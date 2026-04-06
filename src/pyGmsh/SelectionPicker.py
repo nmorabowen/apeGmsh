@@ -940,6 +940,31 @@ class SelectionPicker:
         instead of full bbox projection — much more precise, especially
         for surfaces at grazing angles."""
         added = 0
+        # VTK display coords have Y=0 at bottom; GetEventPosition()
+        # already flips Y through SetEventInformationFlipY, so both
+        # the rubber-band box and WorldToDisplay are in the same space.
+        # However on high-DPI Windows, Qt logical-pixels may differ
+        # from VTK physical-pixels.  Detect and apply the DPI ratio.
+        try:
+            rw = self._plotter.render_window
+            vw, vh = rw.GetSize()          # VTK physical pixels
+            aw, ah = rw.GetActualSize()    # may differ on HiDPI
+            # If actual vs logical differ, scale the box to physical
+            sx_ratio = aw / vw if vw else 1.0
+            sy_ratio = ah / vh if vh else 1.0
+        except Exception:
+            sx_ratio = sy_ratio = 1.0
+        bx0 = x0 * sx_ratio
+        bx1 = x1 * sx_ratio
+        by0 = y0 * sy_ratio
+        by1 = y1 * sy_ratio
+
+        if self._parent._verbose:
+            print(f"[picker] box raw=({x0},{y0})-({x1},{y1}) "
+                  f"scaled=({bx0:.0f},{by0:.0f})-({bx1:.0f},{by1:.0f}) "
+                  f"ratio=({sx_ratio:.2f},{sy_ratio:.2f})")
+
+        candidates = 0
         for dt, actor in list(self._dimtag_to_actor.items()):
             if dt[0] not in self._pickable_dims:
                 continue
@@ -951,7 +976,12 @@ class SelectionPicker:
             if pt is None:
                 continue
             sx, sy = pt
-            hit = x0 <= sx <= x1 and y0 <= sy <= y1
+            candidates += 1
+            # Print first few centroids for debugging
+            if self._parent._verbose and candidates <= 5:
+                hit_dbg = bx0 <= sx <= bx1 and by0 <= sy <= by1
+                print(f"  centroid {dt}: display=({sx:.0f},{sy:.0f}) hit={hit_dbg}")
+            hit = bx0 <= sx <= bx1 and by0 <= sy <= by1
             if hit:
                 self._picks.append(dt)
                 self._pick_history.append(dt)
@@ -962,7 +992,7 @@ class SelectionPicker:
             self._fire_pick_changed()
         if self._parent._verbose:
             mode = "crossing" if crossing else "window"
-            print(f"[picker] box-select ({mode}) added {added} entities")
+            print(f"[picker] box-select ({mode}) {candidates} candidates, added {added} entities")
 
     def _do_box_unselect(
         self, x0: float, y0: float, x1: float, y1: float,

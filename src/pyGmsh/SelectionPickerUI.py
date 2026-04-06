@@ -674,20 +674,21 @@ class SelectionPickerWindow:
 
     def _refresh_group_list(self) -> None:
         """Repopulate the group list widget from Gmsh + staged groups."""
-        self._group_list.blockSignals(True)
-        cur = self._group_list.currentItem()
+        lst = self._committed_list
+        lst.blockSignals(True)
+        cur = lst.currentItem()
         cur_text = cur.text().split("  (")[0] if cur else ""
-        self._group_list.clear()
+        lst.clear()
         groups = self._collect_groups()
         for gname in sorted(groups.keys()):
             n = len(groups[gname])
-            self._group_list.addItem(f"{gname}  ({n})")
+            lst.addItem(f"{gname}  ({n})")
         # Restore selection
-        for i in range(self._group_list.count()):
-            if self._group_list.item(i).text().startswith(cur_text + "  ("):
-                self._group_list.setCurrentRow(i)
+        for i in range(lst.count()):
+            if lst.item(i).text().startswith(cur_text + "  ("):
+                lst.setCurrentRow(i)
                 break
-        self._group_list.blockSignals(False)
+        lst.blockSignals(False)
 
     def _on_group_list_selected(self, text: str) -> None:
         """When user clicks a group in the list, populate the name field."""
