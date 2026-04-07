@@ -1602,11 +1602,44 @@ class Mesh:
             name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
             pg_node_tags, pg_coords = \
                 gmsh.model.mesh.getNodesForPhysicalGroup(pg_dim, pg_tag)
-            pg_data[(pg_dim, pg_tag)] = {
+
+            entry: dict = {
                 'name':        name,
                 'node_ids':    np.array(pg_node_tags, dtype=np.int64),
                 'node_coords': np.array(pg_coords).reshape(-1, 3),
             }
+
+            # Capture element data for dim >= 1 physical groups
+            if pg_dim >= 1:
+                entity_tags = gmsh.model.getEntitiesForPhysicalGroup(
+                    pg_dim, pg_tag
+                )
+                pg_elem_tags: list[int] = []
+                pg_conn_blocks: list[ndarray] = []
+                for ent_tag in entity_tags:
+                    etypes, etags_list, enodes_list = \
+                        gmsh.model.mesh.getElements(
+                            dim=pg_dim, tag=int(ent_tag)
+                        )
+                    for etype, etags_arr, enodes in zip(
+                        etypes, etags_list, enodes_list
+                    ):
+                        props = gmsh.model.mesh.getElementProperties(etype)
+                        npe   = props[3]          # n_nodes
+                        pg_elem_tags.extend(
+                            int(t) for t in etags_arr
+                        )
+                        pg_conn_blocks.append(
+                            np.array(enodes, dtype=np.int64).reshape(-1, npe)
+                        )
+
+                if pg_conn_blocks:
+                    entry['element_ids']  = np.array(
+                        pg_elem_tags, dtype=np.int64
+                    )
+                    entry['connectivity'] = np.vstack(pg_conn_blocks)
+
+            pg_data[(pg_dim, pg_tag)] = entry
 
         physical = PhysicalGroupSet(pg_data)
 

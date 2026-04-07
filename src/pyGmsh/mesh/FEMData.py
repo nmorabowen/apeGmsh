@@ -125,6 +125,7 @@ class PhysicalGroupSet:
 
     * **Queries** — ``get_all``, ``get_name``, ``get_tag``, ``summary``
     * **Mesh nodes** — ``get_nodes``
+    * **Mesh elements** — ``get_elements``
 
     Example
     -------
@@ -142,14 +143,22 @@ class PhysicalGroupSet:
         nodes = fem.physical.get_nodes(0, 1)
         nodes['tags']    # ndarray of node IDs
         nodes['coords']  # ndarray(N, 3)
+
+        # Retrieve elements
+        elems = fem.physical.get_elements(2, 3)
+        elems['element_ids']    # ndarray(E,)
+        elems['connectivity']   # ndarray(E, npe)
     """
 
     def __init__(
         self,
         groups: dict[tuple[int, int], dict],
     ) -> None:
-        # groups: {(dim, pg_tag): {'name': str, 'node_ids': ndarray,
-        #                          'node_coords': ndarray}}
+        # groups: {(dim, pg_tag): {'name': str,
+        #                          'node_ids': ndarray,
+        #                          'node_coords': ndarray,
+        #                          'element_ids': ndarray (optional),
+        #                          'connectivity': ndarray (optional)}}
         self._groups = groups
 
     # ── Queries ───────────────────────────────────────────────
@@ -227,6 +236,53 @@ class PhysicalGroupSet:
             'coords': info['node_coords'],
         }
 
+    # ── Mesh elements ────────────────────────────────────────
+
+    def get_elements(self, dim: int, tag: int) -> dict:
+        """
+        Return element IDs and connectivity for a physical group.
+
+        Only available for physical groups with ``dim >= 1`` (curves,
+        surfaces, volumes).  Point groups (``dim=0``) have no elements.
+
+        Parameters
+        ----------
+        dim : dimension of the physical group
+        tag : physical-group tag
+
+        Returns
+        -------
+        dict
+            ``'element_ids'``    : ndarray(E,)      — element IDs
+            ``'connectivity'``   : ndarray(E, npe)   — node IDs per element
+
+        Raises
+        ------
+        KeyError
+            If the physical group does not exist.
+        ValueError
+            If the physical group has no element data (dim=0 groups,
+            or data was not captured at extraction time).
+        """
+        info = self._groups.get((dim, tag))
+        if info is None:
+            raise KeyError(
+                f"No physical group (dim={dim}, tag={tag}). "
+                f"Available: {self.get_all()}"
+            )
+        elem_ids = info.get('element_ids')
+        conn     = info.get('connectivity')
+        if elem_ids is None or conn is None:
+            name = info.get('name', f'(dim={dim}, tag={tag})')
+            raise ValueError(
+                f"Physical group '{name}' has no element data. "
+                f"Element data is only available for dim >= 1 groups."
+            )
+        return {
+            'element_ids':  elem_ids,
+            'connectivity': conn,
+        }
+
     # ── Display ───────────────────────────────────────────────
 
     def summary(self):
@@ -239,21 +295,24 @@ class PhysicalGroupSet:
 
         ``name``       label (empty string if unnamed)
         ``n_nodes``    number of mesh nodes in the group
+        ``n_elems``    number of elements in the group (0 for dim=0)
         """
         import pandas as pd
 
         rows: list[dict] = []
         for (dim, pg_tag), info in sorted(self._groups.items()):
+            elem_ids = info.get('element_ids')
             rows.append({
                 'dim':     dim,
                 'pg_tag':  pg_tag,
                 'name':    info.get('name', ''),
                 'n_nodes': len(info['node_ids']),
+                'n_elems': len(elem_ids) if elem_ids is not None else 0,
             })
 
         if not rows:
             return pd.DataFrame(
-                columns=['dim', 'pg_tag', 'name', 'n_nodes']
+                columns=['dim', 'pg_tag', 'name', 'n_nodes', 'n_elems']
             )
 
         return (
@@ -316,6 +375,12 @@ class FEMData:
         # Build solver model
         for i in range(fem.info.n_nodes):
             ops.node(int(fem.node_ids[i]), *fem.node_coords[i])
+
+        # Elements by physical group
+        cols = fem.physical.get_elements(1, 2)   # columns (dim=1)
+        slab = fem.physical.get_elements(2, 3)   # slab (dim=2)
+        cols['element_ids'], cols['connectivity']
+        slab['element_ids'], slab['connectivity']
     """
     node_ids:     ndarray
     node_coords:  ndarray
