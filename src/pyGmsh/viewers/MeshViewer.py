@@ -2,12 +2,16 @@
 MeshViewer
 ==========
 
-Interactive mesh viewer with dual-level picking (mesh nodes vs BRep patches),
-multiple coloring modes, label overlays, and selection sets.
+Interactive mesh viewer inheriting from :class:`SelectionPicker`.
 
-Renders a Gmsh mesh (nodes + elements) using one VTK actor per BRep entity,
-enabling BRep-level hide/isolate operations.  At the mesh level, individual
-node picking is supported via nearest-node search.
+Renders a Gmsh mesh (nodes + elements) using one VTK actor per BRep entity
+(grouping all elements on that entity into a single
+``pyvista.UnstructuredGrid``), plus a node-cloud glyph overlay.
+
+SelectionPicker provides all BRep-level picking, hover highlight, recolor,
+group management, box-select, and hide/isolate/reveal.  MeshViewer adds
+mesh-level picking (element and node modes), multiple coloring modes, label
+overlays, renumbering, and partitioning.
 
 Usage
 -----
@@ -21,8 +25,9 @@ Usage
 
 Keyboard
 --------
-    [M]  switch to mesh-level picking (nodes)
-    [B]  switch to BRep-level picking (patches)
+    [E]  switch to element picking mode
+    [N]  switch to node picking mode
+    [Esc] deselect all / return to BRep mode
     [H]  hide selected
     [I]  isolate selected
     [R]  reveal all
@@ -36,7 +41,8 @@ import gmsh
 import numpy as np
 import pyvista as pv
 
-from .BaseViewer import BaseViewer, DimTag, _hex_to_rgb
+from .SelectionPicker import SelectionPicker
+from .BaseViewer import DimTag, _hex_to_rgb
 
 if TYPE_CHECKING:
     from pyGmsh._session import _SessionBase
@@ -89,7 +95,7 @@ _ELEM_TYPE_COLORS = {
 _DEFAULT_MESH_COLOR = "#5B8DB8"
 _PICK_COLOR         = "#E74C3C"
 _HOVER_COLOR        = "#FFD700"
-_NODE_COLOR         = "#E8D5B7"
+_NODE_COLOR         = "#FF6600"
 _EDGE_COLOR         = "#2C4A6E"
 
 
@@ -123,19 +129,17 @@ def _elem_type_category(name: str) -> str:
 # MeshViewer
 # ======================================================================
 
-class MeshViewer(BaseViewer):
+class MeshViewer(SelectionPicker):
     """
-    Interactive mesh viewer with dual-level picking.
+    Interactive mesh viewer inheriting from SelectionPicker.
 
     Builds one VTK actor per BRep entity (grouping all elements on that
-    entity into a single ``pyvista.UnstructuredGrid``), plus a single
-    point-cloud actor for all mesh nodes.
+    entity into a single ``pyvista.UnstructuredGrid``), plus a node-cloud
+    glyph overlay.
 
-    Two pick levels are supported:
-
-    * **mesh** -- clicking picks the nearest mesh node.
-    * **brep** -- clicking picks the BRep entity (surface/volume/curve)
-      that owns the element under the cursor.
+    SelectionPicker's BRep-level picking, hover highlight, recolor, group
+    management, box-select, and hide/isolate/reveal all work unchanged on
+    mesh actors.  MeshViewer adds element- and node-level picking modes.
 
     Parameters
     ----------
@@ -146,7 +150,7 @@ class MeshViewer(BaseViewer):
     dims : list[int] or None
         Dimensions to render.  Default ``[1, 2, 3]``.
     point_size : float
-        Visual size for the node point cloud.
+        Visual size for the node glyph cloud.
     line_width : float
         VTK line width for 1-D element actors.
     surface_opacity : float
@@ -161,13 +165,16 @@ class MeshViewer(BaseViewer):
         mesh_composite: "Mesh",
         *,
         dims: list[int] | None = None,
-        point_size: float = 10.0,
+        point_size: float = 1.0,
         line_width: float = 3.0,
         surface_opacity: float = 1.0,
         show_surface_edges: bool = True,
     ) -> None:
+        # SelectionPicker.__init__ expects (parent, model, ...).
+        # We pass physical_group=None so no group is auto-written on close.
         super().__init__(
             parent, parent.model,
+            physical_group=None,
             dims=dims if dims is not None else [1, 2, 3],
             point_size=point_size,
             line_width=line_width,
@@ -175,7 +182,15 @@ class MeshViewer(BaseViewer):
             show_surface_edges=show_surface_edges,
         )
         self._mesh = mesh_composite
-        self._pick_level: str = "mesh"  # "mesh" or "brep"
+
+        # ---- Mesh-level pick mode ----
+        # "off" -> BRep picking (super), "element" -> element, "node" -> node
+        self._mesh_pick_mode: str = "off"
+        self._picked_elems: list[int] = []
+        self._picked_nodes: list[int] = []
+
+        # Actor for highlighting picked nodes (sphere glyphs)
+        self._node_pick_actor: Any = None
 
         # ---- Mesh data (populated in _build_scene) ----
         self._node_tags: np.ndarray | None = None       # (N,) node tags
@@ -186,8 +201,7 @@ class MeshViewer(BaseViewer):
         self._elem_data: dict[int, dict[str, Any]] = {}  # elem_tag -> info dict
         # {type_name, nodes, dim, brep_dt}
 
-        # ---- BRep-level actors: one VTK actor per BRep entity ----
-        self._brep_actors: dict[DimTag, Any] = {}
+        # ---- BRep-level grids and element mappings ----
         self._brep_grids: dict[DimTag, Any] = {}
         self._brep_to_elems: dict[DimTag, list[int]] = {}  # BRep -> elem tags
         self._elem_to_brep: dict[int, DimTag] = {}          # elem -> parent BRep
@@ -195,26 +209,21 @@ class MeshViewer(BaseViewer):
         # Per-BRep dominant element type (for type-coloring)
         self._brep_dominant_type: dict[DimTag, str] = {}
 
-        # ---- Node-level actor ----
-        self._node_actor: Any = None  # single point cloud
+        # ---- Node cloud actor (visual overlay, not pickable) ----
+        self._node_actor: Any = None
+        self._node_cloud: pv.PolyData | None = None
 
         # ---- Visual properties for mesh ----
         self._node_marker_size: float = point_size
-        self._edge_color: str = "#2C4A6E"
+        self._edge_color: str = _EDGE_COLOR
 
         # ---- Element-level picking ----
         # Maps (brep_dt, cell_idx_in_grid) -> gmsh elem tag
         self._grid_cell_to_elem: dict[tuple[DimTag, int], int] = {}
 
-        # ---- Physical-group level picking ----
-        self._group_to_breps: dict[str, list[DimTag]] = {}  # group name -> BRep entities
-        self._brep_to_group: dict[DimTag, str] = {}          # BRep -> first group name
-        self._selected_groups: list[str] = []
-
-        # ---- Selection sets ----
-        self._selection_sets: dict[str, list[int]] = {}  # name -> tags
-        self._selected_nodes: list[int] = []
-        self._selected_elems: list[int] = []  # gmsh element tags
+        # ---- Physical-group <-> BRep mappings ----
+        self._group_to_breps: dict[str, list[DimTag]] = {}
+        self._brep_to_group: dict[DimTag, str] = {}
 
         # ---- Color mode ----
         self._color_mode: str = "default"
@@ -234,9 +243,6 @@ class MeshViewer(BaseViewer):
 
         # ---- Opt-2: KD-tree for nearest-node picking ----
         self._node_tree: Any = None  # scipy cKDTree (or None)
-
-        # ---- Opt-3: persistent node cloud PolyData ----
-        self._node_cloud: pv.PolyData | None = None
 
         # ---- Opt-7: cached gmsh API calls ----
         self._cached_elem_props: dict[int, tuple] = {}
@@ -261,7 +267,7 @@ class MeshViewer(BaseViewer):
 
     def _build_scene(self) -> None:  # noqa: C901
         """Populate the plotter with one actor per BRep entity plus a
-        node point cloud."""
+        node glyph cloud."""
         plotter = self._plotter
 
         # 1. Get all mesh nodes
@@ -287,6 +293,18 @@ class MeshViewer(BaseViewer):
             [int(c * 255) for c in _hex_to_rgb(_DEFAULT_MESH_COLOR)],
             dtype=np.uint8,
         )
+
+        # Compute model diagonal for glyph sizing
+        try:
+            bb = gmsh.model.getBoundingBox(-1, -1)
+            diag = float(np.linalg.norm(
+                [bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]]
+            ))
+            if diag <= 0.0:
+                diag = 1.0
+        except Exception:
+            diag = 1.0
+        self._model_diagonal = diag
 
         # 2. For each BRep entity with dim in self._dims, build actors
         for dim in sorted(self._dims):
@@ -434,37 +452,30 @@ class MeshViewer(BaseViewer):
                     smooth_shading=False,
                     pickable=True,
                 )
-                self._brep_actors[dt] = actor
-                self._register_actor(actor, ("brep", dim, tag))
+                # Register into SelectionPicker's _id_to_actor / _actor_to_id
+                self._register_actor(actor, dt)
 
-        # 3. Node point cloud -- Opt-3: persistent PolyData with pre-set scalars
+        # 3. Node cloud -- sphere glyphs (robust across GPU drivers)
         if self._node_coords is not None and len(self._node_coords) > 0:
             node_cloud = pv.PolyData(self._node_coords)
-            n_nodes = len(self._node_coords)
-            default_node_rgb = np.array(
-                [int(c * 255) for c in _hex_to_rgb(_NODE_COLOR)],
-                dtype=np.uint8,
-            )
-            node_cloud["pick_colors"] = np.tile(
-                default_node_rgb, (n_nodes, 1),
-            )
             self._node_cloud = node_cloud
+
+            glyph_radius = 0.004 * diag * self._node_marker_size
+            sphere_src = pv.Sphere(
+                radius=glyph_radius,
+                theta_resolution=10,
+                phi_resolution=10,
+            )
+            glyphs = node_cloud.glyph(
+                geom=sphere_src, orient=False, scale=False,
+            )
             self._node_actor = plotter.add_mesh(
-                node_cloud,
-                scalars="pick_colors",
-                rgb=True,
-                point_size=self._node_marker_size,
-                render_points_as_spheres=True,
-                pickable=True,
+                glyphs,
+                color=_NODE_COLOR,
+                smooth_shading=True,
+                pickable=False,
                 opacity=1.0,
             )
-            # Depth offset so spheres render on top of mesh faces
-            try:
-                self._node_actor.GetMapper().SetResolveCoincidentTopologyToPolygonOffset()
-                self._node_actor.GetMapper().SetRelativeCoincidentTopologyPolygonOffsetParameters(-1.0, -1.0)
-            except Exception:
-                pass
-            self._register_actor(self._node_actor, ("nodes",))
 
         # --- Opt-2: build KD-tree for nearest-node picking ---
         if self._node_coords is not None and len(self._node_coords) > 0:
@@ -494,106 +505,89 @@ class MeshViewer(BaseViewer):
             self._apply_coloring()
 
     # ------------------------------------------------------------------
-    # Keybindings
+    # Mesh-level pick mode
     # ------------------------------------------------------------------
 
-    def _install_keybindings(self) -> None:
-        plotter = self._plotter
-        plotter.add_key_event("q", lambda: plotter.close())
-        plotter.add_key_event("Q", lambda: plotter.close())
-        plotter.add_key_event("h", self._hide_selected)
-        plotter.add_key_event("H", self._hide_selected)
-        plotter.add_key_event("i", self._isolate_selected)
-        plotter.add_key_event("I", self._isolate_selected)
-        plotter.add_key_event("r", self._show_all)
-        plotter.add_key_event("R", self._show_all)
-        plotter.add_key_event("m", lambda: self._set_pick_level("mesh"))
-        plotter.add_key_event("M", lambda: self._set_pick_level("mesh"))
-        plotter.add_key_event("g", lambda: self._set_pick_level("group"))
-        plotter.add_key_event("G", lambda: self._set_pick_level("group"))
-
-    # ------------------------------------------------------------------
-    # Pick level
-    # ------------------------------------------------------------------
-
-    def _set_pick_level(self, level: str) -> None:
-        """Switch between ``"mesh"`` (node/element) and ``"group"`` picking."""
-        self._pick_level = level
+    def _set_mesh_pick_mode(self, mode: str) -> None:
+        """Switch mesh pick mode: ``"off"`` | ``"element"`` | ``"node"``."""
+        self._mesh_pick_mode = mode
         self._update_status()
         self._fire_pick_changed()
 
     # ------------------------------------------------------------------
-    # Picker hooks (called by BaseViewer._install_picker)
+    # Keybindings
+    # ------------------------------------------------------------------
+
+    def _install_keybindings(self) -> None:
+        super()._install_keybindings()
+        plotter = self._plotter
+        plotter.add_key_event("e", lambda: self._set_mesh_pick_mode("element"))
+        plotter.add_key_event("E", lambda: self._set_mesh_pick_mode("element"))
+        plotter.add_key_event("n", lambda: self._set_mesh_pick_mode("node"))
+        plotter.add_key_event("N", lambda: self._set_mesh_pick_mode("node"))
+
+    # ------------------------------------------------------------------
+    # Picker hooks (override SelectionPicker)
     # ------------------------------------------------------------------
 
     def _on_lmb_click(self, x: int, y: int, ctrl: bool) -> None:
-        """Handle a left-mouse-button click at display coords *(x, y)*."""
+        """Handle a left-mouse-button click at display coords *(x, y)*.
+
+        If mesh-pick mode is ``"off"``, delegate to SelectionPicker for
+        BRep-level picking.  Otherwise handle element or node picking.
+        """
+        if self._mesh_pick_mode == "off":
+            super()._on_lmb_click(x, y, ctrl)
+            return
 
         renderer = self._plotter.renderer
         self._click_picker.Pick(x, y, 0, renderer)
         prop = self._click_picker.GetViewProp()
-        if prop is None:
-            return
 
-        entity_id = self._actor_to_id.get(id(prop))
-        if entity_id is None:
-            return
-
-        if self._pick_level == "group":
-            # Group-level: find which physical group the clicked BRep belongs to
-            if isinstance(entity_id, tuple) and entity_id[0] == "brep":
-                dt: DimTag = (entity_id[1], entity_id[2])
-                group_name = self._brep_to_group.get(dt)
-                if group_name is not None:
-                    if ctrl:
-                        if group_name in self._selected_groups:
-                            self._selected_groups.remove(group_name)
-                    else:
-                        if group_name in self._selected_groups:
-                            self._selected_groups.remove(group_name)
-                        else:
-                            self._selected_groups.append(group_name)
-                    self._recolor_group(group_name)
-                    # --- Opt-6: single render at end of handler ---
-                    self._plotter.render()
-                    self._update_status()
-                    self._fire_pick_changed()
-
-        elif self._pick_level == "mesh":
-            # Mesh-level: identify which element cell was clicked
+        if self._mesh_pick_mode == "element":
+            if prop is None:
+                return
+            entity_id = self._actor_to_id.get(id(prop))
+            if entity_id is None:
+                return
             cell_id = self._click_picker.GetCellId()
-            if cell_id >= 0 and isinstance(entity_id, tuple) and entity_id[0] == "brep":
-                brep_dt: DimTag = (entity_id[1], entity_id[2])
-                elem_tag = self._grid_cell_to_elem.get((brep_dt, cell_id))
-                if elem_tag is not None:
-                    if ctrl:
-                        if elem_tag in self._selected_elems:
-                            self._selected_elems.remove(elem_tag)
-                    else:
-                        if elem_tag in self._selected_elems:
-                            self._selected_elems.remove(elem_tag)
-                        else:
-                            self._selected_elems.append(elem_tag)
-                    self._update_elem_highlight()
-                    self._update_status()
-                    self._fire_pick_changed()
-                    return
+            if cell_id < 0:
+                return
+            # entity_id is a DimTag from _register_actor
+            if not isinstance(entity_id, tuple) or len(entity_id) != 2:
+                return
+            brep_dt: DimTag = entity_id
+            elem_tag = self._grid_cell_to_elem.get((brep_dt, cell_id))
+            if elem_tag is None:
+                return
+            if ctrl:
+                if elem_tag in self._picked_elems:
+                    self._picked_elems.remove(elem_tag)
+            else:
+                if elem_tag in self._picked_elems:
+                    self._picked_elems.remove(elem_tag)
+                else:
+                    self._picked_elems.append(elem_tag)
+            self._highlight_picked_elems()
+            self._update_status()
+            self._fire_pick_changed()
 
-            # Fallback: nearest node picking (for node cloud clicks)
+        elif self._mesh_pick_mode == "node":
             pos = self._click_picker.GetPickPosition()
             nearest = self._find_nearest_node(pos)
-            if nearest is not None:
-                if ctrl:
-                    if nearest in self._selected_nodes:
-                        self._selected_nodes.remove(nearest)
+            if nearest is None:
+                return
+            if ctrl:
+                if nearest in self._picked_nodes:
+                    self._picked_nodes.remove(nearest)
+            else:
+                if nearest in self._picked_nodes:
+                    self._picked_nodes.remove(nearest)
                 else:
-                    if nearest in self._selected_nodes:
-                        self._selected_nodes.remove(nearest)
-                    else:
-                        self._selected_nodes.append(nearest)
-                self._update_node_highlight()
-                self._update_status()
-                self._fire_pick_changed()
+                    self._picked_nodes.append(nearest)
+            self._highlight_picked_nodes()
+            self._update_status()
+            self._fire_pick_changed()
 
     def _on_box_select(
         self,
@@ -601,34 +595,36 @@ class MeshViewer(BaseViewer):
         crossing: bool,
         ctrl: bool,
     ) -> None:
-        """Box-select at the current pick level."""
-        # DPI scaling
-        try:
-            rw = self._plotter.render_window
-            vw, vh = rw.GetSize()
-            aw, ah = rw.GetActualSize()
-            sx_ratio = aw / vw if vw else 1.0
-            sy_ratio = ah / vh if vh else 1.0
-        except Exception:
-            sx_ratio = sy_ratio = 1.0
-        bx0, bx1 = x0 * sx_ratio, x1 * sx_ratio
-        by0, by1 = y0 * sy_ratio, y1 * sy_ratio
-
-        if self._pick_level == "mesh":
+        """Box-select override: node mode uses batch matrix projection,
+        otherwise delegate to SelectionPicker."""
+        if self._mesh_pick_mode == "node":
+            # DPI scaling
+            try:
+                rw = self._plotter.render_window
+                vw, vh = rw.GetSize()
+                aw, ah = rw.GetActualSize()
+                sx_ratio = aw / vw if vw else 1.0
+                sy_ratio = ah / vh if vh else 1.0
+            except Exception:
+                sx_ratio = sy_ratio = 1.0
+            bx0, bx1 = x0 * sx_ratio, x1 * sx_ratio
+            by0, by1 = y0 * sy_ratio, y1 * sy_ratio
             self._box_select_nodes(bx0, by0, bx1, by1, ctrl)
-        elif self._pick_level == "group":
-            self._box_select_groups(bx0, by0, bx1, by1, ctrl)
+        else:
+            super()._on_box_select(x0, y0, x1, y1, crossing, ctrl)
 
     def _box_select_nodes(
         self,
         x0: float, y0: float, x1: float, y1: float,
         ctrl: bool,
     ) -> None:
-        """Select/unselect nodes whose screen projection falls in the box."""
+        """Select/unselect nodes whose screen projection falls in the box.
+
+        Uses batch matrix projection via camera composite matrix (Opt-5).
+        """
         if self._node_coords is None or self._node_tags is None:
             return
 
-        # --- Opt-5: batch projection via camera composite matrix ---
         renderer = self._plotter.renderer
         rw = self._plotter.render_window
         cam = renderer.GetActiveCamera()
@@ -656,62 +652,23 @@ class MeshViewer(BaseViewer):
         hit_indices = np.nonzero(mask)[0]
 
         changed = False
-        selected_set = set(self._selected_nodes)
+        selected_set = set(self._picked_nodes)
 
         for i in hit_indices:
             tag = int(self._node_tags[i])
             if ctrl:
                 if tag in selected_set:
-                    self._selected_nodes.remove(tag)
+                    self._picked_nodes.remove(tag)
                     selected_set.discard(tag)
                     changed = True
             else:
                 if tag not in selected_set:
-                    self._selected_nodes.append(tag)
+                    self._picked_nodes.append(tag)
                     selected_set.add(tag)
                     changed = True
 
         if changed:
-            self._update_node_highlight()
-            self._update_status()
-            self._fire_pick_changed()
-
-    def _box_select_groups(
-        self,
-        x0: float, y0: float, x1: float, y1: float,
-        ctrl: bool,
-    ) -> None:
-        """Select/unselect physical groups -- any BRep actor whose centroid
-        falls in the box adds its entire group to the selection."""
-        hit_groups: set[str] = set()
-        for dt, actor in self._brep_actors.items():
-            if dt in self._hidden:
-                continue
-            pt = self._project_centroid(actor)
-            if pt is None:
-                continue
-            sx, sy = pt
-            if x0 <= sx <= x1 and y0 <= sy <= y1:
-                gname = self._brep_to_group.get(dt)
-                if gname is not None:
-                    hit_groups.add(gname)
-
-        changed = False
-        for gname in hit_groups:
-            if ctrl:
-                if gname in self._selected_groups:
-                    self._selected_groups.remove(gname)
-                    changed = True
-            else:
-                if gname not in self._selected_groups:
-                    self._selected_groups.append(gname)
-                    changed = True
-
-        if changed:
-            for gname in hit_groups:
-                self._recolor_group(gname)
-            # --- Opt-6: single render at end ---
-            self._plotter.render()
+            self._highlight_picked_nodes()
             self._update_status()
             self._fire_pick_changed()
 
@@ -721,13 +678,11 @@ class MeshViewer(BaseViewer):
 
     def _on_hover_changed_internal(self, old_id: Any, new_id: Any) -> None:
         """Recolor actors on hover transition."""
-        if old_id is not None and isinstance(old_id, tuple) and old_id[0] == "brep":
-            dt = (old_id[1], old_id[2])
-            self._recolor_brep(dt)
-        if new_id is not None and isinstance(new_id, tuple) and new_id[0] == "brep":
-            dt = (new_id[1], new_id[2])
-            actor = self._brep_actors.get(dt)
-            if actor is not None and dt not in self._picks:
+        if old_id is not None:
+            self._recolor(old_id)
+        if new_id is not None and new_id in self._id_to_actor:
+            if new_id not in self._picks:
+                actor = self._id_to_actor[new_id]
                 actor.GetProperty().SetColor(*_hex_to_rgb(_HOVER_COLOR))
                 self._plotter.render()
 
@@ -754,47 +709,18 @@ class MeshViewer(BaseViewer):
         idx = int(np.argmin(dists))
         return int(self._node_tags[idx])
 
-    def _update_node_highlight(self) -> None:
-        """Refresh the node point cloud to reflect the current selection.
+    # ------------------------------------------------------------------
+    # Mesh-level highlighting
+    # ------------------------------------------------------------------
 
-        Opt-3: in-place scalar update -- no actor rebuild.
+    def _highlight_picked_elems(self) -> None:
+        """Refresh BRep grid colors to highlight picked elements.
+
+        In-place per-cell color update on BRep grids (Opt-4).
         """
-        if self._node_cloud is None or self._node_tags is None:
-            return
-
-        selected_set = set(self._selected_nodes)
-        n = len(self._node_tags)
-        default_rgb = np.array(
-            [int(c * 255) for c in _hex_to_rgb(_NODE_COLOR)], dtype=np.uint8,
-        )
+        picked_set = set(self._picked_elems)
         pick_rgb = np.array(
             [int(c * 255) for c in _hex_to_rgb(_PICK_COLOR)], dtype=np.uint8,
-        )
-        colors = np.tile(default_rgb, (n, 1))
-
-        if selected_set:
-            for i, tag in enumerate(self._node_tags):
-                if int(tag) in selected_set:
-                    colors[i] = pick_rgb
-
-        # In-place update on persistent PolyData
-        self._node_cloud["pick_colors"] = colors
-        self._node_cloud.Modified()
-        # --- Opt-6: single render at call site ---
-        self._plotter.render()
-
-    def _update_elem_highlight(self) -> None:
-        """Refresh BRep grid colors to highlight selected elements.
-
-        Opt-4: in-place scalar update -- no actor rebuild.
-        """
-        selected_set = set(self._selected_elems)
-        pick_rgb = np.array(
-            [int(c * 255) for c in _hex_to_rgb(_PICK_COLOR)], dtype=np.uint8,
-        )
-        default_rgb = np.array(
-            [int(c * 255) for c in _hex_to_rgb(_DEFAULT_MESH_COLOR)],
-            dtype=np.uint8,
         )
 
         for dt, grid in self._brep_grids.items():
@@ -802,63 +728,147 @@ class MeshViewer(BaseViewer):
             if not elem_tags:
                 continue
             n_cells = grid.n_cells
-            colors = np.tile(default_rgb, (n_cells, 1))
-            any_selected = False
+            # Start from the current color-mode base color
+            base_color = self._get_idle_color_u8(dt)
+            colors = np.tile(base_color, (n_cells, 1))
             for ci, etag in enumerate(elem_tags):
-                if ci < n_cells and etag in selected_set:
+                if ci < n_cells and etag in picked_set:
                     colors[ci] = pick_rgb
-                    any_selected = True
 
-            if any_selected or dt in self._picks:
-                grid["colors"] = colors
-                grid.Modified()
-            else:
-                # Revert to uniform default color
-                grid["colors"] = np.tile(default_rgb, (n_cells, 1))
-                grid.Modified()
-                self._recolor_brep(dt, _skip_render=True)
+            grid["colors"] = colors
+            grid.Modified()
 
-        # --- Opt-6: single render at end ---
         self._plotter.render()
 
+    def _highlight_picked_nodes(self) -> None:
+        """Sphere glyph overlay at picked node positions."""
+        # Remove previous pick actor
+        if self._node_pick_actor is not None:
+            try:
+                self._plotter.remove_actor(self._node_pick_actor)
+            except Exception:
+                pass
+            self._node_pick_actor = None
+
+        if not self._picked_nodes or self._node_coords is None:
+            self._plotter.render()
+            return
+
+        # Gather picked node positions
+        picked_positions = []
+        for tag in self._picked_nodes:
+            idx = self._node_tag_to_idx.get(tag)
+            if idx is not None:
+                picked_positions.append(self._node_coords[idx])
+
+        if not picked_positions:
+            self._plotter.render()
+            return
+
+        pts = np.array(picked_positions)
+        cloud = pv.PolyData(pts)
+        glyph_radius = 0.006 * self._model_diagonal * self._node_marker_size
+        sphere_src = pv.Sphere(
+            radius=glyph_radius,
+            theta_resolution=12,
+            phi_resolution=12,
+        )
+        glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
+        self._node_pick_actor = self._plotter.add_mesh(
+            glyphs,
+            color=_PICK_COLOR,
+            smooth_shading=True,
+            pickable=False,
+            opacity=1.0,
+        )
+        self._plotter.render()
+
+    def _get_idle_color_u8(self, dt: DimTag) -> np.ndarray:
+        """Return the uint8 RGB for an idle (unpicked) BRep entity
+        under the current color mode."""
+        if self._color_mode == "type":
+            cat = self._brep_dominant_type.get(dt, "Line")
+            hex_color = _ELEM_TYPE_COLORS.get(cat, _DEFAULT_MESH_COLOR)
+        elif self._color_mode == "partition":
+            try:
+                parts = gmsh.model.mesh.getPartitions(dt[0], dt[1])
+                if parts:
+                    idx = int(parts[0]) % len(_PARTITION_COLORS)
+                    hex_color = _PARTITION_COLORS[idx]
+                else:
+                    hex_color = _DEFAULT_MESH_COLOR
+            except Exception:
+                hex_color = _DEFAULT_MESH_COLOR
+        elif self._color_mode == "group":
+            hex_color = self._get_group_color_hex(dt)
+        else:
+            hex_color = _DEFAULT_MESH_COLOR
+        return np.array(
+            [int(c * 255) for c in _hex_to_rgb(hex_color)], dtype=np.uint8,
+        )
+
+    def _get_group_color_hex(self, dt: DimTag) -> str:
+        """Return the hex color for a BRep entity based on its physical
+        group membership."""
+        try:
+            groups = gmsh.model.getPhysicalGroups()
+        except Exception:
+            return _DEFAULT_MESH_COLOR
+        for pg_dim, pg_tag in groups:
+            if pg_dim != dt[0]:
+                continue
+            try:
+                ents = gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
+                if dt[1] in ents:
+                    idx = pg_tag % len(_PARTITION_COLORS)
+                    return _PARTITION_COLORS[idx]
+            except Exception:
+                continue
+        return _DEFAULT_MESH_COLOR
+
     # ------------------------------------------------------------------
-    # BRep-level recoloring
+    # _recolor override (SelectionPicker virtual)
     # ------------------------------------------------------------------
 
-    def _recolor_brep(self, dt: DimTag, *, _skip_render: bool = False) -> None:
-        """Set the colour of a single BRep actor based on group selection /
-        hover / color-mode state.
-
-        Opt-6: ``_skip_render`` suppresses the per-call ``render()`` so the
-        caller can batch many updates and issue a single render.
-        """
-        actor = self._brep_actors.get(dt)
+    def _recolor(self, dt: DimTag) -> None:
+        """Recolor a single BRep actor based on pick / hover / color-mode
+        state.  Picked elements take priority over hover; hover takes
+        priority over idle color-mode color."""
+        actor = self._id_to_actor.get(dt)
         if actor is None:
             return
-        # Check if this BRep's group is selected
-        gname = self._brep_to_group.get(dt)
-        if gname and gname in self._selected_groups:
+
+        if dt == self._hover_id and dt not in self._picks:
+            actor.GetProperty().SetColor(*_hex_to_rgb(_HOVER_COLOR))
+        elif dt in self._picks:
             actor.GetProperty().SetColor(*_hex_to_rgb(_PICK_COLOR))
         else:
             self._apply_coloring_single(dt, actor)
-        if not _skip_render:
-            self._plotter.render()
 
-    def _recolor_group(self, group_name: str) -> None:
-        """Recolor all BRep actors belonging to a physical group.
+        self._plotter.render()
 
-        Opt-6: individual ``_recolor_brep`` calls skip their own render;
-        the caller is responsible for issuing a single ``render()`` after.
-        """
-        breps = self._group_to_breps.get(group_name, [])
-        for dt in breps:
-            self._recolor_brep(dt, _skip_render=True)
+    # ------------------------------------------------------------------
+    # Clear override
+    # ------------------------------------------------------------------
 
-    def _recolor_all_brep(self) -> None:
-        """Recolor every BRep actor."""
-        for dt in self._brep_actors:
-            self._recolor_brep(dt, _skip_render=True)
-        # --- Opt-6: single render ---
+    def clear(self) -> None:
+        """Clear all picks and mesh-level selections."""
+        # Clear BRep picks via parent
+        super().clear()
+        # Clear mesh-level picks
+        self._picked_elems.clear()
+        self._picked_nodes.clear()
+        # Remove node pick overlay
+        if self._node_pick_actor is not None:
+            try:
+                self._plotter.remove_actor(self._node_pick_actor)
+            except Exception:
+                pass
+            self._node_pick_actor = None
+        # Reset mesh pick mode
+        self._mesh_pick_mode = "off"
+        # Reapply coloring to clear element highlights
+        self._apply_coloring()
         self._plotter.render()
 
     # ------------------------------------------------------------------
@@ -882,7 +892,6 @@ class MeshViewer(BaseViewer):
             self._color_by_group()
         else:
             self._color_default()
-        # --- Opt-6: single render at end ---
         self._plotter.render()
 
     def _apply_coloring_single(self, dt: DimTag, actor: object) -> None:
@@ -901,7 +910,7 @@ class MeshViewer(BaseViewer):
     # ---- default ----
 
     def _color_default(self) -> None:
-        for dt, actor in self._brep_actors.items():
+        for dt, actor in self._id_to_actor.items():
             if dt not in self._picks:
                 actor.GetProperty().SetColor(*_hex_to_rgb(_DEFAULT_MESH_COLOR))
                 actor.GetProperty().SetOpacity(self._surface_opacity)
@@ -909,7 +918,7 @@ class MeshViewer(BaseViewer):
     # ---- partition ----
 
     def _color_by_partition(self) -> None:
-        for dt, actor in self._brep_actors.items():
+        for dt, actor in self._id_to_actor.items():
             if dt not in self._picks:
                 self._color_single_partition(dt, actor)
 
@@ -930,8 +939,9 @@ class MeshViewer(BaseViewer):
 
     def _color_by_quality(self) -> None:
         """Scalar-field coloring using element quality."""
-        for dt, actor in self._brep_actors.items():
-            if dt in self._picks:
+        for dt in list(self._id_to_actor.keys()):
+            actor = self._id_to_actor.get(dt)
+            if actor is None or dt in self._picks:
                 continue
             grid = self._brep_grids.get(dt)
             if grid is None:
@@ -966,15 +976,14 @@ class MeshViewer(BaseViewer):
                         line_width=0.5,
                         pickable=True,
                     )
-                    self._brep_actors[dt] = new_actor
-                    self._register_actor(new_actor, ("brep", dt[0], dt[1]))
+                    self._register_actor(new_actor, dt)
             except Exception:
                 pass
 
     # ---- type ----
 
     def _color_by_type(self) -> None:
-        for dt, actor in self._brep_actors.items():
+        for dt, actor in self._id_to_actor.items():
             if dt not in self._picks:
                 self._color_single_type(dt, actor)
 
@@ -986,7 +995,7 @@ class MeshViewer(BaseViewer):
     # ---- group (physical group membership) ----
 
     def _color_by_group(self) -> None:
-        for dt, actor in self._brep_actors.items():
+        for dt, actor in self._id_to_actor.items():
             if dt not in self._picks:
                 self._color_single_group(dt, actor)
 
@@ -994,25 +1003,8 @@ class MeshViewer(BaseViewer):
         """Color a BRep actor by physical-group membership.  Entities
         belonging to a physical group get a palette colour; others stay
         at the default."""
-        try:
-            groups = gmsh.model.getPhysicalGroups()
-        except Exception:
-            actor.GetProperty().SetColor(*_hex_to_rgb(_DEFAULT_MESH_COLOR))
-            return
-        for pg_dim, pg_tag in groups:
-            if pg_dim != dt[0]:
-                continue
-            try:
-                ents = gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
-                if dt[1] in ents:
-                    idx = pg_tag % len(_PARTITION_COLORS)
-                    actor.GetProperty().SetColor(
-                        *_hex_to_rgb(_PARTITION_COLORS[idx]),
-                    )
-                    return
-            except Exception:
-                continue
-        actor.GetProperty().SetColor(*_hex_to_rgb(_DEFAULT_MESH_COLOR))
+        hex_color = self._get_group_color_hex(dt)
+        actor.GetProperty().SetColor(*_hex_to_rgb(hex_color))
 
     # ------------------------------------------------------------------
     # Labels
@@ -1126,12 +1118,12 @@ class MeshViewer(BaseViewer):
         # Rebuild scene
         self._actor_to_id.clear()
         self._id_to_actor.clear()
-        self._brep_actors.clear()
         self._brep_grids.clear()
         self._brep_to_elems.clear()
         self._elem_to_brep.clear()
         self._elem_data.clear()
         self._brep_dominant_type.clear()
+        self._grid_cell_to_elem.clear()
         self._node_actor = None
         self._node_cloud = None
         self._node_tree = None
@@ -1140,7 +1132,14 @@ class MeshViewer(BaseViewer):
         self._tag_to_idx = None
         self._node_label_actor = None
         self._elem_label_actor = None
-        self._selected_nodes.clear()
+        self._picked_nodes.clear()
+        self._picked_elems.clear()
+        if self._node_pick_actor is not None:
+            try:
+                self._plotter.remove_actor(self._node_pick_actor)
+            except Exception:
+                pass
+            self._node_pick_actor = None
         self._picks.clear()
         self._plotter.clear()
         self._build_scene()
@@ -1157,33 +1156,6 @@ class MeshViewer(BaseViewer):
             self._set_color_mode("partition")
 
     # ------------------------------------------------------------------
-    # Selection sets
-    # ------------------------------------------------------------------
-
-    def _save_selection_set(self, name: str) -> None:
-        """Save the current selection as a named set."""
-        if self._pick_level == "mesh":
-            self._selection_sets[name] = list(self._selected_nodes)
-        else:
-            self._selection_sets[name] = [
-                (dt[0] * 10000 + dt[1]) for dt in self._picks
-            ]
-
-    def _load_selection_set(self, name: str) -> None:
-        """Restore a previously saved selection set."""
-        if name not in self._selection_sets:
-            return
-        tags = self._selection_sets[name]
-        if self._pick_level == "mesh":
-            self._selected_nodes = list(tags)
-            self._update_node_highlight()
-        else:
-            self._picks = list(tags)
-            self._recolor_all_brep()
-        self._update_status()
-        self._fire_pick_changed()
-
-    # ------------------------------------------------------------------
     # Status display
     # ------------------------------------------------------------------
 
@@ -1194,9 +1166,12 @@ class MeshViewer(BaseViewer):
         except Exception:
             pass
 
-        if self._pick_level == "mesh":
-            n = len(self._selected_nodes)
-            text = f"Mode: Mesh | Nodes selected: {n}"
+        if self._mesh_pick_mode == "element":
+            n = len(self._picked_elems)
+            text = f"Mode: Element | Elements picked: {n}"
+        elif self._mesh_pick_mode == "node":
+            n = len(self._picked_nodes)
+            text = f"Mode: Node | Nodes picked: {n}"
         else:
             n = len(self._picks)
             text = f"Mode: BRep | Patches selected: {n}"
@@ -1212,21 +1187,13 @@ class MeshViewer(BaseViewer):
         except Exception:
             pass
 
-    def _deselect_all(self) -> None:
-        """Clear all picks, selected nodes, elements, and groups."""
-        self._picks.clear()
-        self._selected_nodes.clear()
-        self._selected_elems.clear()
-        self._selected_groups.clear()
-        self._apply_coloring()
-        self._update_node_highlight()
-        self._update_elem_highlight()
-        self._update_status()
-        self._fire_pick_changed()
-
     # ------------------------------------------------------------------
     # Window lifecycle
     # ------------------------------------------------------------------
+
+    def _create_window(self, *, title: str, maximized: bool):
+        from .MeshViewerUI import MeshViewerWindow
+        return MeshViewerWindow(self, title=title, maximized=maximized)
 
     def show(
         self, *, title: str | None = None, maximized: bool = True,
@@ -1234,7 +1201,7 @@ class MeshViewer(BaseViewer):
         """Open the mesh viewer window.  Blocks until closed."""
         gmsh.model.occ.synchronize()
         default_title = (
-            f"MeshViewer — {self._parent.model_name} - Ladruño"
+            f"MeshViewer \u2014 {self._parent.model_name} - Ladru\u00f1o"
         )
         window = self._create_window(
             title=title or default_title, maximized=maximized,
@@ -1243,15 +1210,12 @@ class MeshViewer(BaseViewer):
         self._on_window_closed()
         return self
 
-    def _create_window(self, *, title: str, maximized: bool):
-        from .MeshViewerUI import MeshViewerWindow
-        return MeshViewerWindow(self, title=title, maximized=maximized)
-
     def _on_window_closed(self) -> None:
         """Cleanup after the viewer window closes."""
         if self._parent._verbose:
             print(
-                f"[MeshViewer] closed — "
-                f"{len(self._selected_nodes)} nodes selected, "
+                f"[MeshViewer] closed \u2014 "
+                f"{len(self._picked_nodes)} nodes picked, "
+                f"{len(self._picked_elems)} elements picked, "
                 f"{len(self._picks)} BRep patches selected"
             )

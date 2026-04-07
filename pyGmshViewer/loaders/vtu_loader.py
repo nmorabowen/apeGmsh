@@ -202,3 +202,47 @@ def create_deformed_mesh(
 
     deformed.points = np.array(source.points) + scale_factor * disp
     return deformed
+
+
+def from_arrays(
+    node_coords: np.ndarray,
+    cells: list | np.ndarray,
+    cell_types: np.ndarray,
+    *,
+    point_data: dict[str, np.ndarray] | None = None,
+    cell_data: dict[str, np.ndarray] | None = None,
+    name: str = "mesh",
+) -> MeshData:
+    """Create a :class:`MeshData` from numpy arrays (no file I/O).
+
+    Parameters
+    ----------
+    node_coords : ndarray (N, 3)
+        Node coordinates.
+    cells : list or ndarray
+        VTK-style cell array.
+    cell_types : ndarray
+        VTK cell type codes, one per cell.
+    point_data : dict, optional
+        Nodal fields: ``{name: ndarray}``.
+    cell_data : dict, optional
+        Element fields: ``{name: ndarray}``.
+    name : str
+        Display name for the mesh.
+
+    Returns
+    -------
+    MeshData ready for the viewer.
+    """
+    grid = pv.UnstructuredGrid(cells, np.asarray(cell_types), node_coords)
+    for field_name, arr in (point_data or {}).items():
+        grid.point_data[field_name] = np.asarray(arr)
+    for field_name, arr in (cell_data or {}).items():
+        grid.cell_data[field_name] = np.asarray(arr)
+    return MeshData(
+        name=name,
+        mesh=grid,
+        filepath=Path(""),
+        point_field_names=list(grid.point_data.keys()),
+        cell_field_names=list(grid.cell_data.keys()),
+    )

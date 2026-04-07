@@ -542,4 +542,72 @@ class ViewportRenderer:
         return self._actors.get(name)
 
     # ------------------------------------------------------------------
-    # Vector f
+    # Vector field glyphs
+    # ------------------------------------------------------------------
+
+    def show_vectors(
+        self,
+        name: str,
+        vector_field: str,
+        *,
+        scale: float = 1.0,
+        cmap: str = "viridis",
+        time_step: int | None = None,
+    ) -> None:
+        """Show vector arrows (glyphs) at nodes.
+
+        Parameters
+        ----------
+        name : str
+            Name of the mesh to show vectors on.
+        vector_field : str
+            Name of the vector field in point_data.
+        scale : float
+            Arrow scale factor.
+        cmap : str
+            Colormap for arrow magnitude.
+        time_step : int, optional
+            Time step to use (for PVD series).
+        """
+        mesh_actor = self._actors.get(name)
+        if mesh_actor is None:
+            return
+        self.hide_vectors(name)
+        if time_step is not None and mesh_actor.mesh_data.step_meshes:
+            source = mesh_actor.mesh_data.step_meshes[time_step]
+        else:
+            source = mesh_actor.mesh_data.mesh
+        if vector_field not in source.point_data:
+            return
+        vec = np.asarray(source.point_data[vector_field])
+        if vec.ndim == 1:
+            vec = vec.reshape(-1, 1)
+        if vec.shape[1] == 2:
+            vec = np.column_stack([vec, np.zeros(vec.shape[0])])
+        mag = np.linalg.norm(vec, axis=1)
+        source["_vec_magnitude"] = mag
+        source["_vec_field"] = vec
+        arrows = source.glyph(
+            orient="_vec_field",
+            scale="_vec_magnitude",
+            factor=scale,
+        )
+        actor = self._plotter.add_mesh(
+            arrows, scalars="_vec_magnitude", cmap=cmap,
+            name=f"_vectors_{name}",
+        )
+        mesh_actor._vector_actor = actor
+
+    def hide_vectors(self, name: str) -> None:
+        """Remove vector arrow glyphs."""
+        mesh_actor = self._actors.get(name)
+        if mesh_actor is None:
+            return
+        actor = getattr(mesh_actor, "_vector_actor", None)
+        if actor is not None:
+            self._plotter.remove_actor(actor)
+            mesh_actor._vector_actor = None
+
+    @property
+    def plotter(self) -> pv.Plotter:
+        return self._plotter

@@ -179,4 +179,5 @@ class LibraryContractTests(unittest.TestCase):
         self.assertEqual(rl.slave_entities, [(0, 10), (0, 11)])
 
 
-if __n
+if __name__ == "__main__":
+    unittest.main()

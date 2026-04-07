@@ -4,20 +4,17 @@ MeshViewerUI
 
 Qt (pyvistaqt) front-end for :class:`MeshViewer`.
 
-Inherits from :class:`BaseViewerWindow` (shared window shell, toolbar,
-console, prefs, camera controls) and adds mesh-specific UI:
+Inherits from :class:`SelectionPickerWindow` (shared window shell, toolbar,
+console, prefs, camera controls, Browser tab with tree + group buttons,
+View tab, Filter tab, Preferences tab, Entity Info dock, keyboard shortcuts)
+and adds mesh-specific UI:
 
-* **Mesh Browser tab**: physical groups, BRep patches, partitions tree.
+* **Info tab** (replaces Browser): picked element/node details tree.
 * **Display tab**: color mode, node/element labels, wireframe, edges.
-* **Tools tab**: renumbering (RCMK/Hilbert/Simple) and partitioning.
-* **Preferences tab**: base prefs extended with node marker size and
-  edge color picker.
-* **Node/Element Info dock** (bottom): details for the picked node or
-  BRep patch -- coordinates, connectivity, element types.
-* **Selection Sets dock** (right, below tabs): save / load / delete
-  named selection sets.
-* **Toolbar extras**: mesh/BRep pick level toggle, hide/isolate/show.
-* **Status bar**: pick level, pick count, color mode.
+* **Mesh Filter tab** (replaces Filter): nodes visibility, mesh dims,
+  element types, physical groups.
+* **Toolbar extras**: E/N buttons for element/node picking.
+* **Status bar**: pick mode, pick counts, mesh stats, color mode.
 
 The window is blocking -- ``MeshViewer.show()`` calls
 ``MeshViewerWindow(...).exec()`` and waits.
@@ -28,10 +25,10 @@ from typing import TYPE_CHECKING
 
 import gmsh
 
-from .BaseViewerUI import BaseViewerWindow
+from .SelectionPickerUI import SelectionPickerWindow
 
 if TYPE_CHECKING:
-    from pyGmsh.viewers.MeshViewer import MeshViewer
+    from .MeshViewer import MeshViewer
 
 
 # Mapping from Gmsh element type integer to human-readable name.
@@ -63,17 +60,20 @@ _ELEM_TYPE_NAMES: dict[int, str] = {
 
 _DIM_NAMES = {0: "Points", 1: "Curves", 2: "Surfaces", 3: "Volumes"}
 
+_IC = "#2d2d2d"
+
 
 # ======================================================================
 # MeshViewerWindow
 # ======================================================================
 
-class MeshViewerWindow(BaseViewerWindow):
-    """QMainWindow hosting the 3D viewport + mesh tree + display controls.
+class MeshViewerWindow(SelectionPickerWindow):
+    """QMainWindow hosting the 3D viewport + mesh info + display controls.
 
-    Inherits from :class:`BaseViewerWindow` which provides the Qt shell,
-    console, toolbar (camera buttons), preferences tab, and exec loop.
-    This subclass adds all mesh-specific UI.
+    Inherits from :class:`SelectionPickerWindow` which provides the Qt
+    shell, console, toolbar (camera buttons + group/visibility actions),
+    Browser tab, View tab, Filter tab, Preferences tab, Entity Info dock,
+    and keyboard shortcuts.  This subclass replaces/adds mesh-specific UI.
     """
 
     def __init__(
@@ -83,176 +83,139 @@ class MeshViewerWindow(BaseViewerWindow):
         title: str = "MeshViewer",
         maximized: bool = True,
     ) -> None:
-        # Typed reference (mypy sees self._viewer as BaseViewer)
-        self._viewer: "MeshViewer" = viewer  # type: ignore[assignment]
+        self._show_node_labels = False
+        self._show_elem_labels = False
+        self._picker: "MeshViewer" = viewer  # typed reference
 
-        # Selection-set storage: name -> list of picked items
-        self._selection_sets: dict[str, list] = {}
-
-        # Base class sets self._viewer = viewer, builds window, wires
-        # base observer callbacks.
         super().__init__(viewer, title=title, maximized=maximized)
 
-        # Wire mesh-specific callbacks (info dock refreshes on pick, not hover)
-        viewer._on_pick_changed.append(self._refresh_info_dock)
+        # Reconfigure point-size slider for mesh nodes
+        if hasattr(self, "_s_point"):
+            self._s_point.setRange(1, 5)
+            self._s_point.setValue(int(viewer._point_size))
 
-        # Populate the mesh browser tree after the window is built.
-        self._populate_mesh_browser()
-
-        # Keyboard shortcuts
-        QtWidgets = self._QtWidgets
-        QtGui = self._QtGui
-        window = self._window
-
-        sc_q = QtWidgets.QShortcut(QtGui.QKeySequence("Q"), window)
-        sc_q.activated.connect(window.close)
-
-        sc_esc = QtWidgets.QShortcut(QtGui.QKeySequence("Esc"), window)
-        sc_esc.activated.connect(self._action_deselect_all)
-
-        sc_m = QtWidgets.QShortcut(QtGui.QKeySequence("M"), window)
-        sc_m.activated.connect(lambda: self._set_pick_level_ui("mesh"))
-
-        sc_b = QtWidgets.QShortcut(QtGui.QKeySequence("B"), window)
-        sc_b.activated.connect(lambda: self._set_pick_level_ui("brep"))
-
-        sc_h = QtWidgets.QShortcut(QtGui.QKeySequence("H"), window)
-        sc_h.activated.connect(self._viewer._hide_selected)
-
-        sc_i = QtWidgets.QShortcut(QtGui.QKeySequence("I"), window)
-        sc_i.activated.connect(self._viewer._isolate_selected)
-
-        sc_r = QtWidgets.QShortcut(QtGui.QKeySequence("R"), window)
-        sc_r.activated.connect(self._viewer._show_all)
+        # Wire pick-changed -> refresh info panel
+        viewer._on_pick_changed.append(self._refresh_mesh_info)
 
     # ==================================================================
-    # Deselect-all helper
+    # Override inherited methods that reference the Browser tree
     # ==================================================================
+    # MeshViewerUI replaces Browser with Info tab, so the tree widget
+    # from SelectionPickerUI gets deleted.  Override as no-ops.
 
-    def _action_deselect_all(self) -> None:
-        """Clear all picks and refresh the UI."""
-        try:
-            self._viewer._deselect_all()
-        except Exception:
-            pass
-        self._refresh_statusbar()
+    def _populate_tree(self) -> None:
+        pass
+
+    def _refresh_info(self) -> None:
+        self._refresh_mesh_info()
+
+    def _refresh_tree_picks(self) -> None:
+        pass
+
+    def _refresh_tree_visibility(self) -> None:
+        pass
 
     # ==================================================================
     # BaseViewerWindow hook overrides
     # ==================================================================
 
     def _build_tabs(self):
-        """Return tabs: Mesh Browser, Display, Tools, Preferences."""
+        """Return tabs: Info, Display, Mesh Filter, Preferences."""
         return [
-            ("Browser", self._build_browser_tab()),
+            ("Info", self._build_info_tab()),
             ("Display", self._build_display_tab()),
-            ("Tools", self._build_tools_tab()),
+            ("Filter", self._build_mesh_filter_tab()),
             ("Preferences", self._build_prefs_tab()),  # from base
         ]
 
     def _build_docks(self):
-        """Return extra docks: Selection Sets (right) and
-        Node/Element Info (right, below sets).
-        The base class adds all returned docks to the right area."""
-        QtWidgets = self._QtWidgets
+        """No Entity Info dock -- Info is now a tab."""
+        return []
 
-        # ---- Selection Sets dock ----
-        sets_dock = QtWidgets.QDockWidget("Selection Sets")
-        sets_dock.setFeatures(
-            QtWidgets.QDockWidget.DockWidgetMovable
-            | QtWidgets.QDockWidget.DockWidgetFloatable
-            | QtWidgets.QDockWidget.DockWidgetClosable
-        )
-        sets_dock.setWidget(self._build_selection_sets_widget())
-        self._sets_dock = sets_dock
-
-        # ---- Node/Element Info dock ----
-        info_dock = QtWidgets.QDockWidget("Node / Element Info")
-        info_dock.setFeatures(
-            QtWidgets.QDockWidget.DockWidgetMovable
-            | QtWidgets.QDockWidget.DockWidgetFloatable
-            | QtWidgets.QDockWidget.DockWidgetClosable
-        )
-        info_dock.setWidget(self._build_info_dock_widget())
-        self._info_dock = info_dock
-
-        return [sets_dock, info_dock]
+    # ------------------------------------------------------------------
+    # Toolbar
+    # ------------------------------------------------------------------
 
     def _build_toolbar_extra(self, bar) -> None:
-        """Add mesh-specific buttons to the toolbar.
-
-        Adds pick-level toggles (Mesh / BRep) and visibility actions
-        (hide, isolate, show all) before returning control to the base.
-        """
-        _IC = "#2d2d2d"
-
-        # ---- Pick level toggle ----
-        self._act_mesh_level = bar.addAction(self._make_icon("M", _IC), "")
-        self._act_mesh_level.setToolTip("Mesh level picking  [M]")
-        self._act_mesh_level.setCheckable(True)
-        self._act_mesh_level.setChecked(True)
-        self._act_mesh_level.toggled.connect(
-            lambda c: self._set_pick_level_ui("mesh" if c else "group"),
+        """Add E/N buttons for element/node picking before inherited
+        buttons."""
+        self._act_elem_pick = bar.addAction(self._make_icon("E", _IC), "")
+        self._act_elem_pick.setToolTip("Element picking mode")
+        self._act_elem_pick.setCheckable(True)
+        self._act_elem_pick.setChecked(True)
+        self._act_elem_pick.toggled.connect(
+            lambda c: self._set_mesh_pick_ui("elem") if c else None,
         )
 
-        self._act_group_level = bar.addAction(self._make_icon("G", _IC), "")
-        self._act_group_level.setToolTip("Physical group picking  [G]")
-        self._act_group_level.setCheckable(True)
-        self._act_group_level.toggled.connect(
-            lambda c: self._set_pick_level_ui("group" if c else "mesh"),
+        self._act_node_pick = bar.addAction(self._make_icon("N", _IC), "")
+        self._act_node_pick.setToolTip("Node picking mode")
+        self._act_node_pick.setCheckable(True)
+        self._act_node_pick.toggled.connect(
+            lambda c: self._set_mesh_pick_ui("node") if c else None,
         )
 
         bar.addSeparator()
-
-        # ---- Visibility ----
-        act_hide = bar.addAction(self._make_icon("\u25CB", _IC), "")
-        act_hide.setToolTip("Hide selected  [H]")
-        act_hide.triggered.connect(self._viewer._hide_selected)
-
-        act_isolate = bar.addAction(self._make_icon("\u25CE", _IC), "")
-        act_isolate.setToolTip("Isolate selected  [I]")
-        act_isolate.triggered.connect(self._viewer._isolate_selected)
-
-        act_show = bar.addAction(self._make_icon("\u25C9", _IC), "")
-        act_show.setToolTip("Show all  [R]")
-        act_show.triggered.connect(self._viewer._show_all)
-
-        bar.addSeparator()
+        super()._build_toolbar_extra(bar)
 
     # ------------------------------------------------------------------
     # Status bar
     # ------------------------------------------------------------------
 
-    def _apply_visual_changes(self) -> None:
-        """Rebuild node cloud + recolor after pref changes."""
-        v = self._viewer
-        v._update_node_highlight()
-        v._recolor_all_brep()
-
     def _refresh_statusbar(self) -> None:
-        """Show pick level, pick count, and color mode."""
-        v = self._viewer
-        level = getattr(v, "_pick_level", "mesh").upper()
+        """Show mode (ELEM/NODE/BRep), pick counts, mesh stats,
+        color mode."""
+        v = self._picker
+        pick_mode = getattr(v, "_mesh_pick_mode", "off").upper()
         color_mode = getattr(v, "_color_mode", "Default")
-        if getattr(v, "_pick_level", "mesh") == "mesh":
-            nn = len(getattr(v, "_selected_nodes", []))
-            ne = len(getattr(v, "_selected_elems", []))
-            self._statusbar.showMessage(
-                f"level={level}  nodes={nn}  elems={ne}  color={color_mode}",
-            )
-        else:
-            n = len(getattr(v, "_selected_groups", []))
-            self._statusbar.showMessage(
-                f"level={level}  groups={n}  color={color_mode}",
-            )
+
+        nn = len(getattr(v, "_picked_nodes", []))
+        ne = len(getattr(v, "_picked_elems", []))
+
+        total_nodes = 0
+        total_elems = 0
+        node_tags = getattr(v, "_node_tags", None)
+        elem_data = getattr(v, "_elem_data", {})
+        if node_tags is not None:
+            total_nodes = len(node_tags)
+        total_elems = len(elem_data)
+
+        self._statusbar.showMessage(
+            f"mode={pick_mode}  "
+            f"sel: {nn} nodes, {ne} elems  |  "
+            f"mesh: {total_nodes} nodes, {total_elems} elems  |  "
+            f"color={color_mode}"
+        )
 
     # ------------------------------------------------------------------
-    # Hover / pick info update
+    # Visual changes
+    # ------------------------------------------------------------------
+
+    def _apply_visual_changes(self) -> None:
+        """Rebuild node cloud + recolor after pref changes."""
+        self._picker._apply_coloring()
+
+    # ------------------------------------------------------------------
+    # Point size override (sphere glyph approach)
+    # ------------------------------------------------------------------
+
+    def _on_point_size_changed(self, value: int) -> None:
+        """Rebuild node glyphs with new radius."""
+        v = self._picker
+        v._point_size = float(value)
+        try:
+            v._highlight_picked_nodes()
+        except Exception:
+            pass
+        try:
+            self._qt_interactor.render()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Hover: no expensive info refresh on hover
     # ------------------------------------------------------------------
 
     def _on_hover_changed_ui(self) -> None:
-        """Called when the hover entity changes.
-        Skip expensive info refresh on hover — only update on pick."""
         pass
 
     # ------------------------------------------------------------------
@@ -262,521 +225,80 @@ class MeshViewerWindow(BaseViewerWindow):
     def _help_extra_rows(self):
         """Additional shortcut rows for the mesh viewer."""
         return [
-            ("M", "Switch to mesh (node/element) picking"),
-            ("G", "Switch to physical group picking"),
+            ("E", "Switch to element picking mode"),
+            ("N", "Switch to node picking mode"),
+            ("Esc", "Deselect all / return to BRep mode"),
             ("H", "Hide selected"),
             ("I", "Isolate selected"),
             ("R", "Show all"),
         ]
 
-    # ------------------------------------------------------------------
-    # Pick level UI synchronisation
-    # ------------------------------------------------------------------
+    # ==================================================================
+    # Mesh pick mode UI synchronisation
+    # ==================================================================
 
-    def _set_pick_level_ui(self, level: str) -> None:
-        """Switch pick level on the viewer and sync toolbar toggle state.
+    def _set_mesh_pick_ui(self, mode: str) -> None:
+        """Sync toolbar toggle state and call viewer pick mode setter.
 
         Parameters
         ----------
-        level : str
-            Either ``"mesh"`` or ``"group"``.
+        mode : str
+            ``"elem"``, ``"node"``, or ``"brep"``.
         """
-        self._viewer._set_pick_level(level)
+        # Map to viewer's mesh_pick_mode API
+        if mode == "elem":
+            self._picker._set_mesh_pick_mode("element")
+        elif mode == "node":
+            self._picker._set_mesh_pick_mode("node")
+        else:
+            self._picker._set_mesh_pick_mode("off")
 
         # Block signals to avoid re-entrant toggling
-        self._act_mesh_level.blockSignals(True)
-        self._act_group_level.blockSignals(True)
-        self._act_mesh_level.setChecked(level == "mesh")
-        self._act_group_level.setChecked(level == "group")
-        self._act_mesh_level.blockSignals(False)
-        self._act_group_level.blockSignals(False)
+        self._act_elem_pick.blockSignals(True)
+        self._act_node_pick.blockSignals(True)
+        self._act_elem_pick.setChecked(mode == "elem")
+        self._act_node_pick.setChecked(mode == "node")
+        self._act_elem_pick.blockSignals(False)
+        self._act_node_pick.blockSignals(False)
 
         self._refresh_statusbar()
 
     # ==================================================================
-    # Mesh Browser tab
+    # Deselect-all helper
     # ==================================================================
 
-    def _build_browser_tab(self):
-        """Build the Mesh Browser tree widget.
-
-        The tree is populated later by :meth:`_populate_mesh_browser`
-        once the window is fully constructed and the gmsh model is
-        available.
-        """
-        QtWidgets = self._QtWidgets
-
-        panel = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(panel)
-        layout.setContentsMargins(4, 4, 4, 4)
-
-        self._browser_tree = QtWidgets.QTreeWidget()
-        self._browser_tree.setHeaderLabels(["Entity", "Details"])
-        self._browser_tree.setColumnCount(2)
-        self._browser_tree.setAlternatingRowColors(True)
-        self._browser_tree.setRootIsDecorated(True)
-        layout.addWidget(self._browser_tree)
-
-        return panel
-
-    def _populate_mesh_browser(self) -> None:
-        """Fill the browser tree from the current gmsh model data.
-
-        Creates three top-level sections:
-
-        * **Physical Groups** -- for each group, list member entities
-          and total element count.
-        * **BRep Patches** -- for each (dim, tag) entity, show element
-          type breakdown and node count.
-        * **Partitions** -- if partitioned, for each partition list its
-          entities.
-        """
-        tree = self._browser_tree
-        tree.clear()
-
-        # ----------------------------------------------------------
-        # 1. Physical Groups
-        # ----------------------------------------------------------
-        pg_root = self._QtWidgets.QTreeWidgetItem(tree, ["Physical Groups", ""])
-        pg_root.setExpanded(True)
+    def _action_deselect_all(self) -> None:
+        """Clear all picks and refresh the UI."""
         try:
-            phys_groups = gmsh.model.getPhysicalGroups()
-        except Exception:
-            phys_groups = []
-
-        for dim, tag in phys_groups:
-            name = ""
-            try:
-                name = gmsh.model.getPhysicalName(dim, tag)
-            except Exception:
-                pass
-            label = name if name else f"PhysGrp({dim},{tag})"
-
-            # Count elements in all entities belonging to this group
-            entities = []
-            try:
-                entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
-            except Exception:
-                pass
-
-            total_elems = 0
-            for ent_tag in entities:
-                try:
-                    elem_types, _, _ = gmsh.model.mesh.getElements(dim, ent_tag)
-                    for et in elem_types:
-                        _, node_tags = gmsh.model.mesh.getElementsByType(et)
-                        # node_tags is flat; divide by nodes-per-element
-                        props = gmsh.model.mesh.getElementProperties(et)
-                        npe = props[3]  # nodes per element
-                        total_elems += len(node_tags) // npe if npe else 0
-                except Exception:
-                    pass
-
-            pg_item = self._QtWidgets.QTreeWidgetItem(
-                pg_root, [label, f"{total_elems} elems"],
-            )
-            # List member entities under the group
-            for ent_tag in entities:
-                dim_name = _DIM_NAMES.get(dim, f"Dim{dim}")
-                self._QtWidgets.QTreeWidgetItem(
-                    pg_item, [f"{dim_name} {ent_tag}", ""],
-                )
-
-        # ----------------------------------------------------------
-        # 2. BRep Patches
-        # ----------------------------------------------------------
-        brep_root = self._QtWidgets.QTreeWidgetItem(tree, ["BRep Patches", ""])
-        brep_root.setExpanded(False)
-        try:
-            all_entities = gmsh.model.getEntities()
-        except Exception:
-            all_entities = []
-
-        for dim, tag in all_entities:
-            dim_name = _DIM_NAMES.get(dim, f"Dim{dim}")
-            entity_label = f"{dim_name} {tag}"
-
-            # Element type breakdown + node count
-            elem_info_parts: list[str] = []
-            total_nodes = 0
-            try:
-                elem_types, elem_tags_list, node_tags_list = (
-                    gmsh.model.mesh.getElements(dim, tag)
-                )
-                for i, et in enumerate(elem_types):
-                    type_name = _ELEM_TYPE_NAMES.get(et, f"Type{et}")
-                    n_elems = len(elem_tags_list[i])
-                    elem_info_parts.append(f"{type_name}:{n_elems}")
-
-                # Node count for this entity
-                node_tags_ent, _ = gmsh.model.mesh.getNodes(dim, tag)
-                total_nodes = len(node_tags_ent)
-            except Exception:
-                pass
-
-            details = ", ".join(elem_info_parts) if elem_info_parts else "no elems"
-            details += f"  ({total_nodes} nodes)"
-
-            ent_item = self._QtWidgets.QTreeWidgetItem(
-                brep_root, [entity_label, details],
-            )
-
-            # Children: one row per element type
-            for part in elem_info_parts:
-                self._QtWidgets.QTreeWidgetItem(ent_item, [part, ""])
-
-        # ----------------------------------------------------------
-        # 3. Partitions
-        # ----------------------------------------------------------
-        partitions_root = self._QtWidgets.QTreeWidgetItem(
-            tree, ["Partitions", ""],
-        )
-        partitions_root.setExpanded(False)
-        try:
-            partition_entities = gmsh.model.getPartitions()
-        except Exception:
-            partition_entities = None
-
-        if partition_entities:
-            # partition_entities is a list of partition tags
-            for part_id in partition_entities:
-                part_item = self._QtWidgets.QTreeWidgetItem(
-                    partitions_root,
-                    [f"Partition {part_id}", ""],
-                )
-                # List entities in this partition
-                try:
-                    part_ents = gmsh.model.getEntitiesForPartition(part_id)
-                    for dim, tag in part_ents:
-                        dim_name = _DIM_NAMES.get(dim, f"Dim{dim}")
-                        self._QtWidgets.QTreeWidgetItem(
-                            part_item, [f"{dim_name} {tag}", ""],
-                        )
-                except Exception:
-                    pass
-        else:
-            self._QtWidgets.QTreeWidgetItem(
-                partitions_root, ["(not partitioned)", ""],
-            )
-
-        # Resize columns to content
-        tree.resizeColumnToContents(0)
-        tree.resizeColumnToContents(1)
-
-    # ==================================================================
-    # Display tab
-    # ==================================================================
-
-    def _build_display_tab(self):
-        """Build the Display tab with visualization controls.
-
-        Controls:
-        - Color mode combo (Default/Partition/Quality/Element Type/Physical Group)
-        - Show node labels checkbox
-        - Show element labels checkbox
-        - Wireframe checkbox
-        - Show edges checkbox
-        """
-        QtWidgets = self._QtWidgets
-
-        panel = QtWidgets.QWidget()
-        form = QtWidgets.QFormLayout(panel)
-        form.setContentsMargins(8, 8, 8, 8)
-        form.setSpacing(6)
-
-        # ---- Color mode ----
-        self._combo_color_mode = QtWidgets.QComboBox()
-        self._combo_color_mode.addItems([
-            "Default", "Partition", "Quality", "Element Type", "Physical Group",
-        ])
-        self._combo_color_mode.currentTextChanged.connect(
-            self._on_color_mode_changed,
-        )
-        form.addRow("Color mode", self._combo_color_mode)
-
-        # ---- Show node labels ----
-        self._cb_node_labels = QtWidgets.QCheckBox("Show node labels")
-        self._cb_node_labels.setChecked(False)
-        self._cb_node_labels.toggled.connect(self._on_node_labels_toggled)
-        form.addRow(self._cb_node_labels)
-
-        # ---- Show element labels ----
-        self._cb_elem_labels = QtWidgets.QCheckBox("Show element labels")
-        self._cb_elem_labels.setChecked(False)
-        self._cb_elem_labels.toggled.connect(self._on_elem_labels_toggled)
-        form.addRow(self._cb_elem_labels)
-
-        # ---- Wireframe ----
-        self._cb_wireframe = QtWidgets.QCheckBox("Wireframe")
-        self._cb_wireframe.setChecked(False)
-        self._cb_wireframe.toggled.connect(self._on_wireframe_toggled)
-        form.addRow(self._cb_wireframe)
-
-        # ---- Show edges ----
-        self._cb_show_edges = QtWidgets.QCheckBox("Show edges")
-        self._cb_show_edges.setChecked(True)
-        self._cb_show_edges.toggled.connect(self._on_show_edges_toggled)
-        form.addRow(self._cb_show_edges)
-
-        return panel
-
-    # ---- Display callbacks ----
-
-    def _on_color_mode_changed(self, mode: str) -> None:
-        """Forward color mode change to the viewer."""
-        try:
-            self._viewer._set_color_mode(mode)
+            self._picker.clear()
         except Exception:
             pass
         self._refresh_statusbar()
-        try:
-            self._qt_interactor.render()
-        except Exception:
-            pass
-
-    def _on_node_labels_toggled(self, checked: bool) -> None:
-        """Toggle node label overlays."""
-        try:
-            self._viewer._toggle_node_labels(checked)
-        except Exception:
-            pass
-        try:
-            self._qt_interactor.render()
-        except Exception:
-            pass
-
-    def _on_elem_labels_toggled(self, checked: bool) -> None:
-        """Toggle element label overlays."""
-        try:
-            self._viewer._toggle_elem_labels(checked)
-        except Exception:
-            pass
-        try:
-            self._qt_interactor.render()
-        except Exception:
-            pass
-
-    def _on_wireframe_toggled(self, checked: bool) -> None:
-        """Toggle wireframe / solid rendering on all mesh actors."""
-        try:
-            plotter = self._qt_interactor
-            for actor in plotter.renderer.actors.values():
-                try:
-                    prop = actor.GetProperty()
-                    if prop is not None:
-                        if checked:
-                            prop.SetRepresentationToWireframe()
-                        else:
-                            prop.SetRepresentationToSurface()
-                except Exception:
-                    pass
-            plotter.render()
-        except Exception:
-            pass
-
-    def _on_show_edges_toggled(self, checked: bool) -> None:
-        """Toggle mesh edge visibility on all actors."""
-        try:
-            plotter = self._qt_interactor
-            for actor in plotter.renderer.actors.values():
-                try:
-                    prop = actor.GetProperty()
-                    if prop is not None:
-                        prop.SetEdgeVisibility(checked)
-                except Exception:
-                    pass
-            plotter.render()
-        except Exception:
-            pass
 
     # ==================================================================
-    # Tools tab
+    # Info tab (replaces Browser)
     # ==================================================================
 
-    def _build_tools_tab(self):
-        """Build the Tools tab with renumbering and partitioning controls.
-
-        Sections:
-        - **Renumber**: method combo (RCMK/Hilbert/Simple) + Apply button.
-        - **Partition**: N partitions spin box + Apply button.
-        """
+    def _build_info_tab(self):
+        """QTreeWidget for picked element/node details."""
         QtWidgets = self._QtWidgets
 
-        panel = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(panel)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(10)
+        self._mesh_info_tree = QtWidgets.QTreeWidget()
+        self._mesh_info_tree.setHeaderLabels(["Property", "Value"])
+        self._mesh_info_tree.setColumnCount(2)
+        self._mesh_info_tree.setAlternatingRowColors(True)
+        self._mesh_info_tree.setRootIsDecorated(True)
+        return self._mesh_info_tree
 
-        # ---- Renumber section ----
-        renumber_group = QtWidgets.QGroupBox("Renumber")
-        renumber_form = QtWidgets.QFormLayout(renumber_group)
-        renumber_form.setSpacing(6)
-
-        self._combo_renumber = QtWidgets.QComboBox()
-        self._combo_renumber.addItems(["RCMK", "Hilbert", "Simple"])
-        renumber_form.addRow("Method", self._combo_renumber)
-
-        btn_renumber = QtWidgets.QPushButton("Apply")
-        btn_renumber.clicked.connect(self._on_renumber_apply)
-        renumber_form.addRow(btn_renumber)
-
-        layout.addWidget(renumber_group)
-
-        # ---- Partition section ----
-        partition_group = QtWidgets.QGroupBox("Partition")
-        partition_form = QtWidgets.QFormLayout(partition_group)
-        partition_form.setSpacing(6)
-
-        self._spin_partitions = QtWidgets.QSpinBox()
-        self._spin_partitions.setRange(1, 128)
-        self._spin_partitions.setValue(4)
-        partition_form.addRow("N partitions", self._spin_partitions)
-
-        btn_partition = QtWidgets.QPushButton("Apply")
-        btn_partition.clicked.connect(self._on_partition_apply)
-        partition_form.addRow(btn_partition)
-
-        layout.addWidget(partition_group)
-
-        # Spacer at the bottom
-        layout.addStretch(1)
-
-        return panel
-
-    # ---- Tools callbacks ----
-
-    def _on_renumber_apply(self) -> None:
-        """Apply the selected renumbering method."""
-        method = self._combo_renumber.currentText()
-        try:
-            self._viewer._apply_renumbering(method)
-            self.log(f"Renumbering applied: {method}")
-        except Exception as exc:
-            self.log(f"Renumbering failed: {exc}")
-        self._populate_mesh_browser()
-        try:
-            self._qt_interactor.render()
-        except Exception:
-            pass
-
-    def _on_partition_apply(self) -> None:
-        """Apply mesh partitioning with the specified N."""
-        n = self._spin_partitions.value()
-        try:
-            self._viewer._apply_partitioning(n)
-            self.log(f"Partitioning applied: {n} partitions")
-        except Exception as exc:
-            self.log(f"Partitioning failed: {exc}")
-        self._populate_mesh_browser()
-        try:
-            self._qt_interactor.render()
-        except Exception:
-            pass
-
-    # ==================================================================
-    # Preferences extras
-    # ==================================================================
-
-    def _build_prefs_extra(self, form) -> None:
-        """Extend the Preferences tab with mesh-specific controls.
-
-        Adds:
-        - Node marker size slider
-        - Edge color picker button
-        """
-        QtWidgets = self._QtWidgets
-        QtCore = self._QtCore
-
-        form.addRow(QtWidgets.QLabel(""))  # visual spacer
-        form.addRow(QtWidgets.QLabel("--- Mesh-specific ---"))
-
-        # ---- Node marker size ----
-        self._s_node_marker = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self._s_node_marker.setRange(1, 30)
-        self._s_node_marker.setValue(
-            int(getattr(self._viewer, "_node_marker_size", 6)),
-        )
-        self._s_node_marker.valueChanged.connect(self._on_node_marker_changed)
-        form.addRow("Node marker size", self._s_node_marker)
-
-        # ---- Edge color picker ----
-        self._btn_edge_color = QtWidgets.QPushButton()
-        self._btn_edge_color.setFixedSize(60, 24)
-        edge_color = getattr(self._viewer, "_edge_color", "#000000")
-        self._btn_edge_color.setStyleSheet(
-            f"background-color: {edge_color}; border: 1px solid #999;",
-        )
-        self._btn_edge_color.clicked.connect(self._on_edge_color_pick)
-        form.addRow("Edge color", self._btn_edge_color)
-
-    def _on_node_marker_changed(self, value: int) -> None:
-        """Update node marker size on the viewer and re-render."""
-        try:
-            self._viewer._node_marker_size = float(value)
-        except Exception:
-            pass
-        self._apply_visual_changes()
-        try:
-            self._qt_interactor.render()
-        except Exception:
-            pass
-
-    def _on_edge_color_pick(self) -> None:
-        """Open a color dialog and apply the chosen edge color."""
-        QtWidgets = self._QtWidgets
-        QtGui = self._QtGui
-
-        current = getattr(self._viewer, "_edge_color", "#000000")
-        color = QtWidgets.QColorDialog.getColor(
-            QtGui.QColor(current), self._window, "Edge Color",
-        )
-        if color.isValid():
-            hex_color = color.name()
-            self._viewer._edge_color = hex_color
-            self._btn_edge_color.setStyleSheet(
-                f"background-color: {hex_color}; border: 1px solid #999;",
-            )
-            self._apply_visual_changes()
-            try:
-                self._qt_interactor.render()
-            except Exception:
-                pass
-
-    # ==================================================================
-    # Node / Element Info dock (bottom)
-    # ==================================================================
-
-    def _build_info_dock_widget(self):
-        """Build the QTreeWidget used by the Node/Element Info dock.
-
-        The tree is updated dynamically when the user hovers or picks
-        a node / BRep patch via :meth:`_refresh_info_dock`.
-        """
-        QtWidgets = self._QtWidgets
-
-        self._info_tree = QtWidgets.QTreeWidget()
-        self._info_tree.setHeaderLabels(["Property", "Value"])
-        self._info_tree.setColumnCount(2)
-        self._info_tree.setAlternatingRowColors(True)
-        self._info_tree.setRootIsDecorated(True)
-        return self._info_tree
-
-    def _refresh_info_dock(self) -> None:
-        """Rebuild the info-dock tree from the viewer's current state.
-
-        At **mesh** level, shows the picked node's tag, coordinates,
-        connected elements, and physical group membership.
-
-        At **BRep** level, shows the entity (dim, tag), element count,
-        element types, and node count.
-        """
-        tree = self._info_tree
+    def _refresh_mesh_info(self) -> None:
+        """Populate the info tree with picked elements and nodes."""
+        tree = self._mesh_info_tree
         tree.clear()
 
-        v = self._viewer
-        pick_level = getattr(v, "_pick_level", "mesh")
+        v = self._picker
+        pick_mode = getattr(v, "_mesh_pick_mode", "off")
 
-        if pick_level == "mesh":
+        if pick_mode in ("element", "node"):
             self._refresh_info_mesh_level(tree, v)
         else:
             self._refresh_info_brep_level(tree, v)
@@ -790,7 +312,7 @@ class MeshViewerWindow(BaseViewerWindow):
         QtWidgets = self._QtWidgets
 
         # Show selected elements first
-        selected_elems = getattr(v, "_selected_elems", [])
+        selected_elems = getattr(v, "_picked_elems", [])
         if selected_elems:
             elem_tag = selected_elems[-1]
             elem_data = getattr(v, "_elem_data", {})
@@ -827,7 +349,7 @@ class MeshViewerWindow(BaseViewerWindow):
             return
 
         # Fall back to node info
-        selected_nodes = getattr(v, "_selected_nodes", [])
+        selected_nodes = getattr(v, "_picked_nodes", [])
         if not selected_nodes:
             QtWidgets.QTreeWidgetItem(tree, ["(no selection)", ""])
             return
@@ -850,7 +372,7 @@ class MeshViewerWindow(BaseViewerWindow):
                 tree, ["Coordinates", "(unavailable)"],
             )
 
-        # Connected elements — use cached _elem_data (fast lookup)
+        # Connected elements -- use cached _elem_data (fast lookup)
         elem_data = getattr(v, "_elem_data", {})
         connected = [
             etag for etag, info in elem_data.items()
@@ -876,11 +398,10 @@ class MeshViewerWindow(BaseViewerWindow):
                 tree, ["Connected elements", "none"],
             )
 
-        # Physical group membership — use cached mappings
+        # Physical group membership -- use cached mappings
         brep_to_group = getattr(v, "_brep_to_group", {})
         elem_to_brep = getattr(v, "_elem_to_brep", {})
         memberships: list[str] = []
-        # Find groups via connected elements' parent BRep
         seen_groups: set[str] = set()
         for etag in connected:
             brep_dt = elem_to_brep.get(etag)
@@ -956,148 +477,406 @@ class MeshViewerWindow(BaseViewerWindow):
             )
 
     # ==================================================================
-    # Selection Sets dock (right)
+    # Display tab
     # ==================================================================
 
-    def _build_selection_sets_widget(self):
-        """Build the widget for the Selection Sets dock.
+    def _build_display_tab(self):
+        """Build the Display tab with visualization controls.
 
-        Contains a list of saved sets, a name input, and
-        Save / Load / Delete buttons.  Double-clicking a set loads it.
+        Controls:
+        - Color mode combo (Default/Partition/Quality/Element Type/Physical Group)
+        - Show node labels checkbox
+        - Show element labels checkbox
+        - Wireframe checkbox
+        - Show edges checkbox
         """
         QtWidgets = self._QtWidgets
 
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(container)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        panel = QtWidgets.QWidget()
+        form = QtWidgets.QFormLayout(panel)
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setSpacing(6)
 
-        # List of saved sets (name + count)
-        self._sets_list = QtWidgets.QListWidget()
-        self._sets_list.setAlternatingRowColors(True)
-        self._sets_list.itemDoubleClicked.connect(self._on_set_double_click)
-        layout.addWidget(self._sets_list)
+        # ---- Color mode ----
+        self._combo_color_mode = QtWidgets.QComboBox()
+        self._combo_color_mode.addItems([
+            "Default", "Partition", "Quality", "Element Type", "Physical Group",
+        ])
+        self._combo_color_mode.currentTextChanged.connect(
+            self._on_color_mode_changed,
+        )
+        form.addRow("Color mode", self._combo_color_mode)
 
-        # Name input
-        name_row = QtWidgets.QHBoxLayout()
-        name_label = QtWidgets.QLabel("Name:")
-        self._set_name_input = QtWidgets.QLineEdit()
-        self._set_name_input.setPlaceholderText("Selection set name")
-        name_row.addWidget(name_label)
-        name_row.addWidget(self._set_name_input)
-        layout.addLayout(name_row)
+        # ---- Show node labels ----
+        self._cb_node_labels = QtWidgets.QCheckBox("Show node labels")
+        self._cb_node_labels.setChecked(False)
+        self._cb_node_labels.toggled.connect(self._on_node_labels_toggled)
+        form.addRow(self._cb_node_labels)
 
-        # Buttons
-        btn_row = QtWidgets.QHBoxLayout()
+        # ---- Show element labels ----
+        self._cb_elem_labels = QtWidgets.QCheckBox("Show element labels")
+        self._cb_elem_labels.setChecked(False)
+        self._cb_elem_labels.toggled.connect(self._on_elem_labels_toggled)
+        form.addRow(self._cb_elem_labels)
 
-        btn_save = QtWidgets.QPushButton("Save")
-        btn_save.setToolTip("Save current selection as a named set")
-        btn_save.clicked.connect(self._on_set_save)
-        btn_row.addWidget(btn_save)
+        # ---- Wireframe ----
+        self._cb_wireframe = QtWidgets.QCheckBox("Wireframe")
+        self._cb_wireframe.setChecked(False)
+        self._cb_wireframe.toggled.connect(self._on_wireframe_toggled)
+        form.addRow(self._cb_wireframe)
 
-        btn_load = QtWidgets.QPushButton("Load")
-        btn_load.setToolTip("Load the selected set into the current picks")
-        btn_load.clicked.connect(self._on_set_load)
-        btn_row.addWidget(btn_load)
+        # ---- Show edges ----
+        self._cb_show_edges = QtWidgets.QCheckBox("Show edges")
+        self._cb_show_edges.setChecked(True)
+        self._cb_show_edges.toggled.connect(self._on_show_edges_toggled)
+        form.addRow(self._cb_show_edges)
 
-        btn_delete = QtWidgets.QPushButton("Delete")
-        btn_delete.setToolTip("Delete the selected set")
-        btn_delete.clicked.connect(self._on_set_delete)
-        btn_row.addWidget(btn_delete)
+        return panel
 
-        layout.addLayout(btn_row)
+    # ---- Display callbacks ----
 
-        return container
-
-    def _refresh_sets_list(self) -> None:
-        """Rebuild the selection sets list widget from internal storage."""
-        self._sets_list.clear()
-        for name, items in self._selection_sets.items():
-            self._sets_list.addItem(f"{name}  ({len(items)})")
-
-    def _on_set_save(self) -> None:
-        """Save the current viewer selection as a named set."""
-        name = self._set_name_input.text().strip()
-        if not name:
-            self._statusbar.showMessage("Enter a name for the set", 3000)
-            return
-
-        v = self._viewer
-        pick_level = getattr(v, "_pick_level", "mesh")
-
-        if pick_level == "mesh":
-            items = list(getattr(v, "_selected_nodes", []))
-        else:
-            items = list(getattr(v, "_picks", []))
-
-        if not items:
-            self._statusbar.showMessage("Nothing selected to save", 3000)
-            return
-
-        self._selection_sets[name] = items
-        self._refresh_sets_list()
-        self.log(f"Saved selection set '{name}' ({len(items)} items)")
-        self._set_name_input.clear()
-
-    def _on_set_load(self) -> None:
-        """Load the currently highlighted set into the viewer picks."""
-        current = self._sets_list.currentItem()
-        if current is None:
-            self._statusbar.showMessage("Select a set to load", 3000)
-            return
-        self._load_set_by_row(self._sets_list.currentRow())
-
-    def _on_set_delete(self) -> None:
-        """Delete the currently highlighted selection set."""
-        current = self._sets_list.currentItem()
-        if current is None:
-            self._statusbar.showMessage("Select a set to delete", 3000)
-            return
-        name = self._get_set_name_from_row(self._sets_list.currentRow())
-        if name and name in self._selection_sets:
-            del self._selection_sets[name]
-            self._refresh_sets_list()
-            self.log(f"Deleted selection set '{name}'")
-
-    def _on_set_double_click(self, item) -> None:
-        """Double-click a selection set to load it."""
-        row = self._sets_list.row(item)
-        self._load_set_by_row(row)
-
-    def _load_set_by_row(self, row: int) -> None:
-        """Load a selection set given its row index in the list."""
-        name = self._get_set_name_from_row(row)
-        if name is None or name not in self._selection_sets:
-            return
-
-        items = self._selection_sets[name]
-        v = self._viewer
-        pick_level = getattr(v, "_pick_level", "mesh")
-
+    def _on_color_mode_changed(self, mode: str) -> None:
+        """Forward color mode change to the viewer."""
         try:
-            if pick_level == "mesh":
-                v._selected_nodes = list(items)
-            else:
-                v._picks = list(items)
-            # Trigger UI refresh through the viewer's callbacks
-            for cb in getattr(v, "_on_pick_changed", []):
-                try:
-                    cb()
-                except Exception:
-                    pass
+            self._picker._set_color_mode(mode)
+        except Exception:
+            pass
+        self._refresh_statusbar()
+        try:
+            self._qt_interactor.render()
         except Exception:
             pass
 
-        self.log(f"Loaded selection set '{name}' ({len(items)} items)")
-        self._refresh_statusbar()
+    def _on_node_labels_toggled(self, checked: bool) -> None:
+        """Toggle node label overlays."""
+        self._show_node_labels = checked
+        try:
+            self._picker._toggle_node_labels(checked)
+        except Exception:
+            pass
+        try:
+            self._qt_interactor.render()
+        except Exception:
+            pass
 
-    def _get_set_name_from_row(self, row: int) -> str | None:
-        """Extract the set name from a list widget row.
+    def _on_elem_labels_toggled(self, checked: bool) -> None:
+        """Toggle element label overlays."""
+        self._show_elem_labels = checked
+        try:
+            self._picker._toggle_elem_labels(checked)
+        except Exception:
+            pass
+        try:
+            self._qt_interactor.render()
+        except Exception:
+            pass
 
-        The list items are formatted as ``"name  (count)"``; this
-        extracts just the name part.
+    def _on_wireframe_toggled(self, checked: bool) -> None:
+        """Toggle wireframe / solid rendering on all mesh actors."""
+        try:
+            plotter = self._qt_interactor
+            for actor in plotter.renderer.actors.values():
+                try:
+                    prop = actor.GetProperty()
+                    if prop is not None:
+                        if checked:
+                            prop.SetRepresentationToWireframe()
+                        else:
+                            prop.SetRepresentationToSurface()
+                except Exception:
+                    pass
+            plotter.render()
+        except Exception:
+            pass
+
+    def _on_show_edges_toggled(self, checked: bool) -> None:
+        """Toggle mesh edge visibility on all actors."""
+        try:
+            plotter = self._qt_interactor
+            for actor in plotter.renderer.actors.values():
+                try:
+                    prop = actor.GetProperty()
+                    if prop is not None:
+                        prop.SetEdgeVisibility(checked)
+                except Exception:
+                    pass
+            plotter.render()
+        except Exception:
+            pass
+
+    # ==================================================================
+    # Mesh Filter tab (replaces SelectionPicker Filter)
+    # ==================================================================
+
+    def _build_mesh_filter_tab(self):
+        """Build the mesh-specific Filter tab.
+
+        Sections:
+        - Show nodes checkbox
+        - Mesh dimensions (1D Lines / 2D Surfaces / 3D Volumes)
+        - Element types (checkboxes from _brep_dominant_type categories)
+        - Physical groups (checkboxes, including "(ungrouped)")
         """
-        names = list(self._selection_sets.keys())
-        if 0 <= row < len(names):
-            return names[row]
-        return None
+        QtWidgets = self._QtWidgets
+
+        panel = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # ---- Show nodes ----
+        self._cb_show_nodes = QtWidgets.QCheckBox("Show nodes")
+        self._cb_show_nodes.setChecked(True)
+        self._cb_show_nodes.toggled.connect(self._on_show_nodes_toggled)
+        layout.addWidget(self._cb_show_nodes)
+
+        # ---- Mesh dimensions ----
+        dim_group = QtWidgets.QGroupBox("Mesh dimensions")
+        dim_layout = QtWidgets.QVBoxLayout(dim_group)
+        self._mesh_dim_cbs: dict[int, object] = {}
+        dim_labels = {1: "1D Lines", 2: "2D Surfaces", 3: "3D Volumes"}
+        for d, label in dim_labels.items():
+            cb = QtWidgets.QCheckBox(label)
+            cb.setChecked(True)
+            cb.toggled.connect(self._on_mesh_dim_filter_changed)
+            dim_layout.addWidget(cb)
+            self._mesh_dim_cbs[d] = cb
+        layout.addWidget(dim_group)
+
+        # ---- Element types ----
+        elem_group = QtWidgets.QGroupBox("Element types")
+        elem_layout = QtWidgets.QVBoxLayout(elem_group)
+        self._elem_type_cbs: dict[str, object] = {}
+
+        # Collect unique element type categories from brep_dominant_type
+        v = self._picker
+        categories: set[str] = set()
+        brep_dom = getattr(v, "_brep_dominant_type", {})
+        for cat in brep_dom.values():
+            categories.add(cat)
+
+        if categories:
+            for cat in sorted(categories):
+                cb = QtWidgets.QCheckBox(cat)
+                cb.setChecked(True)
+                cb.toggled.connect(self._on_elem_type_filter_changed)
+                elem_layout.addWidget(cb)
+                self._elem_type_cbs[cat] = cb
+        else:
+            elem_layout.addWidget(QtWidgets.QLabel("(no elements)"))
+
+        scroll_elem = QtWidgets.QScrollArea()
+        scroll_elem.setWidgetResizable(True)
+        scroll_elem.setWidget(elem_group)
+        scroll_elem.setMaximumHeight(160)
+        layout.addWidget(scroll_elem)
+
+        # ---- Physical groups ----
+        pg_group = QtWidgets.QGroupBox("Physical groups")
+        pg_layout = QtWidgets.QVBoxLayout(pg_group)
+        self._pg_filter_cbs: dict[str, object] = {}
+
+        try:
+            phys_groups = gmsh.model.getPhysicalGroups()
+        except Exception:
+            phys_groups = []
+
+        pg_names: list[str] = []
+        for dim, tag in phys_groups:
+            try:
+                name = gmsh.model.getPhysicalName(dim, tag)
+            except Exception:
+                name = ""
+            if not name:
+                name = f"PhysGrp({dim},{tag})"
+            if name not in pg_names:
+                pg_names.append(name)
+
+        # Always add "(ungrouped)" for entities not in any group
+        pg_names.append("(ungrouped)")
+
+        for name in pg_names:
+            cb = QtWidgets.QCheckBox(name)
+            cb.setChecked(True)
+            cb.toggled.connect(self._on_pg_filter_changed)
+            pg_layout.addWidget(cb)
+            self._pg_filter_cbs[name] = cb
+
+        scroll_pg = QtWidgets.QScrollArea()
+        scroll_pg.setWidgetResizable(True)
+        scroll_pg.setWidget(pg_group)
+        scroll_pg.setMaximumHeight(200)
+        layout.addWidget(scroll_pg)
+
+        layout.addStretch(1)
+        return panel
+
+    # ---- Filter callbacks ----
+
+    def _on_show_nodes_toggled(self, checked: bool) -> None:
+        """Toggle node actor visibility."""
+        v = self._picker
+        node_actor = getattr(v, "_node_actor", None)
+        if node_actor is not None:
+            try:
+                if checked:
+                    node_actor.VisibilityOn()
+                else:
+                    node_actor.VisibilityOff()
+            except Exception:
+                pass
+        try:
+            self._qt_interactor.render()
+        except Exception:
+            pass
+
+    def _on_mesh_dim_filter_changed(self) -> None:
+        """Dimension filter changed -- apply combined filter."""
+        self._apply_mesh_filters()
+
+    def _on_elem_type_filter_changed(self) -> None:
+        """Element type filter changed -- apply combined filter."""
+        self._apply_mesh_filters()
+
+    def _on_pg_filter_changed(self) -> None:
+        """Physical group filter changed -- apply combined filter."""
+        self._apply_mesh_filters()
+
+    def _apply_mesh_filters(self) -> None:
+        """Single pass: combine dim filter + element type filter +
+        physical group filter.  Each actor is visible only if ALL pass."""
+        v = self._picker
+
+        # Collect enabled dims
+        enabled_dims: set[int] = set()
+        for d, cb in self._mesh_dim_cbs.items():
+            try:
+                if cb.isChecked():
+                    enabled_dims.add(d)
+            except RuntimeError:
+                enabled_dims.add(d)
+
+        # Collect enabled element type categories
+        enabled_types: set[str] = set()
+        for cat, cb in self._elem_type_cbs.items():
+            try:
+                if cb.isChecked():
+                    enabled_types.add(cat)
+            except RuntimeError:
+                enabled_types.add(cat)
+
+        # Collect enabled physical group names
+        enabled_pgs: set[str] = set()
+        for name, cb in self._pg_filter_cbs.items():
+            try:
+                if cb.isChecked():
+                    enabled_pgs.add(name)
+            except RuntimeError:
+                enabled_pgs.add(name)
+
+        id_to_actor = getattr(v, "_id_to_actor", {})
+        brep_dom = getattr(v, "_brep_dominant_type", {})
+        brep_to_group = getattr(v, "_brep_to_group", {})
+
+        for dt, actor in id_to_actor.items():
+            dim = dt[0]
+
+            # 1) Dimension filter
+            dim_pass = dim in enabled_dims
+
+            # 2) Element type filter
+            cat = brep_dom.get(dt, "")
+            type_pass = (not self._elem_type_cbs) or (cat in enabled_types)
+
+            # 3) Physical group filter
+            gname = brep_to_group.get(dt)
+            if gname:
+                pg_pass = gname in enabled_pgs
+            else:
+                pg_pass = "(ungrouped)" in enabled_pgs
+
+            visible = dim_pass and type_pass and pg_pass
+
+            try:
+                if visible:
+                    actor.VisibilityOn()
+                    actor.SetPickable(True)
+                else:
+                    actor.VisibilityOff()
+                    actor.SetPickable(False)
+            except Exception:
+                pass
+
+        try:
+            self._qt_interactor.render()
+        except Exception:
+            pass
+
+    # ==================================================================
+    # Preferences extras
+    # ==================================================================
+
+    def _build_prefs_extra(self, form) -> None:
+        """Extend the Preferences tab with mesh-specific controls.
+
+        Adds:
+        - Node marker size slider
+        - Edge color picker button
+        """
+        QtWidgets = self._QtWidgets
+        QtCore = self._QtCore
+
+        form.addRow(QtWidgets.QLabel(""))  # visual spacer
+        form.addRow(QtWidgets.QLabel("--- Mesh-specific ---"))
+
+        # ---- Node marker size ----
+        self._s_node_marker = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._s_node_marker.setRange(1, 30)
+        self._s_node_marker.setValue(
+            int(getattr(self._picker, "_node_marker_size", 6)),
+        )
+        self._s_node_marker.valueChanged.connect(self._on_node_marker_changed)
+        form.addRow("Node marker size", self._s_node_marker)
+
+        # ---- Edge color picker ----
+        self._btn_edge_color = QtWidgets.QPushButton()
+        self._btn_edge_color.setFixedSize(60, 24)
+        edge_color = getattr(self._picker, "_edge_color", "#000000")
+        self._btn_edge_color.setStyleSheet(
+            f"background-color: {edge_color}; border: 1px solid #999;",
+        )
+        self._btn_edge_color.clicked.connect(self._on_edge_color_pick)
+        form.addRow("Edge color", self._btn_edge_color)
+
+    def _on_node_marker_changed(self, value: int) -> None:
+        """Update node marker size on the viewer and re-render."""
+        try:
+            self._picker._node_marker_size = float(value)
+        except Exception:
+            pass
+        self._apply_visual_changes()
+        try:
+            self._qt_interactor.render()
+        except Exception:
+            pass
+
+    def _on_edge_color_pick(self) -> None:
+        """Open a color dialog and apply the chosen edge color."""
+        QtWidgets = self._QtWidgets
+        QtGui = self._QtGui
+
+        current = getattr(self._picker, "_edge_color", "#000000")
+        color = QtWidgets.QColorDialog.getColor(
+            QtGui.QColor(current), self._window, "Edge Color",
+        )
+        if color.isValid():
+            hex_color = color.name()
+            self._picker._edge_color = hex_color
+            self._btn_edge_color.setStyleSheet(
+                f"background-color: {hex_color}; border: 1px solid #999;",
+            )
+            self._apply_visual_changes()
+            try:
+                self._qt_interactor.render()
+            except Exception:
+                pass

@@ -803,4 +803,5 @@ def _entities_of_physical(
             return []
     else:
         pg_tag = int(physical)
-    ents = gmsh.model.getEntit
+    ents = gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag)
+    return [(dim, int(t)) for t in ents]
