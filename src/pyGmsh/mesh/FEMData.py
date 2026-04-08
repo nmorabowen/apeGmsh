@@ -222,8 +222,13 @@ class PhysicalGroupSet:
         Returns
         -------
         dict
-            ``'tags'``   : ndarray(N,)   — node IDs
-            ``'coords'`` : ndarray(N, 3) — XYZ coordinates
+            ``'tags'``   : ndarray(N,)   — node IDs (Python ``int``)
+            ``'coords'`` : ndarray(N, 3) — XYZ coordinates (``float``)
+
+        Note
+        ----
+        Tags are returned as ``object`` dtype so iteration yields
+        Python ``int``, not ``numpy.int64`` — safe for OpenSees.
         """
         info = self._groups.get((dim, tag))
         if info is None:
@@ -232,8 +237,8 @@ class PhysicalGroupSet:
                 f"Available: {self.get_all()}"
             )
         return {
-            'tags':   info['node_ids'],
-            'coords': info['node_coords'],
+            'tags':   np.asarray(info['node_ids']).astype(object),
+            'coords': np.asarray(info['node_coords'], dtype=np.float64),
         }
 
     # ── Mesh elements ────────────────────────────────────────
@@ -279,8 +284,8 @@ class PhysicalGroupSet:
                 f"Element data is only available for dim >= 1 groups."
             )
         return {
-            'element_ids':  elem_ids,
-            'connectivity': conn,
+            'element_ids':  np.asarray(elem_ids).astype(object),
+            'connectivity': np.asarray(conn).astype(object),
         }
 
     # ── Display ───────────────────────────────────────────────
@@ -376,6 +381,13 @@ class FEMData:
         for i in range(fem.info.n_nodes):
             ops.node(int(fem.node_ids[i]), *fem.node_coords[i])
 
+        # Quick coordinate lookup by node ID
+        x, y, z = fem.get_node_coords(42)
+
+        # Array index lookup (node or element)
+        idx = fem.node_index(42)
+        fem.node_coords[idx]       # same as above
+
         # Elements by physical group
         cols = fem.physical.get_elements(1, 2)   # columns (dim=1)
         slab = fem.physical.get_elements(2, 3)   # slab (dim=2)
@@ -386,240 +398,201 @@ class FEMData:
     node_coords:   ndarray
     element_ids:   ndarray
     connectivity:  ndarray
-    element_types: ndarray = field(default_factory=lambda: np.array([], dtype=int))
-    info:          MeshInfo     = field(default_factory=lambda: MeshInfo(0, 0, 0))
-    physical:      PhysicalGroupSet = field(
-        default_factory=lambda: PhysicalGroupSet({})
-    )
+    info:          MeshInfo          = field(repr=False)
+    physical:      PhysicalGroupSet  = field(repr=False)
 
-    # Gmsh element type → (name, dim, nodes_per_element)
-    _ELEM_TYPE_INFO: dict = field(default_factory=dict, repr=False)
+    # ── Lazy lookup caches (not part of __init__) ────────────
 
-    def summary(self) -> str:
-        """One-line summary string."""
-        return f"FEMData: {self.info.summary()}"
+    _node_id_to_idx: dict = field(default=None, init=False, repr=False)
+    _elem_id_to_idx: dict = field(default=None, init=False, repr=False)
 
-    # ------------------------------------------------------------------
-    # Element queries by type / dimension
-    # ------------------------------------------------------------------
+    def __post_init__(self) -> None:
+        """Cast ID/connectivity arrays to ``object`` dtype so iteration
+        yields Python ``int``, not ``numpy.int64``.
 
-    def get_ids(
-        self,
-        *,
-        dim: int | None = None,
-        etype: int | None = None,
-        tag: int | None = None,
-    ) -> ndarray:
-        """Return element IDs filtered by dimension, type, or single tag.
+        OpenSees and other C-extension solvers reject numpy integer
+        types.  ``object`` dtype keeps full numpy functionality
+        (``np.isin``, ``np.unique``, arithmetic) while making
+        ``for x in arr`` yield plain ``int``.
+        """
+        object.__setattr__(
+            self, 'node_ids', np.asarray(self.node_ids).astype(object))
+        object.__setattr__(
+            self, 'element_ids', np.asarray(self.element_ids).astype(object))
+        object.__setattr__(
+            self, 'connectivity', np.asarray(self.connectivity).astype(object))
+        object.__setattr__(
+            self, 'node_coords',
+            np.asarray(self.node_coords, dtype=np.float64))
 
-        Parameters
-        ----------
-        dim : int, optional
-            Filter to elements of this topological dimension
-            (1 = lines, 2 = tris/quads, 3 = tets/hexes).
-        etype : int, optional
-            Filter to a specific Gmsh element type code
-            (e.g. 2 = 3-node triangle, 4 = 4-node tet).
-        tag : int, optional
-            Return only the element with this ID.
+    # ── Solver-friendly iterators ────────────────────────────
 
-        Returns
+    def nodes(self):
+        """Iterate ``(node_id, coords)`` as Python-native types.
+
+        Yields ``(int, list[float])`` — safe for OpenSees.
+
+        Example
         -------
-        ndarray of element IDs matching the filter.
-
-        Examples
-        --------
         ::
 
-            fem.get_ids(dim=2)          # all surface elements
-            fem.get_ids(etype=4)        # all 4-node tets
-            fem.get_ids(tag=42)         # single element
+            for nid, xyz in fem.nodes():
+                ops.node(nid, *xyz)
         """
-        mask = np.ones(len(self.element_ids), dtype=bool)
+        for i in range(len(self.node_ids)):
+            yield int(self.node_ids[i]), self.node_coords[i].tolist()
 
-        if tag is not None:
-            mask &= self.element_ids == tag
+    def elements(self):
+        """Iterate ``(element_id, connectivity)`` as Python-native types.
 
-        if etype is not None:
-            if len(self.element_types) == len(self.element_ids):
-                mask &= self.element_types == etype
+        Yields ``(int, list[int])`` — safe for OpenSees.
 
-        if dim is not None:
-            if len(self.element_types) == len(self.element_ids):
-                dim_mask = np.zeros(len(self.element_ids), dtype=bool)
-                for et in np.unique(self.element_types):
-                    info = self._ELEM_TYPE_INFO.get(int(et))
-                    if info is not None and info[1] == dim:
-                        dim_mask |= self.element_types == et
-                mask &= dim_mask
-
-        return self.element_ids[mask]
-
-    def get_connectivity(
-        self,
-        *,
-        dim: int | None = None,
-        etype: int | None = None,
-        tag: int | None = None,
-    ) -> ndarray:
-        """Return connectivity rows filtered by dimension, type, or tag.
-
-        Same filter parameters as :meth:`get_ids`.
-
-        Returns
+        Example
         -------
-        ndarray(M, npe) — connectivity rows matching the filter.
+        ::
+
+            for eid, conn in fem.elements():
+                ops.element("tri31", eid, *conn, thk, "PlaneStrain", 1)
         """
-        mask = np.ones(len(self.element_ids), dtype=bool)
+        for i in range(len(self.element_ids)):
+            yield int(self.element_ids[i]), [int(n) for n in self.connectivity[i]]
 
-        if tag is not None:
-            mask &= self.element_ids == tag
+    # ── Lookup maps ──────────────────────────────────────────
 
-        if etype is not None:
-            if len(self.element_types) == len(self.element_ids):
-                mask &= self.element_types == etype
+    def _build_node_map(self) -> dict[int, int]:
+        """Build and cache the node-ID → array-index map."""
+        if self._node_id_to_idx is None:
+            self._node_id_to_idx = {
+                int(nid): i for i, nid in enumerate(self.node_ids)
+            }
+        return self._node_id_to_idx
 
-        if dim is not None:
-            if len(self.element_types) == len(self.element_ids):
-                dim_mask = np.zeros(len(self.element_ids), dtype=bool)
-                for et in np.unique(self.element_types):
-                    info = self._ELEM_TYPE_INFO.get(int(et))
-                    if info is not None and info[1] == dim:
-                        dim_mask |= self.element_types == et
-                mask &= dim_mask
+    def _build_elem_map(self) -> dict[int, int]:
+        """Build and cache the element-ID → array-index map."""
+        if self._elem_id_to_idx is None:
+            self._elem_id_to_idx = {
+                int(eid): i for i, eid in enumerate(self.element_ids)
+            }
+        return self._elem_id_to_idx
 
-        return self.connectivity[mask]
+    # ── Node lookups ─────────────────────────────────────────
 
-    def get_element_info(self, etype: int) -> dict | None:
-        """Return metadata for a Gmsh element type code.
-
-        Returns
-        -------
-        dict with ``name``, ``dim``, ``n_nodes``, or None if unknown.
+    def node_index(self, nid: int) -> int:
         """
-        info = self._ELEM_TYPE_INFO.get(etype)
-        if info is None:
-            return None
-        return {"name": info[0], "dim": info[1], "n_nodes": info[2]}
-
-    @property
-    def element_type_summary(self) -> dict[int, int]:
-        """Count of elements per Gmsh element type code."""
-        if len(self.element_types) == 0:
-            return {}
-        types, counts = np.unique(self.element_types, return_counts=True)
-        return {int(t): int(c) for t, c in zip(types, counts)}
-
-    # ------------------------------------------------------------------
-    # VTU export
-    # ------------------------------------------------------------------
-
-    def to_vtu(
-        self,
-        filepath: str,
-        *,
-        point_data: dict[str, ndarray] | None = None,
-        cell_data: dict[str, ndarray] | None = None,
-    ) -> None:
-        """Write this mesh (+ optional results) to a VTU file.
+        Return the array index for a node ID.
 
         Parameters
         ----------
-        filepath : str
-            Output ``.vtu`` file path.
-        point_data : dict, optional
-            Nodal fields: ``{name: ndarray (N,) or (N,3)}``.
-        cell_data : dict, optional
-            Element fields: ``{name: ndarray (E,) or (E,3)}``.
+        nid : int
+            Node ID (as stored in ``node_ids``).
+
+        Returns
+        -------
+        int
+            Index into ``node_ids``, ``node_coords``.
+
+        Raises
+        ------
+        KeyError
+            If ``nid`` is not in ``node_ids``.
+
+        Example
+        -------
+        ::
+
+            idx = fem.node_index(42)
+            fem.node_coords[idx]   # → array([x, y, z])
         """
-        import pyvista as pv
-
-        npe = self.connectivity.shape[1]
-        n_elems = len(self.element_ids)
-
-        _NPE_TO_VTK = {
-            1: 1, 2: 3, 3: 5, 4: 10, 6: 13, 8: 12,
-        }
-        vtk_type = _NPE_TO_VTK.get(npe, 5)
-
-        prefix = np.full((n_elems, 1), npe, dtype=np.int64)
-        cells = np.hstack([prefix, self.connectivity.astype(np.int64)])
-        cell_types = np.full(n_elems, vtk_type, dtype=np.uint8)
-
-        grid = pv.UnstructuredGrid(cells, cell_types, self.node_coords)
-
-        for name, arr in (point_data or {}).items():
-            grid.point_data[name] = np.asarray(arr)
-        for name, arr in (cell_data or {}).items():
-            grid.cell_data[name] = np.asarray(arr)
-
-        grid.save(filepath)
-
-    # ------------------------------------------------------------------
-    # Results viewer
-    # ------------------------------------------------------------------
-
-    def viewer(
-        self,
-        results: str | None = None,
-        *,
-        point_data: dict[str, ndarray] | None = None,
-        cell_data: dict[str, ndarray] | None = None,
-        blocking: bool = True,
-    ) -> None:
-        """Open the results viewer (pyGmshViewer).
-
-        No live Gmsh session required — uses the self-contained FEM data.
-
-        Parameters
-        ----------
-        results : str, optional
-            Path to a ``.vtu`` / ``.vtk`` / ``.pvd`` file.
-        point_data : dict, optional
-            Nodal results: ``{name: ndarray (N,) or (N,3)}``.
-        cell_data : dict, optional
-            Element results: ``{name: ndarray (E,) or (E,3)}``.
-        blocking : bool
-            If True, blocks until viewer is closed.
-
-        Examples
-        --------
-        View results from a VTU file::
-
-            fem.viewer("displacement_results.vtu")
-
-        View numpy arrays directly::
-
-            fem.viewer(
-                point_data={"Displacement": disp_array},
-                cell_data={"Stress": stress_array},
-            )
-
-        Just view the mesh (no results)::
-
-            fem.viewer()
-        """
-        from pyGmshViewer import show
-
-        if results is not None:
-            show(results, blocking=blocking)
-            return
-
-        # Build a VTU from our own data + optional results
-        import tempfile
-        import os
-
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".vtu", delete=False, prefix="fem_",
-        )
-        tmp_path = tmp.name
-        tmp.close()
-
+        m = self._build_node_map()
         try:
-            self.to_vtu(tmp_path, point_data=point_data, cell_data=cell_data)
-            show(tmp_path, blocking=blocking)
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+            return m[int(nid)]
+        except KeyError:
+            raise KeyError(
+                f"Node ID {nid} not found. "
+                f"Valid range: {int(self.node_ids.min())}–"
+                f"{int(self.node_ids.max())} "
+                f"({len(self.node_ids)} nodes)"
+            ) from None
+
+    def get_node_coords(self, nid: int) -> ndarray:
+        """
+        Return the coordinates of a node by its ID.
+
+        Parameters
+        ----------
+        nid : int
+            Node ID (as stored in ``node_ids``).
+
+        Returns
+        -------
+        ndarray(3,)
+            ``[x, y, z]`` coordinates.
+
+        Example
+        -------
+        ::
+
+            x, y, z = fem.get_node_coords(42)
+        """
+        return self.node_coords[self.node_index(nid)]
+
+    # ── Element lookups ──────────────────────────────────────
+
+    def elem_index(self, eid: int) -> int:
+        """
+        Return the array index for an element ID.
+
+        Parameters
+        ----------
+        eid : int
+            Element ID (as stored in ``element_ids``).
+
+        Returns
+        -------
+        int
+            Index into ``element_ids``, ``connectivity``.
+
+        Raises
+        ------
+        KeyError
+            If ``eid`` is not in ``element_ids``.
+
+        Example
+        -------
+        ::
+
+            idx = fem.elem_index(10)
+            fem.connectivity[idx]   # → array([n1, n2, n3])
+        """
+        m = self._build_elem_map()
+        try:
+            return m[int(eid)]
+        except KeyError:
+            raise KeyError(
+                f"Element ID {eid} not found. "
+                f"Valid range: {int(self.element_ids.min())}–"
+                f"{int(self.element_ids.max())} "
+                f"({len(self.element_ids)} elements)"
+            ) from None
+
+    def get_elem_connectivity(self, eid: int) -> ndarray:
+        """
+        Return the connectivity (node IDs) of an element by its ID.
+
+        Parameters
+        ----------
+        eid : int
+            Element ID (as stored in ``element_ids``).
+
+        Returns
+        -------
+        ndarray(npe,)
+            Node IDs forming the element.
+
+        Example
+        -------
+        ::
+
+            n1, n2, n3 = fem.get_elem_connectivity(10)
+        """
+        return self.connectivity[self.elem_index(eid)]

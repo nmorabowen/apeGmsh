@@ -186,24 +186,24 @@ def build_fem_data(dim: int = 2):
     -------
     FEMData
     """
-    from .FEMData import FEMData, MeshInfo, PhysicalGroupSet, _compute_bandwidth
+    from .FEMData import (
+        FEMData, MeshInfo, PhysicalGroupSet, _compute_bandwidth,
+    )
 
     raw = extract_raw(dim=dim)
 
-    node_tags       = raw['node_tags']
-    node_coords     = raw['node_coords']
-    connectivity    = raw['connectivity']
-    elem_tags       = np.asarray(raw['elem_tags'], dtype=int)
-    elem_type_codes = raw['elem_type_codes']
-    elem_type_info  = raw['elem_type_info']
-    used_tags       = raw['used_tags']
+    node_tags    = raw['node_tags']
+    node_coords  = raw['node_coords']
+    connectivity = raw['connectivity']
+    elem_tags    = np.asarray(raw['elem_tags'], dtype=int)
+    used_tags    = raw['used_tags']
 
     # Filter to only nodes referenced by elements
-    mask        = np.isin(node_tags, list(used_tags))
-    n_total     = len(node_tags)
-    node_ids    = np.asarray(node_tags[mask], dtype=int)
+    mask      = np.isin(node_tags, list(used_tags))
+    n_total   = len(node_tags)
+    node_ids  = np.asarray(node_tags[mask], dtype=int)
     node_coords = node_coords[mask]
-    n_orphans   = n_total - len(node_ids)
+    n_orphans = n_total - len(node_ids)
     if n_orphans > 0:
         orphan_tags = node_tags[~mask]
         print(
@@ -213,12 +213,10 @@ def build_fem_data(dim: int = 2):
             + (f" ... (+{n_orphans - 20} more)" if n_orphans > 20 else "")
         )
 
-    bw = _compute_bandwidth(connectivity)
-
     info = MeshInfo(
         n_nodes=len(node_ids),
         n_elems=len(elem_tags),
-        bandwidth=bw,
+        bandwidth=_compute_bandwidth(connectivity),
     )
 
     physical = PhysicalGroupSet(extract_physical_groups())
@@ -228,10 +226,8 @@ def build_fem_data(dim: int = 2):
         node_coords=node_coords,
         element_ids=elem_tags,
         connectivity=connectivity,
-        element_types=np.asarray(elem_type_codes, dtype=int),
         info=info,
         physical=physical,
     )
-    result._ELEM_TYPE_INFO = elem_type_info
 
     return result
