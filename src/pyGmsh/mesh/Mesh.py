@@ -1720,25 +1720,23 @@ class Mesh:
         """Open the interactive mesh viewer.
 
         The viewer supports picking (BRep entities, elements, nodes),
-        color modes (partition, quality, element type, physical group),
-        node/element label overlays, and physical group management.
+        color modes, and physical group visualization.
 
         Parameters are forwarded to :class:`MeshViewer`.
         """
-        from ..viewers.MeshViewer import MeshViewer
+        from ..viewers._mesh_viewer import MeshViewer
         mv = MeshViewer(self._parent, self, **kwargs)
         return mv.show()
 
     def viewer_fast(self, **kwargs):
-        """Open the mesh viewer with batched actors (fast for large meshes).
+        """Open the mesh viewer (fast).
 
-        Same as :meth:`viewer` but merges all entities per dimension
-        into one VTK actor.  Much faster for models with many BRep
-        entities.
+        Same as :meth:`viewer` — always uses batched actors.
+        Kept for backward compatibility.
 
         Parameters are forwarded to :class:`MeshViewer`.
         """
-        from ..viewers.MeshViewer import MeshViewer
+        from ..viewers._mesh_viewer import MeshViewer
         mv = MeshViewer(self._parent, self, fast=True, **kwargs)
         return mv.show()
 

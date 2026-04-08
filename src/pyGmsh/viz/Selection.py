@@ -437,8 +437,8 @@ class SelectionComposite:
         SelectionPicker — with ``.selection``, ``.tags``,
         ``.active_group``, and ``.to_physical(name)`` available after close.
         """
-        from pyGmsh.viewers.SelectionPicker import SelectionPicker
-        p = SelectionPicker(
+        from pyGmsh.viewers.model_viewer import ModelViewer
+        p = ModelViewer(
             parent=self._parent, model=self._model,
             physical_group=physical_group, dims=dims, **kwargs,
         )
