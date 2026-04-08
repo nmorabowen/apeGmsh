@@ -455,7 +455,27 @@ class MeshViewer(SelectionPicker):
                 # Register into SelectionPicker's _id_to_actor / _actor_to_id
                 self._register_actor(actor, dt)
 
-        # 3. Node cloud -- sphere glyphs (robust across GPU drivers)
+        # 3. Node cloud -- filter to only nodes in the connectivity
+        #    (removes orphans: arc centres, construction points)
+        used_node_tags: set[int] = set()
+        for elem_tags_list in self._brep_to_elems.values():
+            for etag in elem_tags_list:
+                info = self._elem_data.get(etag)
+                if info is not None:
+                    used_node_tags.update(info["nodes"])
+
+        if self._node_tags is not None and len(self._node_tags) > 0:
+            mask = np.isin(self._node_tags, list(used_node_tags))
+            filtered_tags = self._node_tags[mask]
+            filtered_coords = self._node_coords[mask]
+
+            # Rebuild node data to exclude orphans
+            self._node_tags = filtered_tags
+            self._node_coords = filtered_coords
+            self._node_tag_to_idx = {
+                int(t): i for i, t in enumerate(filtered_tags)
+            }
+
         if self._node_coords is not None and len(self._node_coords) > 0:
             node_cloud = pv.PolyData(self._node_coords)
             self._node_cloud = node_cloud

@@ -75,14 +75,22 @@ def extract_raw(dim: int = 2) -> dict:
         else np.empty((0, 0), dtype=int)
     )
 
-    # --- used_tags from ALL dimensions ---
-    # Nodes on lower-dim entities (supports, columns) should not be
-    # classified as orphans even if they don't appear in the
-    # target-dim connectivity.
-    _, _, all_node_tags = gmsh.model.mesh.getElements(dim=-1, tag=-1)
+    # --- used_tags from connectivity (all dims >= 1) ---
+    # A node is "used" if it appears in any element's connectivity
+    # (lines, surfaces, volumes).  Nodes only referenced by dim=0
+    # point elements (arc centres, construction points) are orphans.
     used_tags: set[int] = set()
-    for enodes in all_node_tags:
-        used_tags.update(int(n) for n in enodes)
+    # Start with the target-dim connectivity we already extracted
+    if connectivity.size > 0:
+        used_tags.update(connectivity.ravel().tolist())
+    # Also include nodes from other structural dims (1D, 2D, 3D)
+    # in case they don't appear in the target-dim connectivity.
+    for d in range(1, 4):
+        if d == dim:
+            continue  # already covered above
+        _, _, d_enodes = gmsh.model.mesh.getElements(dim=d, tag=-1)
+        for enodes_block in d_enodes:
+            used_tags.update(int(n) for n in enodes_block)
 
     return {
         'node_tags':       node_tags,
