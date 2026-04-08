@@ -726,6 +726,40 @@ class Results:
         return grid
 
     # ------------------------------------------------------------------
+    # Viewer bridge
+    # ------------------------------------------------------------------
+
+    def to_mesh_data(self):
+        """Convert to a pyGmshViewer ``MeshData`` (no file I/O).
+
+        Transfers mesh geometry and all fields directly in memory.
+
+        Returns
+        -------
+        pyGmshViewer.loaders.vtu_loader.MeshData
+        """
+        from pyGmshViewer.loaders.vtu_loader import from_arrays
+
+        if self.has_time_series:
+            return from_arrays(
+                self._node_coords,
+                self._cells,
+                self._cell_types,
+                time_steps=self._time_steps,
+                step_point_data=self._step_point_fields,
+                step_cell_data=self._step_cell_fields,
+                name=self._name,
+            )
+        return from_arrays(
+            self._node_coords,
+            self._cells,
+            self._cell_types,
+            point_data=self._point_fields,
+            cell_data=self._cell_fields,
+            name=self._name,
+        )
+
+    # ------------------------------------------------------------------
     # Export
     # ------------------------------------------------------------------
 
@@ -808,48 +842,20 @@ class Results:
         Parameters
         ----------
         blocking : bool
-            If True (default), blocks until the viewer window is closed.
-            If False, launches the viewer as a **subprocess** so the
+            If True (default), opens the viewer in-process with direct
+            memory transfer (no temp files).
+            If False, writes temp files and launches a subprocess so the
             notebook / script keeps running — recommended for Jupyter.
-
-        Notes
-        -----
-        When ``blocking=False`` the results are written to a temporary
-        directory that persists until the Python process exits (via
-        :mod:`atexit`), giving the subprocess time to load the file.
         """
-        import tempfile
-        import shutil
-        import atexit
-
-        from pyGmshViewer import show
-
         if blocking:
-            # Blocking: write temp files, show, clean up after close
-            if self.has_time_series:
-                tmp_dir = tempfile.mkdtemp(prefix="results_")
-                try:
-                    paths = self.to_pvd(Path(tmp_dir) / self._name)
-                    show(str(paths[0]), blocking=True)
-                finally:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
-            else:
-                tmp = tempfile.NamedTemporaryFile(
-                    suffix=".vtu", delete=False, prefix="results_",
-                )
-                tmp_path = tmp.name
-                tmp.close()
-                try:
-                    self.to_vtu(tmp_path)
-                    show(tmp_path, blocking=True)
-                finally:
-                    try:
-                        Path(tmp_path).unlink()
-                    except OSError:
-                        pass
+            from pyGmshViewer import show_mesh_data
+            show_mesh_data(self.to_mesh_data(), blocking=True)
         else:
-            # Non-blocking: write to a temp dir that lives until the
-            # Python process exits, so the subprocess can read it.
+            import tempfile
+            import shutil
+            import atexit
+            from pyGmshViewer import show
+
             tmp_dir = tempfile.mkdtemp(prefix="pyGmsh_results_")
             atexit.register(shutil.rmtree, tmp_dir, True)
 

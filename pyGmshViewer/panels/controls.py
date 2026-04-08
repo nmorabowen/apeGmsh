@@ -28,6 +28,7 @@ class ControlsPanel(QWidget):
     camera_view_changed = Signal(str)          # "xy", "xz", "yz", "iso"
     picking_mode_changed = Signal(str)         # "none", "point", "cell"
     screenshot_requested = Signal()
+    time_step_changed = Signal(int)            # step index
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -120,6 +121,28 @@ class ControlsPanel(QWidget):
         dfl.addLayout(row)
 
         layout.addWidget(deform_group)
+
+        # ── Time Steps ──────────────────────────────────────────────
+        self._timestep_group = self._make_group("Time Steps")
+        tsl = QVBoxLayout(self._timestep_group)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Step:"))
+        self._timestep_slider = QSlider(Qt.Orientation.Horizontal)
+        self._timestep_slider.setRange(0, 0)
+        self._timestep_slider.setValue(0)
+        self._timestep_slider.setEnabled(False)
+        self._timestep_slider.valueChanged.connect(self._on_timestep_changed)
+        row.addWidget(self._timestep_slider)
+        tsl.addLayout(row)
+
+        self._timestep_label = QLabel("No time series")
+        self._timestep_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tsl.addWidget(self._timestep_label)
+
+        self._time_steps: list[float] | None = None
+        self._timestep_group.setVisible(False)
+        layout.addWidget(self._timestep_group)
 
         # ── Camera ───────────────────────────────────────────────────
         camera_group = self._make_group("Camera")
@@ -256,3 +279,39 @@ class ControlsPanel(QWidget):
 
     def set_deformed_checked(self, checked: bool) -> None:
         self._deformed_check.setChecked(checked)
+
+    def set_time_steps(self, time_steps: list[float] | None) -> None:
+        """Configure the time-step slider for the active mesh."""
+        if time_steps and len(time_steps) > 1:
+            self._time_steps = time_steps
+            self._timestep_slider.setRange(0, len(time_steps) - 1)
+            self._timestep_slider.setValue(0)
+            self._timestep_slider.setEnabled(True)
+            self._timestep_group.setVisible(True)
+            self._update_timestep_label(0)
+        else:
+            self._time_steps = None
+            self._timestep_slider.setEnabled(False)
+            self._timestep_group.setVisible(False)
+            self._timestep_label.setText("No time series")
+
+    def set_time_step_value(self, step: int) -> None:
+        """Set the slider position without emitting time_step_changed."""
+        self._timestep_slider.blockSignals(True)
+        self._timestep_slider.setValue(step)
+        self._update_timestep_label(step)
+        self._timestep_slider.blockSignals(False)
+
+    def _on_timestep_changed(self, value: int) -> None:
+        self._update_timestep_label(value)
+        self.time_step_changed.emit(value)
+
+    def _update_timestep_label(self, step: int) -> None:
+        if self._time_steps and step < len(self._time_steps):
+            n = len(self._time_steps)
+            t = self._time_steps[step]
+            self._timestep_label.setText(
+                f"Step {step} / {n - 1}  \u2014  t = {t:.4g}"
+            )
+        else:
+            self._timestep_label.setText("No time series")

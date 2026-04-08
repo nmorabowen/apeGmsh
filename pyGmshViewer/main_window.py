@@ -300,6 +300,10 @@ class MainWindow(QMainWindow):
         self._controls.picking_mode_changed.connect(self._set_picking)
         self._controls.screenshot_requested.connect(self._save_screenshot)
 
+        # Time-step navigation
+        self._model_tree.time_step_selected.connect(self._on_time_step_selected)
+        self._controls.time_step_changed.connect(self._on_time_step_slider)
+
         # Probe panel
         self._probe_panel.probe_point_requested.connect(self._start_point_probe)
         self._probe_panel.probe_line_requested.connect(self._start_line_probe)
@@ -342,6 +346,9 @@ class MainWindow(QMainWindow):
             self._model_tree.add_mesh(name, mesh_data)
             self._active_mesh = name
             self._properties.show_mesh_info(name, mesh_data)
+            self._controls.set_time_steps(
+                mesh_data.time_steps if mesh_data.has_time_series else None
+            )
 
             n = mesh_data.n_points
             e = mesh_data.n_cells
@@ -376,7 +383,11 @@ class MainWindow(QMainWindow):
     def _on_mesh_selected(self, name: str):
         self._active_mesh = name
         if name in self._loaded_meshes:
-            self._properties.show_mesh_info(name, self._loaded_meshes[name])
+            md = self._loaded_meshes[name]
+            self._properties.show_mesh_info(name, md)
+            self._controls.set_time_steps(
+                md.time_steps if md.has_time_series else None
+            )
 
     def _on_field_selected(self, mesh_name: str, field_name: str):
         """Apply contour plot when a field is clicked in the tree."""
@@ -446,6 +457,34 @@ class MainWindow(QMainWindow):
     def _on_undeformed_toggle(self, checked: bool):
         """Toggle undeformed reference visibility."""
         pass  # Handled during deformed update
+
+    # ── Time-Step Handlers ───────────────────────────────────────────
+
+    def _on_time_step_selected(self, mesh_name: str, step: int) -> None:
+        """Handle time-step click in the model tree."""
+        self._active_mesh = mesh_name
+        self._controls.set_time_step_value(step)
+        self._renderer.set_active_time_step(mesh_name, step)
+        md = self._loaded_meshes.get(mesh_name)
+        if md and md.time_steps and step < len(md.time_steps):
+            self.statusBar().showMessage(
+                f"Time step {step} (t = {md.time_steps[step]:.4g})"
+            )
+
+    def _on_time_step_slider(self, step: int) -> None:
+        """Handle time-step slider change."""
+        if not self._active_mesh:
+            return
+        self._renderer.set_active_time_step(self._active_mesh, step)
+        md = self._loaded_meshes.get(self._active_mesh)
+        if md:
+            self._properties.show_mesh_info(self._active_mesh, md)
+            # Re-set probe engine mesh reference after step change
+            self._probe_engine.set_active_mesh(md.mesh, self._active_mesh)
+        if md and md.time_steps and step < len(md.time_steps):
+            self.statusBar().showMessage(
+                f"Time step {step} (t = {md.time_steps[step]:.4g})"
+            )
 
     def _set_camera_view(self, view_id: str):
         views = {
@@ -578,6 +617,9 @@ class MainWindow(QMainWindow):
         self._renderer.add_mesh(mesh_data, name)
         self._model_tree.add_mesh(name, mesh_data)
         self._active_mesh = name
+        self._controls.set_time_steps(
+            mesh_data.time_steps if mesh_data.has_time_series else None
+        )
         return name
 
     def closeEvent(self, event):

@@ -22,6 +22,7 @@ class ModelTree(QWidget):
     mesh_selected = Signal(str)           # name of selected mesh
     field_selected = Signal(str, str)     # (mesh_name, field_name)
     field_deselected = Signal(str)        # mesh_name (clear contour)
+    time_step_selected = Signal(str, int) # (mesh_name, step_index)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -160,4 +161,5 @@ class ModelTree(QWidget):
             self.mesh_selected.emit(data[1])
         elif kind in ("point_field", "cell_field"):
             self.field_selected.emit(data[1], data[2])
-        # Time step clicks could be handled separately
+        elif kind == "time_step":
+            self.time_step_selected.emit(data[1], data[2])

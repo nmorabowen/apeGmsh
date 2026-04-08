@@ -54,6 +54,34 @@ def show(*filepaths, blocking=None):
         return
 
     # Blocking: run the Qt event loop in this process
+    _launch_blocking(lambda win: [win.load_file(p) for p in paths])
+
+
+def show_mesh_data(mesh_data, *, blocking=None):
+    """Launch pyGmshViewer with a MeshData object directly (no file I/O).
+
+    Parameters
+    ----------
+    mesh_data : MeshData
+        Pre-built mesh data, e.g. from ``Results.to_mesh_data()``.
+    blocking : bool or None
+        If True, runs Qt event loop and blocks.
+        If None, auto-detects (True for scripts, False for Jupyter).
+    """
+    if blocking is None:
+        blocking = not _in_jupyter()
+
+    if not blocking:
+        raise ValueError(
+            "Non-blocking mode requires file-based show(). "
+            "Use results.viewer(blocking=False) for subprocess mode."
+        )
+
+    _launch_blocking(lambda win: win.load_mesh_data(mesh_data, mesh_data.name))
+
+
+def _launch_blocking(load_fn):
+    """Create a MainWindow, call *load_fn(window)*, and run the Qt loop."""
     import pyvista as pv
     pv.set_plot_theme("dark")
     pv.global_theme.font.color = "white"
@@ -68,11 +96,10 @@ def show(*filepaths, blocking=None):
         app = QApplication(sys.argv)
 
     window = MainWindow()
-    for p in paths:
-        try:
-            window.load_file(p)
-        except Exception as e:
-            print(f"Warning: could not load '{p}': {e}")
+    try:
+        load_fn(window)
+    except Exception as e:
+        print(f"Warning: could not load data: {e}")
     window.show()
 
     if own_app:

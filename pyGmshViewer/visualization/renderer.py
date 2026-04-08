@@ -256,6 +256,58 @@ class ViewportRenderer:
 
         return base
 
+    # ── Time-Step Navigation ───────────────────────────────────────────────
+
+    def set_active_time_step(self, name: str, step: int) -> None:
+        """Switch the displayed mesh data to a specific time step.
+
+        Replaces the mesh actor's underlying grid with the
+        ``step_meshes[step]`` grid from MeshData, preserving the
+        current display mode, colormap, and contour settings.
+
+        Parameters
+        ----------
+        name : str
+            Mesh actor name.
+        step : int
+            Time step index into ``mesh_data.step_meshes``.
+        """
+        if name not in self._actors:
+            return
+
+        ma = self._actors[name]
+        md = ma.mesh_data
+
+        if not md.step_meshes or step >= len(md.step_meshes):
+            return
+
+        step_mesh = md.step_meshes[step]
+        md.mesh = step_mesh
+        md.point_field_names = list(step_mesh.point_data.keys())
+        md.cell_field_names = list(step_mesh.cell_data.keys())
+
+        # Re-render with same display state
+        self._plotter.remove_actor(name)
+        kwargs = self._display_kwargs(ma)
+        ma.actor = self._plotter.add_mesh(step_mesh, name=name, **kwargs)
+
+        # Refresh deformed overlay if active
+        if ma.show_deformed:
+            disp_field = None
+            for f in md.point_field_names:
+                fl = f.lower()
+                if "disp" in fl or "modeshape" in fl or f == "Displacement":
+                    disp_field = f
+                    break
+            if disp_field:
+                self.show_deformed(
+                    name,
+                    displacement_field=disp_field,
+                    scale_factor=ma.scale_factor,
+                    time_step=step,
+                    show_undeformed=ma.show_undeformed_ref,
+                )
+
     # ── Contour Plots ────────────────────────────────────────────────────
 
     def set_scalar_field(

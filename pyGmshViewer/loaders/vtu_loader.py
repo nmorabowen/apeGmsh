@@ -211,6 +211,9 @@ def from_arrays(
     *,
     point_data: dict[str, np.ndarray] | None = None,
     cell_data: dict[str, np.ndarray] | None = None,
+    time_steps: list[float] | None = None,
+    step_point_data: dict[str, list[np.ndarray]] | None = None,
+    step_cell_data: dict[str, list[np.ndarray]] | None = None,
     name: str = "mesh",
 ) -> MeshData:
     """Create a :class:`MeshData` from numpy arrays (no file I/O).
@@ -227,6 +230,12 @@ def from_arrays(
         Nodal fields: ``{name: ndarray}``.
     cell_data : dict, optional
         Element fields: ``{name: ndarray}``.
+    time_steps : list[float], optional
+        Time values for each step (time-series data).
+    step_point_data : dict, optional
+        Per-step nodal fields: ``{name: [arr_step0, arr_step1, ...]}``.
+    step_cell_data : dict, optional
+        Per-step element fields: ``{name: [arr_step0, arr_step1, ...]}``.
     name : str
         Display name for the mesh.
 
@@ -234,7 +243,38 @@ def from_arrays(
     -------
     MeshData ready for the viewer.
     """
-    grid = pv.UnstructuredGrid(cells, np.asarray(cell_types), node_coords)
+    ct = np.asarray(cell_types)
+
+    # Time-series path: build one grid per step
+    if time_steps is not None and (step_point_data or step_cell_data):
+        step_meshes = []
+        all_point_names: set[str] = set()
+        all_cell_names: set[str] = set()
+
+        for i in range(len(time_steps)):
+            step_grid = pv.UnstructuredGrid(cells, ct, node_coords)
+            if step_point_data:
+                for fname, arrays in step_point_data.items():
+                    step_grid.point_data[fname] = np.asarray(arrays[i])
+                    all_point_names.add(fname)
+            if step_cell_data:
+                for fname, arrays in step_cell_data.items():
+                    step_grid.cell_data[fname] = np.asarray(arrays[i])
+                    all_cell_names.add(fname)
+            step_meshes.append(step_grid)
+
+        return MeshData(
+            name=name,
+            mesh=step_meshes[0],
+            filepath=Path(""),
+            point_field_names=sorted(all_point_names),
+            cell_field_names=sorted(all_cell_names),
+            time_steps=time_steps,
+            step_meshes=step_meshes,
+        )
+
+    # Static path
+    grid = pv.UnstructuredGrid(cells, ct, node_coords)
     for field_name, arr in (point_data or {}).items():
         grid.point_data[field_name] = np.asarray(arr)
     for field_name, arr in (cell_data or {}).items():
