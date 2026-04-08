@@ -169,6 +169,7 @@ class MeshViewer(SelectionPicker):
         line_width: float = 3.0,
         surface_opacity: float = 1.0,
         show_surface_edges: bool = True,
+        fast: bool = False,
     ) -> None:
         # SelectionPicker.__init__ expects (parent, model, ...).
         # We pass physical_group=None so no group is auto-written on close.
@@ -180,6 +181,7 @@ class MeshViewer(SelectionPicker):
             line_width=line_width,
             surface_opacity=surface_opacity,
             show_surface_edges=show_surface_edges,
+            fast=fast,
         )
         self._mesh = mesh_composite
 
@@ -266,8 +268,12 @@ class MeshViewer(SelectionPicker):
     # ------------------------------------------------------------------
 
     def _build_scene(self) -> None:  # noqa: C901
-        """Populate the plotter with one actor per BRep entity plus a
-        node glyph cloud."""
+        """Populate the plotter with mesh actors plus a node glyph cloud.
+
+        When ``self._fast`` is True, merges all entities per dimension
+        into one ``UnstructuredGrid`` (one ``add_mesh`` per dim).
+        Otherwise creates one actor per BRep entity (original path).
+        """
         import time
         t0 = time.perf_counter()
         plotter = self._plotter
@@ -290,13 +296,11 @@ class MeshViewer(SelectionPicker):
         else:
             self._tag_to_idx = np.array([], dtype=np.int64)
 
-        # Pre-compute the default BRep color as uint8 for grid cell_data
         _default_rgb_u8 = np.array(
             [int(c * 255) for c in _hex_to_rgb(_DEFAULT_MESH_COLOR)],
             dtype=np.uint8,
         )
 
-        # Compute model diagonal for glyph sizing
         try:
             bb = gmsh.model.getBoundingBox(-1, -1)
             diag = float(np.linalg.norm(
@@ -309,209 +313,22 @@ class MeshViewer(SelectionPicker):
         self._model_diagonal = diag
         t_setup = time.perf_counter() - t0
 
-        # 2. For each BRep entity with dim in self._dims, build actors
+        # 2. Build actors — dispatch to fast or original path
         t_actors = time.perf_counter()
-        n_actors = 0
-        for dim in sorted(self._dims):
-            for _, tag in gmsh.model.getEntities(dim=dim):
-                dt: DimTag = (dim, tag)
-                try:
-                    elem_types, elem_tags_list, elem_node_tags_list = (
-                        gmsh.model.mesh.getElements(dim, tag)
-                    )
-                except Exception:
-                    continue
 
-                if not elem_types:
-                    continue
-
-                # Collect VTK cells, cell types, and elem tags across all
-                # element-type blocks on this BRep entity.
-                all_cells_parts: list[np.ndarray] = []
-                all_cell_types_parts: list[np.ndarray] = []
-                brep_elem_tags: list[int] = []
-                dominant_type_name = ""
-                dominant_count = 0
-
-                for etype, etags, enodes in zip(
-                    elem_types, elem_tags_list, elem_node_tags_list,
-                ):
-                    vtk_type = _GMSH_TO_VTK.get(int(etype))
-                    if vtk_type is None:
-                        continue
-
-                    # --- Opt-7: cached element properties ---
-                    props = self._get_elem_props(int(etype))
-                    type_name: str = props[0]
-                    n_nodes: int = props[3]
-
-                    etags_arr = np.asarray(etags, dtype=np.int64)
-                    enodes_arr = np.asarray(enodes, dtype=np.int64)
-                    n_elems = len(etags_arr)
-
-                    if n_elems == 0:
-                        continue
-
-                    # Track dominant element type on this BRep entity
-                    if n_elems > dominant_count:
-                        dominant_count = n_elems
-                        dominant_type_name = type_name
-
-                    # --- Opt-1: vectorized cell construction ---
-                    node_rows = enodes_arr.reshape(n_elems, n_nodes)
-
-                    # Check that all node tags are within the lookup table
-                    # and map to valid indices.
-                    if self._tag_to_idx is not None and len(self._tag_to_idx) > 0:
-                        max_allowed = len(self._tag_to_idx) - 1
-                        in_range = np.all(node_rows <= max_allowed) and np.all(
-                            node_rows >= 0,
-                        )
-                        if in_range:
-                            idx_arr = self._tag_to_idx[node_rows]
-                            valid_mask = np.all(idx_arr >= 0, axis=1)
-                        else:
-                            # Fallback: clip and check
-                            clipped = np.clip(node_rows, 0, max_allowed)
-                            idx_arr = self._tag_to_idx[clipped]
-                            valid_mask = (
-                                np.all(idx_arr >= 0, axis=1)
-                                & np.all(node_rows >= 0, axis=1)
-                                & np.all(node_rows <= max_allowed, axis=1)
-                            )
-                    else:
-                        idx_arr = np.zeros_like(node_rows)
-                        valid_mask = np.zeros(n_elems, dtype=bool)
-
-                    valid_idx_arr = idx_arr[valid_mask]
-                    valid_etags = etags_arr[valid_mask]
-                    n_valid = int(valid_mask.sum())
-
-                    if n_valid == 0:
-                        continue
-
-                    # Build VTK cells array: [n_nodes, idx0, idx1, ...] per row
-                    prefix_col = np.full(
-                        (n_valid, 1), n_nodes, dtype=np.int64,
-                    )
-                    cell_block = np.hstack([prefix_col, valid_idx_arr])
-                    all_cells_parts.append(cell_block.ravel())
-                    all_cell_types_parts.append(
-                        np.full(n_valid, vtk_type, dtype=np.uint8),
-                    )
-
-                    # Extend elem tag list and build _elem_data / _elem_to_brep
-                    valid_node_rows = node_rows[valid_mask]
-                    for ri in range(n_valid):
-                        elem_tag = int(valid_etags[ri])
-                        brep_elem_tags.append(elem_tag)
-                        self._elem_to_brep[elem_tag] = dt
-                        self._elem_data[elem_tag] = {
-                            "type_name": type_name,
-                            "nodes": valid_node_rows[ri].tolist(),
-                            "dim": dim,
-                            "brep_dt": dt,
-                        }
-
-                if not all_cells_parts:
-                    continue
-
-                # Map grid cell index -> gmsh element tag for element picking
-                for cell_idx, etag in enumerate(brep_elem_tags):
-                    self._grid_cell_to_elem[(dt, cell_idx)] = etag
-
-                self._brep_to_elems[dt] = brep_elem_tags
-                self._brep_dominant_type[dt] = _elem_type_category(
-                    dominant_type_name,
-                )
-
-                cells_flat = np.concatenate(all_cells_parts)
-                cell_types_flat = np.concatenate(all_cell_types_parts)
-
-                grid = pv.UnstructuredGrid(
-                    cells_flat,
-                    cell_types_flat,
-                    node_coords,
-                )
-                self._brep_grids[dt] = grid
-
-                # --- Opt-4: pre-allocate per-cell RGB so mapper is configured ---
-                default_colors = np.tile(
-                    _default_rgb_u8, (grid.n_cells, 1),
-                )
-                grid["colors"] = default_colors
-
-                # Visual properties depend on dimension
-                show_edges = self._show_surface_edges and dim >= 2
-                opacity = self._surface_opacity if dim >= 2 else 1.0
-
-                actor = plotter.add_mesh(
-                    grid,
-                    scalars="colors",
-                    rgb=True,
-                    opacity=opacity,
-                    show_edges=show_edges,
-                    edge_color=_EDGE_COLOR,
-                    line_width=self._line_width if dim == 1 else 0.5,
-                    render_lines_as_tubes=(dim == 1),
-                    smooth_shading=False,
-                    pickable=True,
-                )
-                # Register into SelectionPicker's _id_to_actor / _actor_to_id
-                self._register_actor(actor, dt)
-                n_actors += 1
+        if self._fast:
+            n_actors = self._build_mesh_actors_batched(
+                plotter, node_coords, _default_rgb_u8,
+            )
+        else:
+            n_actors = self._build_mesh_actors_per_entity(
+                plotter, node_coords, _default_rgb_u8,
+            )
 
         t_actors_elapsed = time.perf_counter() - t_actors
 
-        # 3. Node cloud -- filter to only nodes in the connectivity
-        #    (removes orphans: arc centres, construction points)
-        used_node_tags: set[int] = set()
-        for elem_tags_list in self._brep_to_elems.values():
-            for etag in elem_tags_list:
-                info = self._elem_data.get(etag)
-                if info is not None:
-                    used_node_tags.update(info["nodes"])
-
-        if self._node_tags is not None and len(self._node_tags) > 0:
-            mask = np.isin(self._node_tags, list(used_node_tags))
-            filtered_tags = self._node_tags[mask]
-            filtered_coords = self._node_coords[mask]
-
-            # Rebuild node data to exclude orphans
-            self._node_tags = filtered_tags
-            self._node_coords = filtered_coords
-            self._node_tag_to_idx = {
-                int(t): i for i, t in enumerate(filtered_tags)
-            }
-
-        if self._node_coords is not None and len(self._node_coords) > 0:
-            node_cloud = pv.PolyData(self._node_coords)
-            self._node_cloud = node_cloud
-
-            glyph_radius = 0.004 * diag * self._node_marker_size
-            sphere_src = pv.Sphere(
-                radius=glyph_radius,
-                theta_resolution=10,
-                phi_resolution=10,
-            )
-            glyphs = node_cloud.glyph(
-                geom=sphere_src, orient=False, scale=False,
-            )
-            self._node_actor = plotter.add_mesh(
-                glyphs,
-                color=_NODE_COLOR,
-                smooth_shading=True,
-                pickable=False,
-                opacity=1.0,
-            )
-
-        # --- Opt-2: build KD-tree for nearest-node picking ---
-        if self._node_coords is not None and len(self._node_coords) > 0:
-            try:
-                from scipy.spatial import cKDTree
-                self._node_tree = cKDTree(self._node_coords)
-            except ImportError:
-                self._node_tree = None
+        # 3. Node cloud
+        self._build_node_cloud(plotter, diag)
 
         # 4. Build physical-group <-> BRep mappings
         self._group_to_breps.clear()
@@ -532,17 +349,291 @@ class MeshViewer(SelectionPicker):
         if self._color_mode != "default":
             self._apply_coloring()
 
-        # ── Profiling summary ───────────────────────────────────────
+        # ── Profiling ───────────────────────────────────────────────
         total = time.perf_counter() - t0
         n_nodes = len(self._node_tags) if self._node_tags is not None else 0
         entities = {d: len(gmsh.model.getEntities(d)) for d in self._dims}
+        mode = "batched" if self._fast else "per-entity"
         print(f"\n[mesh.viewer] Scene built in {total:.2f}s  "
-              f"({n_actors} actors, {n_nodes} nodes)")
+              f"({n_actors} actors, {n_nodes} nodes, {mode})")
         print(f"  Entities: {entities}")
         print(f"  Node setup    : {t_setup:.3f}s")
-        print(f"  Actor creation: {t_actors_elapsed:.3f}s  ({n_actors} actors)")
-        print(f"  Remainder     : {total - t_setup - t_actors_elapsed:.3f}s  "
-              f"(glyphs, KD-tree, groups, coloring)")
+        print(f"  Actor creation: {t_actors_elapsed:.3f}s")
+        print(f"  Remainder     : {total - t_setup - t_actors_elapsed:.3f}s")
+
+    # ------------------------------------------------------------------
+    # Actor construction paths
+    # ------------------------------------------------------------------
+
+    def _collect_entity_cells(
+        self, dim: int, tag: int, node_coords: np.ndarray,
+    ) -> tuple[list[np.ndarray], list[np.ndarray], list[int], str] | None:
+        """Extract VTK cells for one BRep entity. Returns
+        (cell_parts, type_parts, elem_tags, dominant_type_name) or None.
+        """
+        dt: DimTag = (dim, tag)
+        try:
+            elem_types, elem_tags_list, elem_node_tags_list = (
+                gmsh.model.mesh.getElements(dim, tag)
+            )
+        except Exception:
+            return None
+        if not elem_types:
+            return None
+
+        all_cells: list[np.ndarray] = []
+        all_types: list[np.ndarray] = []
+        brep_elem_tags: list[int] = []
+        dominant_type_name = ""
+        dominant_count = 0
+
+        for etype, etags, enodes in zip(
+            elem_types, elem_tags_list, elem_node_tags_list,
+        ):
+            vtk_type = _GMSH_TO_VTK.get(int(etype))
+            if vtk_type is None:
+                continue
+            props = self._get_elem_props(int(etype))
+            type_name: str = props[0]
+            n_nodes: int = props[3]
+
+            etags_arr = np.asarray(etags, dtype=np.int64)
+            enodes_arr = np.asarray(enodes, dtype=np.int64)
+            n_elems = len(etags_arr)
+            if n_elems == 0:
+                continue
+            if n_elems > dominant_count:
+                dominant_count = n_elems
+                dominant_type_name = type_name
+
+            node_rows = enodes_arr.reshape(n_elems, n_nodes)
+            if self._tag_to_idx is not None and len(self._tag_to_idx) > 0:
+                max_allowed = len(self._tag_to_idx) - 1
+                in_range = (
+                    np.all(node_rows <= max_allowed)
+                    and np.all(node_rows >= 0)
+                )
+                if in_range:
+                    idx_arr = self._tag_to_idx[node_rows]
+                    valid_mask = np.all(idx_arr >= 0, axis=1)
+                else:
+                    clipped = np.clip(node_rows, 0, max_allowed)
+                    idx_arr = self._tag_to_idx[clipped]
+                    valid_mask = (
+                        np.all(idx_arr >= 0, axis=1)
+                        & np.all(node_rows >= 0, axis=1)
+                        & np.all(node_rows <= max_allowed, axis=1)
+                    )
+            else:
+                idx_arr = np.zeros_like(node_rows)
+                valid_mask = np.zeros(n_elems, dtype=bool)
+
+            valid_idx_arr = idx_arr[valid_mask]
+            valid_etags = etags_arr[valid_mask]
+            n_valid = int(valid_mask.sum())
+            if n_valid == 0:
+                continue
+
+            prefix = np.full((n_valid, 1), n_nodes, dtype=np.int64)
+            all_cells.append(np.hstack([prefix, valid_idx_arr]).ravel())
+            all_types.append(np.full(n_valid, vtk_type, dtype=np.uint8))
+
+            valid_node_rows = node_rows[valid_mask]
+            for ri in range(n_valid):
+                elem_tag = int(valid_etags[ri])
+                brep_elem_tags.append(elem_tag)
+                self._elem_to_brep[elem_tag] = dt
+                self._elem_data[elem_tag] = {
+                    "type_name": type_name,
+                    "nodes": valid_node_rows[ri].tolist(),
+                    "dim": dim,
+                    "brep_dt": dt,
+                }
+
+        if not all_cells:
+            return None
+        return all_cells, all_types, brep_elem_tags, dominant_type_name
+
+    def _build_mesh_actors_per_entity(
+        self, plotter, node_coords, default_rgb,
+    ) -> int:
+        """Original path: one add_mesh per BRep entity."""
+        n_actors = 0
+        for dim in sorted(self._dims):
+            for _, tag in gmsh.model.getEntities(dim=dim):
+                dt: DimTag = (dim, tag)
+                result = self._collect_entity_cells(dim, tag, node_coords)
+                if result is None:
+                    continue
+                all_cells, all_types, brep_elem_tags, dom_type = result
+
+                for cell_idx, etag in enumerate(brep_elem_tags):
+                    self._grid_cell_to_elem[(dt, cell_idx)] = etag
+                self._brep_to_elems[dt] = brep_elem_tags
+                self._brep_dominant_type[dt] = _elem_type_category(dom_type)
+
+                cells_flat = np.concatenate(all_cells)
+                cell_types_flat = np.concatenate(all_types)
+                grid = pv.UnstructuredGrid(
+                    cells_flat, cell_types_flat, node_coords,
+                )
+                self._brep_grids[dt] = grid
+                grid["colors"] = np.tile(default_rgb, (grid.n_cells, 1))
+
+                show_edges = self._show_surface_edges and dim >= 2
+                opacity = self._surface_opacity if dim >= 2 else 1.0
+                actor = plotter.add_mesh(
+                    grid, scalars="colors", rgb=True,
+                    opacity=opacity,
+                    show_edges=show_edges,
+                    edge_color=_EDGE_COLOR,
+                    line_width=self._line_width if dim == 1 else 0.5,
+                    render_lines_as_tubes=(dim == 1),
+                    smooth_shading=False, pickable=True,
+                )
+                self._register_actor(actor, dt)
+                n_actors += 1
+        return n_actors
+
+    def _build_mesh_actors_batched(
+        self, plotter, node_coords, default_rgb,
+    ) -> int:
+        """Fast path: merge all entities per dim into one grid."""
+        self._batched = True
+        self._batch_actors = {}
+        self._batch_meshes = {}
+        self._batch_cell_to_dt = {}
+        self._batch_dt_to_cells = {}
+        self._batch_centroids = {}
+        # For mesh-level element picking in batched mode
+        self._batch_cell_to_elem: dict[int, dict[int, int]] = {}  # dim → {cell_idx: elem_tag}
+
+        n_actors = 0
+        for dim in sorted(self._dims):
+            all_cells_parts: list[np.ndarray] = []
+            all_types_parts: list[np.ndarray] = []
+            all_entity_tags: list[int] = []  # per-cell entity tag
+            all_elem_tags_flat: list[int] = []  # per-cell elem tag
+            cell_to_dt: dict[int, DimTag] = {}
+            cell_offset = 0
+
+            for _, tag in gmsh.model.getEntities(dim=dim):
+                dt: DimTag = (dim, tag)
+                result = self._collect_entity_cells(dim, tag, node_coords)
+                if result is None:
+                    continue
+                cell_parts, type_parts, brep_elem_tags, dom_type = result
+
+                n_entity_cells = len(brep_elem_tags)
+                self._brep_to_elems[dt] = brep_elem_tags
+                self._brep_dominant_type[dt] = _elem_type_category(dom_type)
+
+                cell_indices = list(range(cell_offset, cell_offset + n_entity_cells))
+                self._batch_dt_to_cells[dt] = cell_indices
+                for ci in cell_indices:
+                    cell_to_dt[ci] = dt
+
+                all_cells_parts.extend(cell_parts)
+                all_types_parts.extend(type_parts)
+                all_entity_tags.extend([tag] * n_entity_cells)
+                all_elem_tags_flat.extend(brep_elem_tags)
+
+                # Compute centroid from element node positions
+                try:
+                    ntags, ncoords, _ = gmsh.model.mesh.getNodes(
+                        dim=dim, tag=tag, includeBoundary=True,
+                    )
+                    if len(ntags) > 0:
+                        pts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
+                        self._batch_centroids[dt] = pts.mean(axis=0)
+                except Exception:
+                    pass
+
+                cell_offset += n_entity_cells
+
+            if not all_cells_parts:
+                continue
+
+            cells_flat = np.concatenate(all_cells_parts)
+            cell_types_flat = np.concatenate(all_types_parts)
+            grid = pv.UnstructuredGrid(
+                cells_flat, cell_types_flat, node_coords,
+            )
+            colors = np.tile(default_rgb, (grid.n_cells, 1))
+            grid["colors"] = colors
+            grid.cell_data["entity_tag"] = np.array(all_entity_tags, dtype=np.int64)
+
+            show_edges = self._show_surface_edges and dim >= 2
+            opacity = self._surface_opacity if dim >= 2 else 1.0
+            actor = plotter.add_mesh(
+                grid, scalars="colors", rgb=True,
+                opacity=opacity,
+                show_edges=show_edges,
+                edge_color=_EDGE_COLOR,
+                line_width=self._line_width if dim == 1 else 0.5,
+                render_lines_as_tubes=(dim == 1),
+                smooth_shading=False, pickable=True,
+                reset_camera=False,
+            )
+
+            self._batch_actors[dim] = actor
+            self._batch_meshes[dim] = grid
+            self._batch_cell_to_dt[dim] = cell_to_dt
+            self._batch_cell_to_elem[dim] = {
+                i: etag for i, etag in enumerate(all_elem_tags_flat)
+            }
+
+            # Register entities for picking
+            for dt in self._batch_dt_to_cells:
+                if dt[0] == dim:
+                    self._id_to_actor[dt] = actor
+            self._actor_to_id[id(actor)] = (dim, -1)
+            n_actors += 1
+
+        plotter.reset_camera()
+        return n_actors
+
+    def _build_node_cloud(self, plotter, diag: float) -> None:
+        """Build filtered node cloud with glyph overlay and KD-tree."""
+        used_node_tags: set[int] = set()
+        for elem_tags_list in self._brep_to_elems.values():
+            for etag in elem_tags_list:
+                info = self._elem_data.get(etag)
+                if info is not None:
+                    used_node_tags.update(info["nodes"])
+
+        if self._node_tags is not None and len(self._node_tags) > 0:
+            mask = np.isin(self._node_tags, list(used_node_tags))
+            filtered_tags = self._node_tags[mask]
+            filtered_coords = self._node_coords[mask]
+            self._node_tags = filtered_tags
+            self._node_coords = filtered_coords
+            self._node_tag_to_idx = {
+                int(t): i for i, t in enumerate(filtered_tags)
+            }
+
+        if self._node_coords is not None and len(self._node_coords) > 0:
+            node_cloud = pv.PolyData(self._node_coords)
+            self._node_cloud = node_cloud
+            glyph_radius = 0.004 * diag * self._node_marker_size
+            sphere_src = pv.Sphere(
+                radius=glyph_radius,
+                theta_resolution=10, phi_resolution=10,
+            )
+            glyphs = node_cloud.glyph(
+                geom=sphere_src, orient=False, scale=False,
+            )
+            self._node_actor = plotter.add_mesh(
+                glyphs, color=_NODE_COLOR,
+                smooth_shading=True, pickable=False, opacity=1.0,
+            )
+
+        if self._node_coords is not None and len(self._node_coords) > 0:
+            try:
+                from scipy.spatial import cKDTree
+                self._node_tree = cKDTree(self._node_coords)
+            except ImportError:
+                self._node_tree = None
 
     # ------------------------------------------------------------------
     # Mesh-level pick mode

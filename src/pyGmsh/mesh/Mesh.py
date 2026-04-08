@@ -1729,6 +1729,19 @@ class Mesh:
         mv = MeshViewer(self._parent, self, **kwargs)
         return mv.show()
 
+    def viewer_fast(self, **kwargs):
+        """Open the mesh viewer with batched actors (fast for large meshes).
+
+        Same as :meth:`viewer` but merges all entities per dimension
+        into one VTK actor.  Much faster for models with many BRep
+        entities.
+
+        Parameters are forwarded to :class:`MeshViewer`.
+        """
+        from ..viewers.MeshViewer import MeshViewer
+        mv = MeshViewer(self._parent, self, fast=True, **kwargs)
+        return mv.show()
+
     def results_viewer(
         self,
         results: str | None = None,
