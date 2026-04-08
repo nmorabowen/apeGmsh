@@ -667,20 +667,35 @@ class SelectionPicker(BaseViewer):
             pass
 
         if not had_mesh:
-            old_min = gmsh.option.getNumber("Mesh.MeshSizeMin")
-            old_max = gmsh.option.getNumber("Mesh.MeshSizeMax")
-            old_algo = gmsh.option.getNumber("Mesh.Algorithm")
+            # Save current mesh settings
+            _saved = {}
+            for key in ("Mesh.MeshSizeMin", "Mesh.MeshSizeMax",
+                        "Mesh.Algorithm", "Mesh.MeshSizeFromCurvature",
+                        "Mesh.MinimumElementsPerTwoPi"):
+                try:
+                    _saved[key] = gmsh.option.getNumber(key)
+                except Exception:
+                    pass
             try:
-                gmsh.option.setNumber("Mesh.MeshSizeMin", diag * 0.005)
-                gmsh.option.setNumber("Mesh.MeshSizeMax", diag * 0.05)
+                # Coarse mesh that still resolves small features:
+                # - MeshSizeFromCurvature auto-refines around holes/curves
+                # - MeshSizeMax caps element size for large flat areas
+                # - MinimumElementsPerTwoPi ensures small circles get
+                #   enough elements to be visible
+                gmsh.option.setNumber("Mesh.MeshSizeMin", diag * 0.001)
+                gmsh.option.setNumber("Mesh.MeshSizeMax", diag * 0.03)
+                gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 12)
+                gmsh.option.setNumber("Mesh.MinimumElementsPerTwoPi", 8)
                 gmsh.option.setNumber("Mesh.Algorithm", 6)
                 gmsh.model.mesh.generate(2)
             except Exception:
                 pass
             finally:
-                gmsh.option.setNumber("Mesh.MeshSizeMin", old_min)
-                gmsh.option.setNumber("Mesh.MeshSizeMax", old_max)
-                gmsh.option.setNumber("Mesh.Algorithm", old_algo)
+                for key, val in _saved.items():
+                    try:
+                        gmsh.option.setNumber(key, val)
+                    except Exception:
+                        pass
         t_mesh_elapsed = time.perf_counter() - t_mesh
 
         # ── 3. Check mesh was generated ─────────────────────────────
