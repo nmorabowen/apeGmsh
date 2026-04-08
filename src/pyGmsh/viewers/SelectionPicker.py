@@ -634,20 +634,19 @@ class SelectionPicker(BaseViewer):
         self._build_scene_parametric()
 
     def _build_scene_from_mesh(self) -> None:
-        """Build the VTK scene using a temporary Gmsh mesh.
+        """Build the VTK scene using batched actors (one per dimension).
 
-        Generates a coarse 2D mesh, extracts per-entity triangulation
-        via batch ``getNodes``/``getElements`` calls, and suppresses
-        VTK rendering until all actors are added.  Orders of magnitude
-        faster than parametric sampling for large BRep models.
+        Generates a coarse 2D mesh, merges all entities of each
+        dimension into a single PolyData with ``cell_data["entity_tag"]``
+        for pick resolution.  Typically 3 ``add_mesh`` calls instead of
+        1000+.
         """
         import time
         import pyvista as pv
         plotter = self._plotter
         t0 = time.perf_counter()
-        timings: dict[str, float] = {}
 
-        # ── 1. Model diagonal for sizing ────────────────────────────
+        # ── 1. Model diagonal ───────────────────────────────────────
         try:
             bb = gmsh.model.getBoundingBox(-1, -1)
             diag = float(np.linalg.norm(
@@ -658,7 +657,7 @@ class SelectionPicker(BaseViewer):
         except Exception:
             diag = 1.0
 
-        # ── 2. Generate temp mesh if none exists ────────────────────
+        # ── 2. Generate temp mesh if needed ─────────────────────────
         t_mesh = time.perf_counter()
         had_mesh = False
         try:
@@ -682,11 +681,11 @@ class SelectionPicker(BaseViewer):
                 gmsh.option.setNumber("Mesh.MeshSizeMin", old_min)
                 gmsh.option.setNumber("Mesh.MeshSizeMax", old_max)
                 gmsh.option.setNumber("Mesh.Algorithm", old_algo)
-        timings["mesh_generate"] = time.perf_counter() - t_mesh
+        t_mesh_elapsed = time.perf_counter() - t_mesh
 
         # ── 3. Check mesh was generated ─────────────────────────────
         try:
-            all_tags, all_coords_flat, _ = gmsh.model.mesh.getNodes()
+            all_tags, _, _ = gmsh.model.mesh.getNodes()
         except Exception:
             self._build_scene_parametric()
             return
@@ -694,101 +693,90 @@ class SelectionPicker(BaseViewer):
             self._build_scene_parametric()
             return
 
-        # ── 4. Suppress rendering during batch actor creation ───────
-        try:
-            rw = plotter.render_window
-            rw.SetOffScreenRendering(True)
-        except Exception:
-            rw = None
+        # ── 4. Enable batched pick/hover/recolor mode ───────────────
+        self._batched = True
+        self._batch_actors: dict[int, object] = {}     # dim → VTK actor
+        self._batch_meshes: dict[int, pv.PolyData] = {}
+        self._batch_cell_to_dt: dict[int, dict[int, DimTag]] = {}  # dim → {cell_idx: dt}
+        self._batch_dt_to_cells: dict[DimTag, list[int]] = {}      # dt → [cell_indices]
+        self._batch_centroids: dict[DimTag, np.ndarray] = {}       # dt → xyz centroid
 
-        t_actors = time.perf_counter()
-        try:
-            dim_timings = self._build_scene_from_mesh_inner(plotter, diag)
-            timings.update(dim_timings)
-        finally:
-            if rw is not None:
-                try:
-                    rw.SetOffScreenRendering(False)
-                except Exception:
-                    pass
-        timings["actors_total"] = time.perf_counter() - t_actors
+        idle_rgb = {
+            0: np.array([int(c * 255) for c in _hex_to_rgb(_IDLE_POINT)], dtype=np.uint8),
+            1: np.array([int(c * 255) for c in _hex_to_rgb(_IDLE_CURVE)], dtype=np.uint8),
+            2: np.array([int(c * 255) for c in _hex_to_rgb(_IDLE_SURFACE)], dtype=np.uint8),
+            3: np.array([int(c * 255) for c in _hex_to_rgb(_IDLE_VOLUME)], dtype=np.uint8),
+        }
 
-        # ── 5. Cleanup temp mesh ────────────────────────────────────
-        if not had_mesh:
-            try:
-                gmsh.model.mesh.clear()
-            except Exception:
-                pass
+        t_build = time.perf_counter()
+        n_entities = 0
 
-        t_recolor = time.perf_counter()
-        self._recolor_all()
-        timings["recolor"] = time.perf_counter() - t_recolor
-
-        # ── 6. Print profiling summary ──────────────────────────────
-        total = time.perf_counter() - t0
-        n_actors = len(self._actor_to_id)
-        entities = {d: len(gmsh.model.getEntities(d)) for d in self._dims}
-        print(f"\n[viewer_fast] Scene built in {total:.2f}s  "
-              f"({n_actors} actors)")
-        print(f"  Entities: {entities}")
-        print(f"  Mesh generate : {timings.get('mesh_generate', 0):.3f}s"
-              f"  {'(used existing)' if had_mesh else '(temp coarse)'}")
-        for dim_label in ("dim0_points", "dim1_curves",
-                          "dim2_surfaces", "dim3_volumes"):
-            t = timings.get(dim_label, 0)
-            n = timings.get(dim_label + "_n", 0)
-            if t > 0:
-                print(f"  {dim_label:16s}: {t:.3f}s  ({int(n)} actors)")
-        print(f"  Actors total  : {timings.get('actors_total', 0):.3f}s")
-        print(f"  Recolor       : {timings.get('recolor', 0):.3f}s")
-
-    def _build_scene_from_mesh_inner(
-        self, plotter, diag: float,
-    ) -> dict[str, float]:
-        """Inner loop: create per-entity actors from mesh data.
-
-        Returns per-dimension timing dict.
-        """
-        import time
-        import pyvista as pv
-        timings: dict[str, float] = {}
-
-        # ── dim=0 — points as spheres ───────────────────────────────
+        # ── dim=0: single glyph actor for all points ───────────────
         t_dim = time.perf_counter()
-        n_dim = 0
+        n_d0 = 0
         if 0 in self._dims:
-            base_r = 0.005 * diag
-            scale = float(self._point_size)
+            centers = []
+            tags_d0 = []
             for _, tag in gmsh.model.getEntities(dim=0):
                 try:
-                    ntags, ncoords, _ = gmsh.model.mesh.getNodes(
-                        dim=0, tag=tag,
-                    )
+                    ntags, ncoords, _ = gmsh.model.mesh.getNodes(dim=0, tag=tag)
                     if len(ntags) == 0:
                         continue
                     xyz = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)[0]
-                    sphere = pv.Sphere(
-                        radius=base_r, center=xyz,
-                        theta_resolution=10, phi_resolution=10,
-                    )
-                    actor = plotter.add_mesh(
-                        sphere, color=_IDLE_POINT,
-                        smooth_shading=True, pickable=True,
-                        reset_camera=False,
-                    )
-                    actor.SetOrigin(xyz[0], xyz[1], xyz[2])
-                    actor.SetScale(scale, scale, scale)
-                    self._register_actor(actor, (0, tag))
-                    n_dim += 1
+                    centers.append(xyz)
+                    tags_d0.append(tag)
+                    self._batch_centroids[(0, tag)] = xyz
+                    n_d0 += 1
                 except Exception:
                     pass
-        timings["dim0_points"] = time.perf_counter() - t_dim
-        timings["dim0_points_n"] = n_dim
+            if centers:
+                centers_arr = np.array(centers)
+                cloud = pv.PolyData(centers_arr)
+                sphere_src = pv.Sphere(
+                    radius=0.005 * diag * self._point_size,
+                    theta_resolution=10, phi_resolution=10,
+                )
+                glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
+                # Each center produces n_cells_per_sphere cells
+                n_cells_per_pt = glyphs.n_cells // len(centers) if len(centers) else 1
+                entity_tags = np.empty(glyphs.n_cells, dtype=np.int64)
+                colors = np.tile(idle_rgb[0], (glyphs.n_cells, 1))
+                cell_to_dt: dict[int, DimTag] = {}
+                for i, tag in enumerate(tags_d0):
+                    start = i * n_cells_per_pt
+                    end = start + n_cells_per_pt
+                    entity_tags[start:end] = tag
+                    dt = (0, tag)
+                    self._batch_dt_to_cells[dt] = list(range(start, end))
+                    for ci in range(start, end):
+                        cell_to_dt[ci] = dt
+                glyphs.cell_data["entity_tag"] = entity_tags
+                glyphs.cell_data["colors"] = colors
+                actor = plotter.add_mesh(
+                    glyphs, scalars="colors", rgb=True,
+                    smooth_shading=True, pickable=True,
+                    reset_camera=False,
+                )
+                self._batch_actors[0] = actor
+                self._batch_meshes[0] = glyphs
+                self._batch_cell_to_dt[0] = cell_to_dt
+                # Register the single actor for all dim=0 entities
+                for tag in tags_d0:
+                    self._id_to_actor[(0, tag)] = actor
+                self._actor_to_id[id(actor)] = (0, -1)  # sentinel
+        t_d0 = time.perf_counter() - t_dim
+        n_entities += n_d0
 
-        # ── dim=1 — curves as lines ─────────────────────────────────
+        # ── dim=1: merge all curves into one PolyData ───────────────
         t_dim = time.perf_counter()
-        n_dim = 0
+        n_d1 = 0
         if 1 in self._dims:
+            all_pts_parts: list[np.ndarray] = []
+            all_lines_parts: list[np.ndarray] = []
+            all_etags: list[int] = []
+            all_dt_cells: dict[DimTag, list[int]] = {}
+            cell_offset = 0
+            pt_offset = 0
             for _, tag in gmsh.model.getEntities(dim=1):
                 try:
                     ntags, ncoords, _ = gmsh.model.mesh.getNodes(
@@ -798,143 +786,391 @@ class SelectionPicker(BaseViewer):
                         continue
                     pts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
                     n = len(pts)
-                    lines = np.empty((n - 1) * 3, dtype=np.int64)
-                    idx = np.arange(n - 1, dtype=np.int64)
+                    n_lines = n - 1
+                    idx = np.arange(n_lines, dtype=np.int64)
+                    lines = np.empty(n_lines * 3, dtype=np.int64)
                     lines[0::3] = 2
-                    lines[1::3] = idx
-                    lines[2::3] = idx + 1
-                    poly = pv.PolyData(pts)
-                    poly.lines = lines
-                    actor = plotter.add_mesh(
-                        poly, color=_IDLE_CURVE,
-                        line_width=self._line_width,
-                        render_lines_as_tubes=True,
-                        pickable=True,
-                        reset_camera=False,
-                    )
-                    self._register_actor(actor, (1, tag))
-                    n_dim += 1
+                    lines[1::3] = idx + pt_offset
+                    lines[2::3] = idx + pt_offset + 1
+                    all_pts_parts.append(pts)
+                    all_lines_parts.append(lines)
+                    cell_indices = list(range(cell_offset, cell_offset + n_lines))
+                    dt = (1, tag)
+                    all_dt_cells[dt] = cell_indices
+                    all_etags.extend([tag] * n_lines)
+                    self._batch_centroids[dt] = pts.mean(axis=0)
+                    cell_offset += n_lines
+                    pt_offset += n
+                    n_d1 += 1
                 except Exception:
                     pass
-        timings["dim1_curves"] = time.perf_counter() - t_dim
-        timings["dim1_curves_n"] = n_dim
+            if all_pts_parts:
+                merged_pts = np.vstack(all_pts_parts)
+                merged_lines = np.concatenate(all_lines_parts)
+                poly = pv.PolyData(merged_pts)
+                poly.lines = merged_lines
+                entity_tags = np.array(all_etags, dtype=np.int64)
+                colors = np.tile(idle_rgb[1], (len(all_etags), 1))
+                poly.cell_data["entity_tag"] = entity_tags
+                poly.cell_data["colors"] = colors
+                actor = plotter.add_mesh(
+                    poly, scalars="colors", rgb=True,
+                    line_width=self._line_width,
+                    render_lines_as_tubes=True,
+                    pickable=True, reset_camera=False,
+                )
+                self._batch_actors[1] = actor
+                self._batch_meshes[1] = poly
+                cell_to_dt = {}
+                for dt, cells in all_dt_cells.items():
+                    self._batch_dt_to_cells[dt] = cells
+                    self._id_to_actor[dt] = actor
+                    for ci in cells:
+                        cell_to_dt[ci] = dt
+                self._batch_cell_to_dt[1] = cell_to_dt
+                self._actor_to_id[id(actor)] = (1, -1)
+        t_d1 = time.perf_counter() - t_dim
+        n_entities += n_d1
 
-        # ── dim=2 — surfaces as triangles ───────────────────────────
+        # ── dim=2: merge all surfaces into one PolyData ─────────────
         t_dim = time.perf_counter()
-        n_dim = 0
+        n_d2 = 0
         if 2 in self._dims:
+            all_pts_parts = []
+            all_faces_parts: list[np.ndarray] = []
+            all_etags = []
+            all_dt_cells = {}
+            cell_offset = 0
+            pt_offset = 0
             for _, tag in gmsh.model.getEntities(dim=2):
                 try:
-                    mesh = self._mesh_entity_to_polydata(2, tag)
-                    if mesh is None:
-                        continue
-                    actor = plotter.add_mesh(
-                        mesh, color=_IDLE_SURFACE,
-                        opacity=self._surface_opacity,
-                        show_edges=self._show_surface_edges,
-                        edge_color=_EDGE_COLOR,
-                        line_width=0.5,
-                        smooth_shading=True,
-                        pickable=True,
-                        reset_camera=False,
+                    ntags, ncoords, _ = gmsh.model.mesh.getNodes(
+                        dim=2, tag=tag, includeBoundary=True,
                     )
-                    self._register_actor(actor, (2, tag))
-                    n_dim += 1
-                except Exception:
-                    pass
-        timings["dim2_surfaces"] = time.perf_counter() - t_dim
-        timings["dim2_surfaces_n"] = n_dim
+                    if len(ntags) == 0:
+                        continue
+                    ltags = np.asarray(ntags, dtype=np.int64)
+                    lpts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
+                    lmax = int(ltags.max())
+                    lidx = np.full(lmax + 1, -1, dtype=np.int64)
+                    lidx[ltags] = np.arange(len(ltags), dtype=np.int64)
 
-        # ── dim=3 — volumes (combined boundary surfaces) ────────────
-        t_dim = time.perf_counter()
-        n_dim = 0
-        if 3 in self._dims:
-            vol_alpha = max(0.05, self._surface_opacity * 0.6)
-            for _, vtag in gmsh.model.getEntities(dim=3):
-                try:
-                    boundary = gmsh.model.getBoundary(
-                        [(3, vtag)], combined=False,
-                        oriented=False, recursive=False,
-                    )
-                    parts: list[pv.PolyData] = []
-                    for bd, btag in boundary:
-                        if bd != 2:
+                    etypes, _, enodes_list = gmsh.model.mesh.getElements(2, tag)
+                    n_cells_entity = 0
+                    for etype, enodes in zip(etypes, enodes_list):
+                        etype = int(etype)
+                        if etype == 2:
+                            npe = 3
+                        elif etype == 3:
+                            npe = 4
+                        else:
                             continue
-                        m = self._mesh_entity_to_polydata(2, btag)
-                        if m is not None:
-                            parts.append(m)
-                    if not parts:
-                        continue
-                    combined = parts[0] if len(parts) == 1 else parts[0].merge(parts[1:])
-                    actor = plotter.add_mesh(
-                        combined, color=_IDLE_VOLUME,
-                        opacity=vol_alpha,
-                        smooth_shading=True,
-                        pickable=True,
-                        reset_camera=False,
-                    )
-                    self._register_actor(actor, (3, vtag))
-                    n_dim += 1
+                        enodes = np.asarray(enodes, dtype=np.int64)
+                        n_elems = len(enodes) // npe
+                        node_mat = enodes.reshape(n_elems, npe)
+                        idx_mat = lidx[node_mat]
+                        valid = np.all(idx_mat >= 0, axis=1)
+                        idx_mat = idx_mat[valid]
+                        if len(idx_mat) == 0:
+                            continue
+                        # Offset indices
+                        idx_mat = idx_mat + pt_offset
+                        prefix = np.full((len(idx_mat), 1), npe, dtype=np.int64)
+                        all_faces_parts.append(
+                            np.hstack([prefix, idx_mat]).ravel()
+                        )
+                        n_cells_entity += len(idx_mat)
+                        all_etags.extend([tag] * len(idx_mat))
+
+                    if n_cells_entity > 0:
+                        dt = (2, tag)
+                        cell_indices = list(range(cell_offset, cell_offset + n_cells_entity))
+                        all_dt_cells[dt] = cell_indices
+                        self._batch_centroids[dt] = lpts.mean(axis=0)
+                        all_pts_parts.append(lpts)
+                        cell_offset += n_cells_entity
+                        pt_offset += len(lpts)
+                        n_d2 += 1
                 except Exception:
                     pass
-        timings["dim3_volumes"] = time.perf_counter() - t_dim
-        timings["dim3_volumes_n"] = n_dim
+            if all_pts_parts:
+                merged_pts = np.vstack(all_pts_parts)
+                merged_faces = np.concatenate(all_faces_parts)
+                poly = pv.PolyData(merged_pts, faces=merged_faces)
+                entity_tags = np.array(all_etags, dtype=np.int64)
+                colors = np.tile(idle_rgb[2], (len(all_etags), 1))
+                poly.cell_data["entity_tag"] = entity_tags
+                poly.cell_data["colors"] = colors
+                actor = plotter.add_mesh(
+                    poly, scalars="colors", rgb=True,
+                    opacity=self._surface_opacity,
+                    show_edges=self._show_surface_edges,
+                    edge_color=_EDGE_COLOR,
+                    line_width=0.5,
+                    smooth_shading=True,
+                    pickable=True, reset_camera=False,
+                )
+                self._batch_actors[2] = actor
+                self._batch_meshes[2] = poly
+                cell_to_dt = {}
+                for dt, cells in all_dt_cells.items():
+                    self._batch_dt_to_cells[dt] = cells
+                    self._id_to_actor[dt] = actor
+                    for ci in cells:
+                        cell_to_dt[ci] = dt
+                self._batch_cell_to_dt[2] = cell_to_dt
+                self._actor_to_id[id(actor)] = (2, -1)
+        t_d2 = time.perf_counter() - t_dim
+        n_entities += n_d2
+
+        # dim=3 skipped for now (same merge pattern on boundary surfaces)
 
         plotter.reset_camera()
-        return timings
+        t_total_build = time.perf_counter() - t_build
 
-    @staticmethod
-    def _mesh_entity_to_polydata(dim: int, tag: int):
-        """Extract a surface's mesh triangulation as a pv.PolyData."""
-        import pyvista as pv
+        # ── 5. Cleanup temp mesh ────────────────────────────────────
+        if not had_mesh:
+            try:
+                gmsh.model.mesh.clear()
+            except Exception:
+                pass
 
-        elem_types, _, elem_node_tags_list = (
-            gmsh.model.mesh.getElements(dim, tag)
-        )
-        if not elem_types:
-            return None
+        # ── 6. Print profiling summary ──────────────────────────────
+        total = time.perf_counter() - t0
+        n_add_mesh = len(self._batch_actors)
+        entities = {d: len(gmsh.model.getEntities(d)) for d in self._dims}
+        print(f"\n[viewer_fast] Scene built in {total:.2f}s  "
+              f"({n_add_mesh} add_mesh calls, {n_entities} entities)")
+        print(f"  Entities: {entities}")
+        print(f"  Mesh generate : {t_mesh_elapsed:.3f}s"
+              f"  {'(used existing)' if had_mesh else '(temp coarse)'}")
+        print(f"  dim0 points   : {t_d0:.3f}s  ({n_d0} entities → 1 glyph actor)")
+        print(f"  dim1 curves   : {t_d1:.3f}s  ({n_d1} entities → 1 merged actor)")
+        print(f"  dim2 surfaces : {t_d2:.3f}s  ({n_d2} entities → 1 merged actor)")
+        print(f"  Data build    : {t_total_build:.3f}s")
 
-        ntags, ncoords, _ = gmsh.model.mesh.getNodes(
-            dim=dim, tag=tag, includeBoundary=True,
-        )
-        if len(ntags) == 0:
-            return None
+    # ── Batched pick / hover / recolor overrides ────────────────────
 
-        local_tags = np.asarray(ntags, dtype=np.int64)
-        local_pts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
+    def _resolve_pick_cell(self, prop, cell_id: int) -> DimTag | None:
+        """Resolve a VTK pick to a DimTag using cell_data."""
+        if not getattr(self, '_batched', False):
+            return self._actor_to_id.get(id(prop))
+        # Find which dim-batch this actor belongs to
+        for dim, actor in self._batch_actors.items():
+            if id(actor) == id(prop):
+                cell_map = self._batch_cell_to_dt.get(dim, {})
+                return cell_map.get(cell_id)
+        return None
 
-        # Dense local tag → index
-        local_max = int(local_tags.max())
-        local_idx = np.full(local_max + 1, -1, dtype=np.int64)
-        local_idx[local_tags] = np.arange(len(local_tags), dtype=np.int64)
+    def _on_lmb_click(self, x: int, y: int, ctrl: bool) -> None:
+        """Pixel-pick or Ctrl+unpick at display coords (x, y)."""
+        renderer = self._plotter.renderer
+        self._click_picker.Pick(x, y, 0, renderer)
+        prop = self._click_picker.GetViewProp()
+        if prop is None:
+            return
 
-        face_parts: list[np.ndarray] = []
-        for etype, enodes in zip(elem_types, elem_node_tags_list):
-            etype = int(etype)
-            if etype == 2:
-                npe = 3
-            elif etype == 3:
-                npe = 4
+        if getattr(self, '_batched', False):
+            cell_id = self._click_picker.GetCellId()
+            dt = self._resolve_pick_cell(prop, cell_id)
+        else:
+            dt = self._actor_to_id.get(id(prop))
+
+        if dt is None:
+            return
+
+        if ctrl:
+            if dt in self._picks:
+                self._picks.remove(dt)
+                self._pick_history = [
+                    d for d in self._pick_history if d != dt
+                ]
+                self._recolor(dt)
+                self._update_status()
+                self._fire_pick_changed()
+        else:
+            self._tab_candidates = [dt]  # simplified for batched mode
+            self._tab_pos = (x, y)
+            self._tab_index = 0
+            if dt not in self._picks:
+                self._picks.append(dt)
+                self._pick_history.append(dt)
+            self._recolor(dt)
+            self._update_status()
+            self._fire_pick_changed()
+
+    def _update_hover(self, x: int, y: int) -> None:
+        """Hover highlight with batched cell-data resolution."""
+        import vtk
+
+        if self._plotter is None:
+            return
+
+        self._hover_throttle = (self._hover_throttle + 1) % 3
+        if self._hover_throttle != 0:
+            return
+
+        if self._hover_picker is None:
+            p = vtk.vtkCellPicker()
+            p.SetTolerance(0.005)
+            self._hover_picker = p
+
+        self._hover_picker.Pick(x, y, 0, self._plotter.renderer)
+        prop = self._hover_picker.GetViewProp()
+
+        new_dt: DimTag | None = None
+        if prop is not None:
+            if getattr(self, '_batched', False):
+                cell_id = self._hover_picker.GetCellId()
+                candidate = self._resolve_pick_cell(prop, cell_id)
             else:
-                continue
-            enodes = np.asarray(enodes, dtype=np.int64)
-            n_elems = len(enodes) // npe
-            node_mat = enodes.reshape(n_elems, npe)
-            # Vectorized index lookup
-            idx_mat = local_idx[node_mat]
-            # Skip rows with -1
-            valid = np.all(idx_mat >= 0, axis=1)
-            idx_mat = idx_mat[valid]
-            if len(idx_mat) == 0:
-                continue
-            prefix = np.full((len(idx_mat), 1), npe, dtype=np.int64)
-            face_parts.append(np.hstack([prefix, idx_mat]).ravel())
+                candidate = self._actor_to_id.get(id(prop))
+            if candidate is not None:
+                if candidate[0] in self._pickable_dims and candidate not in self._hidden:
+                    new_dt = candidate
 
-        if not face_parts:
-            return None
+        if new_dt == self._hover_id:
+            return
 
-        faces = np.concatenate(face_parts)
-        return pv.PolyData(local_pts, faces=faces)
+        old_dt = self._hover_id
+        self._hover_id = new_dt
+        self._on_hover_changed_internal(old_dt, new_dt)
+
+        for cb in self._on_hover_changed:
+            try:
+                cb()
+            except Exception:
+                pass
+
+    def _on_hover_changed_internal(self, old_id, new_id) -> None:
+        """Recolor old hover back to idle, recolor new hover to gold."""
+        if old_id is not None:
+            self._recolor(old_id)
+        if new_id is not None:
+            self._recolor(new_id)
+
+    def _recolor(self, dt: DimTag, *, _render: bool = True) -> None:
+        if not getattr(self, '_batched', False):
+            return self._recolor_per_actor(dt, _render=_render)
+
+        # Batched: update cell colors in the merged mesh
+        dim = dt[0]
+        mesh = self._batch_meshes.get(dim)
+        if mesh is None:
+            return
+        cells = self._batch_dt_to_cells.get(dt)
+        if not cells:
+            return
+
+        if dt == self._hover_id and dt not in self._picks:
+            rgb = np.array([int(c * 255) for c in _hex_to_rgb(_HOVER_COLOR)], dtype=np.uint8)
+        elif dt in self._picks:
+            rgb = np.array([int(c * 255) for c in _hex_to_rgb(self._pick_color)], dtype=np.uint8)
+        else:
+            idle = {
+                0: _IDLE_POINT, 1: _IDLE_CURVE,
+                2: _IDLE_SURFACE, 3: _IDLE_VOLUME,
+            }[dim]
+            rgb = np.array([int(c * 255) for c in _hex_to_rgb(idle)], dtype=np.uint8)
+
+        colors = mesh.cell_data["colors"]
+        for ci in cells:
+            colors[ci] = rgb
+        mesh.cell_data["colors"] = colors  # trigger VTK update
+
+        if _render:
+            self._plotter.render()
+
+    def _recolor_per_actor(self, dt: DimTag, *, _render: bool = True) -> None:
+        """Original per-actor recolor (non-batched mode)."""
+        actor = self._id_to_actor.get(dt)
+        if actor is None:
+            return
+        if dt == self._hover_id and dt not in self._picks:
+            actor.GetProperty().SetColor(_hex_to_rgb(_HOVER_COLOR))
+        elif dt in self._picks:
+            actor.GetProperty().SetColor(_hex_to_rgb(self._pick_color))
+        else:
+            idle = {
+                0: _IDLE_POINT, 1: _IDLE_CURVE,
+                2: _IDLE_SURFACE, 3: _IDLE_VOLUME,
+            }[dt[0]]
+            actor.GetProperty().SetColor(_hex_to_rgb(idle))
+        if dt[0] == 0:
+            base = float(self._point_size)
+            if dt in self._picks:
+                s = base * self._PICK_SCALE_BOOST
+            else:
+                s = base
+            actor.SetScale(s, s, s)
+        if _render:
+            self._plotter.render()
+
+    def _recolor_all(self) -> None:
+        """Recolor every entity, render once at the end."""
+        if getattr(self, '_batched', False):
+            for dt in self._batch_dt_to_cells:
+                self._recolor(dt, _render=False)
+        else:
+            for dt in self._id_to_actor:
+                self._recolor(dt, _render=False)
+        self._plotter.render()
+
+    def _project_centroid(self, actor_or_dt):
+        """Project centroid to display coords.
+
+        Accepts either a VTK actor (non-batched) or a DimTag (batched).
+        """
+        if getattr(self, '_batched', False) and isinstance(actor_or_dt, tuple):
+            xyz = self._batch_centroids.get(actor_or_dt)
+            if xyz is None:
+                return None
+            renderer = self._plotter.renderer
+            renderer.SetWorldPoint(xyz[0], xyz[1], xyz[2], 1.0)
+            renderer.WorldToDisplay()
+            dx, dy, _ = renderer.GetDisplayPoint()
+            return (dx, dy)
+        # Non-batched: actor path
+        return super()._project_centroid(actor_or_dt)
+
+    def _do_box_select(
+        self, x0: float, y0: float, x1: float, y1: float,
+        *, crossing: bool,
+    ) -> None:
+        if not getattr(self, '_batched', False):
+            return super()._do_box_select(x0, y0, x1, y1, crossing=crossing)
+
+        # Batched box-select using precomputed centroids
+        try:
+            rw = self._plotter.render_window
+            vw, vh = rw.GetSize()
+            aw, ah = rw.GetActualSize()
+            sx_ratio = aw / vw if vw else 1.0
+            sy_ratio = ah / vh if vh else 1.0
+        except Exception:
+            sx_ratio = sy_ratio = 1.0
+
+        bx0 = x0 * sx_ratio
+        bx1 = x1 * sx_ratio
+        by0 = y0 * sy_ratio
+        by1 = y1 * sy_ratio
+
+        added = 0
+        for dt in self._batch_dt_to_cells:
+            if dt[0] not in self._pickable_dims:
+                continue
+            if dt in self._hidden or dt in self._picks:
+                continue
+            pt = self._project_centroid(dt)
+            if pt is None:
+                continue
+            sx, sy = pt
+            if bx0 <= sx <= bx1 and by0 <= sy <= by1:
+                self._picks.append(dt)
+                self._pick_history.append(dt)
+                self._recolor(dt, _render=False)
+                added += 1
+        self._plotter.render()
 
     def _build_scene_parametric(self) -> None:
         """Original parametric-sampling scene builder."""
@@ -1140,39 +1376,6 @@ class SelectionPicker(BaseViewer):
     # Picker hooks (called by BaseViewer._install_picker)
     # ------------------------------------------------------------------
 
-    def _on_lmb_click(self, x: int, y: int, ctrl: bool) -> None:
-        """Pixel-pick or Ctrl+unpick at display coords (x, y)."""
-        renderer = self._plotter.renderer
-        self._click_picker.Pick(x, y, 0, renderer)
-        prop = self._click_picker.GetViewProp()
-        if prop is None:
-            return
-        dt = self._actor_to_id.get(id(prop))
-        if dt is None:
-            return
-
-        if ctrl:
-            # Ctrl+click: remove the entity under cursor from picks
-            if dt in self._picks:
-                self._picks.remove(dt)
-                self._pick_history = [
-                    d for d in self._pick_history if d != dt
-                ]
-                self._recolor(dt)
-                self._update_status()
-                self._fire_pick_changed()
-        else:
-            # Build Tab-cycle candidate list via peel-picking --
-            # pixel-precise at any depth, no radius needed.
-            self._tab_candidates = self._peel_candidates_at(x, y)
-            self._tab_pos = (x, y)
-            self._tab_index = 0
-            # Make sure the actually-clicked entity is first
-            if dt in self._tab_candidates:
-                self._tab_candidates.remove(dt)
-            self._tab_candidates.insert(0, dt)
-            self._toggle_pick(dt)
-
     def _peel_candidates_at(self, x: int, y: int) -> list[DimTag]:
         """Peel-pick: repeatedly pick at (x, y), hiding each hit
         actor before re-picking, to find ALL entities stacked under
@@ -1219,161 +1422,6 @@ class SelectionPicker(BaseViewer):
                     f"crossing={crossing}"
                 )
             self._do_box_select(x0, y0, x1, y1, crossing=crossing)
-
-    def _do_box_select(
-        self, x0: float, y0: float, x1: float, y1: float,
-        *, crossing: bool,
-    ) -> None:
-        """Select entities whose projected centroid falls inside the
-        rubber-band rectangle."""
-        added = 0
-        # DPI scaling -- on HiDPI Windows, Qt logical-pixels may differ
-        # from VTK physical-pixels.
-        try:
-            rw = self._plotter.render_window
-            vw, vh = rw.GetSize()
-            aw, ah = rw.GetActualSize()
-            sx_ratio = aw / vw if vw else 1.0
-            sy_ratio = ah / vh if vh else 1.0
-        except Exception:
-            sx_ratio = sy_ratio = 1.0
-        bx0 = x0 * sx_ratio
-        bx1 = x1 * sx_ratio
-        by0 = y0 * sy_ratio
-        by1 = y1 * sy_ratio
-
-        if self._parent._verbose:
-            print(f"[picker] box raw=({x0},{y0})-({x1},{y1}) "
-                  f"scaled=({bx0:.0f},{by0:.0f})-({bx1:.0f},{by1:.0f}) "
-                  f"ratio=({sx_ratio:.2f},{sy_ratio:.2f})")
-
-        candidates = 0
-        for dt, actor in list(self._id_to_actor.items()):
-            if dt[0] not in self._pickable_dims:
-                continue
-            if dt in self._hidden:
-                continue
-            if dt in self._picks:
-                continue   # box-select is additive
-            pt = self._project_centroid(actor)
-            if pt is None:
-                continue
-            sx, sy = pt
-            candidates += 1
-            if self._parent._verbose and candidates <= 5:
-                hit_dbg = bx0 <= sx <= bx1 and by0 <= sy <= by1
-                print(f"  centroid {dt}: display=({sx:.0f},{sy:.0f}) hit={hit_dbg}")
-            hit = bx0 <= sx <= bx1 and by0 <= sy <= by1
-            if hit:
-                self._picks.append(dt)
-                self._pick_history.append(dt)
-                self._recolor(dt)
-                added += 1
-        self._plotter.render()
-        if added:
-            self._fire_pick_changed()
-        if self._parent._verbose:
-            mode = "crossing" if crossing else "window"
-            print(f"[picker] box-select ({mode}) {candidates} candidates, added {added} entities")
-
-    def _do_box_unselect(
-        self, x0: float, y0: float, x1: float, y1: float,
-        *, crossing: bool,
-    ) -> None:
-        """Ctrl+drag counterpart to ``_do_box_select``: REMOVES every
-        currently-picked entity whose projected centroid falls inside
-        the rubber-band rectangle."""
-        # DPI scaling (same as _do_box_select)
-        try:
-            rw = self._plotter.render_window
-            vw, vh = rw.GetSize()
-            aw, ah = rw.GetActualSize()
-            sx_ratio = aw / vw if vw else 1.0
-            sy_ratio = ah / vh if vh else 1.0
-        except Exception:
-            sx_ratio = sy_ratio = 1.0
-        bx0 = x0 * sx_ratio
-        bx1 = x1 * sx_ratio
-        by0 = y0 * sy_ratio
-        by1 = y1 * sy_ratio
-
-        removed = 0
-        for dt in list(self._picks):
-            actor = self._id_to_actor.get(dt)
-            if actor is None:
-                continue
-            pt = self._project_centroid(actor)
-            if pt is None:
-                continue
-            sx, sy = pt
-            hit = bx0 <= sx <= bx1 and by0 <= sy <= by1
-            if hit:
-                self._picks.remove(dt)
-                self._pick_history = [
-                    d for d in self._pick_history if d != dt
-                ]
-                self._recolor(dt)
-                removed += 1
-        self._plotter.render()
-        if removed:
-            self._fire_pick_changed()
-        if self._parent._verbose:
-            mode = "crossing" if crossing else "window"
-            print(f"[picker] box-UNselect ({mode}) removed {removed} entities")
-
-    # ------------------------------------------------------------------
-    # Hover
-    # ------------------------------------------------------------------
-
-    def _update_hover(self, x: int, y: int) -> None:
-        """Pixel-precise hover with BRep dim-filter and hidden check.
-
-        Overrides BaseViewer to skip entities on non-pickable dims or
-        that are currently hidden.
-        """
-        import vtk
-
-        if self._plotter is None:
-            return
-
-        self._hover_throttle = (self._hover_throttle + 1) % 3
-        if self._hover_throttle != 0:
-            return
-
-        if self._hover_picker is None:
-            p = vtk.vtkCellPicker()
-            p.SetTolerance(0.005)
-            self._hover_picker = p
-
-        self._hover_picker.Pick(x, y, 0, self._plotter.renderer)
-        prop = self._hover_picker.GetViewProp()
-
-        new_dt: DimTag | None = None
-        if prop is not None:
-            candidate = self._actor_to_id.get(id(prop))
-            if candidate is not None:
-                if candidate[0] in self._pickable_dims and candidate not in self._hidden:
-                    new_dt = candidate
-
-        if new_dt == self._hover_id:
-            return
-
-        old_dt = self._hover_id
-        self._hover_id = new_dt
-        self._on_hover_changed_internal(old_dt, new_dt)
-
-        for cb in self._on_hover_changed:
-            try:
-                cb()
-            except Exception:
-                pass
-
-    def _on_hover_changed_internal(self, old_id, new_id) -> None:
-        """Recolor old hover back to idle, recolor new hover to gold."""
-        if old_id is not None:
-            self._recolor(old_id)
-        if new_id is not None:
-            self._recolor(new_id)
 
     # ------------------------------------------------------------------
     # Pick management
@@ -1428,40 +1476,6 @@ class SelectionPicker(BaseViewer):
     # Scale multiplier for dim=0 spheres when picked -- makes the
     # selection clearly visible even at small point_size values.
     _PICK_SCALE_BOOST = 1.6
-
-    def _recolor(self, dt: DimTag, *, _render: bool = True) -> None:
-        actor = self._id_to_actor.get(dt)
-        if actor is None:
-            return
-        if dt == self._hover_id and dt not in self._picks:
-            actor.GetProperty().SetColor(_hex_to_rgb(_HOVER_COLOR))
-        elif dt in self._picks:
-            actor.GetProperty().SetColor(_hex_to_rgb(self._pick_color))
-        else:
-            idle = {
-                0: _IDLE_POINT, 1: _IDLE_CURVE,
-                2: _IDLE_SURFACE, 3: _IDLE_VOLUME,
-            }[dt[0]]
-            actor.GetProperty().SetColor(_hex_to_rgb(idle))
-        # For dim=0 (point spheres), scale up when picked so the
-        # selection is unmissable -- especially useful for protanopia
-        # where subtle colour shifts may not be enough.
-        if dt[0] == 0:
-            base = float(self._point_size)
-            if dt in self._picks:
-                s = base * self._PICK_SCALE_BOOST
-            else:
-                s = base
-            actor.SetScale(s, s, s)
-        if _render:
-            self._plotter.render()
-
-    def _recolor_all(self) -> None:
-        """Recolor every actor based on current hover / picks state.
-        Called after set_active_group() reloads the working set."""
-        for dt in self._id_to_actor:
-            self._recolor(dt, _render=False)
-        self._plotter.render()
 
     def _undo(self) -> None:
         """Undo the last pick (pop from history)."""
