@@ -419,24 +419,26 @@ class BaseViewerWindow:
         viewer = self._viewer
 
         # Point size
-        self._s_point = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._s_point = QtWidgets.QSpinBox()
         self._s_point.setRange(1, 20)
         self._s_point.setValue(int(viewer._point_size))
         self._s_point.valueChanged.connect(self._on_point_size_changed)
         form.addRow("Point size", self._s_point)
 
         # Line width
-        self._s_line = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._s_line = QtWidgets.QSpinBox()
         self._s_line.setRange(1, 20)
         self._s_line.setValue(int(viewer._line_width))
         self._s_line.valueChanged.connect(self._on_line_width_changed)
         form.addRow("Line width", self._s_line)
 
-        # Surface opacity (0..100 mapping 0.0..1.0)
-        self._s_alpha = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self._s_alpha.setRange(0, 100)
-        self._s_alpha.setValue(int(viewer._surface_opacity * 100))
-        self._s_alpha.valueChanged.connect(self._on_opacity_changed)
+        # Surface opacity
+        self._s_alpha = QtWidgets.QDoubleSpinBox()
+        self._s_alpha.setRange(0.0, 1.0)
+        self._s_alpha.setSingleStep(0.05)
+        self._s_alpha.setDecimals(2)
+        self._s_alpha.setValue(viewer._surface_opacity)
+        self._s_alpha.valueChanged.connect(self._on_opacity_changed_spin)
         form.addRow("Surface \u03b1", self._s_alpha)
 
         # Show edges
@@ -452,7 +454,7 @@ class BaseViewerWindow:
         form.addRow(self._cb_aa)
 
         # Drag threshold (pixels before click becomes a box-select)
-        self._s_drag_thresh = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._s_drag_thresh = QtWidgets.QSpinBox()
         self._s_drag_thresh.setRange(2, 30)
         self._s_drag_thresh.setValue(viewer._drag_threshold)
         self._s_drag_thresh.valueChanged.connect(
@@ -488,6 +490,11 @@ class BaseViewerWindow:
 
     def _on_opacity_changed(self, value: int) -> None:
         self._viewer._surface_opacity = float(value) / 100.0
+        self._apply_visual_changes()
+        self._qt_interactor.render()
+
+    def _on_opacity_changed_spin(self, value: float) -> None:
+        self._viewer._surface_opacity = value
         self._apply_visual_changes()
         self._qt_interactor.render()
 

@@ -91,7 +91,7 @@ class MeshViewerWindow(SelectionPickerWindow):
 
         super().__init__(viewer, title=title, maximized=maximized)
 
-        # Reconfigure point-size slider for mesh nodes
+        # Reconfigure point-size spinbox for mesh nodes
         if hasattr(self, "_s_point"):
             self._s_point.setRange(1, 5)
             self._s_point.setValue(int(viewer._point_size))
@@ -834,7 +834,7 @@ class MeshViewerWindow(SelectionPickerWindow):
         form.addRow(QtWidgets.QLabel("--- Mesh-specific ---"))
 
         # ---- Node marker size ----
-        self._s_node_marker = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self._s_node_marker = QtWidgets.QSpinBox()
         self._s_node_marker.setRange(1, 30)
         self._s_node_marker.setValue(
             int(getattr(self._picker, "_node_marker_size", 6)),
