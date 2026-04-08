@@ -228,10 +228,6 @@ class BaseViewerWindow:
         viewer._on_visibility_changed.append(self._refresh_statusbar)
         viewer._on_hover_changed.append(self._on_hover_changed_ui)
 
-        # ---- Show ----
-        if self._maximized:
-            window.showMaximized()
-
         self._window = window
 
     # ------------------------------------------------------------------
