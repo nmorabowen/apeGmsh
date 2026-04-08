@@ -1546,6 +1546,18 @@ class Model:
         """
         return self.selection.picker(**kwargs)
 
+    def viewer_fast(self, **kwargs):
+        """Open the model viewer with fast mesh-based tessellation.
+
+        Same as :meth:`viewer` but generates a temporary coarse mesh
+        and builds actors from ``getNodes``/``getElements`` instead of
+        parametric sampling.  Much faster for large BRep models
+        (hundreds of surfaces/curves).
+
+        All kwargs are forwarded to :meth:`selection.picker`.
+        """
+        return self.selection.picker(fast=True, **kwargs)
+
     def gui(self) -> None:
         """Open the interactive Gmsh FLTK GUI window."""
         gmsh.fltk.run()
