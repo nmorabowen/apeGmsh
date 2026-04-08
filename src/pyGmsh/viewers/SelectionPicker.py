@@ -671,26 +671,48 @@ class SelectionPicker(BaseViewer):
             _saved = {}
             for key in ("Mesh.MeshSizeMin", "Mesh.MeshSizeMax",
                         "Mesh.Algorithm", "Mesh.MeshSizeFromCurvature",
-                        "Mesh.MinimumElementsPerTwoPi"):
+                        "Mesh.MinimumElementsPerTwoPi",
+                        "Mesh.MeshSizeExtendFromBoundary"):
                 try:
                     _saved[key] = gmsh.option.getNumber(key)
                 except Exception:
                     pass
             try:
-                # Coarse mesh that still resolves small features:
-                # - MeshSizeFromCurvature auto-refines around holes/curves
-                # - MeshSizeMax caps element size for large flat areas
-                # - MinimumElementsPerTwoPi ensures small circles get
-                #   enough elements to be visible
-                gmsh.option.setNumber("Mesh.MeshSizeMin", diag * 0.001)
-                gmsh.option.setNumber("Mesh.MeshSizeMax", diag * 0.03)
-                gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 12)
-                gmsh.option.setNumber("Mesh.MinimumElementsPerTwoPi", 8)
+                # Per-curve adaptive sizing: compute each curve's length
+                # and set its endpoint sizes to a fraction of that length.
+                # This ensures small holes get fine elements even if the
+                # model diagonal is large.
+                max_size = diag * 0.03
+                for dim_c in (1,):
+                    for _, ctag in gmsh.model.getEntities(dim=dim_c):
+                        try:
+                            mass = gmsh.model.occ.getMass(dim_c, ctag)
+                            curve_size = min(max_size, mass / 3.0)
+                            if curve_size > 0:
+                                bnd = gmsh.model.getBoundary(
+                                    [(dim_c, ctag)], combined=False,
+                                )
+                                pt_tags = [(d, abs(t)) for d, t in bnd if d == 0]
+                                if pt_tags:
+                                    gmsh.model.mesh.setSize(pt_tags, curve_size)
+                        except Exception:
+                            pass
+
+                gmsh.option.setNumber("Mesh.MeshSizeMin", diag * 0.0005)
+                gmsh.option.setNumber("Mesh.MeshSizeMax", max_size)
+                gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
                 gmsh.option.setNumber("Mesh.Algorithm", 6)
                 gmsh.model.mesh.generate(2)
             except Exception:
                 pass
             finally:
+                # Clear per-entity sizes and restore global settings
+                try:
+                    all_pts = gmsh.model.getEntities(dim=0)
+                    if all_pts:
+                        gmsh.model.mesh.setSize(all_pts, 0.0)
+                except Exception:
+                    pass
                 for key, val in _saved.items():
                     try:
                         gmsh.option.setNumber(key, val)
