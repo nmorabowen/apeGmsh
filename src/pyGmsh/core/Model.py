@@ -806,13 +806,57 @@ class Model:
         dim           : int  = 3,
         remove_object : bool = True,
         remove_tool   : bool = True,
+        cleanup_free  : bool = True,
         sync          : bool = True,
     ) -> list[Tag]:
         """
         Boolean fragment — splits all shapes at their intersections and
         preserves all sub-volumes (useful for conformal meshing).
+
+        Parameters
+        ----------
+        objects : tag(s) of the entities to fragment.
+        tools : tag(s) of the cutting entities (e.g. rectangles).
+            Dimensions are auto-resolved from the registry, so bare
+            integer tags work even when tools have a different dimension
+            than *dim*.
+        dim : target dimension for bare integer tags in *objects*
+            (default 3).
+        remove_object, remove_tool : passed to OCC (default True).
+        cleanup_free : bool
+            When True (default), remove any "free" surfaces that do not
+            bound a volume after the fragment operation.  This cleans up
+            exterior remnants of cutting planes that fall outside the
+            solid.  Set to False to keep all surface fragments.
+        sync : synchronise the OCC kernel (default True).
+
+        Returns
+        -------
+        list[Tag]
+            Tags of all surviving entities at the target dimension.
         """
-        return self._bool_op('fragment', objects, tools, dim, remove_object, remove_tool, sync)
+        result = self._bool_op(
+            'fragment', objects, tools, dim,
+            remove_object, remove_tool, sync,
+        )
+
+        if cleanup_free:
+            free: list[tuple[int, int]] = []
+            for _, tag_s in gmsh.model.getEntities(2):
+                up, _ = gmsh.model.getAdjacencies(2, tag_s)
+                if len(up) == 0:
+                    free.append((2, tag_s))
+            if free:
+                gmsh.model.occ.remove(free, recursive=True)
+                if sync:
+                    gmsh.model.occ.synchronize()
+                for dt in free:
+                    self._registry.pop(dt, None)
+                self._log(
+                    f"fragment cleanup: removed {len(free)} free surface(s)"
+                )
+
+        return result
 
     # ------------------------------------------------------------------
     # Transforms  (all return self for chaining)
