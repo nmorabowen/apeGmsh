@@ -343,7 +343,7 @@ class ModelViewer:
             win.set_status(f"{n} picked | group: {grp}")
 
         sel.on_changed.append(_on_sel_changed)
-        sel.on_changed.append(lambda: browser.refresh())
+        sel.on_changed.append(lambda: browser.update_active())
         # Write active group to Gmsh on every pick change
         sel.on_changed.append(lambda: sel.commit_active_group())
 

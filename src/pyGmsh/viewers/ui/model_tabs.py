@@ -109,37 +109,81 @@ class BrowserTab:
         self.refresh()
 
     def refresh(self) -> None:
-        """Rebuild the tree from Gmsh physical groups."""
-        QtWidgets, _, QtGui = _qt()
-        tree = self._tree
-        tree.clear()
+        """Full rebuild of the tree from Gmsh physical groups.
 
-        # Existing physical groups
+        Call only when groups are created, deleted, or renamed.
+        For pick changes, use :meth:`update_active` instead.
+        """
+        QtWidgets, _, QtGui = _qt()
+        self._tree.clear()
+        self._group_items: dict[str, object] = {}
+
+        # Collect all groups (Gmsh + staged)
         groups = self._collect_groups()
-        for name, members in groups.items():
-            root = self._tree.invisibleRootItem()
-            item = QtWidgets.QTreeWidgetItem(root)
+        all_names: list[str] = list(groups.keys())
+
+        # Add staged-only groups
+        for name in self._selection.staged_groups:
+            if name not in groups:
+                groups[name] = list(self._selection.staged_groups[name])
+                all_names.append(name)
+
+        active = self._selection.active_group
+        dim_labels = {0: "pt", 1: "crv", 2: "srf", 3: "vol"}
+
+        for name in all_names:
+            members = groups[name]
+            item = QtWidgets.QTreeWidgetItem(self._tree)
             item.setText(0, name)
             item.setText(1, str(len(members)))
-            item.setData(0, 0x0100, ("group", name))  # UserRole
-            item.setForeground(0, QtGui.QBrush(QtGui.QColor("#89b4fa")))
+            item.setData(0, 0x0100, ("group", name))
+
+            # Highlight active group
+            if name == active:
+                item.setForeground(
+                    0, QtGui.QBrush(QtGui.QColor("#a6e3a1")),  # green
+                )
+                font = item.font(0)
+                font.setBold(True)
+                item.setFont(0, font)
+            else:
+                item.setForeground(
+                    0, QtGui.QBrush(QtGui.QColor("#89b4fa")),  # blue
+                )
+
             item.setExpanded(False)
-            # Entity children
-            dim_labels = {0: "pt", 1: "crv", 2: "srf", 3: "vol"}
             for dim, tag in members:
                 child = QtWidgets.QTreeWidgetItem(item)
                 child.setText(0, f"{dim_labels.get(dim, '?')} {tag}")
                 child.setData(0, 0x0100, ("entity", (dim, tag)))
 
-        # Groups in staging that aren't in Gmsh yet (new/empty)
-        for name, members in self._selection.staged_groups.items():
-            if name in groups:
-                continue
-            item = QtWidgets.QTreeWidgetItem(self._tree.invisibleRootItem())
-            item.setText(0, name)
-            item.setText(1, str(len(members)))
-            item.setData(0, 0x0100, ("group", name))
-            item.setForeground(0, QtGui.QBrush(QtGui.QColor("#f9e2af")))
+            self._group_items[name] = item
+
+    def update_active(self) -> None:
+        """Lightweight update: refresh count and highlight of active group.
+
+        Call on pick changes — does NOT rebuild the tree structure.
+        """
+        _, _, QtGui = _qt()
+        active = self._selection.active_group
+        active_count = len(self._selection.picks)
+
+        for name, item in self._group_items.items():
+            if name == active:
+                item.setText(1, str(active_count))
+                item.setForeground(
+                    0, QtGui.QBrush(QtGui.QColor("#a6e3a1")),
+                )
+                font = item.font(0)
+                font.setBold(True)
+                item.setFont(0, font)
+            else:
+                font = item.font(0)
+                font.setBold(False)
+                item.setFont(0, font)
+                item.setForeground(
+                    0, QtGui.QBrush(QtGui.QColor("#89b4fa")),
+                )
 
     def _collect_groups(self) -> dict[str, list[tuple]]:
         groups: dict[str, list[tuple]] = {}
