@@ -5,12 +5,12 @@ deformed shape parameters, and camera views.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
+from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QComboBox, QSlider, QCheckBox, QPushButton, QDoubleSpinBox,
     QSpinBox, QFrame, QSizePolicy,
 )
-from PySide6.QtCore import Signal, Qt
+from qtpy.QtCore import Signal, Qt
 
 from pyGmshViewer.visualization.renderer import DisplayMode, COLORMAPS
 
@@ -191,74 +191,9 @@ class ControlsPanel(QWidget):
         layout.addStretch()
 
     def _make_group(self, title: str) -> QGroupBox:
-        """Create a styled group box."""
-        group = QGroupBox(title)
-        group.setStyleSheet("""
-            QGroupBox {
-                color: #cdd6f4;
-                border: 1px solid #313244;
-                border-radius: 4px;
-                margin-top: 8px;
-                padding-top: 12px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-            }
-            QLabel {
-                color: #bac2de;
-                font-size: 11px;
-            }
-            QPushButton {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 3px;
-                padding: 3px 6px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #45475a;
-            }
-            QPushButton:pressed {
-                background-color: #585b70;
-            }
-            QComboBox {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 3px;
-                padding: 2px 6px;
-                font-size: 11px;
-            }
-            QDoubleSpinBox, QSpinBox {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 3px;
-                padding: 2px 4px;
-            }
-            QSlider::groove:horizontal {
-                background: #313244;
-                height: 6px;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #89b4fa;
-                width: 14px;
-                margin: -4px 0;
-                border-radius: 7px;
-            }
-            QCheckBox {
-                color: #bac2de;
-                font-size: 11px;
-                spacing: 6px;
-            }
-        """)
-        return group
+        """Create a styled group box (inherits global STYLESHEET)."""
+        from pyGmsh.viewers.ui.theme import styled_group
+        return styled_group(title)
 
     def _on_mode_changed(self, text: str) -> None:
         mode_map = {

@@ -88,7 +88,7 @@ def _launch_viewer(load_fn, *, blocking=False):
     pv.global_theme.font.color = "white"
 
     import sys
-    from PySide6.QtWidgets import QApplication
+    from qtpy.QtWidgets import QApplication
     from pyGmshViewer.main_window import MainWindow
 
     app = QApplication.instance()

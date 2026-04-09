@@ -5,15 +5,17 @@ XY plots along lines, and slice information.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
+from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit,
     QPushButton, QGroupBox, QComboBox, QSpinBox, QTabWidget,
     QSizePolicy,
 )
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtGui import QColor
+from qtpy.QtCore import Signal, Qt
+from qtpy.QtGui import QColor
 
 import numpy as np
+
+from pyGmsh.viewers.ui.theme import RED, GREEN, YELLOW, SURFACE0
 
 from pyGmshViewer.visualization.probes import (
     PointProbeResult, LineProbeResult, PlaneProbeResult,
@@ -42,7 +44,7 @@ class ProbePanel(QWidget):
 
         title = QLabel("Probes")
         title.setStyleSheet(
-            "font-weight: bold; font-size: 13px; color: #ddd; padding: 4px;"
+            "font-weight: bold; font-size: 13px; padding: 4px;"
         )
         layout.addWidget(title)
 
@@ -111,23 +113,6 @@ class ProbePanel(QWidget):
 
         # ── Results Display ──────────────────────────────────────────
         self._tabs = QTabWidget()
-        self._tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #313244;
-                background-color: #1e1e2e;
-            }
-            QTabBar::tab {
-                background-color: #181825;
-                color: #a6adc8;
-                border: 1px solid #313244;
-                padding: 4px 10px;
-                font-size: 11px;
-            }
-            QTabBar::tab:selected {
-                background-color: #313244;
-                color: #cdd6f4;
-            }
-        """)
 
         # Point results tab
         self._point_text = QTextEdit()
@@ -152,8 +137,6 @@ class ProbePanel(QWidget):
     def _text_style(self) -> str:
         return """
             QTextEdit {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
                 border: none;
                 font-family: 'Consolas', 'Courier New', monospace;
                 font-size: 11px;
@@ -162,52 +145,8 @@ class ProbePanel(QWidget):
         """
 
     def _make_group(self, title: str) -> QGroupBox:
-        group = QGroupBox(title)
-        group.setStyleSheet("""
-            QGroupBox {
-                color: #cdd6f4;
-                border: 1px solid #313244;
-                border-radius: 4px;
-                margin-top: 8px;
-                padding-top: 12px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-            }
-            QPushButton {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 3px;
-                padding: 4px 8px;
-                font-size: 11px;
-                font-weight: normal;
-            }
-            QPushButton:hover {
-                background-color: #45475a;
-            }
-            QPushButton:pressed {
-                background-color: #585b70;
-            }
-            QLabel {
-                color: #bac2de;
-                font-size: 11px;
-                font-weight: normal;
-            }
-            QSpinBox {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 3px;
-                padding: 2px 4px;
-                font-weight: normal;
-            }
-        """)
-        return group
+        from pyGmsh.viewers.ui.theme import styled_group
+        return styled_group(title)
 
     # ── Display Results ──────────────────────────────────────────────
 
@@ -216,14 +155,14 @@ class ProbePanel(QWidget):
         self._tabs.setCurrentIndex(0)
 
         lines = [
-            f"<b style='color: #f38ba8;'>Point Probe #{len(self._get_existing_probes()) + 1}</b>",
+            f"<b style='color: {RED};'>Point Probe #{len(self._get_existing_probes()) + 1}</b>",
             f"",
             f"<b>Position:</b> ({result.position[0]:.4f}, "
             f"{result.position[1]:.4f}, {result.position[2]:.4f})",
             f"<b>Nearest Node:</b> {result.closest_point_id}",
             f"<b>Distance:</b> {result.distance:.4e}",
             f"",
-            f"<b style='color: #a6e3a1;'>Field Values:</b>",
+            f"<b style='color: {GREEN};'>Field Values:</b>",
         ]
 
         for name, val in result.field_values.items():
@@ -238,7 +177,7 @@ class ProbePanel(QWidget):
 
         # Append to existing text
         existing = self._point_text.toHtml()
-        separator = "<br><hr style='border-color: #313244;'><br>"
+        separator = "<br><hr style='border-color: {SURFACE0};'><br>"
         if existing.strip() and "Point Probe" in existing:
             self._point_text.setHtml(existing + separator + "<br>".join(lines))
         else:
@@ -249,7 +188,7 @@ class ProbePanel(QWidget):
         self._tabs.setCurrentIndex(1)
 
         lines = [
-            f"<b style='color: #f9e2af;'>Line Probe</b>",
+            f"<b style='color: {YELLOW};'>Line Probe</b>",
             f"",
             f"<b>Point A:</b> ({result.point_a[0]:.4f}, "
             f"{result.point_a[1]:.4f}, {result.point_a[2]:.4f})",
@@ -258,7 +197,7 @@ class ProbePanel(QWidget):
             f"<b>Length:</b> {result.total_length:.4f}",
             f"<b>Samples:</b> {result.n_samples}",
             f"",
-            f"<b style='color: #a6e3a1;'>Field Statistics Along Line:</b>",
+            f"<b style='color: {GREEN};'>Field Statistics Along Line:</b>",
         ]
 
         for name, arr in result.field_values.items():
@@ -297,7 +236,7 @@ class ProbePanel(QWidget):
             f"<b>Slice Points:</b> {result.slice_mesh.n_points}",
             f"<b>Slice Cells:</b> {result.slice_mesh.n_cells}",
             f"",
-            f"<b style='color: #a6e3a1;'>Fields on Slice:</b>",
+            f"<b style='color: {GREEN};'>Fields on Slice:</b>",
         ]
 
         for name in result.field_names:

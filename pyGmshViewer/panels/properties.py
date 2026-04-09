@@ -5,10 +5,11 @@ Properties Panel — Shows details about picked nodes/elements and mesh info.
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtWidgets import (
+from pyGmsh.viewers.ui.theme import BLUE, GREEN, PEACH, RED
+from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTextEdit, QGroupBox,
 )
-from PySide6.QtCore import Qt
+from qtpy.QtCore import Qt
 
 
 class PropertiesPanel(QWidget):
@@ -23,18 +24,13 @@ class PropertiesPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
 
         title = QLabel("Properties")
-        title.setStyleSheet(
-            "font-weight: bold; font-size: 13px; color: #ddd; padding: 4px;"
-        )
+        title.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px;")
         layout.addWidget(title)
 
         self._info_text = QTextEdit()
         self._info_text.setReadOnly(True)
         self._info_text.setStyleSheet("""
             QTextEdit {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                border: 1px solid #313244;
                 font-family: 'Consolas', 'Courier New', monospace;
                 font-size: 11px;
                 padding: 6px;
@@ -48,7 +44,7 @@ class PropertiesPanel(QWidget):
         bounds = mesh.bounds
 
         lines = [
-            f"<b style='color: #89b4fa;'>{name}</b>",
+            f"<b style='color: {BLUE};'>{name}</b>",
             f"",
             f"<b>Nodes:</b> {mesh.n_points:,}",
             f"<b>Elements:</b> {mesh.n_cells:,}",
@@ -66,7 +62,7 @@ class PropertiesPanel(QWidget):
 
         if mesh_data.point_field_names:
             lines.append("")
-            lines.append(f"<b style='color: #a6e3a1;'>Point Fields:</b>")
+            lines.append(f"<b style='color: {GREEN};'>Point Fields:</b>")
             for f in mesh_data.point_field_names:
                 arr = mesh.point_data[f]
                 if arr.ndim == 1:
@@ -81,7 +77,7 @@ class PropertiesPanel(QWidget):
 
         if mesh_data.cell_field_names:
             lines.append("")
-            lines.append(f"<b style='color: #fab387;'>Cell Fields:</b>")
+            lines.append(f"<b style='color: {PEACH};'>Cell Fields:</b>")
             for f in mesh_data.cell_field_names:
                 arr = mesh.cell_data[f]
                 if arr.ndim == 1:
@@ -94,7 +90,7 @@ class PropertiesPanel(QWidget):
     def show_point_info(self, point_coords, point_id: int = -1, field_values: dict | None = None) -> None:
         """Display info about a picked node."""
         lines = [
-            f"<b style='color: #f38ba8;'>Picked Node</b>",
+            f"<b style='color: {RED};'>Picked Node</b>",
             f"",
         ]
         if point_id >= 0:
@@ -119,7 +115,7 @@ class PropertiesPanel(QWidget):
     def show_cell_info(self, cell_id: int, cell_type: str = "", n_nodes: int = 0) -> None:
         """Display info about a picked element."""
         lines = [
-            f"<b style='color: #f38ba8;'>Picked Element</b>",
+            f"<b style='color: {RED};'>Picked Element</b>",
             f"",
             f"<b>ID:</b> {cell_id}",
         ]

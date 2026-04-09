@@ -49,9 +49,7 @@ def _lazy_qt():
     return QtWidgets, QtCore, QtGui, QtInteractor
 
 
-# Background gradient
-_BG_TOP    = "#1a1a2e"
-_BG_BOTTOM = "#16213e"
+from .theme import BG_TOP, BG_BOTTOM
 
 
 class ViewerWindow:
@@ -128,7 +126,7 @@ class ViewerWindow:
         import pyvista as _pv
         _pv.set_plot_theme("dark")
         _pv.global_theme.font.color = "white"
-        self._qt_interactor.set_background(_BG_TOP, top=_BG_BOTTOM)
+        self._qt_interactor.set_background(BG_TOP, top=BG_BOTTOM)
         try:
             self._qt_interactor.enable_anti_aliasing("ssaa")
         except Exception:

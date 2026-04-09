@@ -39,8 +39,7 @@ COLORMAPS = {
 
 DEFAULT_MESH_COLOR = "#5B8DB8"      # steel blue
 DEFAULT_EDGE_COLOR = "#2C4A6E"      # dark navy
-DEFAULT_BG_TOP = "#1a1a2e"          # dark gradient top
-DEFAULT_BG_BOTTOM = "#16213e"       # dark gradient bottom
+from pyGmsh.viewers.ui.theme import BG_TOP as DEFAULT_BG_TOP, BG_BOTTOM as DEFAULT_BG_BOTTOM
 DEFORMED_COLOR = "#E05C00"          # orange for deformed overlay
 UNDEFORMED_COLOR = "#AAAAAA"        # light grey for reference
 LINE_MESH_COLOR = "#F5A623"         # amber for line-only meshes (frames, links)

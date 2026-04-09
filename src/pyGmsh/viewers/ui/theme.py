@@ -32,6 +32,10 @@ YELLOW    = "#f9e2af"   # staged items
 PEACH     = "#fab387"   # cell data
 RED       = "#f38ba8"   # errors, picked nodes
 
+# Viewport gradient
+BG_TOP    = "#1a1a2e"
+BG_BOTTOM = "#16213e"
+
 
 # ======================================================================
 # Global stylesheet

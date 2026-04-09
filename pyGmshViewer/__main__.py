@@ -19,8 +19,8 @@ def main():
     pv.set_plot_theme("dark")
     pv.global_theme.font.color = "white"
 
-    from PySide6.QtWidgets import QApplication
-    from PySide6.QtGui import QFont
+    from qtpy.QtWidgets import QApplication
+    from qtpy.QtGui import QFont
     from pyGmshViewer.main_window import MainWindow
 
     app = QApplication(sys.argv)

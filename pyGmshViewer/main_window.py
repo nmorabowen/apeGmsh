@@ -21,13 +21,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import (
+from qtpy.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QSplitter, QMenuBar, QMenu, QToolBar, QStatusBar,
     QFileDialog, QMessageBox, QApplication,
 )
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QAction, QKeySequence
+from qtpy.QtCore import Qt, QSize
+from qtpy.QtGui import QAction, QKeySequence
 
 import pyvista as pv
 from pyvistaqt import QtInteractor
@@ -64,7 +64,12 @@ class MainWindow(QMainWindow):
         # Apply dark theme
         self._apply_theme()
 
-        self.statusBar().showMessage("Ready — Open a VTU file to begin")
+        # Window-level shortcuts
+        from qtpy.QtWidgets import QShortcut
+        from qtpy.QtGui import QKeySequence as _QKS
+        QShortcut(_QKS("Q"), self).activated.connect(self.close)
+
+        self.set_status("Ready — Open a VTU file to begin")
 
     # ── UI Setup ─────────────────────────────────────────────────────
 
@@ -121,6 +126,12 @@ class MainWindow(QMainWindow):
         # Install BaseViewer-compatible camera navigation
         from pyGmshViewer.visualization.navigation import install_navigation
         install_navigation(self._plotter_widget)
+
+        # Default to orthographic projection (consistent with model/mesh viewers)
+        try:
+            self._plotter_widget.enable_parallel_projection()
+        except Exception:
+            pass
 
     def _setup_menu_bar(self):
         menubar = self.menuBar()
@@ -222,6 +233,15 @@ class MainWindow(QMainWindow):
 
         toolbar.addAction("Open", self._open_file)
         toolbar.addSeparator()
+
+        # Ortho / perspective toggle
+        self._act_ortho = toolbar.addAction("Ortho")
+        self._act_ortho.setCheckable(True)
+        self._act_ortho.setChecked(True)
+        self._act_ortho.setToolTip("Toggle orthographic / perspective projection")
+        self._act_ortho.toggled.connect(self._toggle_projection)
+
+        toolbar.addSeparator()
         toolbar.addAction("Front", lambda: self._set_camera_view("xy"))
         toolbar.addAction("Top", lambda: self._set_camera_view("xz"))
         toolbar.addAction("Side", lambda: self._set_camera_view("yz"))
@@ -229,62 +249,16 @@ class MainWindow(QMainWindow):
         toolbar.addAction("Reset", self._renderer.reset_camera)
         toolbar.addSeparator()
         toolbar.addAction("Screenshot", self._save_screenshot)
+        toolbar.addAction("Clipboard", self._copy_screenshot_clipboard)
 
     def _setup_status_bar(self):
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
 
     def _apply_theme(self):
-        """Apply Catppuccin Mocha-inspired dark theme."""
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #1e1e2e;
-            }
-            QMenuBar {
-                background-color: #181825;
-                color: #cdd6f4;
-                border-bottom: 1px solid #313244;
-            }
-            QMenuBar::item:selected {
-                background-color: #45475a;
-            }
-            QMenu {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                border: 1px solid #313244;
-            }
-            QMenu::item:selected {
-                background-color: #45475a;
-            }
-            QToolBar {
-                background-color: #181825;
-                border-bottom: 1px solid #313244;
-                spacing: 4px;
-                padding: 2px;
-            }
-            QToolBar QToolButton {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 3px;
-                padding: 4px 8px;
-                font-size: 11px;
-            }
-            QToolBar QToolButton:hover {
-                background-color: #45475a;
-            }
-            QStatusBar {
-                background-color: #181825;
-                color: #a6adc8;
-                border-top: 1px solid #313244;
-                font-size: 11px;
-            }
-            QSplitter::handle {
-                background-color: #313244;
-                width: 2px;
-                height: 2px;
-            }
-        """)
+        """Apply shared Catppuccin Mocha theme."""
+        from pyGmsh.viewers.ui.theme import STYLESHEET
+        self.setStyleSheet(STYLESHEET)
 
     # ── Signal Connections ────────────────────────────────────────────
 
@@ -356,7 +330,7 @@ class MainWindow(QMainWindow):
 
             n = mesh_data.n_points
             e = mesh_data.n_cells
-            self.statusBar().showMessage(
+            self.set_status(
                 f"Loaded: {name} — {n:,} nodes, {e:,} elements"
             )
 
@@ -369,7 +343,7 @@ class MainWindow(QMainWindow):
         self._properties.clear()
         self._loaded_meshes.clear()
         self._active_mesh = None
-        self.statusBar().showMessage("All meshes closed")
+        self.set_status("All meshes closed")
 
     def _save_screenshot(self):
         filepath, _ = QFileDialog.getSaveFileName(
@@ -380,7 +354,41 @@ class MainWindow(QMainWindow):
         )
         if filepath:
             self._renderer.screenshot(filepath)
-            self.statusBar().showMessage(f"Screenshot saved: {filepath}")
+            self.set_status(f"Screenshot saved: {filepath}", 4000)
+
+    def _copy_screenshot_clipboard(self):
+        """Copy the current viewport to the system clipboard."""
+        try:
+            img = self._plotter_widget.screenshot(return_img=True)
+            from PIL import Image
+            import io
+            pil_img = Image.fromarray(img)
+            buf = io.BytesIO()
+            pil_img.save(buf, format="BMP")
+            from qtpy.QtCore import QByteArray
+            from qtpy.QtGui import QImage
+            from qtpy.QtWidgets import QApplication
+            qimg = QImage()
+            qimg.loadFromData(QByteArray(buf.getvalue()), "BMP")
+            QApplication.clipboard().setImage(qimg)
+            self.set_status("Screenshot copied to clipboard", 4000)
+        except Exception as exc:
+            self.set_status(f"Clipboard screenshot failed: {exc}", 4000)
+
+    def _toggle_projection(self, checked: bool):
+        """Toggle orthographic / perspective projection."""
+        try:
+            if checked:
+                self._plotter_widget.enable_parallel_projection()
+            else:
+                self._plotter_widget.disable_parallel_projection()
+        except Exception:
+            pass
+        self._plotter_widget.render()
+
+    def set_status(self, text: str, timeout: int = 0):
+        """Update the status bar message."""
+        self._statusbar.showMessage(text, timeout)
 
     # ── Slot Handlers ────────────────────────────────────────────────
 
@@ -401,7 +409,7 @@ class MainWindow(QMainWindow):
         if actor:
             cmap = actor.colormap
         self._renderer.set_scalar_field(mesh_name, field_name, colormap=cmap)
-        self.statusBar().showMessage(f"Contour: {field_name} on {mesh_name}")
+        self.set_status(f"Contour: {field_name} on {mesh_name}")
 
     def _on_display_mode(self, mode_name: str):
         if not self._active_mesh:
@@ -447,11 +455,11 @@ class MainWindow(QMainWindow):
                     displacement_field=disp_field,
                     scale_factor=scale,
                 )
-                self.statusBar().showMessage(
+                self.set_status(
                     f"Deformed: {disp_field} x {scale}"
                 )
             else:
-                self.statusBar().showMessage(
+                self.set_status(
                     "No displacement field found in this mesh"
                 )
                 self._controls.set_deformed_checked(False)
@@ -471,7 +479,7 @@ class MainWindow(QMainWindow):
         self._renderer.set_active_time_step(mesh_name, step)
         md = self._loaded_meshes.get(mesh_name)
         if md and md.time_steps and step < len(md.time_steps):
-            self.statusBar().showMessage(
+            self.set_status(
                 f"Time step {step} (t = {md.time_steps[step]:.4g})"
             )
 
@@ -486,7 +494,7 @@ class MainWindow(QMainWindow):
             # Re-set probe engine mesh reference after step change
             self._probe_engine.set_active_mesh(md.mesh, self._active_mesh)
         if md and md.time_steps and step < len(md.time_steps):
-            self.statusBar().showMessage(
+            self.set_status(
                 f"Time step {step} (t = {md.time_steps[step]:.4g})"
             )
 
@@ -509,19 +517,19 @@ class MainWindow(QMainWindow):
             )
             if nav:
                 nav(True)
-            self.statusBar().showMessage("Pick mode: Node — click on mesh")
+            self.set_status("Pick mode: Node — click on mesh")
         elif mode == "cell":
             self._renderer.enable_cell_picking(
                 callback=self._on_cell_picked
             )
             if nav:
                 nav(True)
-            self.statusBar().showMessage("Pick mode: Element — click on mesh")
+            self.set_status("Pick mode: Element — click on mesh")
         else:
             self._renderer.disable_picking()
             if nav:
                 nav(False)
-            self.statusBar().showMessage("Picking disabled")
+            self.set_status("Picking disabled")
 
     def _on_point_picked(self, point):
         """Handle node pick callback."""
@@ -539,7 +547,7 @@ class MainWindow(QMainWindow):
     def _ensure_probe_mesh(self) -> bool:
         """Set the active mesh on the probe engine. Returns True if ready."""
         if not self._active_mesh:
-            self.statusBar().showMessage("No active mesh — load a file first")
+            self.set_status("No active mesh — load a file first")
             return False
         md = self._loaded_meshes.get(self._active_mesh)
         if not md:
@@ -551,7 +559,7 @@ class MainWindow(QMainWindow):
         if not self._ensure_probe_mesh():
             return
         self._probe_engine.start_point_probe()
-        self.statusBar().showMessage(
+        self.set_status(
             "Point Probe: click on the mesh to sample field values"
         )
 
@@ -559,7 +567,7 @@ class MainWindow(QMainWindow):
         if not self._ensure_probe_mesh():
             return
         self._probe_engine.start_line_probe()
-        self.statusBar().showMessage(
+        self.set_status(
             "Line Probe: click FIRST point (A) on the mesh"
         )
 
@@ -568,14 +576,14 @@ class MainWindow(QMainWindow):
             return
         if normal == "interactive":
             self._probe_engine.start_interactive_plane()
-            self.statusBar().showMessage(
+            self.set_status(
                 "Plane Probe: drag the plane widget to slice"
             )
         else:
             result = self._probe_engine.probe_with_plane(normal=normal)
             if result:
                 self._probe_panel.show_plane_result(result)
-                self.statusBar().showMessage(
+                self.set_status(
                     f"Plane Probe: sliced along {normal.upper()} axis "
                     f"({result.slice_mesh.n_points} pts)"
                 )
@@ -583,29 +591,29 @@ class MainWindow(QMainWindow):
     def _clear_probes(self):
         self._probe_engine.clear_all()
         self._probe_panel.clear_results()
-        self.statusBar().showMessage("All probes cleared")
+        self.set_status("All probes cleared")
 
     def _stop_probe(self):
         self._probe_engine.stop()
-        self.statusBar().showMessage("Probe cancelled")
+        self.set_status("Probe cancelled")
 
     def _on_probe_point_result(self, result):
         self._probe_panel.show_point_result(result)
-        self.statusBar().showMessage(
+        self.set_status(
             f"Point Probe: node {result.closest_point_id}, "
             f"{len(result.field_values)} fields sampled"
         )
 
     def _on_probe_line_result(self, result):
         self._probe_panel.show_line_result(result)
-        self.statusBar().showMessage(
+        self.set_status(
             f"Line Probe: {result.n_samples} samples over "
             f"L = {result.total_length:.4f}"
         )
 
     def _on_probe_plane_result(self, result):
         self._probe_panel.show_plane_result(result)
-        self.statusBar().showMessage(
+        self.set_status(
             f"Plane Probe: {result.slice_mesh.n_points} pts on slice"
         )
 

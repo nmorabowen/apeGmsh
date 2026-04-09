@@ -5,12 +5,12 @@ in a collapsible tree structure.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
+from qtpy.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget, QLabel,
     QHeaderView,
 )
-from PySide6.QtCore import Signal, Qt
-from PySide6.QtGui import QIcon, QColor, QBrush
+from qtpy.QtCore import Signal, Qt
+from qtpy.QtGui import QIcon, QColor, QBrush
 
 from pyGmshViewer.loaders.vtu_loader import MeshData
 
@@ -34,9 +34,7 @@ class ModelTree(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
 
         title = QLabel("Model Tree")
-        title.setStyleSheet(
-            "font-weight: bold; font-size: 13px; color: #ddd; padding: 4px;"
-        )
+        title.setStyleSheet("font-weight: bold; font-size: 13px; padding: 4px;")
         layout.addWidget(title)
 
         self._tree = QTreeWidget()
@@ -45,27 +43,6 @@ class ModelTree(QWidget):
         self._tree.header().setStretchLastSection(True)
         self._tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._tree.setAlternatingRowColors(True)
-        self._tree.setStyleSheet("""
-            QTreeWidget {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                border: 1px solid #313244;
-                font-size: 12px;
-            }
-            QTreeWidget::item:selected {
-                background-color: #45475a;
-            }
-            QTreeWidget::item:hover {
-                background-color: #313244;
-            }
-            QHeaderView::section {
-                background-color: #181825;
-                color: #a6adc8;
-                border: 1px solid #313244;
-                padding: 4px;
-                font-weight: bold;
-            }
-        """)
         self._tree.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self._tree)
 

@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 import pyvista as pv
 
+from pyGmsh.viewers.ui.theme import RED, YELLOW
 from pyGmshViewer.loaders.vtu_loader import MeshData
 
 
@@ -99,8 +100,8 @@ class ProbeEngine:
     """
 
     # Visual constants
-    PROBE_COLOR = "#f38ba8"          # pink/red for probe markers
-    LINE_COLOR = "#f9e2af"           # yellow for probe line
+    PROBE_COLOR = RED                # pink/red for probe markers
+    LINE_COLOR = YELLOW              # yellow for probe line
     SLICE_COLOR = "jet"              # colormap for plane probe
     MARKER_SIZE = 14
     LINE_WIDTH = 3
