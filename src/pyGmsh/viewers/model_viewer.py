@@ -276,7 +276,20 @@ class ModelViewer:
         )
 
         # ── Selection tree panel ────────────────────────────────────
-        sel_tree = SelectionTreePanel()
+        def _tree_select_only(dts):
+            sel.select_batch(dts, replace=True)
+
+        def _tree_add(dts):
+            sel.select_batch(dts)
+
+        def _tree_remove(dts):
+            sel.box_remove(dts)
+
+        sel_tree = SelectionTreePanel(
+            on_select_only=_tree_select_only,
+            on_add_to_selection=_tree_add,
+            on_remove_from_selection=_tree_remove,
+        )
 
         # Add tabs to window
         win.add_tab("Browser", browser.widget)
