@@ -203,14 +203,14 @@ class ViewerWindow:
 
         # Subclass-provided actions first
         for tooltip, icon_text, callback in (toolbar_actions or []):
-            act = bar.addAction(self._make_icon(icon_text, "#cdd6f4"), "")
+            act = bar.addAction(self._make_icon(icon_text, "#2d2d2d"), "")
             act.setToolTip(tooltip)
             act.triggered.connect(callback)
         if toolbar_actions:
             bar.addSeparator()
 
         # Camera controls
-        _IC = "#cdd6f4"  # light text on dark toolbar
+        _IC = "#2d2d2d"
         self._act_parallel = bar.addAction(self._make_icon("\u2316", _IC), "")
         self._act_parallel.setToolTip("Ortho / perspective toggle")
         self._act_parallel.setCheckable(True)
@@ -237,6 +237,7 @@ class ViewerWindow:
         act_ss.setToolTip("Copy screenshot to clipboard")
         act_ss.triggered.connect(self._screenshot)
 
+        self._toolbar = bar
         self._window.addToolBar(QtCore.Qt.LeftToolBarArea, bar)
 
         # ── Menu bar ────────────────────────────────────────────────
@@ -269,17 +270,13 @@ class ViewerWindow:
 
     def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
         """Add a button to the toolbar (after construction)."""
-        bar = self._window.findChild(self._QtWidgets.QToolBar, "Tools")
-        if bar is not None:
-            act = bar.addAction(self._make_icon(icon_text, "#cdd6f4"), "")
-            act.setToolTip(tooltip)
-            act.triggered.connect(callback)
+        act = self._toolbar.addAction(self._make_icon(icon_text, "#2d2d2d"), "")
+        act.setToolTip(tooltip)
+        act.triggered.connect(callback)
 
     def add_toolbar_separator(self) -> None:
         """Add a separator to the toolbar."""
-        bar = self._window.findChild(self._QtWidgets.QToolBar, "Tools")
-        if bar is not None:
-            bar.addSeparator()
+        self._toolbar.addSeparator()
 
     def add_shortcut(self, key: str, callback) -> None:
         """Add a window-level keyboard shortcut (works regardless of focus).
