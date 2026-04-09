@@ -36,8 +36,11 @@ class Model:
     * **Boolean ops**  — ``fuse``, ``cut``, ``intersect``, ``fragment``
     * **Transforms**   — ``translate``, ``rotate``, ``scale``, ``mirror``,
       ``copy``
+    * **Sweep ops**    — ``extrude``, ``revolve``
     * **IO**           — ``load_iges``, ``load_step``, ``load_dxf``,
-      ``save_iges``, ``save_step``, ``save_dxf``
+      ``save_iges``, ``save_step``, ``save_dxf``, ``heal_shapes``
+    * **Queries**      — ``bounding_box``, ``center_of_mass``, ``mass``,
+      ``boundary``, ``adjacencies``, ``entities_in_bounding_box``
     * **Utilities**    — ``sync``, ``remove``, ``gui``, ``registry``
 
     All creation methods return plain integer tags so they compose
@@ -984,6 +987,131 @@ class Model:
         return new_tags
 
     # ------------------------------------------------------------------
+    # Extrusion / Revolution  (generative sweep ops)
+    # ------------------------------------------------------------------
+
+    def extrude(
+        self,
+        tags: TagsLike,
+        dx: float, dy: float, dz: float,
+        *,
+        dim          : int             = 2,
+        num_elements : list[int] | None = None,
+        heights      : list[float] | None = None,
+        recombine    : bool            = False,
+        sync         : bool            = True,
+    ) -> list[DimTag]:
+        """
+        Linear extrusion — sweeps entities along (dx, dy, dz).
+
+        Creates new geometry one dimension up: point → curve,
+        curve → surface, surface → volume.
+
+        Parameters
+        ----------
+        tags : entities to extrude.
+        dx, dy, dz : extrusion vector.
+        dim : default dimension for bare integer tags (default 2).
+        num_elements : structured layer counts, e.g. ``[10]`` for
+            10 layers.  Empty list (default) = unstructured.
+        heights : relative heights per layer, e.g. ``[0.3, 0.7]``.
+            Must sum to 1.0 when provided.  Empty = uniform layers.
+        recombine : if True, produce hex/quad elements instead of
+            tet/tri (requires structured layers).
+        sync : synchronise OCC kernel after extrusion (default True).
+
+        Returns
+        -------
+        list[DimTag]
+            All generated (dim, tag) pairs.  For a surface → volume
+            extrusion the list contains the top face, the volume, and
+            the lateral faces — index into it to assign physical groups.
+
+        Example
+        -------
+        ::
+
+            surf = g.model.add_plane_surface(loop)
+            out  = g.model.extrude(surf, 0, 0, 3.0, num_elements=[10])
+            # out[0] = (2, top_face), out[1] = (3, volume), ...
+        """
+        dt = self._as_dimtags(tags, dim)
+        ne = num_elements if num_elements is not None else []
+        ht = heights if heights is not None else []
+        result: list[tuple[int, int]] = gmsh.model.occ.extrude(
+            dt, dx, dy, dz,
+            numElements=ne,
+            heights=ht,
+            recombine=recombine,
+        )
+        if sync:
+            gmsh.model.occ.synchronize()
+        for d, t in result:
+            self._register(d, t, None, 'extrude')
+        self._log(
+            f"extrude({dt}, ({dx},{dy},{dz})) → {len(result)} entities"
+        )
+        return result
+
+    def revolve(
+        self,
+        tags  : TagsLike,
+        angle : float,
+        *,
+        x : float = 0.0, y : float = 0.0, z : float = 0.0,
+        ax: float = 0.0, ay: float = 0.0, az: float = 1.0,
+        dim          : int             = 2,
+        num_elements : list[int] | None = None,
+        heights      : list[float] | None = None,
+        recombine    : bool            = False,
+        sync         : bool            = True,
+    ) -> list[DimTag]:
+        """
+        Revolution — sweeps entities around an axis.
+
+        Parameters
+        ----------
+        tags : entities to revolve.
+        angle : sweep angle in radians (2π for full revolution).
+        x, y, z : point on the rotation axis.
+        ax, ay, az : direction vector of the rotation axis.
+        dim : default dimension for bare integer tags (default 2).
+        num_elements, heights, recombine : same as :meth:`extrude`.
+        sync : synchronise OCC kernel (default True).
+
+        Returns
+        -------
+        list[DimTag]
+            All generated (dim, tag) pairs.
+
+        Example
+        -------
+        ::
+
+            # Revolve a cross-section 360° around the Y axis
+            out = g.model.revolve(profile, 2 * math.pi, ay=1)
+        """
+        dt = self._as_dimtags(tags, dim)
+        ne = num_elements if num_elements is not None else []
+        ht = heights if heights is not None else []
+        result: list[tuple[int, int]] = gmsh.model.occ.revolve(
+            dt, x, y, z, ax, ay, az, angle,
+            numElements=ne,
+            heights=ht,
+            recombine=recombine,
+        )
+        if sync:
+            gmsh.model.occ.synchronize()
+        for d, t in result:
+            self._register(d, t, None, 'revolve')
+        self._log(
+            f"revolve({dt}, angle={math.degrees(angle):.1f}°, "
+            f"axis=({ax},{ay},{az}) through ({x},{y},{z})) "
+            f"→ {len(result)} entities"
+        )
+        return result
+
+    # ------------------------------------------------------------------
     # Remove
     # ------------------------------------------------------------------
 
@@ -1322,6 +1450,74 @@ class Model:
             Path(file_path), 'step', highest_dim_only, sync
         )
 
+    def heal_shapes(
+        self,
+        tags: TagsLike | None = None,
+        *,
+        dim             : int   = 3,
+        tolerance       : float = 1e-8,
+        fix_degenerated : bool  = True,
+        fix_small_edges : bool  = True,
+        fix_small_faces : bool  = True,
+        sew_faces       : bool  = True,
+        make_solids     : bool  = True,
+        sync            : bool  = True,
+    ) -> Model:
+        """
+        Heal topology issues in imported CAD geometry (STEP / IGES).
+
+        Wraps ``gmsh.model.occ.healShapes`` which fixes common issues
+        such as degenerate edges, tiny faces, gaps between faces, and
+        open shells that should be solids.
+
+        Parameters
+        ----------
+        tags : entities to heal (default: all entities in the model).
+        dim : default dimension for bare integer tags.
+        tolerance : healing tolerance (default 1e-8).
+        fix_degenerated : fix degenerate edges/faces.
+        fix_small_edges : remove edges smaller than tolerance.
+        fix_small_faces : remove faces smaller than tolerance.
+        sew_faces : reconnect open shells at shared edges.
+        make_solids : close healed shells into solids.
+        sync : synchronise OCC kernel (default True).
+
+        Returns
+        -------
+        self — for method chaining.
+
+        Example
+        -------
+        ::
+
+            imported = g.model.load_step("legacy_part.step")
+            g.model.heal_shapes(tolerance=1e-3)
+        """
+        if tags is not None:
+            dt = self._as_dimtags(tags, dim)
+        else:
+            dt = []  # empty = heal everything
+
+        out: list[tuple[int, int]] = gmsh.model.occ.healShapes(
+            dimTags=dt,
+            tolerance=tolerance,
+            fixDegenerated=fix_degenerated,
+            fixSmallEdges=fix_small_edges,
+            fixSmallFaces=fix_small_faces,
+            sewFaces=sew_faces,
+            makeSolids=make_solids,
+        )
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        for d, t in out:
+            if (d, t) not in self._registry:
+                self._register(d, t, None, 'healed')
+        self._log(
+            f"heal_shapes(tol={tolerance}) → {len(out)} entities output"
+        )
+        return self
+
     def save_iges(self, file_path: Path | str) -> None:
         """
         Export the current model to IGES.
@@ -1657,6 +1853,163 @@ class Model:
         dim_summary = {d: len(ts) for d, ts in result.items()}
         self._log(f"loaded MSH ← {file_path.name}  {dim_summary}")
         return result
+
+    # ------------------------------------------------------------------
+    # Geometry queries
+    # ------------------------------------------------------------------
+
+    def bounding_box(
+        self,
+        tag: Tag,
+        *,
+        dim: int = 3,
+    ) -> tuple[float, float, float, float, float, float]:
+        """
+        Return the axis-aligned bounding box of an entity.
+
+        Returns
+        -------
+        (xmin, ymin, zmin, xmax, ymax, zmax)
+
+        Example
+        -------
+        ``xmin, ymin, zmin, xmax, ymax, zmax = g.model.bounding_box(vol)``
+        """
+        d = self._resolve_dim(tag, dim)
+        return gmsh.model.getBoundingBox(d, tag)
+
+    def center_of_mass(
+        self,
+        tag: Tag,
+        *,
+        dim: int = 3,
+    ) -> tuple[float, float, float]:
+        """
+        Return the center of mass of an entity.
+
+        Example
+        -------
+        ``cx, cy, cz = g.model.center_of_mass(vol)``
+        """
+        d = self._resolve_dim(tag, dim)
+        return gmsh.model.occ.getCenterOfMass(d, tag)
+
+    def mass(
+        self,
+        tag: Tag,
+        *,
+        dim: int = 3,
+    ) -> float:
+        """
+        Return the mass (volume for 3D, area for 2D, length for 1D)
+        of an entity.
+
+        Example
+        -------
+        ``vol = g.model.mass(solid_tag)``
+        """
+        d = self._resolve_dim(tag, dim)
+        return gmsh.model.occ.getMass(d, tag)
+
+    def boundary(
+        self,
+        tags: TagsLike,
+        *,
+        dim      : int  = 3,
+        oriented : bool = False,
+        combined : bool = True,
+        recursive: bool = False,
+    ) -> list[DimTag]:
+        """
+        Return the boundary entities of the given entities.
+
+        Parameters
+        ----------
+        tags : entities whose boundary to query.
+        dim : default dimension for bare integer tags.
+        oriented : if True, return oriented boundary (signs on tags).
+        combined : if True, return the boundary of the combined entities.
+        recursive : if True, recurse down to dimension 0.
+
+        Returns
+        -------
+        list[DimTag]
+            Boundary entities as (dim, tag) pairs.
+
+        Example
+        -------
+        ::
+
+            faces = g.model.boundary(vol_tag)  # surfaces bounding a volume
+        """
+        dt = self._as_dimtags(tags, dim)
+        return gmsh.model.getBoundary(
+            dt,
+            combined=combined,
+            oriented=oriented,
+            recursive=recursive,
+        )
+
+    def adjacencies(
+        self,
+        tag: Tag,
+        *,
+        dim: int = 3,
+    ) -> tuple[list[Tag], list[Tag]]:
+        """
+        Return entities adjacent to the given entity.
+
+        Returns
+        -------
+        (upward, downward)
+            ``upward`` — tags of entities of ``dim + 1`` that contain
+            this entity.
+            ``downward`` — tags of entities of ``dim - 1`` on this
+            entity's boundary.
+
+        Example
+        -------
+        ::
+
+            up, down = g.model.adjacencies(face_tag, dim=2)
+            # up   = volumes bounded by this face
+            # down = curves on this face's boundary
+        """
+        d = self._resolve_dim(tag, dim)
+        up, down = gmsh.model.getAdjacencies(d, tag)
+        return list(up), list(down)
+
+    def entities_in_bounding_box(
+        self,
+        xmin: float, ymin: float, zmin: float,
+        xmax: float, ymax: float, zmax: float,
+        *,
+        dim: int = -1,
+    ) -> list[DimTag]:
+        """
+        Return all entities inside a bounding box.
+
+        Parameters
+        ----------
+        xmin, ymin, zmin, xmax, ymax, zmax : box limits.
+        dim : restrict to this dimension (-1 = all dimensions).
+
+        Returns
+        -------
+        list[DimTag]
+
+        Example
+        -------
+        ::
+
+            # Find all entities in a region
+            found = g.model.entities_in_bounding_box(
+                0, 0, 0,  10, 10, 10, dim=3
+            )
+        """
+        return gmsh.model.getEntitiesInBoundingBox(
+            xmin, ymin, zmin, xmax, ymax, zmax, dim,
+        )
 
     # ------------------------------------------------------------------
     # Visualisation
