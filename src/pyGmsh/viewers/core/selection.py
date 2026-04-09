@@ -75,6 +75,7 @@ class SelectionState:
         "_history",
         "_active_group",
         "_staged_groups",
+        "_group_order",
         "_tab_candidates",
         "_tab_index",
         "on_changed",
