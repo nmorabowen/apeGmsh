@@ -114,42 +114,45 @@ class DisplayTab:
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(6)
 
-        # Color mode
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(QtWidgets.QLabel("Color mode:"))
+        # ── Color group ─────────────────────────────────────────────
+        color_group = QtWidgets.QGroupBox("Color")
+        color_form = QtWidgets.QFormLayout(color_group)
         self._combo = QtWidgets.QComboBox()
         self._combo.addItems(COLOR_MODES)
         if on_color_mode:
             self._combo.currentTextChanged.connect(on_color_mode)
-        row.addWidget(self._combo)
-        layout.addLayout(row)
+        color_form.addRow("Mode", self._combo)
+        layout.addWidget(color_group)
 
-        # Label toggles
+        # ── Overlays group ──────────────────────────────────────────
+        overlay_group = QtWidgets.QGroupBox("Overlays")
+        overlay_layout = QtWidgets.QVBoxLayout(overlay_group)
+
         self._cb_node_labels = QtWidgets.QCheckBox("Node labels")
         if on_node_labels:
             self._cb_node_labels.toggled.connect(on_node_labels)
-        layout.addWidget(self._cb_node_labels)
+        overlay_layout.addWidget(self._cb_node_labels)
 
         self._cb_elem_labels = QtWidgets.QCheckBox("Element labels")
         if on_elem_labels:
             self._cb_elem_labels.toggled.connect(on_elem_labels)
-        layout.addWidget(self._cb_elem_labels)
+        overlay_layout.addWidget(self._cb_elem_labels)
 
-        # Wireframe / edges
         self._cb_wireframe = QtWidgets.QCheckBox("Wireframe")
         if on_wireframe:
             self._cb_wireframe.toggled.connect(on_wireframe)
-        layout.addWidget(self._cb_wireframe)
+        overlay_layout.addWidget(self._cb_wireframe)
 
         self._cb_edges = QtWidgets.QCheckBox("Show edges")
         self._cb_edges.setChecked(True)
         if on_show_edges:
             self._cb_edges.toggled.connect(on_show_edges)
-        layout.addWidget(self._cb_edges)
+        overlay_layout.addWidget(self._cb_edges)
 
+        layout.addWidget(overlay_group)
         layout.addStretch()
 
 
@@ -171,9 +174,10 @@ class MeshFilterTab:
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(4, 4, 4, 4)
 
-        layout.addWidget(QtWidgets.QLabel("Mesh dimensions:"))
+        dim_group = QtWidgets.QGroupBox("Dimensions")
+        dim_layout = QtWidgets.QVBoxLayout(dim_group)
 
         self._dim_cbs: dict[int, object] = {}
         dim_labels = {1: "1D (Lines)", 2: "2D (Surfaces)", 3: "3D (Volumes)"}
@@ -182,8 +186,9 @@ class MeshFilterTab:
             cb.setChecked(True)
             cb.toggled.connect(self._on_dim_toggled)
             self._dim_cbs[d] = cb
-            layout.addWidget(cb)
+            dim_layout.addWidget(cb)
 
+        layout.addWidget(dim_group)
         layout.addStretch()
 
     def _on_dim_toggled(self, _checked: bool) -> None:

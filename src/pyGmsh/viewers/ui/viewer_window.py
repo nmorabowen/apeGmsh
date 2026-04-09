@@ -143,12 +143,10 @@ class ViewerWindow:
         for name, widget in (tabs or []):
             self._tab_widget.addTab(widget, name)
 
-        tabs_dock = QtWidgets.QDockWidget("Panel")
+        tabs_dock = QtWidgets.QDockWidget()
+        tabs_dock.setTitleBarWidget(QtWidgets.QWidget())  # hide title bar
         tabs_dock.setMinimumWidth(320)
-        tabs_dock.setFeatures(
-            QtWidgets.QDockWidget.DockWidgetMovable
-            | QtWidgets.QDockWidget.DockWidgetFloatable
-        )
+        tabs_dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
         tabs_dock.setWidget(self._tab_widget)
         self._window.addDockWidget(QtCore.Qt.RightDockWidgetArea, tabs_dock)
 

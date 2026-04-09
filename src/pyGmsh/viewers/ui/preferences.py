@@ -49,11 +49,15 @@ class PreferencesTab:
         QtWidgets, QtCore, QtGui = _qt()
 
         self.widget = QtWidgets.QWidget()
-        form = QtWidgets.QFormLayout(self.widget)
-        form.setContentsMargins(8, 8, 8, 8)
-        form.setSpacing(6)
+        layout = QtWidgets.QVBoxLayout(self.widget)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
 
-        # ── Point size (pixels) ─────────────────────────────────────
+        # ── Geometry group ──────────────────────────────────────────
+        geo_group = QtWidgets.QGroupBox("Geometry")
+        geo_form = QtWidgets.QFormLayout(geo_group)
+        geo_form.setSpacing(4)
+
         self._s_point = QtWidgets.QSpinBox()
         self._s_point.setRange(1, 50)
         self._s_point.setValue(int(point_size))
@@ -62,9 +66,8 @@ class PreferencesTab:
             self._s_point.valueChanged.connect(
                 lambda v: on_point_size(float(v))
             )
-        form.addRow("Point size", self._s_point)
+        geo_form.addRow("Point size", self._s_point)
 
-        # ── Line width ──────────────────────────────────────────────
         self._s_line = QtWidgets.QDoubleSpinBox()
         self._s_line.setRange(0.5, 20.0)
         self._s_line.setSingleStep(0.5)
@@ -72,9 +75,8 @@ class PreferencesTab:
         self._s_line.setValue(float(line_width))
         if on_line_width:
             self._s_line.valueChanged.connect(on_line_width)
-        form.addRow("Line width", self._s_line)
+        geo_form.addRow("Line width", self._s_line)
 
-        # ── Surface opacity ─────────────────────────────────────────
         self._s_alpha = QtWidgets.QDoubleSpinBox()
         self._s_alpha.setRange(0.0, 1.0)
         self._s_alpha.setSingleStep(0.05)
@@ -82,37 +84,46 @@ class PreferencesTab:
         self._s_alpha.setValue(float(surface_opacity))
         if on_opacity:
             self._s_alpha.valueChanged.connect(on_opacity)
-        form.addRow("Surface \u03b1", self._s_alpha)
+        geo_form.addRow("Surface \u03b1", self._s_alpha)
 
-        # ── Show edges ──────────────────────────────────────────────
         self._cb_edges = QtWidgets.QCheckBox("Show surface edges")
         self._cb_edges.setChecked(show_surface_edges)
         if on_edges:
             self._cb_edges.toggled.connect(on_edges)
-        form.addRow(self._cb_edges)
+        geo_form.addRow(self._cb_edges)
 
-        # ── Anti-aliasing ───────────────────────────────────────────
+        layout.addWidget(geo_group)
+
+        # ── Rendering group ─────────────────────────────────────────
+        render_group = QtWidgets.QGroupBox("Rendering")
+        render_form = QtWidgets.QFormLayout(render_group)
+        render_form.setSpacing(4)
+
         self._cb_aa = QtWidgets.QCheckBox("Anti-aliasing (SSAA)")
         self._cb_aa.setChecked(True)
         if on_aa:
             self._cb_aa.toggled.connect(on_aa)
-        form.addRow(self._cb_aa)
+        render_form.addRow(self._cb_aa)
 
-        # ── Drag threshold ──────────────────────────────────────────
         self._s_drag = QtWidgets.QSpinBox()
         self._s_drag.setRange(2, 30)
         self._s_drag.setValue(drag_threshold)
         if on_drag_threshold:
             self._s_drag.valueChanged.connect(on_drag_threshold)
-        form.addRow("Drag threshold (px)", self._s_drag)
+        render_form.addRow("Drag threshold (px)", self._s_drag)
 
-        # ── Theme ───────────────────────────────────────────────────
-        form.addRow(QtWidgets.QLabel(""))  # spacer
+        layout.addWidget(render_group)
+
+        # ── Theme group ─────────────────────────────────────────────
+        theme_group = QtWidgets.QGroupBox("Theme")
+        theme_form = QtWidgets.QFormLayout(theme_group)
+        theme_form.setSpacing(4)
+
         self._theme_combo = QtWidgets.QComboBox()
         self._theme_combo.addItems(["Dark", "Light"])
         if on_theme:
             self._theme_combo.currentTextChanged.connect(on_theme)
-        form.addRow("Theme", self._theme_combo)
+        theme_form.addRow("Theme", self._theme_combo)
 
         # ── Pick color ──────────────────────────────────────────────
         self._btn_pick_color = QtWidgets.QPushButton()
@@ -139,12 +150,14 @@ class PreferencesTab:
                     self._on_pick_color(self._pick_color_hex)
 
         self._btn_pick_color.clicked.connect(_pick_color_clicked)
-        form.addRow("Selection color", self._btn_pick_color)
+        theme_form.addRow("Selection color", self._btn_pick_color)
+
+        layout.addWidget(theme_group)
+        layout.addStretch()
 
     def add_extra_row(self, label: str, widget) -> None:
-        """Add an extra row to the form (for viewer-specific prefs)."""
-        form = self.widget.layout()
-        form.addRow(label, widget)
+        """Add an extra row to the main layout."""
+        self.widget.layout().addWidget(widget)
 
     def add_separator(self, text: str = "") -> None:
         """Add a visual separator with optional label."""

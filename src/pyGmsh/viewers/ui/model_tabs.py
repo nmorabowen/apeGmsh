@@ -257,9 +257,10 @@ class FilterTab:
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(4, 4, 4, 4)
 
-        layout.addWidget(QtWidgets.QLabel("Pick filter — active dimensions:"))
+        filter_group = QtWidgets.QGroupBox("Pick Filter")
+        filter_layout = QtWidgets.QVBoxLayout(filter_group)
 
         self._checkboxes: dict[int, object] = {}
         dim_labels = {0: "Points (dim=0)", 1: "Curves (dim=1)",
@@ -269,9 +270,8 @@ class FilterTab:
             cb.setChecked(True)
             cb.toggled.connect(self._on_toggled)
             self._checkboxes[d] = cb
-            layout.addWidget(cb)
+            filter_layout.addWidget(cb)
 
-        # Quick buttons
         btn_row = QtWidgets.QHBoxLayout()
         btn_all = QtWidgets.QPushButton("All")
         btn_all.clicked.connect(self._select_all)
@@ -279,7 +279,9 @@ class FilterTab:
         btn_none = QtWidgets.QPushButton("None")
         btn_none.clicked.connect(self._select_none)
         btn_row.addWidget(btn_none)
-        layout.addLayout(btn_row)
+        filter_layout.addLayout(btn_row)
+
+        layout.addWidget(filter_group)
 
         layout.addStretch()
 
