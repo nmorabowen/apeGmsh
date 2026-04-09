@@ -81,7 +81,7 @@ class ViewerWindow:
         extra_docks: list[Any] | None = None,
         toolbar_actions: list[tuple[str, str, Callable]] | None = None,
         on_close: Callable[[], None] | None = None,
-        show_console: bool = True,
+        show_console: bool = False,
     ) -> None:
         QtWidgets, QtCore, QtGui, QtInteractor = _lazy_qt()
         self._QtWidgets = QtWidgets
