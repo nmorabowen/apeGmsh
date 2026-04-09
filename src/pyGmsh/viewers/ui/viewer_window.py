@@ -149,6 +149,7 @@ class ViewerWindow:
         tabs_dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
         tabs_dock.setWidget(self._tab_widget)
         self._window.addDockWidget(QtCore.Qt.RightDockWidgetArea, tabs_dock)
+        self._tabs_dock = tabs_dock
 
         # ── Extra docks ─────────────────────────────────────────────
         for dock in (extra_docks or []):
@@ -262,6 +263,17 @@ class ViewerWindow:
     def add_tab(self, name: str, widget) -> None:
         """Add a tab to the right-side panel (after construction)."""
         self._tab_widget.addTab(widget, name)
+
+    def add_right_bottom_dock(self, title: str, widget) -> None:
+        """Add a dock below the tabs dock on the right side."""
+        QtWidgets = self._QtWidgets
+        QtCore = self._QtCore
+        dock = QtWidgets.QDockWidget(title)
+        dock.setTitleBarWidget(QtWidgets.QWidget())  # hide title bar
+        dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
+        dock.setWidget(widget)
+        self._window.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
+        self._window.splitDockWidget(self._tabs_dock, dock, QtCore.Qt.Vertical)
 
     def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
         """Add a button to the toolbar (after construction)."""

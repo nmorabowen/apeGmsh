@@ -86,7 +86,7 @@ class ModelViewer:
         from .scene.brep_scene import build_brep_scene
         from .ui.viewer_window import ViewerWindow
         from .ui.preferences import PreferencesTab
-        from .ui.model_tabs import BrowserTab, FilterTab, ViewTab
+        from .ui.model_tabs import BrowserTab, FilterTab, ViewTab, SelectionTreePanel
 
         # Ensure geometry is synced
         gmsh.model.occ.synchronize()
@@ -213,14 +213,22 @@ class ModelViewer:
                 points = []
                 labels = []
                 for _, tag in gmsh.model.getEntities(dim=dim):
-                    try:
-                        bb = gmsh.model.getBoundingBox(dim, tag)
-                        cx = (bb[0] + bb[3]) * 0.5
-                        cy = (bb[1] + bb[4]) * 0.5
-                        cz = (bb[2] + bb[5]) * 0.5
-                        points.append([cx, cy, cz])
-                    except Exception:
-                        continue
+                    # Prefer registry centroid (computed from mesh
+                    # points, always inside the geometry) over bbox
+                    # center which can be outside concave shapes.
+                    dt = (dim, tag)
+                    c = registry.centroid(dt)
+                    if c is not None:
+                        points.append(c)
+                    else:
+                        try:
+                            bb = gmsh.model.getBoundingBox(dim, tag)
+                            cx = (bb[0] + bb[3]) * 0.5 - registry.origin_shift[0]
+                            cy = (bb[1] + bb[4]) * 0.5 - registry.origin_shift[1]
+                            cz = (bb[2] + bb[5]) * 0.5 - registry.origin_shift[2]
+                            points.append([cx, cy, cz])
+                        except Exception:
+                            continue
                     if use_names:
                         # Try to get physical group name
                         name = None
@@ -267,21 +275,29 @@ class ModelViewer:
             on_labels_changed=_on_labels_changed,
         )
 
+        # ── Selection tree panel ────────────────────────────────────
+        sel_tree = SelectionTreePanel()
+
         # Add tabs to window
         win.add_tab("Browser", browser.widget)
         win.add_tab("View", view_tab.widget)
         win.add_tab("Filter", filter_tab.widget)
         win.add_tab("Preferences", prefs.widget)
 
+        # Add selection tree as bottom dock
+        win.add_right_bottom_dock("Selection", sel_tree.widget)
+
         plotter = win.plotter
 
         # ── Build scene ─────────────────────────────────────────────
+        _verbose = getattr(self._parent, '_verbose', False)
         registry = build_brep_scene(
             plotter, self._dims,
             point_size=self._point_size,
             line_width=self._line_width,
             surface_opacity=self._surface_opacity,
             show_surface_edges=self._show_surface_edges,
+            verbose=_verbose,
         )
         self._registry = registry
 
@@ -295,7 +311,7 @@ class ModelViewer:
 
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
-        vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter)
+        vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
         pick_engine = PickEngine(plotter, registry)
 
         # ── Wire callbacks ──────────────────────────────────────────
@@ -347,23 +363,18 @@ class ModelViewer:
 
         # Selection changed → batch recolor + refresh UI
         def _on_sel_changed():
-            import time as _t
-            _t0 = _t.perf_counter()
             color_mgr.recolor_all(
                 picks=set(sel._picks),
                 hidden=vis_mgr.hidden,
                 hover=pick_engine.hover_entity,
             )
-            _t1 = _t.perf_counter()
             plotter.render()
-            _t2 = _t.perf_counter()
-            print(f"[sel_changed] recolor={(_t1-_t0)*1000:.1f}ms  "
-                  f"render={(_t2-_t1)*1000:.1f}ms")
             n = len(sel.picks)
             grp = sel.active_group or "none"
             win.set_status(f"{n} picked | group: {grp}")
 
         sel.on_changed.append(_on_sel_changed)
+        sel.on_changed.append(lambda: sel_tree.update(sel.picks))
         sel.on_changed.append(lambda: browser.update_active())
         # Write active group to Gmsh on every pick change
         sel.on_changed.append(lambda: sel.commit_active_group())

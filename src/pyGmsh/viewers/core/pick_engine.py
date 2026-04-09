@@ -276,8 +276,6 @@ class PickEngine:
         VTK calls).
         """
         import numpy as np
-        import time
-        _t0 = time.perf_counter()
 
         # DPI scaling
         try:
@@ -299,8 +297,7 @@ class PickEngine:
 
         hits: list["DimTag"] = []
 
-        # Collect all pickable entities and their bbox corners
-        _t1 = time.perf_counter()
+        # Collect all pickable entities and their representative points
         entities = []
         all_corners = []
         corner_counts = []
@@ -310,6 +307,15 @@ class PickEngine:
                 continue
             if self._hidden_check(dt):
                 continue
+            # For volumes (dim=3), use actual mesh boundary points
+            # instead of AABB corners for accurate concave selection
+            if dt[0] == 3:
+                pts = self._registry.entity_points(dt)
+                if pts is not None and len(pts) > 0:
+                    entities.append(dt)
+                    all_corners.append(pts)
+                    corner_counts.append(len(pts))
+                    continue
             bbox = self._registry.bbox(dt)
             if bbox is not None:
                 entities.append(dt)
@@ -321,8 +327,6 @@ class PickEngine:
                     entities.append(dt)
                     all_corners.append(c.reshape(1, 3))
                     corner_counts.append(1)
-
-        _t2 = time.perf_counter()
 
         if not entities:
             return
@@ -338,9 +342,7 @@ class PickEngine:
             screen_x[i] = dp[0]
             screen_y[i] = dp[1]
 
-        _t3 = time.perf_counter()
-
-        # Check each entity's corners against the box
+        # Check each entity's points against the box
         offset = 0
         for i, dt in enumerate(entities):
             n = corner_counts[i]
@@ -357,18 +359,8 @@ class PickEngine:
                 hits.append(dt)
             offset += n
 
-        _t4 = time.perf_counter()
-
         if hits and self.on_box_select is not None:
             self.on_box_select(hits, ctrl)
-
-        _t5 = time.perf_counter()
-        print(f"[box_select] {len(entities)} entities, {len(hits)} hits | "
-              f"collect={(_t2-_t1)*1000:.1f}ms  "
-              f"project={(_t3-_t2)*1000:.1f}ms  "
-              f"check={(_t4-_t3)*1000:.1f}ms  "
-              f"callback={(_t5-_t4)*1000:.1f}ms  "
-              f"total={(_t5-_t0)*1000:.1f}ms")
 
     @property
     def hover_entity(self) -> "DimTag | None":

@@ -30,6 +30,7 @@ class VisibilityManager:
         "_selection",
         "_plotter",
         "_hidden",
+        "_verbose",
         "on_changed",
     )
 
@@ -39,12 +40,15 @@ class VisibilityManager:
         color_mgr: "ColorManager",
         selection: "SelectionState",
         plotter: "pv.Plotter",
+        *,
+        verbose: bool = False,
     ) -> None:
         self._registry = registry
         self._color_mgr = color_mgr
         self._selection = selection
         self._plotter = plotter
         self._hidden: set["DimTag"] = set()
+        self._verbose = verbose
         self.on_changed: list[Callable[[], None]] = []
 
     @property
@@ -100,8 +104,9 @@ class VisibilityManager:
         Only rebuilds dimensions that have hidden entities (or all
         if revealing).
         """
-        import time
-        _t0 = time.perf_counter()
+        if self._verbose:
+            import time
+            _t0 = time.perf_counter()
         from .color_manager import IDLE_COLORS
         plotter = self._plotter
         reg = self._registry
@@ -185,9 +190,10 @@ class VisibilityManager:
             )
             reg.swap_dim(dim, visible, new_actor)
 
-        import time as _time
-        print(f"[visibility] _rebuild_actors: {(_time.perf_counter()-_t0)*1000:.1f}ms  "
-              f"({len(affected_dims)} dims, {len(self._hidden)} hidden)")
+        if self._verbose:
+            import time as _time
+            print(f"[visibility] _rebuild_actors: {(_time.perf_counter()-_t0)*1000:.1f}ms  "
+                  f"({len(affected_dims)} dims, {len(self._hidden)} hidden)")
 
     def _fire(self) -> None:
         for cb in self.on_changed:

@@ -179,6 +179,7 @@ def build_brep_scene(
     line_width: float = 6.0,
     surface_opacity: float = 0.35,
     show_surface_edges: bool = False,
+    verbose: bool = False,
 ) -> EntityRegistry:
     """Build batched BRep actors and return an :class:`EntityRegistry`.
 
@@ -516,14 +517,15 @@ def build_brep_scene(
             pass
 
     # ── profiling ───────────────────────────────────────────────────
-    total = time.perf_counter() - t0
-    print(f"\n[brep_scene] Built in {total:.2f}s  "
-          f"({len(registry.dims)} actors, {n_entities} entities)")
-    print(f"  Mesh generate : {t_mesh_elapsed:.3f}s"
-          f"  {'(existing)' if had_mesh else '(temp coarse)'}")
-    print(f"  dim0 points   : {t_d0:.3f}s  ({n_d0})")
-    print(f"  dim1 curves   : {t_d1:.3f}s  ({n_d1})")
-    print(f"  dim2 surfaces : {t_d2:.3f}s  ({n_d2})")
-    print(f"  dim3 volumes  : {t_d3:.3f}s  ({n_d3})")
+    if verbose:
+        total = time.perf_counter() - t0
+        print(f"\n[brep_scene] Built in {total:.2f}s  "
+              f"({len(registry.dims)} actors, {n_entities} entities)")
+        print(f"  Mesh generate : {t_mesh_elapsed:.3f}s"
+              f"  {'(existing)' if had_mesh else '(temp coarse)'}")
+        print(f"  dim0 points   : {t_d0:.3f}s  ({n_d0})")
+        print(f"  dim1 curves   : {t_d1:.3f}s  ({n_d1})")
+        print(f"  dim2 surfaces : {t_d2:.3f}s  ({n_d2})")
+        print(f"  dim3 volumes  : {t_d3:.3f}s  ({n_d3})")
 
     return registry

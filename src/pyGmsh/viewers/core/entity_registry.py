@@ -217,6 +217,38 @@ class EntityRegistry:
         """
         return self._bboxes.get(dt)
 
+    def entity_points(self, dt: DimTag, max_points: int = 64) -> np.ndarray | None:
+        """Return representative mesh points for entity *dt*.
+
+        For accurate box-selection of concave shapes (especially
+        volumes), returns actual mesh vertices rather than just AABB
+        corners.  If the entity has more than *max_points* unique
+        vertices, a uniform subsample is returned.
+        """
+        mesh = self.dim_meshes.get(dt[0])
+        if mesh is None:
+            return None
+        cells = self._dt_to_cells.get(dt)
+        if not cells:
+            return None
+        # Gather unique point indices for this entity's cells
+        try:
+            cell_arr = np.asarray(cells)
+            pt_ids = set()
+            for ci in cell_arr:
+                cell_pt_ids = mesh.get_cell(ci).point_ids
+                pt_ids.update(cell_pt_ids)
+            if not pt_ids:
+                return None
+            idx = np.array(sorted(pt_ids))
+            pts = np.asarray(mesh.points[idx])
+            if len(pts) > max_points:
+                step = len(pts) // max_points
+                pts = pts[::step]
+            return pts
+        except Exception:
+            return None
+
     @property
     def dims(self) -> list[int]:
         """Registered dimensions (sorted)."""

@@ -190,17 +190,11 @@ class MeshViewer:
             on_show_edges=_toggle_edges,
         )
         def _on_mesh_filter(active_dims: set[int]):
-            print(f"[mesh_filter] active_dims={active_dims}, "
-                  f"registry.dims={registry.dims}, "
-                  f"actors={list(registry.dim_actors.keys())}")
             for dim in registry.dims:
                 actor = registry.dim_actors.get(dim)
                 if actor is None:
-                    print(f"  dim={dim}: no actor")
                     continue
-                vis = dim in active_dims
-                actor.SetVisibility(vis)
-                print(f"  dim={dim}: SetVisibility({vis})")
+                actor.SetVisibility(dim in active_dims)
             plotter.render()
 
         filter_tab = MeshFilterTab(self._dims, on_filter_changed=_on_mesh_filter)
@@ -218,19 +212,21 @@ class MeshViewer:
         plotter = win.plotter
 
         # ── Build scene ─────────────────────────────────────────────
+        _verbose = getattr(self._parent, '_verbose', False)
         scene = build_mesh_scene(
             plotter, self._dims,
             line_width=self._line_width,
             surface_opacity=self._surface_opacity,
             show_surface_edges=self._show_surface_edges,
             node_marker_size=self._point_size,
+            verbose=_verbose,
         )
         self._scene_data = scene
         registry = scene.registry
 
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
-        vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter)
+        vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
         pick_engine = PickEngine(plotter, registry)
 
         # ── Pick mode state ─────────────────────────────────────────

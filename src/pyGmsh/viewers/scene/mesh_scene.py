@@ -241,6 +241,7 @@ def build_mesh_scene(
     node_marker_size: float = 6.0,
     node_color: str = "#FF6600",
     edge_color: str = "#2C4A6E",
+    verbose: bool = False,
 ) -> MeshSceneData:
     """Build batched mesh actors and return a :class:`MeshSceneData`.
 
@@ -427,15 +428,16 @@ def build_mesh_scene(
                 brep_to_group[dt] = pg_name
 
     # ── profiling ───────────────────────────────────────────────────
-    total = time.perf_counter() - t0
-    n_nodes = len(filt_tags)
-    entities = {d: len(gmsh.model.getEntities(d)) for d in dims}
-    print(f"\n[mesh_scene] Built in {total:.2f}s  "
-          f"({n_actors} actors, {n_nodes} nodes)")
-    print(f"  Entities: {entities}")
-    print(f"  Node setup    : {t_setup:.3f}s")
-    print(f"  Actor creation: {t_actors_elapsed:.3f}s")
-    print(f"  Remainder     : {total - t_setup - t_actors_elapsed:.3f}s")
+    if verbose:
+        total = time.perf_counter() - t0
+        n_nodes = len(filt_tags)
+        entities = {d: len(gmsh.model.getEntities(d)) for d in dims}
+        print(f"\n[mesh_scene] Built in {total:.2f}s  "
+              f"({n_actors} actors, {n_nodes} nodes)")
+        print(f"  Entities: {entities}")
+        print(f"  Node setup    : {t_setup:.3f}s")
+        print(f"  Actor creation: {t_actors_elapsed:.3f}s")
+        print(f"  Remainder     : {total - t_setup - t_actors_elapsed:.3f}s")
 
     return MeshSceneData(
         registry=registry,
