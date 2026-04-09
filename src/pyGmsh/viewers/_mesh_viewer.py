@@ -227,12 +227,15 @@ class MeshViewer:
         pick_engine.install()
 
         # ── Keybindings ─────────────────────────────────────────────
+        # VTK-level
         plotter.add_key_event("h", lambda: (vis_mgr.hide(), plotter.render()))
         plotter.add_key_event("i", lambda: (vis_mgr.isolate(), plotter.render()))
         plotter.add_key_event("r", lambda: (vis_mgr.reveal_all(), plotter.render()))
         plotter.add_key_event("u", lambda: sel.undo())
-        plotter.add_key_event("Escape", lambda: sel.clear())
-        plotter.add_key_event("q", lambda: plotter.close())
+
+        # Window-level (work regardless of focus)
+        win.add_shortcut("Escape", lambda: sel.clear())
+        win.add_shortcut("Q", lambda: win.window.close())
 
         # Pick mode toggles
         def _set_mode(m):

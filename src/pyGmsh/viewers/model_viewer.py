@@ -369,14 +369,12 @@ class ModelViewer:
         pick_engine.install()
 
         # ── Keybindings ─────────────────────────────────────────────
+        # VTK-level (only when 3D viewport has focus)
         plotter.add_key_event("h", lambda: (vis_mgr.hide(), plotter.render()))
         plotter.add_key_event("i", lambda: (vis_mgr.isolate(), plotter.render()))
         plotter.add_key_event("r", lambda: (vis_mgr.reveal_all(), plotter.render()))
         plotter.add_key_event("u", lambda: sel.undo())
-        plotter.add_key_event("Escape", lambda: sel.clear())
-        plotter.add_key_event("q", lambda: plotter.close())
 
-        # Dim filters: 1-4 keys
         for key, dim_set in [
             ("1", {0}), ("2", {1}), ("3", {2}), ("4", {3}),
             ("0", set(self._dims)),
@@ -385,6 +383,10 @@ class ModelViewer:
                 key,
                 lambda ds=dim_set: pick_engine.set_pickable_dims(ds),
             )
+
+        # Window-level (work regardless of focus / mouse position)
+        win.add_shortcut("Escape", lambda: sel.clear())
+        win.add_shortcut("Q", lambda: win.window.close())
 
         # ── Pre-load group if specified ─────────────────────────────
         if self._physical_group is not None and sel.picks:

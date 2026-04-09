@@ -267,6 +267,21 @@ class ViewerWindow:
         """Add a tab to the right-side panel (after construction)."""
         self._tab_widget.addTab(widget, name)
 
+    def add_shortcut(self, key: str, callback) -> None:
+        """Add a window-level keyboard shortcut (works regardless of focus).
+
+        Parameters
+        ----------
+        key : str
+            Qt key sequence string, e.g. ``"Escape"``, ``"Q"``, ``"H"``.
+        callback : callable
+            Called when the key is pressed.
+        """
+        from qtpy.QtWidgets import QShortcut
+        from qtpy.QtGui import QKeySequence
+        shortcut = QShortcut(QKeySequence(key), self._window)
+        shortcut.activated.connect(callback)
+
     def set_status(self, text: str, timeout: int = 0) -> None:
         self._statusbar.showMessage(text, timeout)
 
