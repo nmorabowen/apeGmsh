@@ -205,6 +205,22 @@ STYLESHEET = f"""
         left: 8px;
         padding: 0 4px;
     }}
+    /* ── Dialogs ─────────────────────────────────────────── */
+    QDialog {{
+        background-color: {BASE};
+        color: {TEXT};
+    }}
+    QLineEdit {{
+        background-color: {SURFACE0};
+        color: {TEXT};
+        border: 1px solid {SURFACE1};
+        border-radius: 3px;
+        padding: 4px 6px;
+    }}
+    QMessageBox {{
+        background-color: {BASE};
+        color: {TEXT};
+    }}
 """
 
 
