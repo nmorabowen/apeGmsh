@@ -85,6 +85,7 @@ class SelectionState:
         self._history: list["DimTag"] = []
         self._active_group: str | None = None
         self._staged_groups: dict[str, list["DimTag"]] = {}
+        self._group_order: list[str] = []  # creation order
         self._tab_candidates: list["DimTag"] = []
         self._tab_index: int = 0
         self.on_changed: list[Callable[[], None]] = []
@@ -205,6 +206,11 @@ class SelectionState:
     def staged_groups(self) -> dict[str, list["DimTag"]]:
         return dict(self._staged_groups)
 
+    @property
+    def group_order(self) -> list[str]:
+        """Group names in creation order."""
+        return list(self._group_order)
+
     def set_active_group(self, name: str | None) -> None:
         """Switch active group, writing the outgoing group to Gmsh.
 
@@ -230,6 +236,8 @@ class SelectionState:
                 _write_group(self._active_group, members)
 
         self._active_group = name
+        if name is not None and name not in self._group_order:
+            self._group_order.append(name)
         if name is None:
             self._picks = []
         elif name in self._staged_groups:

@@ -100,15 +100,35 @@ class BrowserTab:
         self._tree.clear()
         self._group_items: dict[str, object] = {}
 
-        # Collect groups sorted by tag
-        groups = self._collect_groups()
-        seen_names: set[str] = set()
+        # Collect groups from Gmsh, keyed by name
+        gmsh_groups = {}
+        for name, pg_dim, pg_tag, members in self._collect_groups():
+            gmsh_groups[name] = members
+
+        # Merge with staged groups
+        all_groups: dict[str, list[tuple]] = dict(gmsh_groups)
+        for name, members in self._selection.staged_groups.items():
+            if name not in all_groups:
+                all_groups[name] = members
+
+        # Order: follow SelectionState._group_order (creation order),
+        # then any Gmsh groups not in the order list (pre-existing)
+        order = self._selection.group_order
+        ordered_names: list[str] = []
+        # Pre-existing Gmsh groups first (by original tag order)
+        for name in gmsh_groups:
+            if name not in order:
+                ordered_names.append(name)
+        # Then groups in creation order
+        for name in order:
+            if name in all_groups and name not in ordered_names:
+                ordered_names.append(name)
 
         active = self._selection.active_group
         dim_labels = {0: "pt", 1: "crv", 2: "srf", 3: "vol"}
 
-        for name, pg_dim, pg_tag, members in groups:
-            seen_names.add(name)
+        for name in ordered_names:
+            members = all_groups[name]
             item = QtWidgets.QTreeWidgetItem(self._tree)
             item.setText(0, name)
             item.setText(1, str(len(members)))
@@ -132,27 +152,6 @@ class BrowserTab:
                 child.setText(0, f"{dim_labels.get(dim, '?')} {tag}")
                 child.setData(0, 0x0100, ("entity", (dim, tag)))
 
-            self._group_items[name] = item
-
-        # Staged-only groups (not yet in Gmsh)
-        for name, members in self._selection.staged_groups.items():
-            if name in seen_names:
-                continue
-            item = QtWidgets.QTreeWidgetItem(self._tree)
-            item.setText(0, name)
-            item.setText(1, str(len(members)))
-            item.setData(0, 0x0100, ("group", name))
-            if name == active:
-                item.setForeground(
-                    0, QtGui.QBrush(QtGui.QColor("#a6e3a1")),
-                )
-                font = item.font(0)
-                font.setBold(True)
-                item.setFont(0, font)
-            else:
-                item.setForeground(
-                    0, QtGui.QBrush(QtGui.QColor("#f9e2af")),
-                )
             self._group_items[name] = item
 
     def update_active(self) -> None:

@@ -101,6 +101,15 @@ class ModelViewer:
         sel = SelectionState()
         self._selection_state = sel
 
+        # Seed group order with pre-existing Gmsh groups (by tag)
+        for pg_dim, pg_tag in sorted(gmsh.model.getPhysicalGroups(), key=lambda x: x[1]):
+            try:
+                pg_name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
+                if pg_name and pg_name not in sel._group_order:
+                    sel._group_order.append(pg_name)
+            except Exception:
+                pass
+
         if self._physical_group is not None:
             sel.set_active_group(self._physical_group)
 
