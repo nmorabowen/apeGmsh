@@ -277,6 +277,7 @@ class MainWindow(QMainWindow):
         self._controls.camera_view_changed.connect(self._set_camera_view)
         self._controls.picking_mode_changed.connect(self._set_picking)
         self._controls.screenshot_requested.connect(self._save_screenshot)
+        self._controls.aa_toggled.connect(self._on_aa_toggled)
 
         # Time-step navigation
         self._model_tree.time_step_selected.connect(self._on_time_step_selected)
@@ -374,6 +375,17 @@ class MainWindow(QMainWindow):
             self.set_status("Screenshot copied to clipboard", 4000)
         except Exception as exc:
             self.set_status(f"Clipboard screenshot failed: {exc}", 4000)
+
+    def _on_aa_toggled(self, checked: bool):
+        """Toggle anti-aliasing on the VTK viewport."""
+        try:
+            if checked:
+                self._plotter_widget.enable_anti_aliasing("ssaa")
+            else:
+                self._plotter_widget.disable_anti_aliasing()
+        except Exception:
+            pass
+        self._plotter_widget.render()
 
     def _toggle_projection(self, checked: bool):
         """Toggle orthographic / perspective projection."""

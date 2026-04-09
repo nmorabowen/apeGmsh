@@ -29,6 +29,7 @@ class ControlsPanel(QWidget):
     picking_mode_changed = Signal(str)         # "none", "point", "cell"
     screenshot_requested = Signal()
     time_step_changed = Signal(int)            # step index
+    aa_toggled = Signal(bool)                  # anti-aliasing
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -181,6 +182,15 @@ class ControlsPanel(QWidget):
         pkl.addLayout(row)
 
         layout.addWidget(pick_group)
+
+        # ── Rendering ────────────────────────────────────────────────
+        render_group = self._make_group("Rendering")
+        rl = QVBoxLayout(render_group)
+        self._aa_check = QCheckBox("Anti-aliasing (SSAA)")
+        self._aa_check.setChecked(True)
+        self._aa_check.toggled.connect(self.aa_toggled.emit)
+        rl.addWidget(self._aa_check)
+        layout.addWidget(render_group)
 
         # ── Screenshot ───────────────────────────────────────────────
         btn = QPushButton("Save Screenshot")
