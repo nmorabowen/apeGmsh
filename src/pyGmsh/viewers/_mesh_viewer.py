@@ -176,7 +176,11 @@ class MeshViewer:
                 actor = registry.dim_actors.get(dim)
                 if actor is None or dim < 2:
                     continue
-                actor.GetProperty().SetEdgeVisibility(checked)
+                prop = actor.GetProperty()
+                prop.SetEdgeVisibility(checked)
+                if checked:
+                    prop.SetEdgeColor(0.17, 0.29, 0.43)  # #2C4A6E
+                    prop.SetLineWidth(0.5)
             plotter.render()
 
         display_tab = DisplayTab(
