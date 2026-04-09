@@ -170,7 +170,7 @@ def extract_physical_groups() -> dict[tuple[int, int], dict]:
 # Full FEMData assembly
 # =====================================================================
 
-def build_fem_data(dim: int = 2):
+def build_fem_data(dim: int = 2, mesh_selection_composite=None):
     """
     Extract a complete :class:`FEMData` from the live Gmsh session.
 
@@ -181,6 +181,8 @@ def build_fem_data(dim: int = 2):
     ----------
     dim : int
         Element dimension to extract.
+    mesh_selection_composite : MeshSelectionSet, optional
+        If provided, a snapshot is taken and attached to FEMData.
 
     Returns
     -------
@@ -221,6 +223,11 @@ def build_fem_data(dim: int = 2):
 
     physical = PhysicalGroupSet(extract_physical_groups())
 
+    # Snapshot mesh selections if available
+    ms_store = None
+    if mesh_selection_composite is not None and len(mesh_selection_composite) > 0:
+        ms_store = mesh_selection_composite._snapshot()
+
     result = FEMData(
         node_ids=node_ids,
         node_coords=node_coords,
@@ -228,6 +235,7 @@ def build_fem_data(dim: int = 2):
         connectivity=connectivity,
         info=info,
         physical=physical,
+        mesh_selection=ms_store,
     )
 
     return result

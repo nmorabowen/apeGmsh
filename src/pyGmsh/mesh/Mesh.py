@@ -1581,7 +1581,8 @@ class Mesh:
         """
         from ._fem_extract import build_fem_data
 
-        result = build_fem_data(dim=dim)
+        ms_composite = getattr(self._parent, 'mesh_selection', None)
+        result = build_fem_data(dim=dim, mesh_selection_composite=ms_composite)
 
         self._log(
             f"get_fem_data(dim={dim}) → "

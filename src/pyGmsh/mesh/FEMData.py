@@ -400,6 +400,7 @@ class FEMData:
     connectivity:  ndarray
     info:          MeshInfo          = field(repr=False)
     physical:      PhysicalGroupSet  = field(repr=False)
+    mesh_selection: "MeshSelectionStore" = field(repr=False, default=None)
 
     # ── Lazy lookup caches (not part of __init__) ────────────
 
@@ -424,6 +425,10 @@ class FEMData:
         object.__setattr__(
             self, 'node_coords',
             np.asarray(self.node_coords, dtype=np.float64))
+        # Default mesh_selection to empty store if not provided
+        if self.mesh_selection is None:
+            from .MeshSelectionSet import MeshSelectionStore
+            object.__setattr__(self, 'mesh_selection', MeshSelectionStore({}))
 
     # ── Solver-friendly iterators ────────────────────────────
 

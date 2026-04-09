@@ -33,8 +33,9 @@ class pyGmsh(_SessionBase):
         ("model",     ".core.Model",            "Model",          False),
         ("mesh",      ".mesh.Mesh",             "Mesh",           False),
         ("loader",    ".mesh.MshLoader",        "MshLoader",      False),
-        ("physical",  ".mesh.PhysicalGroups",   "PhysicalGroups", False),
-        ("partition", ".mesh.Partition",        "Partition",      False),
+        ("physical",        ".mesh.PhysicalGroups",    "PhysicalGroups",    False),
+        ("mesh_selection",  ".mesh.MeshSelectionSet",  "MeshSelectionSet",  False),
+        ("partition",       ".mesh.Partition",         "Partition",         False),
         ("view",      ".mesh.View",             "View",           False),
         ("g2o",       ".solvers.Gmsh2OpenSees", "Gmsh2OpenSees",  False),
         ("opensees",  ".solvers.OpenSees",      "OpenSees",       False),
@@ -47,6 +48,7 @@ class pyGmsh(_SessionBase):
     mesh: Mesh
     loader: MshLoader
     physical: PhysicalGroups
+    mesh_selection: MeshSelectionSet
     partition: Partition
     view: View
     g2o: Gmsh2OpenSees
