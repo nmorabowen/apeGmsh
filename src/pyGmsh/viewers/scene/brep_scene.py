@@ -285,12 +285,17 @@ def build_brep_scene(
         pt_off = 0
         for _, tag in gmsh.model.getEntities(dim=1):
             try:
-                ntags, ncoords, _ = gmsh.model.mesh.getNodes(
+                ntags, ncoords, nparams = gmsh.model.mesh.getNodes(
                     dim=1, tag=tag, includeBoundary=True,
                 )
                 if len(ntags) < 2:
                     continue
                 pts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
+                # Sort nodes by parametric coordinate along the curve
+                params = np.asarray(nparams, dtype=np.float64)
+                if len(params) == len(pts):
+                    order = np.argsort(params)
+                    pts = pts[order]
                 n = len(pts)
                 n_lines = n - 1
                 idx = np.arange(n_lines, dtype=np.int64)
