@@ -399,14 +399,18 @@ class ModelViewer:
         plotter.add_key_event("r", lambda: (vis_mgr.reveal_all(), plotter.render()))
         plotter.add_key_event("u", lambda: sel.undo())
 
+        # Dim filters: 0=points, 1=curves, 2=surfaces, 3=volumes
         for key, dim_set in [
-            ("1", {0}), ("2", {1}), ("3", {2}), ("4", {3}),
-            ("0", set(self._dims)),
+            ("0", {0}), ("1", {1}), ("2", {2}), ("3", {3}),
         ]:
             plotter.add_key_event(
                 key,
-                lambda ds=dim_set: pick_engine.set_pickable_dims(ds),
+                lambda ds=dim_set: _on_filter(ds),
             )
+        # 9 = all dims
+        plotter.add_key_event(
+            "9", lambda: _on_filter(set(self._dims)),
+        )
 
         # Window-level (work regardless of focus / mouse position)
         win.add_shortcut("Escape", lambda: sel.clear())
