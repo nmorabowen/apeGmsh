@@ -267,6 +267,20 @@ class ViewerWindow:
         """Add a tab to the right-side panel (after construction)."""
         self._tab_widget.addTab(widget, name)
 
+    def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
+        """Add a button to the toolbar (after construction)."""
+        bar = self._window.findChild(self._QtWidgets.QToolBar, "Tools")
+        if bar is not None:
+            act = bar.addAction(self._make_icon(icon_text, "#2d2d2d"), "")
+            act.setToolTip(tooltip)
+            act.triggered.connect(callback)
+
+    def add_toolbar_separator(self) -> None:
+        """Add a separator to the toolbar."""
+        bar = self._window.findChild(self._QtWidgets.QToolBar, "Tools")
+        if bar is not None:
+            bar.addSeparator()
+
     def add_shortcut(self, key: str, callback) -> None:
         """Add a window-level keyboard shortcut (works regardless of focus).
 

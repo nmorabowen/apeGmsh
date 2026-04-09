@@ -368,6 +368,21 @@ class ModelViewer:
         # ── Install pick engine ─────────────────────────────────────
         pick_engine.install()
 
+        # ── Toolbar buttons for visibility ──────────────────────────
+        win.add_toolbar_separator()
+        win.add_toolbar_button(
+            "Hide selected (H)", "H",
+            lambda: (vis_mgr.hide(), plotter.render()),
+        )
+        win.add_toolbar_button(
+            "Isolate selected (I)", "I",
+            lambda: (vis_mgr.isolate(), plotter.render()),
+        )
+        win.add_toolbar_button(
+            "Reveal all (R)", "R",
+            lambda: (vis_mgr.reveal_all(), plotter.render()),
+        )
+
         # ── Keybindings ─────────────────────────────────────────────
         # VTK-level (only when 3D viewport has focus)
         plotter.add_key_event("h", lambda: (vis_mgr.hide(), plotter.render()))

@@ -65,6 +65,7 @@ class EntityRegistry:
         actor: Any,
         cell_to_dt: dict[int, DimTag],
         centroids: dict[DimTag, np.ndarray] | None = None,
+        bboxes: dict[DimTag, np.ndarray] | None = None,
     ) -> None:
         """Register a merged mesh + actor for one dimension.
 
@@ -80,6 +81,9 @@ class EntityRegistry:
             Mapping from cell index (within *mesh*) to ``DimTag``.
         centroids : dict, optional
             Mapping from ``DimTag`` to 3D centroid coordinates.
+        bboxes : dict, optional
+            Mapping from ``DimTag`` to ``ndarray (8, 3)`` AABB corners.
+            If not provided, computed from centroids (degenerate boxes).
         """
         self.dim_meshes[dim] = mesh
         self.dim_actors[dim] = actor
@@ -95,8 +99,13 @@ class EntityRegistry:
         if centroids:
             self.centroids.update(centroids)
 
-        # Precompute bounding boxes from mesh point data
-        self._compute_bboxes(dim, mesh, inv)
+        if bboxes:
+            self._bboxes.update(bboxes)
+        elif centroids:
+            # Fallback: degenerate bbox from centroid
+            for dt, c in centroids.items():
+                if dt not in self._bboxes:
+                    self._bboxes[dt] = np.tile(c, (8, 1))
 
     # ------------------------------------------------------------------
     # Pick resolution
@@ -172,58 +181,6 @@ class EntityRegistry:
     def dims(self) -> list[int]:
         """Registered dimensions (sorted)."""
         return sorted(self.dim_meshes.keys())
-
-    def _compute_bboxes(
-        self, dim: int, mesh: Any, dt_to_cells: dict[DimTag, list[int]],
-    ) -> None:
-        """Precompute axis-aligned bounding boxes from mesh cell points."""
-        try:
-            points = np.asarray(mesh.points)
-        except Exception:
-            return
-
-        # For each entity, find all unique point indices from its cells
-        # and compute min/max bounds
-        try:
-            cell_conn = mesh.cell_connectivity
-        except AttributeError:
-            return
-
-        for dt, cells in dt_to_cells.items():
-            try:
-                # Collect all point indices used by this entity's cells
-                pt_indices = set()
-                for ci in cells:
-                    try:
-                        cell_pts = mesh.get_cell(ci).point_ids
-                        pt_indices.update(cell_pts)
-                    except Exception:
-                        pass
-                if not pt_indices:
-                    # Fallback to centroid-based bbox
-                    c = self.centroids.get(dt)
-                    if c is not None:
-                        self._bboxes[dt] = np.tile(c, (8, 1))
-                    continue
-
-                entity_pts = points[list(pt_indices)]
-                mins = entity_pts.min(axis=0)
-                maxs = entity_pts.max(axis=0)
-
-                # 8 corners of AABB
-                corners = np.array([
-                    [mins[0], mins[1], mins[2]],
-                    [maxs[0], mins[1], mins[2]],
-                    [mins[0], maxs[1], mins[2]],
-                    [maxs[0], maxs[1], mins[2]],
-                    [mins[0], mins[1], maxs[2]],
-                    [maxs[0], mins[1], maxs[2]],
-                    [mins[0], maxs[1], maxs[2]],
-                    [maxs[0], maxs[1], maxs[2]],
-                ])
-                self._bboxes[dt] = corners
-            except Exception:
-                pass
 
     def __len__(self) -> int:
         return len(self._dt_to_cells)

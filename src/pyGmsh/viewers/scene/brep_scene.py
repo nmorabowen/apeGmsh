@@ -150,6 +150,27 @@ def _generate_temp_mesh(diag: float) -> None:
 # Public API
 # ======================================================================
 
+def _compute_entity_bboxes(dims: list[int]) -> dict:
+    """Compute AABB corners for all entities from Gmsh bounding boxes."""
+    bboxes = {}
+    for dim in dims:
+        for _, tag in gmsh.model.getEntities(dim=dim):
+            try:
+                bb = gmsh.model.getBoundingBox(dim, tag)
+                xmin, ymin, zmin = bb[0], bb[1], bb[2]
+                xmax, ymax, zmax = bb[3], bb[4], bb[5]
+                corners = np.array([
+                    [xmin, ymin, zmin], [xmax, ymin, zmin],
+                    [xmin, ymax, zmin], [xmax, ymax, zmin],
+                    [xmin, ymin, zmax], [xmax, ymin, zmax],
+                    [xmin, ymax, zmax], [xmax, ymax, zmax],
+                ])
+                bboxes[(dim, tag)] = corners
+            except Exception:
+                pass
+    return bboxes
+
+
 def build_brep_scene(
     plotter: pv.Plotter,
     dims: list[int],
@@ -218,6 +239,9 @@ def build_brep_scene(
         len(all_node_tags), dtype=np.int64,
     )
 
+    # ── precompute bounding boxes from Gmsh ───────────────────────
+    all_bboxes = _compute_entity_bboxes(dims)
+
     n_entities = 0
 
     # ── dim=0: point glyphs ─────────────────────────────────────────
@@ -243,7 +267,8 @@ def build_brep_scene(
                 point_size=point_size,
                 idle_color=IDLE_COLORS[0],
             )
-            registry.register_dim(0, mesh, actor, cell_to_dt, centroids)
+            d0_bboxes = {dt: all_bboxes[dt] for dt in centroids if dt in all_bboxes}
+            registry.register_dim(0, mesh, actor, cell_to_dt, centroids, d0_bboxes)
     t_d0 = time.perf_counter() - t_dim
     n_entities += n_d0
 
@@ -304,7 +329,8 @@ def build_brep_scene(
             for dt, cells in dt_cells.items():
                 for ci in cells:
                     cell_to_dt_d1[ci] = dt
-            registry.register_dim(1, poly, actor, cell_to_dt_d1, centroids_d1)
+            d1_bboxes = {dt: all_bboxes[dt] for dt in centroids_d1 if dt in all_bboxes}
+            registry.register_dim(1, poly, actor, cell_to_dt_d1, centroids_d1, d1_bboxes)
     t_d1 = time.perf_counter() - t_dim
     n_entities += n_d1
 
@@ -364,7 +390,8 @@ def build_brep_scene(
             for dt, cells in dt_cells.items():
                 for ci in cells:
                     cell_to_dt_d2[ci] = dt
-            registry.register_dim(2, poly, actor, cell_to_dt_d2, centroids_d2)
+            d2_bboxes = {dt: all_bboxes[dt] for dt in centroids_d2 if dt in all_bboxes}
+            registry.register_dim(2, poly, actor, cell_to_dt_d2, centroids_d2, d2_bboxes)
     t_d2 = time.perf_counter() - t_dim
     n_entities += n_d2
 
