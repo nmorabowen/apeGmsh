@@ -269,7 +269,11 @@ class PickEngine:
             self.on_hover(new_dt)
 
     def _do_box(self, x0: int, y0: int, x1: int, y1: int, ctrl: bool) -> None:
-        """Project entity centroids to screen and collect those inside box."""
+        """Box-select with proper window vs crossing modes.
+
+        Left-to-right (window): entity must be **fully enclosed**.
+        Right-to-left (crossing): entity must **overlap** the box.
+        """
         # DPI scaling
         try:
             rw = self._plotter.render_window
@@ -280,6 +284,7 @@ class PickEngine:
         except Exception:
             sx_ratio = sy_ratio = 1.0
 
+        crossing = x1 < x0  # R→L drag = crossing mode
         bx0 = min(x0, x1) * sx_ratio
         bx1 = max(x0, x1) * sx_ratio
         by0 = min(y0, y1) * sy_ratio
@@ -288,18 +293,40 @@ class PickEngine:
         renderer = self._plotter.renderer
         hits: list["DimTag"] = []
 
+        def _project(xyz):
+            renderer.SetWorldPoint(xyz[0], xyz[1], xyz[2], 1.0)
+            renderer.WorldToDisplay()
+            return renderer.GetDisplayPoint()[:2]
+
         for dt in self._registry.all_entities():
             if dt[0] not in self._pickable_dims:
                 continue
             if self._hidden_check(dt):
                 continue
-            xyz = self._registry.centroid(dt)
-            if xyz is None:
-                continue
-            renderer.SetWorldPoint(xyz[0], xyz[1], xyz[2], 1.0)
-            renderer.WorldToDisplay()
-            sx, sy, _ = renderer.GetDisplayPoint()
-            if bx0 <= sx <= bx1 and by0 <= sy <= by1:
+
+            bbox = self._registry.bbox(dt)
+            if bbox is not None:
+                # Project all 8 AABB corners to screen
+                inside = []
+                for corner in bbox:
+                    sx, sy = _project(corner)
+                    inside.append(bx0 <= sx <= bx1 and by0 <= sy <= by1)
+
+                if crossing:
+                    # Crossing: ANY corner inside → selected
+                    hit = any(inside)
+                else:
+                    # Window: ALL corners inside → selected
+                    hit = all(inside)
+            else:
+                # Fallback: centroid only
+                xyz = self._registry.centroid(dt)
+                if xyz is None:
+                    continue
+                sx, sy = _project(xyz)
+                hit = bx0 <= sx <= bx1 and by0 <= sy <= by1
+
+            if hit:
                 hits.append(dt)
 
         if hits and self.on_box_select is not None:

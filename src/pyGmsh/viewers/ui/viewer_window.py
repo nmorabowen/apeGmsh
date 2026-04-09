@@ -281,6 +281,12 @@ class ViewerWindow:
 
     def exec(self) -> int:
         """Show the window maximized and run the Qt event loop."""
+        # Default to orthographic projection
+        try:
+            self._qt_interactor.enable_parallel_projection()
+            self._act_parallel.setChecked(True)
+        except Exception:
+            pass
         self._window.showMaximized()
         try:
             self._qt_interactor.render()

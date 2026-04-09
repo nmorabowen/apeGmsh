@@ -42,6 +42,7 @@ class EntityRegistry:
         "_cell_to_dt",
         "_dt_to_cells",
         "centroids",
+        "_bboxes",
     )
 
     def __init__(self) -> None:
@@ -51,6 +52,7 @@ class EntityRegistry:
         self._cell_to_dt: dict[int, dict[int, DimTag]] = {}   # dim → {cell_idx: DimTag}
         self._dt_to_cells: dict[DimTag, list[int]] = {}       # DimTag → [cell_indices]
         self.centroids: dict[DimTag, np.ndarray] = {}          # DimTag → (3,) xyz
+        self._bboxes: dict[DimTag, np.ndarray] = {}            # DimTag → (8, 3) corners
 
     # ------------------------------------------------------------------
     # Registration
@@ -92,6 +94,9 @@ class EntityRegistry:
 
         if centroids:
             self.centroids.update(centroids)
+
+        # Precompute bounding boxes from mesh point data
+        self._compute_bboxes(dim, mesh, inv)
 
     # ------------------------------------------------------------------
     # Pick resolution
@@ -155,10 +160,70 @@ class EntityRegistry:
         """Return the 3D centroid of entity *dt*, or ``None``."""
         return self.centroids.get(dt)
 
+    def bbox(self, dt: DimTag) -> np.ndarray | None:
+        """Return the 8 corners of the 3D AABB for entity *dt*.
+
+        Returns ``ndarray (8, 3)`` or ``None`` if unknown.
+        Corners are ordered: all combinations of (xmin/xmax, ymin/ymax, zmin/zmax).
+        """
+        return self._bboxes.get(dt)
+
     @property
     def dims(self) -> list[int]:
         """Registered dimensions (sorted)."""
         return sorted(self.dim_meshes.keys())
+
+    def _compute_bboxes(
+        self, dim: int, mesh: Any, dt_to_cells: dict[DimTag, list[int]],
+    ) -> None:
+        """Precompute axis-aligned bounding boxes from mesh cell points."""
+        try:
+            points = np.asarray(mesh.points)
+        except Exception:
+            return
+
+        # For each entity, find all unique point indices from its cells
+        # and compute min/max bounds
+        try:
+            cell_conn = mesh.cell_connectivity
+        except AttributeError:
+            return
+
+        for dt, cells in dt_to_cells.items():
+            try:
+                # Collect all point indices used by this entity's cells
+                pt_indices = set()
+                for ci in cells:
+                    try:
+                        cell_pts = mesh.get_cell(ci).point_ids
+                        pt_indices.update(cell_pts)
+                    except Exception:
+                        pass
+                if not pt_indices:
+                    # Fallback to centroid-based bbox
+                    c = self.centroids.get(dt)
+                    if c is not None:
+                        self._bboxes[dt] = np.tile(c, (8, 1))
+                    continue
+
+                entity_pts = points[list(pt_indices)]
+                mins = entity_pts.min(axis=0)
+                maxs = entity_pts.max(axis=0)
+
+                # 8 corners of AABB
+                corners = np.array([
+                    [mins[0], mins[1], mins[2]],
+                    [maxs[0], mins[1], mins[2]],
+                    [mins[0], maxs[1], mins[2]],
+                    [maxs[0], maxs[1], mins[2]],
+                    [mins[0], mins[1], maxs[2]],
+                    [maxs[0], mins[1], maxs[2]],
+                    [mins[0], maxs[1], maxs[2]],
+                    [maxs[0], maxs[1], maxs[2]],
+                ])
+                self._bboxes[dt] = corners
+            except Exception:
+                pass
 
     def __len__(self) -> int:
         return len(self._dt_to_cells)
