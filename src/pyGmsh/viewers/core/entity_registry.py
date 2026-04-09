@@ -38,21 +38,25 @@ class EntityRegistry:
     __slots__ = (
         "dim_meshes",
         "dim_actors",
+        "_full_meshes",
         "_actor_id_to_dim",
         "_cell_to_dt",
         "_dt_to_cells",
         "centroids",
         "_bboxes",
+        "_add_mesh_kwargs",
     )
 
     def __init__(self) -> None:
         self.dim_meshes: dict[int, Any] = {}          # dim → PolyData | UnstructuredGrid
         self.dim_actors: dict[int, Any] = {}           # dim → vtkActor
+        self._full_meshes: dict[int, Any] = {}         # dim → original (unfiltered) mesh
         self._actor_id_to_dim: dict[int, int] = {}     # id(actor) → dim
         self._cell_to_dt: dict[int, dict[int, DimTag]] = {}   # dim → {cell_idx: DimTag}
         self._dt_to_cells: dict[DimTag, list[int]] = {}       # DimTag → [cell_indices]
         self.centroids: dict[DimTag, np.ndarray] = {}          # DimTag → (3,) xyz
         self._bboxes: dict[DimTag, np.ndarray] = {}            # DimTag → (8, 3) corners
+        self._add_mesh_kwargs: dict[int, dict] = {}            # dim → kwargs for add_mesh
 
     # ------------------------------------------------------------------
     # Registration
@@ -66,6 +70,7 @@ class EntityRegistry:
         cell_to_dt: dict[int, DimTag],
         centroids: dict[DimTag, np.ndarray] | None = None,
         bboxes: dict[DimTag, np.ndarray] | None = None,
+        add_mesh_kwargs: dict | None = None,
     ) -> None:
         """Register a merged mesh + actor for one dimension.
 
@@ -83,12 +88,16 @@ class EntityRegistry:
             Mapping from ``DimTag`` to 3D centroid coordinates.
         bboxes : dict, optional
             Mapping from ``DimTag`` to ``ndarray (8, 3)`` AABB corners.
-            If not provided, computed from centroids (degenerate boxes).
+        add_mesh_kwargs : dict, optional
+            The kwargs used in ``plotter.add_mesh`` (for actor recreation).
         """
         self.dim_meshes[dim] = mesh
+        self._full_meshes[dim] = mesh  # store original for reveal
         self.dim_actors[dim] = actor
         self._actor_id_to_dim[id(actor)] = dim
         self._cell_to_dt[dim] = cell_to_dt
+        if add_mesh_kwargs is not None:
+            self._add_mesh_kwargs[dim] = add_mesh_kwargs
 
         # Build inverse mapping: DimTag → list[cell_idx]
         inv: dict[DimTag, list[int]] = {}
@@ -102,10 +111,39 @@ class EntityRegistry:
         if bboxes:
             self._bboxes.update(bboxes)
         elif centroids:
-            # Fallback: degenerate bbox from centroid
             for dt, c in centroids.items():
                 if dt not in self._bboxes:
                     self._bboxes[dt] = np.tile(c, (8, 1))
+
+    def swap_dim(self, dim: int, new_mesh: Any, new_actor: Any) -> None:
+        """Replace the mesh+actor for *dim* after extract_cells.
+
+        Rebuilds ``cell_to_dt`` from the preserved ``entity_tag`` cell_data.
+        """
+        # Clean up old actor id
+        old_actor = self.dim_actors.get(dim)
+        if old_actor is not None:
+            self._actor_id_to_dim.pop(id(old_actor), None)
+
+        self.dim_meshes[dim] = new_mesh
+        self.dim_actors[dim] = new_actor
+        self._actor_id_to_dim[id(new_actor)] = dim
+
+        # Rebuild cell_to_dt from preserved entity_tag cell_data
+        entity_tags = new_mesh.cell_data.get("entity_tag")
+        new_cell_to_dt: dict[int, DimTag] = {}
+        if entity_tags is not None:
+            for ci, etag in enumerate(entity_tags):
+                new_cell_to_dt[ci] = (dim, int(etag))
+        self._cell_to_dt[dim] = new_cell_to_dt
+
+        # Rebuild dt_to_cells for this dim
+        for dt in [d for d in self._dt_to_cells if d[0] == dim]:
+            del self._dt_to_cells[dt]
+        inv: dict[DimTag, list[int]] = {}
+        for ci, dt in new_cell_to_dt.items():
+            inv.setdefault(dt, []).append(ci)
+        self._dt_to_cells.update(inv)
 
     # ------------------------------------------------------------------
     # Pick resolution

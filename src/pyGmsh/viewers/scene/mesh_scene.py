@@ -342,18 +342,21 @@ def build_mesh_scene(
 
         show_edges = show_surface_edges and dim >= 2
         opacity = surface_opacity if dim >= 2 else 1.0
-        actor = plotter.add_mesh(
-            grid, scalars="colors", rgb=True,
+        dim_kwargs = dict(
+            scalars="colors", rgb=True,
             opacity=opacity,
             show_edges=show_edges,
             edge_color=edge_color,
             line_width=line_width if dim == 1 else 0.5,
             render_lines_as_tubes=(dim == 1),
             smooth_shading=False, pickable=True,
-            reset_camera=False,
         )
+        actor = plotter.add_mesh(grid, reset_camera=False, **dim_kwargs)
 
-        registry.register_dim(dim, grid, actor, cell_to_dt, centroids_dim)
+        registry.register_dim(
+            dim, grid, actor, cell_to_dt, centroids_dim,
+            add_mesh_kwargs=dim_kwargs,
+        )
         batch_cell_to_elem[dim] = {
             i: etag for i, etag in enumerate(all_elem_tags_flat)
         }

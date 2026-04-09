@@ -321,18 +321,22 @@ def build_brep_scene(
             colors = np.tile(IDLE_COLORS[1], (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
-            actor = plotter.add_mesh(
-                poly, scalars="colors", rgb=True,
+            d1_kwargs = dict(
+                scalars="colors", rgb=True,
                 line_width=line_width,
                 render_lines_as_tubes=True,
-                pickable=True, reset_camera=False,
+                pickable=True,
             )
+            actor = plotter.add_mesh(poly, reset_camera=False, **d1_kwargs)
             cell_to_dt_d1 = {}
             for dt, cells in dt_cells.items():
                 for ci in cells:
                     cell_to_dt_d1[ci] = dt
             d1_bboxes = {dt: all_bboxes[dt] for dt in centroids_d1 if dt in all_bboxes}
-            registry.register_dim(1, poly, actor, cell_to_dt_d1, centroids_d1, d1_bboxes)
+            registry.register_dim(
+                1, poly, actor, cell_to_dt_d1, centroids_d1, d1_bboxes,
+                add_mesh_kwargs=d1_kwargs,
+            )
     t_d1 = time.perf_counter() - t_dim
     n_entities += n_d1
 
@@ -379,21 +383,25 @@ def build_brep_scene(
             colors = np.tile(IDLE_COLORS[2], (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
-            actor = plotter.add_mesh(
-                poly, scalars="colors", rgb=True,
+            d2_kwargs = dict(
+                scalars="colors", rgb=True,
                 opacity=surface_opacity,
                 show_edges=show_surface_edges,
                 edge_color="#2C4A6E",
                 line_width=0.5,
                 smooth_shading=True,
-                pickable=True, reset_camera=False,
+                pickable=True,
             )
+            actor = plotter.add_mesh(poly, reset_camera=False, **d2_kwargs)
             cell_to_dt_d2 = {}
             for dt, cells in dt_cells.items():
                 for ci in cells:
                     cell_to_dt_d2[ci] = dt
             d2_bboxes = {dt: all_bboxes[dt] for dt in centroids_d2 if dt in all_bboxes}
-            registry.register_dim(2, poly, actor, cell_to_dt_d2, centroids_d2, d2_bboxes)
+            registry.register_dim(
+                2, poly, actor, cell_to_dt_d2, centroids_d2, d2_bboxes,
+                add_mesh_kwargs=d2_kwargs,
+            )
     t_d2 = time.perf_counter() - t_dim
     n_entities += n_d2
 

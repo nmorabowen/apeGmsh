@@ -119,7 +119,7 @@ class MeshViewer:
 
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
-        vis_mgr = VisibilityManager(registry, color_mgr, sel)
+        vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter)
         pick_engine = PickEngine(plotter, registry)
 
         # ── Pick mode state ─────────────────────────────────────────
