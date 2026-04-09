@@ -82,24 +82,6 @@ class BrowserTab:
         self._tree.setHeaderLabels(["Name", "Count"])
         self._tree.setColumnCount(2)
         self._tree.setAlternatingRowColors(True)
-        self._tree.setStyleSheet("""
-            QTreeWidget {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                border: 1px solid #313244;
-                font-size: 12px;
-            }
-            QTreeWidget::item:selected {
-                background-color: #45475a;
-            }
-            QHeaderView::section {
-                background-color: #181825;
-                color: #a6adc8;
-                border: 1px solid #313244;
-                padding: 3px;
-                font-weight: bold;
-            }
-        """)
         self._tree.itemClicked.connect(self._on_tree_click)
         self._tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)

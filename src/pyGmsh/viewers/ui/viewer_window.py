@@ -117,6 +117,10 @@ class ViewerWindow:
         self._window.setWindowTitle(title)
         self._window.resize(1600, 1000)
 
+        # Apply Catppuccin Mocha theme
+        from .theme import STYLESHEET
+        self._window.setStyleSheet(STYLESHEET)
+
         # ── Central: VTK plotter ────────────────────────────────────
         self._qt_interactor = QtInteractor(parent=self._window)
         self._window.setCentralWidget(self._qt_interactor.interactor)
@@ -159,9 +163,6 @@ class ViewerWindow:
             console = QtWidgets.QTextEdit()
             console.setReadOnly(True)
             console.setFont(QtGui.QFont("Consolas", 9))
-            console.setStyleSheet(
-                "QTextEdit { background: #1e1e1e; color: #d4d4d4; }"
-            )
             self._console = console
             dock = QtWidgets.QDockWidget("Console")
             dock.setFeatures(
@@ -191,15 +192,7 @@ class ViewerWindow:
         bar.setFloatable(True)
         bar.setIconSize(QtCore.QSize(28, 28))
         bar.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
-        bar.setStyleSheet(
-            "QToolBar { spacing: 2px; }"
-            "QToolButton { border: none; border-radius: 4px;"
-            "  padding: 4px; margin: 1px; }"
-            "QToolButton:hover { background: rgba(255,255,255,30); }"
-            "QToolButton:pressed { background: rgba(255,255,255,50); }"
-            "QToolButton:checked { background: rgba(100,180,255,60);"
-            "  border: 1px solid rgba(100,180,255,120); }"
-        )
+        # Styling handled by global STYLESHEET
 
         # Subclass-provided actions first
         for tooltip, icon_text, callback in (toolbar_actions or []):

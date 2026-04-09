@@ -40,21 +40,6 @@ class MeshInfoTab:
         self._tree.setHeaderLabels(["Property", "Value"])
         self._tree.setColumnCount(2)
         self._tree.setAlternatingRowColors(True)
-        self._tree.setStyleSheet("""
-            QTreeWidget {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                border: 1px solid #313244;
-                font-size: 12px;
-            }
-            QHeaderView::section {
-                background-color: #181825;
-                color: #a6adc8;
-                border: 1px solid #313244;
-                padding: 3px;
-                font-weight: bold;
-            }
-        """)
         layout.addWidget(self._tree)
 
     def show_element(self, elem_tag: int, elem_data: dict) -> None:
