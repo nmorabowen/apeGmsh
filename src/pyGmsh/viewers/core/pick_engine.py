@@ -295,23 +295,7 @@ class PickEngine:
         by0 = min(y0, y1) * sy_ratio
         by1 = max(y0, y1) * sy_ratio
 
-        # Get composite projection matrix for batch projection
         renderer = self._plotter.renderer
-        try:
-            cam = renderer.GetActiveCamera()
-            aspect = renderer.GetAspect()
-            proj_mat = cam.GetCompositeProjectionTransformMatrix(
-                aspect[0] / aspect[1] if aspect[1] else 1.0,
-                0.0, 1.0,
-            )
-            M = np.array([
-                [proj_mat.GetElement(i, j) for j in range(4)]
-                for i in range(4)
-            ])
-            w = float(aw if aw else vw)
-            h = float(ah if ah else vh)
-        except Exception:
-            M = None
 
         hits: list["DimTag"] = []
 
@@ -343,30 +327,16 @@ class PickEngine:
         if not entities:
             return
 
-        if M is not None and w > 0 and h > 0:
-            # Batch project all corners at once via matrix multiply
-            pts = np.vstack(all_corners)  # (N, 3)
-            ones = np.ones((len(pts), 1))
-            homog = np.hstack([pts, ones])  # (N, 4)
-            clip = homog @ M.T  # (N, 4)
-            # Perspective divide
-            w_clip = clip[:, 3]
-            w_clip[w_clip == 0] = 1e-12
-            ndc = clip[:, :2] / w_clip[:, None]  # normalized device coords
-            # NDC → screen pixels
-            screen_x = (ndc[:, 0] * 0.5 + 0.5) * w
-            screen_y = (ndc[:, 1] * 0.5 + 0.5) * h
-        else:
-            # Fallback: per-point VTK projection
-            pts_list = np.vstack(all_corners)
-            screen_x = np.empty(len(pts_list))
-            screen_y = np.empty(len(pts_list))
-            for i, p in enumerate(pts_list):
-                renderer.SetWorldPoint(p[0], p[1], p[2], 1.0)
-                renderer.WorldToDisplay()
-                dp = renderer.GetDisplayPoint()
-                screen_x[i] = dp[0]
-                screen_y[i] = dp[1]
+        # Project all corners via VTK WorldToDisplay
+        pts_all = np.vstack(all_corners)
+        screen_x = np.empty(len(pts_all))
+        screen_y = np.empty(len(pts_all))
+        for i, p in enumerate(pts_all):
+            renderer.SetWorldPoint(p[0], p[1], p[2], 1.0)
+            renderer.WorldToDisplay()
+            dp = renderer.GetDisplayPoint()
+            screen_x[i] = dp[0]
+            screen_y[i] = dp[1]
 
         _t3 = time.perf_counter()
 

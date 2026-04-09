@@ -418,7 +418,93 @@ def build_brep_scene(
     t_d2 = time.perf_counter() - t_dim
     n_entities += n_d2
 
-    # dim=3 not implemented yet (same merge pattern on boundary surfaces)
+    # ── dim=3: merged volume boundary surfaces ───────────────────────
+    t_dim = time.perf_counter()
+    n_d3 = 0
+    if 3 in dims:
+        pts_parts = []
+        faces_parts: list[np.ndarray] = []
+        etags = []
+        dt_cells: dict[DimTag, list[int]] = {}
+        centroids_d3: dict[DimTag, np.ndarray] = {}
+        cell_off = 0
+        pt_off = 0
+        vol_alpha = max(0.05, surface_opacity * 0.6)
+        for _, vtag in gmsh.model.getEntities(dim=3):
+            try:
+                boundary = gmsh.model.getBoundary(
+                    [(3, vtag)], combined=False,
+                    oriented=False, recursive=False,
+                )
+                vol_pts: list[np.ndarray] = []
+                vol_faces: list[np.ndarray] = []
+                vol_n_cells = 0
+                vol_pt_off = 0
+                for bd, btag in boundary:
+                    if bd != 2:
+                        continue
+                    ets, _, enl = gmsh.model.mesh.getElements(2, btag)
+                    lpts, entity_faces, n_cells_e = (
+                        _surface_polydata_from_global_mesh(
+                            all_node_coords, global_tag_to_idx, ets, enl,
+                        )
+                    )
+                    if n_cells_e == 0:
+                        continue
+                    vol_pts.append(lpts)
+                    for f in entity_faces:
+                        shifted = f.copy()
+                        shifted.reshape(-1, shifted[0] + 1)[:, 1:] += vol_pt_off
+                        vol_faces.append(shifted)
+                    vol_n_cells += n_cells_e
+                    vol_pt_off += len(lpts)
+
+                if not vol_pts:
+                    continue
+
+                # Combine this volume's boundary surfaces
+                combined_pts = np.vstack(vol_pts)
+                dt = (3, vtag)
+                cell_indices = list(range(cell_off, cell_off + vol_n_cells))
+                dt_cells[dt] = cell_indices
+                centroids_d3[dt] = combined_pts.mean(axis=0)
+                # Offset into merged array
+                for f in vol_faces:
+                    shifted = f.copy()
+                    shifted.reshape(-1, shifted[0] + 1)[:, 1:] += pt_off
+                    faces_parts.append(shifted)
+                pts_parts.append(combined_pts)
+                etags.extend([vtag] * vol_n_cells)
+                cell_off += vol_n_cells
+                pt_off += len(combined_pts)
+                n_d3 += 1
+            except Exception:
+                pass
+        if pts_parts:
+            merged_pts = np.vstack(pts_parts)
+            merged_faces = np.concatenate(faces_parts)
+            poly = pv.PolyData(merged_pts, faces=merged_faces)
+            colors = np.tile(IDLE_COLORS[3], (len(etags), 1))
+            poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
+            poly.cell_data["colors"] = colors
+            d3_kwargs = dict(
+                scalars="colors", rgb=True,
+                opacity=vol_alpha,
+                smooth_shading=True,
+                pickable=True,
+            )
+            actor = plotter.add_mesh(poly, reset_camera=False, **d3_kwargs)
+            cell_to_dt_d3 = {}
+            for dt, cells in dt_cells.items():
+                for ci in cells:
+                    cell_to_dt_d3[ci] = dt
+            d3_bboxes = {dt: all_bboxes[dt] for dt in centroids_d3 if dt in all_bboxes}
+            registry.register_dim(
+                3, poly, actor, cell_to_dt_d3, centroids_d3, d3_bboxes,
+                add_mesh_kwargs=d3_kwargs,
+            )
+    t_d3 = time.perf_counter() - t_dim
+    n_entities += n_d3
 
     plotter.reset_camera()
 
@@ -438,5 +524,6 @@ def build_brep_scene(
     print(f"  dim0 points   : {t_d0:.3f}s  ({n_d0})")
     print(f"  dim1 curves   : {t_d1:.3f}s  ({n_d1})")
     print(f"  dim2 surfaces : {t_d2:.3f}s  ({n_d2})")
+    print(f"  dim3 volumes  : {t_d3:.3f}s  ({n_d3})")
 
     return registry
