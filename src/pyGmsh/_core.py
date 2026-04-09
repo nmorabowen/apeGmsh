@@ -7,9 +7,12 @@ from ._session import _SessionBase
 if TYPE_CHECKING:
     from .viz.Inspect import Inspect
     from .core.Model import Model
+    from .core.ConstraintsComposite import ConstraintsComposite
+    from .core._parts_registry import PartsRegistry
     from .mesh.Mesh import Mesh
     from .mesh.MshLoader import MshLoader
     from .mesh.PhysicalGroups import PhysicalGroups
+    from .mesh.MeshSelectionSet import MeshSelectionSet
     from .mesh.Partition import Partition
     from .mesh.View import View
     from .solvers.Gmsh2OpenSees import Gmsh2OpenSees
@@ -29,22 +32,26 @@ class pyGmsh(_SessionBase):
     """
 
     _COMPOSITES = (
-        ("inspect",   ".viz.Inspect",           "Inspect",        False),
-        ("model",     ".core.Model",            "Model",          False),
-        ("mesh",      ".mesh.Mesh",             "Mesh",           False),
-        ("loader",    ".mesh.MshLoader",        "MshLoader",      False),
-        ("physical",        ".mesh.PhysicalGroups",    "PhysicalGroups",    False),
-        ("mesh_selection",  ".mesh.MeshSelectionSet",  "MeshSelectionSet",  False),
-        ("partition",       ".mesh.Partition",         "Partition",         False),
-        ("view",      ".mesh.View",             "View",           False),
-        ("g2o",       ".solvers.Gmsh2OpenSees", "Gmsh2OpenSees",  False),
-        ("opensees",  ".solvers.OpenSees",      "OpenSees",       False),
-        ("plot",      ".viz.Plot",              "Plot",           True),
+        ("inspect",         ".viz.Inspect",                "Inspect",               False),
+        ("model",           ".core.Model",                 "Model",                 False),
+        ("parts",           ".core._parts_registry",       "PartsRegistry",         False),
+        ("constraints",     ".core.ConstraintsComposite",  "ConstraintsComposite",  False),
+        ("mesh",            ".mesh.Mesh",                  "Mesh",                  False),
+        ("loader",          ".mesh.MshLoader",             "MshLoader",             False),
+        ("physical",        ".mesh.PhysicalGroups",        "PhysicalGroups",        False),
+        ("mesh_selection",  ".mesh.MeshSelectionSet",      "MeshSelectionSet",      False),
+        ("partition",       ".mesh.Partition",             "Partition",             False),
+        ("view",            ".mesh.View",                  "View",                  False),
+        ("g2o",             ".solvers.Gmsh2OpenSees",      "Gmsh2OpenSees",         False),
+        ("opensees",        ".solvers.OpenSees",           "OpenSees",              False),
+        ("plot",            ".viz.Plot",                   "Plot",                  True),
     )
 
     # -- Static type declarations for composites (created at runtime by begin()) --
     inspect: Inspect
     model: Model
+    parts: PartsRegistry
+    constraints: ConstraintsComposite
     mesh: Mesh
     loader: MshLoader
     physical: PhysicalGroups
