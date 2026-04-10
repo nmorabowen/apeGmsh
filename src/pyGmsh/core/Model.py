@@ -86,61 +86,14 @@ class Model:
             print(f"[Model] {msg}")
 
     def _resolve_dim(self, tag: int, default_dim: int) -> int:
-        """Return the dimension of *tag* from the registry.
+        """Resolve tag dimension from registry. See :func:`_helpers.resolve_dim`."""
+        from ._helpers import resolve_dim
+        return resolve_dim(tag, default_dim, self._registry)
 
-        If the tag appears at exactly one dimension, return that dimension.
-        If it appears at multiple dimensions (e.g. curve 1 *and* volume 1)
-        or is not in the registry at all, fall back to *default_dim*.
-        """
-        found_dims = [d for (d, t) in self._registry if t == tag]
-        if len(found_dims) == 1:
-            return found_dims[0]
-        return default_dim
-
-    def _as_dimtags(
-        self,
-        tags: TagsLike,
-        default_dim: int = 3,
-    ) -> list[DimTag]:
-        """
-        Normalise any of the accepted input forms into a list of (dim, tag)
-        tuples.
-
-        For bare integer tags the dimension is resolved automatically from
-        the internal registry when possible.  This allows, e.g.,
-        ``fragment(objects=[vol], tools=[surf], dim=3)`` to work without
-        explicit ``(dim, tag)`` tuples for the tools.
-
-        Accepted forms
-        --------------
-        * ``5``                  → ``[(resolved_dim, 5)]``
-        * ``[1, 2, 3]``          → ``[(resolved_dim, 1), …]``
-        * ``(2, 5)``             → ``[(2, 5)]``
-        * ``[(2, 5), (2, 6)]``   → ``[(2, 5), (2, 6)]``
-
-        When the tag is not in the registry or is ambiguous (same tag at
-        multiple dimensions), *default_dim* is used as before.
-        """
-        if isinstance(tags, int):
-            return [(self._resolve_dim(tags, default_dim), tags)]
-
-        # single (dim, tag) tuple
-        if (
-            isinstance(tags, tuple)
-            and len(tags) == 2
-            and all(isinstance(x, int) for x in tags)
-        ):
-            return [tags]
-
-        out: list[DimTag] = []
-        for item in tags:
-            if isinstance(item, int):
-                out.append((self._resolve_dim(item, default_dim), item))
-            elif isinstance(item, (tuple, list)) and len(item) == 2:
-                out.append((int(item[0]), int(item[1])))
-            else:
-                raise TypeError(f"Cannot convert {item!r} to a (dim, tag) pair.")
-        return out
+    def _as_dimtags(self, tags: TagsLike, default_dim: int = 3) -> list[DimTag]:
+        """Normalize tag input to [(dim, tag), ...]. See :func:`_helpers.as_dimtags`."""
+        from ._helpers import as_dimtags
+        return as_dimtags(tags, default_dim, registry=self._registry)
 
     def _register(self, dim: int, tag: Tag, label: str | None, kind: str) -> Tag:
         self._registry[(dim, tag)] = {

@@ -71,6 +71,5 @@ __all__ = [
     "MeshViewerV2",
     "SelectionPicker",
     "MeshViewer",
-    "Results",
     "Constraints",
 ]

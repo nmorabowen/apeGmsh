@@ -393,29 +393,10 @@ class Mesh:
         if self._parent._verbose:
             print(f"[Mesh] {msg}")
 
-    def _as_dimtags(
-        self,
-        tags       : TagsLike,
-        default_dim: int = 0,
-    ) -> list[DimTag]:
-        """Normalise int / tuple / list inputs into ``[(dim, tag), ...]``."""
-        if isinstance(tags, int):
-            return [(default_dim, tags)]
-        if (
-            isinstance(tags, tuple)
-            and len(tags) == 2
-            and all(isinstance(x, int) for x in tags)
-        ):
-            return [tags]
-        out: list[DimTag] = []
-        for item in tags:
-            if isinstance(item, int):
-                out.append((default_dim, item))
-            elif isinstance(item, (tuple, list)) and len(item) == 2:
-                out.append((int(item[0]), int(item[1])))
-            else:
-                raise TypeError(f"Cannot convert {item!r} to a (dim, tag) pair.")
-        return out
+    def _as_dimtags(self, tags: TagsLike, default_dim: int = 0) -> list[DimTag]:
+        """Normalize tag input to [(dim, tag), ...]. See :func:`core._helpers.as_dimtags`."""
+        from pyGmsh.core._helpers import as_dimtags
+        return as_dimtags(tags, default_dim)
 
     # ------------------------------------------------------------------
     # Generation
