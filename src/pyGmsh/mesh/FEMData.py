@@ -658,6 +658,85 @@ class LoadSet:
 
 
 # =====================================================================
+# Mass snapshot
+# =====================================================================
+
+class MassSet:
+    """
+    Solver-ready snapshot of resolved nodal masses.
+
+    Accessed via ``fem.mass``.  One :class:`MassRecord` per node
+    (the composite already accumulates contributions from multiple
+    mass definitions).
+
+    There is no pattern grouping — mass is intrinsic to the model.
+
+    Iteration helpers:
+
+    * :meth:`records`     — yield raw MassRecord objects
+    * :meth:`total_mass`  — scalar sum of all translational mass
+    * :meth:`summary`     — DataFrame of (node_id, mx, my, mz, ...)
+    """
+
+    def __init__(self, records: list | None = None) -> None:
+        self._records: list = list(records) if records else []
+
+    def records(self):
+        """Yield :class:`MassRecord` objects."""
+        return iter(self._records)
+
+    def by_node(self, node_id: int):
+        """Return the MassRecord for a node, or None if not present."""
+        for r in self._records:
+            if r.node_id == int(node_id):
+                return r
+        return None
+
+    def total_mass(self) -> float:
+        """Sum of translational mass (mx) over all records.
+
+        Assumes isotropic mass (mx == my == mz).  Useful as a sanity
+        check that the resolved total matches the expected
+        ``Σ density × volume``.
+        """
+        return sum(float(r.mass[0]) for r in self._records)
+
+    def summary(self):
+        """DataFrame with one row per node: ``node_id, mx, my, mz, Ixx, Iyy, Izz``."""
+        import pandas as pd
+        if not self._records:
+            return pd.DataFrame(
+                columns=["node_id", "mx", "my", "mz", "Ixx", "Iyy", "Izz"]
+            )
+        rows = []
+        for r in self._records:
+            m = r.mass
+            rows.append({
+                "node_id": int(r.node_id),
+                "mx": float(m[0]), "my": float(m[1]), "mz": float(m[2]),
+                "Ixx": float(m[3]), "Iyy": float(m[4]), "Izz": float(m[5]),
+            })
+        return pd.DataFrame(rows).sort_values("node_id").reset_index(drop=True)
+
+    def __iter__(self):
+        return iter(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __bool__(self) -> bool:
+        return bool(self._records)
+
+    def __repr__(self) -> str:
+        if not self._records:
+            return "MassSet(empty)"
+        return (
+            f"MassSet({len(self._records)} nodes, "
+            f"total={self.total_mass():.6g})"
+        )
+
+
+# =====================================================================
 # FEM data container
 # =====================================================================
 
@@ -727,6 +806,7 @@ class FEMData:
     mesh_selection: "MeshSelectionStore" = field(repr=False, default=None)
     constraints: ConstraintSet = field(repr=False, default=None)
     loads: LoadSet = field(repr=False, default=None)
+    mass: MassSet = field(repr=False, default=None)
 
     # -- Lazy lookup caches (not part of __init__) --
 
@@ -761,6 +841,9 @@ class FEMData:
         # Default loads to empty LoadSet if not provided
         if self.loads is None:
             object.__setattr__(self, 'loads', LoadSet())
+        # Default mass to empty MassSet if not provided
+        if self.mass is None:
+            object.__setattr__(self, 'mass', MassSet())
 
     # -- Solver-friendly iterators --
 

@@ -95,9 +95,10 @@ class OpenSees:
         # pg_name → {ops_type, material, geom_transf, dim, extra}
         self._elem_assignments: dict[str, dict] = {}
 
-        # ── constraints and loads ──────────────────────────────────────────
+        # ── constraints, loads, mass ───────────────────────────────────────
         self._bcs          : dict[str, list[int]] = {}   # pg_name → dof mask
         self._load_patterns: dict[str, list[dict]] = {}  # name → [load_def, ...]
+        self._mass_records : list[dict] = []             # nodal mass entries
 
         # ── post-build state ───────────────────────────────────────────────
         self._built        = False
@@ -485,6 +486,37 @@ class OpenSees:
         self._log(
             f"add_nodal_load(pattern={pattern_name!r}, "
             f"pg={pg_name!r}, force={force})"
+        )
+        return self
+
+    def consume_masses_from_fem(self, fem) -> OpenSees:
+        """Ingest resolved nodal mass records from a :class:`FEMData` snapshot.
+
+        Translates ``fem.mass`` (populated by ``g.mass`` auto-resolve)
+        into the internal mass dict consumed by :meth:`build`.  Each
+        record becomes one ``ops.mass(node, mx, my, mz, ...)`` command.
+
+        Parameters
+        ----------
+        fem : FEMData
+            Snapshot from ``g.mesh.get_fem_data()``.
+
+        Returns
+        -------
+        self
+        """
+        mass = getattr(fem, "mass", None)
+        if not mass:
+            return self
+        if not hasattr(self, "_mass_records"):
+            self._mass_records: list[dict] = []
+        for r in mass:
+            self._mass_records.append({
+                "node_id": int(r.node_id),
+                "mass":    list(r.mass),
+            })
+        self._log(
+            f"consume_masses_from_fem(): {len(mass)} mass record(s)"
         )
         return self
 
@@ -1035,6 +1067,17 @@ class OpenSees:
             for nid in ops_ids:
                 lines.append(f"fix {nid}  {dof_str}")
 
+        if self._mass_records:
+            hdr(f"Nodal masses  ({len(self._mass_records)} entries)")
+            for mr in self._mass_records:
+                gmsh_tag = mr["node_id"]
+                ops_id = self._node_map.get(int(gmsh_tag))
+                if ops_id is None:
+                    continue
+                vals = mr["mass"][: self._ndf]
+                v_str = "  ".join(f"{v:.10g}" for v in vals)
+                lines.append(f"mass {ops_id}  {v_str}")
+
         hdr("Load patterns")
         for pat_idx, (pat_name, loads) in enumerate(
             self._load_patterns.items(), start=1
@@ -1176,6 +1219,17 @@ class OpenSees:
             lines.append(f"# PG: {pg_name!r}  —  {len(ops_ids)} nodes")
             for nid in ops_ids:
                 lines.append(f"ops.fix({nid}, {dof_str})")
+
+        if self._mass_records:
+            hdr(f"Nodal masses  ({len(self._mass_records)} entries)")
+            for mr in self._mass_records:
+                gmsh_tag = mr["node_id"]
+                ops_id = self._node_map.get(int(gmsh_tag))
+                if ops_id is None:
+                    continue
+                vals = mr["mass"][: self._ndf]
+                v_str = ", ".join(f"{v:.10g}" for v in vals)
+                lines.append(f"ops.mass({ops_id}, {v_str})")
 
         hdr("Load patterns")
         for pat_idx, (pat_name, loads) in enumerate(
