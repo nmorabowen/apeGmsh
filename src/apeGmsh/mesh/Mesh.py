@@ -1770,18 +1770,6 @@ class Mesh:
         mv = MeshViewer(self._parent, self, **kwargs)
         return mv.show()
 
-    def viewer_fast(self, **kwargs):
-        """Open the mesh viewer (fast).
-
-        Same as :meth:`viewer` — always uses batched actors.
-        Kept for backward compatibility.
-
-        Parameters are forwarded to :class:`MeshViewer`.
-        """
-        from ..viewers._mesh_viewer import MeshViewer
-        mv = MeshViewer(self._parent, self, fast=True, **kwargs)
-        return mv.show()
-
     def results_viewer(
         self,
         results: str | None = None,

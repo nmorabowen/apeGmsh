@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import gmsh
 import pandas as pd
 
 from ._helpers import Tag, DimTag, TagsLike
 
+if TYPE_CHECKING:
+    from .Model import Model
 
-class _QueriesMixin:
-    """Remove, topology queries, and registry — extracted from Model."""
+
+class _Queries:
+    """Queries sub-composite — remove, topology queries, and registry."""
+
+    def __init__(self, model: "Model") -> None:
+        self._model = model
 
     # ------------------------------------------------------------------
     # Remove
@@ -30,20 +38,20 @@ class _QueriesMixin:
             If True, also delete all lower-dimensional entities that are
             exclusively owned by these entities.
         """
-        dim_tags = self._as_dimtags(tags, dim)
+        dim_tags = self._model._as_dimtags(tags, dim)
         gmsh.model.occ.remove(dim_tags, recursive=recursive)
         if sync:
             gmsh.model.occ.synchronize()
         for dt in dim_tags:
-            self._registry.pop(dt, None)
-        self._log(f"removed {dim_tags} (recursive={recursive})")
+            self._model._registry.pop(dt, None)
+        self._model._log(f"removed {dim_tags} (recursive={recursive})")
 
     def remove_duplicates(
         self,
         *,
         tolerance: float | None = None,
         sync     : bool         = True,
-    ) -> _QueriesMixin:
+    ) -> _Queries:
         """
         Merge all coincident OCC entities in the current model.
 
@@ -110,14 +118,14 @@ class _QueriesMixin:
             for dim in range(4)
             for _, tag in gmsh.model.getEntities(dim)
         }
-        stale_dts = [dt for dt in self._registry if dt not in surviving]
+        stale_dts = [dt for dt in self._model._registry if dt not in surviving]
         for dt in stale_dts:
-            del self._registry[dt]
+            del self._model._registry[dt]
 
         after = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
         removed = {d: before[d] - after[d] for d in range(4) if before[d] != after[d]}
         tol_str = f"tolerance={tolerance}" if tolerance is not None else ""
-        self._log(
+        self._model._log(
             f"remove_duplicates({tol_str}): merged {removed} entities "
             f"(before={before}, after={after})"
         )
@@ -129,7 +137,7 @@ class _QueriesMixin:
         dims     : list[int] | None = None,
         tolerance: float | None     = None,
         sync     : bool             = True,
-    ) -> _QueriesMixin:
+    ) -> _Queries:
         """
         Fragment all entities against each other to produce a conformal model.
 
@@ -188,7 +196,7 @@ class _QueriesMixin:
         ]
 
         if not all_dimtags:
-            self._log("make_conformal(): no entities found, nothing to do")
+            self._model._log("make_conformal(): no entities found, nothing to do")
             return self
 
         _tol_keys = ("Geometry.ToleranceBoolean",)
@@ -208,20 +216,20 @@ class _QueriesMixin:
             gmsh.model.occ.synchronize()
 
         # Rebuild registry from scratch — fragment renumbers entities
-        old_registry = dict(self._registry)
-        self._registry.clear()
+        old_registry = dict(self._model._registry)
+        self._model._registry.clear()
         for d in range(4):
             for _, tag in gmsh.model.getEntities(d):
                 old_entry = old_registry.get((d, tag))
                 if old_entry:
-                    self._registry[(d, tag)] = old_entry
+                    self._model._registry[(d, tag)] = old_entry
                 else:
-                    self._registry[(d, tag)] = {'label': f'entity_{tag}', 'kind': 'fragment'}
+                    self._model._registry[(d, tag)] = {'label': f'entity_{tag}', 'kind': 'fragment'}
 
         after = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
         delta = {d: after[d] - before[d] for d in range(4) if before[d] != after[d]}
         tol_str = f", tolerance={tolerance}" if tolerance is not None else ""
-        self._log(
+        self._model._log(
             f"make_conformal(dims={dims}{tol_str}): entity delta={delta} "
             f"(before={before}, after={after})"
         )
@@ -252,7 +260,7 @@ class _QueriesMixin:
         -------
         ``xmin, ymin, zmin, xmax, ymax, zmax = g.model.bounding_box(vol)``
         """
-        d = self._resolve_dim(tag, dim)
+        d = self._model._resolve_dim(tag, dim)
         return gmsh.model.getBoundingBox(d, tag)
 
     def center_of_mass(
@@ -268,7 +276,7 @@ class _QueriesMixin:
         -------
         ``cx, cy, cz = g.model.center_of_mass(vol)``
         """
-        d = self._resolve_dim(tag, dim)
+        d = self._model._resolve_dim(tag, dim)
         return gmsh.model.occ.getCenterOfMass(d, tag)
 
     def mass(
@@ -285,7 +293,7 @@ class _QueriesMixin:
         -------
         ``vol = g.model.mass(solid_tag)``
         """
-        d = self._resolve_dim(tag, dim)
+        d = self._model._resolve_dim(tag, dim)
         return gmsh.model.occ.getMass(d, tag)
 
     def boundary(
@@ -319,7 +327,7 @@ class _QueriesMixin:
 
             faces = g.model.boundary(vol_tag)  # surfaces bounding a volume
         """
-        dt = self._as_dimtags(tags, dim)
+        dt = self._model._as_dimtags(tags, dim)
         return gmsh.model.getBoundary(
             dt,
             combined=combined,
@@ -352,7 +360,7 @@ class _QueriesMixin:
             # up   = volumes bounded by this face
             # down = curves on this face's boundary
         """
-        d = self._resolve_dim(tag, dim)
+        d = self._model._resolve_dim(tag, dim)
         up, down = gmsh.model.getAdjacencies(d, tag)
         return list(up), list(down)
 
@@ -401,11 +409,11 @@ class _QueriesMixin:
 
         Columns: ``kind``, ``label``
         """
-        if not self._registry:
+        if not self._model._registry:
             return pd.DataFrame(columns=['dim', 'tag', 'kind', 'label'])
         rows = [
             {'dim': dim, 'tag': tag, **info}
-            for (dim, tag), info in self._registry.items()
+            for (dim, tag), info in self._model._registry.items()
         ]
         return (
             pd.DataFrame(rows)

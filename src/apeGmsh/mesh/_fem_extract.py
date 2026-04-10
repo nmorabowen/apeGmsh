@@ -301,17 +301,17 @@ def build_fem_data(
                 print(f"[FEMData] WARNING: load auto-resolve failed: {exc}")
 
         # Masses
-        mass_comp = getattr(parent, "mass", None)
-        if mass_comp is not None and getattr(mass_comp, "mass_defs", None):
+        masses_comp = getattr(parent, "masses", None)
+        if masses_comp is not None and getattr(masses_comp, "mass_defs", None):
             try:
-                ms = mass_comp.resolve(
+                ms = masses_comp.resolve(
                     result.node_ids, result.node_coords,
                     elem_tags=result.element_ids,
                     connectivity=result.connectivity,
                     node_map=node_map, face_map=face_map,
                     ndf=ndf,
                 )
-                object.__setattr__(result, 'mass', ms)
+                object.__setattr__(result, 'masses', ms)
             except Exception as exc:
                 print(f"[FEMData] WARNING: mass auto-resolve failed: {exc}")
 

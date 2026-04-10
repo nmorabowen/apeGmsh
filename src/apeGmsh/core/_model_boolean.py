@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import gmsh
 
 from ._helpers import Tag, DimTag, TagsLike
 
+if TYPE_CHECKING:
+    from .Model import Model
 
-class _BooleanMixin:
-    """Boolean-operation methods extracted from Model."""
+
+class _Boolean:
+    """Boolean-operation sub-composite extracted from Model."""
+
+    def __init__(self, model: "Model") -> None:
+        self._model = model
 
     # ------------------------------------------------------------------
     # Boolean operations
@@ -24,8 +32,8 @@ class _BooleanMixin:
         remove_tool   : bool = True,
         sync          : bool = True,
     ) -> list[Tag]:
-        obj_dt  = self._as_dimtags(objects, default_dim)
-        tool_dt = self._as_dimtags(tools,   default_dim)
+        obj_dt  = self._model._as_dimtags(objects, default_dim)
+        tool_dt = self._model._as_dimtags(tools,   default_dim)
         fn      = getattr(gmsh.model.occ, fn_name)
         result, _ = fn(
             obj_dt, tool_dt,
@@ -40,16 +48,16 @@ class _BooleanMixin:
         if remove_object:
             for dt in obj_dt:
                 if dt not in result_set:
-                    self._registry.pop(dt, None)
+                    self._model._registry.pop(dt, None)
         if remove_tool:
             for dt in tool_dt:
                 if dt not in result_set:
-                    self._registry.pop(dt, None)
+                    self._model._registry.pop(dt, None)
 
         tags = [t for _, t in result]
         for d, t in result:
-            self._register(d, t, None, fn_name)
-        self._log(f"{fn_name}(obj={obj_dt}, tool={tool_dt}) \u2192 tags {tags}")
+            self._model._register(d, t, None, fn_name)
+        self._model._log(f"{fn_name}(obj={obj_dt}, tool={tool_dt}) \u2192 tags {tags}")
         return tags
 
     def fuse(
@@ -156,8 +164,8 @@ class _BooleanMixin:
                 if sync:
                     gmsh.model.occ.synchronize()
                 for dt in free:
-                    self._registry.pop(dt, None)
-                self._log(
+                    self._model._registry.pop(dt, None)
+                self._model._log(
                     f"fragment cleanup: removed {len(free)} free surface(s)"
                 )
 

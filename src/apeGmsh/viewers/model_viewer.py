@@ -597,7 +597,7 @@ class ModelViewer:
             win._tab_widget.insertTab(insert_pos, loads_tab.widget, "Loads")
 
         # ── Mass tab (read-only overlays) ───────────────────────────
-        mass_comp = getattr(self._parent, 'mass', None)
+        mass_comp = getattr(self._parent, 'masses', None)
         mass_tab = None
         _mass_actors: list = []
 
@@ -614,14 +614,14 @@ class ModelViewer:
                 pass
 
             fem = self._fem
-            if not show or fem is None or not fem.mass:
+            if not show or fem is None or not fem.masses:
                 plotter.render()
                 return
 
             positions = []
             masses = []
             origin = registry.origin_shift
-            for r in fem.mass:
+            for r in fem.masses:
                 try:
                     xyz = fem.get_node_coords(int(r.node_id)) - origin
                 except Exception:

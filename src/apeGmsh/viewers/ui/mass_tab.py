@@ -50,7 +50,7 @@ class MassTabPanel:
         # ── empty state ──────────────────────────────────────
         self._empty_label = QtWidgets.QLabel(
             "No mass defined.\n\n"
-            "Use g.mass.point(), g.mass.volume(), etc."
+            "Use g.masses.point(), g.masses.volume(), etc."
         )
         self._empty_label.setStyleSheet("color: #6c7086; padding: 12px;")
         self._empty_label.setWordWrap(True)
@@ -106,7 +106,7 @@ class MassTabPanel:
     # ── Build ───────────────────────────────────────────────
 
     def refresh(self) -> None:
-        """Re-read mass_defs and (if available) fem.mass."""
+        """Re-read mass_defs and (if available) fem.masses."""
         from qtpy.QtWidgets import QTreeWidgetItem
 
         self._tree.clear()
@@ -135,8 +135,8 @@ class MassTabPanel:
 
         self._tree.resizeColumnToContents(0)
 
-        # Stats from fem.mass (if resolved)
-        if self._fem is not None and self._fem.mass:
+        # Stats from fem.masses (if resolved)
+        if self._fem is not None and self._fem.masses:
             self._update_stats()
         else:
             self._lbl_total.setText("—")
@@ -160,7 +160,7 @@ class MassTabPanel:
         return "(unknown)"
 
     def _update_stats(self) -> None:
-        ms = self._fem.mass
+        ms = self._fem.masses
         records = list(ms)
         if not records:
             return

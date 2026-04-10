@@ -11,8 +11,11 @@ if TYPE_CHECKING:
     from .Model import Model
 
 
-class _TransformsMixin:
-    """Transform and extrusion/revolution methods extracted from Model."""
+class _Transforms:
+    """Transform and extrusion/revolution sub-composite extracted from Model."""
+
+    def __init__(self, model: "Model") -> None:
+        self._model = model
 
     # ------------------------------------------------------------------
     # Transforms  (all return self for chaining)
@@ -33,10 +36,10 @@ class _TransformsMixin:
         -------
         ``g.model.translate(box, 5, 0, 0)``
         """
-        gmsh.model.occ.translate(self._as_dimtags(tags, dim), dx, dy, dz)
+        gmsh.model.occ.translate(self._model._as_dimtags(tags, dim), dx, dy, dz)
         if sync:
             gmsh.model.occ.synchronize()
-        self._log(f"translate by ({dx}, {dy}, {dz})")
+        self._model._log(f"translate by ({dx}, {dy}, {dz})")
         return self
 
     def rotate(
@@ -58,14 +61,14 @@ class _TransformsMixin:
         ``g.model.rotate(box, math.pi / 4, az=1)``
         """
         gmsh.model.occ.rotate(
-            self._as_dimtags(tags, dim),
+            self._model._as_dimtags(tags, dim),
             cx, cy, cz,
             ax, ay, az,
             angle,
         )
         if sync:
             gmsh.model.occ.synchronize()
-        self._log(
+        self._model._log(
             f"rotate {math.degrees(angle):.2f}\u00b0 about axis=({ax},{ay},{az}) "
             f"through ({cx},{cy},{cz})"
         )
@@ -88,13 +91,13 @@ class _TransformsMixin:
         ``g.model.scale(box, 2, 2, 2)``   # uniform double
         """
         gmsh.model.occ.dilate(
-            self._as_dimtags(tags, dim),
+            self._model._as_dimtags(tags, dim),
             cx, cy, cz,
             sx, sy, sz,
         )
         if sync:
             gmsh.model.occ.synchronize()
-        self._log(f"scale ({sx},{sy},{sz}) about ({cx},{cy},{cz})")
+        self._model._log(f"scale ({sx},{sy},{sz}) about ({cx},{cy},{cz})")
         return self
 
     def mirror(
@@ -112,10 +115,10 @@ class _TransformsMixin:
         -------
         ``g.model.mirror(box, 1, 0, 0, 0)``   # reflect through YZ plane
         """
-        gmsh.model.occ.mirror(self._as_dimtags(tags, dim), a, b, c, d)
+        gmsh.model.occ.mirror(self._model._as_dimtags(tags, dim), a, b, c, d)
         if sync:
             gmsh.model.occ.synchronize()
-        self._log(f"mirror through plane {a}x + {b}y + {c}z + {d} = 0")
+        self._model._log(f"mirror through plane {a}x + {b}y + {c}z + {d} = 0")
         return self
 
     def copy(
@@ -132,11 +135,11 @@ class _TransformsMixin:
         -------
         ``copies = g.model.copy([box, sphere])``
         """
-        new_dimtags = gmsh.model.occ.copy(self._as_dimtags(tags, dim))
+        new_dimtags = gmsh.model.occ.copy(self._model._as_dimtags(tags, dim))
         if sync:
             gmsh.model.occ.synchronize()
         new_tags = [t for _, t in new_dimtags]
-        self._log(f"copy \u2192 new tags {new_tags}")
+        self._model._log(f"copy \u2192 new tags {new_tags}")
         return new_tags
 
     # ------------------------------------------------------------------
@@ -188,7 +191,7 @@ class _TransformsMixin:
             out  = g.model.extrude(surf, 0, 0, 3.0, num_elements=[10])
             # out[0] = (2, top_face), out[1] = (3, volume), ...
         """
-        dt = self._as_dimtags(tags, dim)
+        dt = self._model._as_dimtags(tags, dim)
         ne = num_elements if num_elements is not None else []
         ht = heights if heights is not None else []
         result: list[tuple[int, int]] = gmsh.model.occ.extrude(
@@ -200,8 +203,8 @@ class _TransformsMixin:
         if sync:
             gmsh.model.occ.synchronize()
         for d, t in result:
-            self._register(d, t, None, 'extrude')
-        self._log(
+            self._model._register(d, t, None, 'extrude')
+        self._model._log(
             f"extrude({dt}, ({dx},{dy},{dz})) \u2192 {len(result)} entities"
         )
         return result
@@ -244,7 +247,7 @@ class _TransformsMixin:
             # Revolve a cross-section 360\u00b0 around the Y axis
             out = g.model.revolve(profile, 2 * math.pi, ay=1)
         """
-        dt = self._as_dimtags(tags, dim)
+        dt = self._model._as_dimtags(tags, dim)
         ne = num_elements if num_elements is not None else []
         ht = heights if heights is not None else []
         result: list[tuple[int, int]] = gmsh.model.occ.revolve(
@@ -256,8 +259,8 @@ class _TransformsMixin:
         if sync:
             gmsh.model.occ.synchronize()
         for d, t in result:
-            self._register(d, t, None, 'revolve')
-        self._log(
+            self._model._register(d, t, None, 'revolve')
+        self._model._log(
             f"revolve({dt}, angle={math.degrees(angle):.1f}\u00b0, "
             f"axis=({ax},{ay},{az}) through ({x},{y},{z})) "
             f"\u2192 {len(result)} entities"
@@ -327,7 +330,7 @@ class _TransformsMixin:
             path    = g.model.add_wire([arc1, line1, arc2], label="beam_path")
             out     = g.model.sweep(section, path, label="curved_beam")
         """
-        dt = self._as_dimtags(profiles, dim)
+        dt = self._model._as_dimtags(profiles, dim)
         result: list[tuple[int, int]] = gmsh.model.occ.addPipe(
             dt, int(path), trihedron=trihedron,
         )
@@ -338,12 +341,12 @@ class _TransformsMixin:
             max_dim = max(d for d, _ in result)
             for d, t in result:
                 lbl = label if d == max_dim else None
-                self._register(d, t, lbl, 'sweep')
+                self._model._register(d, t, lbl, 'sweep')
         else:
             for d, t in result:
-                self._register(d, t, None, 'sweep')
+                self._model._register(d, t, None, 'sweep')
 
-        self._log(
+        self._model._log(
             f"sweep({dt}, path={path}, trihedron={trihedron!r}) "
             f"→ {len(result)} entities"
         )
@@ -441,12 +444,12 @@ class _TransformsMixin:
             max_dim = max(d for d, _ in result)
             for d, t in result:
                 lbl = label if d == max_dim else None
-                self._register(d, t, lbl, 'thru_sections')
+                self._model._register(d, t, lbl, 'thru_sections')
         else:
             for d, t in result:
-                self._register(d, t, None, 'thru_sections')
+                self._model._register(d, t, None, 'thru_sections')
 
-        self._log(
+        self._model._log(
             f"thru_sections(wires={list(wires)}, solid={make_solid}) "
             f"→ {len(result)} entities"
         )

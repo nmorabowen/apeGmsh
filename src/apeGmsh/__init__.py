@@ -2,7 +2,7 @@
 apeGmsh — Gmsh wrapper for structural FEM workflows.
 ====================================================
 
-Two usage modes:
+Composition-based API with sub-composites for focused surfaces:
 
 1. **Standalone** (single-model, quick prototyping)::
 
@@ -10,7 +10,7 @@ Two usage modes:
 
        g = apeGmsh(model_name="plate", verbose=True)
        g.begin()
-       g.model.add_point(0, 0, 0)
+       p = g.model.geometry.add_point(0, 0, 0)
        ...
        g.end()
 
@@ -20,7 +20,7 @@ Two usage modes:
 
        web = Part("web")
        web.begin()
-       web.model.add_box(0, 0, 0, 1, 0.5, 10)
+       web.model.geometry.add_box(0, 0, 0, 1, 0.5, 10)
        web.save("web.step")
        web.end()
 
@@ -29,7 +29,11 @@ Two usage modes:
        g.parts.add(web, label="web")
        g.parts.fragment_all()
        g.constraints.equal_dof("web", "slab", tolerance=1e-3)
-       g.mesh.generate(dim=2)
+       with g.loads.pattern("dead"):
+           g.loads.gravity("web", g=(0, 0, -9.81), density=7850)
+       g.masses.volume("web", density=7850)
+       g.mesh.generate(dim=3)
+       fem = g.mesh.get_fem_data(dim=3)
        g.end()
 """
 

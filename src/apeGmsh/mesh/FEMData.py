@@ -665,7 +665,7 @@ class MassSet:
     """
     Solver-ready snapshot of resolved nodal masses.
 
-    Accessed via ``fem.mass``.  One :class:`MassRecord` per node
+    Accessed via ``fem.masses``.  One :class:`MassRecord` per node
     (the composite already accumulates contributions from multiple
     mass definitions).
 
@@ -806,7 +806,7 @@ class FEMData:
     mesh_selection: "MeshSelectionStore" = field(repr=False, default=None)
     constraints: ConstraintSet = field(repr=False, default=None)
     loads: LoadSet = field(repr=False, default=None)
-    mass: MassSet = field(repr=False, default=None)
+    masses: MassSet = field(repr=False, default=None)
 
     # -- Lazy lookup caches (not part of __init__) --
 
@@ -841,9 +841,9 @@ class FEMData:
         # Default loads to empty LoadSet if not provided
         if self.loads is None:
             object.__setattr__(self, 'loads', LoadSet())
-        # Default mass to empty MassSet if not provided
-        if self.mass is None:
-            object.__setattr__(self, 'mass', MassSet())
+        # Default masses to empty MassSet if not provided
+        if self.masses is None:
+            object.__setattr__(self, 'masses', MassSet())
 
     # -- Solver-friendly iterators --
 

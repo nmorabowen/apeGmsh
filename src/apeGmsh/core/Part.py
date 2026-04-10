@@ -25,7 +25,7 @@ Typical usage
     plate = Part("plate")
     plate.begin()
 
-    p1 = plate.model.add_point(0, 0, 0, sync=False)
+    p1 = plate.model.geometry.add_point(0, 0, 0, sync=False)
     ...                                   # build geometry
     plate.model.sync()
 

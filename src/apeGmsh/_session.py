@@ -7,7 +7,7 @@ Composite Parent Contract
 Composites may access the following on ``self._parent``:
 
 * ``_parent._verbose: bool``   — logging verbosity flag
-* ``_parent.model_name: str``  — property, returns ``self.name``
+* ``_parent.name: str``        — session / model name
 * ``_parent.is_active: bool``  — property, True when Gmsh session is open
 * ``_parent.model``            — the Model composite (Selection uses ``model._registry``)
 * ``_parent.physical``         — PhysicalGroups composite (Selection uses ``physical.add()``)
@@ -42,11 +42,6 @@ class _SessionBase:
     # ------------------------------------------------------------------
     # Composite parent interface
     # ------------------------------------------------------------------
-
-    @property
-    def model_name(self) -> str:
-        """Composites access ``self._parent.model_name``."""
-        return self.name
 
     @property
     def is_active(self) -> bool:

@@ -207,7 +207,6 @@ class MeshSelectionSet:
         in_box: tuple | list | None = None,
         in_sphere: tuple | None = None,
         closest_to: tuple | None = None,
-        nearest_to: tuple | None = None,
         count: int = 1,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
     ) -> int:
@@ -221,7 +220,6 @@ class MeshSelectionSet:
         in_box : (xmin, ymin, zmin, xmax, ymax, zmax)
         in_sphere : (cx, cy, cz, radius)
         closest_to : (x, y, z) — use *count* to select N nearest
-            (preferred name; ``nearest_to`` is a deprecated alias)
         count : number of nearest nodes (used with closest_to)
         predicate : fn(coords(N,3)) → bool mask(N,)
 
@@ -229,10 +227,6 @@ class MeshSelectionSet:
         -------
         int — set tag
         """
-        # Backward-compat alias
-        if nearest_to is not None and closest_to is None:
-            closest_to = nearest_to
-
         all_ids, all_coords = self._get_mesh_nodes()
         mask = np.ones(len(all_ids), dtype=bool)
 

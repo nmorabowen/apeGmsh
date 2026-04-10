@@ -33,19 +33,22 @@ class OpenSees:
     **1 — Declare**  (before ``build()``)
 
     Register materials in the correct registry, assign element formulations
-    to physical groups, declare boundary conditions and load patterns::
+    to physical groups, declare boundary conditions.  Loads and mass are
+    defined on the session via ``g.loads`` / ``g.masses`` and
+    auto-resolved into ``fem.loads`` / ``fem.masses`` by
+    ``g.mesh.get_fem_data()``::
 
         (g.opensees
            .set_model(ndm=3, ndf=3)
-           # nD material for solid elements
            .add_nd_material("Concrete", "ElasticIsotropic",
                             E=30e9, nu=0.2, rho=2400)
-           # element assignment — topology and material family are validated
            .assign_element("Body", "FourNodeTetrahedron",
-                           material="Concrete",
-                           bodyForce=[0, 0, -2400*9.81])
-           .fix("Base",    dofs=[1, 1, 1])
-           .add_nodal_load("Wind", "TopFace", force=[1e4, 0, 0]))
+                           material="Concrete")
+           .fix("Base", dofs=[1, 1, 1]))
+
+        with g.loads.pattern("Wind"):
+            g.loads.point("TopFace", force_xyz=(1e4, 0, 0))
+        g.masses.volume("Body", density=2400)
 
     For beam elements a geometric transformation is required::
 
@@ -162,7 +165,7 @@ class OpenSees:
         raise ValueError(
             f"Ambiguous physical-group name {name!r}: "
             f"exists in dimensions {dims}. "
-            f"Pass `dim=<dim>` to assign_element / fix / add_nodal_load "
+            f"Pass `dim=<dim>` to assign_element / fix "
             f"to resolve the ambiguity."
         )
 
@@ -439,60 +442,12 @@ class OpenSees:
         self._log(f"fix({pg_name!r}, dofs={dofs})")
         return self
 
-    # ── loads ─────────────────────────────────────────────────────────────
-
-    def add_nodal_load(
-        self,
-        pattern_name: str,
-        pg_name     : str,
-        *,
-        force       : list[float],
-        dim         : int | None = None,
-    ) -> OpenSees:
-        """
-        Schedule an equal nodal force on every node in a physical group.
-
-        .. deprecated::
-            Use the solver-agnostic loads composite instead::
-
-                with g.loads.pattern("Wind"):
-                    g.loads.point("WindwardFace", force_xyz=(1e4, 0, 0))
-
-            Then ``fem.loads`` is auto-populated by ``get_fem_data()``.
-            The OpenSees bridge consumes it via
-            :meth:`consume_loads_from_fem` (auto-called from
-            :meth:`build_from_fem`).
-        """
-        import warnings
-        warnings.warn(
-            "OpenSees.add_nodal_load() is deprecated. Use "
-            "g.loads.point(target, force_xyz=...) inside a "
-            "g.loads.pattern(name) block instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if len(force) != self._ndf:
-            raise ValueError(
-                f"add_nodal_load: len(force)={len(force)} != ndf={self._ndf}"
-            )
-        if pattern_name not in self._load_patterns:
-            self._load_patterns[pattern_name] = []
-        self._load_patterns[pattern_name].append({
-            "type"   : "nodal",
-            "pg_name": pg_name,
-            "force"  : list(force),
-            "dim"    : dim,
-        })
-        self._log(
-            f"add_nodal_load(pattern={pattern_name!r}, "
-            f"pg={pg_name!r}, force={force})"
-        )
-        return self
+    # ── loads + mass ──────────────────────────────────────────────────────
 
     def consume_masses_from_fem(self, fem) -> OpenSees:
         """Ingest resolved nodal mass records from a :class:`FEMData` snapshot.
 
-        Translates ``fem.mass`` (populated by ``g.mass`` auto-resolve)
+        Translates ``fem.masses`` (populated by ``g.masses`` auto-resolve)
         into the internal mass dict consumed by :meth:`build`.  Each
         record becomes one ``ops.mass(node, mx, my, mz, ...)`` command.
 
@@ -505,18 +460,18 @@ class OpenSees:
         -------
         self
         """
-        mass = getattr(fem, "mass", None)
-        if not mass:
+        masses = getattr(fem, "masses", None)
+        if not masses:
             return self
         if not hasattr(self, "_mass_records"):
             self._mass_records: list[dict] = []
-        for r in mass:
+        for r in masses:
             self._mass_records.append({
                 "node_id": int(r.node_id),
                 "mass":    list(r.mass),
             })
         self._log(
-            f"consume_masses_from_fem(): {len(mass)} mass record(s)"
+            f"consume_masses_from_fem(): {len(masses)} mass record(s)"
         )
         return self
 
@@ -527,8 +482,7 @@ class OpenSees:
         into the internal load-pattern dict consumed by :meth:`build`.
 
         After calling this, :meth:`build` will emit the loads as
-        ``pattern Plain`` blocks alongside any legacy ``add_nodal_load``
-        entries.
+        ``pattern Plain`` blocks.
 
         Parameters
         ----------

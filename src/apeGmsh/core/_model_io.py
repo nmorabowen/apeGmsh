@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import gmsh
 
 from ._helpers import Tag, DimTag, TagsLike
 
+if TYPE_CHECKING:
+    from .Model import Model
 
-class _IOMixin:
-    """IO methods extracted from Model — import/export IGES, STEP, DXF, MSH."""
+
+class _IO:
+    """IO sub-composite — import/export IGES, STEP, DXF, MSH."""
+
+    def __init__(self, model: "Model") -> None:
+        self._model = model
 
     # ------------------------------------------------------------------
     # IO
@@ -43,11 +50,11 @@ class _IOMixin:
 
         result: dict[int, list[Tag]] = {}
         for dim, tag in raw:
-            self._register(dim, tag, None, kind)
+            self._model._register(dim, tag, None, kind)
             result.setdefault(dim, []).append(tag)
 
         dim_summary = {d: len(ts) for d, ts in result.items()}
-        self._log(f"loaded {kind.upper()} ← {file_path.name}  {dim_summary}")
+        self._model._log(f"loaded {kind.upper()} ← {file_path.name}  {dim_summary}")
         return result
 
     def load_iges(
@@ -140,7 +147,7 @@ class _IOMixin:
         sew_faces       : bool  = True,
         make_solids     : bool  = True,
         sync            : bool  = True,
-    ) -> _IOMixin:
+    ) -> _IO:
         """
         Heal topology issues in imported CAD geometry (STEP / IGES).
 
@@ -172,7 +179,7 @@ class _IOMixin:
             g.model.heal_shapes(tolerance=1e-3)
         """
         if tags is not None:
-            dt = self._as_dimtags(tags, dim)
+            dt = self._model._as_dimtags(tags, dim)
         else:
             dt = []  # empty = heal everything
 
@@ -189,9 +196,9 @@ class _IOMixin:
             gmsh.model.occ.synchronize()
 
         for d, t in out:
-            if (d, t) not in self._registry:
-                self._register(d, t, None, 'healed')
-        self._log(
+            if (d, t) not in self._model._registry:
+                self._model._register(d, t, None, 'healed')
+        self._model._log(
             f"heal_shapes(tol={tolerance}) → {len(out)} entities output"
         )
         return self
@@ -204,7 +211,7 @@ class _IOMixin:
         """
         file_path = Path(file_path).with_suffix('.iges')
         gmsh.write(str(file_path))
-        self._log(f"saved IGES → {file_path}")
+        self._model._log(f"saved IGES → {file_path}")
 
     def save_step(self, file_path: Path | str) -> None:
         """
@@ -214,7 +221,7 @@ class _IOMixin:
         """
         file_path = Path(file_path).with_suffix('.step')
         gmsh.write(str(file_path))
-        self._log(f"saved STEP → {file_path}")
+        self._model._log(f"saved STEP → {file_path}")
 
     # ------------------------------------------------------------------
     # DXF (AutoCAD) — parsed with ezdxf, geometry built via OCC kernel
@@ -310,7 +317,7 @@ class _IOMixin:
                 return _pt_cache[key]
             tag = gmsh.model.occ.addPoint(x, y, z)
             _pt_cache[key] = tag
-            self._register(0, tag, None, 'dxf_point')
+            self._model._register(0, tag, None, 'dxf_point')
             return tag
 
         # -- Entity conversion by type ------------------------------------
@@ -430,7 +437,7 @@ class _IOMixin:
                     )] = layer
 
             else:
-                self._log(f"DXF: skipped unsupported entity {etype} "
+                self._model._log(f"DXF: skipped unsupported entity {etype} "
                           f"on layer '{layer}'")
 
         # -- Merge duplicate points & synchronise --------------------------
@@ -445,15 +452,15 @@ class _IOMixin:
             key = _bbox_key(*bb)
             layer_name = _geom_to_layer.get(key)
             if layer_name:
-                self._register(dim, tag, None, 'dxf')
+                self._model._register(dim, tag, None, 'dxf')
                 layers.setdefault(layer_name, {}).setdefault(1, []).append(tag)
             else:
                 # Fallback: assign to "_unmatched"
-                self._register(dim, tag, None, 'dxf')
+                self._model._register(dim, tag, None, 'dxf')
                 layers.setdefault("_unmatched", {}).setdefault(1, []).append(tag)
 
         for dim, tag in gmsh.model.getEntities(0):
-            self._register(dim, tag, None, 'dxf_point')
+            self._model._register(dim, tag, None, 'dxf_point')
 
         # -- Physical groups from layers ----------------------------------
         if create_physical_groups:
@@ -469,7 +476,7 @@ class _IOMixin:
             name: {d: len(ts) for d, ts in ents.items()}
             for name, ents in layers.items()
         }
-        self._log(f"loaded DXF ← {file_path.name}  layers={layer_summary}")
+        self._model._log(f"loaded DXF ← {file_path.name}  layers={layer_summary}")
         return layers
 
     def save_dxf(self, file_path: Path | str) -> None:
@@ -480,7 +487,7 @@ class _IOMixin:
         """
         file_path = Path(file_path).with_suffix('.dxf')
         gmsh.write(str(file_path))
-        self._log(f"saved DXF → {file_path}")
+        self._model._log(f"saved DXF → {file_path}")
 
     def save_msh(self, file_path: Path | str) -> None:
         """
@@ -494,7 +501,7 @@ class _IOMixin:
         file_path = Path(file_path).with_suffix('.msh')
         gmsh.option.setNumber("Mesh.SaveAll", 1)
         gmsh.write(str(file_path))
-        self._log(f"saved MSH → {file_path}")
+        self._model._log(f"saved MSH → {file_path}")
 
     def load_msh(
         self,
@@ -529,5 +536,5 @@ class _IOMixin:
                 result.setdefault(dim, []).append(tag)
 
         dim_summary = {d: len(ts) for d, ts in result.items()}
-        self._log(f"loaded MSH ← {file_path.name}  {dim_summary}")
+        self._model._log(f"loaded MSH ← {file_path.name}  {dim_summary}")
         return result
