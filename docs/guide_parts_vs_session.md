@@ -18,17 +18,17 @@ Each component is built in its own Gmsh session, exported to STEP, and imported
 into the assembly session.
 
 ```python
-from pyGmsh import Part, pyGmsh
+from apeGmsh import Part, pyGmsh
 
 # Build in isolation
 col = Part("column")
 col.begin()
-col.model.add_box(0, 0, 0,  0.5, 0.5, 3.0)
+col.model.geometry.add_box(0, 0, 0,  0.5, 0.5, 3.0)
 col.save()
 col.end()
 
 # Assemble
-g = pyGmsh("frame")
+g = apeGmsh("frame")
 g.begin()
 g.parts.add(col, label="col_1", translate=(0, 0, 0))
 g.parts.add(col, label="col_2", translate=(6, 0, 0))
@@ -43,16 +43,16 @@ geometry in `g.parts.part()` blocks to give it a name and track it for
 fragmentation and constraints.
 
 ```python
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
-g = pyGmsh("frame")
+g = apeGmsh("frame")
 g.begin()
 
 with g.parts.part("col_1"):
-    g.model.add_box(0, 0, 0,  0.5, 0.5, 3.0)
+    g.model.geometry.add_box(0, 0, 0,  0.5, 0.5, 3.0)
 
 with g.parts.part("col_2"):
-    g.model.add_box(6, 0, 0,  0.5, 0.5, 3.0)
+    g.model.geometry.add_box(6, 0, 0,  0.5, 0.5, 3.0)
 
 g.parts.fragment_all()
 g.mesh.generate(dim=3)
@@ -61,9 +61,9 @@ g.mesh.generate(dim=3)
 Or, at its simplest, skip `g.parts` entirely:
 
 ```python
-g = pyGmsh("plate")
+g = apeGmsh("plate")
 g.begin()
-g.model.add_rectangle(0, 0, 0,  10, 5)
+g.model.geometry.add_rectangle(0, 0, 0,  10, 5)
 g.mesh.generate(dim=2)
 ```
 
@@ -122,7 +122,7 @@ quickly, the single-session approach has less boilerplate.
                          Parts + Import         Direct Session
                          ──────────────         ──────────────
 Reusability              High (STEP files)      None (inline)
-External CAD             Natural fit            Possible via g.model.load_step()
+External CAD             Natural fit            Possible via g.model.io.load_step()
 Session isolation        Yes (own Gmsh env)     No (shared session)
 Boilerplate              Higher                 Lower
 Transfinite control      After re-import        Immediate
@@ -283,21 +283,21 @@ records = g.constraints.resolve(fem.node_ids, fem.node_coords, node_map=node_map
 ```
 
 
-## The Middle Ground: `g.model.make_conformal()`
+## The Middle Ground: `g.model.queries.make_conformal()`
 
 For single-session models (no Parts, no `g.parts`), there is a lower-level
 fragmentation path on the Model composite:
 
 ```python
-g = pyGmsh("multi_region")
+g = apeGmsh("multi_region")
 g.begin()
-g.model.add_box(0, 0, 0,  1, 1, 1)
-g.model.add_box(1, 0, 0,  1, 1, 1)
-g.model.make_conformal()    # fragments all entities at their intersections
+g.model.geometry.add_box(0, 0, 0,  1, 1, 1)
+g.model.geometry.add_box(1, 0, 0,  1, 1, 1)
+g.model.queries.make_conformal()    # fragments all entities at their intersections
 g.mesh.generate(dim=3)
 ```
 
-`g.model.make_conformal()` (aliased as `g.model.fragment_all()`) performs the
+`g.model.queries.make_conformal()` (aliased as `g.model.queries.fragment_all()`) performs the
 same OCC boolean fragmentation but without instance tracking. Use it when you
 have multiple geometric regions in one session but haven't bothered with
 `g.parts`. The tradeoff: you won't have labeled instances, so building node maps
@@ -324,16 +324,16 @@ The simplest approach: build and fuse inside a Part's isolated session using
 Instance.
 
 ```python
-from pyGmsh import Part
+from apeGmsh import Part
 
 beam = Part("i_beam")
 beam.begin()
 
-web        = beam.model.add_box(0, 0, 0,       0.01, 0.3, 5.0)
-flange_bot = beam.model.add_box(-0.1, -0.005, 0, 0.2, 0.005, 5.0)
-flange_top = beam.model.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
+web        = beam.model.geometry.add_box(0, 0, 0,       0.01, 0.3, 5.0)
+flange_bot = beam.model.geometry.add_box(-0.1, -0.005, 0, 0.2, 0.005, 5.0)
+flange_top = beam.model.geometry.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
 
-beam.model.fuse([web], [flange_bot, flange_top])
+beam.model.boolean.fuse([web], [flange_bot, flange_top])
 
 beam.properties["material"] = "steel"
 beam.properties["section"]  = "W360x33"
@@ -351,15 +351,15 @@ When you are building geometry inline and don't need a separate Part, you can
 define the primitives as tracked parts and then fuse them:
 
 ```python
-g = pyGmsh("frame")
+g = apeGmsh("frame")
 g.begin()
 
 with g.parts.part("web"):
-    g.model.add_box(0, 0, 0,  0.01, 0.3, 5.0)
+    g.model.geometry.add_box(0, 0, 0,  0.01, 0.3, 5.0)
 with g.parts.part("flange_bot"):
-    g.model.add_box(-0.1, -0.005, 0,  0.2, 0.005, 5.0)
+    g.model.geometry.add_box(-0.1, -0.005, 0,  0.2, 0.005, 5.0)
 with g.parts.part("flange_top"):
-    g.model.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
+    g.model.geometry.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
 
 g.parts.fuse_group(["web", "flange_bot", "flange_top"], label="i_beam")
 ```
@@ -416,7 +416,7 @@ Is the model a single body?
               │
               Do the bodies share interfaces that need conformal nodes?
               ├── Yes → Use g.parts + fragment_all()
-              │         (or g.model.make_conformal() for quick models)
+              │         (or g.model.queries.make_conformal() for quick models)
               └── No → Are they DOF-incompatible or in contact?
                         ├── Yes → Use g.parts without fragment,
                         │         couple via constraints

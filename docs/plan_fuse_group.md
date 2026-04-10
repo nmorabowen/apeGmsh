@@ -7,7 +7,7 @@ L-wall from two rectangles, a foundation from multiple blocks), the user creates
 several inline parts that represent **one physical body**. After fusing, internal
 surfaces vanish and the result is a single clean volume to mesh.
 
-`g.model.fuse()` already exists, but it operates on raw dimtags and knows nothing
+`g.model.boolean.fuse()` already exists, but it operates on raw dimtags and knows nothing
 about the PartsRegistry. The user has to manually remove old Instances and create
 a new one — error-prone and easy to forget. `fuse_group()` wraps this into one
 call that keeps instance bookkeeping consistent.
@@ -47,11 +47,11 @@ def fuse_group(
 ```python
 # Build an I-beam from three boxes inline
 with g.parts.part("web"):
-    g.model.add_box(0, 0, 0,  0.01, 0.3, 5.0)
+    g.model.geometry.add_box(0, 0, 0,  0.01, 0.3, 5.0)
 with g.parts.part("flange_bot"):
-    g.model.add_box(-0.1, -0.005, 0,  0.2, 0.005, 5.0)
+    g.model.geometry.add_box(-0.1, -0.005, 0,  0.2, 0.005, 5.0)
 with g.parts.part("flange_top"):
-    g.model.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
+    g.model.geometry.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
 
 g.parts.fuse_group(["web", "flange_bot", "flange_top"], label="i_beam")
 

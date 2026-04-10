@@ -10,12 +10,12 @@ import sys
 # Ensure the local source is on the path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
 dxf_path = Path(__file__).with_name("frame_2D.dxf")
 
-with pyGmsh(verbose=True) as g:
-    layers = g.model.load_dxf(dxf_path)
+with apeGmsh(verbose=True) as g:
+    layers = g.model.io.load_dxf(dxf_path)
 
     print("\n--- Layer summary ---")
     for name, dim_tags in layers.items():

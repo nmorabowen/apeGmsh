@@ -34,7 +34,7 @@ class _Transforms:
 
         Example
         -------
-        ``g.model.translate(box, 5, 0, 0)``
+        ``g.model.transforms.translate(box, 5, 0, 0)``
         """
         gmsh.model.occ.translate(self._model._as_dimtags(tags, dim), dx, dy, dz)
         if sync:
@@ -58,7 +58,7 @@ class _Transforms:
 
         Example
         -------
-        ``g.model.rotate(box, math.pi / 4, az=1)``
+        ``g.model.transforms.rotate(box, math.pi / 4, az=1)``
         """
         gmsh.model.occ.rotate(
             self._model._as_dimtags(tags, dim),
@@ -88,7 +88,7 @@ class _Transforms:
 
         Example
         -------
-        ``g.model.scale(box, 2, 2, 2)``   # uniform double
+        ``g.model.transforms.scale(box, 2, 2, 2)``   # uniform double
         """
         gmsh.model.occ.dilate(
             self._model._as_dimtags(tags, dim),
@@ -113,7 +113,7 @@ class _Transforms:
 
         Example
         -------
-        ``g.model.mirror(box, 1, 0, 0, 0)``   # reflect through YZ plane
+        ``g.model.transforms.mirror(box, 1, 0, 0, 0)``   # reflect through YZ plane
         """
         gmsh.model.occ.mirror(self._model._as_dimtags(tags, dim), a, b, c, d)
         if sync:
@@ -133,7 +133,7 @@ class _Transforms:
 
         Example
         -------
-        ``copies = g.model.copy([box, sphere])``
+        ``copies = g.model.transforms.copy([box, sphere])``
         """
         new_dimtags = gmsh.model.occ.copy(self._model._as_dimtags(tags, dim))
         if sync:
@@ -187,8 +187,8 @@ class _Transforms:
         -------
         ::
 
-            surf = g.model.add_plane_surface(loop)
-            out  = g.model.extrude(surf, 0, 0, 3.0, num_elements=[10])
+            surf = g.model.geometry.add_plane_surface(loop)
+            out  = g.model.transforms.extrude(surf, 0, 0, 3.0, num_elements=[10])
             # out[0] = (2, top_face), out[1] = (3, volume), ...
         """
         dt = self._model._as_dimtags(tags, dim)
@@ -245,7 +245,7 @@ class _Transforms:
         ::
 
             # Revolve a cross-section 360\u00b0 around the Y axis
-            out = g.model.revolve(profile, 2 * math.pi, ay=1)
+            out = g.model.transforms.revolve(profile, 2 * math.pi, ay=1)
         """
         dt = self._model._as_dimtags(tags, dim)
         ne = num_elements if num_elements is not None else []
@@ -326,9 +326,9 @@ class _Transforms:
         -------
         ::
 
-            section = g.model.add_plane_surface(loop, label="I_section")
-            path    = g.model.add_wire([arc1, line1, arc2], label="beam_path")
-            out     = g.model.sweep(section, path, label="curved_beam")
+            section = g.model.geometry.add_plane_surface(loop, label="I_section")
+            path    = g.model.geometry.add_wire([arc1, line1, arc2], label="beam_path")
+            out     = g.model.transforms.sweep(section, path, label="curved_beam")
         """
         dt = self._model._as_dimtags(profiles, dim)
         result: list[tuple[int, int]] = gmsh.model.occ.addPipe(
@@ -415,9 +415,9 @@ class _Transforms:
         -------
         ::
 
-            w_base = g.model.add_wire([lb1, lb2, lb3, lb4])
-            w_top  = g.model.add_wire([lt1, lt2, lt3, lt4])
-            out    = g.model.thru_sections(
+            w_base = g.model.geometry.add_wire([lb1, lb2, lb3, lb4])
+            w_top  = g.model.geometry.add_wire([lt1, lt2, lt3, lt4])
+            out    = g.model.transforms.thru_sections(
                 [w_base, w_top],
                 make_solid=True,
                 label="tapered_column",

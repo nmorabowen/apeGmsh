@@ -87,12 +87,12 @@ class _IO:
         -------
         ::
 
-            imported = g.model.load_iges("part.iges")
+            imported = g.model.io.load_iges("part.iges")
             bodies   = imported[3]           # all imported volume tags
             flange   = bodies[0]             # first imported volume
 
-            boss = g.model.add_cylinder(10, 10, 0,  0, 0, 5,  3)
-            result = g.model.fuse(flange, boss)
+            boss = g.model.geometry.add_cylinder(10, 10, 0,  0, 0, 5,  3)
+            result = g.model.boolean.fuse(flange, boss)
         """
         return self._import_shapes(
             Path(file_path), 'iges', highest_dim_only, sync
@@ -127,9 +127,9 @@ class _IO:
         -------
         ::
 
-            imported = g.model.load_step("assembly.step")
+            imported = g.model.io.load_step("assembly.step")
             bodies   = imported[3]
-            g.model.translate(bodies, 0, 0, 50)   # lift the whole import
+            g.model.transforms.translate(bodies, 0, 0, 50)   # lift the whole import
         """
         return self._import_shapes(
             Path(file_path), 'step', highest_dim_only, sync
@@ -175,8 +175,8 @@ class _IO:
         -------
         ::
 
-            imported = g.model.load_step("legacy_part.step")
-            g.model.heal_shapes(tolerance=1e-3)
+            imported = g.model.io.load_step("legacy_part.step")
+            g.model.io.heal_shapes(tolerance=1e-3)
         """
         if tags is not None:
             dt = self._model._as_dimtags(tags, dim)
@@ -281,7 +281,7 @@ class _IO:
         ::
 
             # AutoCAD drawing with layers: "C80x80", "V30x50"
-            layers = g.model.load_dxf("frame_2D.dxf")
+            layers = g.model.io.load_dxf("frame_2D.dxf")
 
             # layers == {
             #     "C80x80": {1: [1, 2, 3, 4]},

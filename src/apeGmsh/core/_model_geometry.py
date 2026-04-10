@@ -188,10 +188,10 @@ class _Geometry:
         -------
         ::
 
-            p1 = g.model.add_point(0, 0, 0)
-            p2 = g.model.add_point(1, 1, 0)
-            p3 = g.model.add_point(2, 0, 0)
-            s  = g.model.add_spline([p1, p2, p3])
+            p1 = g.model.geometry.add_point(0, 0, 0)
+            p2 = g.model.geometry.add_point(1, 1, 0)
+            p3 = g.model.geometry.add_point(2, 0, 0)
+            s  = g.model.geometry.add_spline([p1, p2, p3])
         """
         if len(point_tags) < 2:
             raise ValueError("add_spline requires at least 2 point tags.")
@@ -304,14 +304,14 @@ class _Geometry:
         -------
         ::
 
-            p0 = g.model.add_point(0, 0, 0, sync=False)
-            p1 = g.model.add_point(1, 0, 0, sync=False)
-            p2 = g.model.add_point(1, 1, 0, sync=False)
-            p3 = g.model.add_point(1, 1, 2, sync=False)
-            l1 = g.model.add_line(p0, p1, sync=False)
-            l2 = g.model.add_line(p1, p2, sync=False)
-            l3 = g.model.add_line(p2, p3, sync=False)
-            path = g.model.add_wire([l1, l2, l3], label="sweep_path")
+            p0 = g.model.geometry.add_point(0, 0, 0, sync=False)
+            p1 = g.model.geometry.add_point(1, 0, 0, sync=False)
+            p2 = g.model.geometry.add_point(1, 1, 0, sync=False)
+            p3 = g.model.geometry.add_point(1, 1, 2, sync=False)
+            l1 = g.model.geometry.add_line(p0, p1, sync=False)
+            l2 = g.model.geometry.add_line(p1, p2, sync=False)
+            l3 = g.model.geometry.add_line(p2, p3, sync=False)
+            path = g.model.geometry.add_wire([l1, l2, l3], label="sweep_path")
         """
         tag = gmsh.model.occ.addWire(curve_tags, checkClosed=check_closed)
         if sync:
@@ -340,8 +340,8 @@ class _Geometry:
         -------
         ::
 
-            loop = g.model.add_curve_loop([l1, l2, l3, l4])
-            surf = g.model.add_plane_surface(loop)
+            loop = g.model.geometry.add_curve_loop([l1, l2, l3, l4])
+            surf = g.model.geometry.add_plane_surface(loop)
         """
         tag = gmsh.model.occ.addCurveLoop(curve_tags)
         if sync:
@@ -368,9 +368,9 @@ class _Geometry:
         -------
         ::
 
-            outer = g.model.add_curve_loop([l1, l2, l3, l4])
-            hole  = g.model.add_curve_loop([h1, h2, h3, h4])
-            surf  = g.model.add_plane_surface([outer, hole])
+            outer = g.model.geometry.add_curve_loop([l1, l2, l3, l4])
+            hole  = g.model.geometry.add_curve_loop([h1, h2, h3, h4])
+            surf  = g.model.geometry.add_plane_surface([outer, hole])
         """
         if isinstance(wire_tags, int):
             wire_tags = [wire_tags]
@@ -448,12 +448,12 @@ class _Geometry:
             xmin, ymin, zmin, xmax, ymax, zmax = bb
             zmid = (zmin + zmax) / 2
             pad = 1.0
-            rect = m1.model.add_rectangle(
+            rect = m1.model.geometry.add_rectangle(
                 xmin - pad, ymin - pad, zmid,
                 (xmax - xmin) + 2*pad,
                 (ymax - ymin) + 2*pad,
             )
-            result = m1.model.fragment(objects=[1], tools=[rect], dim=3)
+            result = m1.model.boolean.fragment(objects=[1], tools=[rect], dim=3)
         """
         tag = gmsh.model.occ.addRectangle(x, y, z, dx, dy, roundedRadius=rounded_radius)
         if sync:

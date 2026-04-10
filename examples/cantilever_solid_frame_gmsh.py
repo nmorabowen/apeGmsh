@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 import numpy as np
 import openseespy.opensees as ops
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
 # ================================================================
 #  1. PARAMETERS
@@ -49,30 +49,30 @@ J  = 0.5 * (Iy + Iz)
 # ================================================================
 #  2. BUILD MESH WITH pyGmsh
 # ================================================================
-g = pyGmsh(model_name="cantilever", verbose=True)
-g.initialize()
+g = apeGmsh(model_name="cantilever", verbose=True)
+g.begin()
 
 # Geometry: rectangle [0, L_solid] x [-h/2, h/2]  +  frame line
 dx = L_solid / nx_s
 dy = h / ny_s
 
-p1 = g.model.add_point(0.0,     -h/2, 0.0)
-p2 = g.model.add_point(L_solid, -h/2, 0.0)
-p3 = g.model.add_point(L_solid,  h/2, 0.0)
-p4 = g.model.add_point(0.0,      h/2, 0.0)
+p1 = g.model.geometry.add_point(0.0,     -h/2, 0.0)
+p2 = g.model.geometry.add_point(L_solid, -h/2, 0.0)
+p3 = g.model.geometry.add_point(L_solid,  h/2, 0.0)
+p4 = g.model.geometry.add_point(0.0,      h/2, 0.0)
 
 # Frame endpoints (centroid at interface → tip)
-p_master = g.model.add_point(L_solid, 0.0, 0.0)
-p_tip    = g.model.add_point(L,       0.0, 0.0)
+p_master = g.model.geometry.add_point(L_solid, 0.0, 0.0)
+p_tip    = g.model.geometry.add_point(L,       0.0, 0.0)
 
-l1 = g.model.add_line(p1, p2, label="bottom")
-l2 = g.model.add_line(p2, p3, label="right")
-l3 = g.model.add_line(p3, p4, label="top")
-l4 = g.model.add_line(p4, p1, label="left")
-l_frame = g.model.add_line(p_master, p_tip, label="frame")
+l1 = g.model.geometry.add_line(p1, p2, label="bottom")
+l2 = g.model.geometry.add_line(p2, p3, label="right")
+l3 = g.model.geometry.add_line(p3, p4, label="top")
+l4 = g.model.geometry.add_line(p4, p1, label="left")
+l_frame = g.model.geometry.add_line(p_master, p_tip, label="frame")
 
-loop = g.model.add_curve_loop([l1, l2, l3, l4])
-surf = g.model.add_plane_surface(loop, label="solid_region")
+loop = g.model.geometry.add_curve_loop([l1, l2, l3, l4])
+surf = g.model.geometry.add_plane_surface(loop, label="solid_region")
 
 # Physical groups
 g.physical.add(2, [surf],    name="SolidRegion")
@@ -376,5 +376,5 @@ g.launch_gui()
 # ================================================================
 #  11. CLEANUP
 # ================================================================
-g.finalize()
+g.end()
 print("\nDone!")

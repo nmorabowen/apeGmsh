@@ -29,13 +29,13 @@ Each Part runs in its own Gmsh session.  You build geometry through the familiar
 `part.model` API, then save to disk.
 
 ```python
-from pyGmsh import Part
+from apeGmsh import Part
 
 # ── Column ────────────────────────────────────────────────
 column = Part("column")
 column.begin()
 
-column.model.add_box(0, 0, 0,  0.5, 0.5, 3.0)
+column.model.geometry.add_box(0, 0, 0,  0.5, 0.5, 3.0)
 
 column.properties["material"] = "concrete"
 column.properties["section"]  = "500x500"
@@ -47,7 +47,7 @@ column.end()
 beam = Part("beam")
 beam.begin()
 
-beam.model.add_box(0, 0, 0,  6.0, 0.3, 0.5)
+beam.model.geometry.add_box(0, 0, 0,  6.0, 0.3, 0.5)
 
 beam.properties["material"] = "concrete"
 beam.properties["section"]  = "300x500"
@@ -76,9 +76,9 @@ points depending on where your geometry comes from.
 The most common path.  The Part must be saved to disk first.
 
 ```python
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
-g = pyGmsh("frame")
+g = apeGmsh("frame")
 g.begin()
 
 # Place two columns
@@ -109,7 +109,7 @@ and wrap it in a tracking block:
 
 ```python
 with g.parts.part("foundation"):
-    g.model.add_box(-0.5, -0.5, -0.5,  7.0, 1.5, 0.5)
+    g.model.geometry.add_box(-0.5, -0.5, -0.5,  7.0, 1.5, 0.5)
 ```
 
 Everything created inside the `with` block is automatically recorded as a named
@@ -117,11 +117,11 @@ instance.
 
 ### Entry Point D — Adopt existing geometry
 
-After loading a STEP through `g.model.load_step()`, retroactively tag the
+After loading a STEP through `g.model.io.load_step()`, retroactively tag the
 imported entities:
 
 ```python
-g.model.load_step("bracket.step")
+g.model.io.load_step("bracket.step")
 g.parts.from_model("bracket")
 ```
 
@@ -319,23 +319,23 @@ g.end()
 ## Complete Example — Portal Frame
 
 ```python
-from pyGmsh import Part, pyGmsh
+from apeGmsh import Part, pyGmsh
 
 # ── Define reusable parts ─────────────────────────────────
 column = Part("column")
 column.begin()
-column.model.add_box(0, 0, 0,  0.5, 0.5, 3.0)
+column.model.geometry.add_box(0, 0, 0,  0.5, 0.5, 3.0)
 column.save()
 column.end()
 
 beam = Part("beam")
 beam.begin()
-beam.model.add_box(0, 0, 0,  6.0, 0.3, 0.5)
+beam.model.geometry.add_box(0, 0, 0,  6.0, 0.3, 0.5)
 beam.save()
 beam.end()
 
 # ── Assemble ──────────────────────────────────────────────
-g = pyGmsh("portal_frame")
+g = apeGmsh("portal_frame")
 g.begin()
 
 g.parts.add(column, label="col_left",  translate=(0, 0, 0))

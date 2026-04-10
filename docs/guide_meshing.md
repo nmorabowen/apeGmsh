@@ -70,10 +70,10 @@ Boolean operations live in `core/_model_boolean.py` and are exposed as methods
 on `g.model`. All four share the same shape:
 
 ```python
-g.model.fuse     (objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
-g.model.cut      (objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
-g.model.intersect(objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
-g.model.fragment (objects, tools, *, dim=3, remove_object=True, remove_tool=True, cleanup_free=True, sync=True) -> list[Tag]
+g.model.boolean.fuse     (objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
+g.model.boolean.cut      (objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
+g.model.boolean.intersect(objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
+g.model.boolean.fragment (objects, tools, *, dim=3, remove_object=True, remove_tool=True, cleanup_free=True, sync=True) -> list[Tag]
 ```
 
 `objects` and `tools` accept a flexible `TagsLike = Tag | list[Tag] | DimTag |
@@ -224,7 +224,7 @@ For IDE autocomplete, the same names are exposed as string class constants
 on `MeshAlgorithm2D` and `MeshAlgorithm3D`:
 
 ```python
-from pyGmsh import MeshAlgorithm2D, MeshAlgorithm3D
+from apeGmsh import MeshAlgorithm2D, MeshAlgorithm3D
 
 MeshAlgorithm2D.QUADS       # -> "frontal_delaunay_quads"
 MeshAlgorithm2D.QUAD        # -> "quasi_structured_quad"
@@ -654,9 +654,9 @@ The assembly workflow collapses to the following sequence, with each step
 mapping to one section of this guide:
 
 ```python
-import pyGmsh as pg
+import apeGmsh as pg
 
-g = pg.pyGmsh("demo")
+g = pg.apeGmsh("demo")
 g.begin()
 
 # 1. Instances — either import parts or build inline

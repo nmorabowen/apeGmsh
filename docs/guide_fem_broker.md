@@ -107,10 +107,10 @@ The broker is not just geometry — it is also where the resolved boundary-condi
 ```python
 fem.constraints   # ConstraintSet
 fem.loads         # LoadSet
-fem.mass          # MassSet
+fem.masses          # MassSet
 ```
 
-Each one is populated by the matching composite (`g.constraints`, `g.loads`, `g.mass`) calling `.resolve(...)` during FEM extraction. By the time the broker exists, every constraint has been expanded to node-level records, every load has been pinned to the nodes or elements it applies to, and every mass contribution has been accumulated per node.
+Each one is populated by the matching composite (`g.constraints`, `g.loads`, `g.masses`) calling `.resolve(...)` during FEM extraction. By the time the broker exists, every constraint has been expanded to node-level records, every load has been pinned to the nodes or elements it applies to, and every mass contribution has been accumulated per node.
 
 ### Constraints
 
@@ -158,10 +158,10 @@ for r in fem.loads.element():
 Mass is not pattern-scoped — it is intrinsic to the model — so `MassSet` is a flat collection of per-node records. The composite already summed contributions from multiple mass definitions, so what you see is the final assembled mass at each node:
 
 ```python
-for r in fem.mass.records():
+for r in fem.masses.records():
     ops.mass(r.node_id, *r.mass)
 
-print("Total translational mass:", fem.mass.total_mass())
+print("Total translational mass:", fem.masses.total_mass())
 ```
 
 `total_mass()` is a useful sanity check against the expected `Σ density × volume`.

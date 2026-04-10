@@ -310,7 +310,7 @@ Assembly.py            → DELETED
    - These delegate to `self._parts_registry`
 
 3. **MODIFY `src/pyGmsh/__init__.py`**:
-   - Remove `from pyGmsh.core.Assembly import Assembly`
+   - Remove `from apeGmsh.core.Assembly import Assembly`
    - Remove Assembly from `__all__`
    - Add new exports
 

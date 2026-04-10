@@ -12,7 +12,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Signal, Qt
 
-from pyGmshViewer.visualization.renderer import DisplayMode, COLORMAPS
+from apeGmshViewer.visualization.renderer import DisplayMode, COLORMAPS
 
 
 class ControlsPanel(QWidget):

@@ -12,7 +12,7 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Signal, Qt
 from qtpy.QtGui import QIcon, QColor, QBrush
 
-from pyGmshViewer.loaders.vtu_loader import MeshData
+from apeGmshViewer.loaders.vtu_loader import MeshData
 
 
 class ModelTree(QWidget):

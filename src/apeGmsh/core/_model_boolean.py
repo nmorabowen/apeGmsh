@@ -75,7 +75,7 @@ class _Boolean:
 
         Example
         -------
-        ``result = g.model.fuse(box, sphere)``
+        ``result = g.model.boolean.fuse(box, sphere)``
         """
         return self._bool_op('fuse', objects, tools, dim, remove_object, remove_tool, sync)
 
@@ -94,7 +94,7 @@ class _Boolean:
 
         Example
         -------
-        ``result = g.model.cut(box, cylinder)``
+        ``result = g.model.boolean.cut(box, cylinder)``
         """
         return self._bool_op('cut', objects, tools, dim, remove_object, remove_tool, sync)
 

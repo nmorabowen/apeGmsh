@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 import pyvista as pv
 
-from pyGmshViewer.loaders.vtu_loader import MeshData, create_deformed_mesh
+from apeGmshViewer.loaders.vtu_loader import MeshData, create_deformed_mesh
 
 
 class DisplayMode(Enum):

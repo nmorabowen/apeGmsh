@@ -42,10 +42,10 @@ thk = 1.0       # [mm]   unit thickness (plane strain)
 ### 2.1 Initialization
 
 ```python
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
-g = pyGmsh(model_name="Plate2D", verbose=True)
-g.initialize()
+g = apeGmsh(model_name="Plate2D", verbose=True)
+g.begin()
 ```
 
 The `pyGmsh` object wraps Gmsh's state. Unlike a context manager, calling `initialize()` / `finalize()` manually gives more flexibility in notebooks.
@@ -55,31 +55,31 @@ The `pyGmsh` object wraps Gmsh's state. Unlike a context manager, calling `initi
 pyGmsh mirrors Gmsh's bottom-up approach but with a cleaner API and **labels** for every entity:
 
 ```python
-pc = g.model.add_point(0, 0, 0, lc=lc, label="center")
-p1 = g.model.add_point(inner_radius, 0, 0, lc=lc, label="inner_x")
-p2 = g.model.add_point(outer_radius, 0, 0, lc=lc, label="outer_x")
-p3 = g.model.add_point(0, outer_radius, 0, lc=lc, label="outer_y")
-p4 = g.model.add_point(0, inner_radius, 0, lc=lc, label="inner_y")
+pc = g.model.geometry.add_point(0, 0, 0, lc=lc, label="center")
+p1 = g.model.geometry.add_point(inner_radius, 0, 0, lc=lc, label="inner_x")
+p2 = g.model.geometry.add_point(outer_radius, 0, 0, lc=lc, label="outer_x")
+p3 = g.model.geometry.add_point(0, outer_radius, 0, lc=lc, label="outer_y")
+p4 = g.model.geometry.add_point(0, inner_radius, 0, lc=lc, label="inner_y")
 
-l1 = g.model.add_line(p1, p2, label="bottom")
-l2 = g.model.add_arc(p2, pc, p3, label="outer_arc")
-l3 = g.model.add_line(p3, p4, label="left")
-l4 = g.model.add_arc(p4, pc, p1, label="inner_arc")
+l1 = g.model.geometry.add_line(p1, p2, label="bottom")
+l2 = g.model.geometry.add_arc(p2, pc, p3, label="outer_arc")
+l3 = g.model.geometry.add_line(p3, p4, label="left")
+l4 = g.model.geometry.add_arc(p4, pc, p1, label="inner_arc")
 
-loop = g.model.add_curve_loop([l1, l2, l3, l4])
-surf = g.model.add_plane_surface(loop, label="plate")
+loop = g.model.geometry.add_curve_loop([l1, l2, l3, l4])
+surf = g.model.geometry.add_plane_surface(loop, label="plate")
 ```
 
 **Comparison with raw Gmsh:**
 
 | Raw Gmsh                              | pyGmsh                                    |
 |---------------------------------------|-------------------------------------------|
-| `gmsh.model.geo.addPoint(x, y, z, lc)` | `g.model.add_point(x, y, z, lc=lc, label=...)` |
-| `gmsh.model.geo.addLine(p1, p2)`     | `g.model.add_line(p1, p2, label=...)`     |
-| `gmsh.model.geo.addCircleArc(s, c, e)` | `g.model.add_arc(s, c, e, label=...)`   |
+| `gmsh.model.geo.addPoint(x, y, z, lc)` | `g.model.geometry.add_point(x, y, z, lc=lc, label=...)` |
+| `gmsh.model.geo.addLine(p1, p2)`     | `g.model.geometry.add_line(p1, p2, label=...)`     |
+| `gmsh.model.geo.addCircleArc(s, c, e)` | `g.model.geometry.add_arc(s, c, e, label=...)`   |
 | `gmsh.model.geo.synchronize()`       | Handled internally                         |
 
-The `label` parameter is optional but useful for debugging -- `g.model.registry()` prints a summary of all labeled entities.
+The `label` parameter is optional but useful for debugging -- `g.model.queries.registry()` prints a summary of all labeled entities.
 
 ### 2.3 Physical Groups
 
@@ -131,7 +131,7 @@ This data is needed for boundary queries, edge extraction, and plotting.
 ### 3.2 Solver-Ready Mesh -- `get_numbered_mesh()`
 
 ```python
-from pyGmsh import Numberer, NumberedMesh
+from apeGmsh import Numberer, NumberedMesh
 
 mesh = g.mesh.get_numbered_mesh(dim=2, method="simple")
 ```
@@ -357,7 +357,7 @@ These methods are **solver-agnostic** -- they accept plain lists/arrays and Gmsh
 
 ```python
 g.launch_gui()    # interactive exploration (close window to continue)
-g.finalize()      # release Gmsh resources
+g.end()      # release Gmsh resources
 ```
 
 ---
@@ -419,9 +419,9 @@ Best for: understanding the flow, teaching.
 
 | Step                  | Raw Gmsh (basic example)                          | pyGmsh (this example)                         |
 |-----------------------|---------------------------------------------------|------------------------------------------------|
-| Initialize            | `gmsh.initialize()`                               | `g = pyGmsh(...); g.initialize()`              |
-| Add point             | `gmsh.model.geo.addPoint(x,y,z,lc)`              | `g.model.add_point(x,y,z, lc=lc, label=...)`  |
-| Add arc               | `gmsh.model.geo.addCircleArc(s,c,e)`             | `g.model.add_arc(s,c,e, label=...)`            |
+| Initialize            | `gmsh.initialize()`                               | `g = apeGmsh(...); g.begin()`              |
+| Add point             | `gmsh.model.geo.addPoint(x,y,z,lc)`              | `g.model.geometry.add_point(x,y,z, lc=lc, label=...)`  |
+| Add arc               | `gmsh.model.geo.addCircleArc(s,c,e)`             | `g.model.geometry.add_arc(s,c,e, label=...)`            |
 | Synchronize           | `gmsh.model.geo.synchronize()` (manual, easy to forget) | Handled internally                       |
 | Physical group        | `gmsh.model.addPhysicalGroup(dim, [tags])`        | `g.physical.add(dim, [tags], name=...)`        |
 | Get boundary nodes    | `gmsh.model.mesh.getNodesForPhysicalGroup(...)`   | `g.physical.get_nodes(dim, tag)`               |
@@ -430,7 +430,7 @@ Best for: understanding the flow, teaching.
 | Orphan filtering      | Manual `set(connectivity.flatten())`              | Built into Numberer (`used_only=True`)         |
 | Post-processing views | `gmsh.view.add()` + `addModelData()` (verbose)   | `g.view.add_element_scalar(name, tags, data)`  |
 | Launch GUI            | `gmsh.fltk.run()`                                | `g.launch_gui()`                               |
-| Finalize              | `gmsh.finalize()`                                 | `g.finalize()`                                 |
+| Finalize              | `gmsh.finalize()`                                 | `g.end()`                                 |
 
 The key improvements are:
 - **Labels** on geometry entities for debugging

@@ -17,7 +17,7 @@ Usage::
     g.begin()
 
     with g.parts.part("beam"):
-        g.model.add_box(0, 0, 0, 1, 0.5, 10)
+        g.model.geometry.add_box(0, 0, 0, 1, 0.5, 10)
 
     g.parts.import_step("slab.step", label="slab", translate=(0, 0, 10))
     g.parts.fragment_all()
@@ -107,7 +107,7 @@ class PartsRegistry:
         Example::
 
             with g.parts.part("beam"):
-                g.model.add_box(0, 0, 0, 1, 0.5, 10)
+                g.model.geometry.add_box(0, 0, 0, 1, 0.5, 10)
         """
         if label in self._instances:
             raise ValueError(f"Part label '{label}' already exists.")
@@ -187,7 +187,7 @@ class PartsRegistry:
     ) -> Instance:
         """Adopt entities already in the Gmsh session as a named part.
 
-        Useful after ``g.model.load_step()`` or ``g.model.load_iges()``
+        Useful after ``g.model.io.load_step()`` or ``g.model.io.load_iges()``
         when you want the imported geometry tracked for constraints
         and fragmentation.
 
@@ -210,7 +210,7 @@ class PartsRegistry:
         ::
 
             # Load geometry, then adopt it
-            g.model.load_step("bracket.step")
+            g.model.io.load_step("bracket.step")
             g.parts.from_model("bracket")
 
             # Adopt only specific volumes
@@ -504,11 +504,11 @@ class PartsRegistry:
         ::
 
             with g.parts.part("web"):
-                g.model.add_box(0, 0, 0,  0.01, 0.3, 5.0)
+                g.model.geometry.add_box(0, 0, 0,  0.01, 0.3, 5.0)
             with g.parts.part("flange_bot"):
-                g.model.add_box(-0.1, -0.005, 0,  0.2, 0.005, 5.0)
+                g.model.geometry.add_box(-0.1, -0.005, 0,  0.2, 0.005, 5.0)
             with g.parts.part("flange_top"):
-                g.model.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
+                g.model.geometry.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
 
             g.parts.fuse_group(
                 ["web", "flange_bot", "flange_top"],

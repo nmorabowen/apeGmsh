@@ -19,41 +19,41 @@ Requires Gmsh (with Python bindings), NumPy, and Pandas. Optional extras: matplo
 ### Standalone (single model)
 
 ```python
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
-g = pyGmsh(model_name="plate", verbose=True)
-g.initialize()
+g = apeGmsh(model_name="plate", verbose=True)
+g.begin()
 
-p1 = g.model.add_point(0, 0, 0, lc=10)
-p2 = g.model.add_point(100, 0, 0, lc=10)
-p3 = g.model.add_point(100, 50, 0, lc=10)
-p4 = g.model.add_point(0, 50, 0, lc=10)
+p1 = g.model.geometry.add_point(0, 0, 0, lc=10)
+p2 = g.model.geometry.add_point(100, 0, 0, lc=10)
+p3 = g.model.geometry.add_point(100, 50, 0, lc=10)
+p4 = g.model.geometry.add_point(0, 50, 0, lc=10)
 
-l1 = g.model.add_line(p1, p2)
-l2 = g.model.add_line(p2, p3)
-l3 = g.model.add_line(p3, p4)
-l4 = g.model.add_line(p4, p1)
+l1 = g.model.geometry.add_line(p1, p2)
+l2 = g.model.geometry.add_line(p2, p3)
+l3 = g.model.geometry.add_line(p3, p4)
+l4 = g.model.geometry.add_line(p4, p1)
 
-loop = g.model.add_curve_loop([l1, l2, l3, l4])
-surf = g.model.add_plane_surface(loop)
+loop = g.model.geometry.add_curve_loop([l1, l2, l3, l4])
+surf = g.model.geometry.add_plane_surface(loop)
 
 g.mesh.generate(2)
 g.mesh.renumber_mesh(method="simple", base=1)
 fem = g.mesh.get_fem_data(dim=2)
 print(fem.summary())
 
-g.finalize()
+g.end()
 ```
 
 ### Part / Assembly (multi-part)
 
 ```python
-from pyGmsh import Part, Assembly
+from apeGmsh import Part, Assembly
 
 # Build geometry in isolated sessions
 web = Part("web")
 web.begin()
-# ... build geometry with web.model.add_point(), add_line(), etc.
+# ... build geometry with web.model.geometry.add_point(), add_line(), etc.
 web.save("web.step")
 web.end()
 

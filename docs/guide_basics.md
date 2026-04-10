@@ -13,7 +13,7 @@ The guide is grounded in the current source:
 - `src/pyGmsh/core/Model.py` + `_model_geometry.py` + `_model_boolean.py`
   — geometry creation and boolean operations
 
-All code snippets assume `from pyGmsh import pyGmsh`.
+All code snippets assume `from apeGmsh import apeGmsh`.
 
 
 ## 1. Why initialize? The session lifecycle
@@ -35,12 +35,12 @@ something other than a lexical block (e.g. a class `__init__` /
 `__del__`, a Flask request, a test fixture).
 
 ```python
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
-g = pyGmsh(model_name="cantilever", verbose=True)
+g = apeGmsh(model_name="cantilever", verbose=True)
 g.begin()   # gmsh.initialize() + gmsh.model.add("cantilever") + composite wiring
 
-g.model.add_box(0, 0, 0, 1, 1, 10, label="beam")
+g.model.geometry.add_box(0, 0, 0, 1, 1, 10, label="beam")
 g.mesh.generate(dim=3)
 # ... you can keep using g across many cells / function calls ...
 
@@ -55,10 +55,10 @@ correct cell suddenly errors because of a previous cell's crash. Wrap
 sensitive sections in `try / finally`:
 
 ```python
-g = pyGmsh(model_name="cantilever")
+g = apeGmsh(model_name="cantilever")
 g.begin()
 try:
-    g.model.add_box(0, 0, 0, 1, 1, 10, label="beam")
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 10, label="beam")
     g.mesh.generate(dim=3)
 finally:
     g.end()
@@ -70,10 +70,10 @@ and one-shot notebook cells. Equivalent to Pattern A wrapped in the
 `end()` no matter how the block exits.
 
 ```python
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
-with pyGmsh(model_name="cantilever", verbose=True) as g:
-    g.model.add_box(0, 0, 0, 1, 1, 10, label="beam")
+with apeGmsh(model_name="cantilever", verbose=True) as g:
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 10, label="beam")
     g.mesh.generate(dim=3)
 # gmsh.finalize() runs here, even if the block raised
 ```
@@ -125,21 +125,21 @@ You therefore rarely touch `gmsh.model.occ` directly.
 Solids, surfaces, curves, and points are available:
 
 ```python
-with pyGmsh(model_name="demo") as g:
+with apeGmsh(model_name="demo") as g:
     # Points (dim = 0)
-    p1 = g.model.add_point(0, 0, 0, mesh_size=0.1, label="origin")
+    p1 = g.model.geometry.add_point(0, 0, 0, mesh_size=0.1, label="origin")
 
     # Curves (dim = 1)
-    p2 = g.model.add_point(1, 0, 0)
-    line = g.model.add_line(p1, p2, label="bottom_edge")
+    p2 = g.model.geometry.add_point(1, 0, 0)
+    line = g.model.geometry.add_line(p1, p2, label="bottom_edge")
 
     # Surfaces (dim = 2)
-    plate = g.model.add_rectangle(0, 0, 0, 1.0, 0.5, label="plate")
+    plate = g.model.geometry.add_rectangle(0, 0, 0, 1.0, 0.5, label="plate")
 
     # Solids (dim = 3)
-    box  = g.model.add_box(0, 0, 0, 1, 1, 10, label="beam")
-    cyl  = g.model.add_cylinder(0.5, 0.5, 0, 0, 0, 10, radius=0.3, label="core")
-    sph  = g.model.add_sphere(0.5, 0.5, 5, radius=0.2, label="notch")
+    box  = g.model.geometry.add_box(0, 0, 0, 1, 1, 10, label="beam")
+    cyl  = g.model.geometry.add_cylinder(0.5, 0.5, 0, 0, 0, 10, radius=0.3, label="core")
+    sph  = g.model.geometry.add_sphere(0.5, 0.5, 5, radius=0.2, label="notch")
 ```
 
 Two things are worth noting:
@@ -165,18 +165,18 @@ with pyGmsh wrappers:
 
 ```python
 # 1. Points
-pts = [g.model.add_point(x, y, 0, sync=False) for x, y in coords]
+pts = [g.model.geometry.add_point(x, y, 0, sync=False) for x, y in coords]
 # 2. Lines closing the contour
-lns = [g.model.add_line(pts[i], pts[(i + 1) % len(pts)], sync=False)
+lns = [g.model.geometry.add_line(pts[i], pts[(i + 1) % len(pts)], sync=False)
        for i in range(len(pts))]
 # 3. Curve loop -> surface
-loop = g.model.add_curve_loop(lns, sync=False)
-face = g.model.add_plane_surface([loop], label="I_web")
+loop = g.model.geometry.add_curve_loop(lns, sync=False)
+face = g.model.geometry.add_plane_surface([loop], label="I_web")
 # 4. Extrude to a solid if needed (use gmsh.model.occ.extrude + re-register)
 ```
 
 Extrusion, revolution, and transforms are exposed via
-`g.model.extrude(...)`, `g.model.translate(...)`, `g.model.rotate(...)`,
+`g.model.transforms.extrude(...)`, `g.model.transforms.translate(...)`, `g.model.transforms.rotate(...)`,
 and friends on `_model_transforms.py`. They follow the same
 label + registry conventions as the primitives.
 
@@ -199,15 +199,15 @@ internal helper `_bool_op` that:
 
 ### fuse — union (A ∪ B)
 
-`g.model.fuse(objects, tools)` merges bodies into one. Use this when
+`g.model.boolean.fuse(objects, tools)` merges bodies into one. Use this when
 two parts are geometrically the *same material* and you don't care
 about the interface between them — the classic example is gluing a
 haunch onto a beam flange.
 
 ```python
-beam    = g.model.add_box(0, 0, 0, 10, 0.3, 0.5)
-haunch  = g.model.add_box(0, 0, 0.5, 2.0, 0.3, 0.3)
-merged  = g.model.fuse(beam, haunch)        # -> [one volume tag]
+beam    = g.model.geometry.add_box(0, 0, 0, 10, 0.3, 0.5)
+haunch  = g.model.geometry.add_box(0, 0, 0.5, 2.0, 0.3, 0.3)
+merged  = g.model.boolean.fuse(beam, haunch)        # -> [one volume tag]
 ```
 
 After `fuse`, the interface surface between the two boxes is *gone*.
@@ -217,25 +217,25 @@ instead.
 
 ### cut — difference (A − B)
 
-`g.model.cut(objects, tools)` removes the tool from the object. This
+`g.model.boolean.cut(objects, tools)` removes the tool from the object. This
 is how you drill bolt holes, carve notches, or subtract a void region
 from a soil block.
 
 ```python
-block  = g.model.add_box(0, 0, 0, 1, 1, 1)
-hole   = g.model.add_cylinder(0.5, 0.5, 0, 0, 0, 1, radius=0.1)
-block2 = g.model.cut(block, hole)            # block with a through-hole
+block  = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+hole   = g.model.geometry.add_cylinder(0.5, 0.5, 0, 0, 0, 1, radius=0.1)
+block2 = g.model.boolean.cut(block, hole)            # block with a through-hole
 ```
 
 ### intersect — intersection (A ∩ B)
 
-`g.model.intersect(objects, tools)` keeps only the overlap region.
+`g.model.boolean.intersect(objects, tools)` keeps only the overlap region.
 This is useful for clipping one shape to the bounding volume of
 another — for example, clipping a soil layer to a site footprint.
 
 ### fragment — split at intersections (keep everything)
 
-`g.model.fragment(objects, tools)` is the most important one for FEM
+`g.model.boolean.fragment(objects, tools)` is the most important one for FEM
 work, and the one that trips people up first.
 
 `fragment` computes all intersections between `objects` and `tools`
@@ -247,12 +247,12 @@ This is the geometric precondition for a conformal mesh across a
 multi-body model.
 
 ```python
-soil     = g.model.add_box(-5, -5, -5, 10, 10, 5, label="soil")
-footing  = g.model.add_box(-1, -1, -1, 2, 2, 1, label="footing")
+soil     = g.model.geometry.add_box(-5, -5, -5, 10, 10, 5, label="soil")
+footing  = g.model.geometry.add_box(-1, -1, -1, 2, 2, 1, label="footing")
 
 # Fragment the soil against the footing. Both bodies survive, but
 # the soil now has a matching face where the footing sits.
-pieces = g.model.fragment(soil, footing)
+pieces = g.model.boolean.fragment(soil, footing)
 ```
 
 Because fragmenting can multiply entities, the registry is updated
@@ -300,30 +300,30 @@ all prepared for a conformal mesh.
 ### 4a. Context-manager form (scripts, one-shot cells)
 
 ```python
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
-with pyGmsh(model_name="ssi_demo", verbose=True) as g:
+with apeGmsh(model_name="ssi_demo", verbose=True) as g:
 
     # --- Bodies ---------------------------------------------------------
     # Soil: 10 x 10 x 5 block with its top at z = 0
-    soil    = g.model.add_box(-5, -5, -5, 10, 10, 5, label="soil")
+    soil    = g.model.geometry.add_box(-5, -5, -5, 10, 10, 5, label="soil")
 
     # Footing: 2 x 2 x 1 block, top flush with soil surface
-    footing = g.model.add_box(-1, -1, -1, 2, 2, 1, label="footing")
+    footing = g.model.geometry.add_box(-1, -1, -1, 2, 2, 1, label="footing")
 
     # Column stub above the footing (two halves that we will fuse)
-    col_low  = g.model.add_box(-0.15, -0.15, 0,    0.3, 0.3, 1.0)
-    col_high = g.model.add_box(-0.15, -0.15, 1.0,  0.3, 0.3, 2.0)
+    col_low  = g.model.geometry.add_box(-0.15, -0.15, 0,    0.3, 0.3, 1.0)
+    col_high = g.model.geometry.add_box(-0.15, -0.15, 1.0,  0.3, 0.3, 2.0)
 
     # --- Fuse: two column segments become one body ---------------------
-    column = g.model.fuse(col_low, col_high)
+    column = g.model.boolean.fuse(col_low, col_high)
     # The interface at z = 1.0 is erased. Good: the column is one
     # homogeneous piece of concrete with no artificial seam.
 
     # --- Fragment: make soil + footing + column conformal --------------
     # Any order works; fragment is symmetric in objects/tools except
     # for the order of surviving tags.
-    pieces = g.model.fragment(soil, [footing] + column)
+    pieces = g.model.boolean.fragment(soil, [footing] + column)
     # After this call:
     #   - soil has a matching face with the footing bottom
     #   - footing has a matching face with the column base
@@ -353,24 +353,24 @@ you want to inspect `g.model._registry` between steps, call
 rebuilding the geometry.
 
 ```python
-from pyGmsh import pyGmsh
+from apeGmsh import apeGmsh
 
 # --- Cell 1: open the session --------------------------------------------
-g = pyGmsh(model_name="ssi_demo", verbose=True)
+g = apeGmsh(model_name="ssi_demo", verbose=True)
 g.begin()
 
 try:
     # --- Cell 2: build the bodies ----------------------------------------
-    soil    = g.model.add_box(-5, -5, -5, 10, 10, 5, label="soil")
-    footing = g.model.add_box(-1, -1, -1, 2, 2, 1,   label="footing")
-    col_low  = g.model.add_box(-0.15, -0.15, 0,   0.3, 0.3, 1.0)
-    col_high = g.model.add_box(-0.15, -0.15, 1.0, 0.3, 0.3, 2.0)
+    soil    = g.model.geometry.add_box(-5, -5, -5, 10, 10, 5, label="soil")
+    footing = g.model.geometry.add_box(-1, -1, -1, 2, 2, 1,   label="footing")
+    col_low  = g.model.geometry.add_box(-0.15, -0.15, 0,   0.3, 0.3, 1.0)
+    col_high = g.model.geometry.add_box(-0.15, -0.15, 1.0, 0.3, 0.3, 2.0)
 
     # --- Cell 3: fuse the column halves ---------------------------------
-    column = g.model.fuse(col_low, col_high)
+    column = g.model.boolean.fuse(col_low, col_high)
 
     # --- Cell 4: fragment the whole assembly ----------------------------
-    pieces = g.model.fragment(soil, [footing] + column)
+    pieces = g.model.boolean.fragment(soil, [footing] + column)
 
     # --- Cell 5: physical groups + mesh ---------------------------------
     g.physical.add_from_label("soil",    name="Soil",    dim=3)

@@ -321,7 +321,7 @@ This is the `FEMData` source-agnostic contract in action: a constraint handler o
 Here is what the two sides look like in one session, so you can see where everything lands on the broker:
 
 ```python
-import pyGmsh as pyg
+import apeGmsh as pyg
 
 g = pyg.Session(verbose=True)
 
@@ -363,7 +363,7 @@ fem = g.mesh.get_fem_data(dim=3)
 fem.physical.summary()
 base_nodes = fem.physical.get_nodes(dim=2, tag=fem.physical.get_tag(2, "base"))
 
-# Mesh selections from pyGmsh
+# Mesh selections from apeGmsh
 fem.mesh_selection.summary()
 monitor = fem.mesh_selection.get_nodes(0, fem.mesh_selection.get_tag(0, "monitor"))
 core    = fem.mesh_selection.get_nodes(0, fem.mesh_selection.get_tag(0, "core_probe"))

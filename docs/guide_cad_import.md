@@ -23,7 +23,7 @@ The guide is grounded in the current source on `nmb_WIP`:
 - `src/pyGmsh/mesh/_fem_extract.py` — the broker builder used by both
   paths
 
-All snippets assume `from pyGmsh import pyGmsh, MshLoader`.
+All snippets assume `from apeGmsh import apeGmsh, MshLoader`.
 
 
 ## 1. STEP and IGES — importing geometry
@@ -37,10 +37,10 @@ registers every imported entity in `Model._registry` so that later
 boolean ops, transforms, and queries can address it.
 
 ```python
-g = pyGmsh(model_name="bracket")
+g = apeGmsh(model_name="bracket")
 g.begin()
 
-imported = g.model.load_step("bracket.step")
+imported = g.model.io.load_step("bracket.step")
 # imported == {3: [1], 2: [6, 7, 8, ...], 1: [...], 0: [...]}   (if highest_dim_only=False)
 # imported == {3: [1]}                                          (default)
 
@@ -62,11 +62,11 @@ top-dimensional entities.
 
 ```python
 # Default — clean: only volumes for a solid model
-imported = g.model.load_step("part.step")
+imported = g.model.io.load_step("part.step")
 assert list(imported.keys()) == [3]
 
 # Everything — useful if you need to tag specific faces / edges
-imported = g.model.load_step("part.step", highest_dim_only=False)
+imported = g.model.io.load_step("part.step", highest_dim_only=False)
 volumes  = imported[3]
 faces    = imported[2]     # now addressable for physical groups
 edges    = imported[1]
@@ -85,10 +85,10 @@ when you are about to chain several kernel-level calls and want to pay
 the synchronisation cost only once:
 
 ```python
-imp1 = g.model.load_step("plate.step",  sync=False)
-imp2 = g.model.load_step("rib.step",    sync=False)
-g.model.translate(imp2[3], 0, 0, 50, sync=False)
-g.model.fuse(imp1[3] + imp2[3])         # this call synchronises
+imp1 = g.model.io.load_step("plate.step",  sync=False)
+imp2 = g.model.io.load_step("rib.step",    sync=False)
+g.model.transforms.translate(imp2[3], 0, 0, 50, sync=False)
+g.model.boolean.fuse(imp1[3] + imp2[3])         # this call synchronises
 ```
 
 For single imports, leave `sync=True`. The cost of an extra
@@ -109,9 +109,9 @@ Gmsh's OCC kernel exposes `occ.healShapes` for exactly this, and pyGmsh
 wraps it as `Model.heal_shapes`:
 
 ```python
-imported = g.model.load_step("legacy_part.step")
+imported = g.model.io.load_step("legacy_part.step")
 
-g.model.heal_shapes(
+g.model.io.heal_shapes(
     tolerance       = 1e-3,     # aggressive — tune to your model size
     fix_degenerated = True,
     fix_small_edges = True,
@@ -138,12 +138,12 @@ Putting it all together, a typical import-and-mesh workflow for a STEP
 file looks like this:
 
 ```python
-g = pyGmsh(model_name="bracket")
+g = apeGmsh(model_name="bracket")
 g.begin()
 
 # 1. Import and heal
-imported = g.model.load_step("bracket.step")
-g.model.heal_shapes(tolerance=1e-4)
+imported = g.model.io.load_step("bracket.step")
+g.model.io.heal_shapes(tolerance=1e-4)
 
 bodies = imported[3]
 
@@ -152,9 +152,9 @@ bodies = imported[3]
 g.physical.add(3, bodies, name="Steel")
 
 # Discover faces by bounding-box query (see _model_queries.py)
-base_faces = [t for (d, t) in g.model.entities_in_bounding_box(
+base_faces = [t for (d, t) in g.model.queries.entities_in_bounding_box(
     -1e3, -1e3, -1e-3, 1e3, 1e3, 1e-3, dim=2)]
-top_faces  = [t for (d, t) in g.model.entities_in_bounding_box(
+top_faces  = [t for (d, t) in g.model.queries.entities_in_bounding_box(
     -1e3, -1e3, 99.999, 1e3, 1e3, 100.001, dim=2)]
 
 g.physical.add(2, base_faces, name="Fixed_Support")
@@ -182,7 +182,7 @@ A STEP file can contain multiple bodies (assemblies). `load_step`
 returns all of them under the same `imported[3]` list:
 
 ```python
-imported = g.model.load_step("assembly.step")
+imported = g.model.io.load_step("assembly.step")
 parts    = imported[3]                        # [1, 2, 3, 4, ...]
 
 # Assign each body a distinct material physical group
@@ -191,7 +191,7 @@ for i, tag in enumerate(parts, start=1):
 ```
 
 If the bodies share faces and you need a *conformal* mesh across the
-interface, you must still call `g.model.fragment(parts)` (or `fuse`,
+interface, you must still call `g.model.boolean.fragment(parts)` (or `fuse`,
 depending on whether you want the interface preserved). STEP import
 alone does not imply conformality — bodies come in as independent
 solids.
@@ -202,8 +202,8 @@ solids.
 The reverse direction is trivial because Gmsh handles it natively:
 
 ```python
-g.model.save_step("rebuilt.step")   # .step added if missing
-g.model.save_iges("rebuilt.iges")
+g.model.io.save_step("rebuilt.step")   # .step added if missing
+g.model.io.save_iges("rebuilt.iges")
 ```
 
 These write whatever geometry is currently in the model. They are
@@ -232,10 +232,10 @@ When you already hold an active pyGmsh session and want to bring in a
 previously-saved mesh, use the model-level helpers:
 
 ```python
-g = pyGmsh(model_name="imported")
+g = apeGmsh(model_name="imported")
 g.begin()
 
-g.model.load_msh("previous_run.msh")
+g.model.io.load_msh("previous_run.msh")
 # Geometry + mesh + physical groups are now live in the session.
 # Everything the composites (g.physical, g.inspect, g.mesh) offer works.
 
@@ -260,7 +260,7 @@ is `MshLoader.load`. It is a classmethod, takes a path, and returns a
 state left behind:
 
 ```python
-from pyGmsh import MshLoader
+from apeGmsh import MshLoader
 
 fem = MshLoader.load("bridge.msh", dim=2)
 
@@ -319,7 +319,7 @@ both worlds: load a `.msh` into an active session *and* also get the
 `FEMData` back in one call.
 
 ```python
-g = pyGmsh(model_name="imported")
+g = apeGmsh(model_name="imported")
 g.begin()
 
 fem = g.loader.from_msh("bridge.msh", dim=2)
@@ -412,13 +412,13 @@ All import/export lives in `core/_model_io.py` and
 
 | Call                            | Direction | Returns                        |
 |---------------------------------|-----------|--------------------------------|
-| `g.model.load_step(path)`       | in        | `{dim: [tag,...]}`             |
-| `g.model.load_iges(path)`       | in        | `{dim: [tag,...]}`             |
-| `g.model.heal_shapes(...)`      | —         | `self` (chainable)             |
-| `g.model.save_step(path)`       | out       | `None`                         |
-| `g.model.save_iges(path)`       | out       | `None`                         |
-| `g.model.load_msh(path)`        | in        | `{dim: [tag,...]}` (entities)  |
-| `g.model.save_msh(path)`        | out       | `None`                         |
+| `g.model.io.load_step(path)`       | in        | `{dim: [tag,...]}`             |
+| `g.model.io.load_iges(path)`       | in        | `{dim: [tag,...]}`             |
+| `g.model.io.heal_shapes(...)`      | —         | `self` (chainable)             |
+| `g.model.io.save_step(path)`       | out       | `None`                         |
+| `g.model.io.save_iges(path)`       | out       | `None`                         |
+| `g.model.io.load_msh(path)`        | in        | `{dim: [tag,...]}` (entities)  |
+| `g.model.io.save_msh(path)`        | out       | `None`                         |
 | `MshLoader.load(path, dim=...)` | in        | `FEMData`                      |
 | `g.loader.from_msh(path, dim=)` | in        | `FEMData` (+ live session)     |
 

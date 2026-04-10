@@ -13,7 +13,7 @@
 ## Target Composite Layout
 
 ```python
-g = pyGmsh()
+g = apeGmsh()
 g.begin()
 
 # Geometry
@@ -138,7 +138,7 @@ from numpy import ndarray
 from . import _mesh_filters as mf
 
 if TYPE_CHECKING:
-    from pyGmsh._session import _SessionBase
+    from apeGmsh._session import _SessionBase
 
 Tag    = int
 DimTag = tuple[int, int]
@@ -454,7 +454,7 @@ from ..solvers.Constraints import (
 )
 
 if TYPE_CHECKING:
-    from pyGmsh._session import _SessionBase
+    from apeGmsh._session import _SessionBase
 
 class ConstraintsComposite:
     """
@@ -558,8 +558,8 @@ import gmsh
 import numpy as np
 
 if TYPE_CHECKING:
-    from pyGmsh._session import _SessionBase
-    from pyGmsh.core.Part import Part
+    from apeGmsh._session import _SessionBase
+    from apeGmsh.core.Part import Part
 
 @dataclass
 class Instance:
@@ -582,10 +582,10 @@ class PartsRegistry:
 
     A. Context manager:
         with g.model.part("column"):
-            g.model.add_cylinder(...)
+            g.model.geometry.add_cylinder(...)
 
     B. Explicit registration:
-        vol = g.model.add_box(...)
+        vol = g.model.geometry.add_box(...)
         g.parts.register("slab", [(3, vol)])
 
     C. Import from file:
@@ -604,7 +604,7 @@ class PartsRegistry:
     @contextmanager
     def part(self, label: str):
         """Tag all entities created inside block with label.
-        Usage: with g.parts.part("col"): g.model.add_cylinder(...)"""
+        Usage: with g.parts.part("col"): g.model.geometry.add_cylinder(...)"""
         pre = set(gmsh.model.getEntities(-1))
         yield
         gmsh.model.occ.synchronize()
@@ -688,7 +688,7 @@ class PartsRegistry:
 - Add `g.fragment()` -> `g.parts.fragment_all()`
 
 #### `src/pyGmsh/__init__.py`
-- Remove `from pyGmsh.core.Assembly import Assembly`
+- Remove `from apeGmsh.core.Assembly import Assembly`
 - Remove Assembly from `__all__`
 - Add `Instance`, `PartsRegistry` exports
 

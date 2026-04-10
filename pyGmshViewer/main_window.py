@@ -32,13 +32,13 @@ from qtpy.QtGui import QAction, QKeySequence
 import pyvista as pv
 from pyvistaqt import QtInteractor
 
-from pyGmshViewer.visualization.renderer import ViewportRenderer, DisplayMode
-from pyGmshViewer.visualization.probes import ProbeEngine
-from pyGmshViewer.panels.model_tree import ModelTree
-from pyGmshViewer.panels.controls import ControlsPanel
-from pyGmshViewer.panels.properties import PropertiesPanel
-from pyGmshViewer.panels.probe_panel import ProbePanel
-from pyGmshViewer.loaders.vtu_loader import load_file, MeshData
+from apeGmshViewer.visualization.renderer import ViewportRenderer, DisplayMode
+from apeGmshViewer.visualization.probes import ProbeEngine
+from apeGmshViewer.panels.model_tree import ModelTree
+from apeGmshViewer.panels.controls import ControlsPanel
+from apeGmshViewer.panels.properties import PropertiesPanel
+from apeGmshViewer.panels.probe_panel import ProbePanel
+from apeGmshViewer.loaders.vtu_loader import load_file, MeshData
 
 
 class MainWindow(QMainWindow):
@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
         self._probe_engine = ProbeEngine(self._plotter_widget)
 
         # Install BaseViewer-compatible camera navigation
-        from pyGmshViewer.visualization.navigation import install_navigation
+        from apeGmshViewer.visualization.navigation import install_navigation
         install_navigation(self._plotter_widget)
 
         # Default to orthographic projection (consistent with model/mesh viewers)
@@ -642,7 +642,7 @@ class MainWindow(QMainWindow):
         return name
 
     def load_mesh_data(self, mesh_data: MeshData, name: str | None = None) -> str:
-        """Load a MeshData object directly (e.g., from pyGmsh)."""
+        """Load a MeshData object directly (e.g., from apeGmsh)."""
         name = name or mesh_data.name
         self._loaded_meshes[name] = mesh_data
         self._renderer.add_mesh(mesh_data, name)

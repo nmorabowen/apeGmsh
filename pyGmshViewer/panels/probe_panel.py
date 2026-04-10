@@ -17,7 +17,7 @@ import numpy as np
 
 from apeGmsh.viewers.ui.theme import RED, GREEN, YELLOW, SURFACE0
 
-from pyGmshViewer.visualization.probes import (
+from apeGmshViewer.visualization.probes import (
     PointProbeResult, LineProbeResult, PlaneProbeResult,
 )
 

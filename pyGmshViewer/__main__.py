@@ -21,7 +21,7 @@ def main():
 
     from qtpy.QtWidgets import QApplication
     from qtpy.QtGui import QFont
-    from pyGmshViewer.main_window import MainWindow
+    from apeGmshViewer.main_window import MainWindow
 
     app = QApplication(sys.argv)
     app.setApplicationName("pyGmsh Viewer")

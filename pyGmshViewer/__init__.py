@@ -30,12 +30,12 @@ def show(*filepaths, blocking=None):
     --------
     From a notebook cell::
 
-        from pyGmshViewer import show
+        from apeGmshViewer import show
         show("results.vtu")            # auto-detects Jupyter → subprocess
 
     From a script::
 
-        from pyGmshViewer import show
+        from apeGmshViewer import show
         show("results.vtu")            # auto-detects script → blocking
     """
     from pathlib import Path
@@ -89,7 +89,7 @@ def _launch_viewer(load_fn, *, blocking=False):
 
     import sys
     from qtpy.QtWidgets import QApplication
-    from pyGmshViewer.main_window import MainWindow
+    from apeGmshViewer.main_window import MainWindow
 
     app = QApplication.instance()
     own_app = app is None

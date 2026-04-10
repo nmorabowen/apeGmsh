@@ -87,8 +87,8 @@ class _Queries:
         -------
         ::
 
-            imported = g.model.load_iges("Frame3D.iges", highest_dim_only=False)
-            g.model.remove_duplicates(tolerance=1e-3)
+            imported = g.model.io.load_iges("Frame3D.iges", highest_dim_only=False)
+            g.model.queries.remove_duplicates(tolerance=1e-3)
             g.plot.geometry(label_tags=True)
         """
         before = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
@@ -179,9 +179,9 @@ class _Queries:
         -------
         ::
 
-            m1.model.load_iges("Frame3D.iges", highest_dim_only=False)
+            m1.model.io.load_iges("Frame3D.iges", highest_dim_only=False)
             m1.remove_duplicates(tolerance=1.0)
-            m1.model.make_conformal(dims=[1], tolerance=1.0)
+            m1.model.queries.make_conformal(dims=[1], tolerance=1.0)
             m1.plot.geometry(label_tags=True)
         """
         before = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
@@ -258,7 +258,7 @@ class _Queries:
 
         Example
         -------
-        ``xmin, ymin, zmin, xmax, ymax, zmax = g.model.bounding_box(vol)``
+        ``xmin, ymin, zmin, xmax, ymax, zmax = g.model.queries.bounding_box(vol)``
         """
         d = self._model._resolve_dim(tag, dim)
         return gmsh.model.getBoundingBox(d, tag)
@@ -274,7 +274,7 @@ class _Queries:
 
         Example
         -------
-        ``cx, cy, cz = g.model.center_of_mass(vol)``
+        ``cx, cy, cz = g.model.queries.center_of_mass(vol)``
         """
         d = self._model._resolve_dim(tag, dim)
         return gmsh.model.occ.getCenterOfMass(d, tag)
@@ -291,7 +291,7 @@ class _Queries:
 
         Example
         -------
-        ``vol = g.model.mass(solid_tag)``
+        ``vol = g.model.queries.mass(solid_tag)``
         """
         d = self._model._resolve_dim(tag, dim)
         return gmsh.model.occ.getMass(d, tag)
@@ -325,7 +325,7 @@ class _Queries:
         -------
         ::
 
-            faces = g.model.boundary(vol_tag)  # surfaces bounding a volume
+            faces = g.model.queries.boundary(vol_tag)  # surfaces bounding a volume
         """
         dt = self._model._as_dimtags(tags, dim)
         return gmsh.model.getBoundary(
@@ -356,7 +356,7 @@ class _Queries:
         -------
         ::
 
-            up, down = g.model.adjacencies(face_tag, dim=2)
+            up, down = g.model.queries.adjacencies(face_tag, dim=2)
             # up   = volumes bounded by this face
             # down = curves on this face's boundary
         """
@@ -388,7 +388,7 @@ class _Queries:
         ::
 
             # Find all entities in a region
-            found = g.model.entities_in_bounding_box(
+            found = g.model.queries.entities_in_bounding_box(
                 0, 0, 0,  10, 10, 10, dim=3
             )
         """

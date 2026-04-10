@@ -223,11 +223,11 @@ from .MeshSelectionSet import MeshSelectionSet, MeshSelectionStore
 ## Usage Examples
 
 ```python
-g = pyGmsh(model_name="bridge")
+g = apeGmsh(model_name="bridge")
 g.begin()
 
 # Geometry + physical groups (pre-mesh, as today)
-slab = g.model.add_rectangle(0, 0, 0, 20, 10)
+slab = g.model.geometry.add_rectangle(0, 0, 0, 20, 10)
 g.physical.add_surface([slab], name="slab")
 g.physical.add_curve([1, 3], name="supports")
 

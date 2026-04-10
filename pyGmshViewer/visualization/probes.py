@@ -20,7 +20,7 @@ import numpy as np
 import pyvista as pv
 
 from apeGmsh.viewers.ui.theme import RED, YELLOW
-from pyGmshViewer.loaders.vtu_loader import MeshData
+from apeGmshViewer.loaders.vtu_loader import MeshData
 
 
 # ─────────────────────────────────────────────────────────────────────────

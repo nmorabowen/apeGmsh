@@ -30,7 +30,7 @@ class Partition:
 
         with apeGmsh(model_name="Cube") as g:
             # build and mesh
-            g.model.add_box(0, 0, 0, 1, 1, 1)
+            g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
             g.model.sync()
             g.mesh.generate(3)
 
