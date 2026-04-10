@@ -1802,7 +1802,7 @@ class Mesh:
                 fem,
                 point_data=point_data,
                 cell_data=cell_data,
-                name=self._parent.model_name,
+                name=self._parent.name,
             )
             r.viewer(blocking=blocking)
         else:

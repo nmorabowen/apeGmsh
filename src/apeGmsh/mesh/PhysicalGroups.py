@@ -394,6 +394,6 @@ class PhysicalGroups:
     def __repr__(self) -> str:
         groups = gmsh.model.getPhysicalGroups()
         return (
-            f"PhysicalGroups(model={self._parent.model_name!r}, "
+            f"PhysicalGroups(model={self._parent.name!r}, "
             f"n_groups={len(groups)})"
         )

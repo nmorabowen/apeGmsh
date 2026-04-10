@@ -871,7 +871,7 @@ class OpenSees:
     def summary(self) -> str:
         """Human-readable model description (works before and after build)."""
         lines = [
-            f"OpenSees bridge — model: {self._parent.model_name!r}",
+            f"OpenSees bridge — model: {self._parent.name!r}",
             f"  ndm={self._ndm}  ndf={self._ndf}",
             "",
             f"  nDMaterials ({len(self._nd_materials)}):",
@@ -951,7 +951,7 @@ class OpenSees:
 
         lines += [
             "# OpenSees Tcl script",
-            f"# Model : {self._parent.model_name}",
+            f"# Model : {self._parent.name}",
             "# Source: apeGmsh / OpenSees composite",
         ]
 
@@ -1100,7 +1100,7 @@ class OpenSees:
 
         lines += [
             "# openseespy script",
-            f"# Model : {self._parent.model_name}",
+            f"# Model : {self._parent.name}",
             "# Source: apeGmsh / OpenSees composite",
             "import openseespy.opensees as ops",
         ]
@@ -1242,7 +1242,7 @@ class OpenSees:
     def __repr__(self) -> str:
         status = "built" if self._built else "not built"
         return (
-            f"OpenSees(model={self._parent.model_name!r}, "
+            f"OpenSees(model={self._parent.name!r}, "
             f"ndm={self._ndm}, ndf={self._ndf}, "
             f"nd_mats={len(self._nd_materials)}, "
             f"uni_mats={len(self._uni_materials)}, "

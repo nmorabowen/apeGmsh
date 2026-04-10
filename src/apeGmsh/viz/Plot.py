@@ -65,7 +65,7 @@ class Plot:
     Parameters
     ----------
     parent : _SessionBase
-        The owning instance — used for ``model_name`` and ``_verbose``.
+        The owning instance — used for ``name`` and ``_verbose``.
     """
 
     # Default colour palette — override at instance level if needed
@@ -124,7 +124,7 @@ class Plot:
             self._ax.set_xlabel('X')
             self._ax.set_ylabel('Y')
             self._ax.set_zlabel('Z')
-            self._ax.set_title(self._parent.model_name)
+            self._ax.set_title(self._parent.name)
         return self._fig, self._ax
 
     def _autoscale(self, pts: ndarray) -> None:

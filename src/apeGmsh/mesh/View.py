@@ -40,7 +40,7 @@ class View:
     Parameters
     ----------
     parent : _SessionBase
-        Owning instance — used for ``model_name`` and ``_verbose``.
+        Owning instance — used for ``name`` and ``_verbose``.
     """
 
     def __init__(self, parent: _SessionBase) -> None:
@@ -54,10 +54,6 @@ class View:
     def _log(self, msg: str) -> None:
         if self._parent._verbose:
             print(f"[View] {msg}")
-
-    @property
-    def _model_name(self) -> str:
-        return self._parent.model_name
 
     # ------------------------------------------------------------------
     # ElementData
@@ -90,7 +86,7 @@ class View:
 
         v = gmsh.view.add(name)
         gmsh.view.addModelData(
-            v, step, self._model_name, "ElementData",
+            v, step, self._parent.name, "ElementData",
             tags, data, time, 1,
         )
         gmsh.view.option.setNumber(v, "IntervalsType", 3)  # continuous map
@@ -122,7 +118,7 @@ class View:
 
         v = gmsh.view.add(name)
         gmsh.view.addModelData(
-            v, step, self._model_name, "ElementData",
+            v, step, self._parent.name, "ElementData",
             tags, data, time, 3,
         )
         self._views[v] = name
@@ -155,7 +151,7 @@ class View:
 
         v = gmsh.view.add(name)
         gmsh.view.addModelData(
-            v, step, self._model_name, "NodeData",
+            v, step, self._parent.name, "NodeData",
             tags, data, time, 1,
         )
         gmsh.view.option.setNumber(v, "IntervalsType", 3)
@@ -194,7 +190,7 @@ class View:
 
         v = gmsh.view.add(name)
         gmsh.view.addModelData(
-            v, step, self._model_name, "NodeData",
+            v, step, self._parent.name, "NodeData",
             tags, data, time, 3,
         )
         gmsh.view.option.setNumber(v, "VectorType", vector_type)
@@ -216,4 +212,4 @@ class View:
         return len(self._views)
 
     def __repr__(self) -> str:
-        return f"View(model={self._model_name!r}, n_views={len(self._views)})"
+        return f"View(model={self._parent.name!r}, n_views={len(self._views)})"

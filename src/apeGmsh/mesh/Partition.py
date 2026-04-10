@@ -288,11 +288,11 @@ class Partition:
         n = self.n_partitions()
         if n == 0:
             return (
-                f"Partition(model={self._parent.model_name!r}): "
+                f"Partition(model={self._parent.name!r}): "
                 f"not partitioned"
             )
         lines = [
-            f"Partition(model={self._parent.model_name!r}): "
+            f"Partition(model={self._parent.name!r}): "
             f"{n} partition(s)",
         ]
         df = self.entity_table()
@@ -370,6 +370,6 @@ class Partition:
     def __repr__(self) -> str:
         n = self.n_partitions()
         return (
-            f"Partition(model={self._parent.model_name!r}, "
+            f"Partition(model={self._parent.name!r}, "
             f"n_partitions={n})"
         )

@@ -86,7 +86,7 @@ class MeshViewer:
         self._selection_state = sel
 
         # ── Window (creates QApplication) ───────────────────────────
-        default_title = f"MeshViewer — {self._parent.model_name}"
+        default_title = f"MeshViewer — {self._parent.name}"
         win = ViewerWindow(title=title or default_title)
 
         # ── UI tabs (AFTER QApplication exists) ─────────────────────

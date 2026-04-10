@@ -33,7 +33,7 @@ class ModelViewer:
     Parameters
     ----------
     parent : _SessionBase
-        The apeGmsh session (provides ``model_name``, ``_verbose``).
+        The apeGmsh session (provides ``name``, ``_verbose``).
     model : Model
         The apeGmsh model (provides ``sync()``).
     physical_group : str, optional
@@ -114,7 +114,7 @@ class ModelViewer:
 
         # ── Window (creates QApplication + plotter) ─────────────────
         default_title = (
-            f"ModelViewer — {self._parent.model_name}"
+            f"ModelViewer — {self._parent.name}"
             + (f" → {self._physical_group}" if self._physical_group else "")
         )
 
