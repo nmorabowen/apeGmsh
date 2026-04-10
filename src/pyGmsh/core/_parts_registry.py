@@ -152,6 +152,15 @@ class PartsRegistry:
         if label in self._instances:
             raise ValueError(f"Part label '{label}' already exists.")
 
+        # Ownership check — each entity can belong to at most one part
+        for dim, tag in dimtags:
+            for existing_label, existing_inst in self._instances.items():
+                if int(tag) in existing_inst.entities.get(int(dim), []):
+                    raise ValueError(
+                        f"Entity (dim={dim}, tag={tag}) already belongs to "
+                        f"part '{existing_label}'. Remove it first."
+                    )
+
         entities: dict[int, list[int]] = {}
         for dim, tag in dimtags:
             entities.setdefault(int(dim), []).append(int(tag))
@@ -522,6 +531,37 @@ class PartsRegistry:
     def labels(self) -> list[str]:
         """Return all instance labels in insertion order."""
         return list(self._instances.keys())
+
+    def rename(self, old_label: str, new_label: str) -> None:
+        """Rename an instance.
+
+        Raises
+        ------
+        KeyError   if *old_label* does not exist.
+        ValueError if *new_label* already exists.
+        """
+        if old_label not in self._instances:
+            raise KeyError(f"No part '{old_label}'.")
+        if new_label in self._instances:
+            raise ValueError(f"Part '{new_label}' already exists.")
+        inst = self._instances.pop(old_label)
+        inst.label = new_label
+        self._instances[new_label] = inst
+
+    def delete(self, label: str) -> None:
+        """Remove an instance from the registry.
+
+        The entities remain in the Gmsh session — they become
+        "untracked" and will appear under the Untracked group
+        in the viewer's Parts tab.
+
+        Raises
+        ------
+        KeyError if *label* does not exist.
+        """
+        if label not in self._instances:
+            raise KeyError(f"No part '{label}'.")
+        self._instances.pop(label)
 
     # ------------------------------------------------------------------
     # Private: CAD import (shared by add() and import_step())

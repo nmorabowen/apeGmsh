@@ -352,6 +352,28 @@ class ModelViewer:
                 vis_mgr.hide()
                 plotter.render()
 
+            def _parts_new(label, picks):
+                from qtpy.QtWidgets import QMessageBox
+                try:
+                    parts_reg.register(label, picks)
+                except ValueError as e:
+                    QMessageBox.warning(win.window, "Ownership conflict", str(e))
+                    return
+                parts_tree.refresh()
+
+            def _parts_rename(old_label, new_label):
+                from qtpy.QtWidgets import QMessageBox
+                try:
+                    parts_reg.rename(old_label, new_label)
+                except (KeyError, ValueError) as e:
+                    QMessageBox.warning(win.window, "Rename failed", str(e))
+                    return
+                parts_tree.refresh()
+
+            def _parts_delete(label):
+                parts_reg.delete(label)
+                parts_tree.refresh()
+
             parts_tree = PartsTreePanel(
                 parts_reg, registry,
                 on_select_only=_parts_select_only,
@@ -359,6 +381,10 @@ class ModelViewer:
                 on_remove_from_selection=_parts_remove,
                 on_isolate=_parts_isolate,
                 on_hide=_parts_hide,
+                on_new_part=_parts_new,
+                on_rename_part=_parts_rename,
+                on_delete_part=_parts_delete,
+                get_current_picks=lambda: sel.picks,
             )
             # Insert after Browser tab (position 1)
             win._tab_widget.insertTab(1, parts_tree.widget, "Parts")

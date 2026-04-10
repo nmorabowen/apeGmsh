@@ -602,6 +602,10 @@ class PartsTreePanel:
         on_remove_from_selection: Callable[[list[tuple[int, int]]], None] | None = None,
         on_isolate: Callable[[list[tuple[int, int]]], None] | None = None,
         on_hide: Callable[[list[tuple[int, int]]], None] | None = None,
+        on_new_part: Callable[[str, list[tuple[int, int]]], None] | None = None,
+        on_rename_part: Callable[[str, str], None] | None = None,
+        on_delete_part: Callable[[str], None] | None = None,
+        get_current_picks: Callable[[], list[tuple[int, int]]] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
@@ -612,6 +616,10 @@ class PartsTreePanel:
         self._on_remove_from_selection = on_remove_from_selection
         self._on_isolate = on_isolate
         self._on_hide = on_hide
+        self._on_new_part = on_new_part
+        self._on_rename_part = on_rename_part
+        self._on_delete_part = on_delete_part
+        self._get_current_picks = get_current_picks
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -622,10 +630,24 @@ class PartsTreePanel:
         self._header.setStyleSheet("font-weight: bold; padding: 2px;")
         layout.addWidget(self._header)
 
+        # ── Toolbar ─────────────────────────────────────────────
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_new = QtWidgets.QPushButton("New Part")
+        btn_new.clicked.connect(self._action_new)
+        btn_row.addWidget(btn_new)
+        btn_rename = QtWidgets.QPushButton("Rename")
+        btn_rename.clicked.connect(self._action_rename)
+        btn_row.addWidget(btn_rename)
+        btn_delete = QtWidgets.QPushButton("Delete")
+        btn_delete.clicked.connect(self._action_delete)
+        btn_row.addWidget(btn_delete)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
         self._empty_label = QtWidgets.QLabel(
             "No parts registered.\n\n"
-            "Use g.parts.part(), g.parts.register(),\n"
-            "or g.parts.from_model() to create parts."
+            "Select entities and click 'New Part',\n"
+            "or use g.parts.from_model() in code."
         )
         self._empty_label.setStyleSheet("color: #6c7086; padding: 12px;")
         self._empty_label.setWordWrap(True)
@@ -804,11 +826,22 @@ class PartsTreePanel:
                 has_part = True
                 break
 
-        act_isolate = act_hide = None
+        act_isolate = act_hide = act_rename = act_delete = None
         if has_part:
             menu.addSeparator()
             act_isolate = menu.addAction("Isolate Part")
             act_hide = menu.addAction("Hide Part")
+            # Find the selected part label
+            part_label = None
+            for item in self._tree.selectedItems():
+                d = item.data(0, self._DT_ROLE)
+                if d and isinstance(d, tuple) and d[0] == "part":
+                    part_label = d[1]
+                    break
+            if part_label:
+                menu.addSeparator()
+                act_rename = menu.addAction("Rename Part")
+                act_delete = menu.addAction("Delete Part")
 
         action = menu.exec_(self._tree.viewport().mapToGlobal(pos))
         if action == act_only and self._on_select_only:
@@ -821,6 +854,66 @@ class PartsTreePanel:
             self._on_isolate(dts)
         elif action == act_hide and self._on_hide:
             self._on_hide(dts)
+        elif action == act_rename and part_label:
+            self._action_rename(part_label)
+        elif action == act_delete and part_label:
+            self._action_delete(part_label)
+
+    # ── Button actions ──────────────────────────────────────────
+
+    def _action_new(self):
+        QtWidgets, _, _ = _qt()
+        picks = self._get_current_picks() if self._get_current_picks else []
+        if not picks:
+            QtWidgets.QMessageBox.information(
+                self.widget, "New Part",
+                "Select entities in the viewport first,\n"
+                "then click 'New Part'.",
+            )
+            return
+        label, ok = QtWidgets.QInputDialog.getText(
+            self.widget, "New Part", "Part name:",
+        )
+        if ok and label.strip():
+            if self._on_new_part:
+                self._on_new_part(label.strip(), picks)
+
+    def _action_rename(self, label: str | None = None):
+        QtWidgets, _, _ = _qt()
+        # If called from button (no arg), use first selected part
+        if label is None:
+            for item in self._tree.selectedItems():
+                d = item.data(0, self._DT_ROLE)
+                if d and isinstance(d, tuple) and d[0] == "part":
+                    label = d[1]
+                    break
+        if label is None:
+            return
+        new_label, ok = QtWidgets.QInputDialog.getText(
+            self.widget, "Rename Part", "New name:", text=label,
+        )
+        if ok and new_label.strip() and new_label.strip() != label:
+            if self._on_rename_part:
+                self._on_rename_part(label, new_label.strip())
+
+    def _action_delete(self, label: str | None = None):
+        QtWidgets, _, _ = _qt()
+        if label is None:
+            for item in self._tree.selectedItems():
+                d = item.data(0, self._DT_ROLE)
+                if d and isinstance(d, tuple) and d[0] == "part":
+                    label = d[1]
+                    break
+        if label is None:
+            return
+        reply = QtWidgets.QMessageBox.question(
+            self.widget, "Delete Part",
+            f"Delete part '{label}'?\n\n"
+            f"Entities will remain in the session as untracked.",
+        )
+        if reply == QtWidgets.QMessageBox.Yes:
+            if self._on_delete_part:
+                self._on_delete_part(label)
 
     # ── Helpers ─────────────────────────────────────────────────
 
