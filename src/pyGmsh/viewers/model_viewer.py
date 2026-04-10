@@ -374,6 +374,65 @@ class ModelViewer:
                 parts_reg.delete(label)
                 parts_tree.refresh()
 
+            def _rebuild_scene():
+                """Tear down VTK actors and rebuild from current Gmsh state.
+
+                Mutates ``registry`` in-place so all closures over it
+                (color_mgr, vis_mgr, pick_engine) keep working.
+                """
+                # Save camera state
+                cam = plotter.renderer.GetActiveCamera()
+                cam_pos = cam.GetPosition()
+                cam_fp = cam.GetFocalPoint()
+                cam_up = cam.GetViewUp()
+                cam_clip = cam.GetClippingRange()
+
+                # Remove old actors
+                for actor in list(registry.dim_actors.values()):
+                    try:
+                        plotter.remove_actor(actor)
+                    except Exception:
+                        pass
+
+                # Build fresh scene
+                fresh = build_brep_scene(
+                    plotter, self._dims,
+                    point_size=self._point_size,
+                    line_width=self._line_width,
+                    surface_opacity=self._surface_opacity,
+                    show_surface_edges=self._show_surface_edges,
+                    verbose=_verbose,
+                )
+
+                # Mutate existing registry in place — preserves closures
+                for slot in registry.__slots__:
+                    setattr(registry, slot, getattr(fresh, slot))
+
+                # Clear stale selection / active group
+                sel.clear()
+
+                # Refresh UI panels
+                if parts_tree is not None:
+                    parts_tree.refresh()
+                browser.refresh()
+                sel_tree.update(sel.picks)
+
+                # Restore camera
+                cam.SetPosition(*cam_pos)
+                cam.SetFocalPoint(*cam_fp)
+                cam.SetViewUp(*cam_up)
+                cam.SetClippingRange(*cam_clip)
+                plotter.render()
+
+            def _parts_fuse(labels, new_label):
+                from qtpy.QtWidgets import QMessageBox
+                try:
+                    parts_reg.fuse_group(labels, label=new_label)
+                except (ValueError, RuntimeError) as e:
+                    QMessageBox.warning(win.window, "Fuse failed", str(e))
+                    return
+                _rebuild_scene()
+
             parts_tree = PartsTreePanel(
                 parts_reg, registry,
                 on_select_only=_parts_select_only,
@@ -384,6 +443,7 @@ class ModelViewer:
                 on_new_part=_parts_new,
                 on_rename_part=_parts_rename,
                 on_delete_part=_parts_delete,
+                on_fuse_parts=_parts_fuse,
                 get_current_picks=lambda: sel.picks,
             )
             # Insert after Browser tab (position 1)

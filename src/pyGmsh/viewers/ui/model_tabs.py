@@ -605,6 +605,7 @@ class PartsTreePanel:
         on_new_part: Callable[[str, list[tuple[int, int]]], None] | None = None,
         on_rename_part: Callable[[str, str], None] | None = None,
         on_delete_part: Callable[[str], None] | None = None,
+        on_fuse_parts: Callable[[list[str], str], None] | None = None,
         get_current_picks: Callable[[], list[tuple[int, int]]] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
@@ -619,6 +620,7 @@ class PartsTreePanel:
         self._on_new_part = on_new_part
         self._on_rename_part = on_rename_part
         self._on_delete_part = on_delete_part
+        self._on_fuse_parts = on_fuse_parts
         self._get_current_picks = get_current_picks
 
         self.widget = QtWidgets.QWidget()
@@ -641,6 +643,9 @@ class PartsTreePanel:
         btn_delete = QtWidgets.QPushButton("Delete")
         btn_delete.clicked.connect(self._action_delete)
         btn_row.addWidget(btn_delete)
+        btn_fuse = QtWidgets.QPushButton("Fuse")
+        btn_fuse.clicked.connect(self._action_fuse)
+        btn_row.addWidget(btn_fuse)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -826,22 +831,27 @@ class PartsTreePanel:
                 has_part = True
                 break
 
-        act_isolate = act_hide = act_rename = act_delete = None
+        act_isolate = act_hide = act_rename = act_delete = act_fuse = None
+        # Count distinct part roots in selection
+        part_labels: list[str] = []
+        for item in self._tree.selectedItems():
+            d = item.data(0, self._DT_ROLE)
+            if d and isinstance(d, tuple) and d[0] == "part":
+                if d[1] not in part_labels:
+                    part_labels.append(d[1])
+
         if has_part:
             menu.addSeparator()
             act_isolate = menu.addAction("Isolate Part")
             act_hide = menu.addAction("Hide Part")
-            # Find the selected part label
-            part_label = None
-            for item in self._tree.selectedItems():
-                d = item.data(0, self._DT_ROLE)
-                if d and isinstance(d, tuple) and d[0] == "part":
-                    part_label = d[1]
-                    break
+            part_label = part_labels[0] if part_labels else None
             if part_label:
                 menu.addSeparator()
                 act_rename = menu.addAction("Rename Part")
                 act_delete = menu.addAction("Delete Part")
+            if len(part_labels) >= 2:
+                menu.addSeparator()
+                act_fuse = menu.addAction(f"Fuse Selected Parts ({len(part_labels)})")
 
         action = menu.exec_(self._tree.viewport().mapToGlobal(pos))
         if action == act_only and self._on_select_only:
@@ -858,6 +868,8 @@ class PartsTreePanel:
             self._action_rename(part_label)
         elif action == act_delete and part_label:
             self._action_delete(part_label)
+        elif action == act_fuse and len(part_labels) >= 2:
+            self._action_fuse()
 
     # ── Button actions ──────────────────────────────────────────
 
@@ -914,6 +926,32 @@ class PartsTreePanel:
         if reply == QtWidgets.QMessageBox.Yes:
             if self._on_delete_part:
                 self._on_delete_part(label)
+
+    def _action_fuse(self):
+        """Fuse 2+ selected parts into a single new part."""
+        QtWidgets, _, _ = _qt()
+        # Collect labels from selected part-root items
+        labels: list[str] = []
+        for item in self._tree.selectedItems():
+            d = item.data(0, self._DT_ROLE)
+            if d and isinstance(d, tuple) and d[0] == "part":
+                if d[1] not in labels:
+                    labels.append(d[1])
+        if len(labels) < 2:
+            QtWidgets.QMessageBox.information(
+                self.widget, "Fuse Parts",
+                "Select at least 2 parts to fuse.\n"
+                "Use Ctrl+click on part labels.",
+            )
+            return
+        new_label, ok = QtWidgets.QInputDialog.getText(
+            self.widget, "Fuse Parts",
+            f"Fuse {len(labels)} parts into:",
+            text=labels[0],
+        )
+        if ok and new_label.strip():
+            if self._on_fuse_parts:
+                self._on_fuse_parts(labels, new_label.strip())
 
     # ── Helpers ─────────────────────────────────────────────────
 
