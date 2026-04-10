@@ -1,6 +1,6 @@
 # Migrating to pyGmsh → apeGmsh v1.0
 
-v1.0 bundles three breaking changes into a single release:
+v1.0 bundles four breaking changes into a single release:
 
 1. **Package rename**: `pyGmsh` → `apeGmsh`
 2. **Model API restructure**: `g.model.*` methods split into five focused
@@ -8,6 +8,9 @@ v1.0 bundles three breaking changes into a single release:
 3. **Mesh API restructure**: `g.mesh.*` methods split into seven focused
    sub-composites (`generation`, `sizing`, `field`, `structured`,
    `editing`, `queries`, `partitioning`).
+4. **OpenSees API restructure**: `g.opensees.*` methods split into five
+   focused sub-composites (`materials`, `elements`, `ingest`,
+   `inspect`, `export`), with `set_model` and `build` staying flat.
 
 Plus several smaller cleanups (`g.mass` → `g.masses`, lifecycle aliases,
 legacy deprecation removals).
@@ -424,7 +427,164 @@ work, because `generate` is on `generation`, not `sizing`.
 
 ---
 
-## 4. Rename: `g.mass` → `g.masses`
+## 4. OpenSees methods → sub-composites
+
+`OpenSees` is now a thin composition container.  Every declaration
+method moved behind one of five focused sub-composites, and several
+long-winded names were shortened in the process.
+
+Two methods stay flat on `g.opensees` — the lifecycle verbs that
+every workflow calls exactly once or twice:
+
+- `g.opensees.set_model(ndm, ndf)` — unchanged
+- `g.opensees.build()`            — unchanged
+
+### Materials (`g.opensees.materials.*`)
+
+Three material-like registries live here.  Names kept as-is — the
+composite prefix already provides the disambiguation you used to get
+from the `add_*_material` suffix.
+
+```diff
+-g.opensees.add_nd_material("Concrete", "ElasticIsotropic", E=30e9, nu=0.2)
++g.opensees.materials.add_nd_material("Concrete", "ElasticIsotropic", E=30e9, nu=0.2)
+
+-g.opensees.add_uni_material("Steel", "Steel01", Fy=250e6, E=200e9, b=0.01)
++g.opensees.materials.add_uni_material("Steel", "Steel01", Fy=250e6, E=200e9, b=0.01)
+
+-g.opensees.add_section("Slab", "ElasticMembranePlateSection",
+-                        E=30e9, nu=0.2, h=0.2, rho=2400)
++g.opensees.materials.add_section("Slab", "ElasticMembranePlateSection",
++                                  E=30e9, nu=0.2, h=0.2, rho=2400)
+```
+
+### Elements (`g.opensees.elements.*`)
+
+Geometric transformations, element assignments, and single-point
+constraints — everything that attaches to a physical group during
+model declaration.
+
+**Renamed**: `assign_element` → `assign` (the composite name already
+says "elements", so `elements.assign_element` would stutter).
+
+```diff
+-g.opensees.add_geom_transf("Cols", "Linear", vecxz=[0, 0, 1])
++g.opensees.elements.add_geom_transf("Cols", "Linear", vecxz=[0, 0, 1])
+
+-g.opensees.assign_element("Body", "FourNodeTetrahedron", material="Concrete")
++g.opensees.elements.assign("Body", "FourNodeTetrahedron", material="Concrete")
+
+-g.opensees.assign_element("Cols", "elasticBeamColumn",
+-                           geom_transf="Cols", A=0.04, E=200e9, ...)
++g.opensees.elements.assign("Cols", "elasticBeamColumn",
++                           geom_transf="Cols", A=0.04, E=200e9, ...)
+
+-g.opensees.fix("Base", dofs=[1, 1, 1])
++g.opensees.elements.fix("Base", dofs=[1, 1, 1])
+```
+
+### Ingest from FEMData (`g.opensees.ingest.*`)
+
+The two `consume_*_from_fem` methods are renamed — the composite
+name "ingest" already says what they do, and `fem` is the argument,
+so the method names drop everything but the noun.
+
+```diff
+-g.opensees.consume_loads_from_fem(fem)
++g.opensees.ingest.loads(fem)
+
+-g.opensees.consume_masses_from_fem(fem)
++g.opensees.ingest.masses(fem)
+```
+
+### Inspect (`g.opensees.inspect.*`)
+
+Post-build tables and the human-readable summary.  Names unchanged.
+
+```diff
+-df = g.opensees.node_table()
++df = g.opensees.inspect.node_table()
+
+-df = g.opensees.element_table()
++df = g.opensees.inspect.element_table()
+
+-print(g.opensees.summary())
++print(g.opensees.inspect.summary())
+```
+
+### Export (`g.opensees.export.*`)
+
+Script emission.  **Renamed**: `export_tcl` → `tcl`, `export_py` →
+`py` (same reasoning as `elements.assign`).
+
+```diff
+-g.opensees.export_tcl("model.tcl")
++g.opensees.export.tcl("model.tcl")
+
+-g.opensees.export_py("model.py")
++g.opensees.export.py("model.py")
+```
+
+Both return the composite so they still chain:
+
+```python
+g.opensees.export.tcl("model.tcl").py("model.py")
+```
+
+### Full before/after
+
+```diff
+ # Declaration
+-g.opensees.set_model(ndm=3, ndf=6)
+-g.opensees.add_nd_material("Concrete", "ElasticIsotropic", E=30e9, nu=0.2)
+-g.opensees.add_geom_transf("Cols", "Linear", vecxz=[0, 0, 1])
+-g.opensees.assign_element("Body", "FourNodeTetrahedron", material="Concrete")
+-g.opensees.assign_element("Cols", "elasticBeamColumn", geom_transf="Cols",
+-                           A=0.04, E=200e9, G=77e9, Jx=1e-4, Iy=2e-4, Iz=2e-4)
+-g.opensees.fix("Base", dofs=[1, 1, 1, 1, 1, 1])
++g.opensees.set_model(ndm=3, ndf=6)
++g.opensees.materials.add_nd_material("Concrete", "ElasticIsotropic", E=30e9, nu=0.2)
++g.opensees.elements.add_geom_transf("Cols", "Linear", vecxz=[0, 0, 1])
++g.opensees.elements.assign("Body", "FourNodeTetrahedron", material="Concrete")
++g.opensees.elements.assign("Cols", "elasticBeamColumn", geom_transf="Cols",
++                           A=0.04, E=200e9, G=77e9, Jx=1e-4, Iy=2e-4, Iz=2e-4)
++g.opensees.elements.fix("Base", dofs=[1, 1, 1, 1, 1, 1])
+
+ # Build + inspect + export
+ fem = g.mesh.queries.get_fem_data(dim=3)
+-g.opensees.consume_loads_from_fem(fem)
+-g.opensees.consume_masses_from_fem(fem)
++g.opensees.ingest.loads(fem).masses(fem)
+ g.opensees.build()
+-print(g.opensees.summary())
+-g.opensees.export_tcl("model.tcl").export_py("model.py")
++print(g.opensees.inspect.summary())
++g.opensees.export.tcl("model.tcl").py("model.py")
+```
+
+### Chaining inside a composite
+
+Like Mesh, every non-query method on an OpenSees sub-composite
+returns `self` (the sub-composite) so chaining works inside one
+namespace at a time:
+
+```python
+(g.opensees.materials
+    .add_nd_material("Concrete", "ElasticIsotropic", E=30e9, nu=0.2)
+    .add_nd_material("Soil", "DruckerPrager", K=80e6, G=60e6, sigmaY=20e3))
+
+(g.opensees.elements
+    .add_geom_transf("Cols", "Linear", vecxz=[0, 0, 1])
+    .assign("Cols", "elasticBeamColumn", geom_transf="Cols", ...)
+    .fix("Base", dofs=[1, 1, 1, 1, 1, 1]))
+```
+
+To chain across composites, break the chain — the cross-composite
+form does not work.
+
+---
+
+## 5. Rename: `g.mass` → `g.masses`
 
 Every other composite is plural. The last outlier is fixed.
 
@@ -459,7 +619,7 @@ and `ops.mass(...)` (OpenSees solver command).
 
 ---
 
-## 5. Removed legacy aliases and deprecated methods
+## 6. Removed legacy aliases and deprecated methods
 
 These had lived as shims or `DeprecationWarning` for one or more releases.
 v1.0 deletes them entirely.
@@ -543,11 +703,11 @@ parts. The auto-mapping collapsed this richness.
 
 ---
 
-## 6. Automated migration
+## 7. Automated migration
 
 For a mechanical find-replace across your own codebase, this Python
-script handles every transform in this guide — including both the
-Model and Mesh sub-composite splits:
+script handles every transform in this guide — including the Model,
+Mesh, and OpenSees sub-composite splits:
 
 ```python
 #!/usr/bin/env python3
@@ -623,6 +783,29 @@ MESH_MAPPING = {
     'renumber_mesh': 'partitioning',
 }
 
+# --- OpenSees methods → sub-composites ---
+# Value format: (composite, new_method_name_or_None_to_keep)
+OPENSEES_MAPPING = {
+    # materials
+    'add_nd_material':          ('materials', None),
+    'add_uni_material':         ('materials', None),
+    'add_section':              ('materials', None),
+    # elements (assign_element renamed to assign)
+    'add_geom_transf':          ('elements',  None),
+    'assign_element':           ('elements',  'assign'),
+    'fix':                      ('elements',  None),
+    # ingest (consume_*_from_fem renamed)
+    'consume_loads_from_fem':   ('ingest',    'loads'),
+    'consume_masses_from_fem':  ('ingest',    'masses'),
+    # inspect
+    'node_table':               ('inspect',   None),
+    'element_table':            ('inspect',   None),
+    'summary':                  ('inspect',   None),
+    # export (export_tcl → tcl, export_py → py)
+    'export_tcl':               ('export',    'tcl'),
+    'export_py':                ('export',    'py'),
+}
+
 def model_sub_for(m):
     if m in MODEL_GEOMETRY: return 'geometry'
     if m in MODEL_BOOLEAN: return 'boolean'
@@ -638,6 +821,11 @@ pat_mesh = re.compile(
     '|'.join(sorted(MESH_MAPPING, key=len, reverse=True)) +
     r')(?=\()'
 )
+pat_opensees = re.compile(
+    r'(\bopensees)\.(' +
+    '|'.join(sorted(OPENSEES_MAPPING, key=len, reverse=True)) +
+    r')(?=\()'
+)
 
 def transform(src):
     def model_repl(m):
@@ -648,8 +836,15 @@ def transform(src):
     def mesh_repl(m):
         return f'mesh.{MESH_MAPPING[m.group(2)]}.{m.group(2)}'
 
+    def opensees_repl(m):
+        old = m.group(2)
+        comp, new_name = OPENSEES_MAPPING[old]
+        name = new_name if new_name else old
+        return f'opensees.{comp}.{name}'
+
     out = pat_model.sub(model_repl, src)
     out = pat_mesh.sub(mesh_repl, out)
+    out = pat_opensees.sub(opensees_repl, out)
     out = out.replace('from pyGmsh', 'from apeGmsh')
     out = out.replace('import pyGmsh', 'import apeGmsh')
     out = re.sub(r'\bpyGmsh\(', 'apeGmsh(', out)
@@ -696,23 +891,23 @@ Save as `migrate_v1.py` and run: `python migrate_v1.py /path/to/your/project`
 
 ---
 
-## 7. What didn't change
+## 8. What didn't change
 
 - The session lifecycle contract (`g.begin()` / `g.end()` / context manager)
 - `g.parts`, `g.physical`, `g.constraints`, `g.loads`, `g.mesh_selection`
   composite APIs
 - `fem.node_ids`, `fem.node_coords`, `fem.element_ids`, `fem.connectivity`,
   `fem.physical`, `fem.constraints`, `fem.loads` — all unchanged
-- The OpenSees bridge's `consume_*_from_fem` / `build` / `export_tcl` /
-  `export_py` pipeline
 - `Part` and `PartsRegistry` APIs (only docstring examples were swept)
 - `g.mesh.field.*` — the FieldHelper sub-composite was already in place
 - `g.mesh.viewer()` and `g.mesh.results_viewer()` — the two interactive
   entry points stay flat on `g.mesh`
+- `g.opensees.set_model()` and `g.opensees.build()` — the two
+  OpenSees lifecycle verbs stay flat
 
 ---
 
-## 8. Full example — old vs new
+## 9. Full example — old vs new
 
 ### Old (v0.x pyGmsh)
 

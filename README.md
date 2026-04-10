@@ -69,7 +69,7 @@ session *is* the assembly. Parts are registered into
 | `g.constraints`  | Solver-agnostic constraint definitions & resolver |
 | `g.loads`        | Load patterns & definitions (resolved into `fem.loads`) |
 | `g.masses`       | Mass definitions (resolved into `fem.masses`) |
-| `g.opensees`     | OpenSees bridge (`build_from_fem`, `export_tcl`, ...) |
+| `g.opensees`     | OpenSees bridge (see sub-composites below) |
 | `g.g2o`          | Legacy one-liner `gmsh2opensees` transfer |
 | `g.inspect`      | Session-level diagnostics |
 | `g.plot`         | Matplotlib visualisations (optional) |
@@ -106,6 +106,21 @@ Seven focused namespaces for meshing:
 
 Plus flat `g.mesh.viewer()` and `g.mesh.results_viewer()` for
 interactive windows.
+
+### `g.opensees` sub-composites
+
+Five focused namespaces for the OpenSees bridge:
+
+| Access | Methods |
+|---|---|
+| `g.opensees.materials` | `add_nd_material`, `add_uni_material`, `add_section` |
+| `g.opensees.elements`  | `add_geom_transf`, `assign`, `fix` |
+| `g.opensees.ingest`    | `loads(fem)`, `masses(fem)` — ingest resolved records from a FEMData snapshot |
+| `g.opensees.inspect`   | `node_table`, `element_table`, `summary` |
+| `g.opensees.export`    | `tcl(path)`, `py(path)` |
+
+Plus two lifecycle entry points that stay flat on `g.opensees`:
+`set_model(ndm, ndf)` and `build()`.
 
 ### The FEM broker
 
@@ -226,7 +241,14 @@ apeGmsh/
         MshLoader.py
         Partition.py
       solvers/
-        OpenSees.py
+        OpenSees.py                # g.opensees composite container
+        _opensees_materials.py     # g.opensees.materials
+        _opensees_elements.py      # g.opensees.elements
+        _opensees_ingest.py        # g.opensees.ingest
+        _opensees_inspect.py       # g.opensees.inspect
+        _opensees_export.py        # g.opensees.export
+        _opensees_build.py         # OpenSees.build() implementation
+        _element_specs.py          # element type registry
         Constraints.py
         Loads.py
         Masses.py
@@ -253,7 +275,9 @@ See the `examples/` directory — every notebook runs in-place after
 
 See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md) for the full
 checklist. In short: package rename (`pyGmsh → apeGmsh`), `g.model.*`
-methods split into five sub-composites, `g.mesh.*` methods split into
-seven sub-composites, `g.mass → g.masses`, `g.initialize/finalize →
-g.begin/end`. The migration guide ships a ~100-line Python script
-that handles every mechanical rewrite on an existing project.
+split into five sub-composites, `g.mesh.*` split into seven,
+`g.opensees.*` split into five (with `assign_element → assign`,
+`consume_*_from_fem → ingest.loads/masses`, `export_tcl/py → export.tcl/py`),
+`g.mass → g.masses`, `g.initialize/finalize → g.begin/end`. The
+migration guide ships a ~150-line Python script that handles every
+mechanical rewrite on an existing project.

@@ -290,9 +290,9 @@ needed by the solver.
 
 ```python
 g.opensees.build()
-g.opensees.export_py("frame_model.py")
+g.opensees.export.py("frame_model.py")
 # or
-g.opensees.export_tcl("frame_model.tcl")
+g.opensees.export.tcl("frame_model.tcl")
 ```
 
 ### Direct FEM data access
@@ -363,7 +363,7 @@ g.constraints.resolve(fem.node_ids, fem.node_coords,
                       node_map=node_map, face_map=face_map)
 
 g.opensees.build()
-g.opensees.export_py("portal_frame.py")
+g.opensees.export.py("portal_frame.py")
 g.end()
 ```
 

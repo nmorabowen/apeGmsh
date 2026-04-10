@@ -1,11 +1,11 @@
 """
-Unit test for :meth:`apeGmsh.solvers.OpenSees.OpenSees.node_table`.
+Unit test for :meth:`apeGmsh.solvers._opensees_inspect._Inspect.node_table`.
 
 The test stubs out the Gmsh dependency (by installing a fake ``gmsh``
 module into ``sys.modules``) and constructs an ``OpenSees`` bridge
-directly against a fake parent.  It then populates the legacy
-internal tables the way ``build()`` would and asserts the shape of
-the returned DataFrame.
+directly against a fake parent.  It then populates the internal
+tables the way ``build()`` would and asserts the shape of the
+DataFrame returned by ``bridge.inspect.node_table()``.
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ class OpenSeesNodeTableTests(unittest.TestCase):
             "TopFace": [2, 3],
         }[pg_name]
 
-        df = bridge.node_table()
+        df = bridge.inspect.node_table()
 
         expected_cols = {
             "fix_1", "fix_2", "fix_3",

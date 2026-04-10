@@ -264,8 +264,8 @@ fem.physical.get_nodes(0, 1)          # from physical groups
 fem.mesh_selection.get_nodes(0, 1)    # from mesh selections
 
 # OpenSees — consumes either
-g.opensees.fix(source="physical", name="supports", dofs=[1,1,1,0,0,0])
-g.opensees.fix(source="mesh_selection", name="base_nodes", dofs=[1,1,1,0,0,0])
+g.opensees.elements.fix(source="physical", name="supports", dofs=[1,1,1,0,0,0])
+g.opensees.elements.fix(source="mesh_selection", name="base_nodes", dofs=[1,1,1,0,0,0])
 
 g.mesh_selection.summary()
 # DataFrame indexed by (dim, tag):
