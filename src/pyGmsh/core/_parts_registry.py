@@ -166,7 +166,91 @@ class PartsRegistry:
         return inst
 
     # ------------------------------------------------------------------
-    # Entry point 3: Import a Part object
+    # Entry point 3: Adopt existing model geometry
+    # ------------------------------------------------------------------
+
+    def from_model(
+        self,
+        label: str,
+        *,
+        dim: int | None = None,
+        tags: list[int] | None = None,
+    ) -> Instance:
+        """Adopt entities already in the Gmsh session as a named part.
+
+        Useful after ``g.model.load_step()`` or ``g.model.load_iges()``
+        when you want the imported geometry tracked for constraints
+        and fragmentation.
+
+        Parameters
+        ----------
+        label : str
+            Part name.
+        dim : int, optional
+            Dimension to adopt.  If None, adopts all dimensions.
+        tags : list[int], optional
+            Specific entity tags to adopt.  If None, adopts all
+            **untracked** entities (not already assigned to a part).
+
+        Returns
+        -------
+        Instance
+
+        Examples
+        --------
+        ::
+
+            # Load geometry, then adopt it
+            g.model.load_step("bracket.step")
+            g.parts.from_model("bracket")
+
+            # Adopt only specific volumes
+            g.parts.from_model("slab", dim=3, tags=[1, 2])
+        """
+        if label in self._instances:
+            raise ValueError(f"Part label '{label}' already exists.")
+
+        # Collect already-tracked tags per dim
+        tracked: dict[int, set[int]] = {}
+        for inst in self._instances.values():
+            for d, ts in inst.entities.items():
+                tracked.setdefault(d, set()).update(ts)
+
+        # Determine which dims to scan
+        dims = [dim] if dim is not None else list(range(4))
+
+        entities: dict[int, list[int]] = {}
+        for d in dims:
+            all_tags_d = [t for _, t in gmsh.model.getEntities(d)]
+            if tags is not None:
+                # User specified exact tags — use them
+                adopted = [t for t in all_tags_d if t in tags]
+            else:
+                # Adopt untracked entities
+                adopted = [t for t in all_tags_d if t not in tracked.get(d, set())]
+            if adopted:
+                entities[d] = sorted(adopted)
+
+        if not entities:
+            import warnings
+            warnings.warn(
+                f"No entities to adopt for part '{label}'.  "
+                f"All entities are already tracked or the session is empty.",
+                stacklevel=2,
+            )
+
+        dimtags = [(d, t) for d, ts in entities.items() for t in ts]
+        inst = Instance(
+            label=label,
+            part_name=label,
+            entities=entities,
+            bbox=self._compute_bbox(dimtags) if dimtags else None,
+        )
+        self._instances[label] = inst
+        return inst
+
+    # ------------------------------------------------------------------
+    # Entry point 4: Import a Part object
     # ------------------------------------------------------------------
 
     def add(
@@ -276,6 +360,25 @@ class PartsRegistry:
                 raise RuntimeError("No entities found.")
 
         all_ents = gmsh.model.getEntities(dim)
+
+        # Warn about untracked entities
+        tracked = set()
+        for inst in self._instances.values():
+            for t in inst.entities.get(dim, []):
+                tracked.add(t)
+        all_tags = set(t for _, t in all_ents)
+        orphans = all_tags - tracked
+        if orphans:
+            import warnings
+            warnings.warn(
+                f"{len(orphans)} entities at dim={dim} are not tracked "
+                f"by any part (tags: {sorted(orphans)}).  They will "
+                f"participate in fragmentation but won't be remapped.  "
+                f"Use g.parts.register() or g.parts.from_model() to "
+                f"adopt them.",
+                stacklevel=2,
+            )
+
         if len(all_ents) < 2:
             return [t for _, t in all_ents]
 
