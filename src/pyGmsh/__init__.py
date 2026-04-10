@@ -39,6 +39,15 @@ from pyGmsh.core.Part import Part
 from pyGmsh.core._parts_registry import PartsRegistry, Instance
 from pyGmsh.core.ConstraintsComposite import ConstraintsComposite
 from pyGmsh.mesh.FEMData import FEMData, MeshInfo, PhysicalGroupSet
+from pyGmsh.mesh.Mesh import (
+    Algorithm2D,
+    Algorithm3D,
+    MeshAlgorithm2D,
+    MeshAlgorithm3D,
+    ALGORITHM_2D,
+    ALGORITHM_3D,
+    OptimizeMethod,
+)
 from pyGmsh.mesh.MshLoader import MshLoader
 from pyGmsh.solvers.Numberer import Numberer, NumberedMesh
 from pyGmsh.viz.Selection import Selection, SelectionComposite
@@ -61,6 +70,13 @@ __all__ = [
     "FEMData",
     "MeshInfo",
     "PhysicalGroupSet",
+    "Algorithm2D",
+    "Algorithm3D",
+    "MeshAlgorithm2D",
+    "MeshAlgorithm3D",
+    "ALGORITHM_2D",
+    "ALGORITHM_3D",
+    "OptimizeMethod",
     "MshLoader",
     "Results",
     "Numberer",

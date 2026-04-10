@@ -198,6 +198,77 @@ class PhysicalGroups:
         """
         return list(gmsh.model.getEntitiesForPhysicalGroup(dim, tag))
 
+    def entities(
+        self,
+        name_or_tag,
+        *,
+        dim: int | None = None,
+    ) -> list[Tag]:
+        """
+        Resolve a physical group to its entity tags — by **name** or by tag.
+
+        This is the convenience entry point used by mesh commands that want
+        to act on "everything in the 'Concrete' PG" without the caller
+        having to chain ``get_tag`` + ``get_entities`` manually.
+
+        Parameters
+        ----------
+        name_or_tag : str | int
+            Physical group name, or the raw PG tag (in which case ``dim``
+            is required).
+        dim : int | None, optional
+            Dimension to search.  If omitted and ``name_or_tag`` is a
+            string, all dimensions are searched from 0 to 3 and the first
+            match wins.  Required when ``name_or_tag`` is an int.
+
+        Returns
+        -------
+        list[Tag]
+            Flat list of model-entity tags contained in the group.
+
+        Raises
+        ------
+        KeyError
+            If no physical group with that name exists.
+        TypeError
+            If ``name_or_tag`` is an int but ``dim`` is not provided.
+
+        Examples
+        --------
+        ::
+
+            # Fan a per-surface algorithm out over every surface in a PG
+            for s in g.physical.entities("Concrete", dim=2):
+                g.mesh.set_algorithm(s, "frontal_delaunay_quads")
+                g.mesh.set_recombine(s)
+
+            # Feed a distance field directly from a PG
+            joint = g.physical.entities("BeamColumnJoint", dim=2)
+            d = g.mesh.field.distance(surfaces=joint)
+        """
+        if isinstance(name_or_tag, str):
+            if dim is None:
+                for d in (0, 1, 2, 3):
+                    pg_tag = self.get_tag(d, name_or_tag)
+                    if pg_tag is not None:
+                        return list(gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag))
+                raise KeyError(
+                    f"No physical group named {name_or_tag!r} at any dimension"
+                )
+            pg_tag = self.get_tag(dim, name_or_tag)
+            if pg_tag is None:
+                raise KeyError(
+                    f"No physical group named {name_or_tag!r} at dim={dim}"
+                )
+            return list(gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag))
+
+        # int / PG tag path
+        if dim is None:
+            raise TypeError(
+                "entities(): when passing a raw PG tag, `dim` must be given"
+            )
+        return list(gmsh.model.getEntitiesForPhysicalGroup(dim, int(name_or_tag)))
+
     def get_groups_for_entity(self, dim: int, tag: Tag) -> list[Tag]:
         """
         Return the physical-group tags that contain a given model entity.
