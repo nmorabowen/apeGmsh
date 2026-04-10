@@ -454,6 +454,144 @@ class PartsRegistry:
         return [t for _, t in result]
 
     # ------------------------------------------------------------------
+    # Fuse parts into a single instance
+    # ------------------------------------------------------------------
+
+    def fuse_group(
+        self,
+        labels: list[str],
+        *,
+        label: str | None = None,
+        dim: int | None = None,
+        properties: dict | None = None,
+    ) -> Instance:
+        """Fuse multiple instances into a single new instance.
+
+        Calls ``gmsh.model.occ.fuse()`` on the entities of the listed
+        instances at the target dimension.  Internal interfaces vanish,
+        the surviving entities are stored under a new instance, and the
+        old instances are removed from the registry.
+
+        Parameters
+        ----------
+        labels : list of str
+            Existing instance labels to fuse (minimum 2).
+        label : str, optional
+            Name for the resulting instance.  Defaults to the first
+            label in the list (the "survivor").
+        dim : int, optional
+            Target dimension.  Auto-detects highest common dimension
+            across all listed instances if None.
+        properties : dict, optional
+            Metadata for the new instance.  Inherits from the first
+            label if None.
+
+        Returns
+        -------
+        Instance
+            The new fused instance.
+
+        Raises
+        ------
+        ValueError
+            If fewer than 2 labels, duplicate labels, unknown labels,
+            or if *label* collides with an unrelated existing instance.
+        RuntimeError
+            If no common dimension across the listed instances.
+
+        Examples
+        --------
+        ::
+
+            with g.parts.part("web"):
+                g.model.add_box(0, 0, 0,  0.01, 0.3, 5.0)
+            with g.parts.part("flange_bot"):
+                g.model.add_box(-0.1, -0.005, 0,  0.2, 0.005, 5.0)
+            with g.parts.part("flange_top"):
+                g.model.add_box(-0.1, 0.295, 0,  0.2, 0.005, 5.0)
+
+            g.parts.fuse_group(
+                ["web", "flange_bot", "flange_top"],
+                label="i_beam",
+            )
+        """
+        # ── Validate input ──────────────────────────────────────────
+        if len(labels) < 2:
+            raise ValueError(
+                f"fuse_group requires at least 2 labels, got {len(labels)}."
+            )
+        if len(set(labels)) != len(labels):
+            raise ValueError(f"fuse_group: duplicate labels in {labels}.")
+        for lbl in labels:
+            if lbl not in self._instances:
+                raise ValueError(f"No part '{lbl}'.")
+
+        new_label = label if label is not None else labels[0]
+        if new_label in self._instances and new_label not in labels:
+            raise ValueError(
+                f"Part label '{new_label}' already exists "
+                f"and is not in the fuse list."
+            )
+
+        instances = [self._instances[lbl] for lbl in labels]
+
+        # ── Auto-detect common dimension ────────────────────────────
+        if dim is None:
+            for d in (3, 2, 1):
+                if all(d in inst.entities and inst.entities[d]
+                       for inst in instances):
+                    dim = d
+                    break
+            else:
+                raise RuntimeError(
+                    f"No common dimension across instances {labels}."
+                )
+
+        # ── Collect entities ────────────────────────────────────────
+        obj_inst = instances[0]
+        tool_insts = instances[1:]
+
+        obj = [(dim, t) for t in obj_inst.entities.get(dim, [])]
+        tool: list[tuple[int, int]] = []
+        for tool_inst in tool_insts:
+            tool.extend((dim, t) for t in tool_inst.entities.get(dim, []))
+
+        if not obj or not tool:
+            raise RuntimeError(
+                f"fuse_group: no entities at dim={dim} in one of {labels}."
+            )
+
+        # ── OCC fuse ────────────────────────────────────────────────
+        result, _ = gmsh.model.occ.fuse(
+            obj, tool, removeObject=True, removeTool=True,
+        )
+        gmsh.model.occ.synchronize()
+
+        # ── Drop old instances from registry ────────────────────────
+        for lbl in labels:
+            del self._instances[lbl]
+
+        # ── Build new instance ──────────────────────────────────────
+        new_entities: dict[int, list[int]] = {}
+        for d, t in result:
+            new_entities.setdefault(d, []).append(t)
+
+        new_props = (
+            dict(properties) if properties is not None
+            else dict(obj_inst.properties)
+        )
+
+        inst = Instance(
+            label=new_label,
+            part_name=new_label,
+            entities=new_entities,
+            properties=new_props,
+            bbox=self._compute_bbox(result),
+        )
+        self._instances[new_label] = inst
+        return inst
+
+    # ------------------------------------------------------------------
     # Node / face maps (for constraint resolution)
     # ------------------------------------------------------------------
 
