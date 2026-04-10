@@ -3,9 +3,9 @@ requires = ["setuptools >= 68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pyGmsh"
-version = "0.1.0"
-description = "Gmsh wrapper for structural FEM workflows — Part/Assembly architecture with OpenSees integration."
+name = "apeGmsh"
+version = "0.3.1"
+description = "Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration."
 requires-python = ">= 3.10"
 license = {text = "MIT"}
 authors = [
@@ -32,10 +32,10 @@ pygmsh-viewer = "pyGmshViewer.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]
-include = ["pyGmsh*", "pyGmshViewer*"]
+include = ["apeGmsh*", "pyGmshViewer*"]
 
 [tool.setuptools.package-data]
-pyGmsh = ["py.typed"]
+apeGmsh = ["py.typed"]
 
 [tool.pyright]
 pythonVersion = "3.10"

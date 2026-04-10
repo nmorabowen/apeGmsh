@@ -5,7 +5,7 @@ Properties Panel — Shows details about picked nodes/elements and mesh info.
 from __future__ import annotations
 
 import numpy as np
-from pyGmsh.viewers.ui.theme import BLUE, GREEN, PEACH, RED
+from apeGmsh.viewers.ui.theme import BLUE, GREEN, PEACH, RED
 from qtpy.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTextEdit, QGroupBox,
 )

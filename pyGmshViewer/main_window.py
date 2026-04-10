@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
 
     def _apply_theme(self):
         """Apply shared Catppuccin Mocha theme."""
-        from pyGmsh.viewers.ui.theme import STYLESHEET
+        from apeGmsh.viewers.ui.theme import STYLESHEET
         self.setStyleSheet(STYLESHEET)
 
     # ── Signal Connections ────────────────────────────────────────────

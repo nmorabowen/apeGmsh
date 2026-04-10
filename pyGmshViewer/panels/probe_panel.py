@@ -15,7 +15,7 @@ from qtpy.QtGui import QColor
 
 import numpy as np
 
-from pyGmsh.viewers.ui.theme import RED, GREEN, YELLOW, SURFACE0
+from apeGmsh.viewers.ui.theme import RED, GREEN, YELLOW, SURFACE0
 
 from pyGmshViewer.visualization.probes import (
     PointProbeResult, LineProbeResult, PlaneProbeResult,
@@ -145,7 +145,7 @@ class ProbePanel(QWidget):
         """
 
     def _make_group(self, title: str) -> QGroupBox:
-        from pyGmsh.viewers.ui.theme import styled_group
+        from apeGmsh.viewers.ui.theme import styled_group
         return styled_group(title)
 
     # ── Display Results ──────────────────────────────────────────────

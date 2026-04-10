@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import pyvista as pv
 
-from pyGmsh.viewers.ui.theme import RED, YELLOW
+from apeGmsh.viewers.ui.theme import RED, YELLOW
 from pyGmshViewer.loaders.vtu_loader import MeshData
 
 

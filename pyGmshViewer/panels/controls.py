@@ -202,7 +202,7 @@ class ControlsPanel(QWidget):
 
     def _make_group(self, title: str) -> QGroupBox:
         """Create a styled group box (inherits global STYLESHEET)."""
-        from pyGmsh.viewers.ui.theme import styled_group
+        from apeGmsh.viewers.ui.theme import styled_group
         return styled_group(title)
 
     def _on_mode_changed(self, text: str) -> None:
