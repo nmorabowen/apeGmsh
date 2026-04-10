@@ -297,6 +297,130 @@ class Selection:
             self._dim, list(self.tags), name=name, tag=tag,
         )
 
+    # ------------------------------------------------------------------
+    # Bridges to mesh data
+    # ------------------------------------------------------------------
+
+    def to_mesh_nodes(self) -> dict:
+        """Return mesh node data for the entities in this selection.
+
+        Requires the mesh to have been generated.  Combines nodes from
+        all entities in the selection (deduplicated, sorted by tag).
+
+        Returns
+        -------
+        dict
+            ``'tags'``   : ndarray(N,) — global node tags
+            ``'coords'`` : ndarray(N, 3) — XYZ coordinates
+
+        Raises
+        ------
+        RuntimeError
+            If the mesh has not been generated.
+
+        Example
+        -------
+        ::
+
+            top = g.model.selection.select_surfaces(on_plane=("z", 10))
+            nodes = top.to_mesh_nodes()
+            # → {'tags': [12, 18, 22, ...], 'coords': [[...], ...]}
+        """
+        if not self._dimtags:
+            return {'tags': np.array([], dtype=np.int64),
+                    'coords': np.empty((0, 3), dtype=np.float64)}
+
+        all_tags: list[int] = []
+        all_coords: list = []
+        seen: set[int] = set()
+        for d, t in self._dimtags:
+            try:
+                ntags, ncoords, _ = gmsh.model.mesh.getNodes(d, t, includeBoundary=True)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to retrieve mesh nodes for ({d}, {t}). "
+                    f"Has the mesh been generated? Original error: {exc}"
+                )
+            ncoords = np.asarray(ncoords).reshape(-1, 3)
+            for i, nt in enumerate(ntags):
+                nt = int(nt)
+                if nt not in seen:
+                    seen.add(nt)
+                    all_tags.append(nt)
+                    all_coords.append(ncoords[i])
+
+        order = np.argsort(all_tags)
+        return {
+            'tags':   np.asarray(all_tags, dtype=np.int64)[order],
+            'coords': np.asarray(all_coords, dtype=np.float64)[order],
+        }
+
+    def to_mesh_elements(self) -> dict:
+        """Return mesh element data for the entities in this selection.
+
+        Combines elements from all entities at this selection's dim.
+        Only available for homogeneous-dim selections (dim >= 1).
+
+        Returns
+        -------
+        dict
+            ``'element_ids'``  : ndarray(E,)
+            ``'connectivity'`` : ndarray(E, npe)
+
+        Raises
+        ------
+        ValueError
+            If the selection is mixed-dim or dim==0 (points have no elements).
+        RuntimeError
+            If the mesh has not been generated.
+        """
+        if self._dim == -1:
+            raise ValueError(
+                "to_mesh_elements requires a homogeneous-dim selection."
+            )
+        if self._dim == 0:
+            raise ValueError("Points (dim=0) have no elements.")
+
+        eids: list[int] = []
+        conn_blocks: list[np.ndarray] = []
+        for d, t in self._dimtags:
+            try:
+                etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(d, t)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to retrieve elements for ({d}, {t}). "
+                    f"Has the mesh been generated? Original error: {exc}"
+                )
+            for etags, enodes in zip(etags_list, enodes_list):
+                if len(etags) == 0:
+                    continue
+                npe = len(enodes) // len(etags)
+                conn = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                eids.extend(int(e) for e in etags)
+                conn_blocks.append(conn)
+
+        if not conn_blocks:
+            return {
+                'element_ids': np.array([], dtype=np.int64),
+                'connectivity': np.empty((0, 0), dtype=np.int64),
+            }
+        # Pad if mixed npe — use the largest, fill with -1 sentinel
+        max_npe = max(b.shape[1] for b in conn_blocks)
+        if all(b.shape[1] == max_npe for b in conn_blocks):
+            conn = np.vstack(conn_blocks)
+        else:
+            padded = []
+            for b in conn_blocks:
+                if b.shape[1] < max_npe:
+                    pad = np.full((b.shape[0], max_npe - b.shape[1]), -1, dtype=np.int64)
+                    b = np.hstack([b, pad])
+                padded.append(b)
+            conn = np.vstack(padded)
+        return {
+            'element_ids':  np.asarray(eids, dtype=np.int64),
+            'connectivity': conn,
+        }
+
     def to_dataframe(self) -> pd.DataFrame:
         """
         Return a DataFrame with columns
@@ -591,6 +715,7 @@ def _apply_filters(
     kinds          : str | Sequence[str] | None = None,
     physical       : str | Tag | None     = None,
     in_box         : BBox | None          = None,
+    in_sphere      : tuple[float, float, float, float] | None = None,
     on_plane       : tuple[str, float, float] | None = None,
     on_axis        : tuple[str, float] | None = None,
     at_point       : tuple[float, float, float, float] | None = None,
@@ -650,6 +775,17 @@ def _apply_filters(
             gmsh.model.getEntitiesInBoundingBox(x0, y0, z0, x1, y1, z1, dim=dim)
         )
         out = [dt for dt in out if dt in in_box_set]
+
+    # ---- spatial: in_sphere (centroid within radius of center) -------
+    if in_sphere is not None:
+        cx, cy, cz, r = in_sphere
+        r2 = r * r
+        center = np.array([cx, cy, cz])
+        def _in_sphere(dt: DimTag) -> bool:
+            c = _entity_center(*dt)
+            d = c - center
+            return float(d @ d) <= r2
+        out = [dt for dt in out if _in_sphere(dt)]
 
     # ---- spatial: on_plane -------------------------------------------
     if on_plane is not None:

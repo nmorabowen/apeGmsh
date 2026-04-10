@@ -206,6 +206,7 @@ class MeshSelectionSet:
         on_plane: tuple | None = None,
         in_box: tuple | list | None = None,
         in_sphere: tuple | None = None,
+        closest_to: tuple | None = None,
         nearest_to: tuple | None = None,
         count: int = 1,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
@@ -219,14 +220,19 @@ class MeshSelectionSet:
         on_plane : (axis, value, atol) — e.g. ("z", 0.0, 1e-3)
         in_box : (xmin, ymin, zmin, xmax, ymax, zmax)
         in_sphere : (cx, cy, cz, radius)
-        nearest_to : (x, y, z) — use *count* to select N nearest
-        count : number of nearest nodes (used with nearest_to)
+        closest_to : (x, y, z) — use *count* to select N nearest
+            (preferred name; ``nearest_to`` is a deprecated alias)
+        count : number of nearest nodes (used with closest_to)
         predicate : fn(coords(N,3)) → bool mask(N,)
 
         Returns
         -------
         int — set tag
         """
+        # Backward-compat alias
+        if nearest_to is not None and closest_to is None:
+            closest_to = nearest_to
+
         all_ids, all_coords = self._get_mesh_nodes()
         mask = np.ones(len(all_ids), dtype=bool)
 
@@ -242,8 +248,8 @@ class MeshSelectionSet:
             cx, cy, cz, r = in_sphere
             mask &= _flt.nodes_in_sphere(all_coords, (cx, cy, cz), r)
 
-        if nearest_to is not None:
-            mask &= _flt.nodes_nearest(all_coords, nearest_to, count)
+        if closest_to is not None:
+            mask &= _flt.nodes_nearest(all_coords, closest_to, count)
 
         if predicate is not None:
             mask &= predicate(all_coords)
@@ -505,6 +511,198 @@ class MeshSelectionSet:
                    f"node set tag={t}, {len(nids)} nodes")
         return t
 
+    def from_geometric(
+        self,
+        selection,
+        *,
+        kind: str = "nodes",
+        name: str = "",
+        tag: int = -1,
+    ) -> int:
+        """Seed a mesh selection from a geometric :class:`Selection`.
+
+        Bridge between the pre-mesh ``g.model.selection`` system and
+        the post-mesh ``g.mesh_selection`` system.
+
+        Parameters
+        ----------
+        selection : Selection
+            A geometric selection from ``g.model.selection.select_*``.
+        kind : "nodes" or "elements"
+            Whether to extract mesh nodes or elements of the entities.
+            ``"elements"`` requires homogeneous-dim selection at dim≥1.
+        name, tag : identifier for the resulting mesh selection set.
+
+        Returns
+        -------
+        int — mesh selection set tag
+
+        Example
+        -------
+        ::
+
+            top = g.model.selection.select_surfaces(on_plane=("z", 10))
+            g.mesh_selection.from_geometric(top, name="top_nodes")
+        """
+        if kind == "nodes":
+            data = selection.to_mesh_nodes()
+            t = self._alloc_tag(0, tag)
+            self._store_node_set(t, name, data['tags'], data['coords'])
+            self._log(
+                f"from_geometric(kind=nodes) → tag={t}, "
+                f"{len(data['tags'])} nodes"
+            )
+            return t
+        elif kind == "elements":
+            data = selection.to_mesh_elements()
+            sel_dim = selection._dim
+            t = self._alloc_tag(sel_dim, tag)
+            # Element set storage
+            conn = data['connectivity']
+            unique_node_ids = np.unique(conn[conn >= 0]) if conn.size else \
+                np.array([], dtype=np.int64)
+            self._sets[(sel_dim, t)] = {
+                "name": name,
+                "node_ids": unique_node_ids,
+                "node_coords": np.empty((0, 3), dtype=np.float64),
+                "element_ids": data['element_ids'],
+                "connectivity": conn,
+            }
+            self._log(
+                f"from_geometric(kind=elements, dim={sel_dim}) → tag={t}, "
+                f"{len(data['element_ids'])} elements"
+            )
+            return t
+        else:
+            raise ValueError(f"kind must be 'nodes' or 'elements', got {kind!r}")
+
+    # ------------------------------------------------------------------
+    # Refinement (filter / sort an existing set into a new one)
+    # ------------------------------------------------------------------
+
+    def filter_set(
+        self,
+        dim: int,
+        tag: int,
+        *,
+        name: str = "",
+        new_tag: int = -1,
+        on_plane: tuple | None = None,
+        in_box: tuple | list | None = None,
+        in_sphere: tuple | None = None,
+        closest_to: tuple | None = None,
+        count: int = 1,
+        predicate: Callable[[np.ndarray], np.ndarray] | None = None,
+    ) -> int:
+        """Refine an existing set with spatial filters → create a new set.
+
+        For node sets, filters apply to node coordinates.  For element
+        sets, filters apply to element centroids.  All filters are
+        AND-combined.
+
+        Parameters
+        ----------
+        dim, tag : source set identifier
+        name, new_tag : identifier for the resulting set
+        on_plane, in_box, in_sphere, closest_to, predicate :
+            same semantics as :meth:`add_nodes`
+
+        Returns
+        -------
+        int — tag of the new (filtered) set
+        """
+        info = self._sets.get((dim, tag))
+        if info is None:
+            raise KeyError(
+                f"No mesh selection (dim={dim}, tag={tag}). "
+                f"Available: {self.get_all()}"
+            )
+
+        if dim == 0:
+            ids = np.asarray(info["node_ids"])
+            coords = np.asarray(info["node_coords"], dtype=np.float64)
+        else:
+            # Element set: centroids drive the filtering
+            elem_ids = np.asarray(info.get("element_ids", []))
+            conn = np.asarray(info.get("connectivity"))
+            node_ids, node_coords = self._get_mesh_nodes()
+            id_to_idx = {int(n): i for i, n in enumerate(node_ids)}
+            coords = _flt.element_centroids(conn, id_to_idx, node_coords)
+            ids = elem_ids
+
+        mask = np.ones(len(ids), dtype=bool)
+        if on_plane is not None:
+            axis, value = on_plane[0], on_plane[1]
+            atol = on_plane[2] if len(on_plane) > 2 else 1e-6
+            mask &= _flt.nodes_on_plane(coords, axis, value, atol)
+        if in_box is not None:
+            mask &= _flt.nodes_in_box(coords, in_box)
+        if in_sphere is not None:
+            cx, cy, cz, r = in_sphere
+            mask &= _flt.nodes_in_sphere(coords, (cx, cy, cz), r)
+        if closest_to is not None:
+            mask &= _flt.nodes_nearest(coords, closest_to, count)
+        if predicate is not None:
+            mask &= predicate(coords)
+
+        t = self._alloc_tag(dim, new_tag)
+        if dim == 0:
+            self._store_node_set(t, name, ids[mask], coords[mask])
+        else:
+            self._sets[(dim, t)] = {
+                "name": name,
+                "node_ids": np.unique(conn[mask].ravel()),
+                "node_coords": np.array([], dtype=np.float64).reshape(0, 3),
+                "element_ids": ids[mask],
+                "connectivity": conn[mask],
+            }
+        self._log(
+            f"filter_set(dim={dim}, src={tag}) → tag={t}, "
+            f"{int(mask.sum())}/{len(mask)} kept"
+        )
+        return t
+
+    def sort_set(
+        self,
+        dim: int,
+        tag: int,
+        *,
+        by: str = "x",
+        descending: bool = False,
+    ) -> None:
+        """Sort the entries of a set in place by coordinate axis.
+
+        Parameters
+        ----------
+        dim, tag : set identifier
+        by : "x", "y", or "z" — axis to sort along
+        descending : reverse the order
+        """
+        info = self._sets.get((dim, tag))
+        if info is None:
+            raise KeyError(f"No mesh selection (dim={dim}, tag={tag}).")
+
+        axis_idx = {"x": 0, "y": 1, "z": 2}[by.lower()]
+
+        if dim == 0:
+            coords = np.asarray(info["node_coords"], dtype=np.float64)
+            order = np.argsort(coords[:, axis_idx])
+            if descending:
+                order = order[::-1]
+            info["node_ids"] = np.asarray(info["node_ids"])[order]
+            info["node_coords"] = coords[order]
+        else:
+            conn = np.asarray(info.get("connectivity"))
+            elem_ids = np.asarray(info.get("element_ids", []))
+            node_ids, node_coords = self._get_mesh_nodes()
+            id_to_idx = {int(n): i for i, n in enumerate(node_ids)}
+            cents = _flt.element_centroids(conn, id_to_idx, node_coords)
+            order = np.argsort(cents[:, axis_idx])
+            if descending:
+                order = order[::-1]
+            info["element_ids"] = elem_ids[order]
+            info["connectivity"] = conn[order]
+
     # ------------------------------------------------------------------
     # Display
     # ------------------------------------------------------------------
@@ -524,6 +722,38 @@ class MeshSelectionSet:
         if not rows:
             return pd.DataFrame(columns=["dim", "tag", "name", "n_nodes", "n_elems"])
         return pd.DataFrame(rows).set_index(["dim", "tag"]).sort_index()
+
+    def to_dataframe(self, dim: int, tag: int) -> pd.DataFrame:
+        """Return a DataFrame of the entries of a single set.
+
+        For dim=0 (node set): columns ``[node_id, x, y, z]``.
+        For dim>0 (element set): columns ``[element_id, cx, cy, cz, n_nodes]``.
+        """
+        info = self._sets.get((dim, tag))
+        if info is None:
+            raise KeyError(
+                f"No mesh selection (dim={dim}, tag={tag}). "
+                f"Available: {self.get_all()}"
+            )
+        if dim == 0:
+            return pd.DataFrame({
+                "node_id": np.asarray(info["node_ids"]),
+                "x": info["node_coords"][:, 0],
+                "y": info["node_coords"][:, 1],
+                "z": info["node_coords"][:, 2],
+            })
+        elem_ids = np.asarray(info.get("element_ids", []))
+        conn = np.asarray(info.get("connectivity"))
+        node_ids, node_coords = self._get_mesh_nodes()
+        id_to_idx = {int(n): i for i, n in enumerate(node_ids)}
+        cents = _flt.element_centroids(conn, id_to_idx, node_coords)
+        return pd.DataFrame({
+            "element_id": elem_ids,
+            "cx": cents[:, 0],
+            "cy": cents[:, 1],
+            "cz": cents[:, 2],
+            "n_nodes": [conn.shape[1]] * len(elem_ids),
+        })
 
     # ------------------------------------------------------------------
     # Snapshot (for FEMData)
