@@ -549,6 +549,113 @@ class ConstraintSet:
         return f"ConstraintSet({len(self._records)} records: {parts})"
 
 
+# =====================================================================
+# Load snapshot
+# =====================================================================
+
+class LoadSet:
+    """
+    Solver-ready snapshot of resolved loads.
+
+    Accessed via ``fem.loads``.  Holds the full :class:`LoadRecord`
+    list (nodal forces and/or element load commands) grouped by
+    pattern name.
+
+    Iteration helpers:
+
+    * :meth:`patterns`     — list of unique pattern names
+    * :meth:`by_pattern`   — records belonging to a named pattern
+    * :meth:`nodal`        — yield NodalLoadRecord objects
+    * :meth:`element`      — yield ElementLoadRecord objects
+    * :meth:`by_kind`      — filter by record ``kind`` field
+    * :meth:`summary`      — DataFrame of pattern × kind counts
+
+    Construction
+    ------------
+    ::
+
+        records = g.loads.resolve(...)
+        ls = LoadSet(records)
+        fem = g.mesh.get_fem_data(dim=3)
+        fem.loads = ls            # or pass at construction
+    """
+
+    def __init__(self, records: list | None = None) -> None:
+        self._records: list = list(records) if records else []
+
+    # ── Pattern grouping ─────────────────────────────────────
+
+    def patterns(self) -> list[str]:
+        """Return all unique pattern names in insertion order."""
+        seen: list[str] = []
+        for r in self._records:
+            if r.pattern not in seen:
+                seen.append(r.pattern)
+        return seen
+
+    def by_pattern(self, name: str) -> list:
+        """Return all records belonging to the named pattern."""
+        return [r for r in self._records if r.pattern == name]
+
+    # ── Type iterators ───────────────────────────────────────
+
+    def nodal(self):
+        """Yield :class:`NodalLoadRecord` objects."""
+        from pyGmsh.solvers.Loads import NodalLoadRecord
+        for r in self._records:
+            if isinstance(r, NodalLoadRecord):
+                yield r
+
+    def element(self):
+        """Yield :class:`ElementLoadRecord` objects."""
+        from pyGmsh.solvers.Loads import ElementLoadRecord
+        for r in self._records:
+            if isinstance(r, ElementLoadRecord):
+                yield r
+
+    def by_kind(self, kind: str) -> list:
+        """Return records matching a load kind."""
+        return [r for r in self._records if r.kind == kind]
+
+    # ── Summary ──────────────────────────────────────────────
+
+    def summary(self):
+        """DataFrame of (pattern, kind) → count."""
+        import pandas as pd
+        if not self._records:
+            return pd.DataFrame(columns=["pattern", "kind", "count"])
+        rows: dict[tuple, int] = {}
+        for r in self._records:
+            key = (r.pattern, r.kind)
+            rows[key] = rows.get(key, 0) + 1
+        data = [
+            {"pattern": p, "kind": k, "count": c}
+            for (p, k), c in rows.items()
+        ]
+        return pd.DataFrame(data).sort_values(["pattern", "kind"]).reset_index(drop=True)
+
+    # ── Dunder ───────────────────────────────────────────────
+
+    def __iter__(self):
+        return iter(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __bool__(self) -> bool:
+        return bool(self._records)
+
+    def __repr__(self) -> str:
+        if not self._records:
+            return "LoadSet(empty)"
+        n_pats = len(self.patterns())
+        n_nodal = sum(1 for _ in self.nodal())
+        n_elem = sum(1 for _ in self.element())
+        return (
+            f"LoadSet({len(self._records)} records, "
+            f"{n_pats} pattern(s), {n_nodal} nodal, {n_elem} element)"
+        )
+
 
 # =====================================================================
 # FEM data container
@@ -619,6 +726,7 @@ class FEMData:
     physical:      PhysicalGroupSet  = field(repr=False)
     mesh_selection: "MeshSelectionStore" = field(repr=False, default=None)
     constraints: ConstraintSet = field(repr=False, default=None)
+    loads: LoadSet = field(repr=False, default=None)
 
     # -- Lazy lookup caches (not part of __init__) --
 
@@ -650,6 +758,9 @@ class FEMData:
         # Default constraints to empty ConstraintSet if not provided
         if self.constraints is None:
             object.__setattr__(self, 'constraints', ConstraintSet())
+        # Default loads to empty LoadSet if not provided
+        if self.loads is None:
+            object.__setattr__(self, 'loads', LoadSet())
 
     # -- Solver-friendly iterators --
 
