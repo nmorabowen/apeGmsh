@@ -44,9 +44,20 @@ The class name stays lowercase to match the package (`from apeGmsh import apeGms
 **Install:** uninstall the old wheel (`pip uninstall pyGmsh`) and install the
 new one (`pip install -e .` from the repo root).
 
-**What's NOT renamed:** the companion app `pyGmshViewer` keeps its own name.
-Its internal imports now read `from apeGmsh.viewers.ui.theme import ...` but
-the entry point `pygmsh-viewer` and the package `pyGmshViewer` are unchanged.
+**Companion app rename:** the standalone results viewer was also renamed
+from `pyGmshViewer` → `apeGmshViewer` (directory + package + console
+script).  Update imports and command-line invocations accordingly:
+
+```diff
+-from pyGmshViewer import show
++from apeGmshViewer import show
+
+-python -m pyGmshViewer results.vtu
++python -m apeGmshViewer results.vtu
+
+-pygmsh-viewer results.vtu
++apegmsh-viewer results.vtu
+```
 
 ---
 
@@ -845,9 +856,15 @@ def transform(src):
     out = pat_model.sub(model_repl, src)
     out = pat_mesh.sub(mesh_repl, out)
     out = pat_opensees.sub(opensees_repl, out)
+    # pyGmsh → apeGmsh  (the longer viewer name is caught by the
+    # prefix match: `from pyGmshViewer` → `from apeGmshViewer`)
     out = out.replace('from pyGmsh', 'from apeGmsh')
     out = out.replace('import pyGmsh', 'import apeGmsh')
     out = re.sub(r'\bpyGmsh\(', 'apeGmsh(', out)
+    # Viewer-specific names the line above does not catch
+    out = out.replace('-m pyGmshViewer', '-m apeGmshViewer')
+    out = out.replace('pygmsh-viewer', 'apegmsh-viewer')
+    # Renames elsewhere in the v1.0 API
     out = re.sub(r'\bg\.mass\.', 'g.masses.', out)
     out = re.sub(r'\bfem\.mass\b', 'fem.masses', out)
     out = re.sub(r'\bg\.initialize\(\)', 'g.begin()', out)

@@ -28,11 +28,11 @@ viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2"]
 all = ["matplotlib", "openseespy", "gmsh2opensees", "ezdxf"]
 
 [project.scripts]
-pygmsh-viewer = "pyGmshViewer.__main__:main"
+apegmsh-viewer = "apeGmshViewer.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]
-include = ["apeGmsh*", "pyGmshViewer*"]
+include = ["apeGmsh*", "apeGmshViewer*"]
 
 [tool.setuptools.package-data]
 apeGmsh = ["py.typed"]
@@ -42,3 +42,18 @@ pythonVersion = "3.10"
 typeCheckingMode = "basic"
 reportMissingImports = true
 reportMissingTypeStubs = false
+
+# ─────────────────────────────────────────────────────────────────────
+# mypy: the library ``src/apeGmsh/`` is strictly typed, but the
+# standalone viewer app ``apeGmshViewer/`` is not (it's a Qt/PyVista
+# application, not a library — the cost/benefit of strict typing is
+# different).  Silence follow-imports into the viewer so that
+# ``mypy src/apeGmsh/`` stays clean.
+# ─────────────────────────────────────────────────────────────────────
+[tool.mypy]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "apeGmshViewer.*"
+follow_imports = "skip"
+ignore_errors = true

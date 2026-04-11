@@ -230,7 +230,7 @@ class Mesh:
             If False (default), the viewer runs non-blocking.
         """
         if results is not None:
-            from apeGmshViewer import show  # type: ignore[import-not-found]
+            from apeGmshViewer import show
             show(results, blocking=blocking)
         elif point_data is not None or cell_data is not None:
             from ..results.Results import Results
@@ -245,7 +245,7 @@ class Mesh:
         else:
             import tempfile
 
-            from apeGmshViewer import show  # type: ignore[import-not-found]
+            from apeGmshViewer import show
 
             from ..viz.VTKExport import VTKExport
             vtk_export = VTKExport(self._parent)

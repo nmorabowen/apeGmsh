@@ -1,10 +1,10 @@
 """
-pyGmshViewer — Entry point.
+apeGmshViewer — Entry point.
 
 Usage:
-    python -m pyGmshViewer                    # Launch empty
-    python -m pyGmshViewer model.vtu          # Open a file on startup
-    python -m pyGmshViewer results.pvd        # Open a time-series
+    python -m apeGmshViewer                    # Launch empty
+    python -m apeGmshViewer model.vtu          # Open a file on startup
+    python -m apeGmshViewer results.pvd        # Open a time-series
 """
 
 from __future__ import annotations

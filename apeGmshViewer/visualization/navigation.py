@@ -1,5 +1,5 @@
 """
-Navigation — Camera control for pyGmshViewer.
+Navigation — Camera control for apeGmshViewer.
 
 Re-exports ``install_navigation`` from the core viewer module
 so all viewers share the same implementation.

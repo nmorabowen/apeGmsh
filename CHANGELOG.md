@@ -11,7 +11,7 @@ composition refactor. A full find-replace migration guide is at
 - **Package renamed**: `pyGmsh` → `apeGmsh`
   - `from pyGmsh import pyGmsh` → `from apeGmsh import apeGmsh`
   - `class pyGmsh(_SessionBase)` → `class apeGmsh(_SessionBase)`
-  - Companion app `pyGmshViewer` keeps its name (only its internal
+  - Companion app `apeGmshViewer` keeps its name (only its internal
     imports of our theme module were updated)
 
 - **Model methods split into five sub-composites** (composition replaces

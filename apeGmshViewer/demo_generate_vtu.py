@@ -1,41 +1,28 @@
 """
-Generate sample VTU files for testing pyGmshViewer.
+Generate sample VTU files for testing apeGmshViewer.
 
 Creates:
   1. A simple 2D quad mesh with displacement + stress fields
   2. A 3D cantilever beam with modal results (PVD time-series)
 
-Run:  python -m pyGmshViewer.demo_generate_vtu
+Run:  python -m apeGmshViewer.demo_generate_vtu
 """
 
 from __future__ import annotations
 
-import sys
-import types
-import importlib.util
-import numpy as np
 from pathlib import Path
 
+import numpy as np
 
-def _load_vtk_export():
-    """Load VTKExport module directly, bypassing gmsh dependency."""
-    vtk_path = Path(__file__).resolve().parents[1] / "src" / "pyGmsh" / "VTKExport.py"
-    # Create mock modules so TYPE_CHECKING guard doesn't fail
-    if "pyGmsh" not in sys.modules:
-        sys.modules["pyGmsh"] = types.ModuleType("pyGmsh")
-    if "pyGmsh._core" not in sys.modules:
-        sys.modules["pyGmsh._core"] = types.ModuleType("pyGmsh._core")
-    spec = importlib.util.spec_from_file_location("pyGmsh.VTKExport", str(vtk_path))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_vtk = _load_vtk_export()
-write_vtu = _vtk.write_vtu
-write_vtu_series = _vtk.write_vtu_series
-VTK_QUAD = _vtk.VTK_QUAD
-VTK_HEXAHEDRON = _vtk.VTK_HEXAHEDRON
+# apeGmsh.viz.VTKExport is a pure-numpy writer with no live Gmsh
+# dependency at runtime, so we can import it directly now that the
+# package is installed as a library.
+from apeGmsh.viz.VTKExport import (
+    VTK_HEXAHEDRON,
+    VTK_QUAD,
+    write_vtu,
+    write_vtu_series,
+)
 
 
 def make_2d_plate(output_dir: Path) -> Path:
@@ -177,12 +164,12 @@ def main():
     output_dir = Path(__file__).resolve().parent.parent / "demo_data"
     output_dir.mkdir(exist_ok=True)
 
-    print("Generating sample VTU files for pyGmshViewer...")
+    print("Generating sample VTU files for apeGmshViewer...")
     make_2d_plate(output_dir)
     make_3d_beam_modes(output_dir)
     print(f"\nAll files saved to: {output_dir}")
     print(f"\nLaunch the viewer:")
-    print(f"  python -m pyGmshViewer {output_dir / 'plate_results.vtu'}")
+    print(f"  python -m apeGmshViewer {output_dir / 'plate_results.vtu'}")
 
 
 if __name__ == "__main__":

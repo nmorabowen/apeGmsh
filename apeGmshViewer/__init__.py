@@ -1,4 +1,4 @@
-"""pyGmshViewer — Standalone 3D viewer for pyGmsh meshes and FEM results."""
+"""apeGmshViewer — Standalone 3D viewer for pyGmsh meshes and FEM results."""
 
 __version__ = "0.1.0"
 
@@ -14,7 +14,7 @@ def _in_jupyter() -> bool:
 
 
 def show(*filepaths, blocking=None):
-    """Launch the pyGmshViewer from a notebook or script.
+    """Launch the apeGmshViewer from a notebook or script.
 
     Parameters
     ----------
@@ -49,7 +49,7 @@ def show(*filepaths, blocking=None):
         # Non-blocking: launch as a subprocess so the notebook stays alive
         import subprocess
         import sys
-        cmd = [sys.executable, "-m", "pyGmshViewer"] + paths
+        cmd = [sys.executable, "-m", "apeGmshViewer"] + paths
         subprocess.Popen(cmd)
         return
 
@@ -61,7 +61,7 @@ def show(*filepaths, blocking=None):
 
 
 def show_mesh_data(mesh_data, *, blocking=True):
-    """Launch pyGmshViewer with a MeshData object directly (no file I/O).
+    """Launch apeGmshViewer with a MeshData object directly (no file I/O).
 
     This always runs in-process (blocking) since MeshData cannot be
     serialized to a subprocess.  For non-blocking use, call

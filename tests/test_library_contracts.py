@@ -205,10 +205,22 @@ class LibraryContractTests(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_surface_polydata_keeps_cells_with_embedded_nodes(self) -> None:
-        # Fake pyvista so brep_scene imports.
-        sys.modules.setdefault("pyvista", types.ModuleType("pyvista"))
+        # Fake pyvista so brep_scene imports (restored in finally block
+        # so we don't pollute sys.modules for later tests — see
+        # test_results_roundtrip, which needs the real pyvista).
+        saved_pv = sys.modules.get("pyvista")
+        installed_fake = False
+        if saved_pv is None:
+            sys.modules["pyvista"] = types.ModuleType("pyvista")
+            installed_fake = True
+        try:
+            mod = importlib.import_module("apeGmsh.viewers.scene.brep_scene")
+            self._run_brep_scene_assertions(mod)
+        finally:
+            if installed_fake:
+                sys.modules.pop("pyvista", None)
 
-        mod = importlib.import_module("apeGmsh.viewers.scene.brep_scene")
+    def _run_brep_scene_assertions(self, mod) -> None:
 
         node_tags = np.array([10, 20, 30, 40, 50], dtype=np.int64)
         node_coords = np.array([

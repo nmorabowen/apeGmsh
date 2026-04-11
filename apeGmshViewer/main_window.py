@@ -1,5 +1,5 @@
 """
-Main Window — The primary application window for pyGmshViewer.
+Main Window — The primary application window for apeGmshViewer.
 
 Layout:
 ┌──────────────────────────────────────────────────────┐
@@ -42,7 +42,7 @@ from apeGmshViewer.loaders.vtu_loader import load_file, MeshData
 
 
 class MainWindow(QMainWindow):
-    """Main application window for pyGmshViewer."""
+    """Main application window for apeGmshViewer."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
