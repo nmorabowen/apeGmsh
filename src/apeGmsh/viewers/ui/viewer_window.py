@@ -97,7 +97,7 @@ class ViewerWindow:
         # ── Window ──────────────────────────────────────────────────
         ui_self = self
 
-        class _MainWindow(QtWidgets.QMainWindow):
+        class _MainWindow(QtWidgets.QMainWindow):  # type: ignore[name-defined]  # Qt lazy-imported
             def closeEvent(self, event):
                 if ui_self._on_close is not None:
                     try:

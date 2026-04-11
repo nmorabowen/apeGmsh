@@ -172,8 +172,8 @@ class Inspect:
 
                 # --- dim 3: volumes ---
                 else:
-                    volume : float   = gmsh.model.occ.getMass(3, tag)
-                    center : ndarray = np.array(gmsh.model.occ.getCenterOfMass(3, tag))
+                    volume = float(gmsh.model.occ.getMass(3, tag))
+                    center = np.array(gmsh.model.occ.getCenterOfMass(3, tag))
                     inertia: ndarray = np.array(
                         gmsh.model.occ.getMatrixOfInertia(3, tag)
                     ).reshape(3, 3)

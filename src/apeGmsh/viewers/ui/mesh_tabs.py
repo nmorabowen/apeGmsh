@@ -179,7 +179,7 @@ class MeshFilterTab:
         dim_group = QtWidgets.QGroupBox("Dimensions")
         dim_layout = QtWidgets.QVBoxLayout(dim_group)
 
-        self._dim_cbs: dict[int, object] = {}
+        self._dim_cbs: dict[int, Any] = {}  # QCheckBox (lazy Qt import)
         dim_labels = {1: "1D (Lines)", 2: "2D (Surfaces)", 3: "3D (Volumes)"}
         for d in sorted(dims):
             cb = QtWidgets.QCheckBox(dim_labels.get(d, f"dim={d}"))

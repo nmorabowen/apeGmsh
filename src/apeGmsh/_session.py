@@ -87,9 +87,11 @@ class _SessionBase:
     def __enter__(self) -> "_SessionBase":
         return self.begin()
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        # Return None (implicitly) rather than False so mypy doesn't
+        # flag this as an overly-narrow __exit__ return type.  Python
+        # treats a falsy/None return as "propagate the exception".
         self.end()
-        return False
 
     # ------------------------------------------------------------------
     # Composite creation

@@ -1158,4 +1158,5 @@ class Plot:
         )
         if show:
             self.show()
+        return self
        

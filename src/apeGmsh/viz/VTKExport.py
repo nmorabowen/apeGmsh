@@ -209,13 +209,13 @@ def _add_data_array(parent: ET.Element, name: str, arr: np.ndarray,
     if arr.dtype not in _NP_TO_VTK_TYPE:
         arr = arr.astype(np.float64)
 
-    attrib = {
+    attrib: dict[str, str] = {
         "type": vtk_type,
         "Name": name,
         "NumberOfComponents": str(n_components),
         "format": fmt,
     }
-    da = ET.SubElement(parent, "DataArray", **attrib)
+    da = ET.SubElement(parent, "DataArray", attrib)
 
     if fmt == "binary":
         da.text = _encode_array(arr)

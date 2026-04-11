@@ -522,14 +522,14 @@ class Results:
         }
 
         # Time-series (PVD)
-        time_steps = None
-        step_pf = None
-        step_cf = None
+        time_steps: list[float] | None = None
+        step_pf: dict[str, list[ndarray]] | None = None
+        step_cf: dict[str, list[ndarray]] | None = None
 
         if mesh_data.has_time_series and mesh_data.step_meshes:
             time_steps = list(mesh_data.time_steps)
-            step_pf: dict[str, list[ndarray]] = {}
-            step_cf: dict[str, list[ndarray]] = {}
+            step_pf = {}
+            step_cf = {}
 
             for step_mesh in mesh_data.step_meshes:
                 for k in step_mesh.point_data:

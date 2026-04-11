@@ -11,7 +11,7 @@ This panel never modifies state — it reads from
 """
 from __future__ import annotations
 
-from typing import Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from apeGmsh.core.LoadsComposite import LoadsComposite
@@ -100,7 +100,7 @@ class LoadsTabPanel:
         layout.addWidget(self._tree)
 
         # Map pattern_name → root QTreeWidgetItem (for state queries)
-        self._pattern_items: dict[str, object] = {}
+        self._pattern_items: dict[str, Any] = {}  # QTreeWidgetItem (lazy Qt import)
         # Suppress itemChanged during programmatic edits
         self._suppress_signal = False
 

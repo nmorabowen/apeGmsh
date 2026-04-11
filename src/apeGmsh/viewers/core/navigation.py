@@ -27,7 +27,7 @@ import pyvista as pv
 # Quaternion helpers (pure math, no VTK)
 # ======================================================================
 
-def _quat(axis: tuple, angle: float) -> tuple:
+def _quat(axis: tuple | list, angle: float) -> tuple:
     """Quaternion (w, x, y, z) from axis-angle."""
     ha = angle * 0.5
     s = math.sin(ha)

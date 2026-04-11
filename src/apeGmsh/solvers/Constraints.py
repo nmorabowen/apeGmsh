@@ -915,8 +915,8 @@ def _project_point_to_face(
             break
 
     N_final = shape_fn(xi, eta)
-    projected = N_final @ face_coords
-    distance = np.linalg.norm(projected - point)
+    projected = np.asarray(N_final @ face_coords)
+    distance = float(np.linalg.norm(projected - point))
 
     return np.array([xi, eta]), projected, distance
 

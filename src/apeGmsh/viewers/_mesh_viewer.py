@@ -335,26 +335,30 @@ class MeshViewer:
         # ── Install pick engine ─────────────────────────────────────
         pick_engine.install()
 
+        # ── Visibility action helpers (shared between toolbar + keys) ──
+        def _act_hide() -> None:
+            vis_mgr.hide()
+            plotter.render()
+
+        def _act_isolate() -> None:
+            vis_mgr.isolate()
+            plotter.render()
+
+        def _act_reveal_all() -> None:
+            vis_mgr.reveal_all()
+            plotter.render()
+
         # ── Toolbar buttons for visibility ──────────────────────────
         win.add_toolbar_separator()
-        win.add_toolbar_button(
-            "Hide selected (H)", "H",
-            lambda: (vis_mgr.hide(), plotter.render()),
-        )
-        win.add_toolbar_button(
-            "Isolate selected (I)", "I",
-            lambda: (vis_mgr.isolate(), plotter.render()),
-        )
-        win.add_toolbar_button(
-            "Reveal all (R)", "R",
-            lambda: (vis_mgr.reveal_all(), plotter.render()),
-        )
+        win.add_toolbar_button("Hide selected (H)", "H", _act_hide)
+        win.add_toolbar_button("Isolate selected (I)", "I", _act_isolate)
+        win.add_toolbar_button("Reveal all (R)", "R", _act_reveal_all)
 
         # ── Keybindings ─────────────────────────────────────────────
         # VTK-level
-        plotter.add_key_event("h", lambda: (vis_mgr.hide(), plotter.render()))
-        plotter.add_key_event("i", lambda: (vis_mgr.isolate(), plotter.render()))
-        plotter.add_key_event("r", lambda: (vis_mgr.reveal_all(), plotter.render()))
+        plotter.add_key_event("h", _act_hide)
+        plotter.add_key_event("i", _act_isolate)
+        plotter.add_key_event("r", _act_reveal_all)
         plotter.add_key_event("u", lambda: sel.undo())
 
         # Window-level (work regardless of focus)

@@ -84,8 +84,12 @@ class Model:
         self.queries = _Queries(self)
 
         # Entity-selection sub-composite (g.model.selection.select_points(...))
+        # NB: SelectionComposite's methods that touch `physical` require a
+        # full ``apeGmsh`` session — ``Part`` sessions have a ``model``
+        # composite but never touch ``model.selection``, so the runtime
+        # cast is safe in practice.
         from apeGmsh.viz.Selection import SelectionComposite
-        self.selection = SelectionComposite(parent=parent, model=self)
+        self.selection = SelectionComposite(parent=parent, model=self)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._model._*)
