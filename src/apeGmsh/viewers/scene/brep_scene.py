@@ -14,6 +14,7 @@ Usage::
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import gmsh
 import numpy as np
@@ -316,7 +317,7 @@ def build_brep_scene(
                 pts_parts.append(pts)
                 lines_parts.append(lines)
                 cell_indices = list(range(cell_off, cell_off + n_lines))
-                dt: DimTag = (1, tag)
+                dt = (1, tag)
                 dt_cells[dt] = cell_indices
                 etags.extend([tag] * n_lines)
                 centroids_d1[dt] = pts.mean(axis=0)
@@ -334,7 +335,7 @@ def build_brep_scene(
             colors = np.tile(IDLE_COLORS[1], (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
-            d1_kwargs = dict(
+            d1_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 line_width=line_width,
                 render_lines_as_tubes=True,
@@ -396,7 +397,7 @@ def build_brep_scene(
             colors = np.tile(IDLE_COLORS[2], (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
-            d2_kwargs = dict(
+            d2_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=surface_opacity,
                 show_edges=show_surface_edges,
@@ -423,9 +424,9 @@ def build_brep_scene(
     n_d3 = 0
     if 3 in dims:
         pts_parts = []
-        faces_parts: list[np.ndarray] = []
+        faces_parts = []
         etags = []
-        dt_cells: dict[DimTag, list[int]] = {}
+        dt_cells = {}
         centroids_d3: dict[DimTag, np.ndarray] = {}
         cell_off = 0
         pt_off = 0
@@ -487,7 +488,7 @@ def build_brep_scene(
             colors = np.tile(IDLE_COLORS[3], (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
-            d3_kwargs = dict(
+            d3_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=vol_alpha,
                 smooth_shading=True,
@@ -506,7 +507,7 @@ def build_brep_scene(
     t_d3 = time.perf_counter() - t_dim
     n_entities += n_d3
 
-    plotter.reset_camera()
+    plotter.reset_camera()  # type: ignore[call-arg]  # pyvista stub quirk
 
     # ── cleanup temp mesh ───────────────────────────────────────────
     if not had_mesh:

@@ -351,7 +351,7 @@ def build_mesh_scene(
 
         show_edges = show_surface_edges and dim >= 2
         opacity = surface_opacity if dim >= 2 else 1.0
-        dim_kwargs = dict(
+        dim_kwargs: dict[str, Any] = dict(
             scalars="colors", rgb=True,
             opacity=opacity,
             show_edges=show_edges,
@@ -371,7 +371,7 @@ def build_mesh_scene(
         }
         n_actors += 1
 
-    plotter.reset_camera()
+    plotter.reset_camera()  # type: ignore[call-arg]  # pyvista stub quirk
     t_actors_elapsed = time.perf_counter() - t_actors
 
     # ── node cloud ──────────────────────────────────────────────────

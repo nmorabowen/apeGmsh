@@ -14,7 +14,7 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import gmsh
 
@@ -98,7 +98,9 @@ class BrowserTab:
         """
         QtWidgets, _, QtGui = _qt()
         self._tree.clear()
-        self._group_items: dict[str, object] = {}
+        # Values are QTreeWidgetItem instances — Qt is lazy-imported so
+        # we can't use the real type without circular imports.
+        self._group_items: dict[str, Any] = {}
 
         # Collect groups from Gmsh, keyed by name
         gmsh_groups = {}
@@ -262,7 +264,7 @@ class FilterTab:
         filter_group = QtWidgets.QGroupBox("Pick Filter")
         filter_layout = QtWidgets.QVBoxLayout(filter_group)
 
-        self._checkboxes: dict[int, object] = {}
+        self._checkboxes: dict[int, Any] = {}  # QCheckBox (lazy Qt import)
         dim_labels = {0: "Points (dim=0)", 1: "Curves (dim=1)",
                       2: "Surfaces (dim=2)", 3: "Volumes (dim=3)"}
         for d in sorted(dims):
@@ -343,7 +345,7 @@ class ViewTab:
         group = QtWidgets.QGroupBox("Show entity labels on screen")
         group_layout = QtWidgets.QVBoxLayout(group)
 
-        self._dim_cbs: dict[int, object] = {}
+        self._dim_cbs: dict[int, Any] = {}  # QCheckBox (lazy Qt import)
         for d in sorted(dims):
             cb = QtWidgets.QCheckBox(f"{_DIM_NAMES.get(d, f'dim={d}')} tags")
             cb.setChecked(False)
@@ -683,7 +685,7 @@ class PartsTreePanel:
         layout.addWidget(self._tree)
 
         # Map part_label → root QTreeWidgetItem (for highlight)
-        self._part_items: dict[str, object] = {}
+        self._part_items: dict[str, Any] = {}  # QTreeWidgetItem (lazy Qt import)
 
         self.refresh()
 

@@ -92,6 +92,11 @@ class MeshInfo:
     bandwidth : int
     """
 
+    # Type declarations for __slots__ (consumed by mypy / pyright)
+    n_nodes: int
+    n_elems: int
+    bandwidth: int
+
     __slots__ = ('n_nodes', 'n_elems', 'bandwidth')
 
     def __init__(self, n_nodes: int, n_elems: int, bandwidth: int) -> None:
@@ -546,7 +551,7 @@ class ConstraintSet:
     def __repr__(self) -> str:
         if not self._records:
             return "ConstraintSet(empty)"
-        kinds = {}
+        kinds: dict[str, int] = {}
         for r in self._records:
             kinds[r.kind] = kinds.get(r.kind, 0) + 1
         parts = ", ".join(f"{k}={v}" for k, v in sorted(kinds.items()))

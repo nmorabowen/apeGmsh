@@ -285,6 +285,22 @@ class Results:
     construct instances.
     """
 
+    # Type declarations for __slots__ (consumed by mypy / pyright).
+    # The underscore-prefixed backing fields are written via
+    # object.__setattr__ in __init__ and exposed through public
+    # @property accessors below.
+    _node_coords: ndarray
+    _cells: Any
+    _cell_types: ndarray
+    _point_fields: dict[str, ndarray]
+    _cell_fields: dict[str, ndarray]
+    _time_steps: list[float] | None
+    _step_point_fields: dict[str, list[ndarray]] | None
+    _step_cell_fields: dict[str, list[ndarray]] | None
+    _physical_groups: Any
+    _name: str
+    _n_primary_cells: int
+
     __slots__ = (
         "_node_coords",
         "_cells",
@@ -512,8 +528,8 @@ class Results:
 
         if mesh_data.has_time_series and mesh_data.step_meshes:
             time_steps = list(mesh_data.time_steps)
-            step_pf = {}
-            step_cf = {}
+            step_pf: dict[str, list[ndarray]] = {}
+            step_cf: dict[str, list[ndarray]] = {}
 
             for step_mesh in mesh_data.step_meshes:
                 for k in step_mesh.point_data:
