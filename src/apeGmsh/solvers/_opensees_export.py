@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._element_specs import _render_tcl, _render_py
+from ._opensees_constraints import render_tie_py, render_tie_tcl
 
 if TYPE_CHECKING:
     from .OpenSees import OpenSees
@@ -100,6 +101,14 @@ class _Export:
                     row.extra, row.pg_name,
                 )
             )
+
+        if ops._tie_elements:
+            hdr(
+                f"Tied interfaces  "
+                f"({len(ops._tie_elements)} ASDEmbeddedNodeElement)"
+            )
+            for entry in ops._tie_elements:
+                lines.append(render_tie_tcl(entry))
 
         hdr("Single-point constraints  (fix)")
         for pg_name, bc in ops._bcs.items():
@@ -252,6 +261,14 @@ class _Export:
                     row.extra, row.pg_name,
                 )
             )
+
+        if ops._tie_elements:
+            hdr(
+                f"Tied interfaces  "
+                f"({len(ops._tie_elements)} ASDEmbeddedNodeElement)"
+            )
+            for entry in ops._tie_elements:
+                lines.append(render_tie_py(entry))
 
         hdr("Single-point constraints")
         for pg_name, bc in ops._bcs.items():

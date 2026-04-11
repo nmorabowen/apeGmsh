@@ -51,7 +51,7 @@ Example
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import gmsh
 import pandas as pd
@@ -101,6 +101,17 @@ class OpenSees:
         self._bcs          : dict[str, dict]       = {}
         self._load_patterns: dict[str, list[dict]] = {}
         self._mass_records : list[dict]            = []
+
+        # Constraint records ingested from fem.constraints (Phase 11a).
+        # Populated by ``ingest.constraints(fem)``, consumed by
+        # ``emit_tie_elements()`` at the end of ``build()``.
+        self._constraint_records: Any = None   # ConstraintSet | None
+        self._tie_penalty: float | None = None
+        # Populated by ``emit_tie_elements`` during build.  Each entry:
+        #   {"ele_tag": int, "cNode": int, "rNodes": list[int],
+        #    "use_rot": bool, "penalty": float | None,
+        #    "source_kind": str}
+        self._tie_elements: list[dict] = []
 
         # ── post-build state ───────────────────────────────────────────
         self._built        = False

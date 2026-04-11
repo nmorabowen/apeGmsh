@@ -296,4 +296,14 @@ def run_build(ops: "OpenSees") -> None:
         f"build(): {len(elem_rows)} elements from "
         f"{len(ops._elem_assignments)} group(s)"
     )
+
+    # ── Constraint emission (Phase 11a: tie elements only) ─────────
+    # Runs after ``_elements_df`` is finalised so tie element tags
+    # can start from ``max(_elements_df.index) + 1`` without
+    # colliding with user-declared elements.  If no constraint
+    # records were ingested via ``g.opensees.ingest.constraints(...)``
+    # this is a fast no-op.
+    from ._opensees_constraints import emit_tie_elements
+    emit_tie_elements(ops)
+
     ops._built = True
