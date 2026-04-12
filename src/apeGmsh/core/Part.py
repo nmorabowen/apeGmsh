@@ -94,6 +94,7 @@ from ._part_anchors import collect_anchors, write_sidecar
 
 if TYPE_CHECKING:
     from .Model import Model
+    from ..mesh.PhysicalGroups import PhysicalGroups
     from ..viz.Inspect import Inspect
     from ..viz.Plot import Plot
 
@@ -125,13 +126,15 @@ class Part(_SessionBase):
     # imports here must start with ``.core.*`` / ``.viz.*`` rather
     # than being rooted at ``apeGmsh.core``.
     _COMPOSITES = (
-        ("model",   ".core.Model",   "Model",   False),
-        ("inspect", ".viz.Inspect",  "Inspect", False),
-        ("plot",    ".viz.Plot",     "Plot",    True),
+        ("model",    ".core.Model",          "Model",          False),
+        ("physical", ".mesh.PhysicalGroups", "PhysicalGroups", False),
+        ("inspect",  ".viz.Inspect",         "Inspect",        False),
+        ("plot",     ".viz.Plot",            "Plot",            True),
     )
 
     # -- Static type declarations for composites --
     model: Model
+    physical: "PhysicalGroups"
     inspect: Inspect
     plot: Plot
 
@@ -139,6 +142,10 @@ class Part(_SessionBase):
         super().__init__(name=name, verbose=False)
         self.file_path: Path | None = None       # set by save() or auto-persist
         self.properties: dict[str, Any] = {}     # user metadata
+        # When a geometry method is called with ``label="name"``,
+        # ``Model._register`` auto-creates a physical group so the
+        # label travels through the STEP sidecar into the Assembly.
+        self._auto_pg_from_label = True
 
         # Auto-persist bookkeeping.  ``_owns_file`` is the
         # authorisation bit for deletion — it is True only when we
@@ -218,25 +225,22 @@ class Part(_SessionBase):
 
     def _write_anchors(self, target: Path) -> None:
         """Write the sidecar file for a CAD target if the Part has
-        any user-named entities.
+        any named physical groups.
 
         Idempotent and crash-safe: failure to write the sidecar is
         warned, not raised, because a broken sidecar must never
         break the CAD export itself.
         """
         try:
-            registry = getattr(self.model, "_registry", None)
-            if not registry:
-                return
-            anchors = collect_anchors(registry, gmsh)
+            anchors = collect_anchors(gmsh)
             if not anchors:
                 return
             write_sidecar(target, anchors, part_name=self.name)
         except Exception as exc:
             warnings.warn(
                 f"Part {self.name!r}: could not write anchor sidecar "
-                f"for {target} ({exc!r}). Label rebinding via "
-                f"inst.by_label() will not be available for this Part.",
+                f"for {target} ({exc!r}). Physical group rebinding "
+                f"will not be available for this Part.",
                 stacklevel=2,
             )
 

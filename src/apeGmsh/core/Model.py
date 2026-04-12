@@ -114,6 +114,18 @@ class Model:
             'label': label if label else f'{kind}_{tag}',
             'kind':  kind,
         }
+        # When the owning session has ``_auto_pg_from_label`` set
+        # (currently only ``Part``), automatically create a physical
+        # group so the user-supplied label travels through the STEP
+        # sidecar into the Assembly.  Failures are silenced — PG
+        # creation must never break geometry creation.
+        if label and getattr(self._parent, '_auto_pg_from_label', False):
+            physical = getattr(self._parent, 'physical', None)
+            if physical is not None:
+                try:
+                    physical.add(dim, [tag], name=label)
+                except Exception:
+                    pass
         return tag
 
     # ------------------------------------------------------------------

@@ -35,6 +35,11 @@ class _SessionBase:
         self.name: str = name
         self._verbose: bool = verbose
         self._active: bool = False
+        # When True, ``Model._register`` auto-creates a physical group
+        # for every entity that has a user-supplied ``label=``.  Set to
+        # True only on ``Part`` — the main ``apeGmsh`` session leaves
+        # this False so labels in the assembly don't produce unwanted PGs.
+        self._auto_pg_from_label: bool = False
         # Pre-declare composite slots as None
         for attr_name, _, _, _ in self._COMPOSITES:
             setattr(self, attr_name, None)

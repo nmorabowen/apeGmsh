@@ -61,24 +61,13 @@ class Instance:
     rotate      : applied rotation (angle_rad, ax, ay, az[, cx, cy, cz])
     properties  : arbitrary user metadata
     bbox        : axis-aligned bounding box (xmin, ymin, zmin, xmax, ymax, zmax)
-    label_to_tag : map from the Part's user-named labels to the
-                   ``(dim, tag)`` of the matching imported entity.
-                   Populated by ``_import_cad`` when the CAD file
-                   is accompanied by an ``.apegmsh.json`` sidecar
-                   (see :mod:`_part_anchors`).  Empty when the
-                   Part had no user-named entities or the sidecar
-                   was absent.
-
-    Lookup
-    ------
-    Three equivalent ways to resolve an entity in this instance:
-
-    * ``inst["top_flange"]``     — by user label (string)
-    * ``inst[42]``               — by raw gmsh tag (int)
-    * ``inst[(2, 42)]``          — by dimtag (tuple)
-
-    All three return a ``(dim, tag)`` pair so downstream code
-    never has to re-derive the dimension.
+    pg_names    : physical group names created for this instance
+                  (e.g. ``["col_A.shaft", "col_A.top"]``).  Populated
+                  by ``_import_cad`` when the Part's CAD file has a
+                  ``.apegmsh.json`` sidecar carrying PG definitions.
+                  Empty when the Part had no labeled entities or the
+                  sidecar was absent.  Use ``g.physical.entities(name)``
+                  to resolve tags.
     """
     label: str
     part_name: str
@@ -88,95 +77,7 @@ class Instance:
     rotate: tuple[float, ...] | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     bbox: tuple[float, float, float, float, float, float] | None = None
-    label_to_tag: dict[str, tuple[int, int]] = field(default_factory=dict)
-
-    # ------------------------------------------------------------------
-    # Flexible lookup
-    # ------------------------------------------------------------------
-
-    def __getitem__(
-        self, key: str | int | tuple[int, int],
-    ) -> tuple[int, int]:
-        """Resolve an entity by label, tag, or dimtag.
-
-        Parameters
-        ----------
-        key : str, int, or (int, int)
-            * ``str`` — looked up in ``label_to_tag``.
-            * ``int`` — verified to be in ``entities``; the dim is
-              inferred.  Raises if the tag collides across dims.
-            * ``(dim, tag)`` — verified to be in ``entities``.
-
-        Returns
-        -------
-        tuple[int, int]
-            ``(dim, tag)`` of the resolved entity.
-
-        Raises
-        ------
-        KeyError
-            When the key is not present in this instance, or when
-            an ``int`` key is ambiguous across dims.
-        TypeError
-            On any other key type.
-        """
-        if isinstance(key, str):
-            if key not in self.label_to_tag:
-                raise KeyError(
-                    f"no entity labeled {key!r} in instance "
-                    f"{self.label!r}; available labels: "
-                    f"{sorted(self.label_to_tag)}"
-                )
-            return self.label_to_tag[key]
-
-        if isinstance(key, tuple) and len(key) == 2:
-            dim, tag = int(key[0]), int(key[1])
-            if tag not in self.entities.get(dim, ()):
-                raise KeyError(
-                    f"no entity ({dim}, {tag}) in instance "
-                    f"{self.label!r}"
-                )
-            return (dim, tag)
-
-        if isinstance(key, bool):   # bool is an int subclass — reject early
-            raise TypeError(
-                "Instance lookup key must be str / int / (dim, tag); "
-                "got bool."
-            )
-        if isinstance(key, int):
-            matches = [
-                d for d, tags in self.entities.items() if key in tags
-            ]
-            if not matches:
-                raise KeyError(
-                    f"no entity with tag {key} in instance "
-                    f"{self.label!r}"
-                )
-            if len(matches) > 1:
-                raise KeyError(
-                    f"tag {key} is ambiguous in instance "
-                    f"{self.label!r} — exists at dim={sorted(matches)}. "
-                    f"Use inst[(dim, tag)] or inst.by_tag(tag, dim=...) "
-                    f"to disambiguate."
-                )
-            return (matches[0], key)
-
-        raise TypeError(
-            f"Instance lookup key must be str (label), int (tag), or "
-            f"(dim, tag) tuple; got {type(key).__name__}"
-        )
-
-    def by_label(self, label: str) -> tuple[int, int]:
-        """Named alias for ``inst[label]`` — readable in code."""
-        return self[label]
-
-    def by_tag(
-        self, tag: int, *, dim: int | None = None,
-    ) -> tuple[int, int]:
-        """Named alias for ``inst[tag]`` / ``inst[(dim, tag)]``."""
-        if dim is not None:
-            return self[(dim, tag)]
-        return self[tag]
+    pg_names: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -846,22 +747,38 @@ class PartsRegistry:
         self._apply_transforms(transform_dimtags, translate, rotate)
         dx, dy, dz = translate
 
-        # Rebind anchors from the sidecar (if present) so the
-        # instance exposes the Part's original user-named labels
-        # via ``inst.by_label`` / ``inst[...]``.
-        label_to_tag: dict[str, tuple[int, int]] = {}
+        # Rebind physical groups from the sidecar (if present).
+        # For each PG defined in the Part, re-create it in the
+        # Assembly's physical composite with an instance-scoped
+        # name: "{instance_label}.{pg_name}".
+        pg_names: list[str] = []
         if isinstance(file_path, Path):
-            from ._part_anchors import read_sidecar, rebind_labels
+            from ._part_anchors import read_sidecar, rebind_physical_groups
             payload = read_sidecar(file_path)
             if payload is not None:
                 anchors = payload.get('anchors', [])
-                label_to_tag = rebind_labels(
+                pg_matches = rebind_physical_groups(
                     anchors=anchors,
                     imported_entities=entities,
                     translate=(dx, dy, dz),
                     rotate=rotate,
                     gmsh_module=gmsh,
                 )
+                physical = getattr(self._parent, 'physical', None)
+                if physical is not None and pg_matches:
+                    for pg_name, dimtags in pg_matches.items():
+                        prefixed = f"{label}.{pg_name}"
+                        # Group by dim since physical.add requires
+                        # a single dim per call.
+                        by_dim: dict[int, list[int]] = {}
+                        for d, t in dimtags:
+                            by_dim.setdefault(d, []).append(t)
+                        for d, tags in by_dim.items():
+                            try:
+                                physical.add(d, tags, name=prefixed)
+                                pg_names.append(prefixed)
+                            except Exception:
+                                pass
 
         inst = Instance(
             label=label,
@@ -872,7 +789,7 @@ class PartsRegistry:
             rotate=rotate,
             properties=properties or {},
             bbox=self._compute_bbox(dimtags_all),
-            label_to_tag=label_to_tag,
+            pg_names=pg_names,
         )
         self._instances[label] = inst
         return inst

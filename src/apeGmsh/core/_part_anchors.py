@@ -78,14 +78,17 @@ def sidecar_path(cad_path: Path | str) -> Path:
 # Writing anchors (Part side)
 # =====================================================================
 
-def collect_anchors(registry: dict, gmsh_module: "_gmsh_t") -> list[dict]:
-    """Walk a Model registry and return serialisable anchor records.
+def collect_anchors(gmsh_module: "_gmsh_t") -> list[dict]:
+    """Walk the Gmsh physical groups and return serialisable anchor
+    records — one per named PG entity.
+
+    Physical groups are the canonical naming system.  Each entity
+    inside a named PG gets its own anchor record because different
+    entities in the same PG may have different centers of mass
+    (e.g. a PG containing multiple surface tags).
 
     Parameters
     ----------
-    registry : dict
-        ``model._registry`` — maps ``(dim, tag)`` to
-        ``{'label': str, 'kind': str}``.
     gmsh_module : module
         The ``gmsh`` module — passed in so this function stays
         unit-testable without a live import.
@@ -93,32 +96,26 @@ def collect_anchors(registry: dict, gmsh_module: "_gmsh_t") -> list[dict]:
     Returns
     -------
     list[dict]
-        One record per user-named entity.  Each record is a
-        plain-dict shape (``label``, ``dim``, ``kind``, ``com``)
-        ready to be JSON-serialised.  Auto-generated labels of
-        the form ``"{kind}_{tag}"`` are skipped — the user did
-        not name those entities.
+        One record per entity in a named PG.  Each record has
+        ``pg_name``, ``dim``, and ``com`` (the entity's center
+        of mass in Part-local coordinates).
     """
     records: list[dict] = []
-    for (dim, tag), entry in registry.items():
-        label = entry.get('label')
-        kind = entry.get('kind', '')
-        if label is None:
+    for dim, pg_tag in gmsh_module.model.getPhysicalGroups():
+        name = gmsh_module.model.getPhysicalName(dim, pg_tag)
+        if not name:
             continue
-        # Skip auto-generated labels — they carry no user intent.
-        if label == f"{kind}_{tag}":
-            continue
-        try:
-            com = gmsh_module.model.occ.getCenterOfMass(int(dim), int(tag))
-        except Exception:
-            # Entity may have been consumed by a boolean op; skip.
-            continue
-        records.append({
-            'label': str(label),
-            'dim':   int(dim),
-            'kind':  str(kind),
-            'com':   [float(com[0]), float(com[1]), float(com[2])],
-        })
+        ent_tags = gmsh_module.model.getEntitiesForPhysicalGroup(dim, pg_tag)
+        for tag in ent_tags:
+            try:
+                com = gmsh_module.model.occ.getCenterOfMass(int(dim), int(tag))
+            except Exception:
+                continue
+            records.append({
+                'pg_name': str(name),
+                'dim':     int(dim),
+                'com':     [float(com[0]), float(com[1]), float(com[2])],
+            })
     return records
 
 
@@ -233,7 +230,7 @@ def apply_transform_to_com(
 # Label rebinding (the big one)
 # =====================================================================
 
-def rebind_labels(
+def rebind_physical_groups(
     anchors: list[dict],
     imported_entities: dict[int, list[int]],
     translate: tuple[float, float, float],
@@ -242,14 +239,14 @@ def rebind_labels(
     *,
     tolerance: float = 1e-4,
     characteristic_length: float | None = None,
-) -> dict[str, tuple[int, int]]:
-    """Match stored anchors against imported entities by COM.
+) -> dict[str, list[tuple[int, int]]]:
+    """Match stored PG anchors against imported entities by COM.
 
     Parameters
     ----------
     anchors : list[dict]
         Anchors as produced by :func:`collect_anchors` — each must
-        have ``label``, ``dim``, and ``com``.
+        have ``pg_name``, ``dim``, and ``com``.
     imported_entities : dict
         The ``entities`` dict produced by ``_import_cad`` — maps
         ``dim`` to the list of imported entity tags at that dim.
@@ -261,9 +258,6 @@ def rebind_labels(
         unit-testable.
     tolerance : float
         Matching radius as a fraction of ``characteristic_length``.
-        Stored COMs that have no imported entity within
-        ``tolerance * characteristic_length`` are dropped with a
-        warning.
     characteristic_length : float, optional
         Model-scale length used to size ``tolerance``.  Defaults
         to the bounding-box diagonal of the imported entities, or
@@ -271,23 +265,21 @@ def rebind_labels(
 
     Returns
     -------
-    dict[str, tuple[int, int]]
-        ``label → (dim, tag)`` map for every anchor that was
-        successfully matched.  Labels with no match are omitted.
+    dict[str, list[tuple[int, int]]]
+        ``pg_name → [(dim, tag), ...]`` map.  A PG with multiple
+        entities (e.g. two surfaces in the same group) gets
+        multiple matches.  PGs with no match are omitted.
     """
     if not anchors or not imported_entities:
         return {}
 
-    # Size the tolerance by the model's characteristic length so it
-    # scales from mm-sized to km-sized geometry.
     if characteristic_length is None:
         characteristic_length = _imported_characteristic_length(
             imported_entities, gmsh_module,
         )
     abs_tol = float(tolerance) * max(characteristic_length, 1.0)
 
-    # Cache imported COMs per dim so we do not recompute them
-    # across anchors.
+    # Cache imported COMs per dim.
     imported_coms: dict[int, list[tuple[int, np.ndarray]]] = {}
     for dim, tags in imported_entities.items():
         for tag in tags:
@@ -299,66 +291,38 @@ def rebind_labels(
                 (int(tag), np.asarray(com, dtype=float)),
             )
 
-    label_to_tag: dict[str, tuple[int, int]] = {}
-    seen_labels: set[str] = set()
+    pg_matches: dict[str, list[tuple[int, int]]] = {}
 
     for anchor in anchors:
-        label = anchor['label']
+        pg_name = anchor.get('pg_name') or anchor.get('label', '')
         dim = int(anchor['dim'])
         com = np.asarray(anchor['com'], dtype=float)
-
-        # Non-unique labels: keep the first, warn.
-        if label in seen_labels:
-            warnings.warn(
-                f"apeGmsh: duplicate anchor label {label!r} — "
-                f"keeping the first occurrence.",
-                stacklevel=2,
-            )
-            continue
-        seen_labels.add(label)
-
         expected = apply_transform_to_com(com, translate, rotate)
 
         candidates = imported_coms.get(dim, [])
         if not candidates:
             continue
 
-        # Find the closest candidate by Euclidean distance.
         best_tag: int | None = None
         best_dist = float('inf')
-        second_best = float('inf')
         for tag, cand_com in candidates:
             d = float(np.linalg.norm(cand_com - expected))
             if d < best_dist:
-                second_best = best_dist
                 best_tag = tag
                 best_dist = d
-            elif d < second_best:
-                second_best = d
 
         if best_tag is None or best_dist > abs_tol:
             warnings.warn(
-                f"apeGmsh: anchor {label!r} (dim={dim}) has no import "
-                f"match within {abs_tol:.3e} — best distance was "
-                f"{best_dist:.3e}. Label will be unavailable via "
-                f"inst.by_label({label!r}).",
+                f"apeGmsh: PG anchor {pg_name!r} (dim={dim}) has no "
+                f"import match within {abs_tol:.3e} — best distance "
+                f"was {best_dist:.3e}.",
                 stacklevel=2,
             )
             continue
 
-        # Symmetric geometry: two candidates equidistant from the
-        # stored COM.  Warn but keep the first by tag (deterministic).
-        if abs(best_dist - second_best) < abs_tol * 1e-3 and second_best != float('inf'):
-            warnings.warn(
-                f"apeGmsh: anchor {label!r} matched multiple equidistant "
-                f"candidates (dim={dim}, dists {best_dist:.3e} and "
-                f"{second_best:.3e}) — keeping tag {best_tag}.",
-                stacklevel=2,
-            )
+        pg_matches.setdefault(pg_name, []).append((dim, int(best_tag)))
 
-        label_to_tag[label] = (dim, int(best_tag))
-
-    return label_to_tag
+    return pg_matches
 
 
 def _imported_characteristic_length(
