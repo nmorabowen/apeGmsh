@@ -31,8 +31,8 @@ class _Editing:
 
     def embed(
         self,
-        tags  : int | list[int],
-        in_tag: int,
+        tags,
+        in_tag,
         *,
         dim   : int = 0,
         in_dim: int = 3,
@@ -41,15 +41,20 @@ class _Editing:
         Embed lower-dimensional entities inside a higher-dimensional
         entity so the mesh is conforming along them.
 
+        Parameters accept int tags, label/PG strings, or lists thereof.
+
         Example
         -------
         ::
 
-            g.mesh.editing.embed(crack_surf_tag, body_tag, dim=2, in_dim=3)
+            g.mesh.editing.embed("crack_surf", "body", dim=2, in_dim=3)
             g.mesh.editing.embed([p1, p2, p3], surf_tag, dim=0, in_dim=2)
         """
-        tag_list = tags if isinstance(tags, list) else [tags]
-        gmsh.model.mesh.embed(dim, tag_list, in_dim, in_tag)
+        from apeGmsh.core._helpers import resolve_to_tags
+        tag_list = resolve_to_tags(tags, dim=dim, session=self._mesh._parent)
+        in_tags = resolve_to_tags(in_tag, dim=in_dim, session=self._mesh._parent)
+        in_tag_resolved = in_tags[0]
+        gmsh.model.mesh.embed(dim, tag_list, in_dim, in_tag_resolved)
         self._mesh._log(
             f"embed(dim={dim}, tags={tag_list}, "
             f"in_dim={in_dim}, in_tag={in_tag})"

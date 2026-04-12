@@ -182,14 +182,40 @@ class ConstraintsComposite:
             tolerance=tolerance, name=name))
 
     # Level 2b
-    def node_to_surface(self, master_tag: int, slave_tag: int, *,
+    def node_to_surface(self, master, slave, *,
                         dofs=None, tolerance=1e-6,
-                        name=None) -> NodeToSurfaceDef:
+                        name=None):
         """6-DOF node to 3-DOF surface coupling via phantom nodes.
-        master_tag: node tag (dim=0). slave_tag: surface entity tag (dim=2)."""
-        return self._add_def(NodeToSurfaceDef(
-            master_label=str(master_tag), slave_label=str(slave_tag),
-            dofs=dofs, tolerance=tolerance, name=name))
+
+        Parameters
+        ----------
+        master : int, str, or (dim, tag)
+            The 6-DOF reference node.  Accepts a raw tag, a label
+            name, or a dimtag.  If a label/PG resolves to multiple
+            tags, only the first is used.
+        slave : int, str, or (dim, tag)
+            The surface entity to couple.  Accepts a raw tag, a
+            label, or a PG name.  If it resolves to multiple
+            surfaces, one constraint is created per surface.
+
+        Returns
+        -------
+        NodeToSurfaceDef or list[NodeToSurfaceDef]
+            A single def when slave resolves to one surface,
+            a list when it resolves to multiple.
+        """
+        from ._helpers import resolve_to_tags
+        m_tags = resolve_to_tags(master, dim=0, session=self._parent)
+        s_tags = resolve_to_tags(slave,  dim=2, session=self._parent)
+        master_tag = m_tags[0]
+
+        defs = []
+        for s_tag in s_tags:
+            d = self._add_def(NodeToSurfaceDef(
+                master_label=str(master_tag), slave_label=str(s_tag),
+                dofs=dofs, tolerance=tolerance, name=name))
+            defs.append(d)
+        return defs[0] if len(defs) == 1 else defs
 
     # Level 4
     def tied_contact(self, master_label, slave_label, *,

@@ -93,7 +93,7 @@ class _Generation:
 
     def set_algorithm(
         self,
-        tag      : int,
+        tag,
         algorithm,
         *,
         dim      : int = 2,
@@ -102,41 +102,38 @@ class _Generation:
         Choose the meshing algorithm for a surface (dim=2) or globally
         for all volumes (dim=3).
 
-        Parameters
-        ----------
-        tag       : surface tag (dim=2); ignored for dim=3
-        algorithm : algorithm selector — string name (see
-                    :data:`ALGORITHM_2D` / :data:`ALGORITHM_3D`), an
-                    attribute of :class:`MeshAlgorithm2D` /
-                    :class:`MeshAlgorithm3D`, an :class:`Algorithm2D` /
-                    :class:`Algorithm3D` member, or a raw ``int``.
-        dim       : entity dimension — must be 2 or 3
+        ``tag`` accepts int, label, or PG name.  If it resolves to
+        multiple surfaces, the algorithm is applied to each.
 
         Example
         -------
         ::
 
-            g.mesh.generation.set_algorithm(surf_tag, "frontal_delaunay_quads")
+            g.mesh.generation.set_algorithm("col.web", "frontal_delaunay_quads")
             g.mesh.generation.set_algorithm(0, "hxt", dim=3)
         """
+        from apeGmsh.core._helpers import resolve_to_tags
+
         if dim not in (2, 3):
             raise ValueError(f"set_algorithm: dim must be 2 or 3, got {dim!r}")
 
         alg_int = _normalize_algorithm(algorithm, dim)
 
         if dim == 2:
-            gmsh.model.mesh.setAlgorithm(2, tag, alg_int)
-            self._mesh._directives.append({
-                'kind': 'algorithm', 'dim': 2, 'tag': tag,
-                'algorithm': alg_int, 'requested': algorithm,
-            })
-            self._mesh._log(
-                f"set_algorithm(dim=2, tag={tag}, alg={algorithm!r} -> {alg_int})"
-            )
+            tags_resolved = resolve_to_tags(tag, dim=2, session=self._mesh._parent)
+            for t in tags_resolved:
+                gmsh.model.mesh.setAlgorithm(2, t, alg_int)
+                self._mesh._directives.append({
+                    'kind': 'algorithm', 'dim': 2, 'tag': t,
+                    'algorithm': alg_int, 'requested': algorithm,
+                })
+                self._mesh._log(
+                    f"set_algorithm(dim=2, tag={t}, alg={algorithm!r} -> {alg_int})"
+                )
         else:  # dim == 3
             gmsh.option.setNumber("Mesh.Algorithm3D", alg_int)
             self._mesh._directives.append({
-                'kind': 'algorithm', 'dim': 3, 'tag': tag,
+                'kind': 'algorithm', 'dim': 3, 'tag': 0,
                 'algorithm': alg_int, 'requested': algorithm,
             })
             self._mesh._log(

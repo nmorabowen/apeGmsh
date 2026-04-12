@@ -129,7 +129,7 @@ class _Sizing:
 
     def set_size(
         self,
-        tags: TagsLike,
+        tags,
         size: float,
         *,
         dim : int = 0,
@@ -137,16 +137,21 @@ class _Sizing:
         """
         Assign a target element size to specific points.
 
-        ``gmsh.model.mesh.setSize`` is currently effective only for
-        dimension-0 entities (points).
+        ``tags`` accepts int, str (label/PG), (dim, tag), or a list.
 
         Example
         -------
         ::
 
             g.mesh.sizing.set_size([p1, p2, p3], 0.05)
+            g.mesh.sizing.set_size("col.start_face", 10, dim=0)
         """
-        dimtags = self._mesh._as_dimtags(tags, dim)
+        if isinstance(tags, str):
+            from apeGmsh.core._helpers import resolve_to_tags
+            resolved = resolve_to_tags(tags, dim=dim, session=self._mesh._parent)
+            dimtags = [(dim, t) for t in resolved]
+        else:
+            dimtags = self._mesh._as_dimtags(tags, dim)
         gmsh.model.mesh.setSize(dimtags, size)
         self._mesh._directives.append({
             'kind': 'set_size', 'dim': dim,

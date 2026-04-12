@@ -75,7 +75,7 @@ class PhysicalGroups:
     def add(
         self,
         dim     : int,
-        tags    : list[Tag],
+        tags,
         *,
         name    : str = "",
         tag     : Tag = -1,
@@ -87,7 +87,10 @@ class PhysicalGroups:
         ----------
         dim  : entity dimension (0 = points, 1 = curves, 2 = surfaces,
                3 = volumes)
-        tags : model-entity tags to include — all must be the same dimension
+        tags : entity tags — accepts ``int``, ``str`` (label or PG name),
+               ``(dim, tag)`` tuples, or a list mixing all of these.
+               String references are resolved via ``g.labels`` first,
+               then ``g.physical``.
         name : optional human-readable label assigned immediately
         tag  : requested physical-group tag (``-1`` = auto-assign)
 
@@ -95,7 +98,11 @@ class PhysicalGroups:
         -------
         Tag  the assigned physical-group tag
         """
-        pg_tag = gmsh.model.addPhysicalGroup(dim, tags, tag=tag)
+        from apeGmsh.core._helpers import resolve_to_tags
+        if isinstance(tags, (str, int)):
+            tags = [tags]
+        resolved = resolve_to_tags(tags, dim=dim, session=self._parent)
+        pg_tag = gmsh.model.addPhysicalGroup(dim, resolved, tag=tag)
         if name:
             gmsh.model.setPhysicalName(dim, pg_tag, name)
         f"{_DIM_LABEL.get(dim, str(dim))} {tags}"

@@ -29,9 +29,16 @@ class _Structured:
     # Transfinite constraints
     # ------------------------------------------------------------------
 
+    def _resolve(self, tag, dim: int) -> list[int]:
+        """Resolve a tag/label/PG ref to concrete tags."""
+        from apeGmsh.core._helpers import resolve_to_tags
+        if isinstance(tag, str):
+            return resolve_to_tags(tag, dim=dim, session=self._mesh._parent)
+        return [int(tag)]
+
     def set_transfinite_curve(
         self,
-        tag      : int,
+        tag,
         n_nodes  : int,
         *,
         mesh_type: str   = "Progression",
@@ -40,70 +47,66 @@ class _Structured:
         """
         Set a transfinite constraint on a curve.
 
-        Parameters
-        ----------
-        tag       : curve tag
-        n_nodes   : number of nodes along the curve (endpoints included)
-        mesh_type : ``"Progression"`` (geometric) or ``"Bump"``
-        coef      : progression ratio
-
-        Example
-        -------
-        ::
-
-            g.mesh.structured.set_transfinite_curve(edge_tag, 20, coef=1.3)
+        ``tag`` accepts an int, a label string, or a PG name.
+        If it resolves to multiple curves, the constraint is
+        applied to each.
         """
-        gmsh.model.mesh.setTransfiniteCurve(tag, n_nodes,
-                                             meshType=mesh_type, coef=coef)
-        self._mesh._directives.append({
-            'kind': 'transfinite_curve', 'tag': tag,
-            'n_nodes': n_nodes, 'mesh_type': mesh_type, 'coef': coef,
-        })
-        self._mesh._log(
-            f"set_transfinite_curve(tag={tag}, n={n_nodes}, "
-            f"type={mesh_type!r}, coef={coef})"
-        )
+        for t in self._resolve(tag, dim=1):
+            gmsh.model.mesh.setTransfiniteCurve(t, n_nodes,
+                                                 meshType=mesh_type, coef=coef)
+            self._mesh._directives.append({
+                'kind': 'transfinite_curve', 'tag': t,
+                'n_nodes': n_nodes, 'mesh_type': mesh_type, 'coef': coef,
+            })
+            self._mesh._log(
+                f"set_transfinite_curve(tag={t}, n={n_nodes}, "
+                f"type={mesh_type!r}, coef={coef})"
+            )
         return self
 
     def set_transfinite_surface(
         self,
-        tag        : int,
+        tag,
         *,
         arrangement: str            = "Left",
         corners    : list[int] | None = None,
     ) -> "_Structured":
         """
-        Set a transfinite constraint on a surface (mapped/structured quad).
+        Set a transfinite constraint on a surface.
 
-        All four bounding curves must also have transfinite
-        constraints with compatible node counts.
+        ``tag`` accepts an int, a label string, or a PG name.
         """
-        gmsh.model.mesh.setTransfiniteSurface(tag, arrangement=arrangement,
-                                               cornerTags=corners or [])
-        self._mesh._directives.append({
-            'kind': 'transfinite_surface', 'tag': tag,
-            'arrangement': arrangement,
-            'corners': corners or [],
-        })
-        self._mesh._log(
-            f"set_transfinite_surface(tag={tag}, "
-            f"arrangement={arrangement!r})"
-        )
+        for t in self._resolve(tag, dim=2):
+            gmsh.model.mesh.setTransfiniteSurface(t, arrangement=arrangement,
+                                                   cornerTags=corners or [])
+            self._mesh._directives.append({
+                'kind': 'transfinite_surface', 'tag': t,
+                'arrangement': arrangement,
+                'corners': corners or [],
+            })
+            self._mesh._log(
+                f"set_transfinite_surface(tag={t}, "
+                f"arrangement={arrangement!r})"
+            )
         return self
 
     def set_transfinite_volume(
         self,
-        tag    : int,
+        tag,
         *,
         corners: list[int] | None = None,
     ) -> "_Structured":
-        """Set a transfinite constraint on a volume (mapped hex-style)."""
-        gmsh.model.mesh.setTransfiniteVolume(tag, cornerTags=corners or [])
-        self._mesh._directives.append({
-            'kind': 'transfinite_volume', 'tag': tag,
-            'corners': corners or [],
-        })
-        self._mesh._log(f"set_transfinite_volume(tag={tag})")
+        """Set a transfinite constraint on a volume.
+
+        ``tag`` accepts an int, a label string, or a PG name.
+        """
+        for t in self._resolve(tag, dim=3):
+            gmsh.model.mesh.setTransfiniteVolume(t, cornerTags=corners or [])
+            self._mesh._directives.append({
+                'kind': 'transfinite_volume', 'tag': t,
+                'corners': corners or [],
+            })
+            self._mesh._log(f"set_transfinite_volume(tag={t})")
         return self
 
     def set_transfinite_automatic(
@@ -171,17 +174,18 @@ class _Structured:
 
     def set_recombine(
         self,
-        tag  : int,
+        tag,
         *,
         dim  : int   = 2,
         angle: float = 45.0,
     ) -> "_Structured":
-        """Request quad recombination for a surface (dim=2) or volume (dim=3)."""
-        gmsh.model.mesh.setRecombine(dim, tag, angle)
-        self._mesh._directives.append({
-            'kind': 'recombine', 'dim': dim, 'tag': tag, 'angle': angle,
-        })
-        self._mesh._log(f"set_recombine(dim={dim}, tag={tag}, angle={angle}°)")
+        """Request quad recombination. ``tag`` accepts int, label, or PG name."""
+        for t in self._resolve(tag, dim=dim):
+            gmsh.model.mesh.setRecombine(dim, t, angle)
+            self._mesh._directives.append({
+                'kind': 'recombine', 'dim': dim, 'tag': t, 'angle': angle,
+            })
+            self._mesh._log(f"set_recombine(dim={dim}, tag={t}, angle={angle}°)")
         return self
 
     def recombine(self) -> "_Structured":
@@ -210,13 +214,14 @@ class _Structured:
     # Smoothing
     # ------------------------------------------------------------------
 
-    def set_smoothing(self, tag: int, val: int, *, dim: int = 2) -> "_Structured":
-        """Set the number of Laplacian smoothing passes for a surface."""
-        gmsh.model.mesh.setSmoothing(dim, tag, val)
-        self._mesh._directives.append({
-            'kind': 'smoothing', 'dim': dim, 'tag': tag, 'val': val,
-        })
-        self._mesh._log(f"set_smoothing(dim={dim}, tag={tag}, val={val})")
+    def set_smoothing(self, tag, val: int, *, dim: int = 2) -> "_Structured":
+        """Set smoothing passes. ``tag`` accepts int, label, or PG name."""
+        for t in self._resolve(tag, dim=dim):
+            gmsh.model.mesh.setSmoothing(dim, t, val)
+            self._mesh._directives.append({
+                'kind': 'smoothing', 'dim': dim, 'tag': t, 'val': val,
+            })
+            self._mesh._log(f"set_smoothing(dim={dim}, tag={t}, val={val})")
         return self
 
     def set_smoothing_by_physical(
