@@ -80,9 +80,9 @@ class Instance:
     properties: dict[str, Any] = field(default_factory=dict)
     bbox: tuple[float, float, float, float, float, float] | None = None
     label_names: list[str] = field(default_factory=list)
+    labels: "_InstanceLabels" = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        # Build the labels accessor after dataclass init.
         object.__setattr__(self, 'labels', _InstanceLabels(self))
 
 
