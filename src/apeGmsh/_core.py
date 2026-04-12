@@ -7,10 +7,12 @@ from ._session import _SessionBase
 if TYPE_CHECKING:
     from .viz.Inspect import Inspect
     from .core.Model import Model
+    from .core.Labels import Labels
     from .core.ConstraintsComposite import ConstraintsComposite
     from .core.LoadsComposite import LoadsComposite
     from .core.MassesComposite import MassesComposite
     from .core._parts_registry import PartsRegistry
+    from .sections._builder import SectionsBuilder
     from .mesh.Mesh import Mesh
     from .mesh.MshLoader import MshLoader
     from .mesh.PhysicalGroups import PhysicalGroups
@@ -56,6 +58,8 @@ class apeGmsh(_SessionBase):
     # -- Static type declarations for composites (created at runtime by begin()) --
     inspect: Inspect
     model: Model
+    labels: Labels
+    sections: SectionsBuilder
     parts: PartsRegistry
     constraints: ConstraintsComposite
     loads: LoadsComposite
