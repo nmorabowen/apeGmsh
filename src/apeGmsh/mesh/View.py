@@ -45,7 +45,7 @@ class View:
 
     def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
-        self._views: dict[Tag, str] = {}          # view_tag → name
+        self._views: dict[Tag, str] = {}          # view_tag -> name
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -92,7 +92,7 @@ class View:
         gmsh.view.option.setNumber(v, "IntervalsType", 3)  # continuous map
 
         self._views[v] = name
-        self._log(f"add_element_scalar({name!r}) → view {v}  "
+        self._log(f"add_element_scalar({name!r}) -> view {v}  "
                   f"({len(tags)} elements)")
         return v
 
@@ -122,7 +122,7 @@ class View:
             tags, data, time, 3,
         )
         self._views[v] = name
-        self._log(f"add_element_vector({name!r}) → view {v}")
+        self._log(f"add_element_vector({name!r}) -> view {v}")
         return v
 
     # ------------------------------------------------------------------
@@ -157,7 +157,7 @@ class View:
         gmsh.view.option.setNumber(v, "IntervalsType", 3)
 
         self._views[v] = name
-        self._log(f"add_node_scalar({name!r}) → view {v}  ({len(tags)} nodes)")
+        self._log(f"add_node_scalar({name!r}) -> view {v}  ({len(tags)} nodes)")
         return v
 
     def add_node_vector(
@@ -196,7 +196,7 @@ class View:
         gmsh.view.option.setNumber(v, "VectorType", vector_type)
 
         self._views[v] = name
-        self._log(f"add_node_vector({name!r}) → view {v}  ({len(tags)} nodes)")
+        self._log(f"add_node_vector({name!r}) -> view {v}  ({len(tags)} nodes)")
         return v
 
     # ------------------------------------------------------------------

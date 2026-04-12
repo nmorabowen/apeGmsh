@@ -12,7 +12,7 @@ Typical usage
 >>> vtk.add_node_scalar("Temperature", T)       # T is (nNode,)
 >>> vtk.add_node_vector("Displacement", disp)   # disp is (nNode, 3)
 >>> vtk.add_elem_scalar("Stress_xx", sig_xx)    # sig_xx is (nElem,)
->>> vtk.write("results.vtu")                     # → open in ParaView
+>>> vtk.write("results.vtu")                     # -> open in ParaView
 
 Or standalone (without apeGmsh):
 >>> VTKExport.write_vtu("out.vtu", coords, connectivity,
@@ -49,7 +49,7 @@ VTK_QUAD_QUADRATIC = 23   # 8-node quad
 VTK_TETRA_QUADRATIC = 24  # 10-node tet
 VTK_HEX_QUADRATIC  = 25   # 20-node hex
 
-# Gmsh element type → (VTK cell type, nodes per element)
+# Gmsh element type -> (VTK cell type, nodes per element)
 _GMSH_TO_VTK: dict[int, tuple[int, int]] = {
     1:  (VTK_LINE,        2),
     2:  (VTK_TRIANGLE,    3),
@@ -58,8 +58,8 @@ _GMSH_TO_VTK: dict[int, tuple[int, int]] = {
     5:  (VTK_HEXAHEDRON,  8),
     6:  (VTK_WEDGE,       6),
     7:  (VTK_PYRAMID,     5),
-    8:  (VTK_LINE,        3),   # 2nd-order line → VTK_QUADRATIC_EDGE=21
-    9:  (VTK_TRIANGLE,    6),   # 2nd-order tri  → 22
+    8:  (VTK_LINE,        3),   # 2nd-order line -> VTK_QUADRATIC_EDGE=21
+    9:  (VTK_TRIANGLE,    6),   # 2nd-order tri  -> 22
     10: (VTK_QUAD_QUADRATIC, 9),
     11: (VTK_TETRA_QUADRATIC, 10),
     15: (VTK_VERTEX,      1),
@@ -69,7 +69,7 @@ _GMSH_TO_VTK: dict[int, tuple[int, int]] = {
 
 
 # ---------------------------------------------------------------------------
-# Helper: numpy array → base64-encoded binary string for VTU
+# Helper: numpy array -> base64-encoded binary string for VTU
 # ---------------------------------------------------------------------------
 def _encode_array(arr: np.ndarray) -> str:
     """Encode a numpy array as base64 binary for VTU AppendedData / inline."""
@@ -89,8 +89,8 @@ def write_vtu(
     cells:      np.ndarray,                         # (M, npe) int — 0-based indices
     *,
     vtk_cell_type: int = VTK_QUAD,                  # single type for all cells
-    point_data: dict[str, np.ndarray] | None = None,  # name → (N,) or (N,3)
-    cell_data:  dict[str, np.ndarray] | None = None,  # name → (M,) or (M,3)
+    point_data: dict[str, np.ndarray] | None = None,  # name -> (N,) or (N,3)
+    cell_data:  dict[str, np.ndarray] | None = None,  # name -> (M,) or (M,3)
     binary:     bool = True,
 ) -> Path:
     """Write a VTK UnstructuredGrid (.vtu) file.
@@ -305,7 +305,7 @@ class VTKExport:
         self._elem_tags    = fem.element_ids
         self._node_ids     = fem.node_ids
 
-        # Build node-ID → 0-based array index mapping
+        # Build node-ID -> 0-based array index mapping
         tag_to_idx = {int(t): i for i, t in enumerate(fem.node_ids)}
 
         # Build 0-based connectivity (row indices into node_coords)
@@ -380,7 +380,7 @@ class VTKExport:
         Parameters
         ----------
         base_name : str
-            Base name (e.g. ``"modes"`` → ``modes.pvd`` + ``modes_000.vtu``, …).
+            Base name (e.g. ``"modes"`` -> ``modes.pvd`` + ``modes_000.vtu``, …).
         mode_shapes : list of (N, 3) arrays
             Translational mode shape for each mode.
         frequencies : list of float

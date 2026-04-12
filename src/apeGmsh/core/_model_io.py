@@ -199,7 +199,7 @@ class _IO:
             if (d, t) not in self._model._registry:
                 self._model._register(d, t, None, 'healed')
         self._model._log(
-            f"heal_shapes(tol={tolerance}) → {len(out)} entities output"
+            f"heal_shapes(tol={tolerance}) -> {len(out)} entities output"
         )
         return self
 
@@ -211,7 +211,7 @@ class _IO:
         """
         file_path = Path(file_path).with_suffix('.iges')
         gmsh.write(str(file_path))
-        self._model._log(f"saved IGES → {file_path}")
+        self._model._log(f"saved IGES -> {file_path}")
 
     def save_step(self, file_path: Path | str) -> None:
         """
@@ -221,7 +221,7 @@ class _IO:
         """
         file_path = Path(file_path).with_suffix('.step')
         gmsh.write(str(file_path))
-        self._model._log(f"saved STEP → {file_path}")
+        self._model._log(f"saved STEP -> {file_path}")
 
     # ------------------------------------------------------------------
     # DXF (AutoCAD) — parsed with ezdxf, geometry built via OCC kernel
@@ -322,7 +322,7 @@ class _IO:
 
         # -- Entity conversion by type ------------------------------------
         # We store each curve's geometry fingerprint (sorted bounding-box
-        # coords) → layer name so we can rebuild the mapping after
+        # coords) -> layer name so we can rebuild the mapping after
         # removeAllDuplicates() potentially renumbers tags.
 
         def _bbox_key(
@@ -336,9 +336,9 @@ class _IO:
                 round(max(y0, y1), 8), round(max(z0, z1), 8),
             )
 
-        # fingerprint → layer name  (for curves, dim=1)
+        # fingerprint -> layer name  (for curves, dim=1)
         _geom_to_layer: dict[tuple[float, ...], str] = {}
-        # point key → layer name  (for dim=0 DXF POINT entities)
+        # point key -> layer name  (for dim=0 DXF POINT entities)
         _pt_to_layer: dict[tuple[int, int, int], str] = {}
 
         for entity in msp:
@@ -488,7 +488,7 @@ class _IO:
         """
         file_path = Path(file_path).with_suffix('.dxf')
         gmsh.write(str(file_path))
-        self._model._log(f"saved DXF → {file_path}")
+        self._model._log(f"saved DXF -> {file_path}")
 
     def save_msh(self, file_path: Path | str) -> None:
         """
@@ -502,7 +502,7 @@ class _IO:
         file_path = Path(file_path).with_suffix('.msh')
         gmsh.option.setNumber("Mesh.SaveAll", 1)
         gmsh.write(str(file_path))
-        self._model._log(f"saved MSH → {file_path}")
+        self._model._log(f"saved MSH -> {file_path}")
 
     def load_msh(
         self,

@@ -39,7 +39,7 @@ from apeGmsh.solvers.Loads import (
 )
 
 
-# (LoadDefType, reduction, target_form) → method name on LoadsComposite
+# (LoadDefType, reduction, target_form) -> method name on LoadsComposite
 _DISPATCH: dict[type, dict[tuple[str, str], str]] = {
     PointLoadDef: {
         ("tributary",  "nodal"):   "_resolve_point",
@@ -181,17 +181,17 @@ class LoadsComposite:
         return defn
 
     # ------------------------------------------------------------------
-    # Target resolution: convert flexible target → DimTag list
+    # Target resolution: convert flexible target -> DimTag list
     # ------------------------------------------------------------------
 
     def _resolve_target(self, target) -> list:
         """Resolve a target identifier to a list of ``(dim, tag)`` pairs.
 
         Lookup order:
-            1. ``list[tuple[int, int]]``  → as-is
-            2. mesh selection name        → entities from g.mesh_selection
-            3. physical group name        → entities from g.physical
-            4. part label                 → entities from g.parts.instances
+            1. ``list[tuple[int, int]]``  -> as-is
+            2. mesh selection name        -> entities from g.mesh_selection
+            3. physical group name        -> entities from g.physical
+            4. part label                 -> entities from g.parts.instances
         """
         # 1. Raw DimTag list
         if isinstance(target, (list, tuple)) and len(target) > 0 \

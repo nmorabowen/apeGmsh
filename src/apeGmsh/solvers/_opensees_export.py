@@ -176,7 +176,7 @@ class _Export:
             lines.append("}")
 
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        ops._log(f"export.tcl → {path}  ({len(lines)} lines)")
+        ops._log(f"export.tcl -> {path}  ({len(lines)} lines)")
         return self
 
     # ------------------------------------------------------------------
@@ -336,5 +336,5 @@ class _Export:
                         )
 
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        ops._log(f"export.py → {path}  ({len(lines)} lines)")
+        ops._log(f"export.py -> {path}  ({len(lines)} lines)")
         return self

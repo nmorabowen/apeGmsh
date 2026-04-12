@@ -16,8 +16,8 @@ Usage::
         col = g.sections.W_solid(
             bf=150, tf=20, h=300, tw=10, length=2000, label="col",
         )
-        col.labels.web           # → "col.web"
-        col.labels.start_face    # → "col.start_face"
+        col.labels.web           # -> "col.web"
+        col.labels.start_face    # -> "col.start_face"
 """
 from __future__ import annotations
 

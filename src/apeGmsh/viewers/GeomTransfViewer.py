@@ -162,14 +162,14 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         self._shutdown_event = shutdown_event
         super().__init__(*args, **kwargs)
 
-    # GET /  → serve the viewer page
+    # GET /  -> serve the viewer page
     def do_GET(self):  # noqa: N802
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(self._html.encode("utf-8"))
 
-    # POST /shutdown  → signal Python to stop blocking
+    # POST /shutdown  -> signal Python to stop blocking
     def do_POST(self):  # noqa: N802
         self.send_response(200)
         self.end_headers()

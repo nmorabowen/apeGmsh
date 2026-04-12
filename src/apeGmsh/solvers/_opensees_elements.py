@@ -97,10 +97,10 @@ class _Elements:
         ops_type    : OpenSees element type (must be in the element registry)
         material    : material / section name from the matching registry:
 
-                      ``"nd"``      → ``g.opensees.materials.add_nd_material``
-                      ``"uni"``     → ``g.opensees.materials.add_uni_material``
-                      ``"section"`` → ``g.opensees.materials.add_section``
-                      ``"none"``    → omit (beam elements with scalar props)
+                      ``"nd"``      -> ``g.opensees.materials.add_nd_material``
+                      ``"uni"``     -> ``g.opensees.materials.add_uni_material``
+                      ``"section"`` -> ``g.opensees.materials.add_section``
+                      ``"none"``    -> omit (beam elements with scalar props)
         geom_transf : name from :meth:`add_geom_transf` — required for
                       beam elements (``elasticBeamColumn`` etc.)
         dim         : physical-group dimension hint for name disambiguation

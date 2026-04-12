@@ -9,7 +9,7 @@ STEP files don't carry apeGmsh label strings, so we write a JSON
 sidecar next to the CAD file::
 
     {name}.step               ← the geometry
-    {name}.step.apegmsh.json  ← the label → COM map
+    {name}.step.apegmsh.json  ← the label -> COM map
 
 Each entry in the sidecar stores:
 
@@ -133,7 +133,7 @@ def write_sidecar(
     """Write a JSON sidecar next to ``cad_path`` containing anchors.
 
     Returns the sidecar path, or ``None`` if ``anchors`` is empty
-    (no user-named entities → no sidecar).
+    (no user-named entities -> no sidecar).
     """
     if not anchors:
         return None
@@ -203,7 +203,7 @@ def apply_transform_to_com(
     translate: tuple[float, float, float],
     rotate: tuple[float, ...] | None,
 ) -> np.ndarray:
-    """Apply the same ``rotate → translate`` sequence that
+    """Apply the same ``rotate -> translate`` sequence that
     :func:`_parts_registry._apply_transforms` applies to the
     imported geometry.
 
@@ -270,7 +270,7 @@ def rebind_physical_groups(
     Returns
     -------
     dict[str, list[tuple[int, int]]]
-        ``pg_name → [(dim, tag), ...]`` map.  A PG with multiple
+        ``pg_name -> [(dim, tag), ...]`` map.  A PG with multiple
         entities (e.g. two surfaces in the same group) gets
         multiple matches.  PGs with no match are omitted.
     """

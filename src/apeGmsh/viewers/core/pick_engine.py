@@ -183,7 +183,7 @@ class PickEngine:
             pts.SetPoint(2, x1, y1, 0)
             pts.SetPoint(3, x0, y1, 0)
             pts.Modified()
-            # Change style for crossing (R→L) vs window (L→R)
+            # Change style for crossing (R->L) vs window (L->R)
             prop = engine._rubberband_actor.GetProperty()
             if x1 < x0:  # crossing
                 prop.SetLineStipplePattern(0xAAAA)
@@ -205,7 +205,7 @@ class PickEngine:
             _abort(caller, engine._tags["lmb_press"])
 
         def on_mouse_move(caller, _event):
-            # LMB drag → rubberband
+            # LMB drag -> rubberband
             if engine._press_pos is not None:
                 px, py = caller.GetEventPosition()
                 sx, sy = engine._press_pos

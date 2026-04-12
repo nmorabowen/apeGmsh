@@ -57,7 +57,7 @@ class _Queries:
         }
         if return_parametric and len(param):
             result['parametric_coords'] = np.array(param)
-        self._mesh._log(f"get_nodes → {len(node_tags)} nodes")
+        self._mesh._log(f"get_nodes -> {len(node_tags)} nodes")
         return result
 
     def get_elements(
@@ -86,7 +86,7 @@ class _Queries:
         }
         total = sum(len(t) for t in result['tags'])
         self._mesh._log(
-            f"get_elements → {total} elements "
+            f"get_elements -> {total} elements "
             f"({len(elem_types)} types)"
         )
         return result
@@ -151,7 +151,7 @@ class _Queries:
         )
 
         self._mesh._log(
-            f"get_fem_data(dim={dim}) → "
+            f"get_fem_data(dim={dim}) -> "
             f"{result.info.n_nodes} nodes, "
             f"{result.info.n_elems} elements, "
             f"bw={result.info.bandwidth}"
@@ -248,7 +248,7 @@ class _Queries:
             df = df.set_index(['element_type', 'metric']).sort_index()
 
         self._mesh._log(
-            f"quality_report(dim={dim}) → "
+            f"quality_report(dim={dim}) -> "
             f"{len(rows)} metric rows across "
             f"{df.index.get_level_values('element_type').nunique() if not df.empty else 0} "
             f"element types"

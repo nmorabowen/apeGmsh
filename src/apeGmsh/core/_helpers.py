@@ -43,10 +43,10 @@ def as_dimtags(
     """Normalize flexible tag input to ``[(dim, tag), ...]``.
 
     Accepted forms:
-    - ``5``                → ``[(dim, 5)]``
-    - ``[1, 2, 3]``        → ``[(dim, 1), (dim, 2), (dim, 3)]``
-    - ``(2, 5)``           → ``[(2, 5)]``
-    - ``[(2, 5), (2, 6)]`` → ``[(2, 5), (2, 6)]``
+    - ``5``                -> ``[(dim, 5)]``
+    - ``[1, 2, 3]``        -> ``[(dim, 1), (dim, 2), (dim, 3)]``
+    - ``(2, 5)``           -> ``[(2, 5)]``
+    - ``[(2, 5), (2, 6)]`` -> ``[(2, 5), (2, 6)]``
 
     When *registry* is provided and a bare int tag appears at exactly
     one dimension in the registry, that dimension is used.  Otherwise

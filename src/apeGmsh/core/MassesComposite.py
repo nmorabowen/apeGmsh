@@ -39,7 +39,7 @@ from apeGmsh.solvers.Masses import (
 )
 
 
-# (MassDefType, reduction) → method name on MassesComposite
+# (MassDefType, reduction) -> method name on MassesComposite
 _DISPATCH: dict[type, dict[str, str]] = {
     PointMassDef: {
         "lumped":     "_resolve_point",
@@ -175,7 +175,7 @@ class MassesComposite:
     # ------------------------------------------------------------------
 
     def _resolve_target(self, target) -> list[tuple]:
-        """Resolve target → list of ``(dim, tag)`` or mesh-selection sentinel."""
+        """Resolve target -> list of ``(dim, tag)`` or mesh-selection sentinel."""
         if isinstance(target, (list, tuple)) and len(target) > 0 \
                 and isinstance(target[0], (list, tuple)):
             return [(int(d), int(t)) for d, t in target]

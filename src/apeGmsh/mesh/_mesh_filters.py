@@ -127,7 +127,7 @@ def element_centroids(
     Parameters
     ----------
     connectivity : ndarray (E, npe) — node IDs per element
-    node_id_to_idx : dict — maps node ID → row index in node_coords
+    node_id_to_idx : dict — maps node ID -> row index in node_coords
     node_coords : ndarray (N, 3)
 
     Returns
@@ -138,7 +138,7 @@ def element_centroids(
     centroids = np.zeros((E, 3), dtype=np.float64)
     for j in range(npe):
         col_ids = connectivity[:, j]
-        # Vectorised lookup: map node IDs → coord indices
+        # Vectorised lookup: map node IDs -> coord indices
         idx = np.array([node_id_to_idx.get(int(nid), 0) for nid in col_ids])
         centroids += node_coords[idx]
     centroids /= npe

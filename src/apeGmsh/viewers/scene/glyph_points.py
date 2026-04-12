@@ -57,9 +57,9 @@ def build_point_glyphs(
     actor : vtkActor
         The rendered actor.
     cell_to_dt : dict
-        Cell index → DimTag mapping.
+        Cell index -> DimTag mapping.
     centroids : dict
-        DimTag → (3,) centroid coordinates.
+        DimTag -> (3,) centroid coordinates.
     """
     cloud = pv.PolyData(centers)
     base_r = model_diagonal * 0.003 * max(0.1, point_size / 10.0)

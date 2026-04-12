@@ -8,7 +8,7 @@ that minimise the bandwidth of the stiffness matrix.
 
 This module provides:
 
-* **Simple** renumbering:  Gmsh tags → contiguous 1-based IDs
+* **Simple** renumbering:  Gmsh tags -> contiguous 1-based IDs
   (preserving relative order).
 * **RCM** (Reverse Cuthill-McKee):  bandwidth-optimal ordering
   for direct solvers (Cholesky, LDL, skyline).
@@ -85,13 +85,13 @@ class NumberedMesh:
     Maps
     ~~~~
     gmsh_to_solver_node : dict[int, int]
-        Gmsh node tag → solver node ID.
+        Gmsh node tag -> solver node ID.
     solver_to_gmsh_node : dict[int, int]
-        Solver node ID → Gmsh node tag.
+        Solver node ID -> Gmsh node tag.
     gmsh_to_solver_elem : dict[int, int]
-        Gmsh element tag → solver element ID.
+        Gmsh element tag -> solver element ID.
     solver_to_gmsh_elem : dict[int, int]
-        Solver element ID → Gmsh element tag.
+        Solver element ID -> Gmsh element tag.
     """
     node_ids: ndarray
     node_coords: ndarray
@@ -171,7 +171,7 @@ def _pseudo_peripheral_node(adj: list[list[int]]) -> int:
 
     Algorithm:
     1. Start from node 0 (or the lowest-degree node)
-    2. BFS to find the farthest node → candidate
+    2. BFS to find the farthest node -> candidate
     3. BFS again from candidate to find a farther one
     4. Repeat until eccentricity stops increasing
     """
@@ -327,7 +327,7 @@ class Numberer:
         self._connectivity = np.asarray(fem_data['connectivity'], dtype=int)
         self._used_tags   = fem_data.get('used_tags', set(self._connectivity.flatten()))
 
-        # Build Gmsh tag → raw array index
+        # Build Gmsh tag -> raw array index
         self._tag_to_raw_idx: dict[int, int] = {
             int(t): i for i, t in enumerate(self._node_tags)
         }
@@ -388,7 +388,7 @@ class Numberer:
         n_nodes = len(gmsh_tags)
 
         # ── Temporary 0-based indexing ────────────────────────────
-        # Map Gmsh tags → 0-based indices for internal work
+        # Map Gmsh tags -> 0-based indices for internal work
         gtag_to_tmp: dict[int, int] = {
             int(t): i for i, t in enumerate(gmsh_tags)
         }

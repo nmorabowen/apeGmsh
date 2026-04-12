@@ -145,7 +145,7 @@ class MassResolver:
     """Convert :class:`MassDef` instances to :class:`MassRecord` lists.
 
     Pure mesh math — receives raw arrays, returns record lists.
-    The composite handles target → mesh-entity resolution before
+    The composite handles target -> mesh-entity resolution before
     calling these methods.
     """
 

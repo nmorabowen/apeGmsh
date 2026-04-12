@@ -27,24 +27,24 @@ from .glyph_points import build_node_cloud
 
 
 # ======================================================================
-# Gmsh → VTK element type mapping
+# Gmsh -> VTK element type mapping
 # ======================================================================
 
 GMSH_TO_VTK: dict[int, int] = {
-    1:  3,    # 2-node line          → VTK_LINE
-    2:  5,    # 3-node triangle      → VTK_TRIANGLE
-    3:  9,    # 4-node quad          → VTK_QUAD
-    4:  10,   # 4-node tet           → VTK_TETRA
-    5:  12,   # 8-node hex           → VTK_HEXAHEDRON
-    6:  13,   # 6-node prism         → VTK_WEDGE
-    7:  14,   # 5-node pyramid       → VTK_PYRAMID
-    8:  21,   # 6-node tri (2nd)     → VTK_QUADRATIC_TRIANGLE
-    9:  23,   # 8-node quad (2nd)    → VTK_QUADRATIC_QUAD
-    11: 24,   # 10-node tet (2nd)    → VTK_QUADRATIC_TETRA
-    15: 1,    # 1-node point         → VTK_VERTEX
+    1:  3,    # 2-node line          -> VTK_LINE
+    2:  5,    # 3-node triangle      -> VTK_TRIANGLE
+    3:  9,    # 4-node quad          -> VTK_QUAD
+    4:  10,   # 4-node tet           -> VTK_TETRA
+    5:  12,   # 8-node hex           -> VTK_HEXAHEDRON
+    6:  13,   # 6-node prism         -> VTK_WEDGE
+    7:  14,   # 5-node pyramid       -> VTK_PYRAMID
+    8:  21,   # 6-node tri (2nd)     -> VTK_QUADRATIC_TRIANGLE
+    9:  23,   # 8-node quad (2nd)    -> VTK_QUADRATIC_QUAD
+    11: 24,   # 10-node tet (2nd)    -> VTK_QUADRATIC_TETRA
+    15: 1,    # 1-node point         -> VTK_VERTEX
 }
 
-# Element type name → color palette key
+# Element type name -> color palette key
 ELEM_TYPE_COLORS: dict[str, str] = {
     "Triangle":      "#4363d8",
     "Quadrilateral": "#3cb44b",

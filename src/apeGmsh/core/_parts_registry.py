@@ -94,9 +94,9 @@ class _InstanceLabels:
     pass to any method::
 
         inst = g.parts.add(column, label="col")
-        inst.labels.web            # → "col.web"
-        inst.labels.top_flange     # → "col.top_flange"
-        inst.labels.start_face     # → "col.start_face"
+        inst.labels.web            # -> "col.web"
+        inst.labels.top_flange     # -> "col.top_flange"
+        inst.labels.start_face     # -> "col.start_face"
 
     Typos raise ``AttributeError`` with the list of available
     labels.  Combined with the shared entity resolver, the user
@@ -470,7 +470,7 @@ class PartsRegistry:
         )
         gmsh.model.occ.synchronize()
 
-        # old-tag → new-tags mapping
+        # old-tag -> new-tags mapping
         old_to_new: dict[int, list[int]] = {}
         for old_dt, new_dts in zip(input_ents, result_map):
             old_dim, old_tag = old_dt

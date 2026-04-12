@@ -20,7 +20,7 @@ Typical usage
 -------------
 >>> with apeGmsh(model_name="demo") as g:
 ...     # ... build geometry, set physical groups, generate mesh ...
-...     g.g2o.transfer()          # one-liner: nodes + elements → OpenSees
+...     g.g2o.transfer()          # one-liner: nodes + elements -> OpenSees
 ...     g.g2o.transfer_from_file("model.msh")   # alternative: from .msh file
 """
 
@@ -212,7 +212,7 @@ class Gmsh2OpenSees:
         gmsh.write(str(msh_path))
 
         if verbose:
-            print(f"[Gmsh2OpenSees] Saved mesh → {msh_path}")
+            print(f"[Gmsh2OpenSees] Saved mesh -> {msh_path}")
 
         self.transfer_from_file(msh_path, verbose=verbose)
         return msh_path

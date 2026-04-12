@@ -53,7 +53,7 @@ def W_profile(
     ::
 
         section = W_profile(bf=150, tf=20, h=300, tw=10)
-        # section.has_file → True (auto-persisted)
+        # section.has_file -> True (auto-persisted)
         # Use for fiber analysis or sweep along a path
     """
     part = Part(name)

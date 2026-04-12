@@ -5,10 +5,10 @@ Uses the same ``(dim, tag) + name`` identity contract as
 :class:`PhysicalGroups`, but operates on *mesh* entities (nodes and
 elements) rather than geometric entities.
 
-* ``dim=0`` → node set
-* ``dim=1`` → 1-D element set (line elements)
-* ``dim=2`` → 2-D element set (tri/quad)
-* ``dim=3`` → 3-D element set (tet/hex)
+* ``dim=0`` -> node set
+* ``dim=1`` -> 1-D element set (line elements)
+* ``dim=2`` -> 2-D element set (tri/quad)
+* ``dim=3`` -> 3-D element set (tet/hex)
 
 The mutable composite lives on ``g.mesh_selection``; an immutable
 snapshot :class:`MeshSelectionStore` is captured into ``FEMData`` at
@@ -174,7 +174,7 @@ class MeshSelectionSet:
             arr = np.array(tags, dtype=np.int64)
             mask = np.isin(all_ids, arr)
             self._store_node_set(t, name, all_ids[mask], all_coords[mask])
-            self._log(f"add(dim=0, tag={t}, name='{name}') → {int(mask.sum())} nodes")
+            self._log(f"add(dim=0, tag={t}, name='{name}') -> {int(mask.sum())} nodes")
         else:
             # Element set
             elem_ids_all, conn_all = self._get_mesh_elements(dim)
@@ -189,7 +189,7 @@ class MeshSelectionSet:
                 dim, t, name, sel_ids, sel_conn,
                 all_ids[nmask], all_coords[nmask],
             )
-            self._log(f"add(dim={dim}, tag={t}, name='{name}') → "
+            self._log(f"add(dim={dim}, tag={t}, name='{name}') -> "
                        f"{len(sel_ids)} elements, {int(nmask.sum())} nodes")
         return t
 
@@ -220,7 +220,7 @@ class MeshSelectionSet:
         in_sphere : (cx, cy, cz, radius)
         closest_to : (x, y, z) — use *count* to select N nearest
         count : number of nearest nodes (used with closest_to)
-        predicate : fn(coords(N,3)) → bool mask(N,)
+        predicate : fn(coords(N,3)) -> bool mask(N,)
 
         Returns
         -------
@@ -249,7 +249,7 @@ class MeshSelectionSet:
 
         t = self._alloc_tag(0, tag)
         self._store_node_set(t, name, all_ids[mask], all_coords[mask])
-        self._log(f"add_nodes(tag={t}, name='{name}') → {int(mask.sum())} nodes")
+        self._log(f"add_nodes(tag={t}, name='{name}') -> {int(mask.sum())} nodes")
         return t
 
     def add_elements(
@@ -271,7 +271,7 @@ class MeshSelectionSet:
         tag : explicit tag (-1 = auto)
         in_box : select elements whose centroid is inside box
         on_plane : select elements with all nodes on plane
-        predicate : fn(centroids(E,3)) → bool mask(E,)
+        predicate : fn(centroids(E,3)) -> bool mask(E,)
 
         Returns
         -------
@@ -290,7 +290,7 @@ class MeshSelectionSet:
                 np.array([], dtype=np.int64),
                 np.empty((0, 3), dtype=np.float64),
             )
-            self._log(f"add_elements(dim={dim}, tag={t}) → 0 elements (none found)")
+            self._log(f"add_elements(dim={dim}, tag={t}) -> 0 elements (none found)")
             return t
 
         mask = np.ones(len(elem_ids), dtype=bool)
@@ -318,7 +318,7 @@ class MeshSelectionSet:
             dim, t, name, sel_ids, sel_conn,
             all_node_ids[nmask], all_coords[nmask],
         )
-        self._log(f"add_elements(dim={dim}, tag={t}, name='{name}') → "
+        self._log(f"add_elements(dim={dim}, tag={t}, name='{name}') -> "
                    f"{len(sel_ids)} elements, {int(nmask.sum())} nodes")
         return t
 
@@ -481,7 +481,7 @@ class MeshSelectionSet:
         -------
         int — mesh selection tag
         """
-        # Resolve name → tag
+        # Resolve name -> tag
         if isinstance(name_or_tag, str):
             for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(dim):
                 try:
@@ -500,7 +500,7 @@ class MeshSelectionSet:
         ncoords = np.asarray(coords, dtype=np.float64).reshape(-1, 3)
         label = ms_name or gmsh.model.getPhysicalName(dim, pg_tag)
         self._store_node_set(t, label, nids, ncoords)
-        self._log(f"from_physical(dim={dim}, pg_tag={pg_tag}) → "
+        self._log(f"from_physical(dim={dim}, pg_tag={pg_tag}) -> "
                    f"node set tag={t}, {len(nids)} nodes")
         return t
 
@@ -542,7 +542,7 @@ class MeshSelectionSet:
             t = self._alloc_tag(0, tag)
             self._store_node_set(t, name, data['tags'], data['coords'])
             self._log(
-                f"from_geometric(kind=nodes) → tag={t}, "
+                f"from_geometric(kind=nodes) -> tag={t}, "
                 f"{len(data['tags'])} nodes"
             )
             return t
@@ -562,7 +562,7 @@ class MeshSelectionSet:
                 "connectivity": conn,
             }
             self._log(
-                f"from_geometric(kind=elements, dim={sel_dim}) → tag={t}, "
+                f"from_geometric(kind=elements, dim={sel_dim}) -> tag={t}, "
                 f"{len(data['element_ids'])} elements"
             )
             return t
@@ -587,7 +587,7 @@ class MeshSelectionSet:
         count: int = 1,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
     ) -> int:
-        """Refine an existing set with spatial filters → create a new set.
+        """Refine an existing set with spatial filters -> create a new set.
 
         For node sets, filters apply to node coordinates.  For element
         sets, filters apply to element centroids.  All filters are
@@ -650,7 +650,7 @@ class MeshSelectionSet:
                 "connectivity": conn[mask],
             }
         self._log(
-            f"filter_set(dim={dim}, src={tag}) → tag={t}, "
+            f"filter_set(dim={dim}, src={tag}) -> tag={t}, "
             f"{int(mask.sum())}/{len(mask)} kept"
         )
         return t

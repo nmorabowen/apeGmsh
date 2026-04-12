@@ -56,7 +56,7 @@ class _Queries:
         Merge all coincident OCC entities in the current model.
 
         Calls ``gmsh.model.occ.removeAllDuplicates()``, which walks every
-        dimension (points → curves → surfaces → volumes) and collapses
+        dimension (points -> curves -> surfaces -> volumes) and collapses
         entities that are geometrically identical within the OCC tolerance.
         The internal registry is then reconciled so only entities that
         survive the merge are tracked.

@@ -45,7 +45,7 @@ class Partition:
             g.partition.save("cube_part.msh")
             g.partition.save("cube", one_file_per_partition=True)
 
-    Or with an explicit element → partition assignment::
+    Or with an explicit element -> partition assignment::
 
             elem_tags  = [1, 2, 3, 4, 5, 6]
             part_ids   = [1, 1, 2, 2, 3, 4]

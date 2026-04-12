@@ -447,7 +447,7 @@ class Inspect:
             bb = gmsh.model.getBoundingBox(-1, -1)
             lines.append(
                 f"  {'BBox':10s}: "
-                f"({bb[0]:.4g}, {bb[1]:.4g}, {bb[2]:.4g}) → "
+                f"({bb[0]:.4g}, {bb[1]:.4g}, {bb[2]:.4g}) -> "
                 f"({bb[3]:.4g}, {bb[4]:.4g}, {bb[5]:.4g})"
             )
             diag = float(np.linalg.norm(

@@ -118,7 +118,7 @@ class ModelViewer:
         # ── Window (creates QApplication + plotter) ─────────────────
         default_title = (
             f"ModelViewer — {self._parent.name}"
-            + (f" → {self._physical_group}" if self._physical_group else "")
+            + (f" -> {self._physical_group}" if self._physical_group else "")
         )
 
         # ── Selection state ─────────────────────────────────────────
@@ -727,7 +727,7 @@ class ModelViewer:
 
         # ── Wire callbacks ──────────────────────────────────────────
 
-        # Pick → selection
+        # Pick -> selection
         def _on_pick(dt: DimTag, ctrl: bool):
             if ctrl:
                 sel.unpick(dt)
@@ -737,7 +737,7 @@ class ModelViewer:
         pick_engine.on_pick = _on_pick
         pick_engine.set_hidden_check(vis_mgr.is_hidden)
 
-        # Filter → pick engine + visual dim feedback
+        # Filter -> pick engine + visual dim feedback
         def _on_filter(active_dims: set[int]):
             pick_engine.set_pickable_dims(active_dims)
             # Dim non-pickable dimension actors
@@ -755,7 +755,7 @@ class ModelViewer:
 
         filter_tab._on_filter_changed = _on_filter
 
-        # Hover → color
+        # Hover -> color
         _prev_hover: list[DimTag | None] = [None]
 
         def _on_hover(dt: DimTag | None):
@@ -772,7 +772,7 @@ class ModelViewer:
 
         pick_engine.on_hover = _on_hover
 
-        # Selection changed → batch recolor + refresh UI
+        # Selection changed -> batch recolor + refresh UI
         def _on_sel_changed():
             color_mgr.recolor_all(
                 picks=set(sel._picks),
@@ -795,7 +795,7 @@ class ModelViewer:
         # Write active group to Gmsh on every pick change
         sel.on_changed.append(lambda: sel.commit_active_group())
 
-        # Visibility changed → render
+        # Visibility changed -> render
         vis_mgr.on_changed.append(lambda: plotter.render())
 
         # Box select

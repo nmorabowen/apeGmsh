@@ -280,7 +280,7 @@ class MeshViewer:
                 else:
                     sel.toggle(dt)
             elif mode == "element":
-                # Resolve cell → element tag
+                # Resolve cell -> element tag
                 dim = dt[0]
                 cell_map = scene.batch_cell_to_elem.get(dim, {})
                 # Get the actual cell_id from the pick engine's last pick
@@ -319,7 +319,7 @@ class MeshViewer:
         # Filter
         filter_tab._on_filter = pick_engine.set_pickable_dims
 
-        # Hover → color
+        # Hover -> color
         _prev_hover: list[DimTag | None] = [None]
 
         def _on_hover(dt: DimTag | None):
@@ -336,7 +336,7 @@ class MeshViewer:
 
         pick_engine.on_hover = _on_hover
 
-        # Selection changed → recolor
+        # Selection changed -> recolor
         def _on_sel_changed():
             for entity_dt in registry.all_entities():
                 is_picked = entity_dt in sel._picks

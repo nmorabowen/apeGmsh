@@ -104,21 +104,21 @@ class _Inspect:
         ]
         for i, (name, m) in enumerate(ops._nd_materials.items(), 1):
             p = "  ".join(f"{k}={v}" for k, v in m["params"].items())
-            lines.append(f"    [{i}] {name!r}  →  {m['ops_type']}  {p}")
+            lines.append(f"    [{i}] {name!r}  ->  {m['ops_type']}  {p}")
 
         lines += [f"  uniaxialMaterials ({len(ops._uni_materials)}):"]
         for i, (name, m) in enumerate(ops._uni_materials.items(), 1):
             p = "  ".join(f"{k}={v}" for k, v in m["params"].items())
-            lines.append(f"    [{i}] {name!r}  →  {m['ops_type']}  {p}")
+            lines.append(f"    [{i}] {name!r}  ->  {m['ops_type']}  {p}")
 
         lines += [f"  Sections ({len(ops._sections)}):"]
         for i, (name, s) in enumerate(ops._sections.items(), 1):
             p = "  ".join(f"{k}={v}" for k, v in s["params"].items())
-            lines.append(f"    [{i}] {name!r}  →  {s['section_type']}  {p}")
+            lines.append(f"    [{i}] {name!r}  ->  {s['section_type']}  {p}")
 
         lines += [f"  GeomTransfs ({len(ops._geom_transfs)}):"]
         for i, (name, t) in enumerate(ops._geom_transfs.items(), 1):
-            lines.append(f"    [{i}] {name!r}  →  {t['transf_type']}")
+            lines.append(f"    [{i}] {name!r}  ->  {t['transf_type']}")
 
         lines += ["", f"  Element assignments ({len(ops._elem_assignments)}):"]
         for pg, a in ops._elem_assignments.items():
@@ -131,12 +131,12 @@ class _Inspect:
                 if a['extra'] else ""
             )
             lines.append(
-                f"    PG {pg!r}  →  {a['ops_type']}  ({mat_info}){extra_str}"
+                f"    PG {pg!r}  ->  {a['ops_type']}  ({mat_info}){extra_str}"
             )
 
         lines += ["", f"  Boundary conditions ({len(ops._bcs)}):"]
         for pg, bc in ops._bcs.items():
-            lines.append(f"    PG {pg!r}  →  fix {bc['dofs']}")
+            lines.append(f"    PG {pg!r}  ->  fix {bc['dofs']}")
 
         lines += ["", f"  Load patterns ({len(ops._load_patterns)}):"]
         for pat, loads in ops._load_patterns.items():

@@ -76,7 +76,7 @@ class _Partitioning:
             method=method, elementTags=element_tags or []
         )
         self._mesh._log(
-            f"compute_renumbering(method={method!r}) → {len(old)} nodes"
+            f"compute_renumbering(method={method!r}) -> {len(old)} nodes"
         )
         return np.array(old, dtype=np.int64), np.array(new, dtype=np.int64)
 

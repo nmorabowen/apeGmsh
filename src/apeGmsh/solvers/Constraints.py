@@ -44,7 +44,7 @@ Constraint taxonomy
 **Level 2b — Mixed-DOF coupling** (1 6-DOF master, N 3-DOF slaves)
 
 =================  ================================================
-``node_to_surface`` 6-DOF master → phantom nodes → 3-DOF solid slaves
+``node_to_surface`` 6-DOF master -> phantom nodes -> 3-DOF solid slaves
                    via rigid link + equalDOF (translations only)
 =================  ================================================
 
@@ -129,12 +129,12 @@ class RigidLinkDef(ConstraintDef):
     """
     Rigid bar connecting master and slave nodes.
 
-    ``rigid_beam``  →  full 6-DOF coupling (translations + rotations)::
+    ``rigid_beam``  ->  full 6-DOF coupling (translations + rotations)::
 
         u_s = u_m + θ_m × r       (translations)
         θ_s = θ_m                  (rotations)
 
-    ``rigid_rod``  →  translations only, rotations independent::
+    ``rigid_rod``  ->  translations only, rotations independent::
 
         u_s = u_m + θ_m × r
         (θ_s free)
@@ -161,7 +161,7 @@ class PenaltyDef(ConstraintDef):
     """
     Soft spring between co-located node pairs.
 
-    Numerically approximates EqualDOF when K → ∞.  Useful when
+    Numerically approximates EqualDOF when K -> ∞.  Useful when
     hard constraints cause ill-conditioning.
 
     Parameters
@@ -356,14 +356,14 @@ class NodeToSurfaceDef(ConstraintDef):
 
     The resolver:
 
-    1. **Duplicates** each slave node → creates phantom node tags
+    1. **Duplicates** each slave node -> creates phantom node tags
        at the same coordinates (6-DOF intermediaries).
-    2. **Rigid links** master → each phantom node (``rigid_beam``),
+    2. **Rigid links** master -> each phantom node (``rigid_beam``),
        propagating rotational effects through the offset arm::
 
            u_phantom = u_master + θ_master × r
 
-    3. **EqualDOF** phantom → original slave, translations only
+    3. **EqualDOF** phantom -> original slave, translations only
        ``[1, 2, 3]`` (rotations discarded since the solid has none).
 
     This is the standard technique for mixed-dimensionality
@@ -702,8 +702,8 @@ class NodeToSurfaceRecord(ConstraintRecord):
 
     Solvers consume this by:
     - Creating the phantom nodes (6-DOF, same coords as slaves).
-    - Emitting ``rigid_beam`` constraints master → phantom.
-    - Emitting ``equal_dof`` constraints phantom → slave for DOFs [1,2,3].
+    - Emitting ``rigid_beam`` constraints master -> phantom.
+    - Emitting ``equal_dof`` constraints phantom -> slave for DOFs [1,2,3].
 
     Attributes
     ----------
@@ -719,9 +719,9 @@ class NodeToSurfaceRecord(ConstraintRecord):
         Coordinates of phantom nodes, shape (n_slaves, 3).
         Identical to the slave coordinates.
     rigid_link_records : list[NodePairRecord]
-        Master → phantom rigid beam records (with offset vectors).
+        Master -> phantom rigid beam records (with offset vectors).
     equal_dof_records : list[NodePairRecord]
-        Phantom → slave equalDOF records (translations only).
+        Phantom -> slave equalDOF records (translations only).
     dofs : list[int]
         Translational DOFs coupled to the surface (default [1,2,3]).
     """
@@ -792,7 +792,7 @@ def _shape_quad8(xi: float, eta: float) -> ndarray:
     return N
 
 
-# Map: number of face nodes → shape function evaluator
+# Map: number of face nodes -> shape function evaluator
 SHAPE_FUNCTIONS = {
     3: _shape_tri3,
     4: _shape_quad4,
@@ -978,7 +978,7 @@ class ConstraintResolver:
         self.node_tags = np.asarray(node_tags, dtype=int)
         self.node_coords = np.asarray(node_coords, dtype=float)
 
-        # Tag → index mapping
+        # Tag -> index mapping
         self._tag_to_idx: dict[int, int] = {
             int(t): i for i, t in enumerate(self.node_tags)
         }
@@ -1522,8 +1522,8 @@ class ConstraintResolver:
            ``master_label`` as bare node tag).
         2. Generate phantom node tags — one per slave, starting at
            ``max(all_existing_tags) + 1``.
-        3. Build rigid-beam records: master → each phantom.
-        4. Build equalDOF records: each phantom → original slave
+        3. Build rigid-beam records: master -> each phantom.
+        4. Build equalDOF records: each phantom -> original slave
            (translations only).
 
         Parameters

@@ -35,9 +35,9 @@ class BrowserTab:
     """Tree showing physical groups + unassigned entities.
 
     The tree supports:
-    - Click group header → activate that group for editing
-    - Click entity leaf → toggle its pick in the working set
-    - Right-click group → rename / delete context menu
+    - Click group header -> activate that group for editing
+    - Click entity leaf -> toggle its pick in the working set
+    - Right-click group -> rename / delete context menu
     """
 
     def __init__(
@@ -697,7 +697,7 @@ class PartsTreePanel:
         self._tree.itemClicked.connect(self._on_tree_click)
         layout.addWidget(self._tree)
 
-        # Map part_label → root QTreeWidgetItem (for highlight)
+        # Map part_label -> root QTreeWidgetItem (for highlight)
         self._part_items: dict[str, Any] = {}  # QTreeWidgetItem (lazy Qt import)
 
         self.refresh()

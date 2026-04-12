@@ -629,7 +629,7 @@ class LoadSet:
     # ── Summary ──────────────────────────────────────────────
 
     def summary(self):
-        """DataFrame of (pattern, kind) → count."""
+        """DataFrame of (pattern, kind) -> count."""
         import pandas as pd
         if not self._records:
             return pd.DataFrame(columns=["pattern", "kind", "count"])

@@ -218,7 +218,7 @@ class SelectionState:
         If *name* is the same as the current active group, reloads
         without writing (avoids overwriting with stale picks).
         """
-        # Reload same group → don't write outgoing (would overwrite)
+        # Reload same group -> don't write outgoing (would overwrite)
         if name is not None and name == self._active_group:
             # Reload from staged or Gmsh
             if name in self._staged_groups:

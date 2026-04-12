@@ -38,7 +38,7 @@ def run_build(ops: "OpenSees") -> None:
     declarations.
     """
     # ── 1. Global node numbering ──────────────────────────────────────
-    # Use getNodes() with no args → returns the unique node cache.
+    # Use getNodes() with no args -> returns the unique node cache.
     # getNodes(dim=-1, ..., includeBoundary=True) can return the same
     # physical node multiple times (once per entity it touches),
     # producing duplicates that break the model.
@@ -251,10 +251,10 @@ def run_build(ops: "OpenSees") -> None:
     if n_pruned > 0:
         ops._log(
             f"build(): pruned {n_pruned} disconnected node(s) "
-            f"({n_total} → {len(connected_gmsh)})"
+            f"({n_total} -> {len(connected_gmsh)})"
         )
 
-        # Build new sequential mapping (gmsh tag → new ops id)
+        # Build new sequential mapping (gmsh tag -> new ops id)
         sorted_connected = sorted(connected_gmsh)
         new_node_map = {
             gt: new_id

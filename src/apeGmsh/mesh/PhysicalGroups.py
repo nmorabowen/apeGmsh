@@ -107,7 +107,7 @@ class PhysicalGroups:
             gmsh.model.setPhysicalName(dim, pg_tag, name)
         f"{_DIM_LABEL.get(dim, str(dim))} {tags}"
         self._log(
-            f"add(dim={dim}, entities={tags}) → pg_tag={pg_tag}"
+            f"add(dim={dim}, entities={tags}) -> pg_tag={pg_tag}"
             + (f", name={name!r}" if name else "")
         )
         return pg_tag
@@ -409,7 +409,7 @@ class PhysicalGroups:
         }
         name = gmsh.model.getPhysicalName(dim, tag) or str(tag)
         self._log(
-            f"get_nodes(dim={dim}, pg={name!r}) → {len(node_tags)} nodes"
+            f"get_nodes(dim={dim}, pg={name!r}) -> {len(node_tags)} nodes"
         )
         return result
 

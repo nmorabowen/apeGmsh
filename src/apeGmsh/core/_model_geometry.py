@@ -60,7 +60,7 @@ class _Geometry:
         tag = gmsh.model.occ.addPoint(x, y, z, meshSize=mesh_size)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_point({x}, {y}, {z}) → tag {tag}")
+        self._model._log(f"add_point({x}, {y}, {z}) -> tag {tag}")
         return self._model._register(0, tag, label, 'point')
 
     # ------------------------------------------------------------------
@@ -85,7 +85,7 @@ class _Geometry:
         tag = gmsh.model.occ.addLine(start, end)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_line({start} → {end}) → tag {tag}")
+        self._model._log(f"add_line({start} -> {end}) -> tag {tag}")
         return self._model._register(1, tag, label, 'line')
 
     def add_arc(
@@ -115,7 +115,7 @@ class _Geometry:
         tag = gmsh.model.occ.addCircleArc(start, center, end)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_arc(start={start}, centre={center}, end={end}) → tag {tag}")
+        self._model._log(f"add_arc(start={start}, centre={center}, end={end}) -> tag {tag}")
         return self._model._register(1, tag, label, 'arc')
 
     def add_circle(
@@ -147,7 +147,7 @@ class _Geometry:
             gmsh.model.occ.synchronize()
         self._model._log(
             f"add_circle(centre=({cx},{cy},{cz}), r={radius}, "
-            f"[{math.degrees(angle1):.1f}°→{math.degrees(angle2):.1f}°]) → tag {tag}"
+            f"[{math.degrees(angle1):.1f}°->{math.degrees(angle2):.1f}°]) -> tag {tag}"
         )
         return self._model._register(1, tag, label, 'circle')
 
@@ -177,7 +177,7 @@ class _Geometry:
         if sync:
             gmsh.model.occ.synchronize()
         self._model._log(
-            f"add_ellipse(centre=({cx},{cy},{cz}), a={r_major}, b={r_minor}) → tag {tag}"
+            f"add_ellipse(centre=({cx},{cy},{cz}), a={r_major}, b={r_minor}) -> tag {tag}"
         )
         return self._model._register(1, tag, label, 'ellipse')
 
@@ -212,7 +212,7 @@ class _Geometry:
         tag = gmsh.model.occ.addSpline(point_tags)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_spline({point_tags}) → tag {tag}")
+        self._model._log(f"add_spline({point_tags}) -> tag {tag}")
         return self._model._register(1, tag, label, 'spline')
 
     def add_bspline(
@@ -252,7 +252,7 @@ class _Geometry:
         )
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_bspline(ctrl_pts={point_tags}, degree={degree}) → tag {tag}")
+        self._model._log(f"add_bspline(ctrl_pts={point_tags}, degree={degree}) -> tag {tag}")
         return self._model._register(1, tag, label, 'bspline')
 
     def add_bezier(
@@ -276,11 +276,11 @@ class _Geometry:
         tag = gmsh.model.occ.addBezier(point_tags)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_bezier({point_tags}) → tag {tag}")
+        self._model._log(f"add_bezier({point_tags}) -> tag {tag}")
         return self._model._register(1, tag, label, 'bezier')
 
     # ------------------------------------------------------------------
-    # Wire / surface builders  (dim = 1 → 2)
+    # Wire / surface builders  (dim = 1 -> 2)
     # ------------------------------------------------------------------
 
     def add_wire(
@@ -330,7 +330,7 @@ class _Geometry:
         tag = gmsh.model.occ.addWire(curve_tags, checkClosed=check_closed)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_wire({curve_tags}, closed={check_closed}) → tag {tag}")
+        self._model._log(f"add_wire({curve_tags}, closed={check_closed}) -> tag {tag}")
         return self._model._register(1, tag, label, 'wire')
 
     def add_curve_loop(
@@ -360,7 +360,7 @@ class _Geometry:
         tag = gmsh.model.occ.addCurveLoop(curve_tags)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_curve_loop({curve_tags}) → tag {tag}")
+        self._model._log(f"add_curve_loop({curve_tags}) -> tag {tag}")
         return self._model._register(1, tag, label, 'curve_loop')
 
     def add_plane_surface(
@@ -391,7 +391,7 @@ class _Geometry:
         tag = gmsh.model.occ.addPlaneSurface(wire_tags)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_plane_surface(wires={wire_tags}) → tag {tag}")
+        self._model._log(f"add_plane_surface(wires={wire_tags}) -> tag {tag}")
         return self._model._register(2, tag, label, 'plane_surface')
 
     def add_surface_filling(
@@ -412,7 +412,7 @@ class _Geometry:
         tag = gmsh.model.occ.addSurfaceFilling(wire_tag)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_surface_filling(wire={wire_tag}) → tag {tag}")
+        self._model._log(f"add_surface_filling(wire={wire_tag}) -> tag {tag}")
         return self._model._register(2, tag, label, 'surface_filling')
 
     def add_rectangle(
@@ -474,7 +474,7 @@ class _Geometry:
             gmsh.model.occ.synchronize()
         self._model._log(
             f"add_rectangle(origin=({x},{y},{z}), size=({dx},{dy})"
-            f"{f', r={rounded_radius}' if rounded_radius else ''}) → tag {tag}"
+            f"{f', r={rounded_radius}' if rounded_radius else ''}) -> tag {tag}"
         )
         return self._model._register(2, tag, label, 'rectangle')
 
@@ -580,7 +580,7 @@ class _Geometry:
 
         self._model._log(
             f"add_cutting_plane(point={tuple(p)}, normal={tuple(n)}, "
-            f"size={size}) → tag {tag}"
+            f"size={size}) -> tag {tag}"
         )
         # ``add_plane_surface`` already registered the tag as
         # ``plane_surface``.  Re-label it as a cutting plane and stash
@@ -620,7 +620,7 @@ class _Geometry:
         Parameters
         ----------
         axis : {'x', 'y', 'z'}
-            Axis the plane is **normal to**.  ``'z'`` → XY plane, etc.
+            Axis the plane is **normal to**.  ``'z'`` -> XY plane, etc.
         offset : float, optional
             Signed distance along the base normal from ``origin``
             (or from the global origin if ``origin`` is None).
@@ -711,7 +711,7 @@ class _Geometry:
             f"add_axis_cutting_plane(axis={axis!r}, offset={offset}, "
             f"origin={tuple(origin_arr)}, rotation={rotation}, "
             f"rotation_about={rotation_about!r}) "
-            f"→ point={tuple(point)}, normal={tuple(base_normal)}"
+            f"-> point={tuple(point)}, normal={tuple(base_normal)}"
         )
 
         return self.add_cutting_plane(
@@ -876,7 +876,7 @@ class _Geometry:
                 and entry.get('label') != f"{entry.get('kind', '')}_{t}"
             }
             # If all consumed solids share the same user-supplied label,
-            # propagate it.  Mixed labels → don't guess, leave unlabeled.
+            # propagate it.  Mixed labels -> don't guess, leave unlabeled.
             if len(original_labels) == 1:
                 inherited_label = original_labels.pop()
 
@@ -903,7 +903,7 @@ class _Geometry:
 
         self._model._log(
             f"cut_by_surface(solids={solid_tags}, surface={int(surface)}) "
-            f"→ {len(new_volume_tags)} volume fragment(s): {new_volume_tags}"
+            f"-> {len(new_volume_tags)} volume fragment(s): {new_volume_tags}"
         )
         return new_volume_tags
 
@@ -1066,7 +1066,7 @@ class _Geometry:
             gmsh.model.occ.synchronize()
 
         self._model._log(
-            f"cut_by_plane(plane={plane_tag}) → "
+            f"cut_by_plane(plane={plane_tag}) -> "
             f"above={above_tags}, below={below_tags}"
         )
         return above_tags, below_tags
@@ -1222,7 +1222,7 @@ class _Geometry:
         tag = gmsh.model.occ.addBox(x, y, z, dx, dy, dz)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_box(origin=({x},{y},{z}), size=({dx},{dy},{dz})) → tag {tag}")
+        self._model._log(f"add_box(origin=({x},{y},{z}), size=({dx},{dy},{dz})) -> tag {tag}")
         return self._model._register(3, tag, label, 'box')
 
     def add_sphere(
@@ -1237,7 +1237,7 @@ class _Geometry:
         tag = gmsh.model.occ.addSphere(cx, cy, cz, radius)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_sphere(centre=({cx},{cy},{cz}), r={radius}) → tag {tag}")
+        self._model._log(f"add_sphere(centre=({cx},{cy},{cz}), r={radius}) -> tag {tag}")
         return self._model._register(3, tag, label, 'sphere')
 
     def add_cylinder(
@@ -1263,7 +1263,7 @@ class _Geometry:
         tag = gmsh.model.occ.addCylinder(x, y, z, dx, dy, dz, radius, angle=angle)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_cylinder(base=({x},{y},{z}), axis=({dx},{dy},{dz}), r={radius}) → tag {tag}")
+        self._model._log(f"add_cylinder(base=({x},{y},{z}), axis=({dx},{dy},{dz}), r={radius}) -> tag {tag}")
         return self._model._register(3, tag, label, 'cylinder')
 
     def add_cone(
@@ -1290,7 +1290,7 @@ class _Geometry:
         tag = gmsh.model.occ.addCone(x, y, z, dx, dy, dz, r1, r2, angle=angle)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_cone(base=({x},{y},{z}), r1={r1}, r2={r2}) → tag {tag}")
+        self._model._log(f"add_cone(base=({x},{y},{z}), r1={r1}, r2={r2}) -> tag {tag}")
         return self._model._register(3, tag, label, 'cone')
 
     def add_torus(
@@ -1315,7 +1315,7 @@ class _Geometry:
         tag = gmsh.model.occ.addTorus(cx, cy, cz, r1, r2, angle=angle)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_torus(centre=({cx},{cy},{cz}), R={r1}, r={r2}) → tag {tag}")
+        self._model._log(f"add_torus(centre=({cx},{cy},{cz}), R={r1}, r={r2}) -> tag {tag}")
         return self._model._register(3, tag, label, 'torus')
 
     def add_wedge(
@@ -1339,5 +1339,5 @@ class _Geometry:
         tag = gmsh.model.occ.addWedge(x, y, z, dx, dy, dz, ltx)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_wedge(origin=({x},{y},{z}), size=({dx},{dy},{dz}), ltx={ltx}) → tag {tag}")
+        self._model._log(f"add_wedge(origin=({x},{y},{z}), size=({dx},{dy},{dz}), ltx={ltx}) -> tag {tag}")
         return self._model._register(3, tag, label, 'wedge')

@@ -75,7 +75,7 @@ class MshLoader:
         if not verbose:
             return
         print(
-            f"[MshLoader] {label} → "
+            f"[MshLoader] {label} -> "
             f"{fem.info.n_nodes} nodes, "
             f"{fem.info.n_elems} elements, "
             f"bw={fem.info.bandwidth}"

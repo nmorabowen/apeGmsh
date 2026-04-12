@@ -158,7 +158,7 @@ class Labels:
 
         pg_tag = gmsh.model.addPhysicalGroup(dim, [int(t) for t in tags])
         gmsh.model.setPhysicalName(dim, pg_tag, prefixed)
-        self._log(f"add({name!r}, dim={dim}, tags={tags}) → pg_tag={pg_tag}")
+        self._log(f"add({name!r}, dim={dim}, tags={tags}) -> pg_tag={pg_tag}")
         return pg_tag
 
     def _find_pg_tag(self, dim: int, prefixed_name: str) -> int | None:
@@ -286,7 +286,7 @@ class Labels:
         pg_tag = gmsh.model.addPhysicalGroup(resolved_dim, tags)
         gmsh.model.setPhysicalName(resolved_dim, pg_tag, out_name)
         self._log(
-            f"promote_to_physical({label_name!r}) → "
+            f"promote_to_physical({label_name!r}) -> "
             f"PG {out_name!r} (dim={resolved_dim}, {len(tags)} entities)"
         )
         return pg_tag

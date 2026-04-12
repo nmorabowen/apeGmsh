@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 DimTag = tuple[int, int]
 
 # ---------------------------------------------------------------------------
-# Gmsh element-type → corner-node count
+# Gmsh element-type -> corner-node count
 # Used to stride the flat node-tag arrays returned by getElements.
 # Higher-order variants (9, 10, …) are not listed; those fall back to
 # getElementProperties() at runtime.
@@ -235,7 +235,7 @@ class Plot:
                 except Exception:
                     pass
 
-        # --- Surfaces (dim=2): boundary-curve sampling → Poly3DCollection ---
+        # --- Surfaces (dim=2): boundary-curve sampling -> Poly3DCollection ---
         # Previous approach used a uniform UV grid which fails badly for
         # trimmed surfaces (IGES/STEP imports) because the parametric
         # rectangle extends beyond the trim boundary.  Instead we sample
@@ -362,7 +362,7 @@ class Plot:
                 self.show()
             return self
 
-        # Build node-tag → XYZ lookup
+        # Build node-tag -> XYZ lookup
         node_tags, coords_flat, _ = gmsh.model.mesh.getNodes(
             dim=-1, tag=-1, includeBoundary=True
         )
@@ -646,7 +646,7 @@ class Plot:
         stride   : label every Nth node (useful for dense meshes)
         fontsize : annotation font size
         color    : text colour
-        prefix   : string prepended to each node tag (e.g. ``'n'`` → ``n17``)
+        prefix   : string prepended to each node tag (e.g. ``'n'`` -> ``n17``)
         offset   : (dx, dy, dz) text offset applied to each label; defaults
                    to a small positive x offset so labels do not overlap markers
         show     : call ``plt.show()`` at the end
@@ -702,7 +702,7 @@ class Plot:
         stride   : label every Nth element
         fontsize : annotation font size
         color    : text colour
-        prefix   : string prepended to each element tag (e.g. ``'e'`` → ``e42``)
+        prefix   : string prepended to each element tag (e.g. ``'e'`` -> ``e42``)
         show     : call ``plt.show()`` at the end
 
         Returns
@@ -711,7 +711,7 @@ class Plot:
         """
         _, ax = self._ensure_axes()
 
-        # Build node-tag → XYZ lookup (needed for centroid computation)
+        # Build node-tag -> XYZ lookup (needed for centroid computation)
         n_tags, n_coords_flat, _ = gmsh.model.mesh.getNodes(
             dim=-1, tag=-1, includeBoundary=True,
         )
@@ -747,7 +747,7 @@ class Plot:
 
         self._log(
             f"label_elements(dim={dim}, tag={tag}, "
-            f"stride={step}) → {n_labeled} labels"
+            f"stride={step}) -> {n_labeled} labels"
         )
         if show:
             self.show()
@@ -811,7 +811,7 @@ class Plot:
         linewidth        : width for dim=1 groups
         surface_alpha    : opacity for dim=2 group patches
         label_groups     : annotate each group at its centroid
-        show_legend      : draw a legend mapping colour → group name
+        show_legend      : draw a legend mapping colour -> group name
         show             : call ``plt.show()`` at the end
 
         Returns
@@ -997,7 +997,7 @@ class Plot:
         edge_color   : edge colour for dim=2 polygons
         point_size   : scatter size for dim=0 group nodes
         seg_width    : line width for dim=1 group segments
-        show_legend  : draw legend mapping colour → group name
+        show_legend  : draw legend mapping colour -> group name
         show         : call ``plt.show()`` at the end
 
         Returns
@@ -1022,7 +1022,7 @@ class Plot:
                 self.show()
             return self
 
-        # Node-tag → XYZ lookup (global)
+        # Node-tag -> XYZ lookup (global)
         n_tags, n_coords_flat, _ = gmsh.model.mesh.getNodes(
             dim=-1, tag=-1, includeBoundary=True,
         )

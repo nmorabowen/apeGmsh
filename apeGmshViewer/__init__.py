@@ -31,12 +31,12 @@ def show(*filepaths, blocking=None):
     From a notebook cell::
 
         from apeGmshViewer import show
-        show("results.vtu")            # auto-detects Jupyter → subprocess
+        show("results.vtu")            # auto-detects Jupyter -> subprocess
 
     From a script::
 
         from apeGmshViewer import show
-        show("results.vtu")            # auto-detects script → blocking
+        show("results.vtu")            # auto-detects script -> blocking
     """
     from pathlib import Path
 

@@ -2,8 +2,8 @@
 _Editing — mesh mutation, embedding, periodicity, and STL import.
 
 Accessed via ``g.mesh.editing``.  Owns every operation that changes
-mesh topology or embeds lower-dim entities, plus the STL → discrete
-→ geometry pipeline.
+mesh topology or embeds lower-dim entities, plus the STL -> discrete
+-> geometry pipeline.
 """
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ class _Editing:
         tags        : slave entity tags
         master_tags : master entity tags
         transform   : 16-element row-major 4×4 affine matrix mapping
-                      master → slave coordinates
+                      master -> slave coordinates
         dim         : entity dimension (1 = curves, 2 = surfaces)
         """
         gmsh.model.mesh.setPeriodic(dim, tags, master_tags, transform)
@@ -178,7 +178,7 @@ class _Editing:
         if verbose:
             if removed > 0:
                 print(f"remove_duplicate_nodes: merged {removed} "
-                      f"node(s) ({before} → {after})")
+                      f"node(s) ({before} -> {after})")
             else:
                 print(f"remove_duplicate_nodes: no duplicates found "
                       f"({before} nodes unchanged)")
@@ -198,7 +198,7 @@ class _Editing:
         if verbose:
             if removed > 0:
                 print(f"remove_duplicate_elements: removed {removed} "
-                      f"element(s) ({before} → {after})")
+                      f"element(s) ({before} -> {after})")
             else:
                 print(f"remove_duplicate_elements: no duplicates found "
                       f"({before} elements unchanged)")

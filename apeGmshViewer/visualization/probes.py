@@ -7,7 +7,7 @@ Three probe types:
     3. Plane Probe  — slice the mesh with an arbitrary plane, show field on the cut
 
 Each probe returns a ProbeResult that can be displayed in the properties panel
-or plotted as a chart (line probe → XY plot, plane probe → contour on slice).
+or plotted as a chart (line probe -> XY plot, plane probe -> contour on slice).
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ class PointProbeResult:
     closest_point: np.ndarray            # (3,) nearest mesh point
     closest_point_id: int                # node index in the mesh
     distance: float                      # distance from probe to closest node
-    field_values: dict[str, Any]         # field_name → scalar or vector value
+    field_values: dict[str, Any]         # field_name -> scalar or vector value
 
     def summary(self) -> str:
         lines = [
@@ -62,7 +62,7 @@ class LineProbeResult:
     n_samples: int
     arc_length: np.ndarray               # (n_samples,) distance from start
     positions: np.ndarray                # (n_samples, 3) sampled positions
-    field_values: dict[str, np.ndarray]  # field_name → (n_samples,) or (n_samples, 3)
+    field_values: dict[str, np.ndarray]  # field_name -> (n_samples,) or (n_samples, 3)
     sampled_mesh: pv.PolyData | None = None  # the pyvista sampled line
 
     @property

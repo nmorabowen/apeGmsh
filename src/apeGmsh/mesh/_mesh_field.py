@@ -50,7 +50,7 @@ class FieldHelper:
         self._mesh._directives.append({
             'kind': 'field_add', 'field_type': field_type, 'field_tag': tag,
         })
-        self._log(f"add({field_type!r}) → field tag {tag}")
+        self._log(f"add({field_type!r}) -> field tag {tag}")
         return tag
 
     def set_number(self, tag: int, name: str, value: float) -> "FieldHelper":
@@ -106,7 +106,7 @@ class FieldHelper:
         gmsh.model.mesh.field.setNumber(tag, "Sampling", sampling)
         self._log(
             f"distance(curves={curves!r}, surfaces={surfaces!r}, "
-            f"points={points!r}) → field {tag}"
+            f"points={points!r}) -> field {tag}"
         )
         return tag
 
@@ -133,7 +133,7 @@ class FieldHelper:
         self._log(
             f"threshold(in={distance_field}, "
             f"size=[{size_min},{size_max}], "
-            f"dist=[{dist_min},{dist_max}]) → field {tag}"
+            f"dist=[{dist_min},{dist_max}]) -> field {tag}"
         )
         return tag
 
@@ -141,7 +141,7 @@ class FieldHelper:
         """Create a ``MathEval`` field using an expression in x, y, z."""
         tag = gmsh.model.mesh.field.add("MathEval")
         gmsh.model.mesh.field.setString(tag, "F", expression)
-        self._log(f"math_eval({expression!r}) → field {tag}")
+        self._log(f"math_eval({expression!r}) -> field {tag}")
         return tag
 
     def box(
@@ -172,7 +172,7 @@ class FieldHelper:
         self._log(
             f"box(size_in={size_in}, size_out={size_out}, "
             f"x=[{x_min},{x_max}], y=[{y_min},{y_max}], "
-            f"z=[{z_min},{z_max}]) → field {tag}"
+            f"z=[{z_min},{z_max}]) -> field {tag}"
         )
         return tag
 
@@ -180,7 +180,7 @@ class FieldHelper:
         """Create a ``Min`` field — element-wise minimum of several fields."""
         tag = gmsh.model.mesh.field.add("Min")
         gmsh.model.mesh.field.setNumbers(tag, "FieldsList", field_tags)
-        self._log(f"minimum({field_tags}) → field {tag}")
+        self._log(f"minimum({field_tags}) -> field {tag}")
         return tag
 
     def boundary_layer(
@@ -209,6 +209,6 @@ class FieldHelper:
             gmsh.model.mesh.field.setNumber(tag, "Thickness", thickness)
         self._log(
             f"boundary_layer(size={size_near}, ratio={ratio}, "
-            f"layers={n_layers}) → field {tag}"
+            f"layers={n_layers}) -> field {tag}"
         )
         return tag

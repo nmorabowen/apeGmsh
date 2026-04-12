@@ -286,8 +286,8 @@ class _Transforms:
 
         This is the "constant-section sweep" operation: a single profile
         (point, curve, or surface) is translated along *path*, generating
-        geometry one dimension up — point → curve, curve → surface,
-        surface → volume.  Unlike :meth:`extrude` the path does not have
+        geometry one dimension up — point -> curve, curve -> surface,
+        surface -> volume.  Unlike :meth:`extrude` the path does not have
         to be a straight line: it can be any OCC wire built from lines,
         arcs, splines, or a mix, assembled via
         :meth:`~Model.add_wire`.
@@ -348,7 +348,7 @@ class _Transforms:
 
         self._model._log(
             f"sweep({dt}, path={path}, trihedron={trihedron!r}) "
-            f"→ {len(result)} entities"
+            f"-> {len(result)} entities"
         )
         return result
 
@@ -451,6 +451,6 @@ class _Transforms:
 
         self._model._log(
             f"thru_sections(wires={list(wires)}, solid={make_solid}) "
-            f"→ {len(result)} entities"
+            f"-> {len(result)} entities"
         )
         return result

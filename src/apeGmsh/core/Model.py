@@ -53,7 +53,7 @@ class Model:
         hole = g.model.geometry.add_cylinder(5, 5, 0, 0, 0, 10, 2)
         part = g.model.boolean.cut(box, hole)
 
-        # Wire-frame → surface workflow
+        # Wire-frame -> surface workflow
         p1   = g.model.geometry.add_point(0, 0, 0)
         p2   = g.model.geometry.add_point(10, 0, 0)
         p3   = g.model.geometry.add_point(10, 5, 0)
@@ -73,7 +73,7 @@ class Model:
 
     def __init__(self, parent: "_SessionBase") -> None:
         self._parent = parent
-        # (dim, tag) → {label, kind}
+        # (dim, tag) -> {label, kind}
         self._registry: dict[DimTag, dict] = {}
 
         # Five focused sub-composites — each one holds a reference to self

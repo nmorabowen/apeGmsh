@@ -21,7 +21,7 @@ Tag    = int
 DimTag = tuple[int, int]
 
 # ---------------------------------------------------------------------------
-# Gmsh element type → (corner_node_count, topological_dim)
+# Gmsh element type -> (corner_node_count, topological_dim)
 # ---------------------------------------------------------------------------
 _ETYPE_INFO: dict[int, tuple[int, int]] = {
     1:  (2, 1),   # 2-node line
@@ -69,7 +69,7 @@ class _ElemSpec:
     ndm_ok      : frozenset[int]              # valid ndm values
     ndf_ok      : frozenset[int]              # valid ndf values
     gmsh_etypes : frozenset[int]              # acceptable gmsh element-type codes
-    node_reorder: dict[int, tuple[int, ...]]  # etype → local-index permutation
+    node_reorder: dict[int, tuple[int, ...]]  # etype -> local-index permutation
     slots       : tuple[str, ...]  = ()       # ndm-independent slot order
     slots_2d    : tuple[str, ...] | None = None  # overrides slots for ndm=2
     slots_3d    : tuple[str, ...] | None = None  # overrides slots for ndm=3

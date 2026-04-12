@@ -130,7 +130,7 @@ class MassTabPanel:
 
         for d in defs:
             item = QTreeWidgetItem(self._tree)
-            item.setText(0, f"{d.kind} → {d.target}")
+            item.setText(0, f"{d.kind} -> {d.target}")
             item.setText(1, self._format_def_detail(d))
 
         self._tree.resizeColumnToContents(0)

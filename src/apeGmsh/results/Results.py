@@ -58,7 +58,7 @@ VTK_TETRA      = 10
 VTK_HEXAHEDRON = 12
 VTK_WEDGE      = 13
 
-# (element_dim, nodes_per_element) → VTK cell type
+# (element_dim, nodes_per_element) -> VTK cell type
 _DIM_NPE_TO_VTK: dict[tuple[int, int], int] = {
     (0, 1): VTK_VERTEX,
     (1, 2): VTK_LINE,
@@ -89,7 +89,7 @@ def _remap_connectivity(
     conn : ndarray (E, npe)
         Connectivity in Gmsh node tags.
     tag_to_idx : dict
-        Mapping from node tag → 0-based point index.
+        Mapping from node tag -> 0-based point index.
 
     Returns
     -------
@@ -129,9 +129,9 @@ def _build_vtk_cells_from_fem(
     n_primary : int
         Number of primary-dim cells (first in the array).
     tag_to_idx : dict
-        Node-tag → 0-based index mapping used for the conversion.
+        Node-tag -> 0-based index mapping used for the conversion.
     """
-    # Node ID → 0-based index mapping
+    # Node ID -> 0-based index mapping
     tag_to_idx: dict[int, int] = {
         int(t): i for i, t in enumerate(fem.node_ids)
     }
@@ -406,7 +406,7 @@ class Results:
                 n_primary, n_total, steps, name,
             )
 
-        # Pad cell_data if needed (primary-only → full)
+        # Pad cell_data if needed (primary-only -> full)
         padded_cell_data = _pad_cell_data(cell_data, n_primary, n_total)
 
         return cls(

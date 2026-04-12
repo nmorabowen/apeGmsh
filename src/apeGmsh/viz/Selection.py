@@ -328,7 +328,7 @@ class Selection:
 
             top = g.model.selection.select_surfaces(on_plane=("z", 10))
             nodes = top.to_mesh_nodes()
-            # → {'tags': [12, 18, 22, ...], 'coords': [[...], ...]}
+            # -> {'tags': [12, 18, 22, ...], 'coords': [[...], ...]}
         """
         if not self._dimtags:
             return {'tags': np.array([], dtype=np.int64),
@@ -536,7 +536,7 @@ class SelectionComposite:
         Mouse bindings:
             LEFT click         : pick entity (pixel-accurate)
             LEFT drag          : rubber-band box-select
-                                 (L→R = window, R→L = crossing)
+                                 (L->R = window, R->L = crossing)
             Ctrl+LEFT click    : unpick entity under cursor
             Ctrl+LEFT drag     : rubber-band box-UNselect
             MIDDLE drag        : pan camera
@@ -588,7 +588,7 @@ class SelectionComposite:
             universe, dim=dim, parent=self._parent, **kwargs,
         )
         sel = Selection(filtered, self._parent)
-        self._log(f"select dim={dim} → {len(sel)} / {len(universe)} entities")
+        self._log(f"select dim={dim} -> {len(sel)} / {len(universe)} entities")
         return sel
 
     # ------------------------------------------------------------------
@@ -873,7 +873,7 @@ def _entity_center(dim: int, tag: Tag) -> np.ndarray:
         if dim == 3:
             return np.asarray(gmsh.model.occ.getCenterOfMass(3, tag),
                               dtype=float)
-        # dim == 1 or 2 → parametric midpoint
+        # dim == 1 or 2 -> parametric midpoint
         bounds = gmsh.model.getParametrizationBounds(dim, tag)
         mids = [0.5 * (bounds[0][i] + bounds[1][i]) for i in range(dim)]
         return np.asarray(gmsh.model.getValue(dim, tag, mids), dtype=float)
@@ -900,8 +900,8 @@ def _is_axis_aligned(
     """
     Test whether a *curve* (dim=1) is aligned with a coordinate axis.
 
-    ``perpendicular=False`` → curve is parallel to ``axis``.
-    ``perpendicular=True``  → curve is perpendicular to ``axis`` (i.e.
+    ``perpendicular=False`` -> curve is parallel to ``axis``.
+    ``perpendicular=True``  -> curve is perpendicular to ``axis`` (i.e.
                               lies in the plane normal to that axis).
     """
     d, t = dt
@@ -915,7 +915,7 @@ def _is_axis_aligned(
     total = float(np.linalg.norm(extents))
     if total < 1e-12:
         return False
-    along_axis = abs(extents[i]) / total  # 1 → parallel, 0 → perpendicular
+    along_axis = abs(extents[i]) / total  # 1 -> parallel, 0 -> perpendicular
     # angle between curve direction and axis
     ang_deg = math.degrees(math.acos(min(1.0, along_axis)))
     if perpendicular:

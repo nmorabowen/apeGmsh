@@ -169,7 +169,7 @@ def install_navigation(
     # ── Shift+Scroll: orbit ─────────────────────────────────────────
     def on_mmb_press(caller, _event):
         if caller.GetShiftKey():
-            # Shift+MMB → orbit
+            # Shift+MMB -> orbit
             pivot = None
             if get_orbit_pivot is not None:
                 pivot = get_orbit_pivot()
@@ -178,7 +178,7 @@ def install_navigation(
             _orbit_pivot[0] = pivot
             _orbit_last[0] = caller.GetEventPosition()
         else:
-            # MMB → pan
+            # MMB -> pan
             _orbit_pivot[0] = None
             style.StartPan()
         _abort(caller, _tags["mmb_press"])

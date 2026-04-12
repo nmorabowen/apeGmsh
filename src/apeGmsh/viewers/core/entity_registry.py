@@ -31,8 +31,8 @@ class EntityRegistry:
 
     Stores one merged mesh and one VTK actor per entity dimension.
     Provides O(1) lookup in both directions:
-    - pick resolution: ``(actor_id, cell_id)`` → ``DimTag``
-    - recolor / hide: ``DimTag`` → ``list[cell_idx]``
+    - pick resolution: ``(actor_id, cell_id)`` -> ``DimTag``
+    - recolor / hide: ``DimTag`` -> ``list[cell_idx]``
     """
 
     __slots__ = (
@@ -49,15 +49,15 @@ class EntityRegistry:
     )
 
     def __init__(self) -> None:
-        self.dim_meshes: dict[int, Any] = {}          # dim → PolyData | UnstructuredGrid
-        self.dim_actors: dict[int, Any] = {}           # dim → vtkActor
-        self._full_meshes: dict[int, Any] = {}         # dim → original (unfiltered) mesh
-        self._actor_id_to_dim: dict[int, int] = {}     # id(actor) → dim
-        self._cell_to_dt: dict[int, dict[int, DimTag]] = {}   # dim → {cell_idx: DimTag}
-        self._dt_to_cells: dict[DimTag, list[int]] = {}       # DimTag → [cell_indices]
-        self.centroids: dict[DimTag, np.ndarray] = {}          # DimTag → (3,) xyz
-        self._bboxes: dict[DimTag, np.ndarray] = {}            # DimTag → (8, 3) corners
-        self._add_mesh_kwargs: dict[int, dict] = {}            # dim → kwargs for add_mesh
+        self.dim_meshes: dict[int, Any] = {}          # dim -> PolyData | UnstructuredGrid
+        self.dim_actors: dict[int, Any] = {}           # dim -> vtkActor
+        self._full_meshes: dict[int, Any] = {}         # dim -> original (unfiltered) mesh
+        self._actor_id_to_dim: dict[int, int] = {}     # id(actor) -> dim
+        self._cell_to_dt: dict[int, dict[int, DimTag]] = {}   # dim -> {cell_idx: DimTag}
+        self._dt_to_cells: dict[DimTag, list[int]] = {}       # DimTag -> [cell_indices]
+        self.centroids: dict[DimTag, np.ndarray] = {}          # DimTag -> (3,) xyz
+        self._bboxes: dict[DimTag, np.ndarray] = {}            # DimTag -> (8, 3) corners
+        self._add_mesh_kwargs: dict[int, dict] = {}            # dim -> kwargs for add_mesh
         self.origin_shift: np.ndarray = np.zeros(3)            # subtracted from world coords
 
     # ------------------------------------------------------------------
@@ -101,7 +101,7 @@ class EntityRegistry:
         if add_mesh_kwargs is not None:
             self._add_mesh_kwargs[dim] = add_mesh_kwargs
 
-        # Build inverse mapping: DimTag → list[cell_idx]
+        # Build inverse mapping: DimTag -> list[cell_idx]
         inv: dict[DimTag, list[int]] = {}
         for cell_idx, dt in cell_to_dt.items():
             inv.setdefault(dt, []).append(cell_idx)

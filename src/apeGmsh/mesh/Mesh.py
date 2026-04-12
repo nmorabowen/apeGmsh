@@ -17,7 +17,7 @@ focused sub-composite:
                             smoothing, compound
 * ``g.mesh.editing``      — clear, reverse, relocate, duplicate
                             removal, affine transform, embed,
-                            periodic, STL → discrete pipeline
+                            periodic, STL -> discrete pipeline
 * ``g.mesh.queries``      — get_nodes, get_elements, get_fem_data,
                             quality_report
 * ``g.mesh.partitioning`` — partition / unpartition / renumbering

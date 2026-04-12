@@ -213,7 +213,7 @@ class Part(_SessionBase):
         ownership so ``cleanup()`` can reclaim it later.
 
         The sidecar (``{name}.step.apegmsh.json``) carrying the
-        label→COM anchor map is written as a follow-up step,
+        label->COM anchor map is written as a follow-up step,
         unconditionally — auto-persist always writes anchors when
         available because the user has no other opportunity to do
         so.
@@ -318,7 +318,7 @@ class Part(_SessionBase):
             Force format: ``"step"`` or ``"iges"``.
         write_anchors : bool, default True
             Write a JSON sidecar (``{file_path}.apegmsh.json``)
-            carrying the label → center-of-mass map for every
+            carrying the label -> center-of-mass map for every
             user-named entity in the Part.  This is what lets
             ``assembly.parts.add(part)`` expose the instance's
             labels via ``inst.by_label('name')``.  The sidecar is
@@ -372,7 +372,7 @@ class Part(_SessionBase):
         gmsh.write(str(file_path))
         self.file_path = file_path.resolve()
 
-        # Write the label→COM sidecar so Assembly.parts.add(part)
+        # Write the label->COM sidecar so Assembly.parts.add(part)
         # can expose this Part's user-named entities via
         # ``inst.by_label(...)``.  Failures here are warned, not
         # raised — the CAD write itself already succeeded.

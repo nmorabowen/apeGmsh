@@ -99,7 +99,7 @@ class LoadsTabPanel:
         self._tree.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self._tree)
 
-        # Map pattern_name → root QTreeWidgetItem (for state queries)
+        # Map pattern_name -> root QTreeWidgetItem (for state queries)
         self._pattern_items: dict[str, Any] = {}  # QTreeWidgetItem (lazy Qt import)
         # Suppress itemChanged during programmatic edits
         self._suppress_signal = False
@@ -175,7 +175,7 @@ class LoadsTabPanel:
 
             for d in pat_defs:
                 child = QTreeWidgetItem(root)
-                child.setText(0, f"{d.kind} → {d.target}")
+                child.setText(0, f"{d.kind} -> {d.target}")
                 child.setText(1, self._format_def_detail(d))
                 child.setData(0, self._DT_ROLE, ("def", id(d)))
 
