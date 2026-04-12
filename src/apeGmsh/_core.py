@@ -37,6 +37,7 @@ class apeGmsh(_SessionBase):
         ("inspect",         ".viz.Inspect",                "Inspect",               False),
         ("model",           ".core.Model",                 "Model",                 False),
         ("labels",          ".core.Labels",                "Labels",                False),
+        ("sections",        ".sections._builder",          "SectionsBuilder",       False),
         ("parts",           ".core._parts_registry",       "PartsRegistry",         False),
         ("constraints",     ".core.ConstraintsComposite",  "ConstraintsComposite",  False),
         ("loads",           ".core.LoadsComposite",        "LoadsComposite",        False),
