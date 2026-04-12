@@ -267,5 +267,8 @@ class Labels:
         return pg_tag
 
     def __repr__(self) -> str:
-        labels = self.get_all()
-        return f"Labels({len(labels)} labels: {labels[:5]}{'...' if len(labels) > 5 else ''})"
+        try:
+            labels = self.get_all()
+            return f"Labels({len(labels)} labels: {labels[:5]}{'...' if len(labels) > 5 else ''})"
+        except Exception:
+            return "Labels(session closed)"
