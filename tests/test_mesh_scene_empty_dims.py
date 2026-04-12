@@ -87,8 +87,9 @@ class CollectEntityCellsEmptyArrayTests(unittest.TestCase):
                 del sys.modules[mod_name]
 
     def tearDown(self) -> None:
+        # Purge all apeGmsh modules that may have cached the fake gmsh
         for mod_name in list(sys.modules):
-            if mod_name.startswith("apeGmsh.viewers.scene"):
+            if mod_name.startswith("apeGmsh"):
                 del sys.modules[mod_name]
         if self._saved_gmsh is None:
             sys.modules.pop("gmsh", None)
