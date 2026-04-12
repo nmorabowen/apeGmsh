@@ -81,33 +81,57 @@ class Instance:
     bbox: tuple[float, float, float, float, float, float] | None = None
     label_names: list[str] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # Build the labels accessor after dataclass init.
+        object.__setattr__(self, 'labels', _InstanceLabels(self))
+
+
+class _InstanceLabels:
+    """Attribute-access helper for Part labels on an Instance.
+
+    Accessed via ``inst.labels``.  Each Part label becomes an
+    attribute that returns the prefixed label string ready to
+    pass to any method::
+
+        inst = g.parts.add(column, label="col")
+        inst.labels.web            # → "col.web"
+        inst.labels.top_flange     # → "col.top_flange"
+        inst.labels.start_face     # → "col.start_face"
+
+    Typos raise ``AttributeError`` with the list of available
+    labels.  Combined with the shared entity resolver, the user
+    never types a raw label string.
+    """
+
+    __slots__ = ('_inst',)
+
+    def __init__(self, inst: Instance) -> None:
+        object.__setattr__(self, '_inst', inst)
+
     def __getattr__(self, name: str) -> str:
-        """Access a Part label as an attribute → the prefixed label
-        string ready to pass to any method.
-
-        ``inst.web`` is equivalent to ``f"{inst.label}.web"`` and
-        returns ``"col.web"`` when ``inst.label == "col"``.
-
-        This lets the user write::
-
-            g.mesh.structured.set_transfinite_volume(inst.web)
-            g.physical.add_volume(inst.top_flange, name="steel")
-            g.constraints.node_to_surface(ref_pt, inst.start_face)
-
-        instead of fumbling with raw label strings.
-
-        Raises ``AttributeError`` when the label doesn't exist so
-        IDE autocomplete and typo detection work.
-        """
-        # Build the candidate prefixed name
-        prefixed = f"{self.label}.{name}"
-        if prefixed in self.label_names:
+        inst = object.__getattribute__(self, '_inst')
+        prefixed = f"{inst.label}.{name}"
+        if prefixed in inst.label_names:
             return prefixed
-        available = [n.split('.', 1)[1] for n in self.label_names if '.' in n]
+        available = [
+            n.split('.', 1)[1] for n in inst.label_names if '.' in n
+        ]
         raise AttributeError(
-            f"Instance '{self.label}' has no label '{name}'. "
+            f"Instance '{inst.label}' has no label '{name}'. "
             f"Available: {available}"
         )
+
+    def __dir__(self) -> list[str]:
+        """Enable IDE autocomplete for available labels."""
+        inst = object.__getattribute__(self, '_inst')
+        return [
+            n.split('.', 1)[1] for n in inst.label_names if '.' in n
+        ]
+
+    def __repr__(self) -> str:
+        inst = object.__getattribute__(self, '_inst')
+        names = [n.split('.', 1)[1] for n in inst.label_names if '.' in n]
+        return f"InstanceLabels({names})"
 
 
 # ---------------------------------------------------------------------------
