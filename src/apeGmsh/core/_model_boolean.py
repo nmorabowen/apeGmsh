@@ -57,7 +57,7 @@ class _Boolean:
         tags = [t for _, t in result]
         for d, t in result:
             self._model._register(d, t, None, fn_name)
-        self._model._log(f"{fn_name}(obj={obj_dt}, tool={tool_dt}) \u2192 tags {tags}")
+        self._model._log(f"{fn_name}(obj={obj_dt}, tool={tool_dt}) -> tags {tags}")
         return tags
 
     def fuse(

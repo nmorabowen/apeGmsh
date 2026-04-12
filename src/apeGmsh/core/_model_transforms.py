@@ -139,7 +139,7 @@ class _Transforms:
         if sync:
             gmsh.model.occ.synchronize()
         new_tags = [t for _, t in new_dimtags]
-        self._model._log(f"copy \u2192 new tags {new_tags}")
+        self._model._log(f"copy -> new tags {new_tags}")
         return new_tags
 
     # ------------------------------------------------------------------
@@ -160,8 +160,8 @@ class _Transforms:
         """
         Linear extrusion \u2014 sweeps entities along (dx, dy, dz).
 
-        Creates new geometry one dimension up: point \u2192 curve,
-        curve \u2192 surface, surface \u2192 volume.
+        Creates new geometry one dimension up: point -> curve,
+        curve -> surface, surface -> volume.
 
         Parameters
         ----------
@@ -179,7 +179,7 @@ class _Transforms:
         Returns
         -------
         list[DimTag]
-            All generated (dim, tag) pairs.  For a surface \u2192 volume
+            All generated (dim, tag) pairs.  For a surface -> volume
             extrusion the list contains the top face, the volume, and
             the lateral faces \u2014 index into it to assign physical groups.
 
@@ -205,7 +205,7 @@ class _Transforms:
         for d, t in result:
             self._model._register(d, t, None, 'extrude')
         self._model._log(
-            f"extrude({dt}, ({dx},{dy},{dz})) \u2192 {len(result)} entities"
+            f"extrude({dt}, ({dx},{dy},{dz})) -> {len(result)} entities"
         )
         return result
 
@@ -263,7 +263,7 @@ class _Transforms:
         self._model._log(
             f"revolve({dt}, angle={math.degrees(angle):.1f}\u00b0, "
             f"axis=({ax},{ay},{az}) through ({x},{y},{z})) "
-            f"\u2192 {len(result)} entities"
+            f"-> {len(result)} entities"
         )
         return result
 

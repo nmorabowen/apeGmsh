@@ -8,8 +8,8 @@ Architecture
 STEP files don't carry apeGmsh label strings, so we write a JSON
 sidecar next to the CAD file::
 
-    {name}.step               ← the geometry
-    {name}.step.apegmsh.json  ← the label -> COM map
+    {name}.step               <- the geometry
+    {name}.step.apegmsh.json  <- the label -> COM map
 
 Each entry in the sidecar stores:
 

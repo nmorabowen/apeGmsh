@@ -54,7 +54,7 @@ class _IO:
             result.setdefault(dim, []).append(tag)
 
         dim_summary = {d: len(ts) for d, ts in result.items()}
-        self._model._log(f"loaded {kind.upper()} ← {file_path.name}  {dim_summary}")
+        self._model._log(f"loaded {kind.upper()} <- {file_path.name}  {dim_summary}")
         return result
 
     def load_iges(
@@ -477,7 +477,7 @@ class _IO:
             name: {d: len(ts) for d, ts in ents.items()}
             for name, ents in layers.items()
         }
-        self._model._log(f"loaded DXF ← {file_path.name}  layers={layer_summary}")
+        self._model._log(f"loaded DXF <- {file_path.name}  layers={layer_summary}")
         return layers
 
     def save_dxf(self, file_path: Path | str) -> None:
@@ -537,5 +537,5 @@ class _IO:
                 result.setdefault(dim, []).append(tag)
 
         dim_summary = {d: len(ts) for d, ts in result.items()}
-        self._model._log(f"loaded MSH ← {file_path.name}  {dim_summary}")
+        self._model._log(f"loaded MSH <- {file_path.name}  {dim_summary}")
         return result
