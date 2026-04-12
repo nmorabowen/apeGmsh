@@ -45,3 +45,38 @@ def classify_w_volumes(
         labels_comp.add(3, bot_tags, name="bottom_flange")
     if web_tags:
         labels_comp.add(3, web_tags, name="web")
+
+
+def classify_end_faces(
+    length: float,
+    labels_comp,
+    *,
+    tol: float = 1e-3,
+) -> None:
+    """Label the end-cap surfaces at z=0 and z=length.
+
+    * ``start_face`` — surfaces whose centroid z ≈ 0
+    * ``end_face``   — surfaces whose centroid z ≈ length
+
+    These are the natural targets for node-to-surface couplings
+    (reference points for applying forces/moments or BCs at the
+    member ends).
+    """
+    start_tags: list[int] = []
+    end_tags: list[int] = []
+
+    for _, tag in gmsh.model.getEntities(2):
+        try:
+            com = gmsh.model.occ.getCenterOfMass(2, tag)
+        except Exception:
+            continue
+        z = com[2]
+        if abs(z) < tol:
+            start_tags.append(tag)
+        elif abs(z - length) < tol:
+            end_tags.append(tag)
+
+    if start_tags:
+        labels_comp.add(2, start_tags, name="start_face")
+    if end_tags:
+        labels_comp.add(2, end_tags, name="end_face")

@@ -11,6 +11,7 @@ from __future__ import annotations
 import gmsh
 
 from apeGmsh.core.Part import Part
+from ._classify import classify_end_faces
 
 
 # =====================================================================
@@ -98,6 +99,9 @@ def W_solid(
         # Label by structural role
         classify_w_volumes(h, tw, tf, bf, part.labels)
 
+        # Label end-cap surfaces for BC / load application
+        classify_end_faces(length, part.labels)
+
     return part
 
 
@@ -136,6 +140,7 @@ def rect_solid(
     part = Part(name)
     with part:
         part.model.geometry.add_box(-b / 2, -h / 2, 0, b, h, length, label="body")
+        classify_end_faces(length, part.labels)
     return part
 
 
@@ -185,10 +190,10 @@ def rect_hollow(
         boo.cut(outer, [inner])
 
         # Label the surviving volume
-        import gmsh
         for _, tag in gmsh.model.getEntities(3):
             part.labels.add(3, [tag], name="body")
             break
+        classify_end_faces(length, part.labels)
 
     return part
 
@@ -225,6 +230,7 @@ def pipe_solid(
     part = Part(name)
     with part:
         part.model.geometry.add_cylinder(0, 0, 0, 0, 0, length, r, label="body")
+        classify_end_faces(length, part.labels)
     return part
 
 
@@ -272,6 +278,7 @@ def pipe_hollow(
         for _, tag in gmsh.model.getEntities(3):
             part.labels.add(3, [tag], name="body")
             break
+        classify_end_faces(length, part.labels)
 
     return part
 
@@ -349,6 +356,7 @@ def angle_solid(
             part.labels.add(3, h_tags, name="horizontal_leg")
         if v_tags:
             part.labels.add(3, v_tags, name="vertical_leg")
+        classify_end_faces(length, part.labels)
 
     return part
 
@@ -422,6 +430,7 @@ def channel_solid(
         # Label by role
         from ._classify import classify_w_volumes
         classify_w_volumes(h, tw, tf, bf, part.labels)
+        classify_end_faces(length, part.labels)
 
     return part
 
@@ -501,5 +510,6 @@ def tee_solid(
             part.labels.add(3, flange_tags, name="flange")
         if stem_tags:
             part.labels.add(3, stem_tags, name="stem")
+        classify_end_faces(length, part.labels)
 
     return part
