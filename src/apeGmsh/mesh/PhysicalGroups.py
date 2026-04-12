@@ -261,12 +261,17 @@ class PhysicalGroups:
                     if pg_tag is not None:
                         return list(gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag))
                 raise KeyError(
-                    f"No physical group named {name_or_tag!r} at any dimension"
+                    f"No physical group named {name_or_tag!r} at any "
+                    f"dimension.  If this is a label, use "
+                    f"g.labels.entities({name_or_tag!r}) or promote it "
+                    f"with g.labels.promote_to_physical({name_or_tag!r})."
                 )
             pg_tag = self.get_tag(dim, name_or_tag)
             if pg_tag is None:
                 raise KeyError(
-                    f"No physical group named {name_or_tag!r} at dim={dim}"
+                    f"No physical group named {name_or_tag!r} at dim={dim}.  "
+                    f"If this is a label, use g.labels.entities() or "
+                    f"g.labels.promote_to_physical()."
                 )
             return list(gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag))
 

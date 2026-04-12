@@ -145,10 +145,15 @@ class OpenSees:
             )
 
     def _all_pg_names(self) -> list[str]:
-        return [
-            gmsh.model.getPhysicalName(d, t)
-            for d, t in gmsh.model.getPhysicalGroups()
-        ]
+        from apeGmsh.core.Labels import is_label_pg, strip_prefix
+        names = []
+        for d, t in gmsh.model.getPhysicalGroups():
+            raw = gmsh.model.getPhysicalName(d, t)
+            if is_label_pg(raw):
+                names.append(strip_prefix(raw) + "  [label]")
+            else:
+                names.append(raw)
+        return names
 
     def _find_pg(
         self,
@@ -156,20 +161,32 @@ class OpenSees:
         expected_dim: int | None = None,
     ) -> DimTag:
         """
-        Return ``(dim, tag)`` for the named physical group.
+        Return ``(dim, tag)`` for a named physical group **or** label.
 
-        Raises ``ValueError`` if the name does not exist or is
+        Resolution order:
+
+        1. Exact match on a user-facing PG name.
+        2. Fallback: match on ``_label:{name}`` (the internal label
+           prefix).  This lets the broker accept label names directly
+           so the user can skip ``promote_to_physical``.
+
+        Raises ``ValueError`` if neither is found, or if the name is
         ambiguous across multiple dimensions (pass ``expected_dim``
         to disambiguate).
         """
-        matches = [
-            (d, t) for d, t in gmsh.model.getPhysicalGroups()
-            if gmsh.model.getPhysicalName(d, t) == name
-        ]
+        from apeGmsh.core.Labels import LABEL_PREFIX
+
+        # Try user PG name first, then label-prefixed name.
+        candidates = [name, LABEL_PREFIX + name]
+        matches: list[tuple[int, int]] = []
+        for d, t in gmsh.model.getPhysicalGroups():
+            pg_name = gmsh.model.getPhysicalName(d, t)
+            if pg_name in candidates:
+                matches.append((d, t))
         if not matches:
             raise ValueError(
-                f"Physical group {name!r} not found in the model.\n"
-                f"Available: {self._all_pg_names()}"
+                f"Physical group or label {name!r} not found in the "
+                f"model.\nAvailable: {self._all_pg_names()}"
             )
         if len(matches) == 1:
             return matches[0]
