@@ -141,6 +141,21 @@ class Labels:
             self._log(f"add({name!r}, dim={dim}) merged into pg_tag={pg_tag}")
             return pg_tag
 
+        # Check if the same label name exists at a DIFFERENT dim —
+        # warn about cross-dim shadowing.
+        for other_dim in range(4):
+            if other_dim == dim:
+                continue
+            if self._find_pg_tag(other_dim, prefixed) is not None:
+                import warnings
+                warnings.warn(
+                    f"Label {name!r} already exists at dim={other_dim}, "
+                    f"now also being created at dim={dim}. This may "
+                    f"cause ambiguous lookups when dim= is not specified.",
+                    stacklevel=3,
+                )
+                break
+
         pg_tag = gmsh.model.addPhysicalGroup(dim, [int(t) for t in tags])
         gmsh.model.setPhysicalName(dim, pg_tag, prefixed)
         self._log(f"add({name!r}, dim={dim}, tags={tags}) → pg_tag={pg_tag}")

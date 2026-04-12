@@ -54,6 +54,15 @@ class SectionsBuilder:
 
         parts = getattr(self._parent, 'parts', None)
 
+        # Check instance label uniqueness BEFORE building geometry.
+        # If we build first and check later, a duplicate label leaves
+        # orphaned geometry + labels in the session with no cleanup.
+        if parts is not None and label in parts._instances:
+            raise ValueError(
+                f"Section label '{label}' already exists in the "
+                f"session. Use a different label."
+            )
+
         # Snapshot current entities
         before: dict[int, set[int]] = {}
         for d in range(4):
@@ -122,8 +131,6 @@ class SectionsBuilder:
 
         # Register as an Instance in parts registry
         if parts is not None:
-            if label in parts._instances:
-                raise ValueError(f"Section label '{label}' already exists.")
             parts._counter += 1
 
         inst = Instance(
