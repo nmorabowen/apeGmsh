@@ -36,7 +36,7 @@ class PreferencesTab:
         surface_opacity: float = 0.35,
         show_surface_edges: bool = False,
         drag_threshold: int = 8,
-        # Callbacks
+        # Callbacks — geometry
         on_point_size: Callable[[float], None] | None = None,
         on_line_width: Callable[[float], None] | None = None,
         on_opacity: Callable[[float], None] | None = None,
@@ -45,6 +45,8 @@ class PreferencesTab:
         on_drag_threshold: Callable[[int], None] | None = None,
         on_theme: Callable[[str], None] | None = None,
         on_pick_color: Callable[[str], None] | None = None,
+        # Callbacks — overlay sizing (multipliers, default 1.0×)
+        on_overlay_scale: Callable[[str, float], None] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
 
@@ -153,6 +155,52 @@ class PreferencesTab:
         theme_form.addRow("Selection color", self._btn_pick_color)
 
         layout.addWidget(theme_group)
+
+        # ── Overlay sizing group ───────────────────────────────────
+        overlay_group = QtWidgets.QGroupBox("Overlay Sizing")
+        overlay_form = QtWidgets.QFormLayout(overlay_group)
+        overlay_form.setSpacing(4)
+
+        self._overlay_sliders: dict[str, QtWidgets.QSlider] = {}
+        self._overlay_labels: dict[str, QtWidgets.QLabel] = {}
+
+        _OVERLAY_ITEMS = [
+            ("load_arrow",        "Load arrows"),
+            ("mass_sphere",       "Mass spheres"),
+            ("constraint_marker", "Constraint markers"),
+            ("constraint_line",   "Constraint lines"),
+        ]
+
+        for key, label in _OVERLAY_ITEMS:
+            row = QtWidgets.QHBoxLayout()
+
+            slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+            # Log-like feel: 1–100 maps to 0.1× – 10×
+            # value 10 = 1.0×, value 1 = 0.1×, value 100 = 10.0×
+            slider.setRange(1, 100)
+            slider.setValue(10)  # default 1.0×
+            slider.setTickInterval(10)
+            row.addWidget(slider)
+
+            val_label = QtWidgets.QLabel("1.0\u00d7")
+            val_label.setMinimumWidth(40)
+            row.addWidget(val_label)
+
+            self._overlay_sliders[key] = slider
+            self._overlay_labels[key] = val_label
+
+            def _make_handler(k, lbl):
+                def _handler(v):
+                    mult = v / 10.0  # 1→0.1, 10→1.0, 50→5.0, 100→10.0
+                    lbl.setText(f"{mult:.1f}\u00d7")
+                    if on_overlay_scale:
+                        on_overlay_scale(k, mult)
+                return _handler
+
+            slider.valueChanged.connect(_make_handler(key, val_label))
+            overlay_form.addRow(label, row)
+
+        layout.addWidget(overlay_group)
         layout.addStretch()
 
     def add_extra_row(self, label: str, widget) -> None:

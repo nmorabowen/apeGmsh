@@ -155,11 +155,54 @@ class ModelViewer:
         )
 
         # ── UI tabs (created AFTER QApplication exists) ─────────────
+        # Preference callbacks — update actors live when sliders move
+        def _pref_point_size(v: float):
+            for dim, actor in registry.dim_actors.items():
+                if dim == 0:
+                    actor.GetProperty().SetPointSize(v)
+            plotter.render()
+
+        def _pref_line_width(v: float):
+            for dim, actor in registry.dim_actors.items():
+                if dim == 1:
+                    actor.GetProperty().SetLineWidth(v)
+            plotter.render()
+
+        def _pref_opacity(v: float):
+            for dim, actor in registry.dim_actors.items():
+                if dim >= 2:
+                    actor.GetProperty().SetOpacity(v)
+            plotter.render()
+
+        def _pref_edges(show: bool):
+            for dim, actor in registry.dim_actors.items():
+                if dim >= 2:
+                    actor.GetProperty().SetEdgeVisibility(show)
+            plotter.render()
+
+        def _pref_overlay_scale(key: str, mult: float):
+            _overlay_scales[key] = mult
+            # Re-trigger the relevant overlay with current state
+            if key == 'load_arrow' and loads_tab is not None:
+                _on_loads_patterns_changed(loads_tab.active_patterns())
+            elif key == 'mass_sphere' and mass_tab is not None:
+                # Check if mass overlay is currently shown
+                show_cb = getattr(mass_tab, '_show_cb', None)
+                if show_cb is not None:
+                    _on_mass_overlay_changed(show_cb.isChecked())
+            elif key.startswith('constraint') and constraints_tab is not None:
+                _on_constraint_kinds_changed(constraints_tab.active_kinds())
+
         prefs = PreferencesTab(
             point_size=self._point_size,
             line_width=self._line_width,
             surface_opacity=self._surface_opacity,
             show_surface_edges=self._show_surface_edges,
+            on_point_size=_pref_point_size,
+            on_line_width=_pref_line_width,
+            on_opacity=_pref_opacity,
+            on_edges=_pref_edges,
+            on_overlay_scale=_pref_overlay_scale,
         )
 
         def _on_new_group():
@@ -579,7 +622,12 @@ class ModelViewer:
         loads_tab = None
         _load_actors: list = []
 
-        def _scene_diagonal() -> float:
+        def _characteristic_length() -> float:
+            """Geometric mean of significant bounding box spans.
+
+            Better than diagonal for elongated/flat models — not
+            dominated by the largest dimension.
+            """
             try:
                 dims_present = sorted(registry.dim_meshes.keys())
                 if not dims_present:
@@ -589,10 +637,22 @@ class ModelViewer:
                 if len(pts) == 0:
                     return 1.0
                 span = pts.max(axis=0) - pts.min(axis=0)
-                d = float(np.linalg.norm(span))
-                return max(d, 1.0)
+                max_span = float(span.max())
+                if max_span < 1e-12:
+                    return 1.0
+                # Keep only significant dims (> 1% of largest)
+                sig = span[span > max_span * 0.01]
+                return float(np.prod(sig) ** (1.0 / len(sig)))
             except Exception:
                 return 1.0
+
+        # ── Overlay scale multipliers (updated by Preferences) ─────
+        _overlay_scales = {
+            'load_arrow':         1.0,
+            'mass_sphere':        1.0,
+            'constraint_marker':  1.0,
+            'constraint_line':    1.0,
+        }
 
         def _on_loads_patterns_changed(active_patterns):
             for a in _load_actors:
@@ -607,8 +667,8 @@ class ModelViewer:
                 plotter.render()
                 return
 
-            diag = _scene_diagonal()
-            base_len = diag * 0.05  # 5% of domain diagonal
+            char_len = _characteristic_length()
+            base_len = char_len * 0.05 * _overlay_scales['load_arrow']
             origin = registry.origin_shift
 
             for pat in active_patterns:
@@ -698,9 +758,9 @@ class ModelViewer:
                 plotter.render()
                 return
 
-            diag = _scene_diagonal()
+            char_len = _characteristic_length()
             max_mass = max(masses) if masses else 1.0
-            base_r = diag * 0.005
+            base_r = char_len * 0.005 * _overlay_scales['mass_sphere']
 
             cloud = pv.PolyData(np.array(positions, dtype=float))
             cloud['mass'] = np.array(masses, dtype=float)
@@ -748,9 +808,9 @@ class ModelViewer:
                 plotter.render()
                 return
 
-            diag = _scene_diagonal()
+            char_len = _characteristic_length()
             origin = registry.origin_shift
-            marker_r = diag * 0.003
+            marker_r = char_len * 0.003 * _overlay_scales['constraint_marker']
 
             def _node_xyz(nid: int):
                 try:
@@ -783,12 +843,14 @@ class ModelViewer:
                     color = constraint_color(kind)
 
                     # Line segments (batched)
+                    cst_lw = max(1, int(3 * _overlay_scales['constraint_line']))
+
                     if line_pts:
                         pts_arr = np.array(line_pts, dtype=float)
                         cells_arr = np.array(line_cells, dtype=np.int64)
                         poly = pv.PolyData(pts_arr, lines=cells_arr)
                         actor = plotter.add_mesh(
-                            poly, color=color, line_width=3,
+                            poly, color=color, line_width=cst_lw,
                             render_lines_as_tubes=True,
                             name=f"_cst_lines_{kind}",
                             reset_camera=False, pickable=False,
@@ -866,12 +928,14 @@ class ModelViewer:
                     color = constraint_color(kind)
 
                     # Interpolation lines
+                    cst_lw = max(1, int(2 * _overlay_scales['constraint_line']))
+
                     if interp_pts:
                         pts_arr = np.array(interp_pts, dtype=float)
                         cells_arr = np.array(interp_cells, dtype=np.int64)
                         poly = pv.PolyData(pts_arr, lines=cells_arr)
                         actor = plotter.add_mesh(
-                            poly, color=color, line_width=2,
+                            poly, color=color, line_width=cst_lw,
                             render_lines_as_tubes=True, opacity=0.7,
                             name=f"_cst_interp_{kind}",
                             reset_camera=False, pickable=False,
