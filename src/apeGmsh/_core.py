@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from .mesh.MshLoader import MshLoader
     from .mesh.PhysicalGroups import PhysicalGroups
     from .mesh.MeshSelectionSet import MeshSelectionSet
-    from .mesh.Partition import Partition
+    from .mesh.Partition import Partition  # noqa: F401 (backward compat)
     from .mesh.View import View
     from .solvers.Gmsh2OpenSees import Gmsh2OpenSees
     from .solvers.OpenSees import OpenSees
@@ -48,7 +48,8 @@ class apeGmsh(_SessionBase):
         ("loader",          ".mesh.MshLoader",             "MshLoader",             False),
         ("physical",        ".mesh.PhysicalGroups",        "PhysicalGroups",        False),
         ("mesh_selection",  ".mesh.MeshSelectionSet",      "MeshSelectionSet",      False),
-        ("partition",       ".mesh.Partition",             "Partition",             False),
+        # ("partition",    ".mesh.Partition",             "Partition",             False),
+        # ^ Removed: consolidated into g.mesh.partitioning
         ("view",            ".mesh.View",                  "View",                  False),
         ("g2o",             ".solvers.Gmsh2OpenSees",      "Gmsh2OpenSees",         False),
         ("opensees",        ".solvers.OpenSees",           "OpenSees",              False),
@@ -68,7 +69,7 @@ class apeGmsh(_SessionBase):
     loader: MshLoader
     physical: PhysicalGroups
     mesh_selection: MeshSelectionSet
-    partition: Partition
+    # partition: Partition  # removed — use g.mesh.partitioning
     view: View
     g2o: Gmsh2OpenSees
     opensees: OpenSees

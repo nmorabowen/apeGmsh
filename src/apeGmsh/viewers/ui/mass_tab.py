@@ -1,5 +1,5 @@
 """
-MassTabPanel — read-only mass display for the model viewer.
+MassTabPanel — read-only mass display for the mesh viewer.
 
 Renders a flat list of MassDef objects (mass has no patterns) plus
 a stats panel and a single "Show mass overlays" toggle.  Toggling
@@ -58,7 +58,8 @@ class MassTabPanel:
 
         # ── needs-fem warning ────────────────────────────────
         self._fem_warning = QtWidgets.QLabel(
-            "Pass fem= to g.model.viewer() to display\n"
+            "No resolved mesh available.\n"
+            "Generate a mesh first to display\n"
             "mass sphere overlays in the 3-D viewport."
         )
         self._fem_warning.setStyleSheet(

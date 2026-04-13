@@ -22,7 +22,6 @@ from apeGmsh._types import DimTag
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _SessionBase
     from apeGmsh.core.Model import Model
-    from apeGmsh.mesh.FEMData import FEMData
     from .core.entity_registry import EntityRegistry
     from .core.selection import SelectionState
 
@@ -30,8 +29,9 @@ if TYPE_CHECKING:
 class ModelViewer:
     """Interactive BRep model viewer with physical group management.
 
-    Displays BRep geometry, parts, physical groups, and optional
-    load/mass overlays when a resolved FEMData snapshot is provided.
+    Displays BRep geometry, parts, physical groups, and labels.
+    This is a **geometry-only** viewer — loads, constraints, and masses
+    are mesh-resolved concepts and live on ``g.mesh.viewer()`` instead.
 
     Parameters
     ----------
@@ -47,15 +47,6 @@ class ModelViewer:
         Visual properties forwarded to the scene builder.
     fast : bool
         Ignored (always fast). Kept for backward compatibility.
-    fem : FEMData, optional
-        Resolved FEM snapshot from :meth:`Mesh.get_fem_data`.  Required
-        to enable the **Loads** and **Mass** tabs' 3-D glyph overlays.
-        See :meth:`Model.viewer` for the rationale behind this design
-        choice — in short, snapshot semantics ensure the viewer shows
-        exactly what was resolved, never drifting out of sync with
-        the live session state.  Without ``fem``, the Loads/Mass tabs
-        still display the definition list but the overlays are
-        disabled with an amber warning.
     """
 
     def __init__(
@@ -70,7 +61,6 @@ class ModelViewer:
         surface_opacity: float = 0.35,
         show_surface_edges: bool = False,
         fast: bool = True,
-        fem: "FEMData | None" = None,
         **kwargs: Any,
     ) -> None:
         self._parent = parent
@@ -83,9 +73,6 @@ class ModelViewer:
         self._line_width = line_width
         self._surface_opacity = surface_opacity
         self._show_surface_edges = show_surface_edges
-
-        # Optional resolved FEM data for loads/mass overlays
-        self._fem: "FEMData | None" = fem
 
         # Populated during show()
         self._selection_state: "SelectionState | None" = None
@@ -108,14 +95,6 @@ class ModelViewer:
         from .ui.model_tabs import (
             BrowserTab, FilterTab, ViewTab, SelectionTreePanel, PartsTreePanel,
         )
-        from .ui.loads_tab import LoadsTabPanel, pattern_color
-        from .ui.mass_tab import MassTabPanel
-        from .ui.constraints_tab import ConstraintsTabPanel, constraint_color
-        from .overlays.constraint_overlay import (
-            build_node_pair_actors, build_surface_actors,
-        )
-        from apeGmsh.mesh._record_set import ConstraintKind
-        import pyvista as pv
 
         # Ensure geometry is synced
         gmsh.model.occ.synchronize()
@@ -451,17 +430,6 @@ class ModelViewer:
         _pref_opacity = make_opacity_cb(registry, plotter)
         _pref_edges = make_edges_cb(registry, plotter)
 
-        def _pref_overlay_scale(key: str, mult: float):
-            _overlay_scales[key] = mult
-            if key == 'load_arrow' and loads_tab is not None:
-                _on_loads_patterns_changed(loads_tab.active_patterns())
-            elif key == 'mass_sphere' and mass_tab is not None:
-                show_cb = getattr(mass_tab, '_show_cb', None)
-                if show_cb is not None:
-                    _on_mass_overlay_changed(show_cb.isChecked())
-            elif key.startswith('constraint') and constraints_tab is not None:
-                _on_constraint_kinds_changed(constraints_tab.active_kinds())
-
         prefs = PreferencesTab(
             point_size=self._point_size,
             line_width=self._line_width,
@@ -471,7 +439,6 @@ class ModelViewer:
             on_line_width=_pref_line_width,
             on_opacity=_pref_opacity,
             on_edges=_pref_edges,
-            on_overlay_scale=_pref_overlay_scale,
         )
         win.add_tab("Preferences", prefs.widget)
 
@@ -607,296 +574,6 @@ class ModelViewer:
             )
             # Insert after Browser tab (position 1)
             win._tab_widget.insertTab(1, parts_tree.widget, "Parts")
-
-        # ── Loads tab (read-only overlays) ──────────────────────────
-        loads_comp = getattr(self._parent, 'loads', None)
-        loads_tab = None
-        _load_actors: list = []
-
-        def _characteristic_length() -> float:
-            """Geometric mean of significant bounding box spans.
-
-            Better than diagonal for elongated/flat models — not
-            dominated by the largest dimension.
-            """
-            try:
-                dims_present = sorted(registry.dim_meshes.keys())
-                if not dims_present:
-                    return 1.0
-                mesh = registry.dim_meshes[dims_present[-1]]
-                pts = mesh.points
-                if len(pts) == 0:
-                    return 1.0
-                span = pts.max(axis=0) - pts.min(axis=0)
-                max_span = float(span.max())
-                if max_span < 1e-12:
-                    return 1.0
-                # Keep only significant dims (> 1% of largest)
-                sig = span[span > max_span * 0.01]
-                return float(np.prod(sig) ** (1.0 / len(sig)))
-            except Exception:
-                return 1.0
-
-        # ── Overlay scale multipliers (updated by Preferences) ─────
-        _overlay_scales = {
-            'load_arrow':         1.0,
-            'mass_sphere':        1.0,
-            'constraint_marker':  1.0,
-            'constraint_line':    1.0,
-        }
-
-        # Moment glyph template (built once, reused)
-        _moment_template = None
-
-        def _get_moment_template(radius: float):
-            nonlocal _moment_template
-            if _moment_template is None:
-                from .overlays.moment_glyph import make_moment_glyph
-                _moment_template = make_moment_glyph(
-                    radius=1.0, tube_radius=0.08,
-                    arc_degrees=270, resolution=24)
-            return _moment_template
-
-        def _on_loads_patterns_changed(active_patterns):
-            for a in _load_actors:
-                try:
-                    plotter.remove_actor(a)
-                except Exception:
-                    pass
-            _load_actors.clear()
-
-            fem = self._fem
-            if not active_patterns or fem is None or not fem.nodes.loads:
-                plotter.render()
-                return
-
-            char_len = _characteristic_length()
-            base_len = char_len * 0.05 * _overlay_scales['load_arrow']
-            origin = registry.origin_shift
-
-            # Single pass: group by pattern
-            by_pat: dict[str, list] = {}
-            for r in fem.nodes.loads:
-                if r.pattern in active_patterns:
-                    by_pat.setdefault(r.pattern, []).append(r)
-
-            for pat, records in by_pat.items():
-                # Separate forces ([:3]) and moments ([3:6])
-                f_positions, f_dirs, f_mags = [], [], []
-                m_positions, m_dirs, m_mags = [], [], []
-
-                for r in records:
-                    try:
-                        xyz = fem.nodes.coords[fem.nodes.index(int(r.node_id))] - origin
-                    except Exception:
-                        continue
-
-                    # Force component
-                    fxyz = np.array(r.forces[:3], dtype=float)
-                    fmag = float(np.linalg.norm(fxyz))
-                    if fmag > 1e-30:
-                        f_positions.append(xyz)
-                        f_dirs.append(fxyz / fmag)
-                        f_mags.append(fmag)
-
-                    # Moment component
-                    mxyz = np.array(r.forces[3:6], dtype=float)
-                    mmag = float(np.linalg.norm(mxyz))
-                    if mmag > 1e-30:
-                        m_positions.append(xyz)
-                        m_dirs.append(mxyz / mmag)
-                        m_mags.append(mmag)
-
-                color = pattern_color(pat)
-
-                # ── Force arrows (straight) ────────────────────
-                if f_positions:
-                    pos_arr = np.array(f_positions, dtype=float)
-                    dir_arr = np.array(f_dirs, dtype=float)
-                    mag_arr = np.array(f_mags, dtype=float)
-                    max_mag = mag_arr.max()
-                    scale_arr = mag_arr / max_mag if max_mag > 0 else np.ones_like(mag_arr)
-
-                    cloud = pv.PolyData(pos_arr)
-                    cloud['vectors'] = dir_arr * scale_arr[:, np.newaxis] * base_len
-                    glyphs = cloud.glyph(
-                        orient='vectors', scale='vectors', factor=1.0)
-                    actor = plotter.add_mesh(
-                        glyphs, color=color, lighting=False,
-                        name=f"_loads_force_{pat}",
-                        reset_camera=False, pickable=False,
-                    )
-                    _load_actors.append(actor)
-
-                # ── Moment arrows (curved) ─────────────────────
-                if m_positions:
-                    pos_arr = np.array(m_positions, dtype=float)
-                    dir_arr = np.array(m_dirs, dtype=float)
-                    mag_arr = np.array(m_mags, dtype=float)
-                    max_mag = mag_arr.max()
-                    scale_arr = mag_arr / max_mag if max_mag > 0 else np.ones_like(mag_arr)
-
-                    cloud = pv.PolyData(pos_arr)
-                    # Orient: moment axis direction; scale by magnitude
-                    cloud['vectors'] = dir_arr * scale_arr[:, np.newaxis] * base_len * 0.6
-                    template = _get_moment_template(base_len)
-                    glyphs = cloud.glyph(
-                        geom=template, orient='vectors',
-                        scale='vectors', factor=1.0)
-                    # Lighter color for moments to distinguish from forces
-                    actor = plotter.add_mesh(
-                        glyphs, color=color, lighting=False,
-                        opacity=0.85,
-                        name=f"_loads_moment_{pat}",
-                        reset_camera=False, pickable=False,
-                    )
-                    _load_actors.append(actor)
-
-            plotter.render()
-
-        if loads_comp is not None:
-            loads_tab = LoadsTabPanel(
-                loads_comp, fem=self._fem,
-                on_patterns_changed=_on_loads_patterns_changed,
-            )
-            # Insert after Parts (position 2 if parts exists, else 1)
-            insert_pos = 2 if parts_reg is not None else 1
-            win._tab_widget.insertTab(insert_pos, loads_tab.widget, "Loads")
-
-        # ── Mass tab (read-only overlays) ───────────────────────────
-        mass_comp = getattr(self._parent, 'masses', None)
-        mass_tab = None
-        _mass_actors: list = []
-
-        _mass_scalar_bar_title = 'Nodal mass'
-
-        def _on_mass_overlay_changed(show: bool):
-            for a in _mass_actors:
-                try:
-                    plotter.remove_actor(a)
-                except Exception:
-                    pass
-            _mass_actors.clear()
-            # Remove only the mass scalar bar, not all bars
-            try:
-                plotter.remove_scalar_bar(_mass_scalar_bar_title)
-            except Exception:
-                pass
-
-            fem = self._fem
-            if not show or fem is None or not fem.nodes.masses:
-                plotter.render()
-                return
-
-            positions = []
-            masses = []
-            origin = registry.origin_shift
-            for r in fem.nodes.masses:
-                try:
-                    xyz = fem.nodes.coords[fem.nodes.index(int(r.node_id))] - origin
-                except Exception:
-                    continue
-                m = float(r.mass[0])
-                if m <= 0:
-                    continue
-                positions.append(xyz)
-                masses.append(m)
-
-            if not positions:
-                plotter.render()
-                return
-
-            char_len = _characteristic_length()
-            max_mass = max(masses) if masses else 1.0
-            base_r = char_len * 0.005 * _overlay_scales['mass_sphere']
-
-            cloud = pv.PolyData(np.array(positions, dtype=float))
-            cloud['mass'] = np.array(masses, dtype=float)
-            sphere = pv.Sphere(radius=1.0, theta_resolution=10, phi_resolution=10)
-            scale_factor = base_r / (max_mass ** (1.0 / 3.0))
-            glyphs = cloud.glyph(
-                geom=sphere, scale='mass', factor=scale_factor,
-            )
-
-            actor = plotter.add_mesh(
-                glyphs, scalars='mass', cmap='viridis',
-                scalar_bar_args={'title': _mass_scalar_bar_title},
-                name="_mass_overlays",
-                reset_camera=False,
-                pickable=False,
-            )
-            _mass_actors.append(actor)
-            plotter.render()
-
-        if mass_comp is not None:
-            mass_tab = MassTabPanel(
-                mass_comp, fem=self._fem,
-                on_overlay_changed=_on_mass_overlay_changed,
-            )
-            insert_pos = 3 if (parts_reg is not None and loads_tab is not None) \
-                else (2 if loads_tab is not None or parts_reg is not None else 1)
-            win._tab_widget.insertTab(insert_pos, mass_tab.widget, "Mass")
-
-        # ── Constraints tab (read-only overlays) ───────────────────
-        constraints_comp = getattr(self._parent, 'constraints', None)
-        constraints_tab = None
-        _constraint_actors: list = []
-
-        def _on_constraint_kinds_changed(active_kinds: set[str]):
-            for a in _constraint_actors:
-                try:
-                    plotter.remove_actor(a)
-                except Exception:
-                    pass
-            _constraint_actors.clear()
-
-            fem = self._fem
-            if (not active_kinds or fem is None
-                    or (not fem.nodes.constraints
-                        and not fem.elements.constraints)):
-                plotter.render()
-                return
-
-            char_len = _characteristic_length()
-            origin = registry.origin_shift
-            marker_r = char_len * 0.003 * _overlay_scales['constraint_marker']
-            cst_lw = max(1, int(3 * _overlay_scales['constraint_line']))
-
-            # Node-pair kinds (single-pass grouping inside helper)
-            np_kinds = active_kinds & ConstraintKind.NODE_PAIR_KINDS
-            if np_kinds:
-                for mesh, kwargs in build_node_pair_actors(
-                    fem, np_kinds, origin, marker_r, cst_lw,
-                    constraint_color,
-                ):
-                    actor = plotter.add_mesh(mesh, **kwargs)
-                    _constraint_actors.append(actor)
-
-            # Surface kinds (single-pass grouping inside helper)
-            s_kinds = active_kinds & ConstraintKind.SURFACE_KINDS
-            if s_kinds:
-                interp_lw = max(1, int(2 * _overlay_scales['constraint_line']))
-                for mesh, kwargs in build_surface_actors(
-                    fem, s_kinds, origin, interp_lw,
-                    constraint_color,
-                ):
-                    actor = plotter.add_mesh(mesh, **kwargs)
-                    _constraint_actors.append(actor)
-
-            plotter.render()
-
-        if constraints_comp is not None:
-            constraints_tab = ConstraintsTabPanel(
-                constraints_comp, fem=self._fem,
-                on_kinds_changed=_on_constraint_kinds_changed,
-            )
-            n_cond = sum([
-                parts_reg is not None,
-                loads_tab is not None,
-                mass_tab is not None,
-            ])
-            win._tab_widget.insertTab(
-                1 + n_cond, constraints_tab.widget, "Constraints")
 
         # ── Wire callbacks ──────────────────────────────────────────
 

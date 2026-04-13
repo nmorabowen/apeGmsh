@@ -1,5 +1,5 @@
 """
-LoadsTabPanel — read-only loads display for the model viewer.
+LoadsTabPanel — read-only loads display for the mesh viewer.
 
 Renders a tree of LoadDef objects grouped by pattern, with one
 checkbox per pattern.  Toggling a checkbox triggers an
@@ -79,7 +79,8 @@ class LoadsTabPanel:
 
         # ── needs-fem warning ─────────────────────────────────
         self._fem_warning = QtWidgets.QLabel(
-            "Pass fem= to g.model.viewer() to display\n"
+            "No resolved mesh available.\n"
+            "Generate a mesh first to display\n"
             "load arrow overlays in the 3-D viewport."
         )
         self._fem_warning.setStyleSheet(

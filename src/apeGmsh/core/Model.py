@@ -154,44 +154,15 @@ class Model(_HasLogging):
         """Open the interactive Qt model viewer.
 
         Displays BRep geometry with selectable entities, parts,
-        physical groups, and (when ``fem=`` is provided) loads/mass
-        arrow and sphere overlays.
+        physical groups, and labels.  This is a **geometry-only**
+        viewer — loads, constraints, and masses are mesh-resolved
+        concepts and live on ``g.mesh.viewer()`` instead.
 
         Parameters
         ----------
-        fem : FEMData, optional
-            Resolved snapshot from :meth:`Mesh.get_fem_data`.  Required
-            to enable the **Loads** and **Mass** tab overlays — the
-            viewer reads node coordinates and resolved per-node records
-            from this snapshot.  Without ``fem=``, those tabs show the
-            load/mass definition list but the 3-D glyph overlays are
-            disabled with an amber warning.
-
         **kwargs :
             Forwarded to :meth:`selection.picker` (e.g. ``dims``,
             ``point_size``, ``line_width``, ``surface_opacity``).
-
-        Why ``fem=`` is required for overlays
-        --------------------------------------
-        Loads and mass are **snapshot semantics**: the user defines
-        them symbolically, then resolves them against a specific mesh.
-        The viewer draws exactly what was in the snapshot — not whatever
-        the session currently has.  This means:
-
-        * If you re-mesh or re-resolve, the viewer does not
-          auto-follow.  You re-open with the new snapshot.
-        * The same entry point works for live sessions and for
-          loaded ``.msh`` files via ``g.mesh.loader.from_msh(...)``.
-        * Forgetting to call ``get_fem_data()`` shows empty overlays
-          with a clear warning — safer than drawing stale data.
-
-        Example
-        -------
-        ::
-
-            g.mesh.generation.generate(3)
-            fem = g.mesh.queries.get_fem_data(3)   # resolve loads + mass
-            g.model.viewer(fem=fem)         # overlays enabled
         """
         return self.selection.picker(**kwargs)
 

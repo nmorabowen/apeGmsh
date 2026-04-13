@@ -243,3 +243,65 @@ def extract_labels() -> dict[tuple[int, int], dict]:
         lbl_data[(pg_dim, pg_tag)] = entry
 
     return lbl_data
+
+
+# =====================================================================
+# Partition snapshot
+# =====================================================================
+
+def extract_partitions(dim: int) -> dict[int, dict]:
+    """Per-partition node/element membership from the live Gmsh session.
+
+    After ``gmsh.model.mesh.partition()``, Gmsh creates sub-entities
+    tagged with partition IDs.  This function collects element and node
+    membership per partition.
+
+    Parameters
+    ----------
+    dim : int
+        Element dimension to extract (matches the target dim used
+        for ``extract_raw``).
+
+    Returns
+    -------
+    dict[int, dict]
+        ``{partition_id: {'node_ids': ndarray, 'element_ids': ndarray}}``
+        Empty dict if the mesh is not partitioned.
+    """
+    try:
+        n_parts = gmsh.model.getNumberOfPartitions()
+    except (AttributeError, Exception):
+        return {}
+    if n_parts == 0:
+        return {}
+
+    part_elems: dict[int, list[int]] = {}
+    part_nodes: dict[int, set[int]] = {}
+
+    for ent_dim, ent_tag in gmsh.model.getEntities(dim):
+        try:
+            pparts = gmsh.model.getPartitions(ent_dim, ent_tag)
+        except Exception:
+            continue
+        if len(pparts) == 0:
+            continue
+
+        etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(
+            ent_dim, ent_tag)
+        for _etype, etags, enodes in zip(etypes, etags_list, enodes_list):
+            for p in pparts:
+                p = int(p)
+                part_elems.setdefault(p, []).extend(
+                    int(t) for t in etags)
+                part_nodes.setdefault(p, set()).update(
+                    int(n) for n in enodes)
+
+    result: dict[int, dict] = {}
+    for p in sorted(part_elems):
+        result[p] = {
+            'element_ids': np.array(sorted(part_elems[p]),
+                                    dtype=np.int64),
+            'node_ids': np.array(sorted(part_nodes.get(p, [])),
+                                 dtype=np.int64),
+        }
+    return result

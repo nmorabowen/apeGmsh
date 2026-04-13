@@ -132,10 +132,10 @@ class Mesh(_HasLogging):
         """
         Internal helper — extracts raw FEM data as a plain dict.
 
-        Used by :meth:`_Partitioning.renumber_mesh` (which needs raw
-        data before the Gmsh model is renumbered) and by
-        :meth:`_Queries.get_fem_data` (which packages it into a
-        :class:`FEMData` object).
+        .. deprecated::
+            No longer called internally.  Use
+            ``_fem_extract.extract_raw()`` directly.  Kept for backward
+            compatibility — will be removed in a future release.
         """
         import gmsh
         import numpy as np
@@ -197,12 +197,12 @@ class Mesh(_HasLogging):
         """Open the interactive mesh viewer.
 
         The viewer supports picking (BRep entities, elements, nodes),
-        color modes, and physical group visualisation.
+        color modes, and load/constraint/mass overlays.
 
         Parameters are forwarded to :class:`MeshViewer`.
         """
         from ..viewers._mesh_viewer import MeshViewer
-        mv = MeshViewer(self._parent, self, **kwargs)
+        mv = MeshViewer(self._parent, **kwargs)
         return mv.show()
 
     def results_viewer(

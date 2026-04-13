@@ -57,6 +57,7 @@ from apeGmsh.mesh.MshLoader import MshLoader
 from apeGmsh.results.Results import Results
 import apeGmsh.solvers.Constraints as Constraints
 from apeGmsh.solvers.Numberer import Numberer, NumberedMesh
+from apeGmsh.mesh._mesh_partitioning import RenumberResult, PartitionInfo
 from apeGmsh.viewers._mesh_viewer import MeshViewer as MeshViewerV2
 from apeGmsh.viewers.model_viewer import ModelViewer
 from apeGmsh.viz.Selection import Selection, SelectionComposite
@@ -86,6 +87,8 @@ __all__ = [
     "Results",
     "Numberer",
     "NumberedMesh",
+    "RenumberResult",
+    "PartitionInfo",
     "Selection",
     "SelectionComposite",
     "ModelViewer",

@@ -393,11 +393,12 @@ class Numberer:
             int(t): i for i, t in enumerate(gmsh_tags)
         }
 
-        # Rewrite connectivity in 0-based tmp indices
-        conn_tmp = np.zeros_like(self._connectivity)
-        for i in range(self._connectivity.shape[0]):
-            for j in range(self._connectivity.shape[1]):
-                conn_tmp[i, j] = gtag_to_tmp[int(self._connectivity[i, j])]
+        # Rewrite connectivity in 0-based tmp indices (vectorized)
+        flat = self._connectivity.ravel()
+        conn_tmp = np.array(
+            [gtag_to_tmp[int(t)] for t in flat],
+            dtype=int,
+        ).reshape(self._connectivity.shape)
 
         # ── Compute permutation ───────────────────────────────────
         if method == "rcm":
@@ -415,15 +416,10 @@ class Numberer:
         inv_perm[perm] = np.arange(n_nodes)
 
         # ── Apply permutation ─────────────────────────────────────
-        inv_perm + base              # contiguous IDs
-        new_coords   = coords[perm]                 # reordered coords
-        gmsh_tags[perm]            # Gmsh tags in new order
+        new_coords     = coords[perm]            # reordered coords
 
-        # Rewrite connectivity with new IDs
-        new_conn = np.zeros_like(conn_tmp)
-        for i in range(conn_tmp.shape[0]):
-            for j in range(conn_tmp.shape[1]):
-                new_conn[i, j] = inv_perm[conn_tmp[i, j]] + base
+        # Rewrite connectivity with new IDs (vectorized)
+        new_conn = inv_perm[conn_tmp] + base
 
         # Element IDs: simple contiguous
         new_elem_ids = np.arange(base, base + len(self._elem_tags), dtype=int)

@@ -1,5 +1,5 @@
 """
-ConstraintsTabPanel — read-only constraint display for the model viewer.
+ConstraintsTabPanel — read-only constraint display for the mesh viewer.
 
 Renders a tree of ConstraintDef objects grouped by kind, with one
 checkbox per kind.  Toggling a checkbox triggers an
@@ -102,7 +102,8 @@ class ConstraintsTabPanel:
 
         # ── needs-fem warning ─────────────────────────────────
         self._fem_warning = QtWidgets.QLabel(
-            "Pass fem= to g.model.viewer() to display\n"
+            "No resolved mesh available.\n"
+            "Generate a mesh first to display\n"
             "constraint overlays in the 3-D viewport."
         )
         self._fem_warning.setStyleSheet(

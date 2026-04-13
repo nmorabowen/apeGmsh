@@ -9,6 +9,7 @@ from .Mesh import (
     OptimizeMethod,
 )
 from .Partition import Partition
+from ._mesh_partitioning import RenumberResult, PartitionInfo
 from .PhysicalGroups import PhysicalGroups
 from .MeshSelectionSet import MeshSelectionSet, MeshSelectionStore
 from .View import View
@@ -26,7 +27,7 @@ __all__ = [
     "MeshAlgorithm2D", "MeshAlgorithm3D",
     "ALGORITHM_2D", "ALGORITHM_3D",
     "OptimizeMethod",
-    "Partition", "PhysicalGroups",
+    "Partition", "RenumberResult", "PartitionInfo", "PhysicalGroups",
     "MeshSelectionSet", "MeshSelectionStore",
     "View",
     "FEMData", "MeshInfo", "NodeResult", "ElementResult",
