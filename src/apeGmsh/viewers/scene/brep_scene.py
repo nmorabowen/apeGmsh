@@ -279,7 +279,16 @@ def build_brep_scene(
                 idle_color=IDLE_COLORS[0],
             )
             d0_bboxes = {dt: all_bboxes[dt] for dt in centroids if dt in all_bboxes}
-            registry.register_dim(0, mesh, actor, cell_to_dt, centroids, d0_bboxes)
+            d0_kwargs = {
+                'point_size': point_size,
+                'model_diagonal': diag,
+                '_tags_d0': tags_d0,
+                '_centers_d0': np.array(centers),
+            }
+            registry.register_dim(
+                0, mesh, actor, cell_to_dt, centroids, d0_bboxes,
+                add_mesh_kwargs=d0_kwargs,
+            )
     t_d0 = time.perf_counter() - t_dim
     n_entities += n_d0
 

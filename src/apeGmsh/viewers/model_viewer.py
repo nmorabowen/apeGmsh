@@ -159,13 +159,39 @@ class ModelViewer:
         # Preference callbacks — update live actors AND stored kwargs
         # (so that VisibilityManager recreates actors with current settings)
         def _pref_point_size(v: float):
-            for dim, actor in registry.dim_actors.items():
-                if dim == 0:
-                    actor.GetProperty().SetPointSize(v)
-                    # Also update stored kwargs for actor recreation
-                    kw = registry._add_mesh_kwargs.get(dim, {})
-                    kw['point_size'] = v
-                    registry._add_mesh_kwargs[dim] = kw
+            # Points are sphere glyphs — SetPointSize() does nothing.
+            # Must rebuild the glyphs with a new radius.
+            from .scene.glyph_points import build_point_glyphs
+            from .core.color_manager import IDLE_COLORS
+            if 0 not in registry.dim_actors:
+                return
+            old_mesh = registry._full_meshes.get(0)
+            if old_mesh is None:
+                return
+            # Extract original centers and tags from stored cell data
+            kw = registry._add_mesh_kwargs.get(0, {})
+            old_diag = kw.get('model_diagonal', 1.0)
+            old_tags = kw.get('_tags_d0', [])
+            old_centers = kw.get('_centers_d0', None)
+            if old_centers is None or not len(old_tags):
+                return
+            # Remove old actor
+            old_actor = registry.dim_actors[0]
+            try:
+                plotter.remove_actor(old_actor)
+            except Exception:
+                pass
+            # Rebuild with new size
+            new_mesh, new_actor, new_c2dt, _ = build_point_glyphs(
+                plotter, old_centers, old_tags,
+                model_diagonal=old_diag,
+                point_size=v,
+                idle_color=np.array(IDLE_COLORS[0], dtype=np.uint8),
+            )
+            registry.swap_dim(0, new_mesh, new_actor)
+            # Persist for next rebuild
+            kw['point_size'] = v
+            registry._add_mesh_kwargs[0] = kw
             plotter.render()
 
         def _pref_line_width(v: float):

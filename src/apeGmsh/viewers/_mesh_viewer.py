@@ -234,11 +234,47 @@ class MeshViewer:
             plotter.render()
 
         filter_tab = MeshFilterTab(self._dims, on_filter_changed=_on_mesh_filter)
+        def _pref_line_width(v: float):
+            for dim in registry.dims:
+                if dim == 1:
+                    actor = registry.dim_actors.get(dim)
+                    if actor:
+                        actor.GetProperty().SetLineWidth(v)
+                        kw = registry._add_mesh_kwargs.get(dim, {})
+                        kw['line_width'] = v
+                        registry._add_mesh_kwargs[dim] = kw
+            plotter.render()
+
+        def _pref_opacity(v: float):
+            for dim in registry.dims:
+                if dim >= 2:
+                    actor = registry.dim_actors.get(dim)
+                    if actor:
+                        actor.GetProperty().SetOpacity(v)
+                        kw = registry._add_mesh_kwargs.get(dim, {})
+                        kw['opacity'] = v
+                        registry._add_mesh_kwargs[dim] = kw
+            plotter.render()
+
+        def _pref_edges(show: bool):
+            for dim in registry.dims:
+                if dim >= 2:
+                    actor = registry.dim_actors.get(dim)
+                    if actor:
+                        actor.GetProperty().SetEdgeVisibility(show)
+                        kw = registry._add_mesh_kwargs.get(dim, {})
+                        kw['show_edges'] = show
+                        registry._add_mesh_kwargs[dim] = kw
+            plotter.render()
+
         prefs = PreferencesTab(
             point_size=self._point_size,
             line_width=self._line_width,
             surface_opacity=self._surface_opacity,
             show_surface_edges=self._show_surface_edges,
+            on_line_width=_pref_line_width,
+            on_opacity=_pref_opacity,
+            on_edges=_pref_edges,
         )
         win.add_tab("Info", info_tab.widget)
         win.add_tab("Display", display_tab.widget)
