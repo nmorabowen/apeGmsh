@@ -662,32 +662,47 @@ class ModelViewer:
             base_len = char_len * 0.05 * _overlay_scales['load_arrow']
             origin = registry.origin_shift
 
-            for pat in active_patterns:
+            # Single pass: group by pattern
+            by_pat: dict[str, list] = {}
+            for r in fem.nodes.loads:
+                if r.pattern in active_patterns:
+                    by_pat.setdefault(r.pattern, []).append(r)
+
+            for pat, records in by_pat.items():
                 positions = []
                 directions = []
-                for r in fem.nodes.loads:
-                    if r.pattern != pat:
-                        continue
+                magnitudes = []
+                for r in records:
                     try:
                         xyz = fem.nodes.coords[fem.nodes.index(int(r.node_id))] - origin
                     except Exception:
                         continue
                     fxyz = np.array(r.forces[:3], dtype=float)
-                    if not np.any(fxyz):
+                    mag = float(np.linalg.norm(fxyz))
+                    if mag < 1e-30:
                         continue
                     positions.append(xyz)
-                    directions.append(fxyz)
+                    directions.append(fxyz / mag)  # unit direction
+                    magnitudes.append(mag)
 
                 if not positions:
                     continue
 
                 positions_arr = np.array(positions, dtype=float)
                 directions_arr = np.array(directions, dtype=float)
+                mag_arr = np.array(magnitudes, dtype=float)
+
+                # Scale arrows proportional to magnitude
+                max_mag = mag_arr.max()
+                if max_mag > 0:
+                    scale_arr = mag_arr / max_mag  # 0..1 normalized
+                else:
+                    scale_arr = np.ones_like(mag_arr)
 
                 cloud = pv.PolyData(positions_arr)
-                cloud['vectors'] = directions_arr
+                cloud['vectors'] = directions_arr * scale_arr[:, np.newaxis] * base_len
                 glyphs = cloud.glyph(
-                    orient='vectors', scale=False, factor=base_len,
+                    orient='vectors', scale='vectors', factor=1.0,
                 )
                 color = pattern_color(pat)
                 actor = plotter.add_mesh(
@@ -714,6 +729,8 @@ class ModelViewer:
         mass_tab = None
         _mass_actors: list = []
 
+        _mass_scalar_bar_title = 'Nodal mass'
+
         def _on_mass_overlay_changed(show: bool):
             for a in _mass_actors:
                 try:
@@ -721,8 +738,9 @@ class ModelViewer:
                 except Exception:
                     pass
             _mass_actors.clear()
+            # Remove only the mass scalar bar, not all bars
             try:
-                plotter.remove_scalar_bar()
+                plotter.remove_scalar_bar(_mass_scalar_bar_title)
             except Exception:
                 pass
 
@@ -763,7 +781,7 @@ class ModelViewer:
 
             actor = plotter.add_mesh(
                 glyphs, scalars='mass', cmap='viridis',
-                scalar_bar_args={'title': 'Nodal mass [kg]'},
+                scalar_bar_args={'title': _mass_scalar_bar_title},
                 name="_mass_overlays",
                 reset_camera=False,
                 pickable=False,
@@ -794,7 +812,9 @@ class ModelViewer:
             _constraint_actors.clear()
 
             fem = self._fem
-            if not active_kinds or fem is None:
+            if (not active_kinds or fem is None
+                    or (not fem.nodes.constraints
+                        and not fem.elements.constraints)):
                 plotter.render()
                 return
 
