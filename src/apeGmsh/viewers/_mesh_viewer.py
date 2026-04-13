@@ -234,6 +234,27 @@ class MeshViewer:
             plotter.render()
 
         filter_tab = MeshFilterTab(self._dims, on_filter_changed=_on_mesh_filter)
+
+        win.add_tab("Info", info_tab.widget)
+        win.add_tab("Display", display_tab.widget)
+        win.add_tab("Filter", filter_tab.widget)
+
+        plotter = win.plotter
+
+        # ── Build scene ─────────────────────────────────────────────
+        _verbose = getattr(self._parent, '_verbose', False)
+        scene = build_mesh_scene(
+            plotter, self._dims,
+            line_width=self._line_width,
+            surface_opacity=self._surface_opacity,
+            show_surface_edges=self._show_surface_edges,
+            node_marker_size=self._point_size,
+            verbose=_verbose,
+        )
+        self._scene_data = scene
+        registry = scene.registry
+
+        # ── Preferences (created AFTER scene — needs registry) ─────
         from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
         from .overlays.glyph_helpers import rebuild_node_cloud
 
@@ -255,25 +276,7 @@ class MeshViewer:
             on_opacity=_pref_opacity,
             on_edges=_pref_edges,
         )
-        win.add_tab("Info", info_tab.widget)
-        win.add_tab("Display", display_tab.widget)
-        win.add_tab("Filter", filter_tab.widget)
         win.add_tab("Preferences", prefs.widget)
-
-        plotter = win.plotter
-
-        # ── Build scene ─────────────────────────────────────────────
-        _verbose = getattr(self._parent, '_verbose', False)
-        scene = build_mesh_scene(
-            plotter, self._dims,
-            line_width=self._line_width,
-            surface_opacity=self._surface_opacity,
-            show_surface_edges=self._show_surface_edges,
-            node_marker_size=self._point_size,
-            verbose=_verbose,
-        )
-        self._scene_data = scene
-        registry = scene.registry
 
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)

@@ -156,45 +156,8 @@ class ModelViewer:
         )
 
         # ── UI tabs (created AFTER QApplication exists) ─────────────
-        # Preference callbacks via shared helpers (no duplication with mesh viewer)
-        from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
-        from .overlays.glyph_helpers import rebuild_brep_point_glyphs
-
-        def _pref_point_size(v: float):
-            kw = registry._add_mesh_kwargs.get(0, {})
-            kw['point_size'] = v
-            registry._add_mesh_kwargs[0] = kw
-            rebuild_brep_point_glyphs(plotter, registry)
-            plotter.render()
-
-        _pref_line_width = make_line_width_cb(registry, plotter)
-        _pref_opacity = make_opacity_cb(registry, plotter)
-        _pref_edges = make_edges_cb(registry, plotter)
-
-        def _pref_overlay_scale(key: str, mult: float):
-            _overlay_scales[key] = mult
-            # Re-trigger the relevant overlay with current state
-            if key == 'load_arrow' and loads_tab is not None:
-                _on_loads_patterns_changed(loads_tab.active_patterns())
-            elif key == 'mass_sphere' and mass_tab is not None:
-                # Check if mass overlay is currently shown
-                show_cb = getattr(mass_tab, '_show_cb', None)
-                if show_cb is not None:
-                    _on_mass_overlay_changed(show_cb.isChecked())
-            elif key.startswith('constraint') and constraints_tab is not None:
-                _on_constraint_kinds_changed(constraints_tab.active_kinds())
-
-        prefs = PreferencesTab(
-            point_size=self._point_size,
-            line_width=self._line_width,
-            surface_opacity=self._surface_opacity,
-            show_surface_edges=self._show_surface_edges,
-            on_point_size=_pref_point_size,
-            on_line_width=_pref_line_width,
-            on_opacity=_pref_opacity,
-            on_edges=_pref_edges,
-            on_overlay_scale=_pref_overlay_scale,
-        )
+        # NOTE: PreferencesTab is created AFTER scene build (needs registry).
+        # See "Preferences" block below build_brep_scene().
 
         def _on_new_group():
             from qtpy import QtWidgets
@@ -456,8 +419,6 @@ class ModelViewer:
         win.add_tab("Browser", browser.widget)
         win.add_tab("View", view_tab.widget)
         win.add_tab("Filter", filter_tab.widget)
-        win.add_tab("Preferences", prefs.widget)
-
         # Add selection tree as bottom dock
         win.add_right_bottom_dock("Selection", sel_tree.widget)
 
@@ -474,6 +435,45 @@ class ModelViewer:
             verbose=_verbose,
         )
         self._registry = registry
+
+        # ── Preferences (created AFTER scene — needs registry) ─────
+        from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
+        from .overlays.glyph_helpers import rebuild_brep_point_glyphs
+
+        def _pref_point_size(v: float):
+            kw = registry._add_mesh_kwargs.get(0, {})
+            kw['point_size'] = v
+            registry._add_mesh_kwargs[0] = kw
+            rebuild_brep_point_glyphs(plotter, registry)
+            plotter.render()
+
+        _pref_line_width = make_line_width_cb(registry, plotter)
+        _pref_opacity = make_opacity_cb(registry, plotter)
+        _pref_edges = make_edges_cb(registry, plotter)
+
+        def _pref_overlay_scale(key: str, mult: float):
+            _overlay_scales[key] = mult
+            if key == 'load_arrow' and loads_tab is not None:
+                _on_loads_patterns_changed(loads_tab.active_patterns())
+            elif key == 'mass_sphere' and mass_tab is not None:
+                show_cb = getattr(mass_tab, '_show_cb', None)
+                if show_cb is not None:
+                    _on_mass_overlay_changed(show_cb.isChecked())
+            elif key.startswith('constraint') and constraints_tab is not None:
+                _on_constraint_kinds_changed(constraints_tab.active_kinds())
+
+        prefs = PreferencesTab(
+            point_size=self._point_size,
+            line_width=self._line_width,
+            surface_opacity=self._surface_opacity,
+            show_surface_edges=self._show_surface_edges,
+            on_point_size=_pref_point_size,
+            on_line_width=_pref_line_width,
+            on_opacity=_pref_opacity,
+            on_edges=_pref_edges,
+            on_overlay_scale=_pref_overlay_scale,
+        )
+        win.add_tab("Preferences", prefs.widget)
 
         # Set generous clipping range for shifted coords
         try:
