@@ -155,29 +155,43 @@ class ModelViewer:
         )
 
         # ── UI tabs (created AFTER QApplication exists) ─────────────
-        # Preference callbacks — update actors live when sliders move
+        # Preference callbacks — update live actors AND stored kwargs
+        # (so that VisibilityManager recreates actors with current settings)
         def _pref_point_size(v: float):
             for dim, actor in registry.dim_actors.items():
                 if dim == 0:
                     actor.GetProperty().SetPointSize(v)
+                    # Also update stored kwargs for actor recreation
+                    kw = registry._add_mesh_kwargs.get(dim, {})
+                    kw['point_size'] = v
+                    registry._add_mesh_kwargs[dim] = kw
             plotter.render()
 
         def _pref_line_width(v: float):
             for dim, actor in registry.dim_actors.items():
                 if dim == 1:
                     actor.GetProperty().SetLineWidth(v)
+                    kw = registry._add_mesh_kwargs.get(dim, {})
+                    kw['line_width'] = v
+                    registry._add_mesh_kwargs[dim] = kw
             plotter.render()
 
         def _pref_opacity(v: float):
             for dim, actor in registry.dim_actors.items():
                 if dim >= 2:
                     actor.GetProperty().SetOpacity(v)
+                    kw = registry._add_mesh_kwargs.get(dim, {})
+                    kw['opacity'] = v
+                    registry._add_mesh_kwargs[dim] = kw
             plotter.render()
 
         def _pref_edges(show: bool):
             for dim, actor in registry.dim_actors.items():
                 if dim >= 2:
                     actor.GetProperty().SetEdgeVisibility(show)
+                    kw = registry._add_mesh_kwargs.get(dim, {})
+                    kw['show_edges'] = show
+                    registry._add_mesh_kwargs[dim] = kw
             plotter.render()
 
         def _pref_overlay_scale(key: str, mult: float):
