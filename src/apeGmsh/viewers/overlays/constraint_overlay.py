@@ -100,7 +100,7 @@ def build_node_pair_actors(
                 theta_resolution=8, phi_resolution=8)
             glyphs = cloud.glyph(geom=sphere, orient=False, scale=False)
             result.append((glyphs, dict(
-                color=color, smooth_shading=True,
+                color=color, lighting=False,
                 name=f"_cst_masters_{kind}",
                 reset_camera=False, pickable=False,
             )))
@@ -117,7 +117,7 @@ def build_node_pair_actors(
             glyphs = cloud.glyph(geom=diamond, orient=False, scale=False)
             color = color_fn(ConstraintKind.NODE_TO_SURFACE)
             result.append((glyphs, dict(
-                color=color, smooth_shading=True,
+                color=color, lighting=False,
                 name="_cst_phantoms_node_to_surface",
                 reset_camera=False, pickable=False,
             )))

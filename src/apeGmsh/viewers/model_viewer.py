@@ -645,6 +645,18 @@ class ModelViewer:
             'constraint_line':    1.0,
         }
 
+        # Moment glyph template (built once, reused)
+        _moment_template = None
+
+        def _get_moment_template(radius: float):
+            nonlocal _moment_template
+            if _moment_template is None:
+                from .overlays.moment_glyph import make_moment_glyph
+                _moment_template = make_moment_glyph(
+                    radius=1.0, tube_radius=0.08,
+                    arc_degrees=270, resolution=24)
+            return _moment_template
+
         def _on_loads_patterns_changed(active_patterns):
             for a in _load_actors:
                 try:
@@ -669,49 +681,76 @@ class ModelViewer:
                     by_pat.setdefault(r.pattern, []).append(r)
 
             for pat, records in by_pat.items():
-                positions = []
-                directions = []
-                magnitudes = []
+                # Separate forces ([:3]) and moments ([3:6])
+                f_positions, f_dirs, f_mags = [], [], []
+                m_positions, m_dirs, m_mags = [], [], []
+
                 for r in records:
                     try:
                         xyz = fem.nodes.coords[fem.nodes.index(int(r.node_id))] - origin
                     except Exception:
                         continue
+
+                    # Force component
                     fxyz = np.array(r.forces[:3], dtype=float)
-                    mag = float(np.linalg.norm(fxyz))
-                    if mag < 1e-30:
-                        continue
-                    positions.append(xyz)
-                    directions.append(fxyz / mag)  # unit direction
-                    magnitudes.append(mag)
+                    fmag = float(np.linalg.norm(fxyz))
+                    if fmag > 1e-30:
+                        f_positions.append(xyz)
+                        f_dirs.append(fxyz / fmag)
+                        f_mags.append(fmag)
 
-                if not positions:
-                    continue
+                    # Moment component
+                    mxyz = np.array(r.forces[3:6], dtype=float)
+                    mmag = float(np.linalg.norm(mxyz))
+                    if mmag > 1e-30:
+                        m_positions.append(xyz)
+                        m_dirs.append(mxyz / mmag)
+                        m_mags.append(mmag)
 
-                positions_arr = np.array(positions, dtype=float)
-                directions_arr = np.array(directions, dtype=float)
-                mag_arr = np.array(magnitudes, dtype=float)
-
-                # Scale arrows proportional to magnitude
-                max_mag = mag_arr.max()
-                if max_mag > 0:
-                    scale_arr = mag_arr / max_mag  # 0..1 normalized
-                else:
-                    scale_arr = np.ones_like(mag_arr)
-
-                cloud = pv.PolyData(positions_arr)
-                cloud['vectors'] = directions_arr * scale_arr[:, np.newaxis] * base_len
-                glyphs = cloud.glyph(
-                    orient='vectors', scale='vectors', factor=1.0,
-                )
                 color = pattern_color(pat)
-                actor = plotter.add_mesh(
-                    glyphs, color=color,
-                    name=f"_loads_pattern_{pat}",
-                    reset_camera=False,
-                    pickable=False,
-                )
-                _load_actors.append(actor)
+
+                # ── Force arrows (straight) ────────────────────
+                if f_positions:
+                    pos_arr = np.array(f_positions, dtype=float)
+                    dir_arr = np.array(f_dirs, dtype=float)
+                    mag_arr = np.array(f_mags, dtype=float)
+                    max_mag = mag_arr.max()
+                    scale_arr = mag_arr / max_mag if max_mag > 0 else np.ones_like(mag_arr)
+
+                    cloud = pv.PolyData(pos_arr)
+                    cloud['vectors'] = dir_arr * scale_arr[:, np.newaxis] * base_len
+                    glyphs = cloud.glyph(
+                        orient='vectors', scale='vectors', factor=1.0)
+                    actor = plotter.add_mesh(
+                        glyphs, color=color, lighting=False,
+                        name=f"_loads_force_{pat}",
+                        reset_camera=False, pickable=False,
+                    )
+                    _load_actors.append(actor)
+
+                # ── Moment arrows (curved) ─────────────────────
+                if m_positions:
+                    pos_arr = np.array(m_positions, dtype=float)
+                    dir_arr = np.array(m_dirs, dtype=float)
+                    mag_arr = np.array(m_mags, dtype=float)
+                    max_mag = mag_arr.max()
+                    scale_arr = mag_arr / max_mag if max_mag > 0 else np.ones_like(mag_arr)
+
+                    cloud = pv.PolyData(pos_arr)
+                    # Orient: moment axis direction; scale by magnitude
+                    cloud['vectors'] = dir_arr * scale_arr[:, np.newaxis] * base_len * 0.6
+                    template = _get_moment_template(base_len)
+                    glyphs = cloud.glyph(
+                        geom=template, orient='vectors',
+                        scale='vectors', factor=1.0)
+                    # Lighter color for moments to distinguish from forces
+                    actor = plotter.add_mesh(
+                        glyphs, color=color, lighting=False,
+                        opacity=0.85,
+                        name=f"_loads_moment_{pat}",
+                        reset_camera=False, pickable=False,
+                    )
+                    _load_actors.append(actor)
 
             plotter.render()
 
