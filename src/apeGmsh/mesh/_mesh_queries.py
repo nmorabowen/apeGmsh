@@ -13,6 +13,8 @@ import gmsh
 import numpy as np
 from numpy import ndarray
 
+from .FEMData import FEMData
+
 if TYPE_CHECKING:
     import pandas as pd
     from .Mesh import Mesh
@@ -117,7 +119,7 @@ class _Queries:
     # FEM data
     # ------------------------------------------------------------------
 
-    def get_fem_data(self, dim: int = 2):
+    def get_fem_data(self, dim: int = 2) -> FEMData:
         """
         Extract solver-ready FEM data as a :class:`FEMData` object.
 
@@ -140,8 +142,6 @@ class _Queries:
             g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
             fem = g.mesh.queries.get_fem_data(dim=2)
         """
-        from .FEMData import FEMData
-
         parent = self._mesh._parent
         result = FEMData.from_gmsh(dim=dim, session=parent)
 

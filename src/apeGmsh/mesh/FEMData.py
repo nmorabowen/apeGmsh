@@ -215,6 +215,7 @@ class NodeComposite:
         constraints=None,
         loads=None,
         masses=None,
+        partitions: dict[int, dict] | None = None,
     ) -> None:
         self._ids    = _to_object(node_ids)
         self._coords = np.asarray(node_coords, dtype=np.float64)
@@ -225,6 +226,9 @@ class NodeComposite:
         self.constraints = NodeConstraintSet(constraints)
         self.loads       = NodalLoadSet(loads)
         self.masses      = MassSet(masses)
+
+        # Partition membership: {partition_id: {'node_ids': ndarray, ...}}
+        self._partitions: dict[int, dict] = partitions or {}
 
         self._id_to_idx: dict[int, int] | None = None
 
@@ -240,25 +244,36 @@ class NodeComposite:
         """All domain node coordinates.  ``ndarray(N, 3)`` float64."""
         return self._coords
 
+    @property
+    def partitions(self) -> list[int]:
+        """Sorted list of partition IDs (empty if not partitioned)."""
+        return sorted(self._partitions.keys())
+
     # ── Selection API ────────────────────────────────────────
 
     def get(
         self,
-        target: str | None = None,
+        target: str | int | tuple[int, int] | None = None,
         *,
         pg: str | None = None,
         label: str | None = None,
+        partition: int | None = None,
     ) -> NodeResult:
         """Bundled ``(ids, coords)`` for a selection.
 
         Parameters
         ----------
-        target : str, optional
+        target : str, int, or (dim, tag), optional
             Shorthand — searches PGs first, then labels.
+            Accepts a name (str), Gmsh tag (int), or explicit
+            ``(dim, tag)`` tuple.
         pg : str, optional
             Physical group name (explicit).
         label : str, optional
             Label name (explicit).
+        partition : int, optional
+            Partition ID.  When combined with *pg* or *label*, acts
+            as an intersection filter.
 
         Returns
         -------
@@ -269,51 +284,76 @@ class NodeComposite:
         --------
         ::
 
-            fem.nodes.get()                  # all domain nodes
-            fem.nodes.get("Base")            # PG-first fallback
-            fem.nodes.get(pg="Base")         # explicit PG
-            fem.nodes.get(label="col.web")   # explicit label
+            fem.nodes.get()                          # all domain nodes
+            fem.nodes.get("Base")                    # PG-first fallback
+            fem.nodes.get(pg="Base")                 # explicit PG
+            fem.nodes.get(label="col.web")           # explicit label
+            fem.nodes.get(42)                        # by Gmsh tag
+            fem.nodes.get((2, 1))                    # by (dim, tag)
+            fem.nodes.get(partition=2)               # partition 2
+            fem.nodes.get(pg="Base", partition=1)    # intersection
         """
         if pg is not None:
-            return NodeResult(
-                self.physical.node_ids(pg),
-                self.physical.node_coords(pg))
-        if label is not None:
-            return NodeResult(
-                self.labels.node_ids(label),
-                self.labels.node_coords(label))
-        if target is not None:
-            # PG first, then label
+            ids = self.physical.node_ids(pg)
+            coords = self.physical.node_coords(pg)
+        elif label is not None:
+            ids = self.labels.node_ids(label)
+            coords = self.labels.node_coords(label)
+        elif target is not None:
             try:
-                return NodeResult(
-                    self.physical.node_ids(target),
-                    self.physical.node_coords(target))
+                ids = self.physical.node_ids(target)
+                coords = self.physical.node_coords(target)
             except (KeyError, ValueError):
-                return NodeResult(
-                    self.labels.node_ids(target),
-                    self.labels.node_coords(target))
-        # No target → all domain nodes
-        return NodeResult(self._ids, self._coords)
+                ids = self.labels.node_ids(target)
+                coords = self.labels.node_coords(target)
+        else:
+            ids, coords = self._ids, self._coords
+
+        if partition is not None:
+            ids, coords = self._intersect_partition(
+                ids, coords, partition)
+
+        return NodeResult(ids, coords)
+
+    def _intersect_partition(
+        self,
+        ids: ndarray,
+        coords: ndarray,
+        partition: int,
+    ) -> tuple[ndarray, ndarray]:
+        """Filter *ids*/*coords* to only nodes in *partition*."""
+        pdata = self._partitions.get(partition)
+        if pdata is None:
+            raise KeyError(
+                f"Partition {partition} not found. "
+                f"Available: {self.partitions}")
+        mask = np.isin(
+            np.asarray(ids, dtype=np.int64), pdata['node_ids'])
+        return ids[mask], coords[mask]
 
     def get_ids(
         self,
-        target: str | None = None,
+        target: str | int | tuple[int, int] | None = None,
         *,
         pg: str | None = None,
         label: str | None = None,
+        partition: int | None = None,
     ) -> ndarray:
         """Node IDs only for a selection."""
-        return self.get(target, pg=pg, label=label).ids
+        return self.get(
+            target, pg=pg, label=label, partition=partition).ids
 
     def get_coords(
         self,
-        target: str | None = None,
+        target: str | int | tuple[int, int] | None = None,
         *,
         pg: str | None = None,
         label: str | None = None,
+        partition: int | None = None,
     ) -> ndarray:
         """Coordinates only for a selection."""
-        return self.get(target, pg=pg, label=label).coords
+        return self.get(
+            target, pg=pg, label=label, partition=partition).coords
 
     # ── Lookups ──────────────────────────────────────────────
 
@@ -387,6 +427,7 @@ class ElementComposite:
         labels: LabelSet,
         constraints=None,
         loads=None,
+        partitions: dict[int, dict] | None = None,
     ) -> None:
         self._ids  = _to_object(element_ids)
         self._conn = _to_object(connectivity)
@@ -395,6 +436,9 @@ class ElementComposite:
 
         self.constraints = SurfaceConstraintSet(constraints)
         self.loads       = ElementLoadSet(loads)
+
+        # Partition membership: {partition_id: {'element_ids': ndarray, ...}}
+        self._partitions: dict[int, dict] = partitions or {}
 
         self._id_to_idx: dict[int, int] | None = None
 
@@ -410,25 +454,36 @@ class ElementComposite:
         """Full connectivity array.  ``ndarray(E, npe)`` object dtype."""
         return self._conn
 
+    @property
+    def partitions(self) -> list[int]:
+        """Sorted list of partition IDs (empty if not partitioned)."""
+        return sorted(self._partitions.keys())
+
     # ── Selection API ────────────────────────────────────────
 
     def get(
         self,
-        target: str | None = None,
+        target: str | int | tuple[int, int] | None = None,
         *,
         pg: str | None = None,
         label: str | None = None,
+        partition: int | None = None,
     ) -> ElementResult:
         """Bundled ``(ids, connectivity)`` for a selection.
 
         Parameters
         ----------
-        target : str, optional
+        target : str, int, or (dim, tag), optional
             Shorthand — searches PGs first, then labels.
+            Accepts a name (str), Gmsh tag (int), or explicit
+            ``(dim, tag)`` tuple.
         pg : str, optional
             Physical group name (explicit).
         label : str, optional
             Label name (explicit).
+        partition : int, optional
+            Partition ID.  When combined with *pg* or *label*, acts
+            as an intersection filter.
 
         Returns
         -------
@@ -437,43 +492,66 @@ class ElementComposite:
             ``ids, conn = fem.elements.get(...)``
         """
         if pg is not None:
-            return ElementResult(
-                self.physical.element_ids(pg),
-                self.physical.connectivity(pg))
-        if label is not None:
-            return ElementResult(
-                self.labels.element_ids(label),
-                self.labels.connectivity(label))
-        if target is not None:
+            ids = self.physical.element_ids(pg)
+            conn = self.physical.connectivity(pg)
+        elif label is not None:
+            ids = self.labels.element_ids(label)
+            conn = self.labels.connectivity(label)
+        elif target is not None:
             try:
-                return ElementResult(
-                    self.physical.element_ids(target),
-                    self.physical.connectivity(target))
+                ids = self.physical.element_ids(target)
+                conn = self.physical.connectivity(target)
             except (KeyError, ValueError):
-                return ElementResult(
-                    self.labels.element_ids(target),
-                    self.labels.connectivity(target))
-        return ElementResult(self._ids, self._conn)
+                ids = self.labels.element_ids(target)
+                conn = self.labels.connectivity(target)
+        else:
+            ids, conn = self._ids, self._conn
+
+        if partition is not None:
+            ids, conn = self._intersect_partition(
+                ids, conn, partition)
+
+        return ElementResult(ids, conn)
+
+    def _intersect_partition(
+        self,
+        ids: ndarray,
+        conn: ndarray,
+        partition: int,
+    ) -> tuple[ndarray, ndarray]:
+        """Filter *ids*/*conn* to only elements in *partition*."""
+        pdata = self._partitions.get(partition)
+        if pdata is None:
+            raise KeyError(
+                f"Partition {partition} not found. "
+                f"Available: {self.partitions}")
+        mask = np.isin(
+            np.asarray(ids, dtype=np.int64), pdata['element_ids'])
+        return ids[mask], conn[mask]
 
     def get_ids(
         self,
-        target: str | None = None,
+        target: str | int | tuple[int, int] | None = None,
         *,
         pg: str | None = None,
         label: str | None = None,
+        partition: int | None = None,
     ) -> ndarray:
         """Element IDs only for a selection."""
-        return self.get(target, pg=pg, label=label).ids
+        return self.get(
+            target, pg=pg, label=label, partition=partition).ids
 
     def get_connectivity(
         self,
-        target: str | None = None,
+        target: str | int | tuple[int, int] | None = None,
         *,
         pg: str | None = None,
         label: str | None = None,
+        partition: int | None = None,
     ) -> ndarray:
         """Connectivity only for a selection."""
-        return self.get(target, pg=pg, label=label).connectivity
+        return self.get(
+            target, pg=pg, label=label, partition=partition).connectivity
 
     # ── Lookups ──────────────────────────────────────────────
 
@@ -748,6 +826,11 @@ class FEMData:
         self.mesh_selection = mesh_selection
         self.inspect  = InspectComposite(self)
 
+    @property
+    def partitions(self) -> list[int]:
+        """Sorted list of partition IDs (empty if not partitioned)."""
+        return self.nodes.partitions
+
     @classmethod
     def from_gmsh(cls, dim: int, *, session=None, ndf: int = 6):
         """Extract FEMData from a live Gmsh session.
@@ -787,6 +870,21 @@ class FEMData:
         """
         from ._fem_factory import _from_msh
         return _from_msh(cls, path=path, dim=dim)
+
+    def viewer(self, *, blocking: bool = False) -> None:
+        """Open a non-interactive mesh viewer from this snapshot.
+
+        Works offline — no live Gmsh session required.  Delegates to
+        the ``Results -> VTK -> apeGmshViewer`` pipeline.
+
+        Parameters
+        ----------
+        blocking : bool
+            If True, block until the viewer window is closed.
+        """
+        from ..results.Results import Results
+        r = Results.from_fem(self, name="FEMData")
+        r.viewer(blocking=blocking)
 
     def __repr__(self) -> str:
         return self.inspect.summary()

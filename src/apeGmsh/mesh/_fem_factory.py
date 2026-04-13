@@ -14,7 +14,10 @@ import logging
 
 import numpy as np
 
-from ._fem_extract import extract_raw, extract_physical_groups, extract_labels
+from ._fem_extract import (
+    extract_raw, extract_physical_groups, extract_labels,
+    extract_partitions,
+)
 
 _log = logging.getLogger(__name__)
 from ._group_set import PhysicalGroupSet, LabelSet
@@ -117,14 +120,14 @@ def _from_gmsh(cls, *, dim: int, session=None, ndf: int = 6):
 
     # ── 1-4. Extract + filter + PGs + MeshInfo ─────────────
     node_ids, node_coords_filtered, elem_tags, connectivity, \
-        info, physical, labels = _extract_mesh_core(dim)
+        info, physical, labels, partitions = _extract_mesh_core(dim)
 
     # ── 5. Resolve BCs (warn on failure, continue) ──────────
-    node_constraints = []
-    surface_constraints = []
-    nodal_loads = []
-    element_loads = []
-    mass_records = []
+    node_constraints: list = []
+    surface_constraints: list = []
+    nodal_loads: list = []
+    element_loads: list = []
+    mass_records: list = []
 
     if session is not None:
         # Build node/face maps from parts
@@ -192,6 +195,7 @@ def _from_gmsh(cls, *, dim: int, session=None, ndf: int = 6):
         constraints=node_constraints or None,
         loads=nodal_loads or None,
         masses=mass_records or None,
+        partitions=partitions or None,
     )
     elements = ElementComposite(
         element_ids=elem_tags,
@@ -200,6 +204,7 @@ def _from_gmsh(cls, *, dim: int, session=None, ndf: int = 6):
         labels=labels,
         constraints=surface_constraints or None,
         loads=element_loads or None,
+        partitions=partitions or None,
     )
 
     # ── 7. Snapshot mesh selections if available ────────────
@@ -228,7 +233,7 @@ def _extract_mesh_core(dim: int):
     """Shared extraction: raw arrays → filtered nodes + MeshInfo + PGs.
 
     Returns (node_ids, node_coords, elem_tags, connectivity,
-             info, physical, labels).
+             info, physical, labels, partitions).
     """
     from .FEMData import MeshInfo, _compute_bandwidth
 
@@ -256,6 +261,7 @@ def _extract_mesh_core(dim: int):
 
     physical = PhysicalGroupSet(extract_physical_groups())
     labels   = LabelSet(extract_labels())
+    partitions = extract_partitions(dim)
 
     type_info = raw.get('elem_type_info', {})
     if type_info:
@@ -276,7 +282,7 @@ def _extract_mesh_core(dim: int):
     )
 
     return node_ids, node_coords_filtered, elem_tags, connectivity, \
-        info, physical, labels
+        info, physical, labels, partitions
 
 
 def _from_msh(cls, *, path: str, dim: int = 2):
@@ -294,15 +300,17 @@ def _from_msh(cls, *, path: str, dim: int = 2):
         gmsh.merge(str(path))
 
         node_ids, node_coords, elem_tags, connectivity, \
-            info, physical, labels = _extract_mesh_core(dim)
+            info, physical, labels, partitions = _extract_mesh_core(dim)
 
         nodes = NodeComposite(
             node_ids=node_ids, node_coords=node_coords,
             physical=physical, labels=labels,
+            partitions=partitions or None,
         )
         elements = ElementComposite(
             element_ids=elem_tags, connectivity=connectivity,
             physical=physical, labels=labels,
+            partitions=partitions or None,
         )
     finally:
         gmsh.finalize()
