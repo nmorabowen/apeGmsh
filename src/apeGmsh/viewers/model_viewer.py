@@ -156,70 +156,20 @@ class ModelViewer:
         )
 
         # ── UI tabs (created AFTER QApplication exists) ─────────────
-        # Preference callbacks — update live actors AND stored kwargs
-        # (so that VisibilityManager recreates actors with current settings)
+        # Preference callbacks via shared helpers (no duplication with mesh viewer)
+        from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
+        from .overlays.glyph_helpers import rebuild_brep_point_glyphs
+
         def _pref_point_size(v: float):
-            # Points are sphere glyphs — SetPointSize() does nothing.
-            # Must rebuild the glyphs with a new radius.
-            from .scene.glyph_points import build_point_glyphs
-            from .core.color_manager import IDLE_COLORS
-            if 0 not in registry.dim_actors:
-                return
-            old_mesh = registry._full_meshes.get(0)
-            if old_mesh is None:
-                return
-            # Extract original centers and tags from stored cell data
             kw = registry._add_mesh_kwargs.get(0, {})
-            old_diag = kw.get('model_diagonal', 1.0)
-            old_tags = kw.get('_tags_d0', [])
-            old_centers = kw.get('_centers_d0', None)
-            if old_centers is None or not len(old_tags):
-                return
-            # Remove old actor
-            old_actor = registry.dim_actors[0]
-            try:
-                plotter.remove_actor(old_actor)
-            except Exception:
-                pass
-            # Rebuild with new size
-            new_mesh, new_actor, new_c2dt, _ = build_point_glyphs(
-                plotter, old_centers, old_tags,
-                model_diagonal=old_diag,
-                point_size=v,
-                idle_color=np.array(IDLE_COLORS[0], dtype=np.uint8),
-            )
-            registry.swap_dim(0, new_mesh, new_actor)
-            # Persist for next rebuild
             kw['point_size'] = v
             registry._add_mesh_kwargs[0] = kw
+            rebuild_brep_point_glyphs(plotter, registry)
             plotter.render()
 
-        def _pref_line_width(v: float):
-            for dim, actor in registry.dim_actors.items():
-                if dim == 1:
-                    actor.GetProperty().SetLineWidth(v)
-                    kw = registry._add_mesh_kwargs.get(dim, {})
-                    kw['line_width'] = v
-                    registry._add_mesh_kwargs[dim] = kw
-            plotter.render()
-
-        def _pref_opacity(v: float):
-            for dim, actor in registry.dim_actors.items():
-                if dim >= 2:
-                    actor.GetProperty().SetOpacity(v)
-                    kw = registry._add_mesh_kwargs.get(dim, {})
-                    kw['opacity'] = v
-                    registry._add_mesh_kwargs[dim] = kw
-            plotter.render()
-
-        def _pref_edges(show: bool):
-            for dim, actor in registry.dim_actors.items():
-                if dim >= 2:
-                    actor.GetProperty().SetEdgeVisibility(show)
-                    kw = registry._add_mesh_kwargs.get(dim, {})
-                    kw['show_edges'] = show
-                    registry._add_mesh_kwargs[dim] = kw
-            plotter.render()
+        _pref_line_width = make_line_width_cb(registry, plotter)
+        _pref_opacity = make_opacity_cb(registry, plotter)
+        _pref_edges = make_edges_cb(registry, plotter)
 
         def _pref_overlay_scale(key: str, mult: float):
             _overlay_scales[key] = mult

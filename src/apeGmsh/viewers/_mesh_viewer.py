@@ -234,57 +234,16 @@ class MeshViewer:
             plotter.render()
 
         filter_tab = MeshFilterTab(self._dims, on_filter_changed=_on_mesh_filter)
+        from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
+        from .overlays.glyph_helpers import rebuild_node_cloud
+
         def _pref_point_size(v: float):
-            # Node cloud is a sphere glyph — must rebuild with new radius
-            from .scene.glyph_points import build_node_cloud
-            if scene.node_cloud is None or scene.node_cloud.n_points == 0:
-                return
-            if scene.node_actor is not None:
-                try:
-                    plotter.remove_actor(scene.node_actor)
-                except Exception:
-                    pass
-            new_cloud, new_actor = build_node_cloud(
-                plotter, scene.node_cloud.points,
-                model_diagonal=scene.model_diagonal,
-                marker_size=v,
-            )
-            scene.node_cloud = new_cloud
-            scene.node_actor = new_actor
+            rebuild_node_cloud(plotter, scene, v)
             plotter.render()
 
-        def _pref_line_width(v: float):
-            for dim in registry.dims:
-                if dim == 1:
-                    actor = registry.dim_actors.get(dim)
-                    if actor:
-                        actor.GetProperty().SetLineWidth(v)
-                        kw = registry._add_mesh_kwargs.get(dim, {})
-                        kw['line_width'] = v
-                        registry._add_mesh_kwargs[dim] = kw
-            plotter.render()
-
-        def _pref_opacity(v: float):
-            for dim in registry.dims:
-                if dim >= 2:
-                    actor = registry.dim_actors.get(dim)
-                    if actor:
-                        actor.GetProperty().SetOpacity(v)
-                        kw = registry._add_mesh_kwargs.get(dim, {})
-                        kw['opacity'] = v
-                        registry._add_mesh_kwargs[dim] = kw
-            plotter.render()
-
-        def _pref_edges(show: bool):
-            for dim in registry.dims:
-                if dim >= 2:
-                    actor = registry.dim_actors.get(dim)
-                    if actor:
-                        actor.GetProperty().SetEdgeVisibility(show)
-                        kw = registry._add_mesh_kwargs.get(dim, {})
-                        kw['show_edges'] = show
-                        registry._add_mesh_kwargs[dim] = kw
-            plotter.render()
+        _pref_line_width = make_line_width_cb(registry, plotter)
+        _pref_opacity = make_opacity_cb(registry, plotter)
+        _pref_edges = make_edges_cb(registry, plotter)
 
         prefs = PreferencesTab(
             point_size=self._point_size,
