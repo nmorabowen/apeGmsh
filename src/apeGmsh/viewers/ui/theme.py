@@ -138,6 +138,52 @@ STYLESHEET = f"""
         border-radius: 3px;
         padding: 2px 4px;
     }}
+    QSpinBox::up-button, QDoubleSpinBox::up-button {{
+        subcontrol-origin: border;
+        subcontrol-position: top right;
+        width: 16px;
+        border-left: 1px solid {SURFACE1};
+        border-bottom: 1px solid {SURFACE1};
+        border-top-right-radius: 3px;
+        background-color: {SURFACE0};
+    }}
+    QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover {{
+        background-color: {SURFACE1};
+    }}
+    QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed {{
+        background-color: {SURFACE2};
+    }}
+    QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+        image: none;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-bottom: 5px solid {TEXT};
+        width: 0px;
+        height: 0px;
+    }}
+    QSpinBox::down-button, QDoubleSpinBox::down-button {{
+        subcontrol-origin: border;
+        subcontrol-position: bottom right;
+        width: 16px;
+        border-left: 1px solid {SURFACE1};
+        border-top: 1px solid {SURFACE1};
+        border-bottom-right-radius: 3px;
+        background-color: {SURFACE0};
+    }}
+    QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+        background-color: {SURFACE1};
+    }}
+    QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {{
+        background-color: {SURFACE2};
+    }}
+    QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+        image: none;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {TEXT};
+        width: 0px;
+        height: 0px;
+    }}
     QCheckBox {{
         color: {SUBTEXT};
         font-size: 11px;
