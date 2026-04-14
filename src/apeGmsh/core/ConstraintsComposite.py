@@ -187,31 +187,29 @@ class ConstraintsComposite:
                         name=None):
         """6-DOF node to 3-DOF surface coupling via phantom nodes.
 
+        Creates a single constraint that aggregates all surface
+        entities in *slave*.  Shared-edge mesh nodes are deduplicated
+        so each original slave node gets exactly one phantom.
+
         Parameters
         ----------
         master : int, str, or (dim, tag)
-            The 6-DOF reference node.  Accepts a raw tag, a label
-            name, or a dimtag.  If a label/PG resolves to multiple
-            tags, only the first is used.
+            The 6-DOF reference node.
         slave : int, str, or (dim, tag)
-            The surface entity to couple.  Accepts a raw tag, a
-            label, or a PG name.  If it resolves to multiple
-            surfaces, one constraint is created per surface.
+            The surface(s) to couple.  If it resolves to multiple
+            surface entities, they are combined into a single
+            constraint and slave nodes are deduplicated.
 
         Returns
         -------
-        NodeToSurfaceDef or list[NodeToSurfaceDef]
-            A single def when slave resolves to one surface,
-            a list when it resolves to multiple.
+        NodeToSurfaceDef
+            A single def covering all resolved surface entities.
         """
         from ._helpers import resolve_to_tags
         m_tags = resolve_to_tags(master, dim=0, session=self._parent)
         s_tags = resolve_to_tags(slave,  dim=2, session=self._parent)
         master_tag = m_tags[0]
 
-        # Build a display name from the user's original input.
-        # The resolver needs entity tags in master_label/slave_label,
-        # so we put the human-readable name in the `name` field.
         if name is None:
             m_name = str(master) if isinstance(master, str) else str(master_tag)
             s_name = str(slave) if isinstance(slave, str) else "surface"
@@ -219,15 +217,15 @@ class ConstraintsComposite:
         else:
             display_name = name
 
-        defs = []
-        for s_tag in s_tags:
-            d = self._add_def(NodeToSurfaceDef(
-                master_label=str(master_tag),
-                slave_label=str(s_tag),
-                dofs=dofs, tolerance=tolerance,
-                name=display_name))
-            defs.append(d)
-        return defs[0] if len(defs) == 1 else defs
+        # Store ALL surface tags as a comma-separated string so the
+        # resolver can union their slave nodes and deduplicate.
+        slave_label = ",".join(str(int(t)) for t in s_tags)
+
+        return self._add_def(NodeToSurfaceDef(
+            master_label=str(master_tag),
+            slave_label=slave_label,
+            dofs=dofs, tolerance=tolerance,
+            name=display_name))
 
     # Level 4
     def tied_contact(self, master_label, slave_label, *,
@@ -369,20 +367,26 @@ class ConstraintsComposite:
                 f"(from entity {master_entity_tag}) not found in "
                 f"the mesh node set.")
 
-        slave_entity_tag = int(defn.slave_label)
-        try:
-            nt, _, _ = gmsh.model.mesh.getNodes(
-                dim=2, tag=slave_entity_tag,
-                includeBoundary=True, returnParametricCoord=False)
-            slave_nodes = {int(t) for t in nt}
-        except Exception as exc:
-            raise ValueError(
-                f"node_to_surface: cannot get nodes from surface "
-                f"entity (dim=2, tag={slave_entity_tag}): {exc}") from exc
+        # slave_label is a comma-separated list of surface entity tags.
+        # Union the slave nodes across all surfaces — shared-edge
+        # nodes are naturally deduplicated by the set.
+        slave_entity_tags = [
+            int(s) for s in defn.slave_label.split(",") if s]
+        slave_nodes: set[int] = set()
+        for s_tag in slave_entity_tags:
+            try:
+                nt, _, _ = gmsh.model.mesh.getNodes(
+                    dim=2, tag=s_tag,
+                    includeBoundary=True, returnParametricCoord=False)
+                slave_nodes.update(int(t) for t in nt)
+            except Exception as exc:
+                raise ValueError(
+                    f"node_to_surface: cannot get nodes from surface "
+                    f"entity (dim=2, tag={s_tag}): {exc}") from exc
         if not slave_nodes:
             raise ValueError(
-                f"node_to_surface: surface entity (dim=2, "
-                f"tag={slave_entity_tag}) has no nodes.")
+                f"node_to_surface: surface entities "
+                f"{slave_entity_tags} have no nodes.")
         return resolver.resolve_node_to_surface(defn, master_node, slave_nodes)
 
     def _resolve_embedded(self, resolver, defn, node_map, face_map, all_nodes):

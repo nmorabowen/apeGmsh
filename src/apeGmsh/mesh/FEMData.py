@@ -579,6 +579,12 @@ class ElementComposite:
             pset = set(int(x) for x in pdata['element_ids'])
             id_set = pset if id_set is None else (id_set & pset)
 
+        # Resolve element_type filter once (not per-group)
+        type_codes: set[int] | None = None
+        if element_type is not None:
+            type_codes = resolve_type_filter(
+                element_type, list(self._groups.values()))
+
         # Step 3: build filtered groups
         result_groups: list[ElementGroup] = []
         for g in self._groups.values():
@@ -586,11 +592,8 @@ class ElementComposite:
             if dim is not None and g.dim != dim:
                 continue
             # element_type filter
-            if element_type is not None:
-                codes = resolve_type_filter(
-                    element_type, list(self._groups.values()))
-                if g.type_code not in codes:
-                    continue
+            if type_codes is not None and g.type_code not in type_codes:
+                continue
             # ID filter (from PG/label/partition)
             if id_set is not None:
                 mask = np.isin(g.ids, list(id_set))
