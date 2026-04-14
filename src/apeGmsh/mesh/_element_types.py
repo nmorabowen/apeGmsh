@@ -209,9 +209,14 @@ class ElementGroup:
         return len(self.ids)
 
     def __iter__(self):
-        """Yield ``(eid, conn_row)`` pairs for solver loops."""
+        """Yield ``(eid, conn_row)`` pairs for solver loops.
+
+        Both ``eid`` and each node in ``conn_row`` are plain Python
+        ``int`` — safe for OpenSees and other C-backed APIs that
+        reject ``numpy.int64``.
+        """
         for i in range(len(self.ids)):
-            yield int(self.ids[i]), self.connectivity[i]
+            yield int(self.ids[i]), tuple(int(n) for n in self.connectivity[i])
 
     def __repr__(self) -> str:
         return (
