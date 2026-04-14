@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -185,19 +187,28 @@ class NodeConstraintSet(_RecordSetBase):
                 for tag, xyz in zip(rec.phantom_nodes, coords):
                     yield int(tag), xyz.tolist()
 
-    def get_phantom_nodes(self) -> tuple[list[int], list[list[float]]]:
-        """Return phantom node IDs and coordinates as two parallel lists.
+    def get_phantom_nodes(self):
+        """Return phantom node IDs and coordinates as a ``NodeResult``.
 
         Returns
         -------
-        (list[int], list[list[float]])
-            ``(ids, coords)`` — empty lists if no phantom nodes exist.
+        NodeResult
+            ``(ids, coords)`` — destructurable as
+            ``ids, coords = constraints.get_phantom_nodes()``.
+            Empty arrays if no phantom nodes exist.
         """
-        ids, coords = [], []
+        from .FEMData import NodeResult
+        ids_list, coords_list = [], []
         for nid, xyz in self.extra_nodes():
-            ids.append(nid)
-            coords.append(xyz)
-        return ids, coords
+            ids_list.append(nid)
+            coords_list.append(xyz)
+        if not ids_list:
+            return NodeResult(
+                np.array([], dtype=np.int64),
+                np.empty((0, 3), dtype=np.float64))
+        return NodeResult(
+            np.array(ids_list, dtype=np.int64),
+            np.array(coords_list, dtype=np.float64))
 
     def summary(self) -> "pd.DataFrame":
         """DataFrame summarising the constraint set.

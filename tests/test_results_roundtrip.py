@@ -67,19 +67,29 @@ def _make_unit_tet_fem() -> FEMData:
     element_ids = np.array([1], dtype=np.int64)
     connectivity = np.array([[1, 2, 3, 4]], dtype=np.int64)
 
-    info = MeshInfo(n_nodes=4, n_elems=1, bandwidth=3)
+    from apeGmsh.mesh._element_types import ElementGroup, make_type_info
+
+    type_info = make_type_info(
+        code=4, gmsh_name='Tetrahedron 4', dim=3, order=1, npe=4, count=1)
+    elem_group = ElementGroup(
+        element_type=type_info, ids=element_ids, connectivity=connectivity)
+
+    info = MeshInfo(n_nodes=4, n_elems=1, bandwidth=3, types=[type_info])
 
     # One dim=3 physical group covering the single tet.
-    groups = {
+    pg_groups = {
         (3, 1): {
             "name": "Body",
             "node_ids": node_ids,
             "node_coords": node_coords,
             "element_ids": element_ids,
-            "connectivity": connectivity,
+            "groups": {4: {
+                'ids': element_ids, 'conn': connectivity,
+                'gmsh_name': 'Tetrahedron 4', 'dim': 3, 'order': 1, 'npe': 4,
+            }},
         },
     }
-    physical = PhysicalGroupSet(groups)
+    physical = PhysicalGroupSet(pg_groups)
     labels = LabelSet({})
 
     nodes = NodeComposite(
@@ -89,8 +99,7 @@ def _make_unit_tet_fem() -> FEMData:
         labels=labels,
     )
     elements = ElementComposite(
-        element_ids=element_ids,
-        connectivity=connectivity,
+        groups={4: elem_group},
         physical=physical,
         labels=labels,
     )

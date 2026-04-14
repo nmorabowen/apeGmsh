@@ -298,31 +298,30 @@ class VTKExport:
     >>> vtk.write("results.vtu")
     """
 
-    def __init__(self, ctx: apeGmsh, dim: int = 2) -> None:
+    def __init__(self, ctx: apeGmsh, dim: int | None = 2) -> None:
         fem = ctx.mesh.queries.get_fem_data(dim=dim)
-        self._node_coords  = fem.nodes.coords
-        self._connectivity = fem.elements.connectivity
-        self._elem_tags    = fem.elements.ids
-        self._node_ids     = fem.nodes.ids
+        self._node_coords = fem.nodes.coords
+        self._elem_tags   = fem.elements.ids
+        self._node_ids    = fem.nodes.ids
+        self._fem         = fem
 
         # Build node-ID -> 0-based array index mapping
         tag_to_idx = {int(t): i for i, t in enumerate(fem.nodes.ids)}
 
-        # Build 0-based connectivity (row indices into node_coords)
-        self._conn_idx = np.array(
-            [[tag_to_idx[int(n)] for n in row]
-             for row in self._connectivity]
-        )
-
-        # Determine VTK cell type from number of nodes per element
-        npe = self._connectivity.shape[1]
-        self._vtk_type = {
-            2: VTK_LINE,
-            3: VTK_TRIANGLE,
-            4: VTK_QUAD,
-            6: VTK_WEDGE,
-            8: VTK_HEXAHEDRON,
-        }.get(npe, VTK_QUAD)
+        # Build per-group 0-based connectivity and VTK types
+        self._cell_blocks: list[tuple[np.ndarray, int]] = []
+        for group in fem.elements:
+            if group.connectivity.size == 0:
+                continue
+            conn_0 = np.array(
+                [[tag_to_idx[int(n)] for n in row]
+                 for row in group.connectivity])
+            vtk_type = {
+                (1, 2): VTK_LINE,
+                (2, 3): VTK_TRIANGLE, (2, 4): VTK_QUAD,
+                (3, 4): 10, (3, 6): VTK_WEDGE, (3, 8): VTK_HEXAHEDRON,
+            }.get((group.dim, group.npe), VTK_QUAD)
+            self._cell_blocks.append((conn_0, vtk_type))
 
         self._point_data: dict[str, np.ndarray] = {}
         self._cell_data:  dict[str, np.ndarray] = {}
@@ -356,15 +355,27 @@ class VTKExport:
             arr = np.column_stack([arr, np.zeros(arr.shape[0])])
         self._cell_data[name] = arr
 
+    # ---- Internal helpers --------------------------------------------------
+
+    def _primary_conn_and_type(self):
+        """Return (conn_0, vtk_type) for single-type meshes.
+
+        For mixed-type meshes, uses the first block.
+        """
+        if self._cell_blocks:
+            return self._cell_blocks[0]
+        return np.empty((0, 0), dtype=np.int64), VTK_QUAD
+
     # ---- Write ------------------------------------------------------------
 
     def write(self, filename: str | Path = "results.vtu") -> Path:
         """Write accumulated fields to a .vtu file."""
+        conn_0, vtk_type = self._primary_conn_and_type()
         return write_vtu(
             filename,
             self._node_coords,
-            self._conn_idx,
-            vtk_cell_type=self._vtk_type,
+            conn_0,
+            vtk_cell_type=vtk_type,
             point_data=self._point_data,
             cell_data=self._cell_data,
         )
@@ -372,25 +383,12 @@ class VTKExport:
     def write_mode_series(self, base_name: str,
                           mode_shapes: list[np.ndarray],
                           frequencies: list[float]) -> list[Path]:
-        """Write mode shapes as a time-series PVD for ParaView animation.
-
-        Each mode becomes a time step. ParaView's animation toolbar
-        then steps through modes.
-
-        Parameters
-        ----------
-        base_name : str
-            Base name (e.g. ``"modes"`` -> ``modes.pvd`` + ``modes_000.vtu``, …).
-        mode_shapes : list of (N, 3) arrays
-            Translational mode shape for each mode.
-        frequencies : list of float
-            Natural frequency [Hz] for each mode.
-        """
+        """Write mode shapes as a time-series PVD for ParaView animation."""
         steps = []
         for i, (phi, freq) in enumerate(zip(mode_shapes, frequencies)):
             phi3 = np.asarray(phi, dtype=np.float64)
             if phi3.ndim == 2 and phi3.shape[1] > 3:
-                phi3 = phi3[:, :3]  # take translational DOFs only
+                phi3 = phi3[:, :3]
             if phi3.ndim == 2 and phi3.shape[1] == 2:
                 phi3 = np.column_stack([phi3, np.zeros(phi3.shape[0])])
 
@@ -404,16 +402,18 @@ class VTKExport:
                 },
             })
 
+        conn_0, vtk_type = self._primary_conn_and_type()
         return write_vtu_series(
             base_name,
             self._node_coords,
-            self._conn_idx,
-            vtk_cell_type=self._vtk_type,
+            conn_0,
+            vtk_cell_type=vtk_type,
             steps=steps,
         )
 
     def __repr__(self) -> str:
+        n_cells = sum(c.shape[0] for c, _ in self._cell_blocks)
         return (f"<VTKExport: {self._node_coords.shape[0]} nodes, "
-                f"{self._conn_idx.shape[0]} cells, "
+                f"{n_cells} cells, "
                 f"{len(self._point_data)} point fields, "
                 f"{len(self._cell_data)} cell fields>")

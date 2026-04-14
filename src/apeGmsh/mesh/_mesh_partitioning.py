@@ -163,10 +163,12 @@ class _Partitioning:
         """
         from ._fem_extract import extract_raw
         from .FEMData import _compute_bandwidth
+        from ._fem_factory import _build_element_groups
 
         # 1. Bandwidth BEFORE ────────────────────────────────────
         raw = extract_raw(dim=dim)
-        bw_before = _compute_bandwidth(raw['connectivity'])
+        groups = _build_element_groups(raw['groups'])
+        bw_before = _compute_bandwidth(groups)
         n_nodes = len(raw['node_tags'])
         n_elems = len(raw['elem_tags'])
 
@@ -188,7 +190,8 @@ class _Partitioning:
 
         # 4. Bandwidth AFTER ─────────────────────────────────────
         raw_after = extract_raw(dim=dim)
-        bw_after = _compute_bandwidth(raw_after['connectivity'])
+        groups_after = _build_element_groups(raw_after['groups'])
+        bw_after = _compute_bandwidth(groups_after)
 
         result = RenumberResult(
             method=method,

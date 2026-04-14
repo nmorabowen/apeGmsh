@@ -63,6 +63,10 @@ class NamedGroupSet:
                 info['node_coords'], dtype=np.float64)
             if 'element_ids' in info:
                 coerced['element_ids'] = _to_object(info['element_ids'])
+            # Per-type groups (new extraction format)
+            if 'groups' in info:
+                coerced['groups'] = info['groups']
+            # Legacy flat connectivity (keep if present)
             if 'connectivity' in info:
                 coerced['connectivity'] = _to_object(info['connectivity'])
             self._groups[key] = coerced
@@ -168,15 +172,35 @@ class NamedGroupSet:
         Returns
         -------
         ndarray(E, npe) — object dtype.
+
+        If the group has mixed element types, rows with fewer nodes
+        are padded with ``-1``.
         """
         info = self._resolve(target)
         conn = info.get('connectivity')
-        if conn is None:
-            name = info.get('name', str(target))
-            raise ValueError(
-                f"Group '{name}' has no element data "
-                f"(element data is only available for dim >= 1).")
-        return conn
+        if conn is not None:
+            return conn
+        # Build from per-type groups if available
+        grps = info.get('groups')
+        if grps:
+            blocks = [g['conn'] for g in grps.values()
+                      if g['conn'].size > 0]
+            if blocks:
+                max_npe = max(b.shape[1] for b in blocks)
+                padded = []
+                for b in blocks:
+                    if b.shape[1] < max_npe:
+                        pad = np.full(
+                            (b.shape[0], max_npe - b.shape[1]),
+                            -1, dtype=b.dtype)
+                        padded.append(np.hstack([b, pad]))
+                    else:
+                        padded.append(b)
+                return _to_object(np.vstack(padded))
+        name = info.get('name', str(target))
+        raise ValueError(
+            f"Group '{name}' has no element data "
+            f"(element data is only available for dim >= 1).")
 
     # ── Queries ──────────────────────────────────────────────
 

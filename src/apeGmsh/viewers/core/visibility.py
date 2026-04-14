@@ -140,7 +140,13 @@ class VisibilityManager:
                 colors[:] = idle_rgb
                 full_mesh.cell_data["colors"] = colors
 
-            kwargs = reg._add_mesh_kwargs.get(dim, {})
+            # Filter internal metadata keys — only pass pyvista-safe kwargs
+            _INTERNAL_KEYS = frozenset({
+                'model_diagonal', '_tags_d0', '_centers_d0',
+            })
+            kwargs = {k: v for k, v in
+                      reg._add_mesh_kwargs.get(dim, {}).items()
+                      if k not in _INTERNAL_KEYS}
 
             if not self._hidden:
                 # No hidden entities — restore full mesh

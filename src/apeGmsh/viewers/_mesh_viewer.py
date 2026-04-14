@@ -287,12 +287,10 @@ class MeshViewer:
 
         if fem is not None and fem.nodes.constraints:
             pn = fem.nodes.constraints.get_phantom_nodes()
-            if pn:
-                tags_p, coords_p = zip(*pn)
-                _phantom_tags = np.array(tags_p, dtype=np.int64)
+            if len(pn.ids) > 0:
+                _phantom_tags = pn.ids
                 _phantom_coords = (
-                    np.array(coords_p, dtype=float)
-                    - registry.origin_shift
+                    pn.coords - registry.origin_shift
                 )
                 glyph_r = (0.003 * scene.model_diagonal
                            * max(0.1, self._point_size / 10.0))

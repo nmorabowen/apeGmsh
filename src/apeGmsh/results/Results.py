@@ -139,14 +139,15 @@ def _build_vtk_cells_from_fem(
     primary_elem_ids: set[int] = set(int(e) for e in fem.elements.ids)
     cell_blocks: list[tuple[ndarray, int]] = []   # (conn_0based, vtk_type)
 
-    # ── 1.  Primary connectivity ─────────────────────────────────
-    if fem.elements.connectivity.size > 0:
-        npe = fem.elements.connectivity.shape[1]
+    # ── 1.  Primary connectivity (per element-type group) ────────
+    for group in fem.elements:
+        if group.connectivity.size == 0:
+            continue
         vtk_type = _DIM_NPE_TO_VTK.get(
-            (primary_dim, npe),
-            _NPE_TO_VTK.get(npe, VTK_TRIANGLE),
+            (group.dim, group.npe),
+            _NPE_TO_VTK.get(group.npe, VTK_TRIANGLE),
         )
-        conn_0 = _remap_connectivity(fem.elements.connectivity, tag_to_idx)
+        conn_0 = _remap_connectivity(group.connectivity, tag_to_idx)
         cell_blocks.append((conn_0, vtk_type))
 
     n_primary = len(fem.elements.ids)
@@ -258,14 +259,22 @@ def _fem_to_vtk_cells(
     :func:`_build_vtk_cells_from_fem` which handles mixed types and
     proper index remapping.
     """
-    npe = fem.elements.connectivity.shape[1]
-    n_elems = len(fem.elements.ids)
-    vtk_type = _NPE_TO_VTK.get(npe, 5)
-
-    prefix = np.full((n_elems, 1), npe, dtype=np.int64)
-    cells = np.hstack([prefix, fem.elements.connectivity.astype(np.int64)])
-    cell_types = np.full(n_elems, vtk_type, dtype=np.uint8)
-    return cells, cell_types
+    flat_parts: list[ndarray] = []
+    type_parts: list[ndarray] = []
+    for group in fem.elements:
+        if group.connectivity.size == 0:
+            continue
+        npe = group.npe
+        n_cells = len(group)
+        vtk_type = _DIM_NPE_TO_VTK.get(
+            (group.dim, npe), _NPE_TO_VTK.get(npe, VTK_TRIANGLE))
+        prefix = np.full((n_cells, 1), npe, dtype=np.int64)
+        block = np.hstack([prefix, group.connectivity.astype(np.int64)])
+        flat_parts.append(block.ravel())
+        type_parts.append(np.full(n_cells, vtk_type, dtype=np.uint8))
+    if flat_parts:
+        return np.concatenate(flat_parts), np.concatenate(type_parts)
+    return np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
 
 
 # ======================================================================
@@ -936,25 +945,9 @@ class Results:
 # ======================================================================
 
 def _guess_primary_dim(fem: "FEMData") -> int:
-    """Guess the element dimension from connectivity shape.
+    """Infer the primary element dimension from element groups.
 
-    Uses nodes-per-element to infer whether the primary elements
-    are 1-D (lines), 2-D (tris/quads), or 3-D (tets/hexes).
+    Returns the highest dimension present in the mesh.
     """
-    if fem.elements.connectivity.size == 0:
-        return 2  # safe default
-    npe = fem.elements.connectivity.shape[1]
-    if npe == 2:
-        return 1
-    if npe in (3, 4):
-        # Could be 2-D tri/quad or 3-D tet — use physical groups
-        # to disambiguate.  If any physical group has dim=3 with
-        # matching npe, treat as 3-D.
-        if fem.nodes.physical is not None:
-            for pg_dim, _ in fem.nodes.physical.get_all():
-                if pg_dim == 3:
-                    return 3
-        return 2
-    if npe in (6, 8):
-        return 3
-    return 2
+    dims = {g.dim for g in fem.elements}
+    return max(dims) if dims else 2

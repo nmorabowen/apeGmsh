@@ -9,13 +9,14 @@ loads, and masses as sub-composites.
 Top-level composites::
 
     fem.nodes       → NodeComposite   (IDs, coords, nodal loads, masses, node constraints)
-    fem.elements    → ElementComposite (IDs, connectivity, element loads, surface constraints)
+    fem.elements    → ElementComposite (per-type element groups, surface constraints, element loads)
     fem.info        → MeshInfo        (mesh statistics)
     fem.inspect     → InspectComposite (introspection and summaries)
 
 Construction::
 
     fem = FEMData.from_gmsh(dim=3, session=g, ndf=3)
+    fem = FEMData.from_gmsh(session=g)          # all dims
     fem = FEMData.from_msh("bridge.msh", dim=2)
     fem = FEMData(nodes=..., elements=..., info=...)   # direct
 
@@ -29,9 +30,13 @@ Usage::
     for nid in fem.nodes.get_ids(pg="Base"):
         ops.fix(nid, 1, 1, 1)
 
-    # Elements
-    for eid, conn in zip(*fem.elements.get()):
-        ops.element("tet4", eid, *conn, mat_tag)
+    # Elements (iterate by type)
+    for group in fem.elements:
+        for eid, conn in group:
+            ops.element(group.type_name, eid, *conn, mat_tag)
+
+    # Elements (resolve to flat arrays — single type)
+    ids, conn = fem.elements.get(label="col.web").resolve()
 
     # Constraints
     K = fem.nodes.constraints.Kind
@@ -54,6 +59,10 @@ from ._record_set import (
     ConstraintKind, LoadKind,
     NodeConstraintSet, SurfaceConstraintSet,
     NodalLoadSet, ElementLoadSet, MassSet,
+)
+from ._element_types import (
+    ElementTypeInfo, ElementGroup, GroupResult,
+    resolve_type_filter,
 )
 
 if TYPE_CHECKING:
@@ -92,45 +101,27 @@ class NodeResult(NamedTuple):
         )
 
 
-class ElementResult(NamedTuple):
-    """Bundled element IDs and connectivity.
-
-    Destructurable::
-
-        ids, conn = fem.elements.get(pg="Body")
-    """
-    ids:          ndarray
-    connectivity: ndarray
-
-    def to_dataframe(self) -> "pd.DataFrame":
-        import pandas as pd
-        npe = self.connectivity.shape[1] if self.connectivity.ndim == 2 else 0
-        cols = [f"n{i}" for i in range(npe)]
-        return pd.DataFrame(
-            [[int(x) for x in row] for row in self.connectivity],
-            index=pd.Index(
-                [int(x) for x in self.ids], name='elem_id'),
-            columns=cols,
-        )
-
-
 # =====================================================================
 # Bandwidth computation
 # =====================================================================
 
-def _compute_bandwidth(connectivity: ndarray) -> int:
-    """Semi-bandwidth = max over all elements of (max_node - min_node)."""
-    if connectivity.size == 0:
-        return 0
-    # Work with numeric dtype for min/max
-    c = np.asarray(connectivity, dtype=np.int64)
-    row_max = c.max(axis=1)
-    row_min = c.min(axis=1)
-    return int((row_max - row_min).max())
+def _compute_bandwidth(groups: dict[int, ElementGroup]) -> int:
+    """Semi-bandwidth = max over all elements of (max_node - min_node).
+
+    Iterates over per-type groups and takes the global maximum.
+    """
+    bw = 0
+    for g in groups.values():
+        if g.connectivity.size == 0:
+            continue
+        c = np.asarray(g.connectivity, dtype=np.int64)
+        row_bw = int((c.max(axis=1) - c.min(axis=1)).max())
+        bw = max(bw, row_bw)
+    return bw
 
 
 # =====================================================================
-# MeshInfo (unchanged)
+# MeshInfo
 # =====================================================================
 
 class MeshInfo:
@@ -143,41 +134,51 @@ class MeshInfo:
     n_nodes : int
     n_elems : int
     bandwidth : int
-    nodes_per_elem : int
-    elem_type_name : str
+    types : list[ElementTypeInfo]
+        Element types present in the mesh.
     """
 
-    __slots__ = ('n_nodes', 'n_elems', 'bandwidth',
-                 'nodes_per_elem', 'elem_type_name')
+    __slots__ = ('n_nodes', 'n_elems', 'bandwidth', 'types')
 
     def __init__(
         self,
         n_nodes: int,
         n_elems: int,
         bandwidth: int,
-        nodes_per_elem: int = 0,
-        elem_type_name: str = "",
+        types: list[ElementTypeInfo] | None = None,
     ) -> None:
         self.n_nodes = n_nodes
         self.n_elems = n_elems
         self.bandwidth = bandwidth
-        self.nodes_per_elem = nodes_per_elem
-        self.elem_type_name = elem_type_name
+        self.types = types or []
+
+    # ── Backward compat ─────────────────────────────────────
+    @property
+    def nodes_per_elem(self) -> int:
+        """First type's npe, or 0 if empty."""
+        return self.types[0].npe if self.types else 0
+
+    @property
+    def elem_type_name(self) -> str:
+        """First type's name, or empty string."""
+        return self.types[0].name if self.types else ""
 
     def __repr__(self) -> str:
         parts = (
             f"MeshInfo(n_nodes={self.n_nodes}, n_elems={self.n_elems}, "
             f"bandwidth={self.bandwidth}"
         )
-        if self.elem_type_name:
-            parts += f", type={self.elem_type_name!r}"
+        if self.types:
+            names = [t.name for t in self.types]
+            parts += f", types={names}"
         return parts + ")"
 
     def summary(self) -> str:
         """One-line summary string."""
         s = f"{self.n_nodes} nodes, {self.n_elems} elements"
-        if self.elem_type_name:
-            s += f" ({self.elem_type_name})"
+        if self.types:
+            type_parts = [f"{t.name}:{t.count}" for t in self.types]
+            s += f" ({', '.join(type_parts)})"
         s += f", bandwidth={self.bandwidth}"
         return s
 
@@ -222,17 +223,14 @@ class NodeComposite:
         self.physical = physical
         self.labels   = labels
 
-        # Sub-composites (always present, empty by default)
         self.constraints = NodeConstraintSet(constraints)
         self.loads       = NodalLoadSet(loads)
         self.masses      = MassSet(masses)
 
-        # Partition membership: {partition_id: {'node_ids': ndarray, ...}}
         self._partitions: dict[int, dict] = partitions or {}
-
         self._id_to_idx: dict[int, int] | None = None
 
-    # ── Public properties (raw arrays) ───────────────────────
+    # ── Public properties ───────────────────────────────────
 
     @property
     def ids(self) -> ndarray:
@@ -249,7 +247,7 @@ class NodeComposite:
         """Sorted list of partition IDs (empty if not partitioned)."""
         return sorted(self._partitions.keys())
 
-    # ── Selection API ────────────────────────────────────────
+    # ── Selection API ───────────────────────────────────────
 
     def get(
         self,
@@ -266,8 +264,6 @@ class NodeComposite:
         ----------
         target : str, int, or (dim, tag), optional
             Shorthand — searches PGs first, then labels.
-            Accepts a name (str), Gmsh tag (int), or explicit
-            ``(dim, tag)`` tuple.
         pg : str, optional
             Physical group name (explicit).
         label : str, optional
@@ -275,26 +271,11 @@ class NodeComposite:
         tag : int or (dim, tag), optional
             Direct Gmsh physical-group tag lookup.
         partition : int, optional
-            Partition ID.  When combined with *pg*, *label*, or
-            *tag*, acts as an intersection filter.
+            Partition ID (intersection filter).
 
         Returns
         -------
         NodeResult
-            NamedTuple — destructure as ``ids, coords = fem.nodes.get(...)``
-
-        Examples
-        --------
-        ::
-
-            fem.nodes.get()                          # all domain nodes
-            fem.nodes.get("Base")                    # PG-first fallback
-            fem.nodes.get(pg="Base")                 # explicit PG
-            fem.nodes.get(label="col.web")           # explicit label
-            fem.nodes.get(tag=42)                    # by Gmsh PG tag
-            fem.nodes.get(tag=(2, 1))                # by (dim, tag)
-            fem.nodes.get(partition=2)               # partition 2
-            fem.nodes.get(pg="Base", partition=1)    # intersection
         """
         if tag is not None:
             ids = self.physical.node_ids(tag)
@@ -322,12 +303,8 @@ class NodeComposite:
         return NodeResult(ids, coords)
 
     def _intersect_partition(
-        self,
-        ids: ndarray,
-        coords: ndarray,
-        partition: int,
+        self, ids: ndarray, coords: ndarray, partition: int,
     ) -> tuple[ndarray, ndarray]:
-        """Filter *ids*/*coords* to only nodes in *partition*."""
         pdata = self._partitions.get(partition)
         if pdata is None:
             raise KeyError(
@@ -337,44 +314,22 @@ class NodeComposite:
             np.asarray(ids, dtype=np.int64), pdata['node_ids'])
         return ids[mask], coords[mask]
 
-    def get_ids(
-        self,
-        target: str | int | tuple[int, int] | None = None,
-        *,
-        pg: str | None = None,
-        label: str | None = None,
-        tag: int | tuple[int, int] | None = None,
-        partition: int | None = None,
-    ) -> ndarray:
-        """Node IDs only for a selection."""
-        return self.get(
-            target, pg=pg, label=label, tag=tag,
-            partition=partition).ids
+    def get_ids(self, target=None, *, pg=None, label=None,
+                tag=None, partition=None) -> ndarray:
+        """Node IDs only."""
+        return self.get(target, pg=pg, label=label, tag=tag,
+                        partition=partition).ids
 
-    def get_coords(
-        self,
-        target: str | int | tuple[int, int] | None = None,
-        *,
-        pg: str | None = None,
-        label: str | None = None,
-        tag: int | tuple[int, int] | None = None,
-        partition: int | None = None,
-    ) -> ndarray:
-        """Coordinates only for a selection."""
-        return self.get(
-            target, pg=pg, label=label, tag=tag,
-            partition=partition).coords
+    def get_coords(self, target=None, *, pg=None, label=None,
+                   tag=None, partition=None) -> ndarray:
+        """Coordinates only."""
+        return self.get(target, pg=pg, label=label, tag=tag,
+                        partition=partition).coords
 
-    # ── Lookups ──────────────────────────────────────────────
+    # ── Lookups ─────────────────────────────────────────────
 
     def index(self, nid: int) -> int:
-        """Array index for a node ID.  O(1) after first call.
-
-        Raises
-        ------
-        KeyError
-            If ``nid`` is not in the domain nodes.
-        """
+        """Array index for a node ID.  O(1) after first call."""
         if self._id_to_idx is None:
             self._id_to_idx = {
                 int(n): i for i, n in enumerate(self._ids)}
@@ -387,10 +342,10 @@ class NodeComposite:
                        f"{int(self._ids.max())} "
                        f"({len(self._ids)} nodes)")
             else:
-                msg = f"Node ID {nid} not found (no nodes in composite)"
+                msg = f"Node ID {nid} not found (no nodes)"
             raise KeyError(msg) from None
 
-    # ── Dunder ───────────────────────────────────────────────
+    # ── Dunder ──────────────────────────────────────────────
 
     def __len__(self) -> int:
         return len(self._ids)
@@ -413,63 +368,127 @@ class NodeComposite:
 class ElementComposite:
     """Access and query elements from the FEM mesh.
 
-    Primary interface::
+    Iterable — yields ``ElementGroup`` objects::
 
-        fem.elements.get(pg="Body")  → ElementResult(ids, conn)
-        fem.elements.get()           → all elements
+        for group in fem.elements:
+            print(group.type_name, len(group))
+
+    Selection API::
+
+        result = fem.elements.get(label="col.web")
+        ids, conn = result.resolve()           # single-type
+        ids, conn = result.resolve(element_type='tet4')  # pick one
 
     Sub-composites::
 
         fem.elements.constraints     → SurfaceConstraintSet
         fem.elements.loads           → ElementLoadSet
-
-    Public properties for raw array access::
-
-        fem.elements.ids             → ndarray(E,) object dtype
-        fem.elements.connectivity    → ndarray(E, npe) object dtype
     """
 
     def __init__(
         self,
-        element_ids: ndarray,
-        connectivity: ndarray,
+        groups: dict[int, ElementGroup],
         physical: PhysicalGroupSet,
         labels: LabelSet,
         constraints=None,
         loads=None,
         partitions: dict[int, dict] | None = None,
     ) -> None:
-        self._ids  = _to_object(element_ids)
-        self._conn = _to_object(connectivity)
+        self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
         self.labels   = labels
 
         self.constraints = SurfaceConstraintSet(constraints)
         self.loads       = ElementLoadSet(loads)
 
-        # Partition membership: {partition_id: {'element_ids': ndarray, ...}}
         self._partitions: dict[int, dict] = partitions or {}
 
+        # Lazy caches
+        self._cached_ids: ndarray | None = None
         self._id_to_idx: dict[int, int] | None = None
 
-    # ── Public properties (raw arrays) ───────────────────────
+    # ── Iteration ───────────────────────────────────────────
+
+    def __iter__(self):
+        """Yield ``ElementGroup`` objects (one per element type)."""
+        return iter(self._groups.values())
+
+    def __len__(self) -> int:
+        """Total element count across all groups."""
+        return sum(len(g) for g in self._groups.values())
+
+    def __bool__(self) -> bool:
+        return len(self) > 0
+
+    # ── Public properties ───────────────────────────────────
 
     @property
     def ids(self) -> ndarray:
-        """All element IDs.  ``ndarray(E,)`` object dtype."""
-        return self._ids
+        """All element IDs concatenated.  ``ndarray(E,)`` int64."""
+        if self._cached_ids is None:
+            if not self._groups:
+                self._cached_ids = np.array([], dtype=np.int64)
+            else:
+                self._cached_ids = np.concatenate(
+                    [g.ids for g in self._groups.values()])
+        return self._cached_ids
 
     @property
     def connectivity(self) -> ndarray:
-        """Full connectivity array.  ``ndarray(E, npe)`` object dtype."""
-        return self._conn
+        """Flat connectivity — only if all elements are the same type.
+
+        Raises
+        ------
+        TypeError
+            If multiple element types are present.
+        """
+        if not self._groups:
+            return np.empty((0, 0), dtype=np.int64)
+        if len(self._groups) > 1:
+            names = [g.type_name for g in self._groups.values()]
+            raise TypeError(
+                f"Cannot return flat connectivity: "
+                f"{len(self._groups)} element types present "
+                f"({', '.join(names)}). "
+                f"Use .resolve(element_type=...) or iterate groups."
+            )
+        return next(iter(self._groups.values())).connectivity
+
+    @property
+    def types(self) -> list[ElementTypeInfo]:
+        """Element types present in the mesh."""
+        return [g.element_type for g in self._groups.values()]
 
     @property
     def partitions(self) -> list[int]:
-        """Sorted list of partition IDs (empty if not partitioned)."""
+        """Sorted list of partition IDs."""
         return sorted(self._partitions.keys())
 
-    # ── Selection API ────────────────────────────────────────
+    @property
+    def is_homogeneous(self) -> bool:
+        """True if all elements are the same type."""
+        return len(self._groups) <= 1
+
+    # ── Type introspection ──────────────────────────────────
+
+    def type_table(self) -> "pd.DataFrame":
+        """DataFrame of element types in the mesh."""
+        import pandas as pd
+        rows = []
+        for g in self._groups.values():
+            t = g.element_type
+            rows.append({
+                'code': t.code,
+                'name': t.name,
+                'gmsh_name': t.gmsh_name,
+                'dim': t.dim,
+                'order': t.order,
+                'npe': t.npe,
+                'count': t.count,
+            })
+        return pd.DataFrame(rows)
+
+    # ── Selection API ───────────────────────────────────────
 
     def get(
         self,
@@ -478,127 +497,141 @@ class ElementComposite:
         pg: str | None = None,
         label: str | None = None,
         tag: int | tuple[int, int] | None = None,
+        dim: int | None = None,
+        element_type: str | int | None = None,
         partition: int | None = None,
-    ) -> ElementResult:
-        """Bundled ``(ids, connectivity)`` for a selection.
+    ) -> GroupResult:
+        """Select elements by PG, label, dim, element type, partition.
+
+        All filters compose as AND intersections.  Returns a
+        ``GroupResult`` — iterable of ``ElementGroup`` objects.
 
         Parameters
         ----------
         target : str, int, or (dim, tag), optional
-            Shorthand — searches PGs first, then labels.
-            Accepts a name (str), Gmsh tag (int), or explicit
-            ``(dim, tag)`` tuple.
-        pg : str, optional
-            Physical group name (explicit).
-        label : str, optional
-            Label name (explicit).
-        tag : int or (dim, tag), optional
-            Direct Gmsh physical-group tag lookup.
+            Shorthand — PGs first, then labels.
+        pg, label, tag : optional
+            Explicit selectors (same as ``NodeComposite.get``).
+        dim : int, optional
+            Filter by element dimension (0–3).
+        element_type : str or int, optional
+            Filter by element type alias (``'tet4'``), Gmsh code
+            (``4``), or Gmsh name (``'Tetrahedron 4'``).
         partition : int, optional
-            Partition ID.  When combined with *pg*, *label*, or
-            *tag*, acts as an intersection filter.
+            Filter by partition ID.
 
         Returns
         -------
-        ElementResult
-            NamedTuple — destructure as
-            ``ids, conn = fem.elements.get(...)``
+        GroupResult
         """
+        # Step 1: resolve ID set from PG/label/tag
+        id_set = None
         if tag is not None:
-            ids = self.physical.element_ids(tag)
-            conn = self.physical.connectivity(tag)
+            id_set = set(int(x) for x in self.physical.element_ids(tag))
         elif pg is not None:
-            ids = self.physical.element_ids(pg)
-            conn = self.physical.connectivity(pg)
+            id_set = set(int(x) for x in self.physical.element_ids(pg))
         elif label is not None:
-            ids = self.labels.element_ids(label)
-            conn = self.labels.connectivity(label)
+            id_set = set(int(x) for x in self.labels.element_ids(label))
         elif target is not None:
             try:
-                ids = self.physical.element_ids(target)
-                conn = self.physical.connectivity(target)
+                id_set = set(
+                    int(x) for x in self.physical.element_ids(target))
             except (KeyError, ValueError):
-                ids = self.labels.element_ids(target)
-                conn = self.labels.connectivity(target)
-        else:
-            ids, conn = self._ids, self._conn
+                id_set = set(
+                    int(x) for x in self.labels.element_ids(target))
 
+        # Step 2: partition filter
         if partition is not None:
-            ids, conn = self._intersect_partition(
-                ids, conn, partition)
+            pdata = self._partitions.get(partition)
+            if pdata is None:
+                raise KeyError(
+                    f"Partition {partition} not found. "
+                    f"Available: {self.partitions}")
+            pset = set(int(x) for x in pdata['element_ids'])
+            id_set = pset if id_set is None else (id_set & pset)
 
-        return ElementResult(ids, conn)
+        # Step 3: build filtered groups
+        result_groups: list[ElementGroup] = []
+        for g in self._groups.values():
+            # dim filter
+            if dim is not None and g.dim != dim:
+                continue
+            # element_type filter
+            if element_type is not None:
+                codes = resolve_type_filter(
+                    element_type, list(self._groups.values()))
+                if g.type_code not in codes:
+                    continue
+            # ID filter (from PG/label/partition)
+            if id_set is not None:
+                mask = np.isin(g.ids, list(id_set))
+                if not mask.any():
+                    continue
+                filtered = ElementGroup(
+                    element_type=g.element_type,
+                    ids=g.ids[mask],
+                    connectivity=g.connectivity[mask],
+                )
+                result_groups.append(filtered)
+            else:
+                result_groups.append(g)
 
-    def _intersect_partition(
-        self,
-        ids: ndarray,
-        conn: ndarray,
-        partition: int,
-    ) -> tuple[ndarray, ndarray]:
-        """Filter *ids*/*conn* to only elements in *partition*."""
-        pdata = self._partitions.get(partition)
-        if pdata is None:
-            raise KeyError(
-                f"Partition {partition} not found. "
-                f"Available: {self.partitions}")
-        mask = np.isin(
-            np.asarray(ids, dtype=np.int64), pdata['element_ids'])
-        return ids[mask], conn[mask]
+        return GroupResult(result_groups)
 
     def get_ids(
         self,
-        target: str | int | tuple[int, int] | None = None,
-        *,
-        pg: str | None = None,
-        label: str | None = None,
-        tag: int | tuple[int, int] | None = None,
-        partition: int | None = None,
+        target=None, *, pg=None, label=None, tag=None,
+        dim=None, element_type=None, partition=None,
     ) -> ndarray:
         """Element IDs only for a selection."""
         return self.get(
             target, pg=pg, label=label, tag=tag,
-            partition=partition).ids
+            dim=dim, element_type=element_type,
+            partition=partition,
+        ).ids
 
-    def get_connectivity(
+    def resolve(
         self,
-        target: str | int | tuple[int, int] | None = None,
-        *,
-        pg: str | None = None,
-        label: str | None = None,
-        tag: int | tuple[int, int] | None = None,
-        partition: int | None = None,
-    ) -> ndarray:
-        """Connectivity only for a selection."""
+        target=None, *, pg=None, label=None, tag=None,
+        dim=None, element_type=None, partition=None,
+    ) -> tuple[ndarray, ndarray]:
+        """Flat ``(ids, connectivity)`` — convenience for single-type results.
+
+        Delegates to ``.get(...).resolve()``.
+        """
         return self.get(
             target, pg=pg, label=label, tag=tag,
-            partition=partition).connectivity
+            dim=dim, element_type=element_type,
+            partition=partition,
+        ).resolve()
 
-    # ── Lookups ──────────────────────────────────────────────
+    # ── Lookups ─────────────────────────────────────────────
 
     def index(self, eid: int) -> int:
         """Array index for an element ID.  O(1) after first call."""
         if self._id_to_idx is None:
             self._id_to_idx = {
-                int(e): i for i, e in enumerate(self._ids)}
+                int(e): i for i, e in enumerate(self.ids)}
         try:
             return self._id_to_idx[int(eid)]
         except KeyError:
-            if len(self._ids) > 0:
+            ids = self.ids
+            if len(ids) > 0:
                 msg = (f"Element ID {eid} not found. "
-                       f"Valid range: {int(self._ids.min())}-"
-                       f"{int(self._ids.max())} "
-                       f"({len(self._ids)} elements)")
+                       f"Valid range: {int(ids.min())}-"
+                       f"{int(ids.max())} "
+                       f"({len(ids)} elements)")
             else:
-                msg = f"Element ID {eid} not found (no elements in composite)"
+                msg = f"Element ID {eid} not found (no elements)"
             raise KeyError(msg) from None
 
-    # ── Dunder ───────────────────────────────────────────────
-
-    def __len__(self) -> int:
-        return len(self._ids)
+    # ── Dunder ──────────────────────────────────────────────
 
     def __repr__(self) -> str:
-        parts = [f"ElementComposite({len(self._ids)} elements)"]
+        type_parts = [f"{g.type_name}:{len(g)}"
+                      for g in self._groups.values()]
+        parts = [f"ElementComposite({len(self)} elements: "
+                 f"{', '.join(type_parts)})"]
         if self.constraints:
             parts.append(f"  constraints: {self.constraints!r}")
         if self.loads:
@@ -614,20 +647,12 @@ class InspectComposite:
     """Introspection and summary methods.
 
     Accessed via ``fem.inspect``.
-
-    Example
-    -------
-    ::
-
-        print(fem.inspect.summary())
-        fem.inspect.node_table()
-        fem.inspect.constraint_summary()
     """
 
     def __init__(self, fem: "FEMData") -> None:
         self._fem = fem
 
-    # ── Tables ───────────────────────────────────────────────
+    # ── Tables ──────────────────────────────────────────────
 
     def summary(self) -> str:
         """One-line mesh summary plus sub-composite counts."""
@@ -663,6 +688,15 @@ class InspectComposite:
                     parts += f", {n_e} elems"
                 lines.append(f"    ({d}) {name!r:24s} {parts}")
 
+        # Element types
+        if f.info.types:
+            lines.append(f"  Element types ({len(f.info.types)}):")
+            for t in f.info.types:
+                lines.append(
+                    f"    {t.name:12s} dim={t.dim}, "
+                    f"order={t.order}, npe={t.npe}, "
+                    f"count={t.count}")
+
         # Constraints
         nc = f.nodes.constraints
         sc = f.elements.constraints
@@ -670,19 +704,17 @@ class InspectComposite:
             lines.append(f"  Node constraints: {nc!r}")
         if sc:
             lines.append(f"  Surface constraints: {sc!r}")
-        # Loads
         if f.nodes.loads:
             lines.append(f"  Nodal loads: {f.nodes.loads!r}")
         if f.elements.loads:
             lines.append(f"  Element loads: {f.elements.loads!r}")
-        # Masses
         if f.nodes.masses:
             lines.append(f"  {f.nodes.masses!r}")
 
         return "\n".join(lines)
 
     def node_table(self) -> "pd.DataFrame":
-        """DataFrame of all nodes: ``node_id, x, y, z``."""
+        """DataFrame of all nodes."""
         import pandas as pd
         f = self._fem
         return pd.DataFrame(
@@ -693,41 +725,34 @@ class InspectComposite:
         )
 
     def element_table(self) -> "pd.DataFrame":
-        """DataFrame of all elements: ``elem_id, n0, n1, …``."""
+        """DataFrame of all elements with a ``type`` column."""
         import pandas as pd
-        f = self._fem
-        npe = (f.elements.connectivity.shape[1]
-               if f.elements.connectivity.ndim == 2 else 0)
-        cols = [f"n{i}" for i in range(npe)]
-        return pd.DataFrame(
-            [[int(x) for x in row]
-             for row in f.elements.connectivity],
-            index=pd.Index(
-                [int(x) for x in f.elements.ids], name='elem_id'),
-            columns=cols,
-        )
+        rows = []
+        for group in self._fem.elements:
+            for eid, conn_row in group:
+                row: dict = {'elem_id': eid, 'type': group.type_name}
+                for j, nid in enumerate(conn_row):
+                    row[f'n{j}'] = int(nid)
+                rows.append(row)
+        return pd.DataFrame(rows).set_index('elem_id')
 
     def physical_table(self) -> "pd.DataFrame":
-        """DataFrame of all physical groups."""
         return self._fem.nodes.physical.summary()
 
     def label_table(self) -> "pd.DataFrame":
-        """DataFrame of all labels."""
         return self._fem.nodes.labels.summary()
 
-    # ── Constraint/Load/Mass introspection ───────────────────
+    # ── Constraint/Load/Mass introspection ──────────────────
 
     def constraint_summary(self) -> str:
-        """Human-readable breakdown of all constraints with sources."""
+        """Human-readable breakdown of all constraints."""
         f = self._fem
         lines = []
 
         def _kind_summary(record_set, header):
-            """Single-pass kind counting + name hint extraction."""
             if not record_set:
                 return
             lines.append(f"{header} ({len(record_set)} records):")
-            # Single pass: count + capture first named record per kind
             counts: dict[str, int] = {}
             names: dict[str, str] = {}
             for r in record_set:
@@ -754,7 +779,7 @@ class InspectComposite:
         return "\n".join(lines)
 
     def load_summary(self) -> str:
-        """Human-readable breakdown of all loads with sources."""
+        """Human-readable breakdown of all loads."""
         f = self._fem
         lines = []
 
@@ -799,7 +824,6 @@ class InspectComposite:
             return "No masses."
         lines = [f"Nodal masses ({len(ms)} nodes):"]
         lines.append(f"  Total mass: {ms.total_mass():.6g}")
-        # Source hint from first record
         for r in ms:
             if getattr(r, 'name', None):
                 lines.append(f"  Source: {r.name!r}")
@@ -820,17 +844,6 @@ class FEMData:
         fem.elements    → ElementComposite
         fem.info        → MeshInfo
         fem.inspect     → InspectComposite
-
-    Parameters
-    ----------
-    nodes : NodeComposite
-        Node data with sub-composites for constraints, loads, masses.
-    elements : ElementComposite
-        Element data with sub-composites for constraints, loads.
-    info : MeshInfo
-        Mesh statistics.
-    mesh_selection : MeshSelectionStore, optional
-        Snapshot of mesh selections (if any).
     """
 
     def __init__(
@@ -848,13 +861,13 @@ class FEMData:
 
     @property
     def partitions(self) -> list[int]:
-        """Sorted list of partition IDs (empty if not partitioned)."""
+        """Sorted list of partition IDs."""
         return self.nodes.partitions
 
     @classmethod
     def from_gmsh(
         cls,
-        dim: int,
+        dim: int | None = None,
         *,
         session=None,
         ndf: int = 6,
@@ -864,20 +877,14 @@ class FEMData:
 
         Parameters
         ----------
-        dim : int
-            Element dimension to extract (1, 2, or 3).
+        dim : int or None
+            Element dimension to extract.  ``None`` = all dims.
         session : apeGmsh session, optional
-            When provided, auto-resolves constraints, loads, and masses.
+            When provided, auto-resolves constraints, loads, masses.
         ndf : int
             DOFs per node for load/mass vector padding.
         remove_orphans : bool
             If True, remove mesh nodes not connected to any element.
-            Nodes referenced by constraints, loads, or masses are
-            always kept.  Default False.
-
-        Returns
-        -------
-        FEMData
         """
         from ._fem_factory import _from_gmsh
         return _from_gmsh(
@@ -888,43 +895,17 @@ class FEMData:
     def from_msh(
         cls,
         path: str,
-        dim: int = 2,
+        dim: int | None = 2,
         *,
         remove_orphans: bool = False,
     ):
-        """Load FEMData from an external ``.msh`` file.
-
-        No session, no BCs — pure mesh + physical groups.
-
-        Parameters
-        ----------
-        path : str
-            Path to the ``.msh`` file.
-        dim : int
-            Element dimension to extract.
-        remove_orphans : bool
-            If True, remove mesh nodes not connected to any element.
-            Default False.
-
-        Returns
-        -------
-        FEMData
-        """
+        """Load FEMData from an external ``.msh`` file."""
         from ._fem_factory import _from_msh
         return _from_msh(cls, path=path, dim=dim,
                          remove_orphans=remove_orphans)
 
     def viewer(self, *, blocking: bool = False) -> None:
-        """Open a non-interactive mesh viewer from this snapshot.
-
-        Works offline — no live Gmsh session required.  Delegates to
-        the ``Results -> VTK -> apeGmshViewer`` pipeline.
-
-        Parameters
-        ----------
-        blocking : bool
-            If True, block until the viewer window is closed.
-        """
+        """Open a non-interactive mesh viewer from this snapshot."""
         from ..results.Results import Results
         r = Results.from_fem(self, name="FEMData")
         r.viewer(blocking=blocking)
