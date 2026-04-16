@@ -118,6 +118,31 @@ class _Export:
             for nid in ops_ids:
                 lines.append(f"fix {nid}  {dof_str}")
 
+        if ops._sp_records:
+            hom: dict[int, list[int]] = {}
+            pre: list[dict] = []
+            for sp in ops._sp_records:
+                ops_id = ops._node_map.get(int(sp["node_id"]))
+                if ops_id is None:
+                    continue
+                if sp["is_homogeneous"]:
+                    hom.setdefault(ops_id, []).append(sp["dof"])
+                else:
+                    pre.append({**sp, "ops_id": ops_id})
+            if hom:
+                hdr(f"Face SP — homogeneous fix  ({len(hom)} nodes)")
+                for nid in sorted(hom):
+                    dofs = sorted(set(hom[nid]))
+                    mask = "  ".join(
+                        str(1 if (d + 1) in dofs else 0)
+                        for d in range(ops._ndf)
+                    )
+                    lines.append(f"fix {nid}  {mask}")
+            if pre:
+                hdr(f"Face SP — prescribed displacement  ({len(pre)} entries)")
+                for sp in pre:
+                    lines.append(f"sp {sp['ops_id']}  {sp['dof']}  {sp['value']:.10g}")
+
         if ops._mass_records:
             hdr(f"Nodal masses  ({len(ops._mass_records)} entries)")
             for mr in ops._mass_records:
@@ -277,6 +302,34 @@ class _Export:
             lines.append(f"# PG: {pg_name!r}  —  {len(ops_ids)} nodes")
             for nid in ops_ids:
                 lines.append(f"ops.fix({nid}, {dof_str})")
+
+        if ops._sp_records:
+            # Group homogeneous records into fix() calls; emit prescribed as sp()
+            hom: dict[int, list[int]] = {}   # ops_id -> sorted dof list
+            pre: list[dict] = []
+            for sp in ops._sp_records:
+                ops_id = ops._node_map.get(int(sp["node_id"]))
+                if ops_id is None:
+                    continue
+                if sp["is_homogeneous"]:
+                    hom.setdefault(ops_id, []).append(sp["dof"])
+                else:
+                    pre.append({**sp, "ops_id": ops_id})
+            if hom:
+                hdr(f"Face SP — homogeneous fix  ({len(hom)} nodes)")
+                for nid in sorted(hom):
+                    dofs = sorted(set(hom[nid]))
+                    mask = ", ".join(
+                        str(1 if (d + 1) in dofs else 0)
+                        for d in range(ops._ndf)
+                    )
+                    lines.append(f"ops.fix({nid}, {mask})")
+            if pre:
+                hdr(f"Face SP — prescribed displacement  ({len(pre)} entries)")
+                for sp in pre:
+                    lines.append(
+                        f"ops.sp({sp['ops_id']}, {sp['dof']}, {sp['value']:.10g})"
+                    )
 
         if ops._mass_records:
             hdr(f"Nodal masses  ({len(ops._mass_records)} entries)")

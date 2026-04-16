@@ -56,10 +56,14 @@ class _Ingest:
                 pat = rec.pattern
                 if pat not in ops._load_patterns:
                     ops._load_patterns[pat] = []
+                # The bridge dict keeps a length-6 (Fx,Fy,Fz,Mx,My,Mz) list
+                # so _opensees_build/export/inspect can slice to ops._ndf.
+                f = rec.force_xyz or (0.0, 0.0, 0.0)
+                m = rec.moment_xyz or (0.0, 0.0, 0.0)
                 ops._load_patterns[pat].append({
                     "type":    "nodal_direct",
                     "node_id": int(rec.node_id),
-                    "forces":  list(rec.forces),
+                    "forces":  [f[0], f[1], f[2], m[0], m[1], m[2]],
                 })
             total += len(nodal_loads)
 
@@ -89,6 +93,32 @@ class _Ingest:
             f"ingest.loads(): {total} load record(s) "
             f"across {len(all_patterns)} pattern(s)"
         )
+        return self
+
+    def sp(self, fem) -> "_Ingest":
+        """Ingest resolved SP records from a :class:`FEMData` snapshot.
+
+        Translates ``fem.nodes.sp`` (populated by ``g.loads.face_sp``
+        auto-resolve) into the internal SP dict consumed by
+        :meth:`OpenSees.build`.
+
+        Parameters
+        ----------
+        fem : FEMData
+            Snapshot from ``g.mesh.queries.get_fem_data()``.
+        """
+        sp_set = getattr(getattr(fem, "nodes", None), "sp", None)
+        if not sp_set:
+            return self
+        ops = self._opensees
+        for rec in sp_set:
+            ops._sp_records.append({
+                "node_id": int(rec.node_id),
+                "dof": int(rec.dof),
+                "value": float(rec.value),
+                "is_homogeneous": bool(rec.is_homogeneous),
+            })
+        ops._log(f"ingest.sp(): {len(sp_set)} SP record(s)")
         return self
 
     def masses(self, fem) -> "_Ingest":

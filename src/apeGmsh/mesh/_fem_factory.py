@@ -59,18 +59,21 @@ def _split_constraints(records: list) -> tuple[list, list]:
 # Load splitting
 # =====================================================================
 
-def _split_loads(records: list) -> tuple[list, list]:
-    """Split resolved load records into nodal and element."""
-    from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord
+def _split_loads(records: list) -> tuple[list, list, list]:
+    """Split resolved load records into nodal, element, and SP."""
+    from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord, SPRecord
 
     nodal = []
     element = []
+    sp = []
 
     for rec in records:
         if isinstance(rec, NodalLoadRecord):
             nodal.append(rec)
         elif isinstance(rec, ElementLoadRecord):
             element.append(rec)
+        elif isinstance(rec, SPRecord):
+            sp.append(rec)
         else:
             _log.warning(
                 "Unknown load record type %s (kind=%r) — "
@@ -78,7 +81,7 @@ def _split_loads(records: list) -> tuple[list, list]:
                 type(rec).__name__, getattr(rec, 'kind', '?'))
             nodal.append(rec)
 
-    return nodal, element
+    return nodal, element, sp
 
 
 # =====================================================================
@@ -89,6 +92,7 @@ def _collect_constraint_nodes(
     node_constraints: list,
     surface_constraints: list,
     nodal_loads: list,
+    sp_records: list,
     mass_records: list,
 ) -> set[int]:
     """Collect every mesh node ID referenced by resolved BCs."""
@@ -119,6 +123,8 @@ def _collect_constraint_nodes(
             ids.update(rec.slave_nodes)
 
     for rec in nodal_loads:
+        ids.add(rec.node_id)
+    for rec in sp_records:
         ids.add(rec.node_id)
     for rec in mass_records:
         ids.add(rec.node_id)
@@ -255,6 +261,7 @@ def _from_gmsh(
     surface_constraints: list = []
     nodal_loads: list = []
     element_loads: list = []
+    sp_records: list = []
     mass_records: list = []
 
     if session is not None:
@@ -298,9 +305,8 @@ def _from_gmsh(
                 and getattr(loads_comp, "load_defs", None)):
             try:
                 all_loads = loads_comp.resolve(
-                    node_ids, node_coords_all,
-                    ndf=ndf, **resolve_kw)
-                nodal_loads, element_loads = _split_loads(all_loads)
+                    node_ids, node_coords_all, **resolve_kw)
+                nodal_loads, element_loads, sp_records = _split_loads(all_loads)
             except Exception as exc:
                 _log.warning("Load resolve failed: %s", exc)
 
@@ -319,7 +325,7 @@ def _from_gmsh(
     if remove_orphans:
         protected = _collect_constraint_nodes(
             node_constraints, surface_constraints,
-            nodal_loads, mass_records,
+            nodal_loads, sp_records, mass_records,
         )
         node_ids, node_coords_all = _filter_orphans(
             node_tags, node_coords, used_tags, protected)
@@ -341,6 +347,7 @@ def _from_gmsh(
         labels=labels,
         constraints=node_constraints or None,
         loads=nodal_loads or None,
+        sp=sp_records or None,
         masses=mass_records or None,
         partitions=partitions or None,
     )

@@ -36,6 +36,8 @@ from apeGmsh.solvers.Loads import (
     SurfaceLoadDef,
     GravityLoadDef,
     BodyLoadDef,
+    FaceLoadDef,
+    FaceSPDef,
 )
 
 
@@ -68,6 +70,12 @@ _DISPATCH: dict[type, dict[tuple[str, str], str]] = {
         ("consistent", "nodal"):   "_resolve_body_tributary",
         ("tributary",  "element"): "_resolve_body_element",
         ("consistent", "element"): "_resolve_body_element",
+    },
+    FaceLoadDef: {
+        ("tributary",  "nodal"):   "_resolve_face_load",
+    },
+    FaceSPDef: {
+        ("tributary",  "nodal"):   "_resolve_face_sp",
     },
 }
 
@@ -182,6 +190,67 @@ class LoadsComposite:
             pattern=self._active_pattern, name=name,
             force_per_volume=force_per_volume,
             reduction=reduction, target_form=target_form,
+        ))
+
+    def face_load(self, target=None, *, pg=None, label=None, tag=None,
+                  force_xyz=None, moment_xyz=None,
+                  name=None) -> FaceLoadDef:
+        """Concentrated force/moment at face centroid, distributed to nodes.
+
+        ``force_xyz`` is split equally among all face nodes.
+        ``moment_xyz`` is converted to statically equivalent nodal
+        forces via least-norm distribution.
+
+        Use this instead of a reference node when you only need to
+        apply a load to a face without structural coupling.
+
+        Parameters
+        ----------
+        target : str or list[(dim, tag)]
+            Surface to load (PG name, label, part, or raw DimTag list).
+        force_xyz : tuple, optional
+            Concentrated force ``(Fx, Fy, Fz)`` at the face centroid.
+        moment_xyz : tuple, optional
+            Concentrated moment ``(Mx, My, Mz)`` about the face centroid.
+        """
+        if force_xyz is None and moment_xyz is None:
+            raise ValueError("face_load() requires force_xyz or moment_xyz.")
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
+        return self._add_def(FaceLoadDef(
+            target=t, target_source=src,
+            pattern=self._active_pattern, name=name,
+            force_xyz=force_xyz, moment_xyz=moment_xyz,
+        ))
+
+    def face_sp(self, target=None, *, pg=None, label=None, tag=None,
+                dofs=None, disp_xyz=None, rot_xyz=None,
+                name=None) -> FaceSPDef:
+        """Prescribed displacement/rotation at face centroid, mapped to nodes.
+
+        Each face node receives ``u_i = disp_xyz + rot_xyz x r_i``
+        where ``r_i`` is the arm from the face centroid to node *i*.
+
+        When ``disp_xyz`` and ``rot_xyz`` are both ``None``, the result
+        is a homogeneous fix (equivalent to ``fix()``).
+
+        Parameters
+        ----------
+        target : str or list[(dim, tag)]
+            Surface to constrain.
+        dofs : list[int], optional
+            Restraint mask (``1`` = constrained, ``0`` = free).
+            Defaults to ``[1, 1, 1]``.
+        disp_xyz : tuple, optional
+            Prescribed translation ``(ux, uy, uz)`` at centroid.
+        rot_xyz : tuple, optional
+            Prescribed rotation ``(θx, θy, θz)`` about centroid.
+        """
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
+        return self._add_def(FaceSPDef(
+            target=t, target_source=src,
+            pattern=self._active_pattern, name=name,
+            dofs=dofs or [1, 1, 1],
+            disp_xyz=disp_xyz, rot_xyz=rot_xyz,
         ))
 
     @staticmethod
@@ -425,11 +494,10 @@ class LoadsComposite:
         *,
         node_map=None,
         face_map=None,
-        ndf: int = 6,
     ) -> LoadSet:
         """Resolve all stored LoadDefs into a :class:`LoadSet`."""
         resolver = LoadResolver(
-            node_tags, node_coords, elem_tags, connectivity, ndf=ndf,
+            node_tags, node_coords, elem_tags, connectivity,
         )
         all_nodes = set(int(t) for t in node_tags)
         records: list = []
@@ -533,6 +601,16 @@ class LoadsComposite:
         src = getattr(defn, 'target_source', 'auto')
         eids, _ = self._target_elements(defn.target, source=src)
         return resolver.resolve_body_element(defn, eids)
+
+    def _resolve_face_load(self, resolver, defn, node_map, all_nodes):
+        src = getattr(defn, 'target_source', 'auto')
+        nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
+        return resolver.resolve_face_load(defn, sorted(nodes))
+
+    def _resolve_face_sp(self, resolver, defn, node_map, all_nodes):
+        src = getattr(defn, 'target_source', 'auto')
+        nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
+        return resolver.resolve_face_sp(defn, sorted(nodes))
 
     # ------------------------------------------------------------------
     # Queries

@@ -58,7 +58,7 @@ from ._group_set import (
 from ._record_set import (
     ConstraintKind, LoadKind,
     NodeConstraintSet, SurfaceConstraintSet,
-    NodalLoadSet, ElementLoadSet, MassSet,
+    NodalLoadSet, SPSet, ElementLoadSet, MassSet,
 )
 from ._element_types import (
     ElementTypeInfo, ElementGroup, GroupResult,
@@ -249,6 +249,7 @@ class NodeComposite:
         labels: LabelSet,
         constraints=None,
         loads=None,
+        sp=None,
         masses=None,
         partitions: dict[int, dict] | None = None,
     ) -> None:
@@ -259,6 +260,7 @@ class NodeComposite:
 
         self.constraints = NodeConstraintSet(constraints)
         self.loads       = NodalLoadSet(loads)
+        self.sp          = SPSet(sp)
         self.masses      = MassSet(masses)
 
         self._partitions: dict[int, dict] = partitions or {}

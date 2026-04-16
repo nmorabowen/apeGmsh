@@ -105,6 +105,49 @@ class BodyLoadDef(LoadDef):
     force_per_volume: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
+@dataclass
+class FaceLoadDef(LoadDef):
+    """Concentrated force/moment at face centroid, distributed to face nodes.
+
+    ``force_xyz`` is split equally among all face nodes (``F / N``).
+    ``moment_xyz`` is converted to statically equivalent nodal forces
+    via a least-norm distribution such that ``Sum(r_i x f_i) = M`` and
+    ``Sum(f_i) = 0``.
+
+    Use this instead of a reference node + coupling when you only need
+    to apply a load to a face without structural coupling to another
+    element.
+    """
+    kind: str = field(init=False, default="face_load")
+    force_xyz: tuple[float, float, float] | None = None
+    moment_xyz: tuple[float, float, float] | None = None
+
+
+@dataclass
+class FaceSPDef(LoadDef):
+    """Prescribed displacement/rotation at face centroid, mapped to face nodes.
+
+    Maps a rigid-body motion at the face centroid to per-node
+    displacements using ``u_i = disp_xyz + rot_xyz x r_i``.
+
+    When both ``disp_xyz`` and ``rot_xyz`` are ``None``, all values are
+    zero and the result is a homogeneous fix.
+
+    Parameters
+    ----------
+    dofs : list[int]
+        Restraint mask — ``1`` for constrained DOFs, ``0`` for free.
+    disp_xyz : tuple or None
+        Prescribed translation at the face centroid.
+    rot_xyz : tuple or None
+        Prescribed rotation about the face centroid.
+    """
+    kind: str = field(init=False, default="face_sp")
+    dofs: list[int] = field(default_factory=lambda: [1, 1, 1])
+    disp_xyz: tuple[float, float, float] | None = None
+    rot_xyz: tuple[float, float, float] | None = None
+
+
 # ======================================================================
 # LoadRecord hierarchy (post-mesh, resolved)
 # ======================================================================
@@ -119,10 +162,16 @@ class LoadRecord:
 
 @dataclass
 class NodalLoadRecord(LoadRecord):
-    """Force/moment vector at a single node."""
+    """Force and/or moment at a single node.
+
+    ``force_xyz`` and ``moment_xyz`` are pure 3D spatial vectors (or
+    ``None`` when absent). The record is DOF-agnostic — mapping onto
+    a solver's DOF space is the caller's responsibility.
+    """
     kind: str = field(init=False, default="nodal")
     node_id: int = 0
-    forces: tuple = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)  # (Fx,Fy,Fz,Mx,My,Mz)
+    force_xyz: tuple[float, float, float] | None = None
+    moment_xyz: tuple[float, float, float] | None = None
 
 
 @dataclass
@@ -132,6 +181,21 @@ class ElementLoadRecord(LoadRecord):
     element_id: int = 0
     load_type: str = ""             # "beamUniform", "surfacePressure", "bodyForce", ...
     params: dict = field(default_factory=dict)
+
+
+@dataclass
+class SPRecord(LoadRecord):
+    """Single-point constraint: prescribed displacement or homogeneous fix.
+
+    One record per DOF per node.  When ``is_homogeneous`` is ``True``
+    the downstream emitter can use ``ops.fix()``; otherwise it must use
+    ``ops.sp(node, dof, value)``.
+    """
+    kind: str = field(init=False, default="sp")
+    node_id: int = 0
+    dof: int = 1                    # 1-based DOF index
+    value: float = 0.0
+    is_homogeneous: bool = True
 
 
 # ======================================================================
@@ -152,40 +216,38 @@ def _direction_vec(direction) -> ndarray:
     return np.asarray(direction, dtype=float)
 
 
-def _pad_force(
+def _to_force6(
     force_xyz: tuple | None,
     moment_xyz: tuple | None,
-    ndf: int,
-) -> tuple:
-    """Build a (Fx,Fy,Fz,Mx,My,Mz) tuple padded for *ndf*.
+) -> ndarray:
+    """Expand user-supplied force/moment input to a length-6 ndarray.
 
-    Used by :class:`LoadResolver` to ensure NodalLoadRecord.forces
-    has consistent shape regardless of how the user specified the load.
-
-    The result is always length 6.  The solver bridge slices to
-    ``ndf`` when emitting commands.
+    Purely internal accumulator format (Fx, Fy, Fz, Mx, My, Mz).
+    No DOF awareness — zero components are legal, the resolver
+    collapses them to ``None`` at record-build time.
     """
-    fx = fy = fz = 0.0
-    mx = my = mz = 0.0
+    vec = np.zeros(6, dtype=float)
     if force_xyz is not None:
-        if len(force_xyz) == 2:
-            fx, fy = force_xyz
-        elif len(force_xyz) == 3:
-            fx, fy, fz = force_xyz
+        f = np.asarray(force_xyz, dtype=float)
+        if f.shape[0] == 2:
+            vec[:2] = f
+        elif f.shape[0] == 3:
+            vec[:3] = f
         else:
-            raise ValueError(f"force_xyz must be length 2 or 3, got {len(force_xyz)}")
-    if moment_xyz is not None:
-        if ndf < 4 and any(abs(v) > 0 for v in moment_xyz):
             raise ValueError(
-                f"Cannot apply moment to a model with ndf={ndf} (no rotational DOFs)."
+                f"force_xyz must be length 2 or 3, got {f.shape[0]}"
             )
-        if len(moment_xyz) == 1:
-            mz = moment_xyz[0]
-        elif len(moment_xyz) == 3:
-            mx, my, mz = moment_xyz
+    if moment_xyz is not None:
+        m = np.asarray(moment_xyz, dtype=float)
+        if m.shape[0] == 1:
+            vec[5] = m[0]
+        elif m.shape[0] == 3:
+            vec[3:6] = m
         else:
-            raise ValueError(f"moment_xyz must be length 1 or 3, got {len(moment_xyz)}")
-    return (fx, fy, fz, mx, my, mz)
+            raise ValueError(
+                f"moment_xyz must be length 1 or 3, got {m.shape[0]}"
+            )
+    return vec
 
 
 def _accumulate_nodal(
@@ -206,16 +268,27 @@ def _accum_to_records(
     pattern: str,
     name: str | None,
 ) -> list[NodalLoadRecord]:
-    """Convert an accumulator dict to a list of NodalLoadRecord."""
+    """Convert an accumulator dict to a list of NodalLoadRecord.
+
+    Splits the length-6 accumulator into separate ``force_xyz`` and
+    ``moment_xyz`` fields. Zero sub-vectors are stored as ``None``
+    so downstream consumers can skip them cheaply.
+    """
     out: list[NodalLoadRecord] = []
     for nid, vec in accum.items():
-        rec = NodalLoadRecord(
+        f = tuple(float(v) for v in vec[:3])
+        m = tuple(float(v) for v in vec[3:6])
+        force_xyz = f if any(abs(v) > 0.0 for v in f) else None
+        moment_xyz = m if any(abs(v) > 0.0 for v in m) else None
+        if force_xyz is None and moment_xyz is None:
+            continue
+        out.append(NodalLoadRecord(
             pattern=pattern,
             name=name,
             node_id=int(nid),
-            forces=tuple(float(v) for v in vec),
-        )
-        out.append(rec)
+            force_xyz=force_xyz,
+            moment_xyz=moment_xyz,
+        ))
     return out
 
 
@@ -237,7 +310,6 @@ class LoadResolver:
         node_coords: ndarray,
         elem_tags: ndarray | None = None,
         connectivity: ndarray | None = None,
-        ndf: int = 6,
     ) -> None:
         self.node_tags = np.asarray(node_tags, dtype=np.int64)
         self.node_coords = np.asarray(node_coords, dtype=np.float64).reshape(-1, 3)
@@ -247,7 +319,6 @@ class LoadResolver:
         self.connectivity = (
             np.asarray(connectivity, dtype=np.int64) if connectivity is not None else None
         )
-        self.ndf = int(ndf)
         # Lookup helpers
         self._node_to_idx = {int(t): i for i, t in enumerate(self.node_tags)}
         if self.elem_tags is not None:
@@ -327,7 +398,7 @@ class LoadResolver:
         node_set: set[int],
     ) -> list[NodalLoadRecord]:
         """Apply the same force/moment to every node in *node_set*."""
-        force6 = np.array(_pad_force(defn.force_xyz, defn.moment_xyz, self.ndf))
+        force6 = _to_force6(defn.force_xyz, defn.moment_xyz)
         accum: dict[int, ndarray] = {}
         for nid in node_set:
             _accumulate_nodal(accum, nid, force6)
@@ -574,4 +645,120 @@ class LoadResolver:
                 load_type="bodyForce",
                 params={"bf": tuple(float(v) for v in defn.force_per_volume)},
             ))
+        return out
+
+    # ------------------------------------------------------------------
+    # Face load / face SP
+    # ------------------------------------------------------------------
+
+    def resolve_face_load(
+        self,
+        defn: FaceLoadDef,
+        face_node_ids: list[int],
+    ) -> list[NodalLoadRecord]:
+        """Distribute centroidal force/moment to face nodes.
+
+        ``force_xyz``: equal share ``F / N`` per node.
+        ``moment_xyz``: least-norm nodal forces satisfying
+        ``Sum(f_i) = 0`` and ``Sum(r_i x f_i) = M``.
+        """
+        N = len(face_node_ids)
+        if N == 0:
+            return []
+        accum: dict[int, ndarray] = {}
+
+        # Force contribution: equal split
+        if defn.force_xyz is not None:
+            f_total = np.asarray(defn.force_xyz, dtype=float)
+            per_node = f_total / N
+            f6 = np.array([per_node[0], per_node[1], per_node[2],
+                           0.0, 0.0, 0.0])
+            for nid in face_node_ids:
+                _accumulate_nodal(accum, nid, f6)
+
+        # Moment contribution: least-norm distribution
+        if defn.moment_xyz is not None:
+            moment_forces = self._moment_to_nodal_forces(
+                defn.moment_xyz, face_node_ids)
+            for nid, f3 in moment_forces.items():
+                f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
+                _accumulate_nodal(accum, nid, f6)
+
+        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
+
+    def _moment_to_nodal_forces(
+        self,
+        moment_xyz: tuple[float, float, float],
+        node_ids: list[int],
+    ) -> dict[int, ndarray]:
+        """Least-norm nodal forces for a moment about the face centroid.
+
+        Builds the 6 x 3N equilibrium matrix A:
+        - rows 0-2: ``Sum(f_i) = 0``
+        - rows 3-5: ``Sum(r_i x f_i) = M``
+
+        Solves for ``f = A^T (A A^T)^{-1} b`` (least-norm solution).
+        """
+        coords = np.array([self.coords_of(nid) for nid in node_ids])
+        centroid = coords.mean(axis=0)
+        arms = coords - centroid
+        N = len(node_ids)
+
+        A = np.zeros((6, 3 * N))
+        for i in range(N):
+            # Force equilibrium: Sum(f_i) = 0
+            A[0:3, 3 * i:3 * i + 3] = np.eye(3)
+            # Moment equilibrium: Sum(r_i x f_i) = M
+            r = arms[i]
+            A[3, 3 * i:3 * i + 3] = [0.0, -r[2], r[1]]
+            A[4, 3 * i:3 * i + 3] = [r[2], 0.0, -r[0]]
+            A[5, 3 * i:3 * i + 3] = [-r[1], r[0], 0.0]
+
+        b = np.array([0.0, 0.0, 0.0,
+                       moment_xyz[0], moment_xyz[1], moment_xyz[2]])
+
+        AAt = A @ A.T  # 6x6
+        f_flat = A.T @ np.linalg.solve(AAt, b)
+
+        result: dict[int, ndarray] = {}
+        for i, nid in enumerate(node_ids):
+            result[nid] = f_flat[3 * i:3 * i + 3]
+        return result
+
+    def resolve_face_sp(
+        self,
+        defn: FaceSPDef,
+        face_node_ids: list[int],
+    ) -> list[SPRecord]:
+        """Map centroidal rigid-body motion to per-node SP constraints.
+
+        For each constrained DOF *d* and each node *i*:
+        ``u_i = disp_xyz + rot_xyz x r_i``, then emit
+        ``SPRecord(node_id=i, dof=d, value=u_i[d-1])``.
+        """
+        if not face_node_ids:
+            return []
+
+        coords = np.array([self.coords_of(nid) for nid in face_node_ids])
+        centroid = coords.mean(axis=0)
+
+        u0 = np.asarray(defn.disp_xyz, dtype=float) if defn.disp_xyz else np.zeros(3)
+        theta = np.asarray(defn.rot_xyz, dtype=float) if defn.rot_xyz else np.zeros(3)
+
+        out: list[SPRecord] = []
+        for i, nid in enumerate(face_node_ids):
+            r_i = coords[i] - centroid
+            u_i = u0 + np.cross(theta, r_i)
+            for d_idx, mask in enumerate(defn.dofs):
+                if mask != 1:
+                    continue
+                val = float(u_i[d_idx])
+                out.append(SPRecord(
+                    pattern=defn.pattern,
+                    name=defn.name,
+                    node_id=int(nid),
+                    dof=d_idx + 1,
+                    value=val,
+                    is_homogeneous=(abs(val) < 1e-30),
+                ))
         return out

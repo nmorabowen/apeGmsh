@@ -246,6 +246,11 @@ def run_build(ops: "OpenSees") -> None:
                 if nid in all_gmsh_tags:
                     connected_gmsh.add(nid)
 
+    for sp_rec in ops._sp_records:
+        nid = int(sp_rec["node_id"])
+        if nid in all_gmsh_tags:
+            connected_gmsh.add(nid)
+
     n_total  = len(ops._node_map)
     n_pruned = n_total - len(connected_gmsh)
     if n_pruned > 0:

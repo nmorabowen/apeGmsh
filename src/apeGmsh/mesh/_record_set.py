@@ -32,7 +32,7 @@ if TYPE_CHECKING:
         ConstraintRecord, NodePairRecord, NodeGroupRecord,
         NodeToSurfaceRecord, InterpolationRecord, SurfaceCouplingRecord,
     )
-    from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord  # noqa: F401
+    from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord, SPRecord  # noqa: F401
     from apeGmsh.solvers.Masses import MassRecord  # noqa: F401
 
 
@@ -633,6 +633,49 @@ class NodalLoadSet(_RecordSetBase["NodalLoadRecord"]):
         n_pats = len(self.patterns())
         return (f"NodalLoadSet({len(self._records)} records, "
                 f"{n_pats} pattern(s))")
+
+
+class SPSet(_RecordSetBase["SPRecord"]):
+    """Single-point constraint records (prescribed displacements / fix).
+
+    Accessed via ``fem.nodes.sp``.
+
+    Each record is an ``SPRecord`` with:
+
+    - ``node_id``        : int — mesh node ID
+    - ``dof``            : int — 1-based DOF index
+    - ``value``          : float — prescribed displacement (0.0 for fix)
+    - ``is_homogeneous`` : bool — ``True`` for plain fix, ``False`` for ``ops.sp``
+
+    Examples
+    --------
+    ::
+
+        for rec in fem.nodes.sp:
+            if rec.is_homogeneous:
+                ops.fix(rec.node_id, ...)
+            else:
+                ops.sp(rec.node_id, rec.dof, rec.value)
+    """
+
+    def homogeneous(self) -> list["SPRecord"]:
+        """Return only homogeneous (fix) records."""
+        return [r for r in self._records if r.is_homogeneous]
+
+    def prescribed(self) -> list["SPRecord"]:
+        """Return only non-zero prescribed displacement records."""
+        return [r for r in self._records if not r.is_homogeneous]
+
+    def by_node(self, node_id: int) -> list["SPRecord"]:
+        """All SP records for a given node."""
+        return [r for r in self._records if r.node_id == int(node_id)]
+
+    def __repr__(self) -> str:
+        if not self._records:
+            return "SPSet(empty)"
+        n_hom = sum(1 for r in self._records if r.is_homogeneous)
+        n_pre = len(self._records) - n_hom
+        return f"SPSet({len(self._records)} records: {n_hom} fix, {n_pre} prescribed)"
 
 
 class MassSet(_RecordSetBase["MassRecord"]):

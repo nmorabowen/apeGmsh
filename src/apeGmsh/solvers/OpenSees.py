@@ -105,6 +105,7 @@ class OpenSees(_HasLogging):
         # ── constraints, loads, mass ───────────────────────────────────
         self._bcs          : dict[str, dict]       = {}
         self._load_patterns: dict[str, list[dict]] = {}
+        self._sp_records   : list[dict]            = []
         self._mass_records : list[dict]            = []
 
         # Constraint records ingested from fem (Phase 11a).
