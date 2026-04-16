@@ -233,6 +233,12 @@ The `dofs` list must have exactly `ndf` entries (`1` = fixed, `0` = free). The
 `dim` keyword disambiguates when a name exists at multiple dimensions. Unlike
 other declarations, `fix` validates the `dofs` length immediately.
 
+**Alternative for solid faces:** For solid meshes where you need to prescribe
+displacements or rotations at a face, use `g.loads.face_sp(...)` instead. It
+maps a rigid-body motion at the face centroid to per-node displacements via
+`u_i = disp_xyz + rot_xyz × r_i` and emits `ops.fix()` (homogeneous) or
+`ops.sp()` (non-zero) at each face node. See `guide_loads.md` §11.
+
 
 ## 4. Ingesting Loads, Masses, and Constraints from FEMData
 
@@ -264,7 +270,17 @@ Translates `fem.nodes.masses` into `ops.mass(node, mx, my, mz, ...)` commands.
 If you defined volume masses with `g.masses.volume(...)`, the FEMData snapshot
 has already distributed them to nodes -- the bridge passes them through.
 
-### 4.3 Pulling constraints -- `ingest.constraints(fem)`
+### 4.3 Pulling SP records -- `ingest.sp(fem)`
+
+```python
+g.opensees.ingest.sp(fem)
+```
+
+Translates `fem.nodes.sp` (populated by `g.loads.face_sp(...)`) into internal
+SP records. At export time, homogeneous records become `ops.fix()` calls and
+non-zero prescribed displacements become `ops.sp(node, dof, value)` calls.
+
+### 4.4 Pulling constraints -- `ingest.constraints(fem)`
 
 ```python
 g.opensees.ingest.constraints(fem, tie_penalty=1e12)
@@ -282,14 +298,15 @@ higher-order faces (Tri6, Quad8) are downgraded to corners. Node-pair
 constraints (`equalDOF`, `rigidLink`) and rigid diaphragms are ingested but
 emission is deferred to future phases.
 
-### 4.4 Chaining ingest calls
+### 4.5 Chaining ingest calls
 
-All three methods return `self`, so a common pattern is:
+All methods return `self`, so a common pattern is:
 
 ```python
 fem = g.mesh.queries.get_fem_data(dim=3)
 (g.opensees.ingest
     .loads(fem)
+    .sp(fem)
     .masses(fem)
     .constraints(fem, tie_penalty=1e12))
 ```

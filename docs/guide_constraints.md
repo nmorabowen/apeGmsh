@@ -162,6 +162,12 @@ creates phantom nodes:
 g.constraints.node_to_surface("frame_end", "solid_face")
 ```
 
+For **pure BC application** (force/moment or prescribed displacement on a
+face without a structural element at the reference), prefer
+`g.loads.face_load()` / `g.loads.face_sp()` instead — they distribute
+directly to face nodes and avoid the phantom node conditioning issue.
+See `guide_loads.md` §10–11.
+
 This is the constraint you need when connecting a beam/frame model
 to a solid model. The phantom nodes bridge the DOF mismatch.
 

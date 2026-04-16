@@ -13,7 +13,7 @@ The guide is grounded in the current source:
 - `src/apeGmsh/core/LoadsComposite.py` — the user-facing composite
 - `src/apeGmsh/solvers/Loads.py` — `LoadDef`, `LoadRecord`, and
   `LoadResolver` (pure mesh math, no Gmsh)
-- `src/apeGmsh/mesh/FEMData.py` — the `NodalLoadSet` / `ElementLoadSet` that lands in the broker
+- `src/apeGmsh/mesh/FEMData.py` — the `NodalLoadSet` / `SPSet` / `ElementLoadSet` that lands in the broker
 
 All snippets assume an open session:
 
@@ -357,7 +357,79 @@ density or scalar field produces it. If you find yourself writing
 instead.
 
 
-## 10. Putting it all together
+## 10. Face-concentrated loads
+
+When you need to apply a force or moment to a solid face *without*
+coupling it to a structural element, `face_load` distributes the
+load directly to the face nodes — no reference node, no phantom, no
+conditioning issues:
+
+```python
+with g.loads.pattern("tip"):
+    g.loads.face_load(pg="tip_face", force_xyz=(0, 0, -10_000))
+    g.loads.face_load(pg="tip_face", moment_xyz=(0, 100_000, 0))
+```
+
+**Force distribution:** the total force `F` is split equally among
+all `N` nodes on the face: `f_i = F / N`.
+
+**Moment distribution:** the moment `M` about the face centroid is
+converted to statically equivalent nodal forces via a least-norm
+solve. The solver builds a `6 × 3N` equilibrium matrix encoding
+`Sum(f_i) = 0` and `Sum(r_i × f_i) = M`, then finds the minimum-norm
+force vector `f = A^T (A A^T)^{-1} b`. The result is exact: the
+nodal forces produce zero net force and the desired net moment.
+
+Both contributions are combined and accumulated into `NodalLoadRecord`
+entries — the same type produced by `point()` or `surface()`. The
+downstream solver adapter sees no difference.
+
+**When to use `face_load` vs `node_to_surface`:**
+
+- Use `face_load` when you only need to apply a load or BC to a face
+  and have no structural element at the reference point.
+- Use `node_to_surface` when you need the reference node as a
+  structural node (e.g., connecting a frame beam to a solid face).
+
+
+## 11. Face-prescribed displacements
+
+`face_sp` maps a rigid-body motion at the face centroid to per-node
+prescribed displacements:
+
+```python
+# Homogeneous fix (all face nodes fixed in x, y, z)
+g.loads.face_sp(pg="base_face", dofs=[1, 1, 1])
+
+# Prescribed translation at centroid
+g.loads.face_sp(pg="base_face", dofs=[1, 1, 1],
+                disp_xyz=(0.01, 0, 0))
+
+# Prescribed rotation about centroid
+g.loads.face_sp(pg="base_face", dofs=[1, 1, 1],
+                rot_xyz=(0, 0, 0.01))
+
+# Combined
+g.loads.face_sp(pg="base_face", dofs=[1, 1, 1],
+                disp_xyz=(0.01, 0, 0), rot_xyz=(0, 0, 0.01))
+```
+
+For each face node, the displacement is computed as:
+
+    u_i = disp_xyz + rot_xyz × r_i
+
+where `r_i` is the arm vector from the face centroid to node `i`.
+
+The result is a list of `SPRecord` entries stored in `fem.nodes.sp`.
+A solver adapter emits them as `ops.fix()` (homogeneous) or
+`ops.sp(node, dof, value)` (non-zero).
+
+**Note:** `face_sp` lives on `LoadsComposite` (not on `ConstraintsComposite`)
+because it produces boundary conditions, not multi-point constraints.
+The `dofs` mask follows the same convention as `elements.fix()`.
+
+
+## 12. Putting it all together
 
 A realistic load script for a small building model reads like this,
 and it is the shape of script you should aim for:
@@ -407,7 +479,7 @@ nodes, no manual integration, no `if ndf == 3 else 6`. The
 `LoadResolver` handles all of that when `get_fem_data()` runs.
 
 
-## 11. Debugging loads
+## 13. Debugging loads
 
 Loads are easy to get wrong and easy to inspect. Three cheap sanity
 checks will catch almost everything:
@@ -424,11 +496,12 @@ for pat in fem.nodes.loads.patterns():
 # (b) total applied force per pattern — should match hand calc
 import numpy as np
 for pat in fem.nodes.loads.patterns():
-    total = np.zeros(6)
+    total_f = np.zeros(3)
+    total_m = np.zeros(3)
     for rec in fem.nodes.loads.by_pattern(pat):
-        if hasattr(rec, "forces"):
-            total += np.asarray(rec.forces)
-    print(pat, "ΣF =", total[:3], "ΣM =", total[3:])
+        if rec.force_xyz  is not None: total_f += np.asarray(rec.force_xyz)
+        if rec.moment_xyz is not None: total_m += np.asarray(rec.moment_xyz)
+    print(pat, "ΣF =", total_f, "ΣM =", total_m)
 
 # (c) visual check via the viewer
 g.mesh.view.load_arrows(pattern="live")   # if implemented
@@ -447,10 +520,11 @@ silently drop mismatches, which is friendly for mixed-entity targets
 but less friendly when you typed the wrong label.
 
 
-## 12. What a solver adapter sees
+## 14. What a solver adapter sees
 
 A solver adapter never calls into `LoadsComposite`. It reads a
-`NodalLoadSet` / `ElementLoadSet` out of the broker and walks them:
+`NodalLoadSet` / `SPSet` / `ElementLoadSet` out of the broker and
+walks them:
 
 ```python
 fem = g.mesh.get_fem_data()
@@ -458,19 +532,35 @@ fem = g.mesh.get_fem_data()
 for pat in fem.nodes.loads.patterns():
     # open a solver load pattern / load case here
     for rec in fem.nodes.loads.by_pattern(pat):
-        # rec.node_id, rec.forces == (Fx,Fy,Fz,Mx,My,Mz)
+        # rec.node_id, rec.force_xyz, rec.moment_xyz
+        # Either may be None; each is a length-3 tuple when present.
         ...
     for rec in fem.elements.loads.by_pattern(pat):
         # rec.element_id, rec.load_type, rec.params
         ...
 ```
 
-`NodalLoadRecord.forces` is always length 6 regardless of `ndf`; the
-adapter slices to the solver's DOF count when it emits the command.
+`NodalLoadRecord` stores spatial 3-vectors (`force_xyz`, `moment_xyz`)
+and knows nothing about the solver's DOF count. The adapter maps
+those vectors onto its DOF space at emit time — a 2D planar frame
+slices `(Fx, Fy)` from `force_xyz` and `Mz` from `moment_xyz`; a 3D
+frame uses all six; a 3D solid ignores moments.
 `ElementLoadRecord.load_type` is a string — `"beamUniform"`,
 `"surfacePressure"`, `"bodyForce"` — that a solver adapter switches on
 to pick the right native command. Both records carry their `pattern`
 and `name`, so the adapter can replay the grouping the user wrote.
+
+**SP records** from `face_sp` live in a separate sub-composite:
+
+```python
+# Homogeneous fix records
+for rec in fem.nodes.sp.homogeneous():
+    ops.fix(rec.node_id, ...)
+
+# Prescribed displacement records
+for rec in fem.nodes.sp.prescribed():
+    ops.sp(rec.node_id, rec.dof, rec.value)
+```
 
 The contract is deliberately dumb: a list of records, each fully
 self-describing, no cross-references. That is what makes the broker

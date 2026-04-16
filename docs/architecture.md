@@ -65,7 +65,7 @@ g
   |-- .sections           Parametric section builders (W-beams, rectangles, shells)
   |
   |-- .constraints        Pre-mesh constraint definitions (12 types)
-  |-- .loads              Pre-mesh load definitions (5 types, pattern grouping)
+  |-- .loads              Pre-mesh load definitions (7 types, pattern grouping)
   |-- .masses             Pre-mesh mass definitions (4 types)
   |
   |-- .mesh               Meshing pipeline
@@ -169,7 +169,8 @@ fem
   |     |-- .coords       All coordinates (ndarray)
   |     |-- .get(pg=, label=)  Selection API → NodeResult (iter yields (id, xyz) pairs)
   |     |-- .constraints  Node-pair constraints (equal_dof, rigid, etc.)
-  |     |-- .loads        Nodal loads (point forces)
+  |     |-- .loads        Nodal loads (point forces, face-concentrated)
+  |     |-- .sp           SP records (face-prescribed displacements / fix)
   |     +-- .masses       Lumped nodal masses
   |
   |-- .elements           ElementComposite

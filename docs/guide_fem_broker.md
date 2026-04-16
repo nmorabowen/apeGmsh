@@ -19,6 +19,7 @@ fem
   |     |-- .labels       LabelSet                  geometry-time labels
   |     |-- .constraints  NodeConstraintSet         equal_dof, rigid, etc.
   |     |-- .loads        NodalLoadSet              point forces
+  |     |-- .sp           SPSet                     prescribed displacements / fix
   |     +-- .masses       MassSet                   lumped nodal masses
   |
   |-- .elements           ElementComposite
