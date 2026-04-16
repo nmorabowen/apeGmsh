@@ -639,6 +639,9 @@ class MainWindow(QMainWindow):
         self._renderer.add_mesh(mesh_data, name)
         self._model_tree.add_mesh(name, mesh_data)
         self._active_mesh = name
+        self._controls.set_time_steps(
+            mesh_data.time_steps if mesh_data.has_time_series else None
+        )
         return name
 
     def load_mesh_data(self, mesh_data: MeshData, name: str | None = None) -> str:

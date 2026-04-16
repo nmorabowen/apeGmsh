@@ -99,18 +99,17 @@ class ModelTree(QWidget):
                 item.setText(1, shape_str)
                 item.setData(0, Qt.ItemDataRole.UserRole, ("cell_field", name, fname))
 
-        # Time series info
+        # Time-series summary (actual scrubbing happens via the slider in
+        # the Controls panel — enumerating every step as a child doesn't
+        # scale to thousands of steps).
         if mesh_data.has_time_series:
             ts_root = QTreeWidgetItem(root)
             ts_root.setText(0, "Time Steps")
-            ts_root.setText(1, f"{len(mesh_data.time_steps)} steps")
+            n = len(mesh_data.time_steps)
+            t0 = mesh_data.time_steps[0]
+            t1 = mesh_data.time_steps[-1]
+            ts_root.setText(1, f"{n} steps  [{t0:.4g} \u2192 {t1:.4g}]")
             ts_root.setForeground(0, QBrush(QColor("#f9e2af")))
-
-            for i, t in enumerate(mesh_data.time_steps):
-                item = QTreeWidgetItem(ts_root)
-                item.setText(0, f"Step {i}")
-                item.setText(1, f"t = {t:.4g}")
-                item.setData(0, Qt.ItemDataRole.UserRole, ("time_step", name, i))
 
         self._mesh_items[name] = root
 

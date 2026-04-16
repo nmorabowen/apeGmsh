@@ -48,7 +48,7 @@ class ControlsPanel(QWidget):
         row.addWidget(QLabel("Mode:"))
         self._mode_combo = QComboBox()
         self._mode_combo.addItems([
-            "Surface + Edges", "Surface", "Wireframe", "Points"
+            "Surface", "Surface + Edges", "Wireframe", "Points"
         ])
         self._mode_combo.currentTextChanged.connect(self._on_mode_changed)
         row.addWidget(self._mode_combo)
@@ -212,7 +212,7 @@ class ControlsPanel(QWidget):
             "Wireframe": "WIREFRAME",
             "Points": "POINTS",
         }
-        self.display_mode_changed.emit(mode_map.get(text, "SURFACE_WITH_EDGES"))
+        self.display_mode_changed.emit(mode_map.get(text, "SURFACE"))
 
     def _set_scale(self, factor: float) -> None:
         self._scale_spin.setValue(factor)

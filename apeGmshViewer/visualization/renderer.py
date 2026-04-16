@@ -65,7 +65,7 @@ class MeshActor:
 
     mesh_data: MeshData
     actor: Any = None
-    display_mode: DisplayMode = DisplayMode.SURFACE_WITH_EDGES
+    display_mode: DisplayMode = DisplayMode.SURFACE
     visible: bool = True
     opacity: float = 1.0
     color: str = DEFAULT_MESH_COLOR
@@ -137,14 +137,14 @@ class ViewportRenderer:
         actor = self._plotter.add_mesh(
             mesh_data.mesh,
             color=mesh_color,
-            show_edges=not line_only,
+            show_edges=False,
             edge_color=DEFAULT_EDGE_COLOR,
             line_width=LINE_MESH_WIDTH if line_only else 1,
             opacity=1.0,
             label=name,
             reset_camera=True,
             lighting=not line_only,
-            smooth_shading=not line_only,
+            smooth_shading=False,
             render_lines_as_tubes=line_only,
             name=name,
         )
@@ -152,7 +152,7 @@ class ViewportRenderer:
         self._actors[name] = MeshActor(
             mesh_data=mesh_data,
             actor=actor,
-            display_mode=DisplayMode.SURFACE if line_only else DisplayMode.SURFACE_WITH_EDGES,
+            display_mode=DisplayMode.SURFACE,
             color=mesh_color,
             is_line_mesh=line_only,
         )
@@ -198,7 +198,7 @@ class ViewportRenderer:
         base = {
             "opacity": ma.opacity,
             "lighting": True,
-            "smooth_shading": True,
+            "smooth_shading": False,
             "reset_camera": False,
         }
 
@@ -401,9 +401,9 @@ class ViewportRenderer:
         kwargs = {
             "opacity": ma.opacity,
             "lighting": not ma.is_line_mesh,
-            "smooth_shading": not ma.is_line_mesh,
+            "smooth_shading": False,
             "reset_camera": False,
-            "show_edges": not ma.is_line_mesh,
+            "show_edges": False,
             "edge_color": "#803D00",
             "line_width": LINE_MESH_WIDTH if ma.is_line_mesh else 1,
             "render_lines_as_tubes": ma.is_line_mesh,

@@ -49,7 +49,7 @@ def build_node_pair_actors(
     Returns a list of ``(mesh_or_glyphs, add_mesh_kwargs)`` tuples.
     The caller does ``plotter.add_mesh(mesh, **kwargs)`` for each.
 
-    Single pass over ``node_pairs()`` — records grouped by kind first,
+    Single pass over ``pairs()`` — records grouped by kind first,
     then geometry built per kind.
     """
     from apeGmsh.solvers.Constraints import (
@@ -61,7 +61,7 @@ def build_node_pair_actors(
     # kind="rigid_beam" / "equal_dof", not "node_to_surface".
     # We need to map those back so the checkbox filter works.
     by_kind: dict[str, list] = defaultdict(list)
-    for rec in fem.nodes.constraints.node_pairs():
+    for rec in fem.nodes.constraints.pairs():
         if rec.kind in active_kinds:
             by_kind[rec.kind].append(rec)
 
