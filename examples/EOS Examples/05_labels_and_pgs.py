@@ -108,29 +108,20 @@ print(f"mesh: {fem.info.n_nodes} nodes, {fem.info.n_elems} elements")
 # ## 5. The three accessor dialects
 #
 # For any named entity, ``fem.nodes.get`` and ``fem.elements.get``
-# accept three equivalent forms:
+# accept three equivalent forms, plus raw DimTag lists:
 #
 # | Call | What it does |
 # |---|---|
-# | ``fem.nodes.get(target="foo")`` | auto-resolve — searches PGs first, then labels |
+# | ``fem.nodes.get(target="foo")`` | auto-resolve — **label → PG → part** (matches ``LoadsComposite``) |
 # | ``fem.nodes.get(label="foo")``  | force the label namespace |
 # | ``fem.nodes.get(pg="foo")``     | force the PG namespace |
+# | ``fem.nodes.get(target=[(dim, tag)])`` | raw geometry DimTag(s) resolved through Gmsh |
 #
-# ### ⚠ Two known precedence caveats
-#
-# 1. **Namespace tie-breaker differs between composites.** When the
-#    same name ``"foo"`` is registered as both a label and a PG:
-#    * ``fem.nodes.get(target="foo")`` returns the **PG** entity.
-#    * ``g.loads.point(target="foo")`` returns the **label** entity.
-#    Library bug tracked separately. In production code, use the
-#    explicit form (``label=`` or ``pg=``) whenever collision is
-#    possible.
-# 2. **Raw DimTag lists also differ.** ``g.loads.point(target=[(0, 7)])``
-#    is interpreted as a raw geometry DimTag, but
-#    ``fem.nodes.get(target=[(0, 7)])`` is interpreted as a PG-tag
-#    lookup and will ``KeyError`` if no PG matches. Reach through
-#    the explicit ``label=`` / ``pg=`` form for cross-composite
-#    consistency.
+# **Precedence.** When the same name ``"foo"`` is registered as both
+# a label and a PG, ``target="foo"`` returns the **label** entity —
+# same tie-breaker as ``g.loads.*`` and ``g.constraints.*``. Use the
+# explicit ``label=`` / ``pg=`` form when you want to force one
+# namespace or the other.
 
 # %%
 print("--- tip (label only) ---")

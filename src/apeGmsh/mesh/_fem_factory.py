@@ -340,6 +340,41 @@ def _from_gmsh(
     )
 
     # ── 5. Build composites ───────────────────────────────────
+    # If the session carries a parts registry, snapshot its
+    # label -> {mesh-node-ids} and label -> {mesh-element-ids} maps
+    # now so fem.nodes.get(target=part_label) and
+    # fem.elements.get(target=part_label) can resolve without
+    # needing a live Gmsh session later.
+    part_node_map: dict[str, set[int]] = {}
+    part_elem_map: dict[str, set[int]] = {}
+    if session is not None:
+        parts = getattr(session, "parts", None)
+        if parts is not None and getattr(parts, "_instances", None):
+            import gmsh  # local import — gmsh is alive during factory
+            try:
+                part_node_map = parts.build_node_map(
+                    node_ids, node_coords_all,
+                ) or {}
+            except Exception:
+                part_node_map = {}
+            # Element map: iterate each part instance's DimTags and
+            # ask Gmsh for the elements on each entity (the registry
+            # has no element-map builder today).
+            for label, inst in parts._instances.items():
+                e_ids: set[int] = set()
+                for d in sorted(inst.entities.keys(), reverse=True):
+                    for t in inst.entities[d]:
+                        try:
+                            _, etags_list, _ = (
+                                gmsh.model.mesh.getElements(int(d), int(t))
+                            )
+                            for arr in etags_list:
+                                e_ids.update(int(x) for x in arr)
+                        except Exception:
+                            pass
+                if e_ids:
+                    part_elem_map[label] = e_ids
+
     nodes = NodeComposite(
         node_ids=node_ids,
         node_coords=node_coords_all,
@@ -350,6 +385,7 @@ def _from_gmsh(
         sp=sp_records or None,
         masses=mass_records or None,
         partitions=partitions or None,
+        part_node_map=part_node_map or None,
     )
     elements = ElementComposite(
         groups=groups,
@@ -358,6 +394,7 @@ def _from_gmsh(
         constraints=surface_constraints or None,
         loads=element_loads or None,
         partitions=partitions or None,
+        part_elem_map=part_elem_map or None,
     )
 
     # ── 6. Snapshot mesh selections ───────────────────────────

@@ -29,16 +29,16 @@
 # resolution, and confirm that both cantilevers independently
 # satisfy $\delta = P L^{3} / (3 E I)$.
 #
-# > ### ⚠ A third precedence caveat (slot 05 already covered two)
+# > ### Note
 # >
 # > ``fem.nodes.get(target="my_part")`` and
-# > ``fem.elements.get(target="my_part")`` do **not** resolve part
-# > labels. They search PGs and labels only. To get a part's nodes
-# > use ``g.parts.build_node_map(...)`` — which returns a
-# > ``dict[label → set[int]]`` — or iterate ``Instance.entities``
-# > manually. ``g.loads.*`` / ``g.constraints.*`` do resolve part
-# > labels (step 5 of LoadsComposite's target chain) but FEMData
-# > does not. Library gap tracked separately.
+# > ``fem.elements.get(target="my_part")`` both resolve part labels
+# > directly — they search **label → PG → part** in that order,
+# > matching ``g.loads.*`` and ``g.constraints.*``. The explicit
+# > workaround below (``g.parts.build_node_map`` + direct
+# > ``Instance.entities`` iteration) still works and is shown here
+# > as a reference for when you need the raw mapping; prefer
+# > ``fem.nodes.get(target=...)`` in day-to-day code.
 
 # %% [markdown]
 # ## 1. Imports and parameters

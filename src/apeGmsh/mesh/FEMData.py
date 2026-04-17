@@ -252,6 +252,7 @@ class NodeComposite:
         sp=None,
         masses=None,
         partitions: dict[int, dict] | None = None,
+        part_node_map: dict | None = None,
     ) -> None:
         self._ids    = _to_object(node_ids)
         self._coords = np.asarray(node_coords, dtype=np.float64)
@@ -265,6 +266,11 @@ class NodeComposite:
 
         self._partitions: dict[int, dict] = partitions or {}
         self._id_to_idx: dict[int, int] | None = None
+        # Snapshot of ``g.parts.build_node_map(...)`` at FEM-build
+        # time — lets ``get(target=part_label)`` resolve without
+        # needing a live Gmsh session (parts registry may be gone
+        # by the time the user queries). Dict of ``str -> set[int]``.
+        self._part_node_map: dict[str, set[int]] = part_node_map or {}
 
     # ── Public properties ───────────────────────────────────
 
@@ -324,7 +330,15 @@ class NodeComposite:
         return NodeResult(ids, coords)
 
     def _resolve_nodes(self, target, *, pg, label, tag):
-        """Resolve single or list selectors to (ids, coords)."""
+        """Resolve single or list selectors to (ids, coords).
+
+        Explicit keyword modes (``label=``, ``pg=``, ``tag=``) do a
+        direct lookup with no fallback. The ``target=`` auto-resolve
+        path tries **label → physical group → part label** for string
+        items (matching ``LoadsComposite._resolve_target``), and
+        resolves raw ``(dim, tag)`` DimTag tuples through a live Gmsh
+        session.
+        """
         if tag is not None:
             return self._union_nodes(
                 tag, self.physical.node_ids,
@@ -338,19 +352,90 @@ class NodeComposite:
                 label, self.labels.node_ids,
                 self.labels.node_coords)
         if target is not None:
-            # target can be a list of mixed PG/label names
-            items = ([target] if isinstance(target, (str, int, tuple))
-                     else list(target))
+            items = self._normalise_target(target)
             id_parts, coord_parts = [], []
             for t in items:
-                try:
-                    id_parts.append(self.physical.node_ids(t))
-                    coord_parts.append(self.physical.node_coords(t))
-                except (KeyError, ValueError):
-                    id_parts.append(self.labels.node_ids(t))
-                    coord_parts.append(self.labels.node_coords(t))
+                ids, coords = self._resolve_one_target(t)
+                id_parts.append(ids)
+                coord_parts.append(coords)
             return self._dedupe_node_parts(id_parts, coord_parts)
         return self._ids, self._coords
+
+    @staticmethod
+    def _is_dimtag_tuple(x) -> bool:
+        """True if *x* looks like a ``(dim, tag)`` DimTag pair."""
+        return (
+            isinstance(x, tuple)
+            and len(x) == 2
+            and all(isinstance(v, (int, np.integer)) for v in x)
+        )
+
+    @classmethod
+    def _normalise_target(cls, target) -> list:
+        """Coerce a target (single item or list) into a flat list of items."""
+        if isinstance(target, str):
+            return [target]
+        if cls._is_dimtag_tuple(target):
+            return [target]
+        return list(target)
+
+    def _resolve_one_target(self, t):
+        """Resolve one item (string name or ``(dim, tag)``) to (ids, coords)."""
+        # Raw DimTag — query the live Gmsh session for the mesh nodes
+        # on that geometry entity. Matches ``LoadsComposite`` semantics.
+        if self._is_dimtag_tuple(t):
+            return self._nodes_on_dimtag(int(t[0]), int(t[1]))
+        if not isinstance(t, str):
+            raise TypeError(
+                f"target items must be strings or (dim, tag) tuples, "
+                f"got {type(t).__name__}: {t!r}"
+            )
+        # String — try label, then PG, then part label (matches the
+        # LoadsComposite._resolve_target precedence chain).
+        try:
+            return self.labels.node_ids(t), self.labels.node_coords(t)
+        except (KeyError, ValueError):
+            pass
+        try:
+            return self.physical.node_ids(t), self.physical.node_coords(t)
+        except (KeyError, ValueError):
+            pass
+        if t in self._part_node_map:
+            return self._nodes_from_ids(self._part_node_map[t])
+        raise KeyError(
+            f"No label, physical group, or part named {t!r}. "
+            f"Labels: {list(self.labels._groups) if hasattr(self.labels, '_groups') else '?'}; "
+            f"parts: {list(self._part_node_map)}"
+        )
+
+    def _nodes_on_dimtag(self, dim: int, tag: int):
+        """Mesh nodes on a raw geometry entity via live Gmsh."""
+        import gmsh
+        try:
+            nt, _, _ = gmsh.model.mesh.getNodes(
+                dim=dim, tag=tag, includeBoundary=True,
+                returnParametricCoord=False,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"could not resolve raw DimTag ({dim}, {tag}) — the "
+                f"Gmsh session may have been closed. Pass the target "
+                f"through an explicit `label=` or `pg=` that was "
+                f"tagged before the session exited."
+            ) from e
+        return self._nodes_from_ids({int(n) for n in nt})
+
+    def _nodes_from_ids(self, id_set):
+        """Restrict the composite's (ids, coords) to a given ID set."""
+        if not id_set:
+            return np.array([], dtype=np.int64), np.zeros((0, 3))
+        tag_to_idx = {int(t): i for i, t in enumerate(self._ids)}
+        idxs = [tag_to_idx[i] for i in id_set if i in tag_to_idx]
+        if not idxs:
+            return np.array([], dtype=np.int64), np.zeros((0, 3))
+        idx_arr = np.asarray(idxs, dtype=np.int64)
+        kept_ids = np.asarray([self._ids[i] for i in idxs])
+        return kept_ids, self._coords[idx_arr]
 
     @staticmethod
     def _union_nodes(selector, id_fn, coord_fn):
@@ -467,6 +552,7 @@ class ElementComposite:
         constraints=None,
         loads=None,
         partitions: dict[int, dict] | None = None,
+        part_elem_map: dict | None = None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -480,6 +566,11 @@ class ElementComposite:
         # Lazy caches
         self._cached_ids: ndarray | None = None
         self._id_to_idx: dict[int, int] | None = None
+
+        # Snapshot of ``part_label -> set[element_id]`` built at
+        # FEM-build time. Lets ``get(target=part_label)`` resolve
+        # without a live Gmsh session.
+        self._part_elem_map: dict[str, set[int]] = part_elem_map or {}
 
     # ── Iteration ───────────────────────────────────────────
 
@@ -647,7 +738,14 @@ class ElementComposite:
         return GroupResult(result_groups)
 
     def _resolve_elem_ids(self, target, *, pg, label, tag):
-        """Resolve single or list selectors to an element ID set (or None)."""
+        """Resolve single or list selectors to an element ID set (or None).
+
+        Explicit keyword modes (``label=``, ``pg=``, ``tag=``) do a
+        direct lookup. The ``target=`` auto-resolve path tries
+        **label → physical group → part label** for string items
+        (matching ``LoadsComposite._resolve_target``) and resolves
+        raw ``(dim, tag)`` DimTag tuples through a live Gmsh session.
+        """
         if tag is not None:
             return self._union_elem_ids(tag, self.physical.element_ids)
         if pg is not None:
@@ -655,18 +753,54 @@ class ElementComposite:
         if label is not None:
             return self._union_elem_ids(label, self.labels.element_ids)
         if target is not None:
-            items = ([target] if isinstance(target, (str, int, tuple))
-                     else list(target))
+            items = NodeComposite._normalise_target(target)
             combined: set[int] = set()
             for t in items:
-                try:
-                    combined.update(
-                        int(x) for x in self.physical.element_ids(t))
-                except (KeyError, ValueError):
-                    combined.update(
-                        int(x) for x in self.labels.element_ids(t))
+                combined.update(self._resolve_one_elem_target(t))
             return combined
         return None
+
+    def _resolve_one_elem_target(self, t) -> set[int]:
+        """Resolve one target item to an element-ID set."""
+        # Raw DimTag — query live Gmsh
+        if NodeComposite._is_dimtag_tuple(t):
+            return self._elements_on_dimtag(int(t[0]), int(t[1]))
+        if not isinstance(t, str):
+            raise TypeError(
+                f"target items must be strings or (dim, tag) tuples, "
+                f"got {type(t).__name__}: {t!r}"
+            )
+        # String — label -> PG -> part, matching LoadsComposite
+        try:
+            return {int(x) for x in self.labels.element_ids(t)}
+        except (KeyError, ValueError):
+            pass
+        try:
+            return {int(x) for x in self.physical.element_ids(t)}
+        except (KeyError, ValueError):
+            pass
+        if t in self._part_elem_map:
+            return set(self._part_elem_map[t])
+        raise KeyError(
+            f"No label, physical group, or part named {t!r}. "
+            f"Parts: {list(self._part_elem_map)}"
+        )
+
+    @staticmethod
+    def _elements_on_dimtag(dim: int, tag: int) -> set[int]:
+        """Element IDs on a raw geometry entity via live Gmsh."""
+        import gmsh
+        try:
+            _, etags_list, _ = gmsh.model.mesh.getElements(dim, tag)
+        except Exception as e:
+            raise RuntimeError(
+                f"could not resolve raw DimTag ({dim}, {tag}) — the "
+                f"Gmsh session may have been closed."
+            ) from e
+        out: set[int] = set()
+        for arr in etags_list:
+            out.update(int(x) for x in arr)
+        return out
 
     @staticmethod
     def _union_elem_ids(selector, id_fn) -> set[int]:

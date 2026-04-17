@@ -564,6 +564,11 @@ class PartsRegistry(_PartsFragmentationMixin):
         # name: "{instance_label}.{pg_name}".  These are NOT user-
         # facing physical groups — the user promotes them when ready.
         label_names: list[str] = []
+        # The umbrella-label block below (around the final ``if
+        # labels_comp is not None and top_dim >= 0:``) runs even when
+        # there is no sidecar payload, so ``labels_comp`` must be
+        # defined before the ``if payload is not None`` branch.
+        labels_comp = getattr(self._parent, 'labels', None)
         if isinstance(file_path, Path):
             from ._part_anchors import read_sidecar, rebind_physical_groups
             payload = read_sidecar(file_path)
@@ -588,7 +593,6 @@ class PartsRegistry(_PartsFragmentationMixin):
                     rotate=rotate,
                     gmsh_module=gmsh,
                 )
-                labels_comp = getattr(self._parent, 'labels', None)
                 if labels_comp is not None and pg_matches:
                     for pg_name, dimtags in pg_matches.items():
                         prefixed = f"{label}.{pg_name}"

@@ -110,10 +110,7 @@ g.model.sync()
 g.model.boolean.fragment(
     objects=[(2, concrete_surf)],
     tools=[(1, rebar_line)],
-    dim=2,                      # this is a 2D fragment; the default dim=3 filters out surfaces
-    cleanup_free=False,         # default True removes all surfaces in a 2D model
-                                # because they never bound a volume (library gap;
-                                # tracked separately for a fix).
+    dim=2,                      # 2D fragment (the default dim=3 would filter out surfaces)
 )
 
 # After fragment the surface + line tags may have changed. Look up

@@ -160,7 +160,13 @@ class _Boolean:
             remove_object, remove_tool, sync,
         )
 
-        if cleanup_free:
+        # ``cleanup_free`` removes dim=2 surfaces that have no upward
+        # adjacency to a volume — useful after a 3D fragment to drop
+        # stray cutting-plane remnants. In a 2D-only model every
+        # surface has no volume neighbour (there ARE no volumes), so
+        # the sweep would destroy every surface in the model. Skip
+        # the cleanup when no 3D entities exist.
+        if cleanup_free and gmsh.model.getEntities(3):
             free: list[tuple[int, int]] = []
             for _, tag_s in gmsh.model.getEntities(2):
                 up, _ = gmsh.model.getAdjacencies(2, tag_s)
