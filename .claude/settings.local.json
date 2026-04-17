@@ -117,7 +117,8 @@
       "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -c ' *)",
       "Bash(git commit -m ' *)",
       "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_recent_features.py -v)",
-      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ --ignore=tests/test_part_anchors.py --ignore=tests/test_part_autopersist.py -q)"
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ --ignore=tests/test_part_anchors.py --ignore=tests/test_part_autopersist.py -q)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_recent_features.py tests/test_constraint_resolver.py tests/test_load_resolver.py -q)"
     ]
   }
 }

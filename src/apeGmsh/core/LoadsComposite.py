@@ -83,7 +83,49 @@ _LoadT = TypeVar("_LoadT", bound=LoadDef)
 
 
 class LoadsComposite:
-    """Loads composite — define + resolve loads."""
+    """Loads composite — define + resolve loads.
+
+    Target resolution
+    -----------------
+    All factory methods (``point``, ``line``, ``surface``, ``gravity``,
+    ``body``, ``face_load``, ``face_sp``) accept a flexible positional
+    ``target`` argument plus three explicit keyword overrides::
+
+        g.loads.point("my_pt",     force_xyz=(0, 0, -1))   # auto
+        g.loads.point(pg="my_pg",  force_xyz=(0, 0, -1))   # force PG
+        g.loads.point(label="top", force_xyz=(0, 0, -1))   # force label
+        g.loads.point(tag=[(0, 7)], force_xyz=(0, 0, -1))  # raw DimTag
+
+    When the caller passes ``target=...`` (the auto path),
+    :meth:`_resolve_target` tries each of these in order until one
+    matches:
+
+    ===  ========================  =============================
+    #    Source                    Provided by
+    ===  ========================  =============================
+    1    raw ``list[(dim, tag)]``  the caller
+    2    mesh selection name       ``g.mesh_selection``
+    3    label (Tier 1, prefixed)  ``_label:`` physical groups
+    4    physical group (Tier 2)   user-authored PGs
+    5    part label                ``g.parts._instances``
+    ===  ========================  =============================
+
+    The first match wins. If two namespaces share a name (e.g. a label
+    and a PG both called ``"top"``), label wins because it is checked
+    first. To bypass auto resolution and pin a specific source use the
+    keyword form: ``pg=`` skips straight to step 4, ``label=`` to step
+    3, ``tag=`` to step 1.
+
+    A ``KeyError`` is raised if auto resolution exhausts all five
+    sources without finding the name.
+
+    Patterns
+    --------
+    All load definitions inherit the ``pattern`` of the active
+    :meth:`pattern` context (default ``"default"``). Group loads into
+    named patterns so downstream solvers can emit one ``timeSeries`` /
+    ``pattern`` block per group.
+    """
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent

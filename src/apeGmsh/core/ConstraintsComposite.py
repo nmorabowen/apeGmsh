@@ -93,7 +93,33 @@ _ConstraintT = TypeVar("_ConstraintT", bound=ConstraintDef)
 
 
 class ConstraintsComposite:
-    """Constraint composite -- define + resolve kinematic interactions."""
+    """Constraint composite — define + resolve kinematic interactions.
+
+    Target model
+    ------------
+    Constraints identify their master and slave sides by **part label**
+    (a key of ``g.parts._instances``), not by the multi-tier scheme
+    used by :class:`LoadsComposite`. :meth:`_add_def` validates both
+    labels against the registry and raises ``KeyError`` on a typo::
+
+        g.constraints.tie(master_label="column",
+                          slave_label="slab",
+                          master_entities=[(2, 13)],   # optional scope
+                          slave_entities=[(2, 17)])
+
+    Optional ``master_entities`` / ``slave_entities`` (list of
+    ``(dim, tag)``) narrow the search to a subset of the part's
+    entities — useful when a part has many surfaces and only one is
+    the interface.
+
+    Exceptions
+    ~~~~~~~~~~
+
+    * :class:`NodeToSurfaceDef` (and its spring variant) bypass label
+      validation because their ``master`` is a bare node tag and their
+      ``slave`` is a raw ``(dim=2, tag)`` surface. :meth:`node_to_surface`
+      accepts ``int``, ``str``, or ``(dim, tag)`` for both arguments.
+    """
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
