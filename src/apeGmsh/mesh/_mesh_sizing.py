@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from .Mesh import Mesh
 
 
-from apeGmsh._types import Tag, DimTag, TagsLike
 
 
 class _Sizing:

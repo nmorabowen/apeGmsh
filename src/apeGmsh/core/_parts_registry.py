@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING, Any
 import gmsh
 import numpy as np
 
-from .Labels import pg_preserved
 from ._parts_fragmentation import _PartsFragmentationMixin
 
 if TYPE_CHECKING:
@@ -363,6 +362,9 @@ class PartsRegistry(_PartsFragmentationMixin):
         if label is None:
             self._counter += 1
             label = f"{part.name}_{self._counter}"
+        # part.has_file was checked above; this implies file_path
+        # is not None. Narrow the type for mypy.
+        assert part.file_path is not None
         return self._import_cad(
             file_path=part.file_path,
             label=label,

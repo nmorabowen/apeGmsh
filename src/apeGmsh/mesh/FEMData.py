@@ -53,10 +53,9 @@ import numpy as np
 from numpy import ndarray
 
 from ._group_set import (
-    NamedGroupSet, PhysicalGroupSet, LabelSet, _to_object,
+    PhysicalGroupSet, LabelSet, _to_object,
 )
 from ._record_set import (
-    ConstraintKind, LoadKind,
     NodeConstraintSet, SurfaceConstraintSet,
     NodalLoadSet, SPSet, ElementLoadSet, MassSet,
 )
@@ -173,6 +172,13 @@ class MeshInfo:
     """
 
     __slots__ = ('n_nodes', 'n_elems', 'bandwidth', 'types')
+
+    # Per-slot type annotations (class-level so mypy picks them up;
+    # no assignments because that would clash with __slots__).
+    n_nodes: int
+    n_elems: int
+    bandwidth: int
+    types: list[ElementTypeInfo]
 
     def __init__(
         self,
@@ -925,11 +931,11 @@ class InspectComposite:
         # Element types
         if f.info.types:
             lines.append(f"  Element types ({len(f.info.types)}):")
-            for t in f.info.types:
+            for etype in f.info.types:
                 lines.append(
-                    f"    {t.name:12s} dim={t.dim}, "
-                    f"order={t.order}, npe={t.npe}, "
-                    f"count={t.count}")
+                    f"    {etype.name:12s} dim={etype.dim}, "
+                    f"order={etype.order}, npe={etype.npe}, "
+                    f"count={etype.count}")
 
         # Constraints
         nc = f.nodes.constraints
@@ -1035,15 +1041,15 @@ class InspectComposite:
         if el:
             lines.append(f"Element loads ({len(el)} records):")
             for pat in el.patterns():
-                recs = el.by_pattern(pat)
+                erecs = el.by_pattern(pat)
                 name_hint = ""
-                for r in recs:
-                    if getattr(r, 'name', None):
-                        name_hint = f"  (source: {r.name!r})"
+                for er in erecs:
+                    if getattr(er, 'name', None):
+                        name_hint = f"  (source: {er.name!r})"
                         break
-                ltype = getattr(recs[0], 'load_type', 'element') if recs else 'element'
+                ltype = getattr(erecs[0], 'load_type', 'element') if erecs else 'element'
                 lines.append(
-                    f"  Pattern {pat!r:16s} {len(recs):>4d} "
+                    f"  Pattern {pat!r:16s} {len(erecs):>4d} "
                     f"{ltype}{name_hint}")
 
         if not lines:

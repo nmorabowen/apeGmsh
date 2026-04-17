@@ -220,24 +220,29 @@ def _build_vtk_cells_from_fem(
                 continue
 
             # Look up (dim, tag) for the VTK type table.
-            pg_dim = None
+            target_dim: int | None = None
             if isinstance(target, tuple) and len(target) == 2:
-                pg_dim = int(target[0])
+                target_dim = int(target[0])
             else:
                 # Resolve by name via get_all()
                 for (d, t) in fem.nodes.physical.get_all():
                     try:
                         if fem.nodes.physical.get_name(d, t) == target:
-                            pg_dim = d
+                            target_dim = d
                             break
                     except Exception:
                         continue
 
             new_npe = pg_conn.shape[1]
-            vtk_type = _DIM_NPE_TO_VTK.get(
-                (pg_dim, new_npe),
-                _NPE_TO_VTK.get(new_npe, VTK_LINE),
-            )
+            # target_dim may be None if the PG name didn't resolve; in
+            # that case the lookup falls through to the npe-only fallback.
+            if target_dim is not None:
+                vtk_type = _DIM_NPE_TO_VTK.get(
+                    (target_dim, new_npe),
+                    _NPE_TO_VTK.get(new_npe, VTK_LINE),
+                )
+            else:
+                vtk_type = _NPE_TO_VTK.get(new_npe, VTK_LINE)
 
             conn_0 = _remap_connectivity(pg_conn, tag_to_idx)
             cell_blocks.append((conn_0, vtk_type))
@@ -992,9 +997,11 @@ class Results:
         if cf:
             lines.append(f"  Cell fields:  {', '.join(cf)}")
         if self.has_time_series:
+            ts = self._time_steps
+            assert ts is not None   # has_time_series == True implies non-None
             lines.append(
                 f"  Time-series: {self.n_steps} steps "
-                f"({self._time_steps[0]:.4g} .. {self._time_steps[-1]:.4g})"
+                f"({ts[0]:.4g} .. {ts[-1]:.4g})"
             )
         if self._physical_groups is not None:
             lines.append(f"  Physical groups: {len(self._physical_groups)}")

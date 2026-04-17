@@ -64,7 +64,7 @@ from ._mesh_structured import _Structured
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _ApeGmshSession
 
-from apeGmsh._types import Tag, DimTag, TagsLike
+from apeGmsh._types import DimTag, TagsLike
 
 
 __all__ = [

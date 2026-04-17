@@ -17,10 +17,16 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable, TYPE_CHECKING
+
+# Qt is lazy-imported at instantiation time via `_qt()`; the TYPE_CHECKING
+# block below gives mypy the concrete widget types so class-level
+# annotations like ``dict[str, QtWidgets.QSlider]`` resolve correctly.
+if TYPE_CHECKING:
+    from qtpy import QtWidgets  # noqa: F401
 
 
-def _qt():
+def _qt() -> tuple[Any, Any, Any]:
     from qtpy import QtWidgets, QtCore, QtGui
     return QtWidgets, QtCore, QtGui
 
@@ -160,8 +166,12 @@ class PreferencesTab:
         overlay_form = QtWidgets.QFormLayout(overlay_group)
         overlay_form.setSpacing(4)
 
-        self._overlay_sliders: dict[str, QtWidgets.QSlider] = {}
-        self._overlay_labels: dict[str, QtWidgets.QLabel] = {}
+        # Widget types are resolved only when qtpy is actually imported
+        # (at instantiation time). ``Any`` keeps mypy quiet while
+        # Pylance / IDEs still pick up the actual QSlider / QLabel types
+        # at runtime from the QObject hierarchy.
+        self._overlay_sliders: dict[str, Any] = {}
+        self._overlay_labels: dict[str, Any] = {}
 
         _OVERLAY_ITEMS = [
             ("load_arrow",        "Load arrows"),

@@ -37,7 +37,8 @@ from . import _mesh_filters as _flt
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
 
-from apeGmsh._types import Tag, DimTag
+from apeGmsh._logging import _HasLogging
+from apeGmsh._types import DimTag
 
 _DIM_LABEL = {0: "nodes", 1: "line_elems", 2: "surf_elems", 3: "vol_elems"}
 
@@ -45,8 +46,6 @@ _DIM_LABEL = {0: "nodes", 1: "line_elems", 2: "surf_elems", 3: "vol_elems"}
 # ======================================================================
 # MeshSelectionSet — mutable composite (lives on g.mesh_selection)
 # ======================================================================
-
-from apeGmsh._logging import _HasLogging
 
 
 class MeshSelectionSet(_HasLogging):

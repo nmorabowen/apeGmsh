@@ -11,10 +11,11 @@ from mpl_toolkits.mplot3d import Axes3D              # noqa: F401 – registers 
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 from numpy import ndarray
 
+from apeGmsh._logging import _HasLogging
+from apeGmsh._types import DimTag
+
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
-
-from apeGmsh._types import DimTag
 
 # ---------------------------------------------------------------------------
 # Gmsh element-type -> corner-node count
@@ -41,8 +42,6 @@ _DIM_LABEL  = {0: 'points', 1: 'curves', 2: 'surfaces', 3: 'volumes'}
 # ---------------------------------------------------------------------------
 # Plot — plotting composite
 # ---------------------------------------------------------------------------
-
-from apeGmsh._logging import _HasLogging
 
 
 class Plot(_HasLogging):

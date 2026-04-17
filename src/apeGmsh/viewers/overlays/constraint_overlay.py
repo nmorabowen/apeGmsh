@@ -103,7 +103,7 @@ def build_node_pair_actors(
         # Line segments
         if line_pts:
             pts_arr = np.array(line_pts, dtype=float)
-            cells_arr = np.array(line_cells, dtype=np.int64)
+            cells_arr = np.array(line_cells, dtype=int)
             poly = pv.PolyData(pts_arr, lines=cells_arr)
             result.append((poly, dict(
                 color=color, line_width=line_width,
@@ -185,7 +185,7 @@ def build_surface_actors(
 
         if interp_pts:
             pts_arr = np.array(interp_pts, dtype=float)
-            cells_arr = np.array(interp_cells, dtype=np.int64)
+            cells_arr = np.array(interp_cells, dtype=int)
             poly = pv.PolyData(pts_arr, lines=cells_arr)
             result.append((poly, dict(
                 color=color, line_width=line_width,

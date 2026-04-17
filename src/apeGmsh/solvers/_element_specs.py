@@ -14,7 +14,8 @@ from typing import Any
 
 import numpy as np
 
-from apeGmsh._types import Tag, DimTag
+from apeGmsh._types import DimTag  # noqa: F401  — re-exported by OpenSees.py
+
 
 # ---------------------------------------------------------------------------
 # Gmsh element type -> (corner_node_count, topological_dim)

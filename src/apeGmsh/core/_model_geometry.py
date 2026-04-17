@@ -613,7 +613,7 @@ class _Geometry:
         # Build the wire + pipe.
         wire = gmsh.model.occ.addWire(
             [int(t) for t in path_curves], checkClosed=False)
-        pipe_out = gmsh.model.occ.addPipe(
+        gmsh.model.occ.addPipe(
             [(2, int(profile_face))], wire)
         gmsh.model.occ.synchronize()
 

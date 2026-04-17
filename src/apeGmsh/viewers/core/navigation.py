@@ -136,6 +136,11 @@ def install_navigation(
     import vtk
 
     iren_wrap = plotter.iren
+    assert iren_wrap is not None, (
+        "plotter.iren is None; call plotter.show() or pass an active "
+        "plotter with a realized render window before attaching the "
+        "orbit-camera style."
+    )
     iren = iren_wrap.interactor
     renderer = plotter.renderer
 

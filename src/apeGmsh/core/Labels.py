@@ -53,14 +53,16 @@ with ``_label:`` so the two tiers do not interfere.
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Iterator
 
 import gmsh
 
+from apeGmsh._logging import _HasLogging
+from apeGmsh._types import DimTag
+
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
-
-from apeGmsh._types import DimTag
 
 # The internal prefix that distinguishes label PGs from user PGs.
 LABEL_PREFIX = "_label:"
@@ -105,10 +107,6 @@ def add_prefix(name: str) -> str:
 #         result, result_map = gmsh.model.occ.fragment(obj, tool, ...)
 #         pg.set_result(obj + tool, result_map)
 # =====================================================================
-
-from contextlib import contextmanager
-from typing import Iterator
-
 
 class _PGPreserver:
     """Collects boolean result info and remaps PGs on context exit."""
@@ -224,8 +222,6 @@ def remap_physical_groups(
     for old_dt, new_dts in zip(input_dimtags, result_map):
         key = (int(old_dt[0]), int(old_dt[1]))
         dt_map[key] = [(int(d), int(t)) for d, t in new_dts]
-
-    input_set = {(int(d), int(t)) for d, t in input_dimtags}
 
     # -- Collect result entities per dimension (for absorbed-entity fallback)
     result_by_dim: dict[int, list[int]] = {}
@@ -369,9 +365,6 @@ def reconcile_label_pgs() -> None:
         if new_tags:
             new_pg = gmsh.model.addPhysicalGroup(dim, new_tags)
             gmsh.model.setPhysicalName(dim, new_pg, name)
-
-
-from apeGmsh._logging import _HasLogging
 
 
 class Labels(_HasLogging):

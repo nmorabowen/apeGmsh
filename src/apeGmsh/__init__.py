@@ -75,6 +75,7 @@ __all__ = [
     "FEMData",
     "MeshInfo",
     "PhysicalGroupSet",
+    "LabelSet",
     "Algorithm2D",
     "Algorithm3D",
     "MeshAlgorithm2D",

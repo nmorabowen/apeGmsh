@@ -14,14 +14,14 @@ import logging
 
 import numpy as np
 
+from ._element_types import ElementGroup, make_type_info
 from ._fem_extract import (
     extract_raw, extract_physical_groups, extract_labels,
     extract_partitions,
 )
-from ._element_types import ElementGroup, make_type_info
+from ._group_set import PhysicalGroupSet, LabelSet
 
 _log = logging.getLogger(__name__)
-from ._group_set import PhysicalGroupSet, LabelSet
 
 
 # =====================================================================

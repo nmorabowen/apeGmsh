@@ -36,12 +36,12 @@ import gmsh
 import numpy as np
 import pandas as pd
 
+from apeGmsh._logging import _HasLogging
+from apeGmsh._types import Tag, DimTag
+
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _SessionBase
     from apeGmsh.core.Model import Model
-
-
-from apeGmsh._types import Tag, DimTag
 
 BBox    = tuple[float, float, float, float, float, float]
 
@@ -463,8 +463,6 @@ class Selection:
 # ===========================================================================
 # SelectionComposite — attached to Model as `model.selection`
 # ===========================================================================
-
-from apeGmsh._logging import _HasLogging
 
 
 class SelectionComposite(_HasLogging):

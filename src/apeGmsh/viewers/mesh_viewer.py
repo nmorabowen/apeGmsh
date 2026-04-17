@@ -547,10 +547,13 @@ class MeshViewer:
         if loads_comp is not None:
             def _on_force_scale(v: float):
                 _overlay_scales['force_arrow'] = v
+                # loads_tab is assigned below before these callbacks fire.
+                assert loads_tab is not None
                 _on_loads_patterns_changed(loads_tab.active_patterns())
 
             def _on_moment_scale(v: float):
                 _overlay_scales['moment_arrow'] = v
+                assert loads_tab is not None
                 _on_loads_patterns_changed(loads_tab.active_patterns())
 
             loads_tab = LoadsTabPanel(

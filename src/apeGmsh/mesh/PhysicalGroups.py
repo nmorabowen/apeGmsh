@@ -5,12 +5,12 @@ from typing import TYPE_CHECKING
 import gmsh
 import pandas as pd
 
+from apeGmsh._logging import _HasLogging
+from apeGmsh._types import Tag, DimTag
 from apeGmsh.core.Labels import is_label_pg
 
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
-
-from apeGmsh._types import Tag, DimTag
 
 _DIM_LABEL: dict[int, str] = {
     0: 'points',
@@ -23,8 +23,6 @@ _DIM_LABEL: dict[int, str] = {
 # ---------------------------------------------------------------------------
 # PhysicalGroups — composite class
 # ---------------------------------------------------------------------------
-
-from apeGmsh._logging import _HasLogging
 
 
 class PhysicalGroups(_HasLogging):
@@ -95,10 +93,17 @@ class PhysicalGroups(_HasLogging):
         -------
         Tag  the physical-group tag (existing or newly created)
         """
+        from typing import cast
         from apeGmsh.core._helpers import resolve_to_tags
         if isinstance(tags, (str, int)):
             tags = [tags]
-        resolved = resolve_to_tags(tags, dim=dim, session=self._parent)
+        # self._parent honours the SessionProtocol structural contract
+        # that resolve_to_tags requires — cast to the nominal type
+        # mypy expects.
+        from apeGmsh._session import _SessionBase
+        resolved = resolve_to_tags(
+            tags, dim=dim, session=cast(_SessionBase, self._parent),
+        )
 
         # Upsert: if a PG with this name already exists, merge
         if name:

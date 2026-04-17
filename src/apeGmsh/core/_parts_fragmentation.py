@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import gmsh
 
 from .Labels import pg_preserved
+from apeGmsh._types import DimTag
 
 if TYPE_CHECKING:
     from ._parts_registry import Instance
@@ -18,6 +19,18 @@ class _PartsFragmentationMixin:
     Expects ``self._instances``, ``self._parent``, and
     ``self._compute_bbox`` from the host class.
     """
+
+    # Host-provided attribute contract (supplied by PartsRegistry).
+    # These are declared here without assignment so mypy knows they
+    # exist on ``self`` inside this mixin's methods.
+    if TYPE_CHECKING:
+        _instances: dict[str, "Instance"]
+        _parent: Any
+
+        @staticmethod
+        def _compute_bbox(
+            dimtags: list[DimTag],
+        ) -> tuple[float, float, float, float, float, float] | None: ...
 
     def fragment_all(self, *, dim: int | None = None) -> list[int]:
         """Fragment all entities so interfaces become conformal.

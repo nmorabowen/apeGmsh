@@ -278,8 +278,15 @@ def _accum_to_records(
     for nid, vec in accum.items():
         f = tuple(float(v) for v in vec[:3])
         m = tuple(float(v) for v in vec[3:6])
-        force_xyz = f if any(abs(v) > 0.0 for v in f) else None
-        moment_xyz = m if any(abs(v) > 0.0 for v in m) else None
+        # Static shape: each slice is exactly 3 floats (guaranteed by
+        # _accumulate_nodal's 6-element vectors). Casting to a 3-tuple
+        # lets mypy's tuple[float, float, float] type match.
+        force_xyz: tuple[float, float, float] | None = (
+            (f[0], f[1], f[2]) if any(abs(v) > 0.0 for v in f) else None
+        )
+        moment_xyz: tuple[float, float, float] | None = (
+            (m[0], m[1], m[2]) if any(abs(v) > 0.0 for v in m) else None
+        )
         if force_xyz is None and moment_xyz is None:
             continue
         out.append(NodalLoadRecord(

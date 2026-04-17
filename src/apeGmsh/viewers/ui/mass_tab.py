@@ -161,6 +161,8 @@ class MassTabPanel:
         return "(unknown)"
 
     def _update_stats(self) -> None:
+        if self._fem is None:
+            return
         ms = self._fem.nodes.masses
         records = list(ms)
         if not records:
