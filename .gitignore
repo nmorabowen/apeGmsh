@@ -34,6 +34,9 @@ opensees_venv/
 *.brep
 *.pos
 
+# Claude Code agent worktrees (ephemeral, never tracked)
+.claude/worktrees/
+
 # AutoCAD lock/backup files (should never be tracked)
 *.dwl
 *.dwl2
