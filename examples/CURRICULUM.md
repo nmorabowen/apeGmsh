@@ -108,10 +108,11 @@ boolean operations safely, and tie conformal interfaces.
 | # | Title | File | Learns | Features | Analysis | Verify | Prereq |
 |---|---|---|---|---|---|---|---|
 | 10 | Parts Basics | **NEW** `examples/EOS Examples/10_parts_basics.ipynb` | Register parts with `g.parts.register()`, place multiple instances, identify entities by `(part, dim, tag)`. | `g.parts.register`, instances, `g.parts.from_model`, part labels as load/BC targets | static linear | Reactions equal to sum over instance contributions. | 04 |
+| 10b | Part Assembly with Transforms | **NEW** `examples/EOS Examples/10b_part_assembly.ipynb` | Instance a template geometry multiple times with translate — the "place a CAD part three times" workflow. | `g.model.transforms.copy` + `.translate` + `g.parts.register`; also documents the intended `g.parts.add(part, translate=...)` path (currently blocked by a library bug, tracked separately) | static linear | Every placed column independently satisfies $\delta = PL^{3}/3EI$. | 10 |
 | 11 | Boolean Operations in Assemblies | REVIEW `examples/example_gusset.ipynb` — does it use `g.model.boolean` with parts? If not, **NEW**. | `fuse`, `cut`, `fragment` applied to imported CAD, staying part-aware. | `g.model.io.load_step`, `g.model.boolean.*`, `g.parts.fragment_all` | static linear | Assembled geometry passes `make_conformal` without orphans. | 10 |
 | 12 | Interfaces via Tie | **NEW** `examples/EOS Examples/12_interfaces_via_tie.ipynb` | Two parts meshed separately, tied at a shared surface; the `tie` constraint resolver in action. | `g.constraints.tie`, `InterpolationRecord`, shape-function weights | static linear | Displacement continuity across the interface within mesh-size tolerance. | 10 |
 
-**Tier 3 gaps to write:** 2 fully new (10, 12) + 1 review (11).
+**Tier 3 gaps to write:** 3 fully new (10, 10b, 12) + 1 review (11 — on inspection `example_gusset.ipynb` was a 4-cell stub, so 11 became NEW).
 
 ---
 
