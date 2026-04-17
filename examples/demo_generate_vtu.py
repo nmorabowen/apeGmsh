@@ -5,7 +5,7 @@ Creates:
   1. A simple 2D quad mesh with displacement + stress fields
   2. A 3D cantilever beam with modal results (PVD time-series)
 
-Run:  python -m apeGmshViewer.demo_generate_vtu
+Run:  python examples/demo_generate_vtu.py
 """
 
 from __future__ import annotations

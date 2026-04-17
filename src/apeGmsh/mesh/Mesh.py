@@ -201,7 +201,7 @@ class Mesh(_HasLogging):
 
         Parameters are forwarded to :class:`MeshViewer`.
         """
-        from ..viewers._mesh_viewer import MeshViewer
+        from ..viewers.mesh_viewer import MeshViewer
         mv = MeshViewer(self._parent, **kwargs)
         return mv.show()
 

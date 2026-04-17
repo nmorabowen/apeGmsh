@@ -118,7 +118,13 @@
       "Bash(git commit -m ' *)",
       "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_recent_features.py -v)",
       "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ --ignore=tests/test_part_anchors.py --ignore=tests/test_part_autopersist.py -q)",
-      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_recent_features.py tests/test_constraint_resolver.py tests/test_load_resolver.py -q)"
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_recent_features.py tests/test_constraint_resolver.py tests/test_load_resolver.py -q)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ -q --ignore=tests/test_part_anchors.py --ignore=tests/test_part_autopersist.py)",
+      "Bash(xargs wc *)",
+      "Bash(find /c/Users/nmora/Github/apeGmsh/src/apeGmsh/viewers -name \"*.py\" -type f -exec wc -l {} +)",
+      "Bash(find /c/Users/nmora/Github/apeGmsh/apeGmshViewer -name \"*.py\" -type f -exec wc -l {} +)",
+      "Bash(git mv *)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -c \"from apeGmsh.viewers import GeomTransfViewer; print\\('OK:', GeomTransfViewer.__module__\\)\")"
     ]
   }
 }

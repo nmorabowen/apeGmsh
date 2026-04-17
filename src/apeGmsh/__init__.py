@@ -58,13 +58,12 @@ from apeGmsh.results.Results import Results
 import apeGmsh.solvers.Constraints as Constraints
 from apeGmsh.solvers.Numberer import Numberer, NumberedMesh
 from apeGmsh.mesh._mesh_partitioning import RenumberResult, PartitionInfo
-from apeGmsh.viewers._mesh_viewer import MeshViewer as MeshViewerV2
+from apeGmsh.viewers.mesh_viewer import MeshViewer
 from apeGmsh.viewers.model_viewer import ModelViewer
 from apeGmsh.viz.Selection import Selection, SelectionComposite
 
-# Backward-compatible aliases
+# Backward-compatible alias (SelectionPicker was the pre-v1 name)
 SelectionPicker = ModelViewer
-MeshViewer = MeshViewerV2
 
 __all__ = [
     "_SessionBase",
@@ -92,8 +91,7 @@ __all__ = [
     "Selection",
     "SelectionComposite",
     "ModelViewer",
-    "MeshViewerV2",
-    "SelectionPicker",
     "MeshViewer",
+    "SelectionPicker",
     "Constraints",
 ]
