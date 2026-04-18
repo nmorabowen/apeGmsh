@@ -427,11 +427,18 @@ class ViewerWindow:
         """Apply *palette* to the window chrome + viewport + icons."""
         self._window.setStyleSheet(build_stylesheet(palette))
         try:
-            self._qt_interactor.set_background(
-                palette.bg_top, top=palette.bg_bottom,
-            )
+            from ..scene.background import apply_background
+            apply_background(self._qt_interactor, palette)
         except Exception:
-            pass
+            # Fallback to native linear gradient if the scene module or
+            # VTK texture path fails for any reason — keeps the viewer
+            # usable rather than crashing on palette change.
+            try:
+                self._qt_interactor.set_background(
+                    palette.bg_top, top=palette.bg_bottom,
+                )
+            except Exception:
+                pass
         self._refresh_toolbar_icons(palette.icon)
         for cb in list(self._theme_callbacks):
             try:
