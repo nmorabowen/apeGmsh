@@ -253,6 +253,9 @@ def build_mesh_scene(
     ``node_color`` / ``edge_color`` default to the active palette's
     ``node_accent`` / ``mesh_edge_color`` when left as ``None``.
     """
+    from ..ui.preferences_manager import PREFERENCES as _PREF
+    _pref = _PREF.current
+
     _pal = THEME.current
     if node_color is None:
         node_color = _pal.node_accent
@@ -378,7 +381,7 @@ def build_mesh_scene(
             edge_color=edge_color,
             line_width=line_width if dim == 1 else 0.5,
             render_lines_as_tubes=(dim == 1),
-            smooth_shading=False, pickable=True,
+            smooth_shading=_pref.smooth_shading, pickable=True,
         )
         # Flat matte + silhouette on dim=2/3 — mirrors brep_scene so the
         # two viewers present the same CAD-style outline.
@@ -391,7 +394,7 @@ def build_mesh_scene(
                         _pal.outline_silhouette_px if dim == 3
                         else _pal.outline_feature_px
                     ),
-                    feature_angle=25,
+                    feature_angle=_pref.feature_angle,
                 ),
             )
         actor = plotter.add_mesh(grid, reset_camera=False, **dim_kwargs)

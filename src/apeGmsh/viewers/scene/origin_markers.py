@@ -70,9 +70,14 @@ def build_origin_markers(
     if len(points) == 0:
         return None, None
 
+    from ..ui.preferences_manager import PREFERENCES
+    _pref = PREFERENCES.current
     if color is None:
         from ..ui.theme import THEME
         color = THEME.current.origin_marker_color
+    # Preference wins when caller used the default of 2
+    if coord_precision == 2:
+        coord_precision = _pref.coord_precision
 
     world = np.asarray(points, dtype=np.float64).reshape(-1, 3)
     rendered = world - np.asarray(origin_shift, dtype=np.float64)
@@ -98,7 +103,7 @@ def build_origin_markers(
         label_actor = plotter.add_point_labels(
             rendered,
             labels,
-            font_size=10,
+            font_size=_pref.origin_marker_font_size,
             text_color=pal.text,
             shape_color=pal.mantle,
             point_color=color,

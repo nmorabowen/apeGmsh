@@ -151,9 +151,10 @@ class ViewTab:
         style_layout = QtWidgets.QFormLayout(style_group)
         style_layout.setSpacing(4)
 
+        from .preferences_manager import PREFERENCES as _PREF_FS
         self._font_size = QtWidgets.QSpinBox()
         self._font_size.setRange(6, 24)
-        self._font_size.setValue(10)
+        self._font_size.setValue(_PREF_FS.current.entity_label_font_size)
         self._font_size.valueChanged.connect(self._fire)
         style_layout.addRow("Font size", self._font_size)
 

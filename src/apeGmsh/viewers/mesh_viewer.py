@@ -57,30 +57,53 @@ class MeshViewer:
         parent: "_SessionBase",
         *,
         dims: list[int] | None = None,
-        point_size: float = 6.0,
-        line_width: float = 3.0,
-        surface_opacity: float = 1.0,
-        show_surface_edges: bool = True,
+        point_size: float | None = None,
+        line_width: float | None = None,
+        surface_opacity: float | None = None,
+        show_surface_edges: bool | None = None,
         origin_markers: list[tuple[float, float, float]] | None = None,
-        origin_marker_show_coords: bool = True,
+        origin_marker_show_coords: bool | None = None,
         fem: "FEMData | None" = None,
         fast: bool = True,
         **kwargs: Any,
     ) -> None:
+        from .ui.preferences_manager import PREFERENCES
+        p = PREFERENCES.current
+
         self._parent = parent
         self._dims = dims if dims is not None else [1, 2, 3]
 
-        self._point_size = point_size
-        self._line_width = line_width
-        self._surface_opacity = surface_opacity
-        self._show_surface_edges = show_surface_edges
-        # Origin marker overlay — default always shows world origin.
-        # Pass ``origin_markers=[]`` to suppress the default.
-        self._origin_markers: list[tuple[float, float, float]] = (
-            list(origin_markers) if origin_markers is not None
-            else [(0.0, 0.0, 0.0)]
+        # Mesh viewer keeps its own pref-sourced visual defaults. Explicit
+        # kwarg still wins; falling back to the user's persisted preference
+        # otherwise. Historic hard-coded fallbacks (6.0/3.0/1.0/True) match
+        # ``Preferences``'s ``node_marker_size``/``line_width`` defaults.
+        self._point_size = (
+            point_size if point_size is not None else p.node_marker_size
         )
-        self._origin_marker_show_coords = origin_marker_show_coords
+        self._line_width = (
+            line_width if line_width is not None else p.mesh_line_width
+        )
+        self._surface_opacity = (
+            surface_opacity if surface_opacity is not None
+            else p.mesh_surface_opacity
+        )
+        self._show_surface_edges = (
+            show_surface_edges if show_surface_edges is not None
+            else p.mesh_show_surface_edges
+        )
+
+        # Origin marker overlay. User preference controls whether the
+        # default is ``[(0,0,0)]`` or ``[]``; explicit kwarg wins.
+        if origin_markers is not None:
+            self._origin_markers: list[tuple[float, float, float]] = list(origin_markers)
+        elif p.origin_marker_include_world_origin:
+            self._origin_markers = [(0.0, 0.0, 0.0)]
+        else:
+            self._origin_markers = []
+        self._origin_marker_show_coords = (
+            origin_marker_show_coords if origin_marker_show_coords is not None
+            else p.origin_marker_show_coords
+        )
         self._fem: "FEMData | None" = fem
 
         # Populated during show()
@@ -150,10 +173,11 @@ class MeshViewer:
             if checked and scene.node_coords is not None and len(scene.node_coords) > 0:
                 labels = [str(int(t)) for t in scene.node_tags]
                 from .ui.theme import THEME as _THEME
+                from .ui.preferences_manager import PREFERENCES as _PREF_NL
                 try:
                     actor = plotter.add_point_labels(
                         scene.node_coords, labels,
-                        font_size=8,
+                        font_size=_PREF_NL.current.node_label_font_size,
                         text_color=_THEME.current.text,
                         shape_color=_THEME.current.mantle,
                         shape_opacity=0.6,
@@ -192,10 +216,11 @@ class MeshViewer:
                             labels.append(str(elem_tag))
                 if centers:
                     from .ui.theme import THEME as _THEME
+                    from .ui.preferences_manager import PREFERENCES as _PREF_EL
                     try:
                         actor = plotter.add_point_labels(
                             np.array(centers), labels,
-                            font_size=8,
+                            font_size=_PREF_EL.current.element_label_font_size,
                             text_color=_THEME.current.success,
                             shape_color=_THEME.current.mantle,
                             shape_opacity=0.6,
@@ -269,17 +294,21 @@ class MeshViewer:
         # Origin markers (reference-point overlay — purely visual)
         from .overlays.origin_markers_overlay import OriginMarkerOverlay
         from .ui.origin_markers_panel import OriginMarkersPanel
+        from .ui.preferences_manager import PREFERENCES as _PREF
+        _marker_size = _PREF.current.origin_marker_size
         origin_overlay = OriginMarkerOverlay(
             plotter,
             origin_shift=registry.origin_shift,
             model_diagonal=scene.model_diagonal,
             points=self._origin_markers,
             show_coords=self._origin_marker_show_coords,
+            size=_marker_size,
         )
         origin_panel = OriginMarkersPanel(
             initial_points=self._origin_markers,
             initial_visible=True,
             initial_show_coords=self._origin_marker_show_coords,
+            initial_size=_marker_size,
             on_visible_changed=origin_overlay.set_visible,
             on_show_coords_changed=origin_overlay.set_show_coords,
             on_marker_added=origin_overlay.add,
@@ -651,7 +680,16 @@ class MeshViewer:
             on_overlay_scale=_pref_overlay_scale,
             on_theme=lambda name: THEME.set_theme(name),
         )
-        win.add_tab("Preferences", prefs.widget)
+        # Session tab (formerly "Preferences") — runtime tweaks.
+        # "Global preferences…" button opens the persistent-prefs dialog.
+        from qtpy import QtWidgets as _QtW
+        from .ui.preferences_dialog import open_preferences_dialog
+        _btn_global = _QtW.QPushButton("Global preferences…")
+        _btn_global.clicked.connect(
+            lambda: open_preferences_dialog(win.window)
+        )
+        prefs.widget.layout().addWidget(_btn_global)
+        win.add_tab("Session", prefs.widget)
 
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
@@ -659,7 +697,10 @@ class MeshViewer:
         # the default per-dim idle function already gives a uniform look
         # while keeping nodes black — no override needed.
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
-        pick_engine = PickEngine(plotter, registry)
+        from .ui.preferences_manager import PREFERENCES as _PREF_DT
+        pick_engine = PickEngine(
+            plotter, registry, drag_threshold=_PREF_DT.current.drag_threshold,
+        )
 
         # ── Pick mode state ─────────────────────────────────────────
         _pick_mode: list[str] = ["brep"]  # "brep", "element", "node"

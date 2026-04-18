@@ -193,6 +193,9 @@ def build_brep_scene(
     -------
     EntityRegistry
     """
+    from ..ui.preferences_manager import PREFERENCES as _PREF
+    _pref = _PREF.current
+
     t0 = time.perf_counter()
     registry = EntityRegistry()
 
@@ -415,12 +418,12 @@ def build_brep_scene(
                 show_edges=show_surface_edges,
                 edge_color="#000000",
                 line_width=0.5,
-                smooth_shading=False,
+                smooth_shading=_pref.smooth_shading,
                 diffuse=0.9, specular=0.0,
                 silhouette=dict(
                     color=_pal.outline_color,
                     line_width=_pal.outline_feature_px,
-                    feature_angle=25,
+                    feature_angle=_pref.feature_angle,
                 ),
                 pickable=True,
             )
@@ -512,12 +515,12 @@ def build_brep_scene(
             d3_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=vol_alpha,
-                smooth_shading=False,
+                smooth_shading=_pref.smooth_shading,
                 diffuse=0.9, specular=0.0,
                 silhouette=dict(
                     color=_pal.outline_color,
                     line_width=_pal.outline_silhouette_px,
-                    feature_angle=25,
+                    feature_angle=_pref.feature_angle,
                 ),
                 pickable=True,
             )

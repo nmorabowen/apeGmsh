@@ -56,33 +56,46 @@ class ModelViewer:
         *,
         physical_group: str | None = None,
         dims: list[int] | None = None,
-        point_size: float = 10.0,
-        line_width: float = 6.0,
-        surface_opacity: float = 0.35,
-        show_surface_edges: bool = False,
+        point_size: float | None = None,
+        line_width: float | None = None,
+        surface_opacity: float | None = None,
+        show_surface_edges: bool | None = None,
         origin_markers: list[tuple[float, float, float]] | None = None,
-        origin_marker_show_coords: bool = True,
+        origin_marker_show_coords: bool | None = None,
         fast: bool = True,
         **kwargs: Any,
     ) -> None:
+        from .ui.preferences_manager import PREFERENCES
+        p = PREFERENCES.current
+
         self._parent = parent
         self._model = model
         self._dims = dims if dims is not None else [0, 1, 2, 3]
         self._physical_group = physical_group
 
-        # Visual props
-        self._point_size = point_size
-        self._line_width = line_width
-        self._surface_opacity = surface_opacity
-        self._show_surface_edges = show_surface_edges
-
-        # Origin marker overlay — default always shows world origin.
-        # Pass ``origin_markers=[]`` to suppress the default.
-        self._origin_markers: list[tuple[float, float, float]] = (
-            list(origin_markers) if origin_markers is not None
-            else [(0.0, 0.0, 0.0)]
+        # Visual props — explicit kwarg wins, otherwise pull user preference.
+        self._point_size = point_size if point_size is not None else p.point_size
+        self._line_width = line_width if line_width is not None else p.line_width
+        self._surface_opacity = (
+            surface_opacity if surface_opacity is not None else p.surface_opacity
         )
-        self._origin_marker_show_coords = origin_marker_show_coords
+        self._show_surface_edges = (
+            show_surface_edges if show_surface_edges is not None
+            else p.show_surface_edges
+        )
+
+        # Origin marker overlay. User preference controls whether the
+        # default is ``[(0,0,0)]`` or ``[]``; explicit kwarg wins.
+        if origin_markers is not None:
+            self._origin_markers: list[tuple[float, float, float]] = list(origin_markers)
+        elif p.origin_marker_include_world_origin:
+            self._origin_markers = [(0.0, 0.0, 0.0)]
+        else:
+            self._origin_markers = []
+        self._origin_marker_show_coords = (
+            origin_marker_show_coords if origin_marker_show_coords is not None
+            else p.origin_marker_show_coords
+        )
 
         # Populated during show()
         self._selection_state: "SelectionState | None" = None
@@ -446,17 +459,21 @@ class ModelViewer:
 
         from .overlays.origin_markers_overlay import OriginMarkerOverlay
         from .ui.origin_markers_panel import OriginMarkersPanel
+        from .ui.preferences_manager import PREFERENCES as _PREF
+        _marker_size = _PREF.current.origin_marker_size
         origin_overlay = OriginMarkerOverlay(
             plotter,
             origin_shift=registry.origin_shift,
             model_diagonal=_compute_model_diagonal(),
             points=self._origin_markers,
             show_coords=self._origin_marker_show_coords,
+            size=_marker_size,
         )
         origin_panel = OriginMarkersPanel(
             initial_points=self._origin_markers,
             initial_visible=True,
             initial_show_coords=self._origin_marker_show_coords,
+            initial_size=_marker_size,
             on_visible_changed=origin_overlay.set_visible,
             on_show_coords_changed=origin_overlay.set_show_coords,
             on_marker_added=origin_overlay.add,
@@ -510,7 +527,17 @@ class ModelViewer:
             on_pick_color=_pref_pick_color,
             on_theme=lambda name: THEME.set_theme(name),
         )
-        win.add_tab("Preferences", prefs.widget)
+        # Session tab (formerly "Preferences") — runtime tweaks that reset
+        # next session. The "Global preferences…" button at the bottom opens
+        # the persistent-prefs dialog.
+        from qtpy import QtWidgets as _QtW
+        from .ui.preferences_dialog import open_preferences_dialog
+        _btn_global = _QtW.QPushButton("Global preferences…")
+        _btn_global.clicked.connect(
+            lambda: open_preferences_dialog(win.window)
+        )
+        prefs.widget.layout().addWidget(_btn_global)
+        win.add_tab("Session", prefs.widget)
 
         # Set generous clipping range for shifted coords
         try:
@@ -523,7 +550,10 @@ class ModelViewer:
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
-        pick_engine = PickEngine(plotter, registry)
+        from .ui.preferences_manager import PREFERENCES as _PREF_DT
+        pick_engine = PickEngine(
+            plotter, registry, drag_threshold=_PREF_DT.current.drag_threshold,
+        )
 
         # ── Parts tree panel (needs registry) ──────────────────────
         parts_reg = getattr(self._parent, 'parts', None)

@@ -107,9 +107,12 @@ class ViewerWindow:
         extra_docks: list[Any] | None = None,
         toolbar_actions: list[tuple[str, str, Callable]] | None = None,
         on_close: Callable[[], None] | None = None,
-        show_console: bool = False,
+        show_console: bool | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui, QtInteractor = _lazy_qt()
+        if show_console is None:
+            from .preferences_manager import PREFERENCES as _PREF_SC
+            show_console = _PREF_SC.current.show_console
         self._QtWidgets = QtWidgets
         self._QtCore = QtCore
         self._QtGui = QtGui
@@ -162,30 +165,52 @@ class ViewerWindow:
         self._qt_interactor = QtInteractor(parent=self._window)
         self._window.setCentralWidget(self._qt_interactor.interactor)
 
+        from .preferences_manager import PREFERENCES as _PREF
+        _p = _PREF.current
+
         import pyvista as _pv
         _pv.set_plot_theme("dark")
         _pv.global_theme.font.color = "white"
-        try:
-            self._qt_interactor.enable_anti_aliasing("ssaa")
-        except Exception:
-            pass
-        self._qt_interactor.add_axes(
-            interactive=False, line_width=2, color="white",
-            xlabel="X", ylabel="Y", zlabel="Z",
+        if _p.anti_aliasing != "none":
+            try:
+                self._qt_interactor.enable_anti_aliasing(_p.anti_aliasing)
+            except Exception:
+                pass
+        _axes_kwargs = dict(
+            interactive=False,
+            line_width=_p.axis_line_width,
+            color="white",
         )
+        if _p.axis_labels_visible:
+            _axes_kwargs.update(xlabel="X", ylabel="Y", zlabel="Z")
+        else:
+            _axes_kwargs.update(xlabel="", ylabel="", zlabel="")
+        self._qt_interactor.add_axes(**_axes_kwargs)
 
         # ── Right dock: tabs (vertical labels, horizontal text) ─────
-        self._tab_widget = QtWidgets.QTabWidget()
-        self._tab_widget.setTabPosition(
-            QtWidgets.QTabWidget.TabPosition.West
+        _TAB_POS_MAP = {
+            "left":   QtWidgets.QTabWidget.TabPosition.West,
+            "right":  QtWidgets.QTabWidget.TabPosition.East,
+            "top":    QtWidgets.QTabWidget.TabPosition.North,
+            "bottom": QtWidgets.QTabWidget.TabPosition.South,
+        }
+        _tab_pos = _TAB_POS_MAP.get(
+            _p.tab_position, QtWidgets.QTabWidget.TabPosition.West,
         )
-        self._tab_widget.tabBar().setStyle(_make_horizontal_tab_style())
+        _is_vertical = _tab_pos in (
+            QtWidgets.QTabWidget.TabPosition.West,
+            QtWidgets.QTabWidget.TabPosition.East,
+        )
+        self._tab_widget = QtWidgets.QTabWidget()
+        self._tab_widget.setTabPosition(_tab_pos)
+        if _is_vertical:
+            self._tab_widget.tabBar().setStyle(_make_horizontal_tab_style())
         for name, widget in (tabs or []):
             self._tab_widget.addTab(widget, name)
 
         tabs_dock = QtWidgets.QDockWidget()
         tabs_dock.setTitleBarWidget(QtWidgets.QWidget())  # hide title bar
-        tabs_dock.setMinimumWidth(320)
+        tabs_dock.setMinimumWidth(_p.dock_min_width)
         tabs_dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
         tabs_dock.setWidget(self._tab_widget)
         self._window.addDockWidget(QtCore.Qt.RightDockWidgetArea, tabs_dock)
@@ -359,14 +384,22 @@ class ViewerWindow:
         sb.setValue(sb.maximum())
 
     def exec(self) -> int:
-        """Show the window maximized and run the Qt event loop."""
+        """Show the window and run the Qt event loop.
+
+        Honors the ``window_maximized`` preference: if ``True`` (default),
+        the window opens maximized; otherwise it opens at natural size.
+        """
         # Default to orthographic projection
         try:
             self._qt_interactor.enable_parallel_projection()
             self._act_parallel.setChecked(True)
         except Exception:
             pass
-        self._window.showMaximized()
+        from .preferences_manager import PREFERENCES as _PREF_MAX
+        if _PREF_MAX.current.window_maximized:
+            self._window.showMaximized()
+        else:
+            self._window.show()
         try:
             self._qt_interactor.render()
         except Exception:
