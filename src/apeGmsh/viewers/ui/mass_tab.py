@@ -52,7 +52,10 @@ class MassTabPanel:
             "No mass defined.\n\n"
             "Use g.masses.point(), g.masses.volume(), etc."
         )
-        self._empty_label.setStyleSheet("color: #6c7086; padding: 12px;")
+        from .theme import THEME as _THEME
+        self._empty_label.setStyleSheet(
+            f"color: {_THEME.current.overlay}; padding: 12px;"
+        )
         self._empty_label.setWordWrap(True)
         layout.addWidget(self._empty_label)
 
@@ -62,9 +65,10 @@ class MassTabPanel:
             "Generate a mesh first to display\n"
             "mass sphere overlays in the 3-D viewport."
         )
+        _warn = _THEME.current.warning
         self._fem_warning.setStyleSheet(
-            "color: #f9e2af; padding: 6px; "
-            "border: 1px solid #f9e2af; border-radius: 3px;"
+            f"color: {_warn}; padding: 6px; "
+            f"border: 1px solid {_warn}; border-radius: 3px;"
         )
         self._fem_warning.setWordWrap(True)
         layout.addWidget(self._fem_warning)

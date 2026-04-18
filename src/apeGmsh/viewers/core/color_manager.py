@@ -32,6 +32,22 @@ PICK_RGB   = np.array([231, 76, 60],  dtype=np.uint8)   # #E74C3C red
 HOVER_RGB  = np.array([255, 215, 0],  dtype=np.uint8)   # #FFD700 gold
 HIDDEN_RGB = np.array([0, 0, 0],      dtype=np.uint8)   # invisible on dark bg
 
+
+def _theme_idle_colors() -> dict[int, np.ndarray]:
+    """Per-dim idle RGBs sourced from the active viewer theme."""
+    from apeGmsh.viewers.ui.theme import THEME
+    p = THEME.current
+    return {
+        0: np.array(p.dim_pt,  dtype=np.uint8),
+        1: np.array(p.dim_crv, dtype=np.uint8),
+        2: np.array(p.dim_srf, dtype=np.uint8),
+        3: np.array(p.dim_vol, dtype=np.uint8),
+    }
+
+
+# Back-compat: a snapshot of the dark-theme idle palette. Prefer
+# ``_theme_idle_colors()`` for anything that should respect the active
+# theme; this constant exists for call sites that imported it directly.
 IDLE_COLORS: dict[int, np.ndarray] = {
     0: np.array([232, 213, 183], dtype=np.uint8),  # #E8D5B7 warm white
     1: np.array([170, 170, 170], dtype=np.uint8),  # #AAAAAA mid grey
@@ -72,7 +88,8 @@ class ColorManager:
 
     @staticmethod
     def _default_idle(dt: "DimTag") -> np.ndarray:
-        return IDLE_COLORS.get(dt[0], IDLE_COLORS[2])
+        colors = _theme_idle_colors()
+        return colors.get(dt[0], colors[2])
 
     def set_idle_fn(self, fn: Callable[["DimTag"], np.ndarray]) -> None:
         """Set a custom idle-color function (e.g. partition or group colors)."""

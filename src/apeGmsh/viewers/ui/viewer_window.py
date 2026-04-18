@@ -34,7 +34,7 @@ from __future__ import annotations
 import datetime
 from typing import Any, Callable
 
-from .theme import BG_BOTTOM, BG_TOP
+from .theme import THEME, build_stylesheet
 
 
 def _lazy_qt():
@@ -102,8 +102,18 @@ class ViewerWindow:
                 if ui_self._on_close is not None:
                     try:
                         ui_self._on_close()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        import sys
+                        import traceback
+                        print(
+                            f"[viewer] on_close failed: {exc}",
+                            file=sys.stderr,
+                        )
+                        traceback.print_exc(file=sys.stderr)
+                try:
+                    ui_self._unsub_theme()
+                except Exception:
+                    pass
                 try:
                     ui_self._qt_interactor.close()
                 except Exception:
@@ -114,9 +124,10 @@ class ViewerWindow:
         self._window.setWindowTitle(title)
         self._window.resize(1600, 1000)
 
-        # Apply Catppuccin Mocha theme
-        from .theme import STYLESHEET
-        self._window.setStyleSheet(STYLESHEET)
+        # Icon-action registry for live theme re-rendering
+        self._icon_actions: list[tuple[Any, str]] = []
+        # Observers to notify on theme change (VTK content, etc.)
+        self._theme_callbacks: list[Callable[[Any], None]] = []
 
         # ── Central: VTK plotter ────────────────────────────────────
         self._qt_interactor = QtInteractor(parent=self._window)
@@ -125,7 +136,6 @@ class ViewerWindow:
         import pyvista as _pv
         _pv.set_plot_theme("dark")
         _pv.global_theme.font.color = "white"
-        self._qt_interactor.set_background(BG_TOP, top=BG_BOTTOM)
         try:
             self._qt_interactor.enable_anti_aliasing("ssaa")
         except Exception:
@@ -192,22 +202,17 @@ class ViewerWindow:
 
         # Subclass-provided actions first
         for tooltip, icon_text, callback in (toolbar_actions or []):
-            act = bar.addAction(self._make_icon(icon_text, "#cdd6f4"), "")
-            act.setToolTip(tooltip)
-            act.triggered.connect(callback)
+            self._add_toolbar_action(bar, icon_text, tooltip, callback)
         if toolbar_actions:
             bar.addSeparator()
 
         # Camera controls
-        _IC = "#cdd6f4"
-        self._act_parallel = bar.addAction(self._make_icon("\u2316", _IC), "")
-        self._act_parallel.setToolTip("Ortho / perspective toggle")
-        self._act_parallel.setCheckable(True)
-        self._act_parallel.toggled.connect(self._toggle_parallel)
+        self._act_parallel = self._add_toolbar_action(
+            bar, "\u2316", "Ortho / perspective toggle",
+            self._toggle_parallel, checkable=True, triggered_signal="toggled",
+        )
 
-        act_fit = bar.addAction(self._make_icon("\u2922", _IC), "")
-        act_fit.setToolTip("Fit view")
-        act_fit.triggered.connect(self._fit_view)
+        self._add_toolbar_action(bar, "\u2922", "Fit view", self._fit_view)
 
         bar.addSeparator()
 
@@ -216,15 +221,16 @@ class ViewerWindow:
             ("Bk", "back"), ("L", "left"), ("R", "right"),
             ("\u25E3", "iso"),
         ]:
-            act = bar.addAction(self._make_icon(label, _IC), "")
-            act.setToolTip(f"{direction.capitalize()} view")
-            act.triggered.connect(lambda _, d=direction: self._snap_view(d))
+            self._add_toolbar_action(
+                bar, label, f"{direction.capitalize()} view",
+                lambda _=False, d=direction: self._snap_view(d),
+            )
 
         bar.addSeparator()
 
-        act_ss = bar.addAction(self._make_icon("\u2399", _IC), "")
-        act_ss.setToolTip("Copy screenshot to clipboard")
-        act_ss.triggered.connect(self._screenshot)
+        self._add_toolbar_action(
+            bar, "\u2399", "Copy screenshot to clipboard", self._screenshot,
+        )
 
         self._toolbar = bar
         self._window.addToolBar(QtCore.Qt.LeftToolBarArea, bar)
@@ -243,6 +249,10 @@ class ViewerWindow:
 
         # ── Status bar ──────────────────────────────────────────────
         self._statusbar = self._window.statusBar()
+
+        # ── Theme: initial apply + subscribe for live switching ────
+        self._apply_palette(THEME.current)
+        self._unsub_theme = THEME.subscribe(self._apply_palette)
 
     # ------------------------------------------------------------------
     # Public API
@@ -274,9 +284,15 @@ class ViewerWindow:
 
     def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
         """Add a button to the toolbar (after construction)."""
-        act = self._toolbar.addAction(self._make_icon(icon_text, "#cdd6f4"), "")
-        act.setToolTip(tooltip)
-        act.triggered.connect(callback)
+        self._add_toolbar_action(self._toolbar, icon_text, tooltip, callback)
+
+    def on_theme_changed(self, callback: Callable[[Any], None]) -> None:
+        """Register a viewer-level callback for theme changes.
+
+        The callback receives the new ``Palette``. Called after the
+        window stylesheet + viewport have been re-applied.
+        """
+        self._theme_callbacks.append(callback)
 
     def add_toolbar_separator(self) -> None:
         """Add a separator to the toolbar."""
@@ -385,6 +401,58 @@ class ViewerWindow:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _add_toolbar_action(
+        self,
+        bar,
+        icon_text: str,
+        tooltip: str,
+        callback,
+        *,
+        checkable: bool = False,
+        triggered_signal: str = "triggered",
+    ):
+        """Add an action and register it for live theme updates."""
+        act = bar.addAction(
+            self._make_icon(icon_text, THEME.current.icon), "",
+        )
+        act.setToolTip(tooltip)
+        if checkable:
+            act.setCheckable(True)
+        getattr(act, triggered_signal).connect(callback)
+        self._icon_actions.append((act, icon_text))
+        return act
+
+    def _apply_palette(self, palette) -> None:
+        """Apply *palette* to the window chrome + viewport + icons."""
+        self._window.setStyleSheet(build_stylesheet(palette))
+        try:
+            self._qt_interactor.set_background(
+                palette.bg_top, top=palette.bg_bottom,
+            )
+        except Exception:
+            pass
+        self._refresh_toolbar_icons(palette.icon)
+        for cb in list(self._theme_callbacks):
+            try:
+                cb(palette)
+            except Exception:
+                import logging
+                logging.getLogger("apeGmsh.viewer.theme").exception(
+                    "theme callback failed: %r", cb,
+                )
+        try:
+            self._qt_interactor.render()
+        except Exception:
+            pass
+
+    def _refresh_toolbar_icons(self, color: str) -> None:
+        """Re-render every registered toolbar icon in *color*."""
+        for act, icon_text in self._icon_actions:
+            try:
+                act.setIcon(self._make_icon(icon_text, color))
+            except Exception:
+                pass
 
     def _make_icon(self, text: str, color: str, size: int = 28):
         QtGui = self._QtGui

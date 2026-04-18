@@ -126,8 +126,10 @@ class PreferencesTab:
         theme_form = QtWidgets.QFormLayout(theme_group)
         theme_form.setSpacing(4)
 
+        from .theme import THEME
         self._theme_combo = QtWidgets.QComboBox()
         self._theme_combo.addItems(["Dark", "Light"])
+        self._theme_combo.setCurrentText(THEME.current.name.capitalize())
         if on_theme:
             self._theme_combo.currentTextChanged.connect(on_theme)
         theme_form.addRow("Theme", self._theme_combo)
@@ -137,7 +139,7 @@ class PreferencesTab:
         self._btn_pick_color.setFixedSize(60, 24)
         self._pick_color_hex = "#E74C3C"
         self._btn_pick_color.setStyleSheet(
-            f"background-color: {self._pick_color_hex}; border: 1px solid #999;"
+            f"background-color: {self._pick_color_hex}; border: 1px solid {THEME.current.overlay};"
         )
         self._on_pick_color = on_pick_color
 
@@ -151,7 +153,7 @@ class PreferencesTab:
                 self._pick_color_hex = color.name()
                 self._btn_pick_color.setStyleSheet(
                     f"background-color: {self._pick_color_hex}; "
-                    f"border: 1px solid #999;"
+                    f"border: 1px solid {THEME.current.overlay};"
                 )
                 if self._on_pick_color:
                     self._on_pick_color(self._pick_color_hex)

@@ -20,8 +20,17 @@ def _qt():
     return QtWidgets, QtCore, QtGui
 
 
-_PART_COLOR = "#a6e3a1"      # green — Catppuccin
-_UNTRACKED_COLOR = "#f9e2af"  # yellow — warning
+def _theme():
+    from .theme import THEME
+    return THEME
+
+
+def _part_color() -> str:
+    return _theme().current.success
+
+
+def _untracked_color() -> str:
+    return _theme().current.warning
 
 
 class PartsTreePanel:
@@ -96,7 +105,9 @@ class PartsTreePanel:
             "Select entities and click 'New Part',\n"
             "or use g.parts.from_model() in code."
         )
-        self._empty_label.setStyleSheet("color: #6c7086; padding: 12px;")
+        self._empty_label.setStyleSheet(
+            f"color: {_theme().current.overlay}; padding: 12px;"
+        )
         self._empty_label.setWordWrap(True)
         layout.addWidget(self._empty_label)
 
@@ -147,7 +158,7 @@ class PartsTreePanel:
             root.setText(0, label)
             root.setText(1, str(len(part_dts)))
             root.setData(0, self._DT_ROLE, ("part", label))
-            root.setForeground(0, QtGui.QBrush(QtGui.QColor(_PART_COLOR)))
+            root.setForeground(0, QtGui.QBrush(QtGui.QColor(_part_color())))
             font = root.font(0)
             font.setBold(True)
             root.setFont(0, font)
@@ -159,7 +170,9 @@ class PartsTreePanel:
                 if not tags:
                     continue
                 dim_label = _DIM_LABEL.get(dim, f"dim={dim}")
-                color = QtGui.QColor(_DIM_ICON_COLOR.get(dim, "#cdd6f4"))
+                color = QtGui.QColor(
+                    _DIM_ICON_COLOR.get(dim, _theme().current.text)
+                )
 
                 group = QTreeWidgetItem(root)
                 group.setText(0, f"{dim_label}s")
@@ -177,7 +190,7 @@ class PartsTreePanel:
         # Untracked entities
         untracked = all_scene - tracked
         if untracked:
-            ucolor = QtGui.QColor(_UNTRACKED_COLOR)
+            ucolor = QtGui.QColor(_untracked_color())
             uroot = QTreeWidgetItem(self._tree)
             uroot.setText(0, "Untracked")
             uroot.setText(1, str(len(untracked)))
@@ -193,7 +206,9 @@ class PartsTreePanel:
             for dim in sorted(by_dim.keys()):
                 tags = sorted(by_dim[dim])
                 dim_label = _DIM_LABEL.get(dim, f"dim={dim}")
-                color = QtGui.QColor(_DIM_ICON_COLOR.get(dim, "#cdd6f4"))
+                color = QtGui.QColor(
+                    _DIM_ICON_COLOR.get(dim, _theme().current.text)
+                )
                 group = QTreeWidgetItem(uroot)
                 group.setText(0, f"{dim_label}s")
                 group.setText(1, str(len(tags)))
@@ -227,7 +242,7 @@ class PartsTreePanel:
             font = item.font(0)
             font.setBold(True)
             item.setFont(0, font)
-            item.setForeground(0, QtGui.QBrush(QtGui.QColor(_PART_COLOR)))
+            item.setForeground(0, QtGui.QBrush(QtGui.QColor(_part_color())))
 
         # Find owning part
         for label, inst in self._parts.instances.items():
@@ -236,7 +251,7 @@ class PartsTreePanel:
                 item = self._part_items.get(label)
                 if item:
                     item.setForeground(
-                        0, QtGui.QBrush(QtGui.QColor("#f38ba8")),
+                        0, QtGui.QBrush(QtGui.QColor(_theme().current.error)),
                     )
                     self._tree.scrollToItem(item)
                 return

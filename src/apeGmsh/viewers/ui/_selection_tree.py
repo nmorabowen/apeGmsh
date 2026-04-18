@@ -19,6 +19,11 @@ def _qt():
     return QtWidgets, QtCore, QtGui
 
 
+def _theme():
+    from .theme import THEME
+    return THEME
+
+
 _DIM_LABEL = {0: "Point", 1: "Curve", 2: "Surface", 3: "Volume"}
 _DIM_ICON_COLOR = {
     0: "#f38ba8",   # red (Catppuccin)
@@ -95,7 +100,7 @@ class SelectionTreePanel:
         for dim in sorted(by_dim.keys(), reverse=True):
             tags = sorted(by_dim[dim])
             dim_label = _DIM_LABEL.get(dim, f"dim={dim}")
-            color = QtGui.QColor(_DIM_ICON_COLOR.get(dim, "#cdd6f4"))
+            color = QtGui.QColor(_DIM_ICON_COLOR.get(dim, _theme().current.text))
 
             for tag in tags:
                 # Root node: the selected entity

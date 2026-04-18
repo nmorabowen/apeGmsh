@@ -140,12 +140,13 @@ class MeshViewer:
             _label_actors.clear()
             if checked and scene.node_coords is not None and len(scene.node_coords) > 0:
                 labels = [str(int(t)) for t in scene.node_tags]
+                from .ui.theme import THEME as _THEME
                 try:
                     actor = plotter.add_point_labels(
                         scene.node_coords, labels,
                         font_size=8,
-                        text_color="white",
-                        shape_color="#333333",
+                        text_color=_THEME.current.text,
+                        shape_color=_THEME.current.mantle,
                         shape_opacity=0.6,
                         show_points=False,
                         always_visible=True,
@@ -181,12 +182,13 @@ class MeshViewer:
                             centers.append(center)
                             labels.append(str(elem_tag))
                 if centers:
+                    from .ui.theme import THEME as _THEME
                     try:
                         actor = plotter.add_point_labels(
                             np.array(centers), labels,
                             font_size=8,
-                            text_color="#a6e3a1",
-                            shape_color="#333333",
+                            text_color=_THEME.current.success,
+                            shape_color=_THEME.current.mantle,
                             shape_opacity=0.6,
                             show_points=False,
                             always_visible=True,
@@ -605,6 +607,7 @@ class MeshViewer:
             elif key.startswith('constraint') and constraints_tab is not None:
                 _on_constraint_kinds_changed(constraints_tab.active_kinds())
 
+        from .ui.theme import THEME
         prefs = PreferencesTab(
             point_size=self._point_size,
             line_width=self._line_width,
@@ -615,6 +618,7 @@ class MeshViewer:
             on_opacity=_pref_opacity,
             on_edges=_pref_edges,
             on_overlay_scale=_pref_overlay_scale,
+            on_theme=lambda name: THEME.set_theme(name),
         )
         win.add_tab("Preferences", prefs.widget)
 
@@ -623,8 +627,12 @@ class MeshViewer:
         # Mesh scene uses a single uniform color for all dims — override
         # the default per-dim idle palette so hover→unhover restores the
         # correct colour instead of a different shade.
-        from .scene.mesh_scene import DEFAULT_MESH_RGB
-        color_mgr.set_idle_fn(lambda _dt: DEFAULT_MESH_RGB)
+        import numpy as _np
+
+        def _mesh_idle(_dt):
+            return _np.array(THEME.current.dim_srf, dtype=_np.uint8)
+
+        color_mgr.set_idle_fn(_mesh_idle)
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
         pick_engine = PickEngine(plotter, registry)
 
@@ -710,6 +718,8 @@ class MeshViewer:
 
         sel.on_changed.append(_on_sel_changed)
         vis_mgr.on_changed.append(lambda: plotter.render())
+        # Repaint mesh idle colors when the theme palette changes
+        win.on_theme_changed(lambda _p: _on_sel_changed())
 
         # Box select
         def _on_box(dts: list[DimTag], ctrl: bool):

@@ -21,6 +21,11 @@ def _qt():
     return QtWidgets, QtCore, QtGui
 
 
+def _theme():
+    from .theme import THEME
+    return THEME
+
+
 class BrowserTab:
     """Tree showing physical groups + unassigned entities.
 
@@ -92,10 +97,12 @@ class BrowserTab:
         # we can't use the real type without circular imports.
         self._group_items: dict[str, Any] = {}
 
-        # Collect groups from Gmsh, keyed by name
-        gmsh_groups = {}
+        # Collect groups from Gmsh, keyed by name. A single name may
+        # span multiple dims (one gmsh PG per dim) — union their
+        # members so the browser reflects the full selection.
+        gmsh_groups: dict[str, list[tuple]] = {}
         for name, pg_dim, pg_tag, members in self._collect_groups():
-            gmsh_groups[name] = members
+            gmsh_groups.setdefault(name, []).extend(members)
 
         # Merge with staged groups
         all_groups: dict[str, list[tuple]] = dict(gmsh_groups)
@@ -128,14 +135,14 @@ class BrowserTab:
 
             if name == active:
                 item.setForeground(
-                    0, QtGui.QBrush(QtGui.QColor("#a6e3a1")),
+                    0, QtGui.QBrush(QtGui.QColor(_theme().current.success)),
                 )
                 font = item.font(0)
                 font.setBold(True)
                 item.setFont(0, font)
             else:
                 item.setForeground(
-                    0, QtGui.QBrush(QtGui.QColor("#89b4fa")),
+                    0, QtGui.QBrush(QtGui.QColor(_theme().current.info)),
                 )
 
             item.setExpanded(False)
@@ -159,7 +166,7 @@ class BrowserTab:
             if name == active:
                 item.setText(1, str(active_count))
                 item.setForeground(
-                    0, QtGui.QBrush(QtGui.QColor("#a6e3a1")),
+                    0, QtGui.QBrush(QtGui.QColor(_theme().current.success)),
                 )
                 font = item.font(0)
                 font.setBold(True)
@@ -169,7 +176,7 @@ class BrowserTab:
                 font.setBold(False)
                 item.setFont(0, font)
                 item.setForeground(
-                    0, QtGui.QBrush(QtGui.QColor("#89b4fa")),
+                    0, QtGui.QBrush(QtGui.QColor(_theme().current.info)),
                 )
 
     def _collect_groups(self) -> list[tuple[str, int, int, list[tuple]]]:

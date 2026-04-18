@@ -123,7 +123,16 @@ class ModelViewer:
             sel.set_active_group(self._physical_group)
 
         def _on_close():
-            n = sel.flush_to_gmsh()
+            try:
+                n = sel.flush_to_gmsh()
+            except Exception as exc:
+                try:
+                    win.set_status(
+                        f"Failed to write physical groups: {exc}", 8000,
+                    )
+                except Exception:
+                    pass
+                raise
             if self._parent._verbose:
                 print(f"[viewer] closed — {n} physical group(s) written, "
                       f"{len(sel.picks)} picks in working set")
@@ -267,12 +276,13 @@ class ModelViewer:
                 if not points:
                     continue
 
+                from .ui.theme import THEME as _THEME
                 try:
                     actor = plotter.add_point_labels(
                         np.array(points), labels,
                         font_size=font_size,
-                        text_color="white",
-                        shape_color="#333333",
+                        text_color=_THEME.current.text,
+                        shape_color=_THEME.current.mantle,
                         shape_opacity=0.6,
                         show_points=False,
                         always_visible=True,
@@ -314,8 +324,8 @@ class ModelViewer:
                         actor = plotter.add_point_labels(
                             np.array(part_points), part_labels,
                             font_size=font_size + 2,
-                            text_color="#a6e3a1",
-                            shape_color="#1e1e2e",
+                            text_color=_THEME.current.success,
+                            shape_color=_THEME.current.base,
                             shape_opacity=0.85,
                             show_points=False,
                             always_visible=True,
@@ -359,8 +369,8 @@ class ModelViewer:
                         actor = plotter.add_point_labels(
                             np.array(label_points), label_texts,
                             font_size=font_size,
-                            text_color="#f9e2af",     # warm yellow
-                            shape_color="#1e1e2e",
+                            text_color=_THEME.current.warning,
+                            shape_color=_THEME.current.base,
                             shape_opacity=0.75,
                             show_points=False,
                             always_visible=True,
@@ -430,6 +440,7 @@ class ModelViewer:
         _pref_opacity = make_opacity_cb(registry, plotter)
         _pref_edges = make_edges_cb(registry, plotter)
 
+        from .ui.theme import THEME
         prefs = PreferencesTab(
             point_size=self._point_size,
             line_width=self._line_width,
@@ -439,6 +450,7 @@ class ModelViewer:
             on_line_width=_pref_line_width,
             on_opacity=_pref_opacity,
             on_edges=_pref_edges,
+            on_theme=lambda name: THEME.set_theme(name),
         )
         win.add_tab("Preferences", prefs.widget)
 
@@ -635,6 +647,8 @@ class ModelViewer:
             win.set_status(f"{n} picked | group: {grp}")
 
         sel.on_changed.append(_on_sel_changed)
+        # Repaint idle colors when the theme palette changes
+        win.on_theme_changed(lambda _p: _on_sel_changed())
         sel.on_changed.append(lambda: sel_tree.update(sel.picks))
         sel.on_changed.append(lambda: browser.update_active())
         if parts_tree is not None:
@@ -651,9 +665,16 @@ class ModelViewer:
         # Box select
         def _on_box(dts: list[DimTag], ctrl: bool):
             if ctrl:
-                sel.box_remove(dts)
+                n = sel.box_remove(dts)
+                verb = "removed"
             else:
-                sel.box_add(dts)
+                n = sel.box_add(dts)
+                verb = "added"
+            if n:
+                noun = "entity" if n == 1 else "entities"
+                win.set_status(f"Box select: {verb} {n} {noun}", 2000)
+            else:
+                win.set_status("Box select: 0 entities", 2000)
 
         pick_engine.on_box_select = _on_box
 
