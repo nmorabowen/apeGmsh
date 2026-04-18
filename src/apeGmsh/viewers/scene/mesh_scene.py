@@ -251,13 +251,13 @@ def build_mesh_scene(
 
     Always uses the batched path (one actor per dim).
     ``node_color`` / ``edge_color`` default to the active palette's
-    ``node_accent`` / black at render time when left as ``None``.
+    ``node_accent`` / ``mesh_edge_color`` when left as ``None``.
     """
     _pal = THEME.current
     if node_color is None:
         node_color = _pal.node_accent
     if edge_color is None:
-        edge_color = "#000000"
+        edge_color = _pal.mesh_edge_color
 
     t0 = time.perf_counter()
     registry = EntityRegistry()

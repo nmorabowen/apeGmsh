@@ -48,7 +48,7 @@ def test_every_palette_has_aesthetic_fields():
     required = (
         "background_mode", "body_palette",
         "outline_color", "outline_silhouette_px", "outline_feature_px",
-        "mesh_line_mode", "mesh_line_opacity", "mesh_line_shift_pct",
+        "mesh_edge_color",
         "node_accent", "grid_major", "grid_minor",
         "bbox_color", "bbox_line_px",
         "cmap_seq", "cmap_div", "ao_intensity", "corner_triad_default",

@@ -76,11 +76,8 @@ class Palette:
     outline_color: str
     outline_silhouette_px: float
     outline_feature_px: float
-    # ── Viewport — mesh-viewer lines ────────────────────────────────
-    mesh_line_mode: Literal["body_relative", "fixed"]
-    mesh_line_fixed_color: str              # used only when mode="fixed"
-    mesh_line_opacity: float                # 0.0-1.0
-    mesh_line_shift_pct: float              # body_relative shift toward opposite luminance
+    # ── Viewport — mesh-viewer edges (show_edges line color) ────────
+    mesh_edge_color: str                    # hex color for mesh element edges
     # ── Viewport — nodes (0D glyphs) ────────────────────────────────
     node_accent: str
     # ── Viewport — axis scene / grid / bbox ─────────────────────────
@@ -133,11 +130,8 @@ PALETTE_CATPPUCCIN_MOCHA = Palette(
     outline_color="#000000",
     outline_silhouette_px=2.5,
     outline_feature_px=1.5,
-    # Mesh-viewer lines — body-relative 30% shift, 70% opacity
-    mesh_line_mode="body_relative",
-    mesh_line_fixed_color="",
-    mesh_line_opacity=0.70,
-    mesh_line_shift_pct=0.30,
+    # Mesh-viewer edges — black (CAD-neutral, max contrast on gray fills)
+    mesh_edge_color="#000000",
     # Nodes — pure black
     node_accent="#000000",
     # Axis scene
@@ -190,11 +184,8 @@ PALETTE_NEUTRAL_STUDIO = Palette(
     outline_color="#000000",
     outline_silhouette_px=2.5,
     outline_feature_px=1.5,
-    # Mesh-viewer lines
-    mesh_line_mode="body_relative",
-    mesh_line_fixed_color="",
-    mesh_line_opacity=0.70,
-    mesh_line_shift_pct=0.30,
+    # Mesh-viewer edges — black (CAD-neutral, max contrast on gray fills)
+    mesh_edge_color="#000000",
     # Nodes — pure black
     node_accent="#000000",
     # Axis scene
@@ -245,11 +236,8 @@ PALETTE_PAPER = Palette(
     outline_color="#000000",
     outline_silhouette_px=3.0,
     outline_feature_px=1.8,
-    # Mesh-viewer lines — neutral gray, low opacity
-    mesh_line_mode="fixed",
-    mesh_line_fixed_color="#303030",
-    mesh_line_opacity=0.40,
-    mesh_line_shift_pct=0.0,
+    # Mesh-viewer edges — dark gray (softer than pure black on white bg)
+    mesh_edge_color="#303030",
     # Nodes — pure black
     node_accent="#000000",
     # Axis scene
