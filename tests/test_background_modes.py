@@ -25,13 +25,13 @@ def test_every_theme_applies_without_error(theme_name):
         p.close()
 
 
-def test_linear_mode_sets_both_colors():
-    """PyVista stores top/bottom gradient colors on the renderer."""
-    pal = PALETTES["catppuccin_mocha"]
+def test_textured_modes_clear_gradient_flag():
+    """Radial/flat_corner install a texture — VTK linear-gradient flag must be off."""
+    pal = PALETTES["neutral_studio"]
     p = pv.Plotter(off_screen=True)
     try:
         apply_background(p, pal)
-        # GradientBackground is VTK's linear-gradient flag
-        assert p.renderer.GetGradientBackground() is True
+        assert p.renderer.GetGradientBackground() is False
+        assert bool(p.renderer.GetTexturedBackground()) is True
     finally:
         p.close()

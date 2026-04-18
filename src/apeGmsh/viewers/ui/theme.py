@@ -105,9 +105,9 @@ PALETTE_CATPPUCCIN_MOCHA = Palette(
     accent="#89b4fa", icon="#cdd6f4",
     success="#a6e3a1", warning="#f9e2af",
     error="#f38ba8", info="#89b4fa",
-    # Background: linear Mantle→Crust (optically similar to vignette)
-    background_mode="linear",
-    bg_top="#181825", bg_bottom="#11111b",
+    # Background: radial Base→Crust vignette (lighter center, deeper corners)
+    background_mode="radial",
+    bg_top="#313244", bg_bottom="#11111b",
     # Idle per-dim (Mocha accents)
     dim_pt=(245, 224, 220),     # Rosewater — node accent
     dim_crv=(250, 179, 135),    # Peach — curves
@@ -159,9 +159,9 @@ PALETTE_NEUTRAL_STUDIO = Palette(
     accent="#7aa2d7", icon="#d0d0d0",
     success="#6ca872", warning="#d4a44a",
     error="#d47272", info="#7aa2d7",
-    # Background: radial #2a2a2a center → #0f0f0f edge
+    # Background: radial #4a4a4a center → #0f0f0f edge (lighter center for pronounced vignette)
     background_mode="radial",
-    bg_top="#2a2a2a", bg_bottom="#0f0f0f",
+    bg_top="#4a4a4a", bg_bottom="#0f0f0f",
     # Idle per-dim (industrial muted palette)
     dim_pt=(234, 230, 222),     # warm off-white — node accent
     dim_crv=(169, 168, 120),    # olive — curves

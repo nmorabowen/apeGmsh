@@ -27,14 +27,21 @@ def _hex_to_rgb(h: str) -> tuple[int, int, int]:
 def _radial_gradient_texture(
     center_hex: str,
     edge_hex: str,
-    size: int = 512,
+    size: int = 1024,
     falloff_exp: float = 1.0,
+    dither: float = 1.0,
 ):
     """Build a VTK texture with a center→edge radial gradient.
 
-    ``falloff_exp`` < 1 flattens the transition (softer); >= 1 pulls
-    the darkening inward (stronger vignette). The Paper theme uses a
-    high exponent so only the extreme corners darken.
+    ``falloff_exp`` < 1 pulls the edge color inward (stronger vignette);
+    >= 1 keeps the bright center wider (softer). Paper uses a high
+    exponent so only the extreme corners darken.
+
+    ``dither`` is the amplitude (in 8-bit RGB units) of uniform noise
+    added before quantization. Without it, narrow gradients like the
+    Neutral Studio #2a→#02 range show visible banding in flat screen
+    regions; one unit of uniform noise turns the bands into imperceptible
+    per-pixel noise.
     """
     import vtk
     from vtk.util import numpy_support
@@ -47,10 +54,16 @@ def _radial_gradient_texture(
     r = np.clip(np.sqrt(X ** 2 + Y ** 2) / np.sqrt(2.0), 0.0, 1.0)
     t = r ** falloff_exp
 
-    img = (
+    img_f = (
         c[None, None, :] * (1.0 - t[:, :, None])
         + e[None, None, :] * t[:, :, None]
-    ).astype(np.uint8)
+    )
+    if dither > 0.0:
+        rng = np.random.default_rng(seed=0)
+        img_f = img_f + rng.uniform(
+            -dither * 0.5, dither * 0.5, size=img_f.shape,
+        ).astype(np.float32)
+    img = np.clip(img_f, 0.0, 255.0).astype(np.uint8)
 
     flat = img.reshape(-1, 3)
     vtk_arr = numpy_support.numpy_to_vtk(flat, deep=True)
