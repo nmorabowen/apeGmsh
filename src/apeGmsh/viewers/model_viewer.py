@@ -60,6 +60,8 @@ class ModelViewer:
         line_width: float = 6.0,
         surface_opacity: float = 0.35,
         show_surface_edges: bool = False,
+        origin_markers: list[tuple[float, float, float]] | None = None,
+        origin_marker_show_coords: bool = True,
         fast: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -73,6 +75,14 @@ class ModelViewer:
         self._line_width = line_width
         self._surface_opacity = surface_opacity
         self._show_surface_edges = show_surface_edges
+
+        # Origin marker overlay — default always shows world origin.
+        # Pass ``origin_markers=[]`` to suppress the default.
+        self._origin_markers: list[tuple[float, float, float]] = (
+            list(origin_markers) if origin_markers is not None
+            else [(0.0, 0.0, 0.0)]
+        )
+        self._origin_marker_show_coords = origin_marker_show_coords
 
         # Populated during show()
         self._selection_state: "SelectionState | None" = None
@@ -425,6 +435,36 @@ class ModelViewer:
         )
         self._registry = registry
 
+        def _compute_model_diagonal() -> float:
+            try:
+                bb = gmsh.model.getBoundingBox(-1, -1)
+                return float(np.linalg.norm(
+                    [bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]]
+                )) or 1.0
+            except Exception:
+                return 1.0
+
+        from .overlays.origin_markers_overlay import OriginMarkerOverlay
+        from .ui.origin_markers_panel import OriginMarkersPanel
+        origin_overlay = OriginMarkerOverlay(
+            plotter,
+            origin_shift=registry.origin_shift,
+            model_diagonal=_compute_model_diagonal(),
+            points=self._origin_markers,
+            show_coords=self._origin_marker_show_coords,
+        )
+        origin_panel = OriginMarkersPanel(
+            initial_points=self._origin_markers,
+            initial_visible=True,
+            initial_show_coords=self._origin_marker_show_coords,
+            on_visible_changed=origin_overlay.set_visible,
+            on_show_coords_changed=origin_overlay.set_show_coords,
+            on_marker_added=origin_overlay.add,
+            on_marker_removed=origin_overlay.remove,
+            on_size_changed=origin_overlay.set_size,
+        )
+        win.add_tab("Markers", origin_panel.widget)
+
         # ── Preferences (created AFTER scene — needs registry) ─────
         from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
         from .overlays.glyph_helpers import rebuild_brep_point_glyphs
@@ -563,6 +603,9 @@ class ModelViewer:
                 # Mutate existing registry in place — preserves closures
                 for slot in registry.__slots__:
                     setattr(registry, slot, getattr(fresh, slot))
+
+                # Re-sync origin markers with the fresh registry's shift
+                origin_overlay.set_origin_shift(registry.origin_shift)
 
                 # Clear stale selection / active group
                 sel.clear()

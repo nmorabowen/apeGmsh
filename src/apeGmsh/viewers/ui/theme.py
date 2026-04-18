@@ -80,6 +80,8 @@ class Palette:
     mesh_edge_color: str                    # hex color for mesh element edges
     # ── Viewport — nodes (0D glyphs) ────────────────────────────────
     node_accent: str
+    # ── Viewport — origin-marker overlay (reference points) ─────────
+    origin_marker_color: str
     # ── Viewport — axis scene / grid / bbox ─────────────────────────
     grid_major: str
     grid_minor: str
@@ -134,6 +136,8 @@ PALETTE_CATPPUCCIN_MOCHA = Palette(
     mesh_edge_color="#000000",
     # Nodes — pure black
     node_accent="#000000",
+    # Origin marker — Catppuccin Peach (gold-amber, stands out on gray)
+    origin_marker_color="#fab387",
     # Axis scene
     grid_major="#45475a",       # Surface1
     grid_minor="#313244",       # Surface0
@@ -188,6 +192,8 @@ PALETTE_NEUTRAL_STUDIO = Palette(
     mesh_edge_color="#000000",
     # Nodes — pure black
     node_accent="#000000",
+    # Origin marker — warm amber (contrasts with steel-blue body palette)
+    origin_marker_color="#d4a44a",
     # Axis scene
     grid_major="#3a3a3a",
     grid_minor="#2a2a2a",
@@ -240,6 +246,8 @@ PALETTE_PAPER = Palette(
     mesh_edge_color="#303030",
     # Nodes — pure black
     node_accent="#000000",
+    # Origin marker — deep amber (visible on white, not garish)
+    origin_marker_color="#b8860b",
     # Axis scene
     grid_major="#d0d0d0",
     grid_minor="#e8e8e8",

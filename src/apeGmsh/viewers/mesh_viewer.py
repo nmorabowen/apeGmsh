@@ -61,6 +61,8 @@ class MeshViewer:
         line_width: float = 3.0,
         surface_opacity: float = 1.0,
         show_surface_edges: bool = True,
+        origin_markers: list[tuple[float, float, float]] | None = None,
+        origin_marker_show_coords: bool = True,
         fem: "FEMData | None" = None,
         fast: bool = True,
         **kwargs: Any,
@@ -72,6 +74,13 @@ class MeshViewer:
         self._line_width = line_width
         self._surface_opacity = surface_opacity
         self._show_surface_edges = show_surface_edges
+        # Origin marker overlay — default always shows world origin.
+        # Pass ``origin_markers=[]`` to suppress the default.
+        self._origin_markers: list[tuple[float, float, float]] = (
+            list(origin_markers) if origin_markers is not None
+            else [(0.0, 0.0, 0.0)]
+        )
+        self._origin_marker_show_coords = origin_marker_show_coords
         self._fem: "FEMData | None" = fem
 
         # Populated during show()
@@ -256,6 +265,28 @@ class MeshViewer:
         )
         self._scene_data = scene
         registry = scene.registry
+
+        # Origin markers (reference-point overlay — purely visual)
+        from .overlays.origin_markers_overlay import OriginMarkerOverlay
+        from .ui.origin_markers_panel import OriginMarkersPanel
+        origin_overlay = OriginMarkerOverlay(
+            plotter,
+            origin_shift=registry.origin_shift,
+            model_diagonal=scene.model_diagonal,
+            points=self._origin_markers,
+            show_coords=self._origin_marker_show_coords,
+        )
+        origin_panel = OriginMarkersPanel(
+            initial_points=self._origin_markers,
+            initial_visible=True,
+            initial_show_coords=self._origin_marker_show_coords,
+            on_visible_changed=origin_overlay.set_visible,
+            on_show_coords_changed=origin_overlay.set_show_coords,
+            on_marker_added=origin_overlay.add,
+            on_marker_removed=origin_overlay.remove,
+            on_size_changed=origin_overlay.set_size,
+        )
+        win.add_tab("Markers", origin_panel.widget)
 
         # ── Resolve FEM snapshot for overlays ───────────────────────
         fem = self._fem
