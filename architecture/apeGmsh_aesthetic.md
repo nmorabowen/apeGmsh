@@ -397,7 +397,36 @@ convention across every axis indicator in apeGmsh.
 
 ---
 
-## 4. Three themes
+## 4. Themes
+
+> [!note] v2 update — what actually shipped
+> The original §4 description below is preserved as design
+> context, but the implementation has evolved. Three changes
+> worth surfacing up front:
+>
+> 1. **CAD-neutral fills were adopted across all themes.** The
+>    "body-relative mesh-line" rule (30% shift toward opposite
+>    luminance) in §4.1–4.2 was dropped in favor of gray fills
+>    (`dim_srf`/`dim_vol` ≈ `(210,210,210)` on dark themes,
+>    `(192,192,192)` on Paper) with black wire, black mesh edges,
+>    and black nodes. Theme identity lives in chrome, background
+>    mode, outlines, and interaction/accent colors — not in body
+>    color. The `Palette` gained a single `mesh_edge_color` field;
+>    the old `mesh_line_mode` / `mesh_line_shift_pct` /
+>    `mesh_line_opacity` / `mesh_line_fixed_color` fields were
+>    removed.
+> 2. **The roster grew from 3 to 10 built-ins.** Catppuccin Latte,
+>    Solarized Dark, Solarized Light, Nord, Tokyo Night, Gruvbox
+>    Dark, and High Contrast (accessibility) joined the original
+>    three. Reserved slot 4.4 "Cappuccino" was not used.
+> 3. **User-authored custom themes are supported.** JSON files at
+>    `<config>/apeGmsh/themes/*.json` auto-load at startup; a
+>    modal Theme Editor dialog (see [[apeGmsh_visualization]] §2.4)
+>    authors them with live preview. Built-in names are
+>    protected from overwrite via `theme._BUILTIN_THEME_IDS`.
+>
+> The palette rules, per-viewer aesthetics, and per-dimension
+> treatment (§§2–3 and §6) did *not* change.
 
 Each theme fully specifies the viewport for all three viewers
 and the Qt chrome it ships with. Themes switch together by
