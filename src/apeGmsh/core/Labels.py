@@ -563,6 +563,41 @@ class Labels(_HasLogging):
                 names.append(strip_prefix(pg_name))
         return sorted(set(names))
 
+    def summary(self):
+        """DataFrame describing every label in the model.
+
+        Mirrors :meth:`PhysicalGroups.summary` but returns only the
+        internal label PGs (with the ``_label:`` prefix stripped).
+
+        Returns
+        -------
+        pd.DataFrame  indexed by ``(dim, pg_tag)`` with columns
+        ``name``, ``n_entities``, ``entity_tags``.
+        """
+        import pandas as pd
+        rows: list[dict] = []
+        for d, t in gmsh.model.getPhysicalGroups():
+            pg_name = gmsh.model.getPhysicalName(d, t)
+            if not is_label_pg(pg_name):
+                continue
+            entities = gmsh.model.getEntitiesForPhysicalGroup(d, t)
+            rows.append({
+                'dim'        : d,
+                'pg_tag'     : t,
+                'name'       : strip_prefix(pg_name),
+                'n_entities' : len(entities),
+                'entity_tags': ", ".join(str(x) for x in entities),
+            })
+        if not rows:
+            return pd.DataFrame(
+                columns=['dim', 'pg_tag', 'name', 'n_entities', 'entity_tags']
+            )
+        return (
+            pd.DataFrame(rows)
+            .set_index(['dim', 'pg_tag'])
+            .sort_index()
+        )
+
     def has(self, name: str, *, dim: int | None = None) -> bool:
         """Return True if a label with this name exists."""
         try:

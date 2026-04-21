@@ -739,6 +739,53 @@ class LoadsComposite:
                 seen.append(d.pattern)
         return seen
 
+    def summary(self):
+        """DataFrame of the declared load intent — one row per def.
+
+        Columns: ``kind, name, pattern, target, source, reduction,
+        target_form, params``. ``params`` is a short stringified view
+        of the kind-specific fields (force, magnitude, direction, ...).
+        """
+        import pandas as pd
+        from dataclasses import fields
+
+        _COMMON = {
+            "kind", "name", "pattern", "target", "target_source",
+            "reduction", "target_form",
+        }
+
+        def _fmt_target(t) -> str:
+            if isinstance(t, str):
+                return t
+            if isinstance(t, (list, tuple)):
+                return "[" + ", ".join(str(x) for x in t) + "]"
+            return repr(t)
+
+        rows: list[dict] = []
+        for d in self.load_defs:
+            params = {
+                f.name: getattr(d, f.name)
+                for f in fields(d)
+                if f.name not in _COMMON
+            }
+            params = {k: v for k, v in params.items() if v is not None}
+            rows.append({
+                "kind"       : d.kind,
+                "name"       : d.name or "",
+                "pattern"    : d.pattern,
+                "target"     : _fmt_target(d.target),
+                "source"     : d.target_source,
+                "reduction"  : d.reduction,
+                "target_form": d.target_form,
+                "params"     : ", ".join(f"{k}={v}" for k, v in params.items()),
+            })
+
+        cols = ["kind", "name", "pattern", "target", "source",
+                "reduction", "target_form", "params"]
+        if not rows:
+            return pd.DataFrame(columns=cols)
+        return pd.DataFrame(rows, columns=cols)
+
     def __len__(self) -> int:
         return len(self.load_defs)
 

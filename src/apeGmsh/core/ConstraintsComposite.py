@@ -516,6 +516,39 @@ class ConstraintsComposite:
              "slave": d.slave_label, "name": d.name}
             for d in self.constraint_defs]
 
+    def summary(self):
+        """DataFrame of the declared constraint intent — one row per def.
+
+        Columns: ``kind, name, master, slave, params``.  ``params`` is a
+        short stringified view of the kind-specific fields (``dofs``,
+        ``tolerance``, etc.).
+        """
+        import pandas as pd
+        from dataclasses import fields
+
+        _COMMON = {"kind", "name", "master_label", "slave_label"}
+
+        rows: list[dict] = []
+        for d in self.constraint_defs:
+            params = {
+                f.name: getattr(d, f.name)
+                for f in fields(d)
+                if f.name not in _COMMON
+            }
+            params = {k: v for k, v in params.items() if v is not None}
+            rows.append({
+                "kind"  : d.kind,
+                "name"  : d.name or "",
+                "master": d.master_label,
+                "slave" : d.slave_label,
+                "params": ", ".join(f"{k}={v}" for k, v in params.items()),
+            })
+
+        cols = ["kind", "name", "master", "slave", "params"]
+        if not rows:
+            return pd.DataFrame(columns=cols)
+        return pd.DataFrame(rows, columns=cols)
+
     def list_records(self) -> list[dict]:
         out = []
         for r in self.constraint_records:
