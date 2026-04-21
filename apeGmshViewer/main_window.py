@@ -23,13 +23,12 @@ from pathlib import Path
 
 from qtpy.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QSplitter, QMenuBar, QMenu, QToolBar, QStatusBar,
-    QFileDialog, QMessageBox, QApplication,
+    QSplitter, QToolBar, QStatusBar,
+    QFileDialog, QMessageBox,
 )
 from qtpy.QtCore import Qt, QSize
-from qtpy.QtGui import QAction, QKeySequence
+from qtpy.QtGui import QAction, QActionGroup, QKeySequence
 
-import pyvista as pv
 from pyvistaqt import QtInteractor
 
 from apeGmshViewer.visualization.renderer import ViewportRenderer, DisplayMode
@@ -39,6 +38,8 @@ from apeGmshViewer.panels.controls import ControlsPanel
 from apeGmshViewer.panels.properties import PropertiesPanel
 from apeGmshViewer.panels.probe_panel import ProbePanel
 from apeGmshViewer.loaders.vtu_loader import load_file, MeshData
+from apeGmshViewer.ui.theme import THEME, PALETTES, build_stylesheet
+from apeGmshViewer.ui.preferences import PREFERENCES
 
 
 class MainWindow(QMainWindow):
@@ -61,8 +62,13 @@ class MainWindow(QMainWindow):
         self._setup_status_bar()
         self._connect_signals()
 
-        # Apply dark theme
-        self._apply_theme()
+        # Apply active theme and subscribe to future changes
+        self._apply_palette(THEME.current)
+        self._theme_unsub = THEME.subscribe(self._apply_palette)
+
+        # Apply current preferences and subscribe to changes
+        self._apply_preferences(PREFERENCES.current)
+        self._prefs_unsub = PREFERENCES.subscribe(self._apply_preferences)
 
         # Window-level shortcuts
         from qtpy.QtWidgets import QShortcut
@@ -95,7 +101,7 @@ class MainWindow(QMainWindow):
         vtk_layout = QVBoxLayout(self._vtk_frame)
         vtk_layout.setContentsMargins(0, 0, 0, 0)
 
-        self._plotter_widget = QtInteractor(self._vtk_frame)
+        self._plotter_widget = QtInteractor(self._vtk_frame)  # pyright: ignore[reportArgumentType]
         vtk_layout.addWidget(self._plotter_widget)
         self._hsplitter.addWidget(self._vtk_frame)
 
@@ -184,6 +190,25 @@ class MainWindow(QMainWindow):
         reset_action.triggered.connect(self._renderer.reset_camera)
         view_menu.addAction(reset_action)
 
+        view_menu.addSeparator()
+
+        # Theme submenu — all built-in + custom themes discovered at startup
+        theme_menu = view_menu.addMenu("Theme")
+        self._theme_action_group = QActionGroup(self)
+        self._theme_action_group.setExclusive(True)
+        current_name = THEME.current.name
+        for theme_id in sorted(PALETTES.keys()):
+            act = QAction(theme_id, self)
+            act.setCheckable(True)
+            act.setData(theme_id)
+            if theme_id == current_name:
+                act.setChecked(True)
+            act.triggered.connect(
+                lambda _checked, tid=theme_id: THEME.set_theme(tid)
+            )
+            self._theme_action_group.addAction(act)
+            theme_menu.addAction(act)
+
         # Tools menu
         tools_menu = menubar.addMenu("Tools")
 
@@ -255,10 +280,48 @@ class MainWindow(QMainWindow):
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
 
-    def _apply_theme(self):
-        """Apply shared Catppuccin Mocha theme."""
-        from apeGmsh.viewers.ui.theme import STYLESHEET
-        self.setStyleSheet(STYLESHEET)
+    def _apply_palette(self, palette):
+        """Observer callback: push a new palette onto chrome + viewport."""
+        self.setStyleSheet(build_stylesheet(palette))
+        try:
+            self._renderer.apply_palette(palette)
+        except Exception:
+            # Renderer may not be ready on the very first call during init.
+            pass
+        # Keep the theme menu's checked item in sync if it's been built.
+        group = getattr(self, "_theme_action_group", None)
+        if group is not None:
+            for act in group.actions():
+                act.setChecked(act.data() == palette.name)
+
+    def _apply_preferences(self, prefs):
+        """Observer callback: push new preferences onto live viewport state."""
+        # Anti-aliasing mode
+        try:
+            if prefs.anti_aliasing == "none":
+                self._plotter_widget.disable_anti_aliasing()
+            else:
+                self._plotter_widget.enable_anti_aliasing(prefs.anti_aliasing)
+        except Exception:
+            pass
+        try:
+            self._plotter_widget.render()
+        except Exception:
+            pass
+
+        # Render preferences that affect already-loaded meshes — re-style
+        # each actor so point/line/opacity/edge defaults pick up.
+        for name in list(self._renderer.actor_names):
+            ma = self._renderer.get_actor(name)
+            if ma is None:
+                continue
+            ma.opacity = prefs.mesh_surface_opacity
+            # The renderer will re-read ma state on next rebuild; force one
+            # by reapplying the display mode.
+            try:
+                self._renderer.set_display_mode(name, ma.display_mode)
+            except Exception:
+                pass
 
     # ── Signal Connections ────────────────────────────────────────────
 
@@ -370,7 +433,7 @@ class MainWindow(QMainWindow):
             from qtpy.QtGui import QImage
             from qtpy.QtWidgets import QApplication
             qimg = QImage()
-            qimg.loadFromData(QByteArray(buf.getvalue()), "BMP")
+            qimg.loadFromData(QByteArray(buf.getvalue()), "BMP")  # pyright: ignore[reportArgumentType]
             QApplication.clipboard().setImage(qimg)
             self.set_status("Screenshot copied to clipboard", 4000)
         except Exception as exc:

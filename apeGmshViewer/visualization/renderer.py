@@ -15,6 +15,9 @@ import numpy as np
 import pyvista as pv
 
 from apeGmshViewer.loaders.vtu_loader import MeshData, create_deformed_mesh
+from apeGmshViewer.ui.theme import THEME
+from apeGmshViewer.ui.viewport_palette import apply_palette_to_plotter
+from apeGmshViewer.ui.preferences import PREFERENCES
 
 
 class DisplayMode(Enum):
@@ -39,7 +42,6 @@ COLORMAPS = {
 
 DEFAULT_MESH_COLOR = "#5B8DB8"      # steel blue
 DEFAULT_EDGE_COLOR = "#2C4A6E"      # dark navy
-from apeGmsh.viewers.ui.theme import BG_TOP as DEFAULT_BG_TOP, BG_BOTTOM as DEFAULT_BG_BOTTOM
 DEFORMED_COLOR = "#E05C00"          # orange for deformed overlay
 UNDEFORMED_COLOR = "#AAAAAA"        # light grey for reference
 LINE_MESH_COLOR = "#F5A623"         # amber for line-only meshes (frames, links)
@@ -85,6 +87,9 @@ class MeshActor:
     # Line-only meshes (1D cells) need a thicker line width to be visible
     is_line_mesh: bool = False
 
+    # Vector-glyph overlay actor (set by ``show_vectors``, cleared by ``hide_vectors``)
+    _vector_actor: Any = None
+
 
 class ViewportRenderer:
     """Manages the 3D viewport and all visual actors.
@@ -94,22 +99,44 @@ class ViewportRenderer:
     """
 
     def __init__(self, plotter: pv.Plotter) -> None:
-        self._plotter = plotter
+        # Typed as Any internally: pyvista.Plotter delegates many methods
+        # (remove_actor, disable_picking, ...) via @wraps(Renderer.method),
+        # which defeats pyright's method-binding resolution and produces
+        # spurious "str not assignable to self" / "missing self" errors on
+        # every otherwise-correct call.
+        self._plotter: Any = plotter
         self._actors: dict[str, MeshActor] = {}
         self._setup_viewport()
 
     def _setup_viewport(self) -> None:
-        """Configure default viewport appearance."""
-        self._plotter.set_background(DEFAULT_BG_TOP, top=DEFAULT_BG_BOTTOM)
+        """Configure default viewport appearance from the active palette."""
+        palette = THEME.current
+        apply_palette_to_plotter(self._plotter, palette)
+        # Axis widget label color follows the theme's icon/text color so
+        # labels remain legible on both dark and light backgrounds.
         self._plotter.add_axes(
             interactive=False,
             line_width=2,
-            color="white",
+            color=palette.icon,
             xlabel="X",
             ylabel="Y",
             zlabel="Z",
         )
         self._plotter.enable_anti_aliasing("ssaa")
+
+    def apply_palette(self, palette) -> None:
+        """Push a new palette onto the viewport (background + axis color).
+
+        Called from the main window's theme observer when the user picks
+        a new theme. Mesh-actor colors are not re-pushed here — already-
+        loaded meshes keep their current color until the user explicitly
+        re-styles or reloads.
+        """
+        apply_palette_to_plotter(self._plotter, palette)
+        try:
+            self._plotter.render()
+        except Exception:
+            pass
 
     # ── Mesh Management ──────────────────────────────────────────────────
 
@@ -132,19 +159,23 @@ class ViewportRenderer:
         if name in self._actors:
             self.remove_mesh(name)
 
+        prefs = PREFERENCES.current
+        palette = THEME.current
         line_only = _is_line_only(mesh_data.mesh)
         mesh_color = LINE_MESH_COLOR if line_only else DEFAULT_MESH_COLOR
+        edge_color = palette.mesh_edge_color
+        show_edges_default = prefs.mesh_show_surface_edges and not line_only
         actor = self._plotter.add_mesh(
             mesh_data.mesh,
             color=mesh_color,
-            show_edges=False,
-            edge_color=DEFAULT_EDGE_COLOR,
-            line_width=LINE_MESH_WIDTH if line_only else 1,
-            opacity=1.0,
+            show_edges=show_edges_default,
+            edge_color=edge_color,
+            line_width=LINE_MESH_WIDTH if line_only else prefs.mesh_line_width,
+            opacity=prefs.mesh_surface_opacity,
             label=name,
             reset_camera=True,
             lighting=not line_only,
-            smooth_shading=False,
+            smooth_shading=prefs.smooth_shading,
             render_lines_as_tubes=line_only,
             name=name,
         )
@@ -152,8 +183,14 @@ class ViewportRenderer:
         self._actors[name] = MeshActor(
             mesh_data=mesh_data,
             actor=actor,
-            display_mode=DisplayMode.SURFACE,
+            display_mode=(
+                DisplayMode.SURFACE_WITH_EDGES
+                if show_edges_default
+                else DisplayMode.SURFACE
+            ),
+            opacity=prefs.mesh_surface_opacity,
             color=mesh_color,
+            colormap=palette.cmap_seq,
             is_line_mesh=line_only,
         )
 
@@ -195,10 +232,12 @@ class ViewportRenderer:
 
     def _display_kwargs(self, ma: MeshActor) -> dict:
         """Build keyword args for plotter.add_mesh based on display state."""
+        prefs = PREFERENCES.current
+        palette = THEME.current
         base = {
             "opacity": ma.opacity,
             "lighting": True,
-            "smooth_shading": False,
+            "smooth_shading": prefs.smooth_shading,
             "reset_camera": False,
         }
 
@@ -233,15 +272,16 @@ class ViewportRenderer:
         elif mode == DisplayMode.WIREFRAME:
             base["style"] = "wireframe"
             base["show_edges"] = False
-            base["color"] = DEFAULT_EDGE_COLOR
+            base["color"] = palette.mesh_edge_color
+            base["line_width"] = prefs.mesh_line_width
         elif mode == DisplayMode.SURFACE_WITH_EDGES:
             base["style"] = "surface"
             base["show_edges"] = True
-            base["edge_color"] = DEFAULT_EDGE_COLOR
-            base["line_width"] = 1
+            base["edge_color"] = palette.mesh_edge_color
+            base["line_width"] = prefs.mesh_line_width
         elif mode == DisplayMode.POINTS:
             base["style"] = "points"
-            base["point_size"] = 5
+            base["point_size"] = prefs.node_marker_size
             base["show_edges"] = False
 
         # Line-only meshes: always render as thick tubes so the 1D cells
@@ -411,7 +451,11 @@ class ViewportRenderer:
         }
 
         # If there's an active scalar, show it on the deformed mesh too
-        if ma.active_scalar and ma.active_scalar in ma.deformed_mesh.point_data:
+        if (
+            ma.active_scalar
+            and ma.deformed_mesh is not None
+            and ma.active_scalar in ma.deformed_mesh.point_data
+        ):
             kwargs["scalars"] = ma.active_scalar
             kwargs["cmap"] = ma.colormap
             kwargs["show_scalar_bar"] = False  # Only one scalar bar
@@ -542,11 +586,13 @@ class ViewportRenderer:
             if callback:
                 callback(point)
 
+        pick_rgb = THEME.current.pick_rgb
+        pick_color = "#{:02x}{:02x}{:02x}".format(*pick_rgb)
         self._plotter.enable_point_picking(
             callback=_on_pick,
             show_message=True,
-            color="red",
-            point_size=12,
+            color=pick_color,
+            point_size=int(PREFERENCES.current.node_marker_size * 2),
             show_point=True,
             tolerance=0.025,
         )
@@ -562,10 +608,12 @@ class ViewportRenderer:
             if callback:
                 callback(cell)
 
+        pick_rgb = THEME.current.pick_rgb
+        pick_color = "#{:02x}{:02x}{:02x}".format(*pick_rgb)
         self._plotter.enable_cell_picking(
             callback=_on_pick,
             show_message=True,
-            color="red",
+            color=pick_color,
             show=True,
         )
 

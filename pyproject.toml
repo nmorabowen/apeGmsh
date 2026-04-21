@@ -40,9 +40,18 @@ apeGmsh = ["py.typed"]
 
 [tool.pyright]
 pythonVersion = "3.10"
+# Point pyright at the project's opensees_venv so Qt/PyVista imports resolve.
+# Path is machine-specific — adjust (or move to a gitignored pyrightconfig.json)
+# if the repo is cloned elsewhere.
+venvPath = "C:/Users/nmora/venv"
+venv = "opensees_venv"
 typeCheckingMode = "basic"
 reportMissingImports = true
 reportMissingTypeStubs = false
+# qtpy re-exports PySide6/PyQt symbols lazily; the stubs flag every
+# `from qtpy.QtGui import QAction` as a private-import access. The rule
+# fundamentally conflicts with using qtpy as a Qt-binding abstraction.
+reportPrivateImportUsage = false
 
 # ─────────────────────────────────────────────────────────────────────
 # mypy: the library ``src/apeGmsh/`` is strictly typed, but the
