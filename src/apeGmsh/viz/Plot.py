@@ -4,18 +4,66 @@ from typing import TYPE_CHECKING
 
 import gmsh
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import matplotlib.colors as mcolors
-from mpl_toolkits.mplot3d import Axes3D              # noqa: F401 – registers projection
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 from numpy import ndarray
 
 from apeGmsh._logging import _HasLogging
 from apeGmsh._types import DimTag
 
 if TYPE_CHECKING:
+    # Typecheckers see the real types unconditionally; the runtime try/except
+    # below handles the lean-install case.  Without this branch pyright
+    # unifies every optional symbol with ``None`` and flags every call site.
+    import matplotlib
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as _mpl_cm
+    import matplotlib.colors as mcolors
+    from matplotlib.path import Path as _MplPath
+    from mpl_toolkits.mplot3d import Axes3D
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
+    from scipy.spatial import Delaunay
     from apeGmsh._types import SessionProtocol as _SessionBase
+
+# ---------------------------------------------------------------------------
+# Optional-dependency guards
+#
+# matplotlib and scipy are both under `[project.optional-dependencies].plot`.
+# We defer imports so that ``from apeGmsh.viz.Plot import Plot`` succeeds on a
+# lean install — the ImportError only fires when a drawing method is actually
+# called, and includes the install hint.
+# ---------------------------------------------------------------------------
+
+try:
+    import matplotlib  # noqa: F811
+    import matplotlib.pyplot as plt  # noqa: F811
+    import matplotlib.cm as _mpl_cm  # noqa: F811
+    import matplotlib.colors as mcolors  # noqa: F811
+    from matplotlib.path import Path as _MplPath  # noqa: F811
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F811  (registers projection)
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection  # noqa: F811
+    _HAS_MPL = True
+except ImportError:
+    _HAS_MPL = False
+
+try:
+    from scipy.spatial import Delaunay  # noqa: F811
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+
+
+def _require_mpl() -> None:
+    """Raise a clear ImportError if matplotlib isn't installed."""
+    if not _HAS_MPL:
+        raise ImportError(
+            "apeGmsh.viz.Plot requires matplotlib. "
+            "Install with: pip install apeGmsh[plot]"
+        )
+
+
+def _get_cmap(name: str):
+    """Version-safe colormap lookup (``cm.get_cmap`` is deprecated in mpl ≥ 3.9)."""
+    _require_mpl()
+    return matplotlib.colormaps[name]
 
 # ---------------------------------------------------------------------------
 # Gmsh element-type -> corner-node count
@@ -37,6 +85,192 @@ _CORNER_NODES: dict[int, int] = {
 # Dimension labels / colours used for per-entity annotations
 _DIM_PREFIX = {0: 'P', 1: 'C', 2: 'S', 3: 'V'}
 _DIM_LABEL  = {0: 'points', 1: 'curves', 2: 'surfaces', 3: 'volumes'}
+
+
+# ---------------------------------------------------------------------------
+# Surface triangulation helpers
+#
+# The previous implementation sampled each boundary curve, chained the points
+# into one flat polygon, and ran ``Delaunay(polygon[:, :2])``.  Two real-world
+# failure modes:
+#
+#   * Surfaces with holes (outer + inner loops got concatenated; the hole was
+#     filled with triangles).
+#   * Planar surfaces not in the XY plane (the XY projection can collapse to
+#     a line — for strictly vertical plates, ``Delaunay`` raises, and the
+#     centroid-fan fallback only works for convex outlines).
+#
+# New approach:
+#
+#   1. Walk the surface's oriented boundary, grouping curves into *closed
+#      loops* by their shared point tags.
+#   2. Fit a plane to every loop point via SVD (works for any orientation).
+#   3. Triangulate in the fitted plane, then filter out triangles whose
+#      centroid lies outside the outer loop or inside any hole loop.
+#   4. Lift the kept triangles back into 3D.
+# ---------------------------------------------------------------------------
+
+
+def _sample_surface_boundary_loops(
+    surf_tag: int, n_samples: int,
+) -> list[ndarray]:
+    """Return the surface's boundary as a list of loops (each an ``(N, 3)`` array).
+
+    First element is the outer loop; any further elements are holes, ordered
+    by decreasing in-plane area.  Returns ``[]`` when the surface has no
+    extractable boundary.
+    """
+    try:
+        bnd = gmsh.model.getBoundary(
+            [(2, surf_tag)], combined=False, oriented=True,
+        )
+    except Exception:
+        return []
+
+    # For each oriented boundary curve: sample it into points and record the
+    # signed pair (start_pt_tag, end_pt_tag) as traversed in our direction.
+    # Closed curves (circles/ellipses) have no endpoint tags — they are their
+    # own loop.
+    open_curves: dict[int, list[tuple[int, ndarray]]] = {}
+    closed_loops: list[ndarray] = []
+
+    for _, ctag_signed in bnd:
+        abs_ctag = abs(int(ctag_signed))
+        try:
+            lo, hi = gmsh.model.getParametrizationBounds(1, abs_ctag)
+        except Exception:
+            continue
+        u = np.linspace(lo[0], hi[0], n_samples)
+        try:
+            cpts = np.array(
+                gmsh.model.getValue(1, abs_ctag, u.tolist())
+            ).reshape(-1, 3)
+        except Exception:
+            continue
+        if ctag_signed < 0:
+            cpts = cpts[::-1]
+
+        try:
+            endpts = gmsh.model.getBoundary(
+                [(1, abs_ctag)], combined=False, oriented=True,
+            )
+        except Exception:
+            endpts = []
+
+        if len(endpts) < 2:
+            # Closed curve (no distinct start/end in gmsh's eyes)
+            closed_loops.append(cpts[:-1])
+            continue
+
+        nat_start, nat_end = int(endpts[0][1]), int(endpts[1][1])
+        if ctag_signed > 0:
+            start_tag, end_tag = nat_start, nat_end
+        else:
+            start_tag, end_tag = nat_end, nat_start
+
+        open_curves.setdefault(start_tag, []).append((end_tag, cpts))
+
+    # Walk start->end chains to build loops.  Each vertex should appear exactly
+    # once as a start across the oriented boundary of a well-formed surface.
+    loops: list[ndarray] = []
+    for seed in list(open_curves):
+        if not open_curves.get(seed):
+            continue
+        loop_parts: list[ndarray] = []
+        current = seed
+        safety = sum(len(v) for v in open_curves.values()) + 1
+        while open_curves.get(current) and safety > 0:
+            end_tag, pts = open_curves[current].pop(0)
+            loop_parts.append(pts[:-1])  # drop duplicate junction point
+            current = end_tag
+            safety -= 1
+        if loop_parts:
+            loops.append(np.vstack(loop_parts))
+
+    loops.extend(closed_loops)
+    if not loops:
+        return []
+
+    # Determine outer vs hole by fitted-plane area (largest = outer).
+    # Re-use the plane of ALL points combined; good enough for well-formed
+    # planar surfaces where all loops share a plane.
+    _, basis = _fit_plane(np.vstack(loops))
+    areas = [abs(_polygon_area_on_plane(loop, basis)) for loop in loops]
+    order = sorted(range(len(loops)), key=lambda i: areas[i], reverse=True)
+    return [loops[i] for i in order]
+
+
+def _fit_plane(pts_3d: ndarray) -> tuple[ndarray, ndarray]:
+    """Return ``(origin, basis)`` where ``basis`` is ``(2, 3)`` in-plane axes.
+
+    Uses SVD on the centred points: the two singular vectors with the largest
+    singular values span the best-fit plane; the smallest is the normal.
+    """
+    origin = pts_3d.mean(axis=0)
+    _, _, vt = np.linalg.svd(pts_3d - origin, full_matrices=False)
+    return origin, vt[:2]
+
+
+def _polygon_area_on_plane(loop_3d: ndarray, basis: ndarray) -> float:
+    """Shoelace area of a 3D loop projected onto ``basis`` (2×3)."""
+    pts_2d = (loop_3d - loop_3d.mean(axis=0)) @ basis.T
+    x, y = pts_2d[:, 0], pts_2d[:, 1]
+    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _triangulate_surface_loops(
+    loops_3d: list[ndarray],
+) -> list[ndarray]:
+    """Triangulate a surface bounded by an outer loop and (optionally) holes.
+
+    ``loops_3d[0]`` is the outer loop; ``loops_3d[1:]`` are holes.  Returns a
+    list of ``(3, 3)`` triangle vertex arrays in 3D.  Falls back to a centroid
+    fan if scipy is unavailable (works for convex outer + no-hole inputs).
+    """
+    if not loops_3d:
+        return []
+    outer = loops_3d[0]
+    holes = loops_3d[1:]
+
+    all_pts = np.vstack([outer, *holes]) if holes else outer
+    origin, basis = _fit_plane(all_pts)
+    pts_2d_all = (all_pts - origin) @ basis.T
+
+    n_outer = len(outer)
+    outer_2d = pts_2d_all[:n_outer]
+    holes_2d: list[ndarray] = []
+    idx = n_outer
+    for h in holes:
+        holes_2d.append(pts_2d_all[idx:idx + len(h)])
+        idx += len(h)
+
+    if _HAS_SCIPY and _HAS_MPL:
+        try:
+            tri = Delaunay(pts_2d_all)
+        except Exception:
+            tri = None
+        if tri is not None:
+            outer_path = _MplPath(outer_2d)
+            hole_paths = [_MplPath(h) for h in holes_2d]
+            kept: list[ndarray] = []
+            for simplex in tri.simplices:
+                c = pts_2d_all[simplex].mean(axis=0)
+                if not outer_path.contains_point(c):
+                    continue
+                if any(hp.contains_point(c) for hp in hole_paths):
+                    continue
+                kept.append(origin + pts_2d_all[simplex] @ basis)
+            return kept
+
+    # Fallback: centroid fan on the outer loop.  Only correct for convex
+    # outer shapes with no holes — we ignore holes here, with a log warning
+    # at the caller's level when scipy is missing.
+    centroid = outer.mean(axis=0)
+    n = len(outer)
+    return [
+        np.array([centroid, outer[i], outer[(i + 1) % n]])
+        for i in range(n)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -229,63 +463,23 @@ class Plot(_HasLogging):
                     pass
 
         # --- Surfaces (dim=2): boundary-curve sampling -> Poly3DCollection ---
-        # Previous approach used a uniform UV grid which fails badly for
-        # trimmed surfaces (IGES/STEP imports) because the parametric
-        # rectangle extends beyond the trim boundary.  Instead we sample
-        # each surface's boundary curves, chain the points into a closed
-        # polygon, and fan-triangulate from the centroid.
+        # Surfaces: sample boundary curves into closed loops (outer + holes),
+        # fit a plane via SVD, triangulate in that plane with a point-in-
+        # polygon filter so holes and non-XY orientations come out correctly.
         if show_surfaces:
             tris: list[ndarray] = []
             for _, tag in gmsh.model.getEntities(dim=2):
-                try:
-                    bnd = gmsh.model.getBoundary(
-                        [(2, tag)], combined=False, oriented=True,
-                    )
-                    if not bnd:
-                        continue
-
-                    # Sample each boundary curve and chain into polygon
-                    boundary_pts: list[ndarray] = []
-                    for _, ctag in bnd:
-                        abs_ctag = abs(ctag)
-                        lo, hi = gmsh.model.getParametrizationBounds(
-                            1, abs_ctag,
-                        )
-                        u = np.linspace(lo[0], hi[0], n_curve_samples)
-                        cpts = np.array(
-                            gmsh.model.getValue(1, abs_ctag, u.tolist())
-                        ).reshape(-1, 3)
-                        if ctag < 0:          # reversed orientation
-                            cpts = cpts[::-1]
-                        # Drop last point (== first of next curve)
-                        boundary_pts.append(cpts[:-1])
-
-                    if not boundary_pts:
-                        continue
-                    polygon = np.vstack(boundary_pts)
-
-                    # Delaunay triangulation (handles concave surfaces)
-                    try:
-                        from scipy.spatial import Delaunay
-                        tri_obj = Delaunay(polygon[:, :2])
-                        for simplex in tri_obj.simplices:
-                            tris.append(polygon[simplex])
-                    except Exception:
-                        # Fallback: centroid fan (convex only)
-                        centroid = polygon.mean(axis=0)
-                        n_bnd = len(polygon)
-                        for i in range(n_bnd):
-                            j = (i + 1) % n_bnd
-                            tris.append(
-                                np.array([centroid, polygon[i], polygon[j]])
-                            )
-
-                    if label_tags:
-                        ax.text(*centroid, f'  S{tag}', fontsize=6,
-                                color=color_surfaces)
-                    collected.append(polygon)
-                except Exception:
-                    pass
+                loops = _sample_surface_boundary_loops(tag, n_curve_samples)
+                if not loops:
+                    continue
+                surf_tris = _triangulate_surface_loops(loops)
+                tris.extend(surf_tris)
+                all_loop_pts = np.vstack(loops)
+                collected.append(all_loop_pts)
+                if label_tags:
+                    centroid = loops[0].mean(axis=0)
+                    ax.text(*centroid, f'  S{tag}', fontsize=6,
+                            color=color_surfaces)
 
             if tris:
                 ax.add_collection3d(
@@ -516,7 +710,7 @@ class Plot(_HasLogging):
         q_min  = float(q_arr.min()) if vmin is None else vmin
         q_max  = float(q_arr.max()) if vmax is None else vmax
         norm   = mcolors.Normalize(vmin=q_min, vmax=q_max)
-        cmap_f = cm.get_cmap(cmap)
+        cmap_f = _get_cmap(cmap)
         face_colors = [cmap_f(norm(q)) for q in qualities]
 
         ax.add_collection3d(
@@ -529,7 +723,7 @@ class Plot(_HasLogging):
         self._autoscale(np.vstack(polys))
 
         if show_colorbar:
-            sm = cm.ScalarMappable(cmap=cmap_f, norm=norm)
+            sm = _mpl_cm.ScalarMappable(cmap=cmap_f, norm=norm)
             sm.set_array([])
             fig.colorbar(sm, ax=ax, shrink=0.55, pad=0.10,
                          label=quality_name)
@@ -830,7 +1024,7 @@ class Plot(_HasLogging):
                 self.show()
             return self
 
-        cmap_f = cm.get_cmap(cmap)
+        cmap_f = _get_cmap(cmap)
         collected: list[ndarray] = []
         legend_handles: list = []
 
@@ -876,47 +1070,15 @@ class Plot(_HasLogging):
             elif pg_dim == 2:
                 tris: list[ndarray] = []
                 for t in ents:
-                    try:
-                        # Sample boundary curves (handles trimmed/concave)
-                        bnd = gmsh.model.getBoundary(
-                            [(2, int(t))], combined=False, oriented=True,
-                        )
-                        if not bnd:
-                            continue
-                        bnd_pts: list[ndarray] = []
-                        for _, ctag in bnd:
-                            abs_ctag = abs(ctag)
-                            lo, hi = gmsh.model.getParametrizationBounds(
-                                1, abs_ctag,
-                            )
-                            u = np.linspace(lo[0], hi[0], n_curve_samples)
-                            cpts = np.array(
-                                gmsh.model.getValue(1, abs_ctag, u.tolist())
-                            ).reshape(-1, 3)
-                            if ctag < 0:
-                                cpts = cpts[::-1]
-                            bnd_pts.append(cpts[:-1])
-                        if not bnd_pts:
-                            continue
-                        pts = np.vstack(bnd_pts)
-                        # Delaunay triangulation
-                        try:
-                            from scipy.spatial import Delaunay
-                            tri_obj = Delaunay(pts[:, :2])
-                            for simplex in tri_obj.simplices:
-                                tris.append(pts[simplex])
-                        except Exception:
-                            centroid = pts.mean(axis=0)
-                            n_bnd = len(pts)
-                            for i in range(n_bnd):
-                                j = (i + 1) % n_bnd
-                                tris.append(
-                                    np.array([centroid, pts[i], pts[j]])
-                                )
-                        collected.append(pts)
-                        centroid_pts.append(pts.mean(axis=0))
-                    except Exception:
-                        pass
+                    loops = _sample_surface_boundary_loops(
+                        int(t), n_curve_samples,
+                    )
+                    if not loops:
+                        continue
+                    tris.extend(_triangulate_surface_loops(loops))
+                    all_loop_pts = np.vstack(loops)
+                    collected.append(all_loop_pts)
+                    centroid_pts.append(loops[0].mean(axis=0))
                 if tris:
                     ax.add_collection3d(
                         Poly3DCollection(tris, alpha=surface_alpha,
@@ -1029,7 +1191,7 @@ class Plot(_HasLogging):
             for i, t in enumerate(n_tags)
         }
 
-        cmap_f = cm.get_cmap(cmap)
+        cmap_f = _get_cmap(cmap)
         collected: list[ndarray] = []
         legend_handles: list = []
 
