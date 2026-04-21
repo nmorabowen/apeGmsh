@@ -565,8 +565,8 @@ class SelectionComposite(_HasLogging):
             ``[0, 1, 2, 3]``.  Use e.g. ``dims=[0]`` to show only
             points from the start.
         **kwargs : forwarded to :class:`SelectionPicker`
-            (``n_curve_samples``, ``n_surf_samples``, ``point_size``,
-            ``line_width``, ``surface_opacity``, ``show_surface_edges``).
+            (``n_curve_samples``, ``point_size``, ``line_width``,
+            ``surface_opacity``, ``show_surface_edges``).
 
         Returns
         -------

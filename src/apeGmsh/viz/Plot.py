@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterator
 
 import gmsh
 import numpy as np
@@ -434,6 +434,65 @@ class Plot(_HasLogging):
         return int(n_total), int(n_corner)
 
     # ------------------------------------------------------------------
+    # Mesh-primitive collection helpers
+    #
+    # Three drawing methods (mesh, quality, physical_groups_mesh) each
+    # need the same two things: a global ``{node_tag: xyz}`` lookup and
+    # a way to iterate per-element corner-vertex arrays.  These helpers
+    # centralise that so the drawing methods can focus on their actual
+    # styling differences.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_node_lookup() -> dict[int, ndarray] | None:
+        """Return ``{node_tag: xyz}`` for every meshed node.
+
+        Returns ``None`` when the mesh is empty — callers should treat
+        that as "no mesh to draw".
+        """
+        node_tags, coords_flat, _ = gmsh.model.mesh.getNodes(
+            dim=-1, tag=-1, includeBoundary=True,
+        )
+        if len(node_tags) == 0:
+            return None
+        return {
+            int(t): np.asarray(coords_flat[i * 3:(i + 1) * 3])
+            for i, t in enumerate(node_tags)
+        }
+
+    def _iter_elements(
+        self,
+        dim: int,
+        tag: int,
+        coords: dict[int, ndarray],
+        *,
+        min_corners: int = 2,
+    ) -> Iterator[tuple[int, ndarray]]:
+        """Yield ``(elem_tag, verts)`` for every element on ``(dim, tag)``.
+
+        ``verts`` is an ``(n_corner, 3)`` ndarray of first-order
+        corner-node coordinates.  Elements whose corner count is below
+        ``min_corners`` are skipped (use ``min_corners=3`` to drop line
+        elements when only polygons are wanted).  Elements referencing
+        missing node tags are silently skipped.
+        """
+        etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(
+            dim=dim, tag=tag,
+        )
+        for etype, elem_tags, enodes in zip(etypes, etags_list, enodes_list):
+            n_total, n_corner = self._element_node_counts(etype)
+            if n_corner < min_corners:
+                continue
+            for k in range(len(elem_tags)):
+                all_ns = enodes[k * n_total:(k + 1) * n_total]
+                ns = all_ns[:n_corner]
+                try:
+                    verts = np.array([coords[int(ni)] for ni in ns])
+                except KeyError:
+                    continue
+                yield int(elem_tags[k]), verts
+
+    # ------------------------------------------------------------------
     # Geometry
     # ------------------------------------------------------------------
 
@@ -441,7 +500,6 @@ class Plot(_HasLogging):
         self,
         *,
         n_curve_samples : int   = 60,
-        n_surf_samples  : int   = 20,
         show_points     : bool  = True,
         show_curves     : bool  = True,
         show_surfaces   : bool  = True,
@@ -458,10 +516,10 @@ class Plot(_HasLogging):
         Parameters
         ----------
         n_curve_samples  : points sampled along each curve
-        n_surf_samples   : UV grid resolution per surface (n × n)
         show_points      : scatter-plot geometric vertices
         show_curves      : draw sampled curve polylines
-        show_surfaces    : draw shaded surface patches via UV grid
+        show_surfaces    : draw filled surface patches (best-fit-plane
+                           triangulation, hole-aware)
         label_tags       : annotate each entity with its tag (e.g. ``C3``)
         color_points/curves/surfaces : matplotlib colour specs
         surface_alpha    : opacity of surface patches
@@ -581,9 +639,10 @@ class Plot(_HasLogging):
         # Collect every entity whose mesh elements we can draw.  Both
         # dim=2 (surface polygons) and dim=1 (line segments) are included
         # so mixed models — e.g. slabs + column curves — render both.
-        surf_entities = gmsh.model.getEntities(dim=2)
-        edge_entities = gmsh.model.getEntities(dim=1)
-        plot_entities: list[DimTag] = list(surf_entities) + list(edge_entities)
+        plot_entities: list[DimTag] = (
+            list(gmsh.model.getEntities(dim=2))
+            + list(gmsh.model.getEntities(dim=1))
+        )
 
         if not plot_entities:
             self._log("mesh(): no surface or edge entities found")
@@ -591,43 +650,21 @@ class Plot(_HasLogging):
                 self.show()
             return self
 
-        # Build node-tag -> XYZ lookup
-        node_tags, coords_flat, _ = gmsh.model.mesh.getNodes(
-            dim=-1, tag=-1, includeBoundary=True
-        )
-        if len(node_tags) == 0:
+        coords = self._build_node_lookup()
+        if coords is None:
             self._log("mesh(): no nodes — has the mesh been generated?")
             if show:
                 self.show()
             return self
 
-        coords: dict[int, ndarray] = {
-            int(t): coords_flat[i * 3:(i + 1) * 3]
-            for i, t in enumerate(node_tags)
-        }
-
         polys: list[ndarray] = []
         segments: list[ndarray] = []
         for ent_dim, ent_tag in plot_entities:
-            etypes, _, enodes_list = gmsh.model.mesh.getElements(
-                dim=ent_dim, tag=ent_tag
-            )
-            for etype, enodes in zip(etypes, enodes_list):
-                n_total, n_corner = self._element_node_counts(etype)
-                if n_corner < 2:
-                    continue
-                elem_count = len(enodes) // n_total
-                for k in range(elem_count):
-                    all_ns = enodes[k * n_total:(k + 1) * n_total]
-                    ns     = all_ns[:n_corner]   # corner nodes only
-                    try:
-                        verts = np.array([coords[int(ni)] for ni in ns])
-                    except KeyError:
-                        continue
-                    if n_corner == 2:
-                        segments.append(verts)
-                    else:
-                        polys.append(verts)
+            for _, verts in self._iter_elements(ent_dim, ent_tag, coords):
+                if len(verts) == 2:
+                    segments.append(verts)
+                else:
+                    polys.append(verts)
 
         all_pts: list[ndarray] = []
 
@@ -702,45 +739,30 @@ class Plot(_HasLogging):
         """
         fig, ax = self._ensure_axes()
 
-        node_tags, coords_flat, _ = gmsh.model.mesh.getNodes(
-            dim=-1, tag=-1, includeBoundary=True
-        )
-        if len(node_tags) == 0:
+        coords = self._build_node_lookup()
+        if coords is None:
             self._log("quality(): no nodes found")
             if show:
                 self.show()
             return self
 
-        coords: dict[int, ndarray] = {
-            int(t): coords_flat[i * 3:(i + 1) * 3]
-            for i, t in enumerate(node_tags)
-        }
-
         polys:     list[ndarray] = []
-        qualities: list[float]   = []
+        elem_tags: list[int]     = []
+        for _, ent_tag in gmsh.model.getEntities(dim=2):
+            for etag, verts in self._iter_elements(
+                2, ent_tag, coords, min_corners=3,
+            ):
+                polys.append(verts)
+                elem_tags.append(etag)
 
-        for ent_dim, ent_tag in gmsh.model.getEntities(dim=2):
-            etypes, etags_list, enodes_list = gmsh.model.mesh.getElements(
-                dim=ent_dim, tag=ent_tag
-            )
-            for etype, elem_tags_arr, enodes in zip(etypes, etags_list, enodes_list):
-                n_total, n_corner = self._element_node_counts(etype)
-                if n_corner < 3:
-                    continue
-                q_vals = gmsh.model.mesh.getElementQualities(
-                    list(elem_tags_arr), qualityName=quality_name
+        if elem_tags:
+            qualities = [
+                float(q) for q in gmsh.model.mesh.getElementQualities(
+                    elem_tags, qualityName=quality_name,
                 )
-                elem_count = len(elem_tags_arr)
-                for k in range(elem_count):
-                    all_ns = enodes[k * n_total:(k + 1) * n_total]
-                    ns     = all_ns[:n_corner]   # corner nodes only
-                    try:
-                        polys.append(
-                            np.array([coords[int(ni)] for ni in ns])
-                        )
-                        qualities.append(float(q_vals[k]))
-                    except KeyError:
-                        pass
+            ]
+        else:
+            qualities = []
 
         if not polys:
             self._log("quality(): no surface elements found")
@@ -1045,7 +1067,6 @@ class Plot(_HasLogging):
         names           : list[str] | None = None,
         cmap            : str   = "tab20",
         n_curve_samples : int   = 40,
-        n_surf_samples  : int   = 12,
         point_size      : int   = 60,
         linewidth       : float = 2.5,
         surface_alpha   : float = 0.35,
@@ -1067,7 +1088,6 @@ class Plot(_HasLogging):
                            (``None`` draws all groups)
         cmap             : matplotlib colormap used to cycle group colours
         n_curve_samples  : points sampled per curve
-        n_surf_samples   : UV grid resolution per surface
         point_size       : marker size for dim=0 groups
         linewidth        : width for dim=1 groups
         surface_alpha    : opacity for dim=2 group patches
@@ -1251,19 +1271,12 @@ class Plot(_HasLogging):
                 self.show()
             return self
 
-        # Node-tag -> XYZ lookup (global)
-        n_tags, n_coords_flat, _ = gmsh.model.mesh.getNodes(
-            dim=-1, tag=-1, includeBoundary=True,
-        )
-        if len(n_tags) == 0:
+        node_lookup = self._build_node_lookup()
+        if node_lookup is None:
             self._log("physical_groups_mesh(): no nodes — mesh generated?")
             if show:
                 self.show()
             return self
-        node_lookup = {
-            int(t): np.asarray(n_coords_flat[i * 3:(i + 1) * 3])
-            for i, t in enumerate(n_tags)
-        }
 
         cmap_f = _get_cmap(cmap)
         collected: list[ndarray] = []
@@ -1301,25 +1314,11 @@ class Plot(_HasLogging):
             elif pg_dim == 1:
                 segs: list[ndarray] = []
                 for t in ents:
-                    etypes, _, enodes_list = gmsh.model.mesh.getElements(
-                        dim=1, tag=int(t),
-                    )
-                    for etype, enodes in zip(etypes, enodes_list):
-                        n_total, n_corner = self._element_node_counts(etype)
-                        if n_corner < 2:
-                            continue
-                        n_elem = len(enodes) // n_total
-                        for k in range(n_elem):
-                            all_ns = enodes[k * n_total:(k + 1) * n_total]
-                            ns = all_ns[:n_corner]
-                            try:
-                                verts = np.array(
-                                    [node_lookup[int(ni)] for ni in ns]
-                                )
-                            except KeyError:
-                                continue
-                            for s in range(len(verts) - 1):
-                                segs.append(verts[s:s + 2])
+                    for _, verts in self._iter_elements(
+                        1, int(t), node_lookup,
+                    ):
+                        for s in range(len(verts) - 1):
+                            segs.append(verts[s:s + 2])
                 if segs:
                     ax.add_collection3d(
                         Line3DCollection(segs, colors=[color],
@@ -1331,24 +1330,10 @@ class Plot(_HasLogging):
             elif pg_dim == 2:
                 polys: list[ndarray] = []
                 for t in ents:
-                    etypes, _, enodes_list = gmsh.model.mesh.getElements(
-                        dim=2, tag=int(t),
-                    )
-                    for etype, enodes in zip(etypes, enodes_list):
-                        n_total, n_corner = self._element_node_counts(etype)
-                        if n_corner < 3:
-                            continue
-                        n_elem = len(enodes) // n_total
-                        for k in range(n_elem):
-                            all_ns = enodes[k * n_total:(k + 1) * n_total]
-                            ns = all_ns[:n_corner]
-                            try:
-                                verts = np.array(
-                                    [node_lookup[int(ni)] for ni in ns]
-                                )
-                            except KeyError:
-                                continue
-                            polys.append(verts)
+                    for _, verts in self._iter_elements(
+                        2, int(t), node_lookup, min_corners=3,
+                    ):
+                        polys.append(verts)
                 if polys:
                     ax.add_collection3d(
                         Poly3DCollection(polys, alpha=alpha,
