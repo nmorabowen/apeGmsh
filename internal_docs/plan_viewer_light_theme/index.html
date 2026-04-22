@@ -1,0 +1,3921 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/plan_viewer_light_theme/">
+      
+      
+        <link rel="prev" href="../plan_viewer_box_select/">
+      
+      
+        <link rel="next" href="../plan_viewer_pg_persistence/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Viewer Light Theme + Theme Switching — Plan - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#viewer-light-theme-theme-switching-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Viewer Light Theme + Theme Switching — Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_meshing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_groundTruth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#reported-need" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reported need
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architectural-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectural context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Architectural context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#todays-theme-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Today's theme surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scattered-hex-constants-by-role" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scattered hex constants (by role)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-failure-modes-a-light-theme-must-avoid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two failure modes a light theme must avoid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-invariants-the-design-must-preserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key invariants the design must preserve
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions-captured-resolved-upfront" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decisions captured (resolved upfront)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#root-causes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Root causes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Root causes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-1-no-light-stylesheet-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 1 — No Light stylesheet exists
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-2-on_theme-callback-is-a-no-op-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 2 — on_theme callback is a no-op hook
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-3-chrome-hex-constants-duplicated-outside-themepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 3 — Chrome hex constants duplicated outside theme.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-4-viewport-gradient-is-hardcoded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 4 — Viewport gradient is hardcoded
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-5-_dim_colors-is-theme-agnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 5 — _DIM_COLORS is theme-agnostic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fix-plan-phased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fix plan — phased
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fix plan — phased">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-palette-abstraction-light-palette" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1 — Palette abstraction + light palette
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-wire-the-theme-combo-apply-theme-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2 — Wire the theme combo + apply theme live
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-replace-hardcoded-chrome-in-widgets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — Replace hardcoded chrome in widgets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-viewport-gradient-vtk-_dim_colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — Viewport gradient + VTK _DIM_COLORS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 — Persistence
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#teststest_theme_palettepy-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tests/test_theme_palette.py (new)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#teststest_theme_persistencepy-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tests/test_theme_persistence.py (new)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#visual-qa-checklist-manual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visual QA checklist (manual)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-plan-does-not-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this plan does NOT change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-overall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance — overall
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cheat-sheet-for-implementation-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cheat sheet for implementation order
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#reported-need" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reported need
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architectural-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architectural context
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Architectural context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#todays-theme-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Today's theme surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scattered-hex-constants-by-role" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scattered hex constants (by role)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-failure-modes-a-light-theme-must-avoid" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two failure modes a light theme must avoid
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#key-invariants-the-design-must-preserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key invariants the design must preserve
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions-captured-resolved-upfront" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decisions captured (resolved upfront)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#root-causes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Root causes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Root causes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-1-no-light-stylesheet-exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 1 — No Light stylesheet exists
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-2-on_theme-callback-is-a-no-op-hook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 2 — on_theme callback is a no-op hook
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-3-chrome-hex-constants-duplicated-outside-themepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 3 — Chrome hex constants duplicated outside theme.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-4-viewport-gradient-is-hardcoded" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 4 — Viewport gradient is hardcoded
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bug-gap-5-_dim_colors-is-theme-agnostic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug / gap 5 — _DIM_COLORS is theme-agnostic
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fix-plan-phased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fix plan — phased
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fix plan — phased">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-palette-abstraction-light-palette" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1 — Palette abstraction + light palette
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-wire-the-theme-combo-apply-theme-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2 — Wire the theme combo + apply theme live
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-replace-hardcoded-chrome-in-widgets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — Replace hardcoded chrome in widgets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-viewport-gradient-vtk-_dim_colors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — Viewport gradient + VTK _DIM_COLORS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 — Persistence
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#teststest_theme_palettepy-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tests/test_theme_palette.py (new)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#teststest_theme_persistencepy-new" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tests/test_theme_persistence.py (new)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#visual-qa-checklist-manual" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Visual QA checklist (manual)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-this-plan-does-not-change" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What this plan does NOT change
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-overall" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance — overall
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cheat-sheet-for-implementation-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cheat sheet for implementation order
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="viewer-light-theme-theme-switching-plan">Viewer Light Theme + Theme Switching — Plan<a class="headerlink" href="#viewer-light-theme-theme-switching-plan" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>[!summary] One-line
+The viewers today hardcode a single Catppuccin Mocha (dark) theme in
+<code>viewers/ui/theme.py</code>, with the palette's hex constants leaking into
+~10 widget files. This plan adds a white / greyscale light theme,
+wires the existing (unconnected) Theme combo in <code>PreferencesTab</code>,
+and extracts the minimum palette abstraction needed so both themes
+stay in sync without each widget growing an <code>if dark else light</code>
+branch.</p>
+</blockquote>
+<h2 id="reported-need">Reported need<a class="headerlink" href="#reported-need" title="Permanent link">&para;</a></h2>
+<p>User request:</p>
+<blockquote>
+<p>On the viewers we now have only the cappuccino theme, lets plan for
+a light theme, this should be white with mainly black and
+greyscale. We need to figure out a way for the user to select their
+theme, and make sure the theme serves its purpose.</p>
+</blockquote>
+<p>Current state:</p>
+<ul>
+<li>Single theme in <code>src/apeGmsh/viewers/ui/theme.py</code> — Catppuccin Mocha
+  (12 palette constants + one big f-string <code>STYLESHEET</code>).</li>
+<li>A <code>Theme</code> <code>QComboBox</code> with items <code>["Dark", "Light"]</code> already exists
+  in <code>src/apeGmsh/viewers/ui/preferences.py:129-133</code>, plus an
+  <code>on_theme: Callable[[str], None]</code> callback parameter at line 52. But
+  <strong>nothing wires <code>on_theme</code></strong> — selecting "Light" today is a no-op.</li>
+<li>~30 hardcoded hex colors live in widget files outside <code>theme.py</code>
+  (grep below). Some are chrome (would break on white), most are
+  semantic content (active-group green, warning yellow, error red)
+  that should survive theme switching with minor contrast tweaks.</li>
+</ul>
+<hr />
+<h2 id="architectural-context">Architectural context<a class="headerlink" href="#architectural-context" title="Permanent link">&para;</a></h2>
+<h3 id="todays-theme-surface">Today's theme surface<a class="headerlink" href="#todays-theme-surface" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>theme.py
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a> ├─ Constants: BASE, MANTLE, SURFACE0..2, TEXT, SUBTEXT, OVERLAY,
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a> │              BLUE, GREEN, YELLOW, PEACH, RED, BG_TOP, BG_BOTTOM
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a> ├─ STYLESHEET  (single f-string, ~240 lines of QSS)
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a> └─ styled_group(title) helper
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>Consumers
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a> ├─ viewer_window.py:124  → window.setStyleSheet(STYLESHEET)
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a> ├─ viewer_window.py:134  → plotter.set_background(BG_TOP, top=BG_BOTTOM)
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a> └─ viewer_window.py:201,208  → icon color &quot;#cdd6f4&quot; (NOT imported
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>                                 from theme; copy-pasted)
+</span></code></pre></div>
+<h3 id="scattered-hex-constants-by-role">Scattered hex constants (by role)<a class="headerlink" href="#scattered-hex-constants-by-role" title="Permanent link">&para;</a></h3>
+<p>Grep of <code>src/apeGmsh/viewers/**/*.py</code> for <code>#[0-9a-fA-F]{6}</code>:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Role</th>
+<th>Change with theme?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ui/_browser_tab.py:131,138,162,172</code></td>
+<td>Active (green) / inactive (blue) group label</td>
+<td><strong>Yes</strong> — needs darker shade on white</td>
+</tr>
+<tr>
+<td><code>ui/_parts_tree.py:23,24,99,150,162,180,196,230,239</code></td>
+<td>Part color, untracked warning, empty-label, dim-icon fallback, error red</td>
+<td><strong>Partially</strong> — empty-label must flip; semantic colors may need contrast-adjusted variant</td>
+</tr>
+<tr>
+<td><code>ui/_selection_tree.py:24-27,98,126-127,152-153</code></td>
+<td>Per-dim icon colors</td>
+<td>Semantic (keep hue, adjust contrast)</td>
+</tr>
+<tr>
+<td><code>ui/constraints_tab.py:29-44,99,110-111,201</code></td>
+<td>Constraint-kind palette, empty-label, warning banner</td>
+<td>Palette: semantic; empty-label: <strong>yes</strong></td>
+</tr>
+<tr>
+<td><code>ui/loads_tab.py:28-34,78,89-90</code></td>
+<td>Pattern-cycle palette, empty-label, warning banner</td>
+<td>Same as above</td>
+</tr>
+<tr>
+<td><code>ui/mass_tab.py:55,66-67</code></td>
+<td>Empty-label, warning banner</td>
+<td><strong>Yes</strong></td>
+</tr>
+<tr>
+<td><code>ui/viewer_window.py:201,208</code></td>
+<td>Icon color (<code>#cdd6f4</code>)</td>
+<td><strong>Yes</strong> — near-invisible on white</td>
+</tr>
+<tr>
+<td><code>ui/preferences.py:138,140,154</code></td>
+<td>Default pick color (<code>#E74C3C</code>), color-swatch border (<code>#999</code>)</td>
+<td>Pick color is content (stays); border must flip</td>
+</tr>
+<tr>
+<td><code>model_viewer.py:284,326-327,371-372</code></td>
+<td>3D point-label shape/text colors</td>
+<td><strong>Yes</strong> — dark label on dark bg becomes dark label on white bg</td>
+</tr>
+<tr>
+<td><code>core/color_manager.py:31-39</code></td>
+<td>VTK <code>PICK_RGB</code>, <code>HOVER_RGB</code>, <code>_DIM_COLORS</code> (warm white, grey, blue, slate)</td>
+<td><strong>Yes</strong> — warm white geometry invisible on white bg</td>
+</tr>
+<tr>
+<td><code>viewers/geom_transf_viewer.py:*</code></td>
+<td>Standalone HTML/three.js viewer CSS</td>
+<td><strong>Out of scope</strong> — separate artifact, not a Qt widget</td>
+</tr>
+</tbody>
+</table>
+<h3 id="two-failure-modes-a-light-theme-must-avoid">Two failure modes a light theme must avoid<a class="headerlink" href="#two-failure-modes-a-light-theme-must-avoid" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Invisible geometry.</strong> VTK <code>_DIM_COLORS[0] = warm white (#E8D5B7)</code>
+   is near-white and disappears on a white viewport background. Light
+   theme needs a contrast-adjusted content palette.</li>
+<li><strong>Hardcoded chrome bleeds through.</strong> Even if <code>STYLESHEET</code> is
+   rebuilt for light, a <code>#cdd6f4</code> icon or a <code>#6c7086</code> empty-label is
+   still set via <code>setStyleSheet</code> or <code>QColor</code> at widget construction
+   time and won't respond to theme change.</li>
+</ol>
+<h3 id="key-invariants-the-design-must-preserve">Key invariants the design must preserve<a class="headerlink" href="#key-invariants-the-design-must-preserve" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Single source of truth for chrome.</strong> Widgets should not know what
+   theme is active — they ask for a semantic role ("muted text",
+   "warning border") and get the right hex.</li>
+<li><strong>Live switching.</strong> Selecting "Light" in Preferences should update
+   all open viewers without a reopen. Qt supports this via
+   <code>QApplication.setStyleSheet</code>, but <code>plotter.set_background</code> and
+   VTK actor colors require explicit re-push.</li>
+<li><strong>Content palette survives theme change.</strong> Semantic colors
+   (active-group green, warning yellow, error red) stay semantic —
+   only their exact shade adjusts for contrast. A user who creates a
+   group in dark mode should see it still highlighted as "the active
+   one" in light mode.</li>
+</ol>
+<hr />
+<h2 id="decisions-captured-resolved-upfront">Decisions captured (resolved upfront)<a class="headerlink" href="#decisions-captured-resolved-upfront" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Resolution</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Palette architecture</td>
+<td><strong><code>Palette</code> dataclass</strong> with named roles (base, mantle, text, …), one <code>PALETTE_DARK</code> + one <code>PALETTE_LIGHT</code> instance, one <code>build_stylesheet(palette) -&gt; str</code> factory. Rejected alternative: two parallel stylesheet strings (would duplicate ~240 lines of QSS and drift).</td>
+<td>CLAUDE.md §2 — minimum code; §1 — explicit over duplicated</td>
+</tr>
+<tr>
+<td>How users select theme</td>
+<td><strong>Existing <code>PreferencesTab</code> combo, wired through.</strong> No menu bar entry, no keyboard shortcut in this plan. If user wants a menu shortcut later, it's a 5-LOC add.</td>
+<td>Already in UI, not worth adding a second control</td>
+</tr>
+<tr>
+<td>Persistence</td>
+<td><strong><code>QSettings("apeGmsh", "viewer")</code>.</strong> Native Qt, no extra dependency, writes to the standard OS location (registry on Windows, <code>~/.config/apeGmsh/viewer.conf</code> on Linux).</td>
+<td>Already have Qt; avoid hand-rolling a JSON-prefs file</td>
+</tr>
+<tr>
+<td>Scope of "theme"</td>
+<td><strong>Chrome + viewport background + VTK <code>_DIM_COLORS</code> + icon color + empty-label + warning-banner.</strong> NOT the semantic content palette (active-group green, constraint-kind hues, load-pattern cycle) — those keep their hue but get a contrast-adjusted variant picked from the active palette.</td>
+<td>Explicit to avoid scope creep into "redo every color"</td>
+</tr>
+<tr>
+<td>Live switching vs requires reopen</td>
+<td><strong>Live switching.</strong> Every open viewer window observes a <code>ThemeManager</code> and re-pushes stylesheet + background + VTK <code>_DIM_COLORS</code> on change.</td>
+<td>UX — nobody wants "close and reopen to see your new theme"</td>
+</tr>
+<tr>
+<td>Default theme on first run</td>
+<td><strong>Dark</strong> (Catppuccin Mocha). Preserves existing behavior for users who don't touch the preference.</td>
+<td>Zero-friction migration</td>
+</tr>
+<tr>
+<td>Accent color in light mode</td>
+<td><strong>Neutral dark grey</strong>, not Catppuccin blue. Matches user's "mainly black and greyscale" direction. Slider handles, focus borders, the pick color swatch all use a <code>#333</code> accent on white.</td>
+<td>User: "mainly black and greyscale"</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>[!note] On the "rejected" alternative
+A two-stylesheet-strings approach would have been faster to ship
+but would duplicate all ~240 lines of QSS. Every future change to
+chrome (e.g. a new button style) would need to be made twice, and
+in practice they would drift. The dataclass-+-factory route is
+~30 LOC more upfront and eliminates the drift class of bug.</p>
+<p>[!warning] VTK <code>_DIM_COLORS</code> is a quiet dependency
+<code>ColorManager._DIM_COLORS</code> is currently a module-level constant
+(<code>core/color_manager.py:35-40</code>). Making it theme-aware requires
+either (a) turning it into a method that reads from the active
+palette, or (b) re-pushing default colors to all actors on theme
+change. Option (b) is surgical and preferred — <code>ColorManager</code>
+already has <code>reset_all()</code> in its public API (check the file before
+implementing).</p>
+</blockquote>
+<hr />
+<h2 id="root-causes">Root causes<a class="headerlink" href="#root-causes" title="Permanent link">&para;</a></h2>
+<h3 id="bug-gap-1-no-light-stylesheet-exists">Bug / gap 1 — No Light stylesheet exists<a class="headerlink" href="#bug-gap-1-no-light-stylesheet-exists" title="Permanent link">&para;</a></h3>
+<p><code>viewers/ui/theme.py:44-274</code> is a single f-string hard-bound to the
+Catppuccin constants. No alternative palette is defined anywhere.</p>
+<h3 id="bug-gap-2-on_theme-callback-is-a-no-op-hook">Bug / gap 2 — <code>on_theme</code> callback is a no-op hook<a class="headerlink" href="#bug-gap-2-on_theme-callback-is-a-no-op-hook" title="Permanent link">&para;</a></h3>
+<p><code>viewers/ui/preferences.py:129-133</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">_theme_combo</span> <span class="o">=</span> <span class="n">QtWidgets</span><span class="o">.</span><span class="n">QComboBox</span><span class="p">()</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="bp">self</span><span class="o">.</span><span class="n">_theme_combo</span><span class="o">.</span><span class="n">addItems</span><span class="p">([</span><span class="s2">&quot;Dark&quot;</span><span class="p">,</span> <span class="s2">&quot;Light&quot;</span><span class="p">])</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">if</span> <span class="n">on_theme</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_theme_combo</span><span class="o">.</span><span class="n">currentTextChanged</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">on_theme</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The combo exists, the callback slot exists, but <code>model_viewer.py</code> and
+<code>mesh_viewer.py</code> never pass <code>on_theme=</code> when constructing
+<code>PreferencesTab</code>. Selecting "Light" fires <code>currentTextChanged("Light")</code>
+→ into the void.</p>
+<h3 id="bug-gap-3-chrome-hex-constants-duplicated-outside-themepy">Bug / gap 3 — Chrome hex constants duplicated outside <code>theme.py</code><a class="headerlink" href="#bug-gap-3-chrome-hex-constants-duplicated-outside-themepy" title="Permanent link">&para;</a></h3>
+<p>Counted at least <strong>18 occurrences</strong> of Catppuccin hex literals in
+widget files that should have imported from <code>theme.py</code>:</p>
+<ul>
+<li><code>_browser_tab.py</code> — 4× <code>#a6e3a1</code>, 4× <code>#89b4fa</code></li>
+<li><code>_parts_tree.py</code> — <code>_PART_COLOR = "#a6e3a1"</code>, <code>_UNTRACKED_COLOR =
+  "#f9e2af"</code>, empty-label <code>#6c7086</code>, fallback <code>#cdd6f4</code>, error <code>#f38ba8</code></li>
+<li><code>_selection_tree.py</code> — <code>_DIM_ICON_COLOR</code> dict (4 hues), fallback
+  <code>#cdd6f4</code></li>
+<li><code>constraints_tab.py</code> — 12-entry kind palette + empty-label
+  <code>#6c7086</code> + warning-banner <code>#f9e2af</code></li>
+<li><code>loads_tab.py</code> — 7-entry pattern cycle + empty-label <code>#6c7086</code> +
+  warning-banner <code>#f9e2af</code></li>
+<li><code>mass_tab.py</code> — empty-label <code>#6c7086</code> + warning-banner <code>#f9e2af</code></li>
+<li><code>viewer_window.py:201,208</code> — icon color <code>#cdd6f4</code></li>
+<li><code>preferences.py:140,154</code> — swatch-border <code>#999</code></li>
+<li><code>model_viewer.py:284,326-327,371-372</code> — point-label shape/text
+  colors</li>
+</ul>
+<p>Of these, roughly half are <strong>chrome</strong> (empty-label, swatch-border,
+icon, point-label backgrounds) and must follow the theme; the other
+half are <strong>semantic content</strong> (active-group green, constraint-kind
+palette) and need a contrast-adjusted variant but keep their hue
+identity.</p>
+<h3 id="bug-gap-4-viewport-gradient-is-hardcoded">Bug / gap 4 — Viewport gradient is hardcoded<a class="headerlink" href="#bug-gap-4-viewport-gradient-is-hardcoded" title="Permanent link">&para;</a></h3>
+<p><code>viewer_window.py:134</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">_qt_interactor</span><span class="o">.</span><span class="n">set_background</span><span class="p">(</span><span class="n">BG_TOP</span><span class="p">,</span> <span class="n">top</span><span class="o">=</span><span class="n">BG_BOTTOM</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Called once at construction. No re-push path on theme change.</p>
+<h3 id="bug-gap-5-_dim_colors-is-theme-agnostic">Bug / gap 5 — <code>_DIM_COLORS</code> is theme-agnostic<a class="headerlink" href="#bug-gap-5-_dim_colors-is-theme-agnostic" title="Permanent link">&para;</a></h3>
+<p><code>core/color_manager.py:35-40</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">_DIM_COLORS</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="mi">0</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">232</span><span class="p">,</span> <span class="mi">213</span><span class="p">,</span> <span class="mi">183</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">),</span>  <span class="c1"># #E8D5B7 warm white</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="mi">1</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">170</span><span class="p">,</span> <span class="mi">170</span><span class="p">,</span> <span class="mi">170</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">),</span>  <span class="c1"># grey</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="mi">2</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">91</span><span class="p">,</span> <span class="mi">141</span><span class="p">,</span> <span class="mi">184</span><span class="p">],</span>  <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">),</span>  <span class="c1"># steel blue</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="mi">3</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">90</span><span class="p">,</span> <span class="mi">110</span><span class="p">,</span> <span class="mi">130</span><span class="p">],</span>  <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">),</span>  <span class="c1"># slate</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><code>#E8D5B7</code> (warm white, dim 0 = points) is near-invisible on a white
+viewport. Needs a light-mode variant: near-black for points, a
+slightly darker slate for volumes, etc.</p>
+<hr />
+<h2 id="fix-plan-phased">Fix plan — phased<a class="headerlink" href="#fix-plan-phased" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>[!important] Phase ordering
+Phase 1 (palette + factory) is a <strong>prerequisite</strong> for everything
+else. Phases 2, 3, 4 are independent after Phase 1 and can be
+parallelized. Phase 5 (persistence) lands last.</p>
+</blockquote>
+<h3 id="phase-1-palette-abstraction-light-palette">Phase 1 — Palette abstraction + light palette<a class="headerlink" href="#phase-1-palette-abstraction-light-palette" title="Permanent link">&para;</a></h3>
+<p><strong>Goal:</strong> <code>theme.py</code> exposes <code>Palette</code>, <code>PALETTE_DARK</code>,
+<code>PALETTE_LIGHT</code>, <code>build_stylesheet(palette) -&gt; str</code>, and a
+<code>ThemeManager</code> singleton. All existing Catppuccin constants still
+importable (backwards-compat alias).</p>
+<p><strong>Files &amp; changes:</strong></p>
+<ol>
+<li><strong><code>src/apeGmsh/viewers/ui/theme.py</code></strong> — rewrite:</li>
+</ol>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="c1"># ── Palette ───────────────────────────────────────────────────</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">Palette</span><span class="p">:</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Chrome + semantic roles for a viewer theme.&quot;&quot;&quot;</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># &quot;dark&quot; | &quot;light&quot;</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="c1"># Surfaces</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">base</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># main window background</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="n">mantle</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># bars, headers</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="n">surface0</span><span class="p">:</span> <span class="nb">str</span>        <span class="c1"># borders, input bg</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="n">surface1</span><span class="p">:</span> <span class="nb">str</span>        <span class="c1"># hover</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="n">surface2</span><span class="p">:</span> <span class="nb">str</span>        <span class="c1"># pressed</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="c1"># Text</span>
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">text</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># primary text</span>
+</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="n">subtext</span><span class="p">:</span> <span class="nb">str</span>         <span class="c1"># secondary text (labels)</span>
+</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>    <span class="n">overlay</span><span class="p">:</span> <span class="nb">str</span>         <span class="c1"># muted text (empty-label)</span>
+</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>    <span class="c1"># Accent</span>
+</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>    <span class="n">accent</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># slider handles, focus borders</span>
+</span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>    <span class="c1"># Viewport gradient</span>
+</span><span id="__span-4-23"><a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>    <span class="n">bg_top</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>    <span class="n">bg_bottom</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="__span-4-25"><a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>    <span class="c1"># Icon color (viewer_window toolbar)</span>
+</span><span id="__span-4-26"><a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>    <span class="n">icon</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="__span-4-27"><a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a>    <span class="c1"># Semantic (contrast-adjusted per theme)</span>
+</span><span id="__span-4-28"><a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a>    <span class="n">success</span><span class="p">:</span> <span class="nb">str</span>         <span class="c1"># active group</span>
+</span><span id="__span-4-29"><a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a>    <span class="n">warning</span><span class="p">:</span> <span class="nb">str</span>         <span class="c1"># staged items, warning banner</span>
+</span><span id="__span-4-30"><a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a>    <span class="n">error</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># errors, picked nodes</span>
+</span><span id="__span-4-31"><a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a>    <span class="n">info</span><span class="p">:</span> <span class="nb">str</span>            <span class="c1"># inactive group, cell data</span>
+</span><span id="__span-4-32"><a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a>    <span class="c1"># VTK content colors (RGB 0..255 tuples)</span>
+</span><span id="__span-4-33"><a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a>    <span class="n">dim_pt</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+</span><span id="__span-4-34"><a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a>    <span class="n">dim_crv</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+</span><span id="__span-4-35"><a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a>    <span class="n">dim_srf</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+</span><span id="__span-4-36"><a id="__codelineno-4-36" name="__codelineno-4-36" href="#__codelineno-4-36"></a>    <span class="n">dim_vol</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+</span><span id="__span-4-37"><a id="__codelineno-4-37" name="__codelineno-4-37" href="#__codelineno-4-37"></a>
+</span><span id="__span-4-38"><a id="__codelineno-4-38" name="__codelineno-4-38" href="#__codelineno-4-38"></a><span class="c1"># ── Dark (Catppuccin Mocha, existing) ─────────────────────────</span>
+</span><span id="__span-4-39"><a id="__codelineno-4-39" name="__codelineno-4-39" href="#__codelineno-4-39"></a><span class="n">PALETTE_DARK</span> <span class="o">=</span> <span class="n">Palette</span><span class="p">(</span>
+</span><span id="__span-4-40"><a id="__codelineno-4-40" name="__codelineno-4-40" href="#__codelineno-4-40"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;dark&quot;</span><span class="p">,</span>
+</span><span id="__span-4-41"><a id="__codelineno-4-41" name="__codelineno-4-41" href="#__codelineno-4-41"></a>    <span class="n">base</span><span class="o">=</span><span class="s2">&quot;#1e1e2e&quot;</span><span class="p">,</span> <span class="n">mantle</span><span class="o">=</span><span class="s2">&quot;#181825&quot;</span><span class="p">,</span>
+</span><span id="__span-4-42"><a id="__codelineno-4-42" name="__codelineno-4-42" href="#__codelineno-4-42"></a>    <span class="n">surface0</span><span class="o">=</span><span class="s2">&quot;#313244&quot;</span><span class="p">,</span> <span class="n">surface1</span><span class="o">=</span><span class="s2">&quot;#45475a&quot;</span><span class="p">,</span> <span class="n">surface2</span><span class="o">=</span><span class="s2">&quot;#585b70&quot;</span><span class="p">,</span>
+</span><span id="__span-4-43"><a id="__codelineno-4-43" name="__codelineno-4-43" href="#__codelineno-4-43"></a>    <span class="n">text</span><span class="o">=</span><span class="s2">&quot;#cdd6f4&quot;</span><span class="p">,</span> <span class="n">subtext</span><span class="o">=</span><span class="s2">&quot;#bac2de&quot;</span><span class="p">,</span> <span class="n">overlay</span><span class="o">=</span><span class="s2">&quot;#a6adc8&quot;</span><span class="p">,</span>
+</span><span id="__span-4-44"><a id="__codelineno-4-44" name="__codelineno-4-44" href="#__codelineno-4-44"></a>    <span class="n">accent</span><span class="o">=</span><span class="s2">&quot;#89b4fa&quot;</span><span class="p">,</span>
+</span><span id="__span-4-45"><a id="__codelineno-4-45" name="__codelineno-4-45" href="#__codelineno-4-45"></a>    <span class="n">bg_top</span><span class="o">=</span><span class="s2">&quot;#1a1a2e&quot;</span><span class="p">,</span> <span class="n">bg_bottom</span><span class="o">=</span><span class="s2">&quot;#16213e&quot;</span><span class="p">,</span>
+</span><span id="__span-4-46"><a id="__codelineno-4-46" name="__codelineno-4-46" href="#__codelineno-4-46"></a>    <span class="n">icon</span><span class="o">=</span><span class="s2">&quot;#cdd6f4&quot;</span><span class="p">,</span>
+</span><span id="__span-4-47"><a id="__codelineno-4-47" name="__codelineno-4-47" href="#__codelineno-4-47"></a>    <span class="n">success</span><span class="o">=</span><span class="s2">&quot;#a6e3a1&quot;</span><span class="p">,</span> <span class="n">warning</span><span class="o">=</span><span class="s2">&quot;#f9e2af&quot;</span><span class="p">,</span>
+</span><span id="__span-4-48"><a id="__codelineno-4-48" name="__codelineno-4-48" href="#__codelineno-4-48"></a>    <span class="n">error</span><span class="o">=</span><span class="s2">&quot;#f38ba8&quot;</span><span class="p">,</span> <span class="n">info</span><span class="o">=</span><span class="s2">&quot;#89b4fa&quot;</span><span class="p">,</span>
+</span><span id="__span-4-49"><a id="__codelineno-4-49" name="__codelineno-4-49" href="#__codelineno-4-49"></a>    <span class="n">dim_pt</span><span class="o">=</span><span class="p">(</span><span class="mi">232</span><span class="p">,</span> <span class="mi">213</span><span class="p">,</span> <span class="mi">183</span><span class="p">),</span>    <span class="c1"># warm white</span>
+</span><span id="__span-4-50"><a id="__codelineno-4-50" name="__codelineno-4-50" href="#__codelineno-4-50"></a>    <span class="n">dim_crv</span><span class="o">=</span><span class="p">(</span><span class="mi">170</span><span class="p">,</span> <span class="mi">170</span><span class="p">,</span> <span class="mi">170</span><span class="p">),</span>
+</span><span id="__span-4-51"><a id="__codelineno-4-51" name="__codelineno-4-51" href="#__codelineno-4-51"></a>    <span class="n">dim_srf</span><span class="o">=</span><span class="p">(</span><span class="mi">91</span><span class="p">,</span> <span class="mi">141</span><span class="p">,</span> <span class="mi">184</span><span class="p">),</span>
+</span><span id="__span-4-52"><a id="__codelineno-4-52" name="__codelineno-4-52" href="#__codelineno-4-52"></a>    <span class="n">dim_vol</span><span class="o">=</span><span class="p">(</span><span class="mi">90</span><span class="p">,</span> <span class="mi">110</span><span class="p">,</span> <span class="mi">130</span><span class="p">),</span>
+</span><span id="__span-4-53"><a id="__codelineno-4-53" name="__codelineno-4-53" href="#__codelineno-4-53"></a><span class="p">)</span>
+</span><span id="__span-4-54"><a id="__codelineno-4-54" name="__codelineno-4-54" href="#__codelineno-4-54"></a>
+</span><span id="__span-4-55"><a id="__codelineno-4-55" name="__codelineno-4-55" href="#__codelineno-4-55"></a><span class="c1"># ── Light (white + greyscale, user-requested) ─────────────────</span>
+</span><span id="__span-4-56"><a id="__codelineno-4-56" name="__codelineno-4-56" href="#__codelineno-4-56"></a><span class="n">PALETTE_LIGHT</span> <span class="o">=</span> <span class="n">Palette</span><span class="p">(</span>
+</span><span id="__span-4-57"><a id="__codelineno-4-57" name="__codelineno-4-57" href="#__codelineno-4-57"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;light&quot;</span><span class="p">,</span>
+</span><span id="__span-4-58"><a id="__codelineno-4-58" name="__codelineno-4-58" href="#__codelineno-4-58"></a>    <span class="n">base</span><span class="o">=</span><span class="s2">&quot;#ffffff&quot;</span><span class="p">,</span> <span class="n">mantle</span><span class="o">=</span><span class="s2">&quot;#f4f4f4&quot;</span><span class="p">,</span>
+</span><span id="__span-4-59"><a id="__codelineno-4-59" name="__codelineno-4-59" href="#__codelineno-4-59"></a>    <span class="n">surface0</span><span class="o">=</span><span class="s2">&quot;#e0e0e0&quot;</span><span class="p">,</span> <span class="n">surface1</span><span class="o">=</span><span class="s2">&quot;#d0d0d0&quot;</span><span class="p">,</span> <span class="n">surface2</span><span class="o">=</span><span class="s2">&quot;#b8b8b8&quot;</span><span class="p">,</span>
+</span><span id="__span-4-60"><a id="__codelineno-4-60" name="__codelineno-4-60" href="#__codelineno-4-60"></a>    <span class="n">text</span><span class="o">=</span><span class="s2">&quot;#1a1a1a&quot;</span><span class="p">,</span> <span class="n">subtext</span><span class="o">=</span><span class="s2">&quot;#3a3a3a&quot;</span><span class="p">,</span> <span class="n">overlay</span><span class="o">=</span><span class="s2">&quot;#666666&quot;</span><span class="p">,</span>
+</span><span id="__span-4-61"><a id="__codelineno-4-61" name="__codelineno-4-61" href="#__codelineno-4-61"></a>    <span class="n">accent</span><span class="o">=</span><span class="s2">&quot;#333333&quot;</span><span class="p">,</span>                <span class="c1"># neutral dark grey, per request</span>
+</span><span id="__span-4-62"><a id="__codelineno-4-62" name="__codelineno-4-62" href="#__codelineno-4-62"></a>    <span class="n">bg_top</span><span class="o">=</span><span class="s2">&quot;#fafafa&quot;</span><span class="p">,</span> <span class="n">bg_bottom</span><span class="o">=</span><span class="s2">&quot;#e8e8e8&quot;</span><span class="p">,</span>
+</span><span id="__span-4-63"><a id="__codelineno-4-63" name="__codelineno-4-63" href="#__codelineno-4-63"></a>    <span class="n">icon</span><span class="o">=</span><span class="s2">&quot;#1a1a1a&quot;</span><span class="p">,</span>
+</span><span id="__span-4-64"><a id="__codelineno-4-64" name="__codelineno-4-64" href="#__codelineno-4-64"></a>    <span class="c1"># Semantic: darker shades that read on white</span>
+</span><span id="__span-4-65"><a id="__codelineno-4-65" name="__codelineno-4-65" href="#__codelineno-4-65"></a>    <span class="n">success</span><span class="o">=</span><span class="s2">&quot;#2d8659&quot;</span><span class="p">,</span>               <span class="c1"># darker green</span>
+</span><span id="__span-4-66"><a id="__codelineno-4-66" name="__codelineno-4-66" href="#__codelineno-4-66"></a>    <span class="n">warning</span><span class="o">=</span><span class="s2">&quot;#b8860b&quot;</span><span class="p">,</span>               <span class="c1"># dark goldenrod</span>
+</span><span id="__span-4-67"><a id="__codelineno-4-67" name="__codelineno-4-67" href="#__codelineno-4-67"></a>    <span class="n">error</span><span class="o">=</span><span class="s2">&quot;#c1272d&quot;</span><span class="p">,</span>                 <span class="c1"># darker red</span>
+</span><span id="__span-4-68"><a id="__codelineno-4-68" name="__codelineno-4-68" href="#__codelineno-4-68"></a>    <span class="n">info</span><span class="o">=</span><span class="s2">&quot;#1f5fa8&quot;</span><span class="p">,</span>                  <span class="c1"># darker blue</span>
+</span><span id="__span-4-69"><a id="__codelineno-4-69" name="__codelineno-4-69" href="#__codelineno-4-69"></a>    <span class="c1"># VTK: inverted contrast — dark geometry on white</span>
+</span><span id="__span-4-70"><a id="__codelineno-4-70" name="__codelineno-4-70" href="#__codelineno-4-70"></a>    <span class="n">dim_pt</span><span class="o">=</span><span class="p">(</span><span class="mi">30</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="mi">30</span><span class="p">),</span>
+</span><span id="__span-4-71"><a id="__codelineno-4-71" name="__codelineno-4-71" href="#__codelineno-4-71"></a>    <span class="n">dim_crv</span><span class="o">=</span><span class="p">(</span><span class="mi">80</span><span class="p">,</span> <span class="mi">80</span><span class="p">,</span> <span class="mi">80</span><span class="p">),</span>
+</span><span id="__span-4-72"><a id="__codelineno-4-72" name="__codelineno-4-72" href="#__codelineno-4-72"></a>    <span class="n">dim_srf</span><span class="o">=</span><span class="p">(</span><span class="mi">70</span><span class="p">,</span> <span class="mi">110</span><span class="p">,</span> <span class="mi">150</span><span class="p">),</span>
+</span><span id="__span-4-73"><a id="__codelineno-4-73" name="__codelineno-4-73" href="#__codelineno-4-73"></a>    <span class="n">dim_vol</span><span class="o">=</span><span class="p">(</span><span class="mi">50</span><span class="p">,</span> <span class="mi">70</span><span class="p">,</span> <span class="mi">90</span><span class="p">),</span>
+</span><span id="__span-4-74"><a id="__codelineno-4-74" name="__codelineno-4-74" href="#__codelineno-4-74"></a><span class="p">)</span>
+</span><span id="__span-4-75"><a id="__codelineno-4-75" name="__codelineno-4-75" href="#__codelineno-4-75"></a>
+</span><span id="__span-4-76"><a id="__codelineno-4-76" name="__codelineno-4-76" href="#__codelineno-4-76"></a><span class="n">PALETTES</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;dark&quot;</span><span class="p">:</span> <span class="n">PALETTE_DARK</span><span class="p">,</span> <span class="s2">&quot;light&quot;</span><span class="p">:</span> <span class="n">PALETTE_LIGHT</span><span class="p">}</span>
+</span><span id="__span-4-77"><a id="__codelineno-4-77" name="__codelineno-4-77" href="#__codelineno-4-77"></a>
+</span><span id="__span-4-78"><a id="__codelineno-4-78" name="__codelineno-4-78" href="#__codelineno-4-78"></a><span class="c1"># ── Stylesheet factory ────────────────────────────────────────</span>
+</span><span id="__span-4-79"><a id="__codelineno-4-79" name="__codelineno-4-79" href="#__codelineno-4-79"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_stylesheet</span><span class="p">(</span><span class="n">p</span><span class="p">:</span> <span class="n">Palette</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+</span><span id="__span-4-80"><a id="__codelineno-4-80" name="__codelineno-4-80" href="#__codelineno-4-80"></a>    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&quot;&quot;</span>
+</span><span id="__span-4-81"><a id="__codelineno-4-81" name="__codelineno-4-81" href="#__codelineno-4-81"></a><span class="s2">        QMainWindow </span><span class="se">{{</span><span class="s2"> background-color: </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">base</span><span class="si">}</span><span class="s2">; </span><span class="se">}}</span>
+</span><span id="__span-4-82"><a id="__codelineno-4-82" name="__codelineno-4-82" href="#__codelineno-4-82"></a><span class="s2">        QMenuBar    </span><span class="se">{{</span><span class="s2"> background-color: </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">mantle</span><span class="si">}</span><span class="s2">;</span>
+</span><span id="__span-4-83"><a id="__codelineno-4-83" name="__codelineno-4-83" href="#__codelineno-4-83"></a><span class="s2">                       color: </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">text</span><span class="si">}</span><span class="s2">;</span>
+</span><span id="__span-4-84"><a id="__codelineno-4-84" name="__codelineno-4-84" href="#__codelineno-4-84"></a><span class="s2">                       border-bottom: 1px solid </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">surface0</span><span class="si">}</span><span class="s2">; </span><span class="se">}}</span>
+</span><span id="__span-4-85"><a id="__codelineno-4-85" name="__codelineno-4-85" href="#__codelineno-4-85"></a><span class="s2">        /* ... rest of the existing stylesheet, with every</span>
+</span><span id="__span-4-86"><a id="__codelineno-4-86" name="__codelineno-4-86" href="#__codelineno-4-86"></a><span class="s2">               hex replaced by a </span><span class="si">{</span><span class="n">p</span><span class="o">.*</span><span class="si">}</span><span class="s2"> field ... */</span>
+</span><span id="__span-4-87"><a id="__codelineno-4-87" name="__codelineno-4-87" href="#__codelineno-4-87"></a><span class="s2">    &quot;&quot;&quot;</span>
+</span><span id="__span-4-88"><a id="__codelineno-4-88" name="__codelineno-4-88" href="#__codelineno-4-88"></a>
+</span><span id="__span-4-89"><a id="__codelineno-4-89" name="__codelineno-4-89" href="#__codelineno-4-89"></a><span class="c1"># ── Back-compat: keep STYLESHEET importable ──────────────────</span>
+</span><span id="__span-4-90"><a id="__codelineno-4-90" name="__codelineno-4-90" href="#__codelineno-4-90"></a><span class="c1"># (downstream modules that imported STYLESHEET directly keep</span>
+</span><span id="__span-4-91"><a id="__codelineno-4-91" name="__codelineno-4-91" href="#__codelineno-4-91"></a><span class="c1"># working until Phase 2 rewires them.)</span>
+</span><span id="__span-4-92"><a id="__codelineno-4-92" name="__codelineno-4-92" href="#__codelineno-4-92"></a><span class="n">STYLESHEET</span> <span class="o">=</span> <span class="n">build_stylesheet</span><span class="p">(</span><span class="n">PALETTE_DARK</span><span class="p">)</span>
+</span><span id="__span-4-93"><a id="__codelineno-4-93" name="__codelineno-4-93" href="#__codelineno-4-93"></a><span class="n">BASE</span><span class="p">,</span> <span class="n">MANTLE</span><span class="p">,</span> <span class="n">SURFACE0</span> <span class="o">=</span> <span class="n">PALETTE_DARK</span><span class="o">.</span><span class="n">base</span><span class="p">,</span> <span class="n">PALETTE_DARK</span><span class="o">.</span><span class="n">mantle</span><span class="p">,</span> <span class="n">PALETTE_DARK</span><span class="o">.</span><span class="n">surface0</span>
+</span><span id="__span-4-94"><a id="__codelineno-4-94" name="__codelineno-4-94" href="#__codelineno-4-94"></a><span class="c1"># ... (all the old constants aliased) ...</span>
+</span><span id="__span-4-95"><a id="__codelineno-4-95" name="__codelineno-4-95" href="#__codelineno-4-95"></a>
+</span><span id="__span-4-96"><a id="__codelineno-4-96" name="__codelineno-4-96" href="#__codelineno-4-96"></a><span class="c1"># ── Theme manager (singleton) ────────────────────────────────</span>
+</span><span id="__span-4-97"><a id="__codelineno-4-97" name="__codelineno-4-97" href="#__codelineno-4-97"></a><span class="k">class</span><span class="w"> </span><span class="nc">ThemeManager</span><span class="p">:</span>
+</span><span id="__span-4-98"><a id="__codelineno-4-98" name="__codelineno-4-98" href="#__codelineno-4-98"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Global current theme + observer list.</span>
+</span><span id="__span-4-99"><a id="__codelineno-4-99" name="__codelineno-4-99" href="#__codelineno-4-99"></a>
+</span><span id="__span-4-100"><a id="__codelineno-4-100" name="__codelineno-4-100" href="#__codelineno-4-100"></a><span class="sd">    Designed to be monkey-patchable in tests (swap the singleton).</span>
+</span><span id="__span-4-101"><a id="__codelineno-4-101" name="__codelineno-4-101" href="#__codelineno-4-101"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-4-102"><a id="__codelineno-4-102" name="__codelineno-4-102" href="#__codelineno-4-102"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-4-103"><a id="__codelineno-4-103" name="__codelineno-4-103" href="#__codelineno-4-103"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_current</span><span class="p">:</span> <span class="n">Palette</span> <span class="o">=</span> <span class="n">PALETTE_DARK</span>
+</span><span id="__span-4-104"><a id="__codelineno-4-104" name="__codelineno-4-104" href="#__codelineno-4-104"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_observers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">Palette</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-4-105"><a id="__codelineno-4-105" name="__codelineno-4-105" href="#__codelineno-4-105"></a>
+</span><span id="__span-4-106"><a id="__codelineno-4-106" name="__codelineno-4-106" href="#__codelineno-4-106"></a>    <span class="nd">@property</span>
+</span><span id="__span-4-107"><a id="__codelineno-4-107" name="__codelineno-4-107" href="#__codelineno-4-107"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">current</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Palette</span><span class="p">:</span>
+</span><span id="__span-4-108"><a id="__codelineno-4-108" name="__codelineno-4-108" href="#__codelineno-4-108"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_current</span>
+</span><span id="__span-4-109"><a id="__codelineno-4-109" name="__codelineno-4-109" href="#__codelineno-4-109"></a>
+</span><span id="__span-4-110"><a id="__codelineno-4-110" name="__codelineno-4-110" href="#__codelineno-4-110"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">set_theme</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-4-111"><a id="__codelineno-4-111" name="__codelineno-4-111" href="#__codelineno-4-111"></a>        <span class="n">key</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+</span><span id="__span-4-112"><a id="__codelineno-4-112" name="__codelineno-4-112" href="#__codelineno-4-112"></a>        <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">PALETTES</span><span class="p">:</span>
+</span><span id="__span-4-113"><a id="__codelineno-4-113" name="__codelineno-4-113" href="#__codelineno-4-113"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown theme: </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-4-114"><a id="__codelineno-4-114" name="__codelineno-4-114" href="#__codelineno-4-114"></a>        <span class="n">new</span> <span class="o">=</span> <span class="n">PALETTES</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+</span><span id="__span-4-115"><a id="__codelineno-4-115" name="__codelineno-4-115" href="#__codelineno-4-115"></a>        <span class="k">if</span> <span class="n">new</span> <span class="ow">is</span> <span class="bp">self</span><span class="o">.</span><span class="n">_current</span><span class="p">:</span>
+</span><span id="__span-4-116"><a id="__codelineno-4-116" name="__codelineno-4-116" href="#__codelineno-4-116"></a>            <span class="k">return</span>
+</span><span id="__span-4-117"><a id="__codelineno-4-117" name="__codelineno-4-117" href="#__codelineno-4-117"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_current</span> <span class="o">=</span> <span class="n">new</span>
+</span><span id="__span-4-118"><a id="__codelineno-4-118" name="__codelineno-4-118" href="#__codelineno-4-118"></a>        <span class="k">for</span> <span class="n">cb</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_observers</span><span class="p">):</span>
+</span><span id="__span-4-119"><a id="__codelineno-4-119" name="__codelineno-4-119" href="#__codelineno-4-119"></a>            <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-4-120"><a id="__codelineno-4-120" name="__codelineno-4-120" href="#__codelineno-4-120"></a>                <span class="n">cb</span><span class="p">(</span><span class="n">new</span><span class="p">)</span>
+</span><span id="__span-4-121"><a id="__codelineno-4-121" name="__codelineno-4-121" href="#__codelineno-4-121"></a>            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-4-122"><a id="__codelineno-4-122" name="__codelineno-4-122" href="#__codelineno-4-122"></a>                <span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+</span><span id="__span-4-123"><a id="__codelineno-4-123" name="__codelineno-4-123" href="#__codelineno-4-123"></a>                <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;apeGmsh.viewer.theme&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span>
+</span><span id="__span-4-124"><a id="__codelineno-4-124" name="__codelineno-4-124" href="#__codelineno-4-124"></a>                    <span class="s2">&quot;theme observer failed: </span><span class="si">%r</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">cb</span><span class="p">,</span>
+</span><span id="__span-4-125"><a id="__codelineno-4-125" name="__codelineno-4-125" href="#__codelineno-4-125"></a>                <span class="p">)</span>
+</span><span id="__span-4-126"><a id="__codelineno-4-126" name="__codelineno-4-126" href="#__codelineno-4-126"></a>
+</span><span id="__span-4-127"><a id="__codelineno-4-127" name="__codelineno-4-127" href="#__codelineno-4-127"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">subscribe</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cb</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Palette</span><span class="p">],</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="kc">None</span><span class="p">]:</span>
+</span><span id="__span-4-128"><a id="__codelineno-4-128" name="__codelineno-4-128" href="#__codelineno-4-128"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns an unsubscribe function.&quot;&quot;&quot;</span>
+</span><span id="__span-4-129"><a id="__codelineno-4-129" name="__codelineno-4-129" href="#__codelineno-4-129"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_observers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cb</span><span class="p">)</span>
+</span><span id="__span-4-130"><a id="__codelineno-4-130" name="__codelineno-4-130" href="#__codelineno-4-130"></a>        <span class="k">return</span> <span class="k">lambda</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_observers</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">cb</span><span class="p">)</span>
+</span><span id="__span-4-131"><a id="__codelineno-4-131" name="__codelineno-4-131" href="#__codelineno-4-131"></a>
+</span><span id="__span-4-132"><a id="__codelineno-4-132" name="__codelineno-4-132" href="#__codelineno-4-132"></a><span class="n">THEME</span> <span class="o">=</span> <span class="n">ThemeManager</span><span class="p">()</span>
+</span></code></pre></div>
+<ol>
+<li><strong>Verify back-compat:</strong> every existing
+   <code>from .theme import STYLESHEET, BG_TOP, BG_BOTTOM, …</code> in the tree
+   still resolves. Run <code>python -c "from apeGmsh.viewers.ui import
+   theme; print(theme.STYLESHEET[:50])"</code> as a smoke check.</li>
+</ol>
+<p><strong>Acceptance:</strong>
+- <code>theme.PALETTES["dark"]</code> and <code>theme.PALETTES["light"]</code> both resolve
+  to <code>Palette</code> instances.
+- <code>build_stylesheet(PALETTE_DARK) == STYLESHEET</code> character-for-
+  character (refactor preserves existing rendering).
+- <code>THEME.set_theme("light")</code> fires every subscribed observer with
+  <code>PALETTE_LIGHT</code>.
+- New test <code>tests/test_theme_palette.py</code> covers the above.</p>
+<hr />
+<h3 id="phase-2-wire-the-theme-combo-apply-theme-live">Phase 2 — Wire the theme combo + apply theme live<a class="headerlink" href="#phase-2-wire-the-theme-combo-apply-theme-live" title="Permanent link">&para;</a></h3>
+<p><strong>Goal:</strong> selecting "Dark" / "Light" in <code>PreferencesTab</code> reaches
+<code>ThemeManager</code> and visibly changes every open viewer.</p>
+<p><strong>Files &amp; changes:</strong></p>
+<ol>
+<li><strong><code>src/apeGmsh/viewers/ui/viewer_window.py:124</code></strong> — instead of a
+   one-shot <code>setStyleSheet(STYLESHEET)</code>, subscribe to <code>THEME</code>:</li>
+</ol>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.theme</span><span class="w"> </span><span class="kn">import</span> <span class="n">THEME</span><span class="p">,</span> <span class="n">build_stylesheet</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">_apply_palette</span><span class="p">(</span><span class="n">palette</span><span class="p">):</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_window</span><span class="o">.</span><span class="n">setStyleSheet</span><span class="p">(</span><span class="n">build_stylesheet</span><span class="p">(</span><span class="n">palette</span><span class="p">))</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_qt_interactor</span><span class="o">.</span><span class="n">set_background</span><span class="p">(</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="n">palette</span><span class="o">.</span><span class="n">bg_top</span><span class="p">,</span> <span class="n">top</span><span class="o">=</span><span class="n">palette</span><span class="o">.</span><span class="n">bg_bottom</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="p">)</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="c1"># Also re-push icon color to toolbar actions</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_refresh_toolbar_icons</span><span class="p">(</span><span class="n">palette</span><span class="o">.</span><span class="n">icon</span><span class="p">)</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="n">_apply_palette</span><span class="p">(</span><span class="n">THEME</span><span class="o">.</span><span class="n">current</span><span class="p">)</span>                    <span class="c1"># initial</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="bp">self</span><span class="o">.</span><span class="n">_unsub_theme</span> <span class="o">=</span> <span class="n">THEME</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="n">_apply_palette</span><span class="p">)</span>  <span class="c1"># live updates</span>
+</span></code></pre></div>
+<ol>
+<li>
+<p><strong><code>src/apeGmsh/viewers/ui/viewer_window.py:101-106</code></strong> (<code>closeEvent</code>)
+   — call <code>self._unsub_theme()</code> to avoid leaking observers. Note the
+   <code>closeEvent</code> already has the silent-exception bug documented in
+   <code>plan_viewer_pg_persistence.md</code> Phase 0; do not regress it.</p>
+</li>
+<li>
+<p><strong><code>src/apeGmsh/viewers/ui/viewer_window.py:197-210</code></strong> — factor the
+   icon-color into a helper <code>_refresh_toolbar_icons(hex)</code> so the
+   subscription callback above can call it. The existing <code>_IC =
+   "#cdd6f4"</code> (line 208) becomes a lookup from the current palette.</p>
+</li>
+<li>
+<p><strong><code>src/apeGmsh/viewers/model_viewer.py</code></strong> — locate the
+   <code>PreferencesTab(...)</code> constructor call (around the UI-wiring
+   section) and add:</p>
+</li>
+</ol>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">on_theme</span><span class="o">=</span><span class="k">lambda</span> <span class="n">name</span><span class="p">:</span> <span class="n">THEME</span><span class="o">.</span><span class="n">set_theme</span><span class="p">(</span><span class="n">name</span><span class="p">),</span>
+</span></code></pre></div>
+<ol>
+<li>
+<p><strong><code>src/apeGmsh/viewers/mesh_viewer.py</code></strong> — same wiring as
+   <code>model_viewer.py</code>.</p>
+</li>
+<li>
+<p><strong><code>src/apeGmsh/viewers/ui/preferences.py:129-133</code></strong> — seed the
+   combo to the current theme (not always "Dark"):</p>
+</li>
+</ol>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">.theme</span><span class="w"> </span><span class="kn">import</span> <span class="n">THEME</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="bp">self</span><span class="o">.</span><span class="n">_theme_combo</span> <span class="o">=</span> <span class="n">QtWidgets</span><span class="o">.</span><span class="n">QComboBox</span><span class="p">()</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">_theme_combo</span><span class="o">.</span><span class="n">addItems</span><span class="p">([</span><span class="s2">&quot;Dark&quot;</span><span class="p">,</span> <span class="s2">&quot;Light&quot;</span><span class="p">])</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="bp">self</span><span class="o">.</span><span class="n">_theme_combo</span><span class="o">.</span><span class="n">setCurrentText</span><span class="p">(</span><span class="n">THEME</span><span class="o">.</span><span class="n">current</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">capitalize</span><span class="p">())</span>
+</span></code></pre></div>
+<p><strong>Acceptance:</strong>
+- Manual: open viewer → Preferences → switch Theme to "Light" →
+  entire window flips to white/grey instantly (no reopen).
+- Manual: with two viewers open (model + mesh), switching theme in
+  one updates both.
+- No observer leak: opening/closing 5 viewers leaves
+  <code>THEME._observers</code> at the same length (assert in a new test if easy
+  to do without Qt).</p>
+<hr />
+<h3 id="phase-3-replace-hardcoded-chrome-in-widgets">Phase 3 — Replace hardcoded chrome in widgets<a class="headerlink" href="#phase-3-replace-hardcoded-chrome-in-widgets" title="Permanent link">&para;</a></h3>
+<p><strong>Goal:</strong> widgets no longer hardcode <code>#6c7086</code>, <code>#cdd6f4</code>, <code>#999</code>.
+They import from <code>theme.THEME.current</code> (or subscribe for live
+update).</p>
+<p><strong>Strategy:</strong> two tiers.</p>
+<p><strong>Tier A (static chrome)</strong> — widgets that apply a color once at
+construction but rarely redraw on theme change. Accept "requires
+reopen for some panels" as a pragmatic limit for tab widgets that
+are cheap to throw away.</p>
+<p>Files:
+- <code>ui/mass_tab.py:55,66-67</code> (empty-label + warning banner)
+- <code>ui/loads_tab.py:78,89-90</code>
+- <code>ui/constraints_tab.py:99,110-111</code>
+- <code>ui/preferences.py:140,154</code> (swatch border)
+- <code>model_viewer.py:284,326-327,371-372</code> (point-label shape/text)</p>
+<p>Change: replace <code>"#6c7086"</code> → <code>f"{THEME.current.overlay}"</code> etc. Wrap
+the setStyleSheet calls in a <code>_apply_chrome(palette)</code> method on each
+tab, called from <code>__init__</code> with <code>THEME.current</code>. Optional: subscribe
+to <code>THEME</code> for live update in a follow-up PR — this plan does not
+require it.</p>
+<p><strong>Tier B (tree foreground colors)</strong> — <code>_browser_tab.py</code>,
+<code>_parts_tree.py</code>, <code>_selection_tree.py</code>. These DO react to state
+changes (active-group highlighting re-colors items via
+<code>update_active</code>), so they naturally repaint on re-state. Wire the
+hex lookups through <code>THEME.current.success</code> / <code>.info</code> / <code>.error</code> etc.</p>
+<p>Files:
+- <code>ui/_browser_tab.py:131,138,162,172</code> — <code>"#a6e3a1"</code> →
+  <code>THEME.current.success</code>; <code>"#89b4fa"</code> → <code>THEME.current.info</code>
+- <code>ui/_parts_tree.py:23,24</code> — same substitution; for <code>#f38ba8</code> →
+  <code>THEME.current.error</code>
+- <code>ui/_selection_tree.py:24-27</code> — <code>_DIM_ICON_COLOR</code> dict becomes a
+  function or property that reads from <code>THEME.current</code></p>
+<blockquote>
+<p>[!warning] Semantic hues that must survive theme switch
+Active-group "green" is a semantic role, not a literal hex. In
+dark mode <code>p.success = #a6e3a1</code> (mint green on blue-black); in
+light mode <code>p.success = #2d8659</code> (dark green on white). Both read
+as "this group is active" to the user. <strong>Do not</strong> collapse
+semantic roles into pure greyscale in light mode — the user asked
+for "white + black + greyscale" for the chrome, but the CAD
+affordances (active group, warning, error) still need hue. Verify
+this reading with the user if unsure.</p>
+</blockquote>
+<p><strong><code>ui/constraints_tab.py:29-44</code> and <code>ui/loads_tab.py:28-34</code></strong> — the
+constraint-kind palette and load-pattern cycle are pure content, not
+theme chrome. Leave their hex constants as-is. On light theme they
+are displayed on <code>p.base = white</code>, which is already the WCAG-intended
+context for saturated hues — most of those Catppuccin pastels read
+acceptably on white. Flag for user review if any pair becomes hard
+to read.</p>
+<p><strong>Acceptance:</strong>
+- Grep <code>src/apeGmsh/viewers/**/*.py -e '#[0-9a-fA-F]{6}'</code> after this
+  phase: remaining literals are either (a) inside <code>theme.py</code>,
+  (b) inside <code>constraints_tab.py</code> / <code>loads_tab.py</code> content palette,
+  or (c) inside <code>geom_transf_viewer.py</code> (out of scope).
+- Manual: all labels / empty-states / tree foregrounds read legibly
+  in both themes.</p>
+<hr />
+<h3 id="phase-4-viewport-gradient-vtk-_dim_colors">Phase 4 — Viewport gradient + VTK <code>_DIM_COLORS</code><a class="headerlink" href="#phase-4-viewport-gradient-vtk-_dim_colors" title="Permanent link">&para;</a></h3>
+<p><strong>Goal:</strong> the 3D viewport (pyvista viewport background + entity
+default colors) follows the theme.</p>
+<p><strong>Files &amp; changes:</strong></p>
+<ol>
+<li>
+<p><strong><code>src/apeGmsh/viewers/ui/viewer_window.py:134</code></strong> — already covered
+   by Phase 2's <code>_apply_palette</code>. Verify it re-pushes on theme
+   change.</p>
+</li>
+<li>
+<p><strong><code>src/apeGmsh/viewers/core/color_manager.py:35-40</code></strong> — turn
+   <code>_DIM_COLORS</code> into a property that reads from the active theme:</p>
+</li>
+</ol>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nd">@staticmethod</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">_dim_colors</span><span class="p">():</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.viewers.ui.theme</span><span class="w"> </span><span class="kn">import</span> <span class="n">THEME</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">p</span> <span class="o">=</span> <span class="n">THEME</span><span class="o">.</span><span class="n">current</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="k">return</span> <span class="p">{</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>        <span class="mi">0</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">dim_pt</span><span class="p">,</span>  <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">),</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>        <span class="mi">1</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">dim_crv</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">),</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>        <span class="mi">2</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">dim_srf</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">),</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="mi">3</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">dim_vol</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">uint8</span><span class="p">),</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="p">}</span>
+</span></code></pre></div>
+<p>Replace <code>_DIM_COLORS[dim]</code> call sites with <code>self._dim_colors()[dim]</code>.</p>
+<ol>
+<li>
+<p><strong><code>src/apeGmsh/viewers/model_viewer.py</code></strong> — on theme change, call
+   <code>color_manager.reset_all()</code> (confirm it exists; if not, wire a
+   <code>color_manager.reapply_defaults()</code> helper). Re-pushes the new
+   default RGB to every actor.</p>
+</li>
+<li>
+<p><strong><code>src/apeGmsh/viewers/ui/viewer_window.py</code></strong> — <code>_apply_palette</code>
+   should invoke step 3 after the stylesheet flip. Ordering: Qt
+   chrome first, then VTK content, then <code>plotter.render()</code>.</p>
+</li>
+</ol>
+<p><strong>Acceptance:</strong>
+- Manual: open a model with points, curves, surfaces, volumes →
+  switch to light theme → all entities remain visible (no
+  white-on-white).
+- Manual: switch back to dark → warm-white points reappear.</p>
+<hr />
+<h3 id="phase-5-persistence">Phase 5 — Persistence<a class="headerlink" href="#phase-5-persistence" title="Permanent link">&para;</a></h3>
+<p><strong>Goal:</strong> user's theme choice survives viewer close / app restart.</p>
+<p><strong>Files &amp; changes:</strong></p>
+<ol>
+<li><strong><code>src/apeGmsh/viewers/ui/theme.py</code></strong> — extend <code>ThemeManager</code>:</li>
+</ol>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_current</span><span class="p">:</span> <span class="n">Palette</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_load_saved</span><span class="p">()</span> <span class="ow">or</span> <span class="n">PALETTE_DARK</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_observers</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Callable</span><span class="p">[[</span><span class="n">Palette</span><span class="p">],</span> <span class="kc">None</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="nd">@staticmethod</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="k">def</span><span class="w"> </span><span class="nf">_load_saved</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Palette</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>        <span class="kn">from</span><span class="w"> </span><span class="nn">qtpy.QtCore</span><span class="w"> </span><span class="kn">import</span> <span class="n">QSettings</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>        <span class="n">s</span> <span class="o">=</span> <span class="n">QSettings</span><span class="p">(</span><span class="s2">&quot;apeGmsh&quot;</span><span class="p">,</span> <span class="s2">&quot;viewer&quot;</span><span class="p">)</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>        <span class="n">name</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">value</span><span class="p">(</span><span class="s2">&quot;theme&quot;</span><span class="p">,</span> <span class="s2">&quot;dark&quot;</span><span class="p">)</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>        <span class="k">return</span> <span class="n">PALETTES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>        <span class="c1"># Qt not importable (e.g. headless test) — fall through</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>        <span class="k">return</span> <span class="kc">None</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="k">def</span><span class="w"> </span><span class="nf">set_theme</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>    <span class="c1"># ... existing logic ...</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>        <span class="kn">from</span><span class="w"> </span><span class="nn">qtpy.QtCore</span><span class="w"> </span><span class="kn">import</span> <span class="n">QSettings</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>        <span class="n">QSettings</span><span class="p">(</span><span class="s2">&quot;apeGmsh&quot;</span><span class="p">,</span> <span class="s2">&quot;viewer&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setValue</span><span class="p">(</span><span class="s2">&quot;theme&quot;</span><span class="p">,</span> <span class="n">new</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>        <span class="k">pass</span>  <span class="c1"># best-effort persistence</span>
+</span></code></pre></div>
+<ol>
+<li>Verify that the first <code>THEME</code> reference during Python import does
+   NOT touch Qt (otherwise importing <code>theme.py</code> in a headless test
+   fails). The lazy <code>_load_saved</code> pattern above handles this — Qt is
+   imported inside the staticmethod, not at module level.</li>
+</ol>
+<p><strong>Acceptance:</strong>
+- Manual: switch theme → close viewer → reopen → theme persists.
+- New test <code>tests/test_theme_persistence.py</code> with a <code>QSettings</code> stub:
+  <code>set_theme("light")</code> writes "light"; next <code>ThemeManager()</code> reads
+  "light".</p>
+<hr />
+<h2 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h2>
+<p>All new tests go under <code>tests/</code>. Theme tests are headless —
+palette/builder/manager are pure Python. We do NOT write Qt
+integration tests for the live-switch flow; that is manual per
+"Acceptance" above.</p>
+<h3 id="teststest_theme_palettepy-new"><code>tests/test_theme_palette.py</code> (new)<a class="headerlink" href="#teststest_theme_palettepy-new" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="sd">&quot;&quot;&quot;Phase 1: palette dataclass + stylesheet factory.&quot;&quot;&quot;</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.viewers.ui</span><span class="w"> </span><span class="kn">import</span> <span class="n">theme</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_both_palettes_defined</span><span class="p">():</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="k">assert</span> <span class="s2">&quot;dark&quot;</span> <span class="ow">in</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTES</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="k">assert</span> <span class="s2">&quot;light&quot;</span> <span class="ow">in</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTES</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="k">assert</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTES</span><span class="p">[</span><span class="s2">&quot;dark&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;dark&quot;</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>    <span class="k">assert</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTES</span><span class="p">[</span><span class="s2">&quot;light&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="s2">&quot;light&quot;</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>
+</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_build_stylesheet_returns_non_empty_qss</span><span class="p">():</span>
+</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>    <span class="n">qss</span> <span class="o">=</span> <span class="n">theme</span><span class="o">.</span><span class="n">build_stylesheet</span><span class="p">(</span><span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_DARK</span><span class="p">)</span>
+</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>    <span class="k">assert</span> <span class="s2">&quot;QMainWindow&quot;</span> <span class="ow">in</span> <span class="n">qss</span>
+</span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>    <span class="k">assert</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_DARK</span><span class="o">.</span><span class="n">base</span> <span class="ow">in</span> <span class="n">qss</span>
+</span><span id="__span-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>    <span class="k">assert</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_DARK</span><span class="o">.</span><span class="n">text</span> <span class="ow">in</span> <span class="n">qss</span>
+</span><span id="__span-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>
+</span><span id="__span-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>
+</span><span id="__span-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_stylesheet_uses_light_palette_for_light</span><span class="p">():</span>
+</span><span id="__span-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>    <span class="n">qss</span> <span class="o">=</span> <span class="n">theme</span><span class="o">.</span><span class="n">build_stylesheet</span><span class="p">(</span><span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_LIGHT</span><span class="p">)</span>
+</span><span id="__span-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a>    <span class="c1"># Chrome colors from the light palette are present</span>
+</span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a>    <span class="k">assert</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_LIGHT</span><span class="o">.</span><span class="n">base</span> <span class="ow">in</span> <span class="n">qss</span>
+</span><span id="__span-10-25"><a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a>    <span class="k">assert</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_LIGHT</span><span class="o">.</span><span class="n">text</span> <span class="ow">in</span> <span class="n">qss</span>
+</span><span id="__span-10-26"><a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a>    <span class="c1"># And the dark palette&#39;s base is NOT (unless by coincidence)</span>
+</span><span id="__span-10-27"><a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a>    <span class="k">if</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_DARK</span><span class="o">.</span><span class="n">base</span> <span class="o">!=</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_LIGHT</span><span class="o">.</span><span class="n">base</span><span class="p">:</span>
+</span><span id="__span-10-28"><a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a>        <span class="k">assert</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_DARK</span><span class="o">.</span><span class="n">base</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">qss</span>
+</span><span id="__span-10-29"><a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a>
+</span><span id="__span-10-30"><a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a>
+</span><span id="__span-10-31"><a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_backcompat_stylesheet_constant_still_exists</span><span class="p">():</span>
+</span><span id="__span-10-32"><a id="__codelineno-10-32" name="__codelineno-10-32" href="#__codelineno-10-32"></a>    <span class="c1"># Downstream code that imported STYLESHEET must keep working.</span>
+</span><span id="__span-10-33"><a id="__codelineno-10-33" name="__codelineno-10-33" href="#__codelineno-10-33"></a>    <span class="k">assert</span> <span class="n">theme</span><span class="o">.</span><span class="n">STYLESHEET</span> <span class="o">==</span> <span class="n">theme</span><span class="o">.</span><span class="n">build_stylesheet</span><span class="p">(</span><span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_DARK</span><span class="p">)</span>
+</span><span id="__span-10-34"><a id="__codelineno-10-34" name="__codelineno-10-34" href="#__codelineno-10-34"></a>
+</span><span id="__span-10-35"><a id="__codelineno-10-35" name="__codelineno-10-35" href="#__codelineno-10-35"></a>
+</span><span id="__span-10-36"><a id="__codelineno-10-36" name="__codelineno-10-36" href="#__codelineno-10-36"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_theme_manager_set_theme_fires_observers</span><span class="p">():</span>
+</span><span id="__span-10-37"><a id="__codelineno-10-37" name="__codelineno-10-37" href="#__codelineno-10-37"></a>    <span class="n">tm</span> <span class="o">=</span> <span class="n">theme</span><span class="o">.</span><span class="n">ThemeManager</span><span class="p">()</span>
+</span><span id="__span-10-38"><a id="__codelineno-10-38" name="__codelineno-10-38" href="#__codelineno-10-38"></a>    <span class="n">received</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">theme</span><span class="o">.</span><span class="n">Palette</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-10-39"><a id="__codelineno-10-39" name="__codelineno-10-39" href="#__codelineno-10-39"></a>    <span class="n">unsub</span> <span class="o">=</span> <span class="n">tm</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">received</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">))</span>
+</span><span id="__span-10-40"><a id="__codelineno-10-40" name="__codelineno-10-40" href="#__codelineno-10-40"></a>    <span class="n">tm</span><span class="o">.</span><span class="n">set_theme</span><span class="p">(</span><span class="s2">&quot;light&quot;</span><span class="p">)</span>
+</span><span id="__span-10-41"><a id="__codelineno-10-41" name="__codelineno-10-41" href="#__codelineno-10-41"></a>    <span class="k">assert</span> <span class="n">received</span> <span class="o">==</span> <span class="p">[</span><span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_LIGHT</span><span class="p">]</span>
+</span><span id="__span-10-42"><a id="__codelineno-10-42" name="__codelineno-10-42" href="#__codelineno-10-42"></a>    <span class="n">unsub</span><span class="p">()</span>
+</span><span id="__span-10-43"><a id="__codelineno-10-43" name="__codelineno-10-43" href="#__codelineno-10-43"></a>    <span class="n">tm</span><span class="o">.</span><span class="n">set_theme</span><span class="p">(</span><span class="s2">&quot;dark&quot;</span><span class="p">)</span>
+</span><span id="__span-10-44"><a id="__codelineno-10-44" name="__codelineno-10-44" href="#__codelineno-10-44"></a>    <span class="k">assert</span> <span class="n">received</span> <span class="o">==</span> <span class="p">[</span><span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_LIGHT</span><span class="p">]</span>  <span class="c1"># unsubscribed, no new entry</span>
+</span><span id="__span-10-45"><a id="__codelineno-10-45" name="__codelineno-10-45" href="#__codelineno-10-45"></a>
+</span><span id="__span-10-46"><a id="__codelineno-10-46" name="__codelineno-10-46" href="#__codelineno-10-46"></a>
+</span><span id="__span-10-47"><a id="__codelineno-10-47" name="__codelineno-10-47" href="#__codelineno-10-47"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_theme_manager_idempotent</span><span class="p">():</span>
+</span><span id="__span-10-48"><a id="__codelineno-10-48" name="__codelineno-10-48" href="#__codelineno-10-48"></a>    <span class="n">tm</span> <span class="o">=</span> <span class="n">theme</span><span class="o">.</span><span class="n">ThemeManager</span><span class="p">()</span>
+</span><span id="__span-10-49"><a id="__codelineno-10-49" name="__codelineno-10-49" href="#__codelineno-10-49"></a>    <span class="n">received</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">theme</span><span class="o">.</span><span class="n">Palette</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-10-50"><a id="__codelineno-10-50" name="__codelineno-10-50" href="#__codelineno-10-50"></a>    <span class="n">tm</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">received</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">p</span><span class="p">))</span>
+</span><span id="__span-10-51"><a id="__codelineno-10-51" name="__codelineno-10-51" href="#__codelineno-10-51"></a>    <span class="n">tm</span><span class="o">.</span><span class="n">set_theme</span><span class="p">(</span><span class="s2">&quot;dark&quot;</span><span class="p">)</span>  <span class="c1"># already dark</span>
+</span><span id="__span-10-52"><a id="__codelineno-10-52" name="__codelineno-10-52" href="#__codelineno-10-52"></a>    <span class="k">assert</span> <span class="n">received</span> <span class="o">==</span> <span class="p">[]</span>
+</span><span id="__span-10-53"><a id="__codelineno-10-53" name="__codelineno-10-53" href="#__codelineno-10-53"></a>
+</span><span id="__span-10-54"><a id="__codelineno-10-54" name="__codelineno-10-54" href="#__codelineno-10-54"></a>
+</span><span id="__span-10-55"><a id="__codelineno-10-55" name="__codelineno-10-55" href="#__codelineno-10-55"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_theme_manager_rejects_unknown</span><span class="p">():</span>
+</span><span id="__span-10-56"><a id="__codelineno-10-56" name="__codelineno-10-56" href="#__codelineno-10-56"></a>    <span class="n">tm</span> <span class="o">=</span> <span class="n">theme</span><span class="o">.</span><span class="n">ThemeManager</span><span class="p">()</span>
+</span><span id="__span-10-57"><a id="__codelineno-10-57" name="__codelineno-10-57" href="#__codelineno-10-57"></a>    <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">):</span>
+</span><span id="__span-10-58"><a id="__codelineno-10-58" name="__codelineno-10-58" href="#__codelineno-10-58"></a>        <span class="n">tm</span><span class="o">.</span><span class="n">set_theme</span><span class="p">(</span><span class="s2">&quot;solarized&quot;</span><span class="p">)</span>
+</span><span id="__span-10-59"><a id="__codelineno-10-59" name="__codelineno-10-59" href="#__codelineno-10-59"></a>
+</span><span id="__span-10-60"><a id="__codelineno-10-60" name="__codelineno-10-60" href="#__codelineno-10-60"></a>
+</span><span id="__span-10-61"><a id="__codelineno-10-61" name="__codelineno-10-61" href="#__codelineno-10-61"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_observer_exception_is_logged_not_raised</span><span class="p">(</span><span class="n">caplog</span><span class="p">):</span>
+</span><span id="__span-10-62"><a id="__codelineno-10-62" name="__codelineno-10-62" href="#__codelineno-10-62"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+</span><span id="__span-10-63"><a id="__codelineno-10-63" name="__codelineno-10-63" href="#__codelineno-10-63"></a>    <span class="n">tm</span> <span class="o">=</span> <span class="n">theme</span><span class="o">.</span><span class="n">ThemeManager</span><span class="p">()</span>
+</span><span id="__span-10-64"><a id="__codelineno-10-64" name="__codelineno-10-64" href="#__codelineno-10-64"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">bad</span><span class="p">(</span><span class="n">p</span><span class="p">):</span> <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;boom&quot;</span><span class="p">)</span>
+</span><span id="__span-10-65"><a id="__codelineno-10-65" name="__codelineno-10-65" href="#__codelineno-10-65"></a>    <span class="n">tm</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="n">bad</span><span class="p">)</span>
+</span><span id="__span-10-66"><a id="__codelineno-10-66" name="__codelineno-10-66" href="#__codelineno-10-66"></a>    <span class="k">with</span> <span class="n">caplog</span><span class="o">.</span><span class="n">at_level</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">ERROR</span><span class="p">,</span> <span class="n">logger</span><span class="o">=</span><span class="s2">&quot;apeGmsh.viewer.theme&quot;</span><span class="p">):</span>
+</span><span id="__span-10-67"><a id="__codelineno-10-67" name="__codelineno-10-67" href="#__codelineno-10-67"></a>        <span class="n">tm</span><span class="o">.</span><span class="n">set_theme</span><span class="p">(</span><span class="s2">&quot;light&quot;</span><span class="p">)</span>  <span class="c1"># must not raise</span>
+</span><span id="__span-10-68"><a id="__codelineno-10-68" name="__codelineno-10-68" href="#__codelineno-10-68"></a>    <span class="k">assert</span> <span class="nb">any</span><span class="p">(</span><span class="s2">&quot;boom&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">r</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">caplog</span><span class="o">.</span><span class="n">records</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="teststest_theme_persistencepy-new"><code>tests/test_theme_persistence.py</code> (new)<a class="headerlink" href="#teststest_theme_persistencepy-new" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="sd">&quot;&quot;&quot;Phase 5: theme choice survives across ThemeManager instances.&quot;&quot;&quot;</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">pytest</span><span class="o">.</span><span class="n">importorskip</span><span class="p">(</span><span class="s2">&quot;qtpy.QtCore&quot;</span><span class="p">)</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">qtpy.QtCore</span><span class="w"> </span><span class="kn">import</span> <span class="n">QSettings</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.viewers.ui</span><span class="w"> </span><span class="kn">import</span> <span class="n">theme</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="nd">@pytest</span><span class="o">.</span><span class="n">fixture</span><span class="p">(</span><span class="n">autouse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="k">def</span><span class="w"> </span><span class="nf">_clean_settings</span><span class="p">():</span>
+</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>    <span class="n">s</span> <span class="o">=</span> <span class="n">QSettings</span><span class="p">(</span><span class="s2">&quot;apeGmsh&quot;</span><span class="p">,</span> <span class="s2">&quot;viewer-test&quot;</span><span class="p">)</span>
+</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="n">s</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>    <span class="c1"># Swap the org so we don&#39;t pollute real user prefs</span>
+</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>    <span class="n">theme</span><span class="o">.</span><span class="n">ThemeManager</span><span class="o">.</span><span class="n">_settings_org</span> <span class="o">=</span> <span class="s2">&quot;apeGmsh&quot;</span>
+</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>    <span class="n">theme</span><span class="o">.</span><span class="n">ThemeManager</span><span class="o">.</span><span class="n">_settings_app</span> <span class="o">=</span> <span class="s2">&quot;viewer-test&quot;</span>
+</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>    <span class="k">yield</span>
+</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>    <span class="n">s</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>
+</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>
+</span><span id="__span-11-22"><a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_theme_choice_persists</span><span class="p">():</span>
+</span><span id="__span-11-23"><a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a>    <span class="n">tm</span> <span class="o">=</span> <span class="n">theme</span><span class="o">.</span><span class="n">ThemeManager</span><span class="p">()</span>
+</span><span id="__span-11-24"><a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a>    <span class="n">tm</span><span class="o">.</span><span class="n">set_theme</span><span class="p">(</span><span class="s2">&quot;light&quot;</span><span class="p">)</span>
+</span><span id="__span-11-25"><a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a>    <span class="n">tm2</span> <span class="o">=</span> <span class="n">theme</span><span class="o">.</span><span class="n">ThemeManager</span><span class="p">()</span>
+</span><span id="__span-11-26"><a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a>    <span class="k">assert</span> <span class="n">tm2</span><span class="o">.</span><span class="n">current</span> <span class="ow">is</span> <span class="n">theme</span><span class="o">.</span><span class="n">PALETTE_LIGHT</span>
+</span></code></pre></div>
+<p>(Only lands if Phase 5 ships. If the plan ends at Phase 4, skip this.)</p>
+<hr />
+<h2 id="visual-qa-checklist-manual">Visual QA checklist (manual)<a class="headerlink" href="#visual-qa-checklist-manual" title="Permanent link">&para;</a></h2>
+<p>After all phases land, a reviewer runs through:</p>
+<ol>
+<li>Launch a viewer → default is dark (matches today).</li>
+<li>Preferences → Theme → "Light" → chrome flips to white/grey
+   instantly.</li>
+<li>All four dim types (points, curves, surfaces, volumes) remain
+   visible in light mode.</li>
+<li>Active group (green) / inactive group (blue) labels in Browser tab
+   are still distinguishable in light mode.</li>
+<li>Warning banner in Loads / Constraints / Mass tabs is still a
+   warning (yellow/orange, not muddy).</li>
+<li>Error messages (red) still read as error.</li>
+<li>Pick (selection) highlight still pops against both backgrounds.</li>
+<li>Hover gold highlight still works.</li>
+<li>3D point labels (node tags) are legible — dark-text-on-light-
+   background in light theme.</li>
+<li>Toolbar icons are visible in both themes.</li>
+<li>Close viewer → reopen → theme is remembered.</li>
+<li>Open two viewers at once → switching theme in one updates the
+    other (if Phase 2 is complete).</li>
+</ol>
+<hr />
+<h2 id="what-this-plan-does-not-change">What this plan does NOT change<a class="headerlink" href="#what-this-plan-does-not-change" title="Permanent link">&para;</a></h2>
+<p>Per <code>CLAUDE.md</code> §3 (Surgical Changes), the following are <strong>out of
+scope</strong> and should be left untouched:</p>
+<ul>
+<li><code>geom_transf_viewer.py</code> — standalone HTML/three.js viewer with its
+  own CSS. Themeable later if needed; not a Qt widget.</li>
+<li><code>constraints_tab.py</code> / <code>loads_tab.py</code> <strong>content palettes</strong> (the
+  kind-to-color maps). They are semantic content, not theme chrome.
+  If the user later reports readability issues on white, pick this
+  up as a follow-up tuning pass.</li>
+<li><code>ColorManager.PICK_RGB</code> / <code>HOVER_RGB</code> — intentional
+  selection/highlight colors. They read on both backgrounds. Leave
+  alone.</li>
+<li>Adding a third or custom theme — architecturally supported by
+  <code>PALETTES</code> dict but not requested.</li>
+<li>Menu-bar / keyboard-shortcut access to theme switching —
+  <code>PreferencesTab</code> combo is enough.</li>
+<li>Per-widget theme overrides — every widget follows the global theme.</li>
+<li>VTK-level color-blind-safe palette — separate accessibility ticket.</li>
+<li>Migrating existing <code>STYLESHEET</code> / <code>BG_TOP</code> / <code>BG_BOTTOM</code> imports
+  one-by-one. The Phase 1 back-compat aliases let downstream code
+  keep working; modernize as part of Phases 2–3 touches, not a
+  separate mass-rename pass.</li>
+</ul>
+<hr />
+<h2 id="acceptance-overall">Acceptance — overall<a class="headerlink" href="#acceptance-overall" title="Permanent link">&para;</a></h2>
+<p>The feature is complete when:</p>
+<ol>
+<li><strong>All new tests pass</strong> (<code>pytest tests/test_theme_*.py</code>).</li>
+<li><strong>All existing tests still pass</strong> (<code>pytest tests/</code>).</li>
+<li><strong>Manual visual QA</strong> — all 12 checklist items pass on the user's
+   target machine.</li>
+<li><strong>Grep cleanliness</strong> — <code>rg '#[0-9a-fA-F]{6}' src/apeGmsh/viewers/</code>
+   returns only:</li>
+<li><code>theme.py</code> (both palettes)</li>
+<li><code>constraints_tab.py</code> and <code>loads_tab.py</code> content palettes</li>
+<li><code>geom_transf_viewer.py</code> (out of scope)</li>
+<li><code>color_manager.py</code> (PICK/HOVER, which are intentional)</li>
+<li><strong>No observer leak</strong> on viewer open/close cycles.</li>
+<li><strong>Theme persists across restart</strong> (Phase 5).</li>
+<li><code>docs/architecture.md</code> gets a one-line note that the viewer has a
+   theme contract routed through <code>ThemeManager</code>.</li>
+</ol>
+<hr />
+<h2 id="cheat-sheet-for-implementation-order">Cheat sheet for implementation order<a class="headerlink" href="#cheat-sheet-for-implementation-order" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>1. Phase 1 — theme.py rewrite (1 file, ~150 LOC source)
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>2. Run existing tests — confirm back-compat (STYLESHEET still there)
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>3. Add tests/test_theme_palette.py — confirm green
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>4. Phase 2 — wire on_theme + _apply_palette (3 files, ~40 LOC)
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>5. Manual: switch theme, verify chrome flips
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>6. Phase 4 — viewport + VTK _DIM_COLORS (2 files, ~25 LOC)
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>7. Phase 3 — replace hardcoded hex in widgets (~8 files, ~30 LOC)
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>   [can be parallelized with 4 or 6]
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>8. Manual visual QA pass in both themes
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>9. Phase 5 — QSettings persistence (1 file, ~15 LOC)
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>10. Add tests/test_theme_persistence.py — confirm green
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>11. Update docs/architecture.md (one line)
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>12. CHANGELOG entry
+</span></code></pre></div>
+<p>Net delta: ~250 LOC source, ~120 LOC tests.</p>
+<hr />
+<p><em>Cross-references:</em>
+[[architecture]] · [[apeGmsh_architecture]] ·
+[[plan_viewer_pg_persistence]] · [[plan_viewer_box_select]] ·
+<code>src/apeGmsh/viewers/ui/theme.py</code> ·
+<code>src/apeGmsh/viewers/ui/preferences.py</code> ·
+<code>src/apeGmsh/viewers/ui/viewer_window.py</code> ·
+<code>src/apeGmsh/viewers/core/color_manager.py</code></p>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

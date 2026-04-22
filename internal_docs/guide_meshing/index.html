@@ -1,0 +1,3804 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/guide_meshing/">
+      
+      
+        <link rel="prev" href="../guide_cad_import/">
+      
+      
+        <link rel="next" href="../guide_partitioning/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Meshing - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#meshing-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Meshing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-parts-and-the-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Parts and the session
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-conformal-meshing-fuse-cut-intersect-fragment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Conformal meshing: fuse, cut, intersect, fragment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-dimension-and-higher-dimensional-meshing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Dimension and higher-dimensional meshing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Dimension and higher-dimensional meshing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#element-order-and-uniform-refinement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Element order and uniform refinement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-generate-inherits-from-gmsh-the-default-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What generate() inherits from Gmsh (the default contract)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-mesh-algorithms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Mesh algorithms
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Mesh algorithms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-name-based-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The name-based API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set_algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        set_algorithm
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-size-control-and-mesh-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Size control and mesh fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-structured-meshing-transfinite-and-recombination" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Structured meshing: transfinite and recombination
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6a-driving-mesh-commands-by-physical-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6a. Driving mesh commands by physical group
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6a. Driving mesh commands by physical group">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-resolver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The resolver
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-_by_physical-convenience-wrappers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The *_by_physical convenience wrappers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-caveats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two caveats
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-physical-groups-and-mesh-selection-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Physical groups and mesh selection sets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-the-bridge-between-mesh-and-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. The bridge between mesh and constraints
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. The bridge between mesh and constraints">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stage-1-definition-on-geometry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 1 — definition, on geometry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-2-resolution-on-the-mesh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 2 — resolution, on the mesh
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-a-minimal-end-to-end-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. A minimal end-to-end example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_groundTruth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_light_theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-parts-and-the-session" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Parts and the session
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-conformal-meshing-fuse-cut-intersect-fragment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Conformal meshing: fuse, cut, intersect, fragment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-dimension-and-higher-dimensional-meshing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Dimension and higher-dimensional meshing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Dimension and higher-dimensional meshing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#element-order-and-uniform-refinement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Element order and uniform refinement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-generate-inherits-from-gmsh-the-default-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What generate() inherits from Gmsh (the default contract)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-mesh-algorithms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Mesh algorithms
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Mesh algorithms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-name-based-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The name-based API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#set_algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        set_algorithm
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-size-control-and-mesh-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Size control and mesh fields
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-structured-meshing-transfinite-and-recombination" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Structured meshing: transfinite and recombination
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6a-driving-mesh-commands-by-physical-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6a. Driving mesh commands by physical group
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6a. Driving mesh commands by physical group">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-resolver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The resolver
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-_by_physical-convenience-wrappers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The *_by_physical convenience wrappers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-caveats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two caveats
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-physical-groups-and-mesh-selection-sets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Physical groups and mesh selection sets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-the-bridge-between-mesh-and-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. The bridge between mesh and constraints
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. The bridge between mesh and constraints">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stage-1-definition-on-geometry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 1 — definition, on geometry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stage-2-resolution-on-the-mesh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stage 2 — resolution, on the mesh
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-a-minimal-end-to-end-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. A minimal end-to-end example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="meshing-guide">Meshing guide<a class="headerlink" href="#meshing-guide" title="Permanent link">&para;</a></h1>
+<p>Reference-style guide to the meshing layer of apeGmsh. This document is grounded
+in the current source tree and mirrors the symbols that actually exist. It
+assumes you are already familiar with the Part workflow described in
+<code>guide_parts_assembly.md</code> and <code>guide_parts_vs_session.md</code>.</p>
+<p>The meshing layer sits between geometry (<code>core/Model.py</code>, <code>core/Part.py</code>,
+<code>core/_parts_registry.py</code>) and the FEM broker (<code>mesh/FEMData.py</code>,
+<code>solvers/OpenSees.py</code>). Its job is to turn an OCC geometry — possibly assembled
+from several parts — into a solver-ready mesh and expose enough handles
+(physical groups, mesh selection sets, node/face maps) for <code>Constraints</code> and
+the solver bridges to consume it.</p>
+<p>The composites involved are attached to an <code>apeGmsh</code> session as:</p>
+<ul>
+<li><code>g.model</code> — OCC geometry wrapper (<code>core/Model.py</code>)</li>
+<li><code>g.parts</code> — instance registry (<code>core/_parts_registry.py</code>)</li>
+<li><code>g.mesh</code> — thin composition container (<code>mesh/Mesh.py</code>) with seven focused
+  sub-composites:</li>
+<li><code>g.mesh.generation</code> — generate, set_order, refine, optimize, set_algorithm</li>
+<li><code>g.mesh.sizing</code>     — global / per-entity size control</li>
+<li><code>g.mesh.field</code>      — <code>FieldHelper</code> (size fields)</li>
+<li><code>g.mesh.structured</code> — transfinite, recombine, smoothing, compound</li>
+<li><code>g.mesh.editing</code>    — clear, embed, periodic, STL, topology editing</li>
+<li><code>g.mesh.queries</code>    — get_nodes, get_elements, get_fem_data, quality_report</li>
+<li><code>g.mesh.partitioning</code> — partition / unpartition / renumber_*</li>
+<li><code>g.physical</code> — physical group API (<code>mesh/PhysicalGroups.py</code>)</li>
+<li><code>g.mesh_selection</code> — post-mesh selection sets (<code>mesh/MeshSelectionSet.py</code>)</li>
+<li><code>g.constraints</code> — constraint definitions / resolver (<code>core/ConstraintsComposite.py</code>, <code>solvers/Constraints.py</code>)</li>
+</ul>
+<p>Every action method on a mesh sub-composite returns <code>self</code> (the
+sub-composite) so chaining works inside one namespace at a time. To chain
+across composites, break the chain — this is a deliberate v1.0 design
+choice in favour of a flat, discoverable API.</p>
+<h2 id="1-parts-and-the-session">1. Parts and the session<a class="headerlink" href="#1-parts-and-the-session" title="Permanent link">&para;</a></h2>
+<p>apeGmsh separates two different uses of a Gmsh "session":</p>
+<ol>
+<li>A <strong>Part</strong> (<code>core/Part.py</code>) owns its own isolated Gmsh session and is a pure
+   geometry container. It only exists to build a shape and export it to STEP or
+   IGES via <code>Part.save()</code>. Parts know nothing about meshing, physical groups,
+   or constraints.</li>
+<li>A <strong>apeGmsh session</strong> (the <code>apeGmsh</code> object users normally work with) owns the
+   <em>assembly-level</em> Gmsh session — the one the mesher will actually run on. It
+   wraps the same <code>gmsh.model.occ</code> API through <code>g.model</code>, and it keeps its own
+   book-keeping in two places:</li>
+<li><code>g.model._metadata: dict[DimTag, dict]</code> — entity metadata (<code>kind</code>,
+     cutting-plane normals, etc.). Labels live in <code>g.labels</code> (Gmsh PGs).</li>
+<li><code>g.parts.instances: dict[str, Instance]</code> — every imported or inlined
+     <em>part instance</em> is registered here, with its entities grouped by dimension
+     (<code>Instance.entities: dict[int, list[Tag]]</code>), translation/rotation, and
+     bounding box.</li>
+</ol>
+<p>Instances are created through five entry points on the <code>PartsRegistry</code>
+composite:</p>
+<table>
+<thead>
+<tr>
+<th>Entry point</th>
+<th>File / line</th>
+<th>Use case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>g.parts.add(part, *, label=None, translate=..., rotate=..., highest_dim_only=True)</code></td>
+<td><code>_parts_registry.py</code></td>
+<td>Import a <code>Part</code> object (auto STEP round-trip)</td>
+</tr>
+<tr>
+<td><code>g.parts.import_step(file_path, *, label=None, translate=..., rotate=...)</code></td>
+<td><code>_parts_registry.py</code></td>
+<td>Import a CAD file directly</td>
+</tr>
+<tr>
+<td><code>with g.parts.part(label): ...</code></td>
+<td><code>_parts_registry.py</code></td>
+<td>Inline geometry block; entities created in the block are auto-tagged</td>
+</tr>
+<tr>
+<td><code>g.parts.register(label, dimtags)</code></td>
+<td><code>_parts_registry.py</code></td>
+<td>Manually tag existing entities as an instance</td>
+</tr>
+<tr>
+<td><code>g.parts.from_model(label, *, dim=None, tags=None)</code></td>
+<td><code>_parts_registry.py</code></td>
+<td>Adopt entities already sitting in <code>gmsh.model</code></td>
+</tr>
+</tbody>
+</table>
+<p>All five converge on the same <code>Instance</code> dataclass. Once an instance exists,
+the mesher and the constraint resolver can address its entities by <em>label</em>
+instead of by raw Gmsh tag — this is what makes the downstream pipeline
+robust to fragmentation, fusion, and re-tagging.</p>
+<p>See <code>guide_parts_vs_session.md</code> for the rationale behind keeping the Part and
+session sessions separate, and <code>guide_parts_assembly.md</code> for the full
+five-phase workflow.</p>
+<h2 id="2-conformal-meshing-fuse-cut-intersect-fragment">2. Conformal meshing: fuse, cut, intersect, fragment<a class="headerlink" href="#2-conformal-meshing-fuse-cut-intersect-fragment" title="Permanent link">&para;</a></h2>
+<p>Boolean operations live in <code>core/_model_boolean.py</code> and are exposed as methods
+on <code>g.model</code>. All four share the same shape:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">boolean</span><span class="o">.</span><span class="n">fuse</span>     <span class="p">(</span><span class="n">objects</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">remove_object</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">remove_tool</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sync</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Tag</span><span class="p">]</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">boolean</span><span class="o">.</span><span class="n">cut</span>      <span class="p">(</span><span class="n">objects</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">remove_object</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">remove_tool</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sync</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Tag</span><span class="p">]</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">boolean</span><span class="o">.</span><span class="n">intersect</span><span class="p">(</span><span class="n">objects</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">remove_object</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">remove_tool</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sync</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Tag</span><span class="p">]</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">boolean</span><span class="o">.</span><span class="n">fragment</span> <span class="p">(</span><span class="n">objects</span><span class="p">,</span> <span class="n">tools</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">remove_object</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">remove_tool</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">cleanup_free</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sync</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Tag</span><span class="p">]</span>
+</span></code></pre></div>
+<p><code>objects</code> and <code>tools</code> accept a flexible <code>TagsLike = Tag | list[Tag] | DimTag |
+list[DimTag]</code>. The internal <code>_bool_op()</code> helper normalises them, calls the OCC
+operation, then updates <code>Model._metadata</code> — consumed entities are unregistered
+and surviving ones are re-registered with <code>kind</code> equal to the operation name.</p>
+<p>Semantically:</p>
+<ul>
+<li><strong><code>fuse</code></strong> returns the boolean union. Shared faces between the operands are
+  removed and the result is a single body. Use this when two parts should
+  become <em>one</em> part with a single label, not a pair of parts sharing an
+  interface.</li>
+<li><strong><code>cut</code></strong> returns <code>A \ B</code>. The default removes the tool; pass
+  <code>remove_tool=False</code> to keep the cutter around.</li>
+<li><strong><code>intersect</code></strong> returns <code>A ∩ B</code>. Useful for windowing a shape against a box
+  or another solid.</li>
+<li><strong><code>fragment</code></strong> is the conformal-meshing primitive. It splits every shape at
+  every intersection and keeps <em>all</em> sub-volumes, including the pieces of the
+  tools that are left over. The <code>cleanup_free=True</code> default also drops
+  surfaces that do not bound a volume after the operation — those are the
+  dangling remnants of cutting planes that sit outside the solid and would
+  otherwise show up as stray 2D elements in the mesh.</li>
+</ul>
+<p><strong>Conformal meshing in practice</strong> almost always means "fragment, then mesh".
+Without fragmentation, two touching parts will be meshed independently and
+their interface nodes will not be shared, which breaks any constraint or
+integration that crosses the interface. With fragmentation, the interface
+becomes a shared surface in the OCC topology and the mesher produces coincident
+nodes on both sides automatically.</p>
+<p><code>PartsRegistry</code> wraps this pattern in three higher-level operations so you do
+not have to track tags by hand:</p>
+<ul>
+<li><strong><code>g.parts.fragment_all(*, dim=None)</code></strong> (<code>_parts_registry.py</code>) —
+  fragments every instance in the registry against every other instance at the
+  requested dimension (auto-detected if <code>None</code>). After it runs, each
+  <code>Instance.entities</code> is updated in place with the <em>new</em> surviving tags. Use
+  this at the end of Phase 3 in the standard assembly workflow.</li>
+<li><strong><code>g.parts.fragment_pair(label_a, label_b, *, dim=None)</code></strong> — same, but
+  restricted to two instances. Useful when you only want one interface to be
+  conformal and want to keep the rest of the assembly unfragmented for
+  performance.</li>
+<li><strong><code>g.parts.fuse_group(labels, *, label=None, dim=None, properties=None)</code></strong>
+  (<code>_parts_registry.py</code>) — fuses a list of instances into a single new
+  instance. The old instances are removed from the registry and a fresh one
+  is created with the surviving tags. See <code>plan_fuse_group.md</code> for the design
+  motivation.</li>
+</ul>
+<p>A rule of thumb: <strong>fragment</strong> when the parts must share nodes but remain
+distinct logical bodies (e.g. a steel gusset welded to a concrete column, two
+materials meeting at an interface). <strong>fuse_group</strong> when the parts are really
+one body and you want a single label downstream (e.g. a welded assembly of
+many small STEP pieces that should be treated as one component).</p>
+<h2 id="3-dimension-and-higher-dimensional-meshing">3. Dimension and higher-dimensional meshing<a class="headerlink" href="#3-dimension-and-higher-dimensional-meshing" title="Permanent link">&para;</a></h2>
+<p>Gmsh meshes are always indexed by a dimension between 0 and 3. apeGmsh exposes
+the dimension explicitly rather than hiding it, because the same session
+frequently carries elements of multiple dimensions at once (for example, a
+3D solid with 2D shells glued to its surface, or 1D beam lines sharing nodes
+with a 3D volume).</p>
+<p>Generation is controlled by a single entry point:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span></code></pre></div>
+<ul>
+<li><code>dim=1</code> produces only 1D elements on curves.</li>
+<li><code>dim=2</code> produces 1D + 2D elements up to surfaces. This is what you want for
+  shell models and for meshing the surface of a solid without filling it.</li>
+<li><code>dim=3</code> (the default) produces the full 1D + 2D + 3D cascade. 3D meshing
+  internally runs the lower dimensions first, so the output always includes
+  the surface and edge meshes the volume mesher used.</li>
+</ul>
+<p>Once the mesh exists, most query methods accept <code>dim</code> as a filter with the
+same convention: <code>dim=-1</code> means "all dimensions", and any positive value
+restricts the query. The most useful ones are:</p>
+<ul>
+<li><code>g.mesh.queries.get_nodes(*, dim=-1, tag=-1, ...) -&gt; dict</code></li>
+<li><code>g.mesh.queries.get_elements(*, dim=-1, tag=-1) -&gt; dict</code></li>
+<li><code>g.mesh.queries.get_fem_data(dim: int = 2) -&gt; FEMData</code></li>
+</ul>
+<p><code>get_fem_data</code> is the bridge to the FEM broker. Its <code>dim</code> argument selects the
+<em>element</em> dimension you want the solver to see, not the dimension of the mesh
+that was generated. A common pattern is to generate at <code>dim=3</code> and then extract
+at <code>dim=2</code> for a shell model, or at <code>dim=3</code> for a solid model. The FEM broker
+is source-agnostic on purpose: whether elements came from physical groups or
+mesh selection sets, <code>FEMData</code> has the same shape and downstream code should
+not special-case either source.</p>
+<h3 id="element-order-and-uniform-refinement">Element order and uniform refinement<a class="headerlink" href="#element-order-and-uniform-refinement" title="Permanent link">&para;</a></h3>
+<p>High-order elements are toggled globally through <code>set_order</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_order</span><span class="p">(</span><span class="n">order</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span></code></pre></div>
+<p><code>order=1</code> is the default (linear). <code>order=2</code> promotes edges, faces and volumes
+to their quadratic variants (9-node quads, 10-node tets, 20/27-node hexes
+depending on recombination). Order changes must be applied <em>after</em>
+<code>generate()</code>.</p>
+<p><code>g.mesh.generation.refine()</code> performs one round of uniform subdivision.
+It is cheap for diagnostics but rarely what you want for production meshes —
+prefer size fields (Section 5) for targeted refinement.</p>
+<h3 id="what-generate-inherits-from-gmsh-the-default-contract">What <code>generate()</code> inherits from Gmsh (the default contract)<a class="headerlink" href="#what-generate-inherits-from-gmsh-the-default-contract" title="Permanent link">&para;</a></h3>
+<p><code>g.mesh.generation.generate(dim)</code> is intentionally a thin wrapper over
+<code>gmsh.model.mesh.generate(dim)</code>. apeGmsh does <strong>not</strong> touch any <code>Mesh.*</code>
+option behind your back on session startup — <code>g.begin()</code> only calls
+<code>gmsh.initialize()</code> and <code>gmsh.model.add(name)</code>. That means: unless <em>you</em>
+(or a previous call on this session) have set an option, <code>generate()</code> runs
+with Gmsh's factory defaults.</p>
+<p>This is a deliberate contract: every knob you care about is either left at
+Gmsh's default <em>or</em> has a visible apeGmsh setter. Nothing in between.</p>
+<p>The table below lists the options that actually shape the mesh, the Gmsh
+default in effect when you call <code>generate()</code> on a fresh session, and the
+apeGmsh setter (if any) that changes it. When there is no apeGmsh setter,
+you can always fall through to <code>gmsh.option.setNumber(key, value)</code> yourself.</p>
+<table>
+<thead>
+<tr>
+<th>Gmsh option</th>
+<th>Default</th>
+<th>Effect</th>
+<th>apeGmsh setter</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Mesh.Algorithm</code></td>
+<td><code>6</code> (Frontal-Delaunay)</td>
+<td>2D algorithm, global</td>
+<td><code>g.mesh.generation.set_algorithm(tag, alg, dim=2)</code> (per-surface)</td>
+</tr>
+<tr>
+<td><code>Mesh.Algorithm3D</code></td>
+<td><code>1</code> (Delaunay)</td>
+<td>3D algorithm, global. Note: <code>"auto"</code> / <code>"default"</code> in the apeGmsh string table maps to <code>HXT</code> (10), not the raw Gmsh default</td>
+<td><code>g.mesh.generation.set_algorithm(0, alg, dim=3)</code></td>
+</tr>
+<tr>
+<td><code>Mesh.ElementOrder</code></td>
+<td><code>1</code> (linear)</td>
+<td>Element order</td>
+<td><code>g.mesh.generation.set_order(order)</code> (applied <em>after</em> <code>generate()</code>)</td>
+</tr>
+<tr>
+<td><code>Mesh.HighOrderOptimize</code></td>
+<td><code>0</code> (off)</td>
+<td>Curve high-order elements</td>
+<td>— (raw <code>gmsh.option</code>)</td>
+</tr>
+<tr>
+<td><code>Mesh.MeshSizeMin</code></td>
+<td><code>0.0</code></td>
+<td>Global floor on element size</td>
+<td><code>g.mesh.sizing.set_global_size(max, min)</code> / <code>set_size_global(min_size=...)</code></td>
+</tr>
+<tr>
+<td><code>Mesh.MeshSizeMax</code></td>
+<td><code>1e22</code></td>
+<td>Global ceiling on element size</td>
+<td><code>g.mesh.sizing.set_global_size(max, min)</code> / <code>set_size_global(max_size=...)</code></td>
+</tr>
+<tr>
+<td><code>Mesh.MeshSizeFactor</code></td>
+<td><code>1.0</code></td>
+<td>Global multiplier applied to all characteristic lengths</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>Mesh.MeshSizeFromPoints</code></td>
+<td><code>1</code> (on)</td>
+<td>Honour per-point <code>lc</code> values from STEP/IGES and <code>set_size</code></td>
+<td><code>g.mesh.sizing.set_size_sources(from_points=...)</code></td>
+</tr>
+<tr>
+<td><code>Mesh.MeshSizeFromCurvature</code></td>
+<td><code>0</code> (off)</td>
+<td>Refine with surface curvature</td>
+<td><code>g.mesh.sizing.set_size_sources(from_curvature=...)</code></td>
+</tr>
+<tr>
+<td><code>Mesh.MeshSizeExtendFromBoundary</code></td>
+<td><code>1</code> (on)</td>
+<td>Propagate boundary sizes inward</td>
+<td><code>g.mesh.sizing.set_size_sources(extend_from_boundary=...)</code></td>
+</tr>
+<tr>
+<td><code>Mesh.RecombineAll</code></td>
+<td><code>0</code> (off)</td>
+<td>Try to recombine triangles into quads globally</td>
+<td><code>g.mesh.structured.recombine()</code></td>
+</tr>
+<tr>
+<td><code>Mesh.RecombinationAlgorithm</code></td>
+<td><code>1</code> (Blossom)</td>
+<td>Blossom-based full-quad merging</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>Mesh.Recombine3DAll</code></td>
+<td><code>0</code> (off)</td>
+<td>Recombine tets into hexes globally</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>Mesh.Smoothing</code></td>
+<td><code>1</code></td>
+<td>Number of Laplacian smoothing passes</td>
+<td><code>g.mesh.structured.set_smoothing(tag, n)</code> (per-surface)</td>
+</tr>
+<tr>
+<td><code>Mesh.Optimize</code></td>
+<td><code>1</code> (on)</td>
+<td>Run the built-in tet optimiser after 3D meshing</td>
+<td><code>g.mesh.generation.optimize(...)</code> (explicit pass)</td>
+</tr>
+<tr>
+<td><code>Mesh.OptimizeNetgen</code></td>
+<td><code>0</code> (off)</td>
+<td>Netgen optimiser pass</td>
+<td><code>g.mesh.generation.optimize("Netgen", ...)</code></td>
+</tr>
+<tr>
+<td><code>Mesh.OptimizeThreshold</code></td>
+<td><code>0.3</code></td>
+<td>Quality threshold below which elements are optimised</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>General.NumThreads</code></td>
+<td><code>1</code></td>
+<td>Threads used by parallel mesh kernels (HXT uses this)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>Mesh.Binary</code></td>
+<td><code>0</code> (ASCII)</td>
+<td>Output format when saving <code>.msh</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>Mesh.MshFileVersion</code></td>
+<td><code>4.1</code></td>
+<td><code>.msh</code> file format version</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>Things worth remembering:</p>
+<ol>
+<li><strong>2D vs 3D algorithm defaults differ.</strong> Gmsh's raw default for
+   <code>Mesh.Algorithm3D</code> is <code>1</code> (plain Delaunay), but apeGmsh's <code>"auto"</code> /
+   <code>"default"</code> alias points at <code>HXT</code> (<code>10</code>) because HXT is the modern
+   recommendation. If you never call <code>set_algorithm(..., dim=3)</code>, you get
+   <strong>Delaunay</strong>, not HXT. Pass <code>set_algorithm(0, "hxt", dim=3)</code> explicitly
+   if you want HXT.</li>
+<li><strong><code>Mesh.Optimize=1</code> is on by default.</strong> A 3D <code>generate()</code> already runs
+   one tet-optimiser pass without you asking. Calling
+   <code>g.mesh.generation.optimize(...)</code> adds <em>another</em> pass on top of that.</li>
+<li><strong>Size from points is on by default.</strong> If you import STEP/IGES and your
+   <code>set_global_size</code> appears to be ignored, the file is pushing per-point
+   characteristic lengths through <code>Mesh.MeshSizeFromPoints</code>. Disable it
+   with <code>g.mesh.sizing.set_size_sources(from_points=False)</code>.</li>
+<li><strong><code>MeshSizeMax = 1e22</code> is effectively "no ceiling".</strong> If you forget to
+   set a global size <em>and</em> there are no size fields <em>and</em> <code>from_points</code> is
+   off, Gmsh will happily produce a one-element mesh of your whole domain.</li>
+<li><strong>Order is set after generate().</strong> <code>set_order(2)</code> elevates elements
+   in-place; it is not an option that <code>generate()</code> reads. Calling it
+   before <code>generate()</code> has no effect.</li>
+<li><strong>apeGmsh never clears options between generations.</strong> If you change
+   <code>set_algorithm</code>, <code>set_global_size</code>, or call <code>set_size_sources</code>, those
+   values stick on the Gmsh session for every subsequent <code>generate()</code>
+   until you overwrite them or call <code>g.end()</code>.</li>
+</ol>
+<p>If you need an option that is not in the table, reach straight through:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">gmsh</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">gmsh</span><span class="o">.</span><span class="n">option</span><span class="o">.</span><span class="n">setNumber</span><span class="p">(</span><span class="s2">&quot;Mesh.CharacteristicLengthFactor&quot;</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span></code></pre></div>
+<p>This is always allowed — apeGmsh never hides Gmsh from you; it only
+promotes the knobs that matter often enough to deserve a first-class name.</p>
+<h2 id="4-mesh-algorithms">4. Mesh algorithms<a class="headerlink" href="#4-mesh-algorithms" title="Permanent link">&para;</a></h2>
+<p>apeGmsh exposes the Gmsh algorithm catalogues in three equivalent forms, and
+<code>set_algorithm</code> accepts any of them. <strong>Strings are the preferred form</strong> — they
+are easier to remember, they tolerate aliases and separator/case variation,
+and typos raise a helpful <code>ValueError</code> listing every canonical name.</p>
+<h3 id="the-name-based-api">The name-based API<a class="headerlink" href="#the-name-based-api" title="Permanent link">&para;</a></h3>
+<p>The canonical lookup tables live in <code>mesh/Mesh.py</code> and are exported as
+<code>apeGmsh.ALGORITHM_2D</code> and <code>apeGmsh.ALGORITHM_3D</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">ALGORITHM_2D</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="c1"># canonical names</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="s2">&quot;mesh_adapt&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;automatic&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;initial_mesh_only&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="s2">&quot;delaunay&quot;</span><span class="p">:</span>   <span class="mi">5</span><span class="p">,</span> <span class="s2">&quot;frontal_delaunay&quot;</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span> <span class="s2">&quot;bamg&quot;</span><span class="p">:</span> <span class="mi">7</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="s2">&quot;frontal_delaunay_quads&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;packing_parallelograms&quot;</span><span class="p">:</span> <span class="mi">9</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="s2">&quot;quasi_structured_quad&quot;</span><span class="p">:</span>  <span class="mi">11</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="c1"># aliases</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="s2">&quot;auto&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;frontal&quot;</span><span class="p">:</span> <span class="mi">6</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="s2">&quot;quad&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;quads&quot;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span> <span class="s2">&quot;quasi_structured&quot;</span><span class="p">:</span> <span class="mi">11</span><span class="p">,</span> <span class="s2">&quot;qsq&quot;</span><span class="p">:</span> <span class="mi">11</span><span class="p">,</span> <span class="o">...</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="p">}</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">ALGORITHM_3D</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="s2">&quot;delaunay&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;initial_mesh_only&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span> <span class="s2">&quot;frontal&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="s2">&quot;mmg3d&quot;</span><span class="p">:</span>    <span class="mi">7</span><span class="p">,</span> <span class="s2">&quot;r_tree&quot;</span><span class="p">:</span> <span class="mi">9</span><span class="p">,</span> <span class="s2">&quot;hxt&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="c1"># aliases</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="s2">&quot;auto&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span> <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span> <span class="s2">&quot;automatic&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span> <span class="o">...</span>
+</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Matching is case- and separator-insensitive, so <code>"Frontal-Delaunay"</code>,
+<code>"frontal_delaunay"</code>, and <code>"FRONTAL DELAUNAY"</code> are equivalent.</p>
+<p>For IDE autocomplete, the same names are exposed as string class constants
+on <code>MeshAlgorithm2D</code> and <code>MeshAlgorithm3D</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">MeshAlgorithm2D</span><span class="p">,</span> <span class="n">MeshAlgorithm3D</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">MeshAlgorithm2D</span><span class="o">.</span><span class="n">QUADS</span>       <span class="c1"># -&gt; &quot;frontal_delaunay_quads&quot;</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">MeshAlgorithm2D</span><span class="o">.</span><span class="n">QUAD</span>        <span class="c1"># -&gt; &quot;quasi_structured_quad&quot;</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">MeshAlgorithm2D</span><span class="o">.</span><span class="n">AUTO</span>        <span class="c1"># -&gt; &quot;automatic&quot;</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">MeshAlgorithm3D</span><span class="o">.</span><span class="n">HXT</span>         <span class="c1"># -&gt; &quot;hxt&quot;</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">MeshAlgorithm3D</span><span class="o">.</span><span class="n">AUTO</span>        <span class="c1"># -&gt; &quot;hxt&quot;</span>
+</span></code></pre></div>
+<p>The legacy <code>Algorithm2D</code> / <code>Algorithm3D</code> <code>IntEnum</code>s are still exported and
+still work — they are kept so that existing notebooks and scripts keep
+running. New code should prefer the string form.</p>
+<h3 id="set_algorithm">set_algorithm<a class="headerlink" href="#set_algorithm" title="Permanent link">&para;</a></h3>
+<p>Selection happens through a single method whose behaviour depends on <code>dim</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="n">tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">algorithm</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">2</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span></code></pre></div>
+<p><code>algorithm</code> accepts:</p>
+<ul>
+<li>a <strong>string</strong> — looked up in <code>ALGORITHM_2D</code> / <code>ALGORITHM_3D</code></li>
+<li>a <code>MeshAlgorithm2D</code> / <code>MeshAlgorithm3D</code> attribute (same strings)</li>
+<li>an <code>Algorithm2D</code> / <code>Algorithm3D</code> <code>IntEnum</code> member (legacy)</li>
+<li>a raw <code>int</code> — passed straight to Gmsh for forward compatibility</li>
+</ul>
+<p>Examples (all four equivalent):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="n">surf_tag</span><span class="p">,</span> <span class="s2">&quot;frontal_delaunay_quads&quot;</span><span class="p">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="n">surf_tag</span><span class="p">,</span> <span class="s2">&quot;quads&quot;</span><span class="p">)</span>                   <span class="c1"># alias</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="n">surf_tag</span><span class="p">,</span> <span class="n">MeshAlgorithm2D</span><span class="o">.</span><span class="n">QUADS</span><span class="p">)</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="n">surf_tag</span><span class="p">,</span> <span class="n">Algorithm2D</span><span class="o">.</span><span class="n">FRONTAL_DELAUNAY_QUADS</span><span class="p">)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;hxt&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;auto&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>                    <span class="c1"># also hxt</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">MeshAlgorithm3D</span><span class="o">.</span><span class="n">HXT</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span></code></pre></div>
+<ul>
+<li>With <code>dim=2</code>, the algorithm is set <strong>per surface</strong> via
+  <code>gmsh.model.mesh.setAlgorithm(2, tag, algorithm)</code>. This lets you mix, for
+  example, <code>FRONTAL_DELAUNAY_QUADS</code> on structured surfaces and plain
+  <code>AUTOMATIC</code> everywhere else.</li>
+<li>With <code>dim=3</code>, the algorithm is set <strong>globally</strong> via
+  <code>gmsh.option.setNumber("Mesh.Algorithm3D", algorithm)</code>. Gmsh does not
+  support per-volume 3D algorithm selection, so the <code>tag</code> argument is ignored.</li>
+</ul>
+<p>Rules of thumb from the Gmsh docs as they apply here:</p>
+<ul>
+<li><code>Algorithm2D.AUTOMATIC</code> / <code>FRONTAL_DELAUNAY</code> are the safe defaults for
+  unstructured triangular meshes.</li>
+<li><code>FRONTAL_DELAUNAY_QUADS</code> or <code>PACKING_PARALLELOGRAMS</code> are the preferred
+  starting points for quad-dominant surface meshing; both still benefit from a
+  subsequent <code>set_recombine</code>.</li>
+<li><code>QUASI_STRUCTURED_QUAD</code> is the best-quality quad mesher but is the slowest
+  and requires clean geometry.</li>
+<li><code>Algorithm3D.HXT</code> is the modern default: fast, parallel, robust on large
+  models. Fall back to <code>DELAUNAY</code> only for very small meshes or when <code>HXT</code>
+  fails on pathological topology.</li>
+<li><code>MMG3D</code> is reserved for remeshing / metric-based adaptation workflows.</li>
+</ul>
+<p>Quad recombination and smoothing are controlled separately:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_recombine</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">angle</span><span class="o">=</span><span class="mf">45.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">recombine</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_smoothing</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">val</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span></code></pre></div>
+<p><code>set_recombine</code> requests recombination on a single surface (or volume, when
+<code>dim=3</code>) and the <code>angle</code> threshold controls how aggressively triangles are
+merged into quads. <code>recombine()</code> is the global equivalent and takes no
+arguments. <code>set_smoothing</code> applies <code>val</code> Laplacian passes to a surface.</p>
+<h2 id="5-size-control-and-mesh-fields">5. Size control and mesh fields<a class="headerlink" href="#5-size-control-and-mesh-fields" title="Permanent link">&para;</a></h2>
+<p>apeGmsh gives you three layers of size control, from coarse to fine:</p>
+<p><strong>Global bounds</strong> — set a floor and ceiling on element size:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="n">max_size</span><span class="p">,</span> <span class="n">min_size</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_global</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">min_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_size</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The second form lets you change only one bound at a time. Both map to
+<code>Mesh.MeshSizeMax</code> / <code>Mesh.MeshSizeMin</code> in Gmsh options.</p>
+<p><strong>Size sources</strong> — control which inputs Gmsh consults when deciding element
+size at a point:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_sources</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">from_points</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">from_curvature</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>                            <span class="n">extend_from_boundary</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span></code></pre></div>
+<p>A common gotcha after importing IGES or STEP is that the file carries
+per-point characteristic lengths that override your <code>set_global_size</code> call.
+Passing <code>from_points=False</code> (and usually <code>from_curvature=False</code>) makes the
+global bound authoritative again.</p>
+<p><strong>Per-point sizes:</strong></p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size</span><span class="p">(</span><span class="n">tags</span><span class="p">,</span> <span class="n">size</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_all_points</span><span class="p">(</span><span class="n">size</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_callback</span><span class="p">(</span><span class="n">func</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span></code></pre></div>
+<p>The callback signature is <code>func(dim, tag, x, y, z, lc) -&gt; float</code> and lets you
+compute size in Python based on arbitrary criteria.</p>
+<p><strong>Mesh fields</strong> — <code>g.mesh.field</code> is a <code>FieldHelper</code> (<code>_mesh_field.py</code>) that
+wraps the raw <code>gmsh.model.mesh.field</code> API with named convenience builders:</p>
+<table>
+<thead>
+<tr>
+<th>Helper</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>field.distance(*, curves=None, surfaces=None, points=None, sampling=100)</code></td>
+<td>Shortest distance to a set of entities</td>
+</tr>
+<tr>
+<td><code>field.threshold(distance_field, *, size_min, size_max, dist_min, dist_max, sigmoid=False, ...)</code></td>
+<td>Ramp size between two distance thresholds</td>
+</tr>
+<tr>
+<td><code>field.math_eval(expression)</code></td>
+<td>Arbitrary MathEval field in <code>x, y, z</code></td>
+</tr>
+<tr>
+<td><code>field.box(*, x_min, y_min, z_min, x_max, y_max, z_max, size_in, size_out, thickness=0)</code></td>
+<td>Different size inside and outside a box</td>
+</tr>
+<tr>
+<td><code>field.minimum(field_tags)</code></td>
+<td>Element-wise minimum of several fields</td>
+</tr>
+<tr>
+<td><code>field.boundary_layer(*, curves=None, points=None, size_near, ratio=1.2, n_layers=5, thickness=None, fan_points=None)</code></td>
+<td>BoundaryLayer field for wall-resolved meshes</td>
+</tr>
+</tbody>
+</table>
+<p>Once a field is built, register it as the active size field with
+<code>field.set_background(tag)</code>, or as a boundary-layer field with
+<code>field.set_boundary_layer_field(tag)</code>. The raw primitives
+(<code>add</code>, <code>set_number</code>, <code>set_numbers</code>, <code>set_string</code>) are still available if you
+need to use a field type that does not have a helper yet.</p>
+<p>The canonical "refine near a feature" recipe is:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">d</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">distance</span><span class="p">(</span><span class="n">curves</span><span class="o">=</span><span class="n">crack_tip_curves</span><span class="p">)</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">t</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">threshold</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">size_min</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">size_max</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>                               <span class="n">dist_min</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">dist_max</span><span class="o">=</span><span class="mf">10.0</span><span class="p">)</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">set_background</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span></code></pre></div>
+<h2 id="6-structured-meshing-transfinite-and-recombination">6. Structured meshing: transfinite and recombination<a class="headerlink" href="#6-structured-meshing-transfinite-and-recombination" title="Permanent link">&para;</a></h2>
+<p>Transfinite meshing produces structured (mapped) grids from topologically
+quadrilateral or hexahedral regions. The three primitives mirror Gmsh:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_transfinite_curve</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">n_nodes</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">mesh_type</span><span class="o">=</span><span class="s2">&quot;Progression&quot;</span><span class="p">,</span> <span class="n">coef</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_transfinite_surface</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">arrangement</span><span class="o">=</span><span class="s2">&quot;Left&quot;</span><span class="p">,</span> <span class="n">corners</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_transfinite_volume</span><span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">corners</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span></code></pre></div>
+<ul>
+<li>On a curve, <code>n_nodes</code> counts endpoints. <code>mesh_type</code> is <code>"Progression"</code> for
+  a geometric ratio (use <code>coef &gt; 1</code> to cluster nodes at the start,
+  <code>coef &lt; 1</code> to cluster at the end) or <code>"Bump"</code> to cluster at both ends.</li>
+<li>On a surface, all four bounding curves must already carry compatible
+  transfinite constraints. <code>arrangement</code> picks the triangle split pattern
+  (<code>"Left"</code>, <code>"Right"</code>, <code>"AlternateLeft"</code>, <code>"AlternateRight"</code>). For a
+  quad-only surface, also call <code>set_recombine(tag)</code> afterwards.</li>
+<li>On a volume, pass the eight corner point tags explicitly when the
+  auto-detection fails.</li>
+</ul>
+<p>For whole assemblies where you want Gmsh to <em>find</em> transfinite regions
+itself, use:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_transfinite_automatic</span><span class="p">(</span><span class="n">dim_tags</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">corner_angle</span><span class="o">=</span><span class="mf">2.35</span><span class="p">,</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>                                 <span class="n">recombine</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mesh</span>
+</span></code></pre></div>
+<p><code>corner_angle</code> (in radians; default ≈ 135°) controls how sharp a vertex has
+to be to count as a "corner". <code>recombine=True</code> automatically recombines the
+detected surfaces so you get quads rather than triangles. Passing
+<code>dim_tags=None</code> applies it to every entity in the model.</p>
+<p>Structured meshing composes cleanly with the global algorithm: set
+<code>Algorithm2D.AUTOMATIC</code> for the unstructured regions, then mark the
+structured patches with transfinite constraints. Gmsh will use the
+transfinite code path where applicable and the general algorithm everywhere
+else.</p>
+<h2 id="6a-driving-mesh-commands-by-physical-group">6a. Driving mesh commands by physical group<a class="headerlink" href="#6a-driving-mesh-commands-by-physical-group" title="Permanent link">&para;</a></h2>
+<p>Physical groups are named bags of OCC entity tags — they carry no meshing
+semantics on their own, because every Gmsh mesh-control call
+(<code>setAlgorithm</code>, <code>setRecombine</code>, <code>setTransfiniteCurve</code>, <code>setSize</code>, field
+<code>CurvesList</code> / <code>SurfacesList</code>, …) takes raw entity tags. apeGmsh bridges the
+gap with a single resolver on <code>g.physical</code> plus a small family of
+<code>*_by_physical</code> wrappers on <code>g.mesh</code> that fan per-entity commands out over
+every member of a named group. The goal is to let you write code in terms
+of domain labels ("Concrete", "BeamColumnJoint", "StructuredFlanges")
+without ever calling <code>gmsh.model.getEntitiesForPhysicalGroup</code> by hand.</p>
+<h3 id="the-resolver">The resolver<a class="headerlink" href="#the-resolver" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">entities</span><span class="p">(</span><span class="n">name_or_tag</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">Tag</span><span class="p">]</span>     <span class="c1"># PhysicalGroups.py</span>
+</span></code></pre></div>
+<ul>
+<li>Pass a <strong>name</strong> (<code>"Concrete"</code>) and optionally a <code>dim</code>. With no <code>dim</code>,
+  apeGmsh searches every dimension from 0 to 3 and returns the tags of the
+  first match, so a name that is unambiguous across dimensions just works.</li>
+<li>Pass a raw PG tag and <code>dim</code> is required.</li>
+<li>Missing groups raise <code>KeyError</code>; passing a raw tag without <code>dim</code> raises
+  <code>TypeError</code>. Both messages name the offending group so failures are
+  immediately actionable.</li>
+</ul>
+<p>The resolver composes cleanly with every mesh entry point that already
+accepts a list of tags:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c1"># Drive a per-surface algorithm from a PG</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">entities</span><span class="p">(</span><span class="s2">&quot;Concrete&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="s2">&quot;frontal_delaunay_quads&quot;</span><span class="p">)</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_recombine</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="c1"># Feed a distance field directly from a PG</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="n">joint</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">entities</span><span class="p">(</span><span class="s2">&quot;BeamColumnJoint&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="n">d</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">distance</span><span class="p">(</span><span class="n">surfaces</span><span class="o">=</span><span class="n">joint</span><span class="p">)</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="n">t</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">threshold</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">size_min</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span> <span class="n">dist_min</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>                              <span class="n">size_max</span><span class="o">=</span><span class="mf">0.30</span><span class="p">,</span> <span class="n">dist_max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">set_background</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>
+</span><span id="__span-16-13"><a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="c1"># Embed rebar curves pulled from a PG into a concrete volume</span>
+</span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="n">rebar_curves</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">entities</span><span class="p">(</span><span class="s2">&quot;Rebars&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">editing</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">rebar_curves</span><span class="p">,</span> <span class="n">in_tag</span><span class="o">=</span><span class="n">concrete_vol</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">in_dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Because <code>g.parts.add_physical_groups()</code> (<code>_parts_registry.py</code>) already
+creates one PG per registered instance, the resolver also doubles as a
+"by part label" lookup for the common case — <code>g.physical.entities("col")</code>
+and <code>g.parts.instances["col"].entities[dim]</code> give the same tags. Where the
+PG route is strictly more expressive is when you want to group <em>across</em>
+instances (e.g. collect every interface surface produced by
+<code>fragment_all()</code> under one label) or <em>a subset of one</em> instance (e.g. only
+the top faces of a slab).</p>
+<h3 id="the-_by_physical-convenience-wrappers">The <code>*_by_physical</code> convenience wrappers<a class="headerlink" href="#the-_by_physical-convenience-wrappers" title="Permanent link">&para;</a></h3>
+<p>For the very common "fan a per-entity mesh command out over a named PG"
+pattern, <code>Mesh</code> exposes thin wrappers that do the resolution and the loop
+internally. They all take the PG name as the first argument and the
+dimension as a keyword, and they all return <code>self</code> so they chain:</p>
+<table>
+<thead>
+<tr>
+<th>Wrapper</th>
+<th>Fans out to</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>g.mesh.generation.set_algorithm_by_physical(name, algorithm, *, dim=2)</code></td>
+<td><code>set_algorithm</code></td>
+<td><code>dim=2</code> is per-surface; <code>dim=3</code> still writes the global <code>Mesh.Algorithm3D</code> option, name is used only in the log</td>
+</tr>
+<tr>
+<td><code>g.mesh.structured.set_recombine_by_physical(name, *, dim=2, angle=45.0)</code></td>
+<td><code>set_recombine</code></td>
+<td>Turn triangles into quads over every surface in the PG</td>
+</tr>
+<tr>
+<td><code>g.mesh.structured.set_smoothing_by_physical(name, val, *, dim=2)</code></td>
+<td><code>set_smoothing</code></td>
+<td>Laplacian passes per surface</td>
+</tr>
+<tr>
+<td><code>g.mesh.sizing.set_size_by_physical(name, size, *, dim=0)</code></td>
+<td><code>set_size</code></td>
+<td>Only effective on points; use a field for surface/volume sizing</td>
+</tr>
+<tr>
+<td><code>g.mesh.structured.set_transfinite_by_physical(name, *, dim, **kwargs)</code></td>
+<td><code>set_transfinite_curve / _surface / _volume</code></td>
+<td>Picks the right variant from <code>dim</code>; forwards <code>**kwargs</code> untouched</td>
+</tr>
+</tbody>
+</table>
+<p>A compact recipe mixing several of them:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># PG layout (pre-mesh, declared on geometry)</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">(</span><span class="n">flange_surfs</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Flanges&quot;</span><span class="p">)</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">(</span><span class="n">web_surfs</span><span class="p">,</span>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Web&quot;</span><span class="p">)</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_curve</span>  <span class="p">(</span><span class="n">edge_curves</span><span class="p">,</span>  <span class="n">name</span><span class="o">=</span><span class="s2">&quot;WebEdges&quot;</span><span class="p">)</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">(</span><span class="n">joint_surfs</span><span class="p">,</span>  <span class="n">name</span><span class="o">=</span><span class="s2">&quot;BeamColumnJoint&quot;</span><span class="p">)</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="c1"># Structured quad patches on the flanges</span>
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm_by_physical</span><span class="p">(</span><span class="s2">&quot;Flanges&quot;</span><span class="p">,</span> <span class="s2">&quot;frontal_delaunay_quads&quot;</span><span class="p">)</span>
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_recombine_by_physical</span><span class="p">(</span><span class="s2">&quot;Flanges&quot;</span><span class="p">)</span>
+</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>
+</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="c1"># A transfinite web, 40 nodes along every edge, clustered 1:1.1</span>
+</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_transfinite_by_physical</span><span class="p">(</span>
+</span><span id="__span-17-13"><a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>    <span class="s2">&quot;WebEdges&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">n_nodes</span><span class="o">=</span><span class="mi">40</span><span class="p">,</span> <span class="n">mesh_type</span><span class="o">=</span><span class="s2">&quot;Progression&quot;</span><span class="p">,</span> <span class="n">coef</span><span class="o">=</span><span class="mf">1.1</span><span class="p">,</span>
+</span><span id="__span-17-14"><a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="p">)</span>
+</span><span id="__span-17-15"><a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a><span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">entities</span><span class="p">(</span><span class="s2">&quot;Web&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+</span><span id="__span-17-16"><a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_transfinite_surface</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+</span><span id="__span-17-17"><a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">structured</span><span class="o">.</span><span class="n">set_recombine</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+</span><span id="__span-17-18"><a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a>
+</span><span id="__span-17-19"><a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a><span class="c1"># Refinement zone around the joint</span>
+</span><span id="__span-17-20"><a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a><span class="n">d</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">distance</span><span class="p">(</span>
+</span><span id="__span-17-21"><a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a>    <span class="n">surfaces</span><span class="o">=</span><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">entities</span><span class="p">(</span><span class="s2">&quot;BeamColumnJoint&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-17-22"><a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a><span class="p">)</span>
+</span><span id="__span-17-23"><a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a><span class="n">t</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">threshold</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">size_min</span><span class="o">=</span><span class="mf">0.02</span><span class="p">,</span> <span class="n">dist_min</span><span class="o">=</span><span class="mf">0.05</span><span class="p">,</span>
+</span><span id="__span-17-24"><a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>                              <span class="n">size_max</span><span class="o">=</span><span class="mf">0.30</span><span class="p">,</span> <span class="n">dist_max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-17-25"><a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">field</span><span class="o">.</span><span class="n">set_background</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+</span><span id="__span-17-26"><a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a>
+</span><span id="__span-17-27"><a id="__codelineno-17-27" name="__codelineno-17-27" href="#__codelineno-17-27"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="two-caveats">Two caveats<a class="headerlink" href="#two-caveats" title="Permanent link">&para;</a></h3>
+<p>The 3D-algorithm global limitation from Section 4 still holds:
+<code>set_algorithm_by_physical("SoilBlock", "delaunay", dim=3)</code> is accepted,
+but it ends up writing <code>Mesh.Algorithm3D</code> once (not once per volume), and
+the PG name is only preserved in the log. It's still useful as a
+self-documenting way to say "I picked Delaunay because of the soil
+volume", but it does not give you per-volume 3D selection.</p>
+<p>Second, everything above is strictly <em>pre-mesh</em>. <code>MeshSelectionSet</code> —
+covered in the next section — is its post-mesh sibling and cannot drive
+sizes, algorithms or transfinite constraints, because the mesh has to
+exist before a selection set can be defined. If you want "these elements
+one size, those elements another size", build the zones as physical
+groups (or raw entity tags), feed them to <code>field.distance</code>/<code>field.box</code>/
+<code>field.threshold</code>, and let the mesher produce the right element sizes
+directly. Use <code>MeshSelectionSet</code> later, when you need to address specific
+node or element subsets of the <em>finished</em> mesh for boundary conditions,
+post-processing, or constraints.</p>
+<h2 id="7-physical-groups-and-mesh-selection-sets">7. Physical groups and mesh selection sets<a class="headerlink" href="#7-physical-groups-and-mesh-selection-sets" title="Permanent link">&para;</a></h2>
+<p>Once the mesh exists you need named handles to address subsets of it —
+boundary faces, node sets for constraints, element sets for material
+assignment, and so on. apeGmsh has two composites for this, and they are
+deliberately complementary.</p>
+<p><strong><code>g.physical</code> (PhysicalGroups, <code>mesh/PhysicalGroups.py</code>)</strong> is the
+geometry-driven route. It wraps <code>gmsh.model.addPhysicalGroup</code> and requires
+<code>(dim, entity_tags)</code> — it tags <em>geometry entities</em>, and the mesher copies the
+tag onto the elements the geometry owns. Physical groups survive writing and
+re-reading a <code>.msh</code> file.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tags</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tag</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">tags</span><span class="p">,</span>   <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_curve</span><span class="p">(</span><span class="n">tags</span><span class="p">,</span>   <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">(</span><span class="n">tags</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_volume</span><span class="p">(</span><span class="n">tags</span><span class="p">,</span>  <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">get_all</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)]</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span>
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">DataFrame</span>
+</span></code></pre></div>
+<p><code>g.parts.add_physical_groups(dim=None)</code> (<code>_parts_registry.py</code>) is the
+one-liner that creates one physical group per registered instance, so you get
+named handles for every part without touching raw tags.</p>
+<p><strong><code>g.mesh_selection</code> (MeshSelectionSet, <code>mesh/MeshSelectionSet.py</code>)</strong> is the
+mesh-driven route. It identifies subsets directly on the mesh — by spatial
+predicate, element type, or explicit IDs — and is the right tool for things
+that do not correspond to a single OCC entity (a bounding box full of nodes, a
+plane slicing through the middle of a volume, elements of a particular type).
+It uses the same <code>(dim, tag) + name</code> identity contract as <code>g.physical</code>, so
+downstream code can iterate over both in the same way.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tags</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_nodes</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="n">on_plane</span><span class="o">=...</span><span class="p">,</span> <span class="n">in_box</span><span class="o">=...</span><span class="p">,</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>                                <span class="n">in_sphere</span><span class="o">=...</span><span class="p">,</span> <span class="n">nearest_to</span><span class="o">=...</span><span class="p">,</span> <span class="n">predicate</span><span class="o">=...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_elements</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">in_box</span><span class="o">=...</span><span class="p">,</span> <span class="n">on_plane</span><span class="o">=...</span><span class="p">,</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>                                       <span class="n">by_type</span><span class="o">=...</span><span class="p">,</span> <span class="n">predicate</span><span class="o">=...</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_physical</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">pg_tag</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span>
+</span></code></pre></div>
+<p>The dimension convention on a mesh selection set matches the <em>element</em>
+dimension: <code>dim=0</code> is a node set, <code>dim=1/2/3</code> are line/surface/volume element
+sets. <code>from_physical</code> is the interop bridge — it materialises a physical group
+as a mesh selection set so you can then combine it with spatial queries.</p>
+<p>Both composites are snapshotted into <code>FEMData</code> when you call
+<code>get_fem_data()</code>. The broker treats <code>fem.physical</code> and <code>fem.mesh_selection</code>
+identically; downstream solvers should not care which one produced a given
+set.</p>
+<h2 id="8-the-bridge-between-mesh-and-constraints">8. The bridge between mesh and constraints<a class="headerlink" href="#8-the-bridge-between-mesh-and-constraints" title="Permanent link">&para;</a></h2>
+<p>Constraints are declared <strong>before</strong> the mesh exists and resolved <strong>after</strong>.
+This two-stage pipeline is what lets you describe intent ("tie the top of the
+gusset to the face of the beam") in terms of part labels and geometry, while
+the actual node tags, DOFs, weights and offsets are computed from the mesh
+once it has been generated.</p>
+<h3 id="stage-1-definition-on-geometry">Stage 1 — definition, on geometry<a class="headerlink" href="#stage-1-definition-on-geometry" title="Permanent link">&para;</a></h3>
+<p>All definition methods live on <code>g.constraints</code> and return a lightweight
+<code>ConstraintDef</code> dataclass that is appended to <code>constraint_defs</code>. They touch no
+mesh data:</p>
+<ul>
+<li>Node-to-node: <code>equal_dof</code>, <code>rigid_link</code>, <code>penalty</code></li>
+<li>Node-to-group: <code>rigid_diaphragm</code>, <code>rigid_body</code>, <code>kinematic_coupling</code></li>
+<li>Node-to-surface: <code>tie</code></li>
+</ul>
+<p>All of them take <em>labels</em> (instance names) as arguments, never raw tags. This
+is why fragmentation has to happen first: the labels must already point at the
+conformal, fragmented entities.</p>
+<h3 id="stage-2-resolution-on-the-mesh">Stage 2 — resolution, on the mesh<a class="headerlink" href="#stage-2-resolution-on-the-mesh" title="Permanent link">&para;</a></h3>
+<p>After <code>g.mesh.generation.generate()</code> you extract an FEM view of the mesh and feed it to
+the resolver:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="n">node_map</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">build_node_map</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">node_ids</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">node_coords</span><span class="p">)</span>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="n">face_map</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">build_face_map</span><span class="p">(</span><span class="n">node_map</span><span class="p">)</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">records</span>  <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">fem</span><span class="o">.</span><span class="n">node_ids</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">node_coords</span><span class="p">,</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>    <span class="n">node_map</span><span class="o">=</span><span class="n">node_map</span><span class="p">,</span>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>    <span class="n">face_map</span><span class="o">=</span><span class="n">face_map</span><span class="p">,</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="p">)</span>
+</span></code></pre></div>
+<ul>
+<li><code>build_node_map</code> returns a <code>dict[label, set[int]]</code> that assigns every mesh
+  node to the instance(s) whose bounding box contains it. This is the
+  geometry-to-mesh label lookup the resolver relies on.</li>
+<li><code>build_face_map</code> returns a <code>dict[label, ndarray]</code> of surface-element
+  connectivity per instance, for surface-based constraints (<code>tie</code>, future
+  contact types).</li>
+<li><code>resolve</code> walks the <code>constraint_defs</code> list and converts each one into one or
+  more <code>ConstraintRecord</code>s with concrete node tags and DOFs. The records are
+  solver-agnostic; the OpenSees bridge and any future solver bridge consume
+  the same shape.</li>
+</ul>
+<p>The resolver currently does <strong>not</strong> implement embedded-constraint resolution
+— <code>ConstraintsComposite.py</code> raises <code>NotImplementedError</code> for that path.
+Everything else in the definition catalogue is wired end to end.</p>
+<p>This is also where the no-proxy rule matters: there is no "ConstraintEntity"
+or "MeshedEntity" sitting between <code>Instance.entities</code> and the node/face maps.
+The registry is the single source of truth; the resolver reads from it
+directly.</p>
+<h2 id="9-a-minimal-end-to-end-example">9. A minimal end-to-end example<a class="headerlink" href="#9-a-minimal-end-to-end-example" title="Permanent link">&para;</a></h2>
+<p>The assembly workflow collapses to the following sequence, with each step
+mapping to one section of this guide:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;demo&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>    <span class="c1"># 1. Instances — either import parts or build inline</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>    <span class="n">col</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">import_step</span><span class="p">(</span><span class="s2">&quot;column.step&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;col&quot;</span><span class="p">)</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>    <span class="n">bm</span>  <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">import_step</span><span class="p">(</span><span class="s2">&quot;beam.step&quot;</span><span class="p">,</span>   <span class="n">label</span><span class="o">=</span><span class="s2">&quot;bm&quot;</span><span class="p">,</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>                              <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">))</span>
+</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>
+</span><span id="__span-21-9"><a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>    <span class="c1"># 2. Conformal topology — fragment so the interface becomes shared</span>
+</span><span id="__span-21-10"><a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">fragment_all</span><span class="p">()</span>
+</span><span id="__span-21-11"><a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a>
+</span><span id="__span-21-12"><a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a>    <span class="c1"># 3. Physical groups per part (explicit in v1.0)</span>
+</span><span id="__span-21-13"><a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_volume</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">instances</span><span class="p">[</span><span class="s2">&quot;col&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">entities</span><span class="p">[</span><span class="mi">3</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;col&quot;</span><span class="p">)</span>
+</span><span id="__span-21-14"><a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_volume</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">instances</span><span class="p">[</span><span class="s2">&quot;bm&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">entities</span><span class="p">[</span><span class="mi">3</span><span class="p">],</span>  <span class="n">name</span><span class="o">=</span><span class="s2">&quot;bm&quot;</span><span class="p">)</span>
+</span><span id="__span-21-15"><a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a>
+</span><span id="__span-21-16"><a id="__codelineno-21-16" name="__codelineno-21-16" href="#__codelineno-21-16"></a>    <span class="c1"># 4. Size + algorithm + field control</span>
+</span><span id="__span-21-17"><a id="__codelineno-21-17" name="__codelineno-21-17" href="#__codelineno-21-17"></a>    <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span>
+</span><span id="__span-21-18"><a id="__codelineno-21-18" name="__codelineno-21-18" href="#__codelineno-21-18"></a>        <span class="o">.</span><span class="n">set_size_sources</span><span class="p">(</span><span class="n">from_points</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-21-19"><a id="__codelineno-21-19" name="__codelineno-21-19" href="#__codelineno-21-19"></a>        <span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">0.15</span><span class="p">))</span>
+</span><span id="__span-21-20"><a id="__codelineno-21-20" name="__codelineno-21-20" href="#__codelineno-21-20"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_algorithm</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;hxt&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-21-21"><a id="__codelineno-21-21" name="__codelineno-21-21" href="#__codelineno-21-21"></a>
+</span><span id="__span-21-22"><a id="__codelineno-21-22" name="__codelineno-21-22" href="#__codelineno-21-22"></a>    <span class="c1"># 5. Generate the mesh at the target dimension</span>
+</span><span id="__span-21-23"><a id="__codelineno-21-23" name="__codelineno-21-23" href="#__codelineno-21-23"></a>    <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span>
+</span><span id="__span-21-24"><a id="__codelineno-21-24" name="__codelineno-21-24" href="#__codelineno-21-24"></a>        <span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-21-25"><a id="__codelineno-21-25" name="__codelineno-21-25" href="#__codelineno-21-25"></a>        <span class="o">.</span><span class="n">set_order</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+</span><span id="__span-21-26"><a id="__codelineno-21-26" name="__codelineno-21-26" href="#__codelineno-21-26"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_mesh</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-21-27"><a id="__codelineno-21-27" name="__codelineno-21-27" href="#__codelineno-21-27"></a>
+</span><span id="__span-21-28"><a id="__codelineno-21-28" name="__codelineno-21-28" href="#__codelineno-21-28"></a>    <span class="c1"># 6. Declare constraints against part labels (pre-resolution)</span>
+</span><span id="__span-21-29"><a id="__codelineno-21-29" name="__codelineno-21-29" href="#__codelineno-21-29"></a>    <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="n">master_label</span><span class="o">=</span><span class="s2">&quot;col&quot;</span><span class="p">,</span> <span class="n">slave_label</span><span class="o">=</span><span class="s2">&quot;bm&quot;</span><span class="p">)</span>
+</span><span id="__span-21-30"><a id="__codelineno-21-30" name="__codelineno-21-30" href="#__codelineno-21-30"></a>
+</span><span id="__span-21-31"><a id="__codelineno-21-31" name="__codelineno-21-31" href="#__codelineno-21-31"></a>    <span class="c1"># 7. Extract FEM data (resolves constraints automatically)</span>
+</span><span id="__span-21-32"><a id="__codelineno-21-32" name="__codelineno-21-32" href="#__codelineno-21-32"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-21-33"><a id="__codelineno-21-33" name="__codelineno-21-33" href="#__codelineno-21-33"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Every method shown above is a direct reference to the symbols listed earlier
+in the guide. When in doubt, the definitions in
+<code>src/apeGmsh/mesh/_mesh_*.py</code>, <code>src/apeGmsh/core/_parts_registry.py</code>,
+<code>src/apeGmsh/core/_model_boolean.py</code> and
+<code>src/apeGmsh/core/ConstraintsComposite.py</code> are the authoritative source.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>guide_parts_vs_session.md</code> — when to use parts vs a direct session</li>
+<li><code>guide_parts_assembly.md</code> — full five-phase assembly workflow</li>
+<li><code>plan_fuse_group.md</code> — motivation and API for <code>fuse_group</code></li>
+<li><code>plan_mesh_selection_set.md</code> — architecture of <code>MeshSelectionSet</code></li>
+<li><code>plan_v2_unified_architecture.md</code> / <code>plan_v2_final.md</code> — the unified runtime
+  that these composites live in</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

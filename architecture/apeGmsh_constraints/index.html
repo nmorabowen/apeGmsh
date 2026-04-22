@@ -1,0 +1,3651 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_constraints/">
+      
+      
+        <link rel="prev" href="../apeGmsh_partInstanceAssemble/">
+      
+      
+        <link rel="next" href="../apeGmsh_loads/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>apeGmsh Constraints - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#apegmsh-constraints" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              apeGmsh Constraints
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_meshing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-why-constraints-are-harder-than-loads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Why constraints are harder than loads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-taxonomy-four-levels-a-sidepath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Taxonomy — four levels + a sidepath
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Taxonomy — four levels + a sidepath">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#level-1-node-to-node-1-master-1-slave" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 1 — Node-to-Node (1 master, 1 slave)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-2-node-to-group-1-master-n-slaves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 2 — Node-to-Group (1 master, N slaves)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-2b-mixed-dof-1-6-dof-master-n-3-dof-slaves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 2b — Mixed-DOF (1 6-DOF master → N 3-DOF slaves)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-3-node-to-surface-1-node-1-face" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 3 — Node-to-Surface (1 node ↔ 1 face)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-4-surface-to-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 4 — Surface-to-Surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-target-model-part-labels-not-pgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Target model — part labels, not PGs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Target model — part labels, not PGs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-the-one-exception-node_to_surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 The one exception: node_to_surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-constraintscomposite-the-factory-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. ConstraintsComposite — the factory layer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. ConstraintsComposite — the factory layer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-two-dispatch-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Two dispatch tables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-five-dispatch-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Five dispatch helpers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-resolve-the-freeze" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. resolve() — the freeze
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-constraintresolver-pure-math" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. ConstraintResolver — pure math
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-constraintrecord-hierarchy-post-mesh-resolved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. ConstraintRecord hierarchy (post-mesh, resolved)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-nodetosurfacedef-why-phantom-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. NodeToSurfaceDef — why phantom nodes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. NodeToSurfaceDef — why phantom nodes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#81-the-_spring-variant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.1 The _spring variant
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-end-to-end-skeleton" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. End-to-end skeleton
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-contributor-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Contributor rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-where-it-plugs-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Where it plugs in
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_groundTruth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_light_theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-why-constraints-are-harder-than-loads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Why constraints are harder than loads
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-taxonomy-four-levels-a-sidepath" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Taxonomy — four levels + a sidepath
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Taxonomy — four levels + a sidepath">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#level-1-node-to-node-1-master-1-slave" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 1 — Node-to-Node (1 master, 1 slave)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-2-node-to-group-1-master-n-slaves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 2 — Node-to-Group (1 master, N slaves)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-2b-mixed-dof-1-6-dof-master-n-3-dof-slaves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 2b — Mixed-DOF (1 6-DOF master → N 3-DOF slaves)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-3-node-to-surface-1-node-1-face" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 3 — Node-to-Surface (1 node ↔ 1 face)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#level-4-surface-to-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Level 4 — Surface-to-Surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-target-model-part-labels-not-pgs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Target model — part labels, not PGs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Target model — part labels, not PGs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-the-one-exception-node_to_surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 The one exception: node_to_surface
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-constraintscomposite-the-factory-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. ConstraintsComposite — the factory layer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. ConstraintsComposite — the factory layer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-two-dispatch-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Two dispatch tables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-five-dispatch-helpers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Five dispatch helpers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-resolve-the-freeze" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. resolve() — the freeze
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-constraintresolver-pure-math" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. ConstraintResolver — pure math
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-constraintrecord-hierarchy-post-mesh-resolved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. ConstraintRecord hierarchy (post-mesh, resolved)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-nodetosurfacedef-why-phantom-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. NodeToSurfaceDef — why phantom nodes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. NodeToSurfaceDef — why phantom nodes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#81-the-_spring-variant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8.1 The _spring variant
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-end-to-end-skeleton" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. End-to-end skeleton
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-contributor-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Contributor rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-where-it-plugs-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Where it plugs in
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="apegmsh-constraints">apeGmsh Constraints<a class="headerlink" href="#apegmsh-constraints" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>[!note] Companion document
+This file documents the <strong>constraints subsystem</strong> — how
+multi-point kinematic relations between parts ("tie this column to
+that slab", "this node drives that surface") are captured pre-mesh
+and resolved into concrete node-pair / node-group / interpolation
+records on the frozen broker. It assumes you have read
+[[apeGmsh_principles]] (tenets <strong>(ix)</strong> "three class flavours",
+<strong>(xi)</strong> "pre-mesh mutable, broker frozen", <strong>(xii)</strong> "pure
+resolvers, impure composites"), [[apeGmsh_partInstanceAssemble]] for
+the part-label vocabulary (every constraint references two part
+labels), and [[apeGmsh_broker]] for where the records end up
+(<code>fem.nodes.constraints</code>). Related: [[apeGmsh_loads]] — the loads
+subsystem shares the two-stage layout but targets a single side;
+constraints always relate <em>two</em> sides.</p>
+</blockquote>
+<p>Every constraint ultimately expresses a linear MPC equation</p>
+<p>$$\mathbf{u}<em _text_master="\text{master">{\text{slave}} = \mathbf{C}\,\mathbf{u}</em>$$}</p>
+<p>for some transformation matrix $\mathbf{C}$. The subsystem's job is to
+build $\mathbf{C}$ from geometric intent. Like the loads subsystem,
+this is a strict define-then-resolve pipeline, but the constraint
+model carries <em>more</em> invariants than loads: both sides must be named
+part-label instances, surface-type constraints need a <code>face_map</code>
+dependency injected at <code>resolve()</code> time, and the taxonomy partitions
+defs into four levels (plus a mixed-DOF sidepath for solid-shell
+coupling).</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>src/apeGmsh/core/ConstraintsComposite.py      ← factory + target resolution
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>src/apeGmsh/solvers/Constraints.py            ← public re-export shim
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>src/apeGmsh/solvers/_constraint_defs.py       ← Stage-1 Def dataclasses
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>src/apeGmsh/solvers/_constraint_records.py    ← Stage-2 Record dataclasses
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>src/apeGmsh/solvers/_constraint_geom.py       ← shape functions, spatial index,
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                                                 Newton projection
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>src/apeGmsh/solvers/_constraint_resolver.py   ← ConstraintResolver (pure math)
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>src/apeGmsh/solvers/_kinds.py                 ← ConstraintKind enum
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>src/apeGmsh/solvers/_opensees_constraints.py  ← solver emission (not discussed here)
+</span></code></pre></div>
+<p>The session exposes the composite as <code>g.constraints</code>. As with loads,
+that's the full public surface.</p>
+<hr />
+<h2 id="1-why-constraints-are-harder-than-loads">1. Why constraints are harder than loads<a class="headerlink" href="#1-why-constraints-are-harder-than-loads" title="Permanent link">&para;</a></h2>
+<p>Loads map <code>(geometry) → (nodal / element records)</code> in a single pass.
+Constraints map <code>(geometry_A, geometry_B) → (MPC equation between the
+two meshes)</code>. Three things make this non-trivial:</p>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Loads</th>
+<th>Constraints</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Target arity</td>
+<td>one side</td>
+<td>two sides (master + slave)</td>
+</tr>
+<tr>
+<td>Dependency on node_map</td>
+<td>optional fast path</td>
+<td><strong>required</strong> — identifies instance ownership</td>
+</tr>
+<tr>
+<td>Dependency on face_map</td>
+<td>never</td>
+<td><strong>required for surface-type constraints</strong></td>
+</tr>
+<tr>
+<td>Geometric operation</td>
+<td>quadrature</td>
+<td>proximity search + shape-function projection</td>
+</tr>
+<tr>
+<td>Pure-numpy resolver?</td>
+<td>yes</td>
+<td>yes (but spatial index is more complex)</td>
+</tr>
+<tr>
+<td>Produces</td>
+<td>per-node forces</td>
+<td>MPC matrix rows</td>
+</tr>
+</tbody>
+</table>
+<p>This is why constraints get their own doc: the story isn't just
+"stored defs, later records", it's also "how the two sides find each
+other, what the face map does, and why node_to_surface needs phantom
+nodes".</p>
+<hr />
+<h2 id="2-taxonomy-four-levels-a-sidepath">2. Taxonomy — four levels + a sidepath<a class="headerlink" href="#2-taxonomy-four-levels-a-sidepath" title="Permanent link">&para;</a></h2>
+<p>The doctrinal grouping comes from the header of
+<code>solvers/Constraints.py</code> and is worth memorising. Each row maps
+cleanly to a Def subclass, a composite factory, a resolver method,
+and ultimately a record type.</p>
+<h3 id="level-1-node-to-node-1-master-1-slave">Level 1 — Node-to-Node (1 master, 1 slave)<a class="headerlink" href="#level-1-node-to-node-1-master-1-slave" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Factory</th>
+<th>Def</th>
+<th>Geometry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>equal_dof</code></td>
+<td><code>EqualDOFDef</code></td>
+<td>co-located node pairs within <code>tolerance</code></td>
+</tr>
+<tr>
+<td><code>rigid_link</code></td>
+<td><code>RigidLinkDef</code></td>
+<td>master point + slave entities; <code>link_type</code></td>
+</tr>
+<tr>
+<td><code>penalty</code></td>
+<td><code>PenaltyDef</code></td>
+<td>co-located pairs + spring <code>stiffness</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="level-2-node-to-group-1-master-n-slaves">Level 2 — Node-to-Group (1 master, N slaves)<a class="headerlink" href="#level-2-node-to-group-1-master-n-slaves" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Factory</th>
+<th>Def</th>
+<th>Geometry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rigid_diaphragm</code></td>
+<td><code>RigidDiaphragmDef</code></td>
+<td>master point + slaves on a plane</td>
+</tr>
+<tr>
+<td><code>rigid_body</code></td>
+<td><code>RigidBodyDef</code></td>
+<td>master point + all slaves</td>
+</tr>
+<tr>
+<td><code>kinematic_coupling</code></td>
+<td><code>KinematicCouplingDef</code></td>
+<td>master point + slaves, explicit <code>dofs</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="level-2b-mixed-dof-1-6-dof-master-n-3-dof-slaves">Level 2b — Mixed-DOF (1 6-DOF master → N 3-DOF slaves)<a class="headerlink" href="#level-2b-mixed-dof-1-6-dof-master-n-3-dof-slaves" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Factory</th>
+<th>Def</th>
+<th>Geometry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>node_to_surface</code></td>
+<td><code>NodeToSurfaceDef</code></td>
+<td>phantom-node rigid-link path</td>
+</tr>
+<tr>
+<td><code>node_to_surface_spring</code></td>
+<td><code>NodeToSurfaceSpringDef</code></td>
+<td>phantom-node stiff-beam path</td>
+</tr>
+</tbody>
+</table>
+<h3 id="level-3-node-to-surface-1-node-1-face">Level 3 — Node-to-Surface (1 node ↔ 1 face)<a class="headerlink" href="#level-3-node-to-surface-1-node-1-face" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Factory</th>
+<th>Def</th>
+<th>Geometry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tie</code></td>
+<td><code>TieDef</code></td>
+<td>slave node projected onto master face</td>
+</tr>
+<tr>
+<td><code>distributing_coupling</code></td>
+<td><code>DistributingCouplingDef</code></td>
+<td>master point distributes to slave surf.</td>
+</tr>
+<tr>
+<td><code>embedded</code></td>
+<td><code>EmbeddedDef</code></td>
+<td>embedded nodes follow host field</td>
+</tr>
+</tbody>
+</table>
+<h3 id="level-4-surface-to-surface">Level 4 — Surface-to-Surface<a class="headerlink" href="#level-4-surface-to-surface" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Factory</th>
+<th>Def</th>
+<th>Geometry</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tied_contact</code></td>
+<td><code>TiedContactDef</code></td>
+<td>per-slave-node interpolation (N tie records)</td>
+</tr>
+<tr>
+<td><code>mortar</code></td>
+<td><code>MortarDef</code></td>
+<td>Lagrange-multiplier operator <strong>B</strong> on Γ</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-target-model-part-labels-not-pgs">3. Target model — part labels, not PGs<a class="headerlink" href="#3-target-model-part-labels-not-pgs" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>[!important] Constraints use part labels, not the multi-tier chain that
+loads use.
+[[apeGmsh_loads]] resolves targets through five sources (raw DimTag,
+mesh selection, label PG, user PG, part label). <strong>Constraints do
+not.</strong> A constraint's master and slave are always <strong>part-label
+instance keys</strong> from <code>g.parts._instances</code>. This is enforced at
+factory time:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># ConstraintsComposite._add_def (core/ConstraintsComposite.py:129)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="k">for</span> <span class="n">lbl</span> <span class="ow">in</span> <span class="p">(</span><span class="n">defn</span><span class="o">.</span><span class="n">master_label</span><span class="p">,</span> <span class="n">defn</span><span class="o">.</span><span class="n">slave_label</span><span class="p">):</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="k">if</span> <span class="n">lbl</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">parts</span><span class="o">.</span><span class="n">_instances</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</span></code></pre></div>
+</blockquote>
+<p>Why the asymmetry? A load applies to <em>one</em> region; a constraint ties
+<em>two</em> things that each need a stable identity across mesh
+refinements. Part labels are the coarsest identity apeGmsh offers —
+one per placement. Loads can afford finer granularity (an arbitrary
+named PG on some face); constraints cannot, because the resolver
+needs to ask <code>g.parts.build_node_map(...)</code> which nodes belong to each
+side.</p>
+<p>Optional <code>master_entities</code> / <code>slave_entities</code> (list of <code>(dim, tag)</code>)
+narrow the search to a subset of the part's entities — the typical
+use is <em>"this part has many surfaces; only this one is the
+interface"</em>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">master_label</span><span class="o">=</span><span class="s2">&quot;column&quot;</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">slave_label</span><span class="o">=</span><span class="s2">&quot;slab&quot;</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">master_entities</span><span class="o">=</span><span class="p">[(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">13</span><span class="p">)],</span>     <span class="c1"># one interface face</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">slave_entities</span><span class="o">=</span><span class="p">[(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">17</span><span class="p">)],</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<h3 id="31-the-one-exception-node_to_surface">3.1 The one exception: <code>node_to_surface</code><a class="headerlink" href="#31-the-one-exception-node_to_surface" title="Permanent link">&para;</a></h3>
+<p><code>NodeToSurfaceDef</code> (and its spring variant) <strong>bypass label
+validation</strong> because its "master" is a bare geometry <em>point</em> entity
+tag and its "slave" is a raw surface entity tag. The composite's
+<code>node_to_surface(master, slave, ...)</code> factory resolves these via
+<code>_helpers.resolve_to_tags(...)</code> up-front and stores:</p>
+<ul>
+<li><code>master_label</code>: stringified point entity tag (dim=0)</li>
+<li><code>slave_label</code>: comma-separated list of surface entity tags (dim=2)</li>
+</ul>
+<p>At resolve time, <code>_resolve_node_to_surface</code> queries Gmsh for the mesh
+node on the point entity (there must be exactly one) and the union of
+mesh nodes on all surface entities. Shared-edge nodes are naturally
+deduplicated by the set union.</p>
+<hr />
+<h2 id="4-constraintscomposite-the-factory-layer">4. ConstraintsComposite — the factory layer<a class="headerlink" href="#4-constraintscomposite-the-factory-layer" title="Permanent link">&para;</a></h2>
+<p><code>ConstraintsComposite</code> holds three pieces of state:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="bp">self</span><span class="o">.</span><span class="n">_parent</span> <span class="p">:</span> <span class="n">_ApeGmshSession</span>         <span class="c1"># to reach g.parts at validate-time</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="bp">self</span><span class="o">.</span><span class="n">constraint_defs</span>   <span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ConstraintDef</span><span class="p">]</span>     <span class="c1"># append-only pre-mesh</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="bp">self</span><span class="o">.</span><span class="n">constraint_records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ConstraintRecord</span><span class="p">]</span>  <span class="c1"># written by resolve()</span>
+</span></code></pre></div>
+<p>Factory methods validate labels, build a Def, append. No Gmsh calls at
+factory time — the composite queries Gmsh only at <code>resolve()</code>.</p>
+<h3 id="41-two-dispatch-tables">4.1 Two dispatch tables<a class="headerlink" href="#41-two-dispatch-tables" title="Permanent link">&para;</a></h3>
+<p>The composite keeps <em>two</em> parallel tables keyed by Def type:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">_DISPATCH</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">type</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>         <span class="c1"># Def type  →  composite-level dispatch method</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">_RESOLVER_METHOD</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">type</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>  <span class="c1"># Def type  →  ConstraintResolver method name</span>
+</span></code></pre></div>
+<p>The split exists because several Def subclasses share the same
+composite-level lookup strategy but dispatch to different resolver
+methods. For example, <code>EqualDOFDef</code>, <code>RigidLinkDef</code>, and <code>PenaltyDef</code>
+all use <code>_resolve_node_pair</code> (same node-pair lookup logic) but end up
+calling three different <code>ConstraintResolver.resolve_*</code> methods.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>_DISPATCH groups by LOOKUP          _RESOLVER_METHOD groups by MATH
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>─────────────────────────────       ──────────────────────────────
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>EqualDOF    ─┐                     EqualDOF     → resolve_equal_dof
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>RigidLink   ─┼─→ _resolve_node_pair RigidLink   → resolve_rigid_link
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>Penalty     ─┘                     Penalty      → resolve_penalty
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>RigidDiaphragm  → _resolve_diaphragm  RigidDiaphragm → resolve_rigid_diaphragm
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>RigidBody       ─┐                    RigidBody      → resolve_kinematic_coupling
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>KinematicCoupl. ─┼─→ _resolve_kinematic  KinematicCoupling → resolve_kinematic_coupling
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>Distributing    ─┘                    Distributing  → resolve_distributing
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>Tie             → _resolve_face_slave   Tie         → resolve_tie
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>TiedContact    ─┐                     TiedContact  → resolve_tied_contact
+</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>Mortar         ─┼─→ _resolve_face_both Mortar       → resolve_mortar
+</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>
+</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>NodeToSurface       ─┐                 NodeToSurface       → resolve_node_to_surface
+</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>NodeToSurfaceSpring ─┴─→ _resolve_node_to_surface  NodeToSurfaceSpring → resolve_node_to_surface_spring
+</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>
+</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>Embedded → _resolve_embedded   (NotImplementedError — reserved for future)
+</span></code></pre></div>
+<h3 id="42-five-dispatch-helpers">4.2 Five dispatch helpers<a class="headerlink" href="#42-five-dispatch-helpers" title="Permanent link">&para;</a></h3>
+<p>The private <code>_resolve_*</code> methods on the composite group by <em>what kind
+of geometric primitive the resolver needs</em>:</p>
+<table>
+<thead>
+<tr>
+<th>Helper</th>
+<th>Needs</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_resolve_node_pair</code></td>
+<td>two node sets</td>
+<td>EqualDOF, RigidLink, Penalty</td>
+</tr>
+<tr>
+<td><code>_resolve_diaphragm</code></td>
+<td>node union</td>
+<td>RigidDiaphragm</td>
+</tr>
+<tr>
+<td><code>_resolve_kinematic</code></td>
+<td>two node sets</td>
+<td>RigidBody, KinematicCoupling, Distributing</td>
+</tr>
+<tr>
+<td><code>_resolve_face_slave</code></td>
+<td>master faces + slave nodes</td>
+<td>Tie</td>
+</tr>
+<tr>
+<td><code>_resolve_face_both</code></td>
+<td>both faces + both node sets</td>
+<td>TiedContact, Mortar</td>
+</tr>
+<tr>
+<td><code>_resolve_node_to_surface</code></td>
+<td>direct Gmsh queries</td>
+<td>NodeToSurface / Spring</td>
+</tr>
+<tr>
+<td><code>_resolve_embedded</code></td>
+<td>— (unimplemented)</td>
+<td>Embedded</td>
+</tr>
+</tbody>
+</table>
+<p>Each helper calls two low-level utilities:</p>
+<ul>
+<li><code>_resolve_nodes(label, role, defn, node_map, all_nodes) -&gt; set[int]</code>
+  — prefers <code>master_entities</code>/<code>slave_entities</code> if provided (queries
+  Gmsh directly), otherwise falls back to <code>node_map[label]</code>.</li>
+<li><code>_resolve_faces(label, role, defn, face_map) -&gt; ndarray</code>
+  — prefers <code>*_entities</code> via <code>parts._collect_surface_faces(...)</code>,
+  otherwise falls back to <code>face_map[label]</code>.</li>
+</ul>
+<hr />
+<h2 id="5-resolve-the-freeze">5. <code>resolve()</code> — the freeze<a class="headerlink" href="#5-resolve-the-freeze" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">recs</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">node_tags</span><span class="p">,</span> <span class="n">node_coords</span><span class="p">,</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">elem_tags</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">connectivity</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">node_map</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">face_map</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NodeConstraintSet</span>
+</span></code></pre></div>
+<p>Triggered by <code>Mesh.get_fem_data(...)</code> (same seam as loads). The
+caller is expected to provide:</p>
+<ul>
+<li><code>node_map: dict[part_label, set[int]]</code> — which mesh nodes belong to
+  each part instance, built by <code>g.parts.build_node_map(...)</code>.</li>
+<li><code>face_map: dict[part_label, ndarray(n_faces, n_nodes_per_face)]</code> —
+  connectivity rows for each part's surfaces, built by
+  <code>g.parts.build_face_map(node_map)</code>.</li>
+</ul>
+<p>Both are <strong>dependency-injected</strong> — <code>ConstraintsComposite</code> never
+imports <code>PartsRegistry</code>. The motivation is tenet <strong>(xii)</strong>: the
+resolver stays pure. If you call <code>resolve()</code> without a <code>face_map</code> and
+you have surface-type defs (<code>TieDef</code>, <code>TiedContactDef</code>, <code>MortarDef</code>),
+the composite <em>warns</em> and those constraints silently resolve to
+empty records:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">if</span> <span class="n">has_face_constraints</span> <span class="ow">and</span> <span class="n">face_map</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s2">&quot;Surface constraints defined but face_map=None.&quot;</span><span class="p">,</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>                  <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span></code></pre></div>
+<p>The end-user rarely sees this because <code>Mesh.get_fem_data</code> builds both
+maps before calling resolve.</p>
+<hr />
+<h2 id="6-constraintresolver-pure-math">6. ConstraintResolver — pure math<a class="headerlink" href="#6-constraintresolver-pure-math" title="Permanent link">&para;</a></h2>
+<p><code>ConstraintResolver</code> holds only raw arrays plus two precomputed
+lookup dicts (<code>_node_to_idx</code>, <code>_elem_to_idx</code>). It never imports
+gmsh, never touches the session. Two heavyweight helpers live next
+to it in <code>_constraint_geom.py</code>:</p>
+<ul>
+<li><code>_SpatialIndex</code> — a KD-tree-lite used to find closest slave candidates for
+  a master point, and closest master-face candidates for a slave node.</li>
+<li><code>_project_point_to_face</code> — Newton iteration that finds
+  <code>(ξ, η)</code> on the master face whose physical coordinate is closest
+  to the slave node, then evaluates <code>SHAPE_FUNCTIONS[face_type]</code> to
+  get interpolation weights.</li>
+</ul>
+<p>Resolver methods (one per row of the taxonomy):</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Returns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resolve_equal_dof</code></td>
+<td><code>list[NodePairRecord]</code></td>
+</tr>
+<tr>
+<td><code>resolve_rigid_link</code></td>
+<td><code>list[NodePairRecord]</code> (with <code>offset</code>)</td>
+</tr>
+<tr>
+<td><code>resolve_penalty</code></td>
+<td><code>list[NodePairRecord]</code> (with <code>penalty_stiffness</code>)</td>
+</tr>
+<tr>
+<td><code>resolve_rigid_diaphragm</code></td>
+<td><code>NodeGroupRecord</code> (with <code>plane_normal</code>)</td>
+</tr>
+<tr>
+<td><code>resolve_kinematic_coupling</code></td>
+<td><code>NodeGroupRecord</code></td>
+</tr>
+<tr>
+<td><code>resolve_distributing</code></td>
+<td><code>NodeGroupRecord</code></td>
+</tr>
+<tr>
+<td><code>resolve_tie</code></td>
+<td><code>list[InterpolationRecord]</code></td>
+</tr>
+<tr>
+<td><code>resolve_tied_contact</code></td>
+<td><code>SurfaceCouplingRecord</code></td>
+</tr>
+<tr>
+<td><code>resolve_mortar</code></td>
+<td><code>SurfaceCouplingRecord</code> (dense operator)</td>
+</tr>
+<tr>
+<td><code>resolve_node_to_surface</code></td>
+<td><code>NodeToSurfaceRecord</code></td>
+</tr>
+<tr>
+<td><code>resolve_node_to_surface_spring</code></td>
+<td><code>NodeToSurfaceRecord</code> (variant flag)</td>
+</tr>
+</tbody>
+</table>
+<p>No resolver method ever opens Gmsh. They receive fully resolved node
+sets / face matrices and produce records.</p>
+<hr />
+<h2 id="7-constraintrecord-hierarchy-post-mesh-resolved">7. ConstraintRecord hierarchy (post-mesh, resolved)<a class="headerlink" href="#7-constraintrecord-hierarchy-post-mesh-resolved" title="Permanent link">&para;</a></h2>
+<p>Five record types, each with an <code>expand_to_pairs()</code> or
+<code>constraint_matrix()</code> method that flattens the record down to the
+atomic MPC equation the solver ultimately needs:</p>
+<table>
+<thead>
+<tr>
+<th>Record type</th>
+<th>Master → slave shape</th>
+<th>Flattening method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NodePairRecord</code></td>
+<td>1 ↔ 1</td>
+<td><code>constraint_matrix(ndof)</code></td>
+</tr>
+<tr>
+<td><code>NodeGroupRecord</code></td>
+<td>1 ↔ N</td>
+<td><code>expand_to_pairs()</code> → <code>list[NodePairRecord]</code></td>
+</tr>
+<tr>
+<td><code>InterpolationRecord</code></td>
+<td>N ↔ 1 (shape-fn weighted)</td>
+<td><code>constraint_matrix(ndof)</code></td>
+</tr>
+<tr>
+<td><code>SurfaceCouplingRecord</code></td>
+<td>N ↔ M (composite of tie records or mortar op)</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>NodeToSurfaceRecord</code></td>
+<td>1 ↔ N via phantom nodes</td>
+<td><code>expand()</code> → rigid_links + equalDOFs</td>
+</tr>
+</tbody>
+</table>
+<p><code>NodePairRecord.constraint_matrix()</code> encodes the family of kinematics:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>EQUAL_DOF / PENALTY:  C = selection matrix  (rows of identity)
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>RIGID_BEAM:                           RIGID_ROD:
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>  ┌ u_s ┐   ┌ I   -[r×] ┐ ┌ u_m ┐       u_s = u_m + θ_m × r
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>  │     │ = │            │ │     │       (θ_s free — only translations coupled)
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>  │ θ_s │   │ 0      I   │ │ θ_m │
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>  └     ┘   └            ┘ └     ┘
+</span></code></pre></div>
+<p>where <code>[r×]</code> is the skew-symmetric matrix of the rigid arm
+<code>r = x_slave - x_master</code>. This is the single equation that powers
+all of Level 1 and (via <code>NodeGroupRecord.expand_to_pairs()</code>) Level 2.</p>
+<p><code>InterpolationRecord</code> carries <code>master_nodes: list[int]</code>,
+<code>weights: ndarray</code> (shape-function values on the projected parametric
+coords), <code>projected_point</code>, and <code>parametric_coords</code>. The <code>weights</code>
+sum to 1.0 (partition of unity) and the constraint equation is</p>
+<p>$$u_{\text{slave}} = \sum_i w_i \, u_{\text{master}_i}.$$</p>
+<hr />
+<h2 id="8-nodetosurfacedef-why-phantom-nodes">8. <code>NodeToSurfaceDef</code> — why phantom nodes<a class="headerlink" href="#8-nodetosurfacedef-why-phantom-nodes" title="Permanent link">&para;</a></h2>
+<p>The Level-2b sidepath deserves its own section because it's the
+single constraint type that <em>creates mesh nodes at resolve time</em>.</p>
+<p>Problem: a 6-DOF reference node (e.g., a fork support or moment
+applicator) needs to couple to a solid surface whose nodes are
+3-DOF. Direct <code>rigid_link</code> from 6-DOF master to 3-DOF slaves produces
+an ill-conditioned reduced stiffness because the master rotation DOFs
+have no on-diagonal stiffness contribution.</p>
+<p>Solution: phantom nodes. The resolver:</p>
+<ol>
+<li>For each real slave node, creates a <strong>phantom</strong> node at the same
+   coordinates with 6 DOFs. Phantom tags start at
+   <code>max_existing_tag + 1</code>.</li>
+<li>Emits <code>rigid_beam</code> constraints from master → each phantom (this
+   gives master rotations full 6×6 kinematic coupling).</li>
+<li>Emits <code>equal_dof</code> on DOFs <code>[1,2,3]</code> from each phantom → original
+   slave (translations coupled; rotations independent).</li>
+</ol>
+<p>The <code>NodeToSurfaceRecord</code> bundles all three lists
+(<code>phantom_nodes</code>, <code>rigid_link_records</code>, <code>equal_dof_records</code>) so the
+solver can emit them in one block. <code>expand()</code> flattens to
+<code>list[NodePairRecord]</code> in the correct order (rigid links first,
+equalDOFs second).</p>
+<h3 id="81-the-_spring-variant">8.1 The <code>_spring</code> variant<a class="headerlink" href="#81-the-_spring-variant" title="Permanent link">&para;</a></h3>
+<p><code>node_to_surface_spring</code> swaps step 2 for a stiff <code>elasticBeamColumn</code>
+element instead of a kinematic <code>rigidLink</code>. Use this when:</p>
+<ul>
+<li>The master carries <strong>free rotational DOFs</strong> that receive direct
+  moment loading (e.g., a fork support on a solid end face), and</li>
+<li>The kinematic rotation coupling would leave the master rotation
+  DOFs without direct stiffness, producing ill-conditioning.</li>
+</ul>
+<p>Topology, factory signature, and slave deduplication are identical
+to the constraint-based variant. The only difference is the solver
+emission path — the bridge detects <code>NodeToSurfaceSpringDef</code> and
+generates <code>ops.element('elasticBeamColumn', ...)</code> with a big <code>(A, E,
+I, J)</code> for each master → phantom link, then <code>ops.equalDOF(master,
+phantom, *dofs)</code> for the phantom → slave links.</p>
+<hr />
+<h2 id="9-end-to-end-skeleton">9. End-to-end skeleton<a class="headerlink" href="#9-end-to-end-skeleton" title="Permanent link">&para;</a></h2>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ape</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">with</span> <span class="n">ape</span><span class="o">.</span><span class="n">apeGmsh</span><span class="p">(</span><span class="s2">&quot;connection.geo&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">part</span><span class="p">(</span><span class="s2">&quot;beam&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>        <span class="n">p</span><span class="o">.</span><span class="n">box</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">)</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">part</span><span class="p">(</span><span class="s2">&quot;column&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>        <span class="n">p</span><span class="o">.</span><span class="n">box</span><span class="p">(</span><span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">register_instances</span><span class="p">({</span><span class="s2">&quot;beam&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">1.3</span><span class="p">),</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>                                <span class="s2">&quot;column&quot;</span><span class="p">:</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)})</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="c1"># ── Level 1 ───────────────────────────────────────────────</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>        <span class="n">master_label</span><span class="o">=</span><span class="s2">&quot;beam&quot;</span><span class="p">,</span> <span class="n">slave_label</span><span class="o">=</span><span class="s2">&quot;column&quot;</span><span class="p">,</span>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>        <span class="n">tolerance</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>    <span class="c1"># ── Level 2 ───────────────────────────────────────────────</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>    <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">rigid_diaphragm</span><span class="p">(</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>        <span class="n">master_label</span><span class="o">=</span><span class="s2">&quot;slab&quot;</span><span class="p">,</span> <span class="n">slave_label</span><span class="o">=</span><span class="s2">&quot;slab&quot;</span><span class="p">,</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>        <span class="n">master_point</span><span class="o">=</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>        <span class="n">plane_normal</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>        <span class="n">constrained_dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">])</span>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>
+</span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>    <span class="c1"># ── Level 2b ──────────────────────────────────────────────</span>
+</span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a>    <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">node_to_surface</span><span class="p">(</span>
+</span><span id="__span-9-27"><a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a>        <span class="n">master</span><span class="o">=</span><span class="s2">&quot;fork_support_point&quot;</span><span class="p">,</span>    <span class="c1"># str name of a geometry point</span>
+</span><span id="__span-9-28"><a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a>        <span class="n">slave</span><span class="o">=</span><span class="s2">&quot;column_top_face&quot;</span><span class="p">,</span>        <span class="c1"># str name of a surface</span>
+</span><span id="__span-9-29"><a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a>        <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+</span><span id="__span-9-30"><a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>
+</span><span id="__span-9-31"><a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a>    <span class="c1"># ── Level 3 ───────────────────────────────────────────────</span>
+</span><span id="__span-9-32"><a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a>    <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span>
+</span><span id="__span-9-33"><a id="__codelineno-9-33" name="__codelineno-9-33" href="#__codelineno-9-33"></a>        <span class="n">master_label</span><span class="o">=</span><span class="s2">&quot;beam&quot;</span><span class="p">,</span> <span class="n">slave_label</span><span class="o">=</span><span class="s2">&quot;column&quot;</span><span class="p">,</span>
+</span><span id="__span-9-34"><a id="__codelineno-9-34" name="__codelineno-9-34" href="#__codelineno-9-34"></a>        <span class="n">master_entities</span><span class="o">=</span><span class="p">[(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">5</span><span class="p">)],</span>   <span class="c1"># only this face is the interface</span>
+</span><span id="__span-9-35"><a id="__codelineno-9-35" name="__codelineno-9-35" href="#__codelineno-9-35"></a>        <span class="n">slave_entities</span><span class="o">=</span><span class="p">[(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">7</span><span class="p">)],</span>
+</span><span id="__span-9-36"><a id="__codelineno-9-36" name="__codelineno-9-36" href="#__codelineno-9-36"></a>        <span class="n">tolerance</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-9-37"><a id="__codelineno-9-37" name="__codelineno-9-37" href="#__codelineno-9-37"></a>
+</span><span id="__span-9-38"><a id="__codelineno-9-38" name="__codelineno-9-38" href="#__codelineno-9-38"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">size</span><span class="o">=</span><span class="mf">0.1</span><span class="p">)</span>
+</span><span id="__span-9-39"><a id="__codelineno-9-39" name="__codelineno-9-39" href="#__codelineno-9-39"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>   <span class="c1"># node_map + face_map built here</span>
+</span><span id="__span-9-40"><a id="__codelineno-9-40" name="__codelineno-9-40" href="#__codelineno-9-40"></a>
+</span><span id="__span-9-41"><a id="__codelineno-9-41" name="__codelineno-9-41" href="#__codelineno-9-41"></a><span class="c1"># Solver emission</span>
+</span><span id="__span-9-42"><a id="__codelineno-9-42" name="__codelineno-9-42" href="#__codelineno-9-42"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="p">:</span>          <span class="c1"># atomic iteration (default)</span>
+</span><span id="__span-9-43"><a id="__codelineno-9-43" name="__codelineno-9-43" href="#__codelineno-9-43"></a>    <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="s2">&quot;equal_dof&quot;</span><span class="p">:</span>
+</span><span id="__span-9-44"><a id="__codelineno-9-44" name="__codelineno-9-44" href="#__codelineno-9-44"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">equalDOF</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">rec</span><span class="o">.</span><span class="n">slave_node</span><span class="p">,</span> <span class="o">*</span><span class="n">rec</span><span class="o">.</span><span class="n">dofs</span><span class="p">)</span>
+</span><span id="__span-9-45"><a id="__codelineno-9-45" name="__codelineno-9-45" href="#__codelineno-9-45"></a>    <span class="k">elif</span> <span class="n">rec</span><span class="o">.</span><span class="n">kind</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;rigid_beam&quot;</span><span class="p">,</span> <span class="s2">&quot;rigid_rod&quot;</span><span class="p">):</span>
+</span><span id="__span-9-46"><a id="__codelineno-9-46" name="__codelineno-9-46" href="#__codelineno-9-46"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">rigidLink</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">kind</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;rigid_&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">),</span>
+</span><span id="__span-9-47"><a id="__codelineno-9-47" name="__codelineno-9-47" href="#__codelineno-9-47"></a>                      <span class="n">rec</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">rec</span><span class="o">.</span><span class="n">slave_node</span><span class="p">)</span>
+</span><span id="__span-9-48"><a id="__codelineno-9-48" name="__codelineno-9-48" href="#__codelineno-9-48"></a>
+</span><span id="__span-9-49"><a id="__codelineno-9-49" name="__codelineno-9-49" href="#__codelineno-9-49"></a><span class="c1"># Or compound iteration for NodeToSurface</span>
+</span><span id="__span-9-50"><a id="__codelineno-9-50" name="__codelineno-9-50" href="#__codelineno-9-50"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">node_to_surfaces</span><span class="p">():</span>
+</span><span id="__span-9-51"><a id="__codelineno-9-51" name="__codelineno-9-51" href="#__codelineno-9-51"></a>    <span class="k">for</span> <span class="n">ph_tag</span><span class="p">,</span> <span class="n">ph_coords</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">phantom_nodes</span><span class="p">,</span> <span class="n">rec</span><span class="o">.</span><span class="n">phantom_coords</span><span class="p">):</span>
+</span><span id="__span-9-52"><a id="__codelineno-9-52" name="__codelineno-9-52" href="#__codelineno-9-52"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">ph_tag</span><span class="p">,</span> <span class="o">*</span><span class="nb">map</span><span class="p">(</span><span class="nb">float</span><span class="p">,</span> <span class="n">ph_coords</span><span class="p">))</span>
+</span><span id="__span-9-53"><a id="__codelineno-9-53" name="__codelineno-9-53" href="#__codelineno-9-53"></a>    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">rec</span><span class="o">.</span><span class="n">rigid_link_records</span><span class="p">:</span>
+</span><span id="__span-9-54"><a id="__codelineno-9-54" name="__codelineno-9-54" href="#__codelineno-9-54"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">rigidLink</span><span class="p">(</span><span class="s2">&quot;beam&quot;</span><span class="p">,</span> <span class="n">p</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">p</span><span class="o">.</span><span class="n">slave_node</span><span class="p">)</span>
+</span><span id="__span-9-55"><a id="__codelineno-9-55" name="__codelineno-9-55" href="#__codelineno-9-55"></a>    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">rec</span><span class="o">.</span><span class="n">equal_dof_records</span><span class="p">:</span>
+</span><span id="__span-9-56"><a id="__codelineno-9-56" name="__codelineno-9-56" href="#__codelineno-9-56"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">equalDOF</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">p</span><span class="o">.</span><span class="n">slave_node</span><span class="p">,</span> <span class="o">*</span><span class="n">p</span><span class="o">.</span><span class="n">dofs</span><span class="p">)</span>
+</span></code></pre></div>
+<p>See [[apeGmsh_broker#atomic-vs-compound]] for the iteration
+convention — atomic vs compound iterators on a record set let the
+solver pick between "flatten everything to node pairs" and
+"preserve compound structure" (needed for <code>NodeToSurfaceRecord</code>
+because you have to emit the phantom nodes before the rigid links).</p>
+<hr />
+<h2 id="10-contributor-rules">10. Contributor rules<a class="headerlink" href="#10-contributor-rules" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Every new constraint is a Def + a <code>_DISPATCH</code> entry + a
+   <code>_RESOLVER_METHOD</code> entry + a resolver method + (optionally) a
+   record subclass.</strong> The five tables are the source of truth;
+   there is no "magic" that auto-infers any of them.</li>
+<li><strong>Use part labels for master/slave.</strong> The only exceptions are
+   <code>NodeToSurfaceDef</code> and <code>NodeToSurfaceSpringDef</code>, which operate on
+   raw geometry tags. If your new constraint takes bare node tags,
+   add it to the <code>isinstance(defn, NodeToSurfaceDef)</code> guard in
+   <code>_add_def</code> (or refactor the guard into a method).</li>
+<li><strong>The resolver stays pure.</strong> No gmsh imports in
+   <code>_constraint_resolver.py</code> or <code>_constraint_geom.py</code>. If you need a
+   mesh query at resolve time, add it to the composite's
+   <code>_resolve_*</code> helper and pass the resolved array down.</li>
+<li><strong>Surface-type defs go into <code>_FACE_TYPES</code>.</strong> The warning about
+   <code>face_map=None</code> keys off this tuple; missing your def from it
+   means silent failure when the caller forgets the face map.</li>
+<li><strong>Records never carry <code>(dim, tag)</code>.</strong> All resolved records
+   reference mesh node tags and element tags, never geometry
+   entities. Record flattening (<code>expand_to_pairs</code>,
+   <code>constraint_matrix</code>) must also be OCC-free.</li>
+<li><strong>Phantom tags start at <code>max_existing_tag + 1</code>.</strong> If you add
+   another def type that creates nodes at resolve time, use the
+   same offset strategy — never hardcode a tag range. Collisions
+   with solver-side elements are a footgun.</li>
+<li><strong><code>tolerance</code> is model-space, not parametric.</strong> Every Def takes a
+   <code>tolerance</code> in model units (metres, millimetres — whatever the
+   user's Gmsh units are). Don't default to <code>1e-6</code> for surface
+   searches: use the mesh characteristic length. The defaults in
+   <code>_constraint_defs.py</code> reflect this (<code>tie</code> defaults to <code>1.0</code>,
+   <code>equal_dof</code> defaults to <code>1e-6</code>).</li>
+</ol>
+<hr />
+<h2 id="11-where-it-plugs-in">11. Where it plugs in<a class="headerlink" href="#11-where-it-plugs-in" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Stored on the session</strong> as <code>g.constraints</code> (a
+  <code>ConstraintsComposite</code> instance, built in
+  <code>apeGmsh._core.apeGmsh.__init__</code>; see [[apeGmsh_architecture]] §3
+  on composites).</li>
+<li><strong>Called by</strong> <code>Mesh.get_fem_data(...)</code> after meshing — the
+  composite is passed the post-mesh <code>node_tags</code>, <code>node_coords</code>,
+  <code>elem_tags</code>, <code>connectivity</code>, <strong>plus</strong> the <code>node_map</code> and
+  <code>face_map</code> built from <code>g.parts</code>.</li>
+<li><strong>Stored as</strong> <code>fem.nodes.constraints: NodeConstraintSet</code> on the
+  broker — see [[apeGmsh_broker#fem.nodes|<code>fem.nodes</code>]] for the
+  record-set conventions (atomic vs compound iterators).</li>
+<li><strong>Emitted by</strong> <code>solvers/_opensees_constraints.py</code>, which
+  dispatches on <code>record.kind</code> to produce <code>ops.equalDOF</code>,
+  <code>ops.rigidLink</code>, <code>ops.rigidDiaphragm</code>, <code>ops.sp</code>, and (for
+  <code>NodeToSurfaceRecord</code> / spring variant) the phantom-node +
+  beam-element combo.</li>
+</ul>
+<p>The constraint pipeline, summarised as an FSM:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>factory (pre-mesh)
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>  ↓  label validation against g.parts._instances
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>store in constraint_defs
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>  ↓  wait for mesh
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>resolve (post-mesh, with node_map + face_map)
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>  ↓  spatial search + shape-function projection
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>NodeConstraintSet on fem.nodes.constraints
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>  ↓  atomic vs compound iteration
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>solver emission (OpenSees / Abaqus / …)
+</span></code></pre></div>
+<p>If you add a seventh arrow — say, post-resolve validation that
+queries Gmsh — you've broken tenet <strong>(v)</strong> "broker is the boundary";
+downstream of <code>from_gmsh(...)</code> no object references the OCC kernel.</p>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,3514 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/plan_aesthetic/">
+      
+      
+        <link rel="prev" href="../plan_v2_unified_architecture/">
+      
+      
+        <link rel="next" href="../plan_fuse_group/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Plan — Aesthetic System Implementation - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#plan-aesthetic-system-implementation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Plan — Aesthetic System Implementation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_meshing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_groundTruth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-goal-and-success-criterion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Goal and success criterion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Scope
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#v1-this-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1 — this plan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#v2-deferred-separate-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2 — deferred (separate plan)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touched-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Touched files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#untouched" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Untouched
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-step-by-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Step-by-step
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Step-by-step">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-theme_viewportpy-with-three-instances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — theme_viewport.py with three instances
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-apply_theme-coupling-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — apply_theme coupling layer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-model-viewer-outline-flat-matte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — Model viewer: outline + flat matte
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-mesh-viewer-body-relative-edges-soft-shading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4 — Mesh viewer: body-relative edges + soft shading
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-radial-vignette-background" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5 — Radial vignette background
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-6-axis-scene-builders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6 — Axis scene builders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-7-node-glyph-aesthetic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 7 — Node glyph aesthetic
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-8-results-viewer-colormap-enforcement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 8 — Results viewer colormap enforcement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-9-ui-theme-selector-preference-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 9 — UI: theme selector + preference persistence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-10-acceptance-gallery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 10 — Acceptance gallery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-testing-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Testing strategy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-risks-and-open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Risks and open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-milestones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Milestones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_light_theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-goal-and-success-criterion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Goal and success criterion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Scope
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#v1-this-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1 — this plan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#v2-deferred-separate-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2 — deferred (separate plan)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Non-goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touched-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Touched files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#untouched" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Untouched
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-step-by-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Step-by-step
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Step-by-step">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-theme_viewportpy-with-three-instances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — theme_viewport.py with three instances
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-apply_theme-coupling-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — apply_theme coupling layer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-model-viewer-outline-flat-matte" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — Model viewer: outline + flat matte
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-4-mesh-viewer-body-relative-edges-soft-shading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 4 — Mesh viewer: body-relative edges + soft shading
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-5-radial-vignette-background" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 5 — Radial vignette background
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-6-axis-scene-builders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 6 — Axis scene builders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-7-node-glyph-aesthetic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 7 — Node glyph aesthetic
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-8-results-viewer-colormap-enforcement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 8 — Results viewer colormap enforcement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-9-ui-theme-selector-preference-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 9 — UI: theme selector + preference persistence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-10-acceptance-gallery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 10 — Acceptance gallery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-testing-strategy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Testing strategy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-risks-and-open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Risks and open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-milestones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Milestones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. References
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="plan-aesthetic-system-implementation">Plan: Aesthetic System Implementation<a class="headerlink" href="#plan-aesthetic-system-implementation" title="Permanent link">&para;</a></h1>
+<p>Implements the design spec in
+[[apeGmsh_aesthetic]] (<code>architecture/apeGmsh_aesthetic.md</code>).
+Touches only the <code>viewers/</code> package; <code>viz/</code> and the external
+<code>apeGmshViewer</code> are out of scope.</p>
+<blockquote>
+<p>[!note] Scope discipline
+Per <code>CLAUDE.md</code> §§2–3: minimum code that solves the problem,
+surgical changes, no speculative abstraction. The aesthetic
+doc is complete; this plan executes it, nothing more. v2
+features (tube rendering, section-extruded beams, shell
+thickness, deformed-shape with undeformed ghost) are
+deferred to a separate plan.</p>
+</blockquote>
+<hr />
+<h2 id="1-goal-and-success-criterion">1. Goal and success criterion<a class="headerlink" href="#1-goal-and-success-criterion" title="Permanent link">&para;</a></h2>
+<p>Ship a theme system with three selectable themes (Neutral
+Studio, Catppuccin Mocha, Paper) where each theme fully
+specifies the viewport palette and rendering behavior of the
+three viewers (Model / Mesh / Results). Wire theme selection
+into the UI so chrome and viewport switch together.</p>
+<p><strong>Success criterion.</strong> Opening the
+<code>examples/example_frame3D_slab_opensees_manual_results.ipynb</code>
+and <code>examples/cantilever_solid_frame_gmsh.py</code> models in each
+of the three themes produces the per-theme-per-viewer
+rendering specified in aesthetic doc §§2–4. Acceptance is
+manual visual review against the aesthetic doc, with
+committed reference screenshots under
+<code>tests/viewers/reference/</code>.</p>
+<hr />
+<h2 id="2-scope">2. Scope<a class="headerlink" href="#2-scope" title="Permanent link">&para;</a></h2>
+<h3 id="v1-this-plan">v1 — this plan<a class="headerlink" href="#v1-this-plan" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Viewport theme dataclass + three instances</li>
+<li>Theme-switching infrastructure (chrome + viewport coupled)</li>
+<li>Model viewer: flat matte shading + black BRep outlines</li>
+<li>Mesh viewer: soft shading + body-relative mesh-line color +
+  radial vignette background + contact AO</li>
+<li>Results viewer: enforce theme's colormap defaults; reject
+  jet/rainbow with a warning</li>
+<li>Axis scene: corner triad, origin triad, reference grid,
+  bounding box — all four toggleable</li>
+<li>Node glyph aesthetic: theme-driven accent color, depth-test
+  toggle, "nodes on top" mode</li>
+<li>UI: <code>View → Theme</code> menu with three radio actions;
+  preference persistence via QSettings</li>
+</ul>
+<h3 id="v2-deferred-separate-plan">v2 — deferred (separate plan)<a class="headerlink" href="#v2-deferred-separate-plan" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Line element tube rendering (currently 1D mesh renders as
+  raw lines)</li>
+<li>Section-extruded line mode (requires beam-section + geomTransf
+  integration)</li>
+<li>Shell thickness-extrusion toggle (§3.3)</li>
+<li>Local-axis RGB mode on tubes and shells</li>
+<li>Node filter categories beyond display (constrained / loaded
+  wire-up to broker queries)</li>
+<li>Results deformed-shape with undeformed outline ghost</li>
+<li>Cappuccino (warm-cream) theme as a fourth entry</li>
+</ul>
+<h3 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Modifying the existing Catppuccin Mocha stylesheet in
+  <code>viewers/ui/theme.py</code>. The chrome is preserved byte-for-byte;
+  we add a parallel viewport theme module and a selector
+  that swaps both.</li>
+<li>Touching <code>viz/</code> (matplotlib notebook surface) or the
+  external <code>apeGmshViewer</code> subprocess.</li>
+<li>A runtime theme-loading / plugin mechanism. Themes are
+  hard-coded constants in one file. If users later request
+  custom themes, that's a v3 conversation.</li>
+<li>Changing interaction plumbing (<code>viewers/core/pick_engine</code>,
+  <code>selection</code>, <code>visibility</code>, <code>navigation</code>). Theme is
+  orthogonal to picking; leave the plumbing alone.</li>
+</ul>
+<hr />
+<h2 id="3-architecture">3. Architecture<a class="headerlink" href="#3-architecture" title="Permanent link">&para;</a></h2>
+<h3 id="new-files">New files<a class="headerlink" href="#new-files" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>src/apeGmsh/viewers/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── theme_viewport.py         ViewportTheme dataclass,
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│                             three instances,
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│                             get_theme() / set_theme()
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>└── scene/
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    ├── axis_scene.py         corner / origin / grid / bbox
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    └── background.py         radial vignette + linear gradient
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                              helpers (keeps mesh_scene.py lean)
+</span></code></pre></div>
+<h3 id="touched-files">Touched files<a class="headerlink" href="#touched-files" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>src/apeGmsh/viewers/
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>├── ui/
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>│   ├── theme.py              + apply_theme() that swaps Qt
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>│   │                           stylesheet AND viewport theme
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>│   ├── viewer_window.py      + View → Theme menu + signal
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>│   └── preferences.py        + theme field (QSettings-backed)
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>├── scene/
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>│   ├── brep_scene.py         + outline pass + flat matte
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>│   ├── mesh_scene.py         + body-relative edge color +
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>│   │                           soft shading + vignette wire
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>│   └── glyph_points.py       + theme accent + depth toggle
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>├── core/
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>│   └── color_manager.py      + body_relative_edge_color()
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>├── model_viewer.py           wire theme into scene builders;
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>│                             subscribe to theme-change signal
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>├── mesh_viewer.py            same as model_viewer
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>└── results/Results.py        enforce theme colormap defaults
+</span></code></pre></div>
+<h3 id="untouched">Untouched<a class="headerlink" href="#untouched" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>viewers/core/pick_engine.py</code>, <code>selection.py</code>,
+  <code>visibility.py</code>, <code>navigation.py</code> — interaction plumbing is
+  theme-orthogonal.</li>
+<li><code>viewers/overlays/*</code> — overlays already take theme via
+  kwargs per [[apeGmsh_visualization]] §2.5; they pick up the
+  new theme palette without file-level edits.</li>
+<li><code>viewers/ui/mesh_tabs.py</code>, <code>model_tabs.py</code> — tabs render
+  data, not styled surfaces.</li>
+<li><code>viz/*</code> — notebook matplotlib; unrelated.</li>
+</ul>
+<hr />
+<h2 id="4-step-by-step">4. Step-by-step<a class="headerlink" href="#4-step-by-step" title="Permanent link">&para;</a></h2>
+<p>Each step has an explicit verification. The project's
+<code>CLAUDE.md</code> §4 is clear that "make it work" is too weak a
+criterion; every step below has a check that can fail.</p>
+<h3 id="step-1-theme_viewportpy-with-three-instances">Step 1 — <code>theme_viewport.py</code> with three instances<a class="headerlink" href="#step-1-theme_viewportpy-with-three-instances" title="Permanent link">&para;</a></h3>
+<p><strong>File</strong>: <code>src/apeGmsh/viewers/theme_viewport.py</code> (new)</p>
+<p>Frozen dataclass <code>ViewportTheme</code> with fields covering every
+entry in aesthetic doc §§4–5 and §3.5:</p>
+<ul>
+<li><code>name: Literal["neutral_studio", "catppuccin_mocha", "paper"]</code></li>
+<li><code>background_mode: Literal["radial", "linear", "flat_corner"]</code></li>
+<li><code>background_colors: tuple[str, str]</code> (inner→outer, or
+  top→bottom for linear)</li>
+<li><code>body_palette: tuple[str, ...]</code> (cycle used when a body has
+  no explicit color)</li>
+<li><code>outline_color: str</code>, <code>outline_silhouette_px: float</code>,
+  <code>outline_feature_px: float</code></li>
+<li><code>mesh_line_mode: Literal["body_relative", "fixed"]</code>,
+  <code>mesh_line_fixed_color: str | None</code>,
+  <code>mesh_line_opacity: float</code>,
+  <code>mesh_line_shift_pct: float</code> (30% for body_relative)</li>
+<li><code>node_accent: str</code></li>
+<li><code>grid_major: str</code>, <code>grid_minor: str</code></li>
+<li><code>bbox_color: str</code>, <code>bbox_line_px: float</code></li>
+<li><code>cmap_seq: str</code>, <code>cmap_div: str</code></li>
+<li><code>chrome_stylesheet_name: str</code> (maps to existing
+  <code>viewers/ui/theme.py</code> stylesheet key)</li>
+<li><code>corner_triad_on: dict[Literal["model","mesh","results"],
+  bool]</code></li>
+<li><code>origin_triad_on: dict[Literal["model","mesh","results"],
+  bool]</code></li>
+<li><code>ao_intensity: Literal["light", "moderate", "none"]</code></li>
+<li><code>shading_style: Literal["flat_matte", "soft", "matched"]</code>
+  — per viewer dict actually: use nested
+  <code>viewer_overrides: dict</code></li>
+</ul>
+<p>Three module-level instances: <code>NEUTRAL_STUDIO</code>,
+<code>CATPPUCCIN_MOCHA</code>, <code>PAPER</code>, with values from aesthetic
+doc §4.</p>
+<p>Module-level <code>_active: ViewportTheme = NEUTRAL_STUDIO</code> plus:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">get_theme</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ViewportTheme</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">set_theme</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ViewportTheme</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">list_themes</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
+</span></code></pre></div>
+<p><strong>No import of PyVista or Qt at module load.</strong> Import-time
+cost is a dataclass definition and three literals.</p>
+<p><strong>Verify</strong>:</p>
+<ol>
+<li><code>pytest tests/viewers/test_theme_viewport.py</code> — three
+   instances exist, each field populated, <code>set_theme("paper")</code>
+   → <code>get_theme().outline_silhouette_px == 2.0</code>.</li>
+<li><code>python -c "import apeGmsh.viewers.theme_viewport"</code> in a
+   headless env (no Qt, no VTK display) succeeds.</li>
+</ol>
+<h3 id="step-2-apply_theme-coupling-layer">Step 2 — <code>apply_theme</code> coupling layer<a class="headerlink" href="#step-2-apply_theme-coupling-layer" title="Permanent link">&para;</a></h3>
+<p><strong>File</strong>: <code>src/apeGmsh/viewers/ui/theme.py</code> (touched)</p>
+<p>Add <code>apply_theme(app_or_window, name: str) -&gt; ViewportTheme</code>.
+Responsibilities:</p>
+<ol>
+<li>Look up Qt stylesheet for <code>name</code>; call
+   <code>app.setStyleSheet(...)</code>. For Catppuccin Mocha this is the
+   existing stylesheet; Neutral Studio and Paper need new
+   stylesheets written alongside (short — reusing the
+   existing <code>styled_group</code> / theme-var machinery).</li>
+<li><code>theme_viewport.set_theme(name)</code>.</li>
+<li>Emit a Qt signal <code>theme_changed = pyqtSignal(str)</code> on a
+   module-level singleton so open viewers can subscribe and
+   re-render.</li>
+</ol>
+<p><strong>Verify</strong>:</p>
+<ul>
+<li>Unit: <code>apply_theme</code> mutates both chrome and viewport
+  state; reading <code>theme_viewport.get_theme().name</code> matches.</li>
+<li>Manual: open mesh viewer, call <code>apply_theme(window, "paper")</code>
+  programmatically, confirm stylesheet changes AND theme-change
+  signal fires.</li>
+</ul>
+<h3 id="step-3-model-viewer-outline-flat-matte">Step 3 — Model viewer: outline + flat matte<a class="headerlink" href="#step-3-model-viewer-outline-flat-matte" title="Permanent link">&para;</a></h3>
+<p><strong>Files</strong>: <code>viewers/scene/brep_scene.py</code>,
+<code>viewers/model_viewer.py</code> (both touched)</p>
+<p>In <code>build_brep_scene</code>:</p>
+<ul>
+<li>Accept optional <code>theme: ViewportTheme</code> argument;
+  <code>theme = theme or get_theme()</code>.</li>
+<li>For each <code>plotter.add_mesh(...)</code> call, add
+  <code>silhouette={"color": theme.outline_color,
+  "line_width": theme.outline_silhouette_px,
+  "feature_angle": 25}</code>. PyVista's silhouette filter
+  generates BRep-feature edges from the dihedral-angle
+  threshold — matches §2.1.</li>
+<li><code>smooth_shading=False</code>, <code>lighting=True</code>, diffuse=0.9,
+  specular=0.0 to get flat matte per §2.1.</li>
+</ul>
+<p>In <code>model_viewer.py</code>:</p>
+<ul>
+<li>On construction, subscribe to <code>theme_changed</code>. On signal,
+  rebuild the scene (easier than patching live props).</li>
+</ul>
+<p><strong>Verify</strong>:</p>
+<ul>
+<li>Manual: open
+  <code>examples/cantilever_solid_frame_gmsh.py</code> in model viewer
+  under Neutral Studio → bodies render flat matte with
+  continuous black outlines at silhouettes and feature
+  edges.</li>
+<li>Manual: <code>apply_theme(window, "paper")</code> → outlines thicken
+  to 2.0 px silhouette on <code>#FAFAFA</code>.</li>
+<li>Reference screenshot: commit to
+  <code>tests/viewers/reference/model_viewer_{theme}.png</code>.</li>
+</ul>
+<h3 id="step-4-mesh-viewer-body-relative-edges-soft-shading">Step 4 — Mesh viewer: body-relative edges + soft shading<a class="headerlink" href="#step-4-mesh-viewer-body-relative-edges-soft-shading" title="Permanent link">&para;</a></h3>
+<p><strong>Files</strong>: <code>viewers/scene/mesh_scene.py</code>,
+<code>viewers/core/color_manager.py</code>,
+<code>viewers/mesh_viewer.py</code> (all touched)</p>
+<p>Add to <code>color_manager.py</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">body_relative_edge_color</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">body_rgb</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">],</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">theme</span><span class="p">:</span> <span class="n">ViewportTheme</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return RGBA edge color shifted `shift_pct` toward the</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="sd">    opposite luminance extreme of `body_rgb`, at theme opacity.&quot;&quot;&quot;</span>
+</span></code></pre></div>
+<p>Luminance threshold 128/255: lighter bodies → edge shifted
+toward <code>#000</code>; darker bodies → edge shifted toward <code>#fff</code>.
+Shift percentage from <code>theme.mesh_line_shift_pct</code>.</p>
+<p>In <code>build_mesh_scene</code>:</p>
+<ul>
+<li>Compute per-body edge color; pass as
+  <code>edge_color=&lt;color&gt;</code> or a per-cell edge color array to
+  <code>add_mesh</code>.</li>
+<li><code>smooth_shading=True</code>, configure plotter lights for one
+  key + one fill + ambient per §2.2.</li>
+</ul>
+<p><strong>Verify</strong>:</p>
+<ul>
+<li>Unit: <code>body_relative_edge_color((230,230,230), PAPER)</code>
+  returns darker shade; <code>body_relative_edge_color(
+  (30,30,60), NEUTRAL_STUDIO)</code> returns lighter shade.</li>
+<li>Manual: open <code>examples/example_plate_viewer_v2.ipynb</code> in
+  mesh viewer → mesh lines legible but subordinate to fill,
+  color shifts per body.</li>
+</ul>
+<h3 id="step-5-radial-vignette-background">Step 5 — Radial vignette background<a class="headerlink" href="#step-5-radial-vignette-background" title="Permanent link">&para;</a></h3>
+<p><strong>File</strong>: <code>src/apeGmsh/viewers/scene/background.py</code> (new)</p>
+<p>Three functions:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">set_linear_background</span><span class="p">(</span><span class="n">plotter</span><span class="p">,</span> <span class="n">top_hex</span><span class="p">,</span> <span class="n">bottom_hex</span><span class="p">):</span> <span class="o">...</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">set_radial_vignette</span><span class="p">(</span><span class="n">plotter</span><span class="p">,</span> <span class="n">center_hex</span><span class="p">,</span> <span class="n">edge_hex</span><span class="p">):</span> <span class="o">...</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">set_flat_corner_falloff</span><span class="p">(</span><span class="n">plotter</span><span class="p">,</span> <span class="n">base_hex</span><span class="p">,</span> <span class="n">falloff_hex</span><span class="p">):</span> <span class="o">...</span>
+</span></code></pre></div>
+<p><code>set_linear_background</code> delegates to
+<code>plotter.set_background(top, bottom)</code> (native).</p>
+<p><code>set_radial_vignette</code> — PyVista does not expose radial
+gradients. Implementation: attach a screen-aligned
+background plane textured with a procedurally generated
+radial-gradient <code>numpy</code> array (256×256 suffices); use
+<code>plotter.add_background_image</code> or attach to the far plane
+with depth test off. Single actor, re-bound on window resize.</p>
+<p><code>set_flat_corner_falloff</code> (for Paper) — same technique with
+a very soft corner darkening in the ≤5% range.</p>
+<p>Dispatch from the viewers based on <code>theme.background_mode</code>.</p>
+<p><strong>Verify</strong>:</p>
+<ul>
+<li>Manual: Neutral Studio → radial vignette visible, brighter
+  center, darker corners. Paper → near-white with faint
+  corner darkening. Mocha → linear top-to-bottom gradient.</li>
+<li>Resize window → background resizes correctly.</li>
+</ul>
+<p><strong>Risk</strong>: PyVista add_background_image behavior differs
+across backends (Qt vs trame). Test both. If trame breaks,
+fallback to linear gradient in trame only.</p>
+<h3 id="step-6-axis-scene-builders">Step 6 — Axis scene builders<a class="headerlink" href="#step-6-axis-scene-builders" title="Permanent link">&para;</a></h3>
+<p><strong>File</strong>: <code>src/apeGmsh/viewers/scene/axis_scene.py</code> (new)</p>
+<p>Four pure functions matching [[apeGmsh_visualization]] §2.3
+convention (scene builders are <code>def</code>, no session reference,
+return actors/data):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_corner_triad</span><span class="p">(</span><span class="n">plotter</span><span class="p">,</span> <span class="n">theme</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">vtkActor</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_origin_triad</span><span class="p">(</span><span class="n">plotter</span><span class="p">,</span> <span class="n">model_diagonal</span><span class="p">,</span> <span class="n">theme</span><span class="p">,</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>                       <span class="n">depth_tested</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>                       <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">vtkActor</span><span class="p">]:</span> <span class="o">...</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_reference_grid</span><span class="p">(</span><span class="n">plotter</span><span class="p">,</span> <span class="n">xy_bbox</span><span class="p">,</span> <span class="n">z_level</span><span class="p">,</span> <span class="n">theme</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>                         <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">vtkActor</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="k">def</span><span class="w"> </span><span class="nf">build_bounding_box</span><span class="p">(</span><span class="n">plotter</span><span class="p">,</span> <span class="n">bbox</span><span class="p">,</span> <span class="n">theme</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>                       <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">vtkActor</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">vtkActor</span><span class="p">]]:</span> <span class="o">...</span>
+</span></code></pre></div>
+<p>Sizing per aesthetic doc §3.5 table. Grid adaptive spacing
+(nearest power of 10). Red X-ruler + green Y-ruler at major
+line weight.</p>
+<p>Each returns actors the viewer can show/hide via a
+<code>VisibilityManager</code>-style wrapper.</p>
+<p>Default state on viewer open:</p>
+<ul>
+<li><code>ModelViewer</code>: corner triad on (dark themes) / off (Paper);
+  origin triad on; grid off; bbox off.</li>
+<li><code>MeshViewer</code>: same.</li>
+<li><code>Results</code>: corner triad as per theme; origin triad off;
+  grid off; bbox off.</li>
+</ul>
+<p>Expose toggles in <code>viewers/ui/mesh_tabs.DisplayTab</code> and
+<code>viewers/ui/model_tabs._filter_view_tabs</code> — these already
+exist for visibility toggles; adding four axis-toggle
+checkboxes is additive.</p>
+<p><strong>Verify</strong>:</p>
+<ul>
+<li>Manual: each indicator shown/hidden individually; switching
+  theme updates triad hub color, grid line color, bbox color
+  without re-opening viewer.</li>
+<li>Unit: <code>build_reference_grid</code> on a 3×4 model produces
+  correct major/minor spacing (check actor bounds).</li>
+<li>Reference screenshots: one per indicator per theme.</li>
+</ul>
+<h3 id="step-7-node-glyph-aesthetic">Step 7 — Node glyph aesthetic<a class="headerlink" href="#step-7-node-glyph-aesthetic" title="Permanent link">&para;</a></h3>
+<p><strong>File</strong>: <code>viewers/scene/glyph_points.py</code> (touched)</p>
+<ul>
+<li><code>build_node_cloud</code> takes a <code>theme</code> arg; default color is
+  <code>theme.node_accent</code>.</li>
+<li>Returned actor exposes an <code>on_top</code> property — setting
+  <code>True</code> disables depth test (<code>actor.SetForceOpaque(True);
+  actor.GetProperty().SetOpacity(1); plotter.disable_depth_peeling()</code>
+  on that actor), setting <code>False</code> restores depth testing.</li>
+<li>Pick/hover state priority already in <code>ColorManager</code> — no
+  changes needed here; the change is the <em>idle</em> color.</li>
+</ul>
+<p><strong>Verify</strong>:</p>
+<ul>
+<li>Manual: switching theme changes node color instantly on
+  signal receipt.</li>
+<li>Manual: toggling "on top" shows all nodes through solid
+  geometry; toggling off re-hides occluded nodes.</li>
+</ul>
+<h3 id="step-8-results-viewer-colormap-enforcement">Step 8 — Results viewer colormap enforcement<a class="headerlink" href="#step-8-results-viewer-colormap-enforcement" title="Permanent link">&para;</a></h3>
+<p><strong>File</strong>: <code>viewers/results/Results.py</code> (touched, small)</p>
+<p>In <code>Results.plot(...)</code> or equivalent entry:</p>
+<ul>
+<li>If <code>cmap is None</code>: use <code>theme.cmap_seq</code> for unsigned fields,
+  <code>theme.cmap_div</code> for diverging.</li>
+<li>If <code>cmap in {"jet", "rainbow", "turbo"}</code>: emit
+  <code>warnings.warn("Rainbow colormaps are perceptually
+  non-uniform and misleading; apeGmsh defaults use {...}. See
+  apeGmsh_aesthetic.md §7.")</code> once per call. Do NOT block —
+  the user's call wins.</li>
+</ul>
+<p>Also update the external-viewer dispatch in
+<code>Results.viewer(...)</code> to pass the current theme name
+downstream (the external viewer can ignore it for now — this
+is a one-line forward-compatibility ticket).</p>
+<p><strong>Verify</strong>:</p>
+<ul>
+<li>Unit: <code>Results.plot(field)</code> in Mocha → actor cmap is
+  viridis. In Paper → cividis. Explicit <code>cmap='jet'</code> emits
+  warning.</li>
+<li>Unit: diverging field auto-selects coolwarm (Mocha) or
+  BrBG (Paper).</li>
+</ul>
+<h3 id="step-9-ui-theme-selector-preference-persistence">Step 9 — UI: theme selector + preference persistence<a class="headerlink" href="#step-9-ui-theme-selector-preference-persistence" title="Permanent link">&para;</a></h3>
+<p><strong>File</strong>: <code>viewers/ui/viewer_window.py</code> (touched),
+<code>viewers/ui/preferences.py</code> (touched)</p>
+<ul>
+<li>Add <code>View → Theme</code> menu with three QAction entries in a
+  QActionGroup (exclusive checkable). Default checked =
+  <code>preferences.theme</code> (from QSettings, fallback
+  <code>"neutral_studio"</code>).</li>
+<li>On trigger, call <code>apply_theme(self, name)</code> from Step 2 and
+  persist to <code>preferences.theme</code>.</li>
+<li><code>preferences.py</code> gains <code>theme: str</code> field backed by
+  <code>QSettings("apeGmsh", "viewers").value("theme", ...)</code>.</li>
+</ul>
+<p><strong>Verify</strong>:</p>
+<ul>
+<li>Manual: menu appears, three radios, switching takes effect
+  immediately, selection persists across viewer close/reopen
+  and across process restart.</li>
+</ul>
+<h3 id="step-10-acceptance-gallery">Step 10 — Acceptance gallery<a class="headerlink" href="#step-10-acceptance-gallery" title="Permanent link">&para;</a></h3>
+<p><strong>File</strong>: <code>tests/viewers/aesthetic_gallery.md</code> (new)</p>
+<p>Run each of the following examples in each of the three
+themes and commit one screenshot per (example × theme ×
+viewer) combination:</p>
+<ul>
+<li><code>cantilever_solid_frame_gmsh.py</code> (model viewer)</li>
+<li><code>example_plate_viewer_v2.ipynb</code> (mesh viewer)</li>
+<li><code>example_frame3D_slab_opensees_manual_results.ipynb</code>
+  (results viewer)</li>
+</ul>
+<p>3 examples × 3 themes × 1 viewer each = 9 screenshots.
+Inline them in the gallery .md with captions tying each back
+to the aesthetic doc section it demonstrates.</p>
+<p>Reviewer approves by visual inspection against the design
+reference images we discussed (SolidWorks assembly for model,
+Ansys image 2 for mesh, muted-colormap result for results).</p>
+<hr />
+<h2 id="5-testing-strategy">5. Testing strategy<a class="headerlink" href="#5-testing-strategy" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Unit</strong>: dataclass instance correctness, color math
+  helpers (body-relative shift, grid spacing), enum
+  membership, warning behavior on jet/rainbow.</li>
+<li><strong>Integration</strong>: scene-builder functions return non-empty
+  actors when given a minimal model; theme-switch signal
+  fires and observers receive.</li>
+<li><strong>Visual regression</strong>: committed reference screenshots
+  under <code>tests/viewers/reference/</code> — SSIM &gt; 0.9 at 256×256
+  rather than byte-for-byte (GPU variance makes pixel-exact
+  diff brittle). CI headless via <code>xvfb</code> or <code>Xvfb</code>.</li>
+<li><strong>Smoke</strong>: import <code>apeGmsh.viewers.theme_viewport</code> in a
+  pure-Python (no Qt, no VTK) environment succeeds.</li>
+</ul>
+<hr />
+<h2 id="6-risks-and-open-questions">6. Risks and open questions<a class="headerlink" href="#6-risks-and-open-questions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Radial vignette rendering path (Step 5)</strong>. PyVista does
+  not expose radial gradient natively. The background-image
+  approach is the safest but needs a prototype before Step 5
+  starts; if it reveals backend-specific issues (trame,
+  remote), we fall back to linear gradient in those backends
+  and scope radial to Qt.</li>
+<li><strong>Silhouette filter on batched meshes (Step 3)</strong>. The
+  existing <code>EntityRegistry</code> merges geometry per-dimension for
+  batched picking. PyVista's <code>silhouette=True</code> kwarg applies
+  per-mesh; confirm it still produces clean outlines on the
+  merged UnstructuredGrid — if not, outline rendering needs
+  a separate pass pre-merge.</li>
+<li><strong>Theme switch on an open window (Step 2)</strong>. Some PyVista
+  properties (custom shaders, baked background textures) do
+  not update live. Plan budgets a scene rebuild on theme
+  change, which is simpler than selective prop-patching even
+  if slightly slower. Confirm rebuild time is under 500 ms
+  on a medium model; if not, revisit.</li>
+<li><strong>Hex color tuning</strong>. Aesthetic doc §4 values are v1
+  starting points. Expect to iterate once Step 10 gallery is
+  in hand. The <em>rules</em> (§6, §7, RGB=XYZ) are fixed; the
+  specific hex codes are expected to move.</li>
+<li><strong>QSettings key collision</strong>. <code>preferences.theme</code> might
+  collide with the existing chrome theme preference if one
+  exists. Check <code>preferences.py</code> before Step 9; rename
+  either side if needed.</li>
+</ul>
+<hr />
+<h2 id="7-milestones">7. Milestones<a class="headerlink" href="#7-milestones" title="Permanent link">&para;</a></h2>
+<p>Each milestone is independently reviewable and demoable.</p>
+<ul>
+<li><strong>M1 — Foundation</strong> (Steps 1, 2). Infrastructure exists.
+  No user-visible change — internal only.</li>
+<li><strong>M2 — Model viewer aesthetic</strong> (Step 3). First visible
+  delivery. CAD-style geometry review is live in all three
+  themes.</li>
+<li><strong>M3 — Mesh viewer aesthetic</strong> (Steps 4, 5). Studio-render
+  mesh review across themes, including the radial vignette.</li>
+<li><strong>M4 — World references</strong> (Step 6). Corner triad, origin
+  triad, grid, bbox — all four toggleable across themes.</li>
+<li><strong>M5 — Polish</strong> (Steps 7, 8, 9). Nodes, results colormap,
+  UI selector.</li>
+<li><strong>M6 — Gallery</strong> (Step 10). Visual acceptance.</li>
+</ul>
+<p>A reviewer can approve M1 before M2 begins; each builds on
+the prior without blocking it.</p>
+<hr />
+<h2 id="8-references">8. References<a class="headerlink" href="#8-references" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[[apeGmsh_aesthetic]] — the design spec this plan executes.</li>
+<li>[[apeGmsh_visualization]] — the module layout this plan
+  touches (§§2–5).</li>
+<li>[[apeGmsh_principles]] — tenet <strong>(viii)</strong> "the viewer is
+  core and environment-aware" is the motivation.</li>
+</ul>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,3456 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_groundTruth/">
+      
+      
+        <link rel="prev" href="../apeGmsh_aesthetic/">
+      
+      
+        <link rel="next" href="../apeGmsh_hinting/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>apeGmsh Ground Truth - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#apegmsh-ground-truth" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              apeGmsh Ground Truth
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_meshing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-ground-truth-means-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What "ground truth" means here
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-two-tier-name-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The two-tier name layer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-drift-surfaces-where-tags-move" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The drift surfaces — where tags move
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-the-central-invariant-snapshot-then-remap-around-every-boolean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The central invariant: snapshot-then-remap around every boolean
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. The central invariant: snapshot-then-remap around every boolean">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-snapshot-snapshot_physical_groups-labelspy155" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Snapshot (snapshot_physical_groups, Labels.py:155)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-remap-remap_physical_groups-labelspy178" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Remap (remap_physical_groups, Labels.py:178)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-the-_pgpreserver-wrapper-labelspy111" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 The _PGPreserver wrapper (Labels.py:111)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-creation-time-hook-label-kwargs-and-_auto_pg_from_label" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The creation-time hook: label= kwargs and _auto_pg_from_label
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. The creation-time hook: label= kwargs and _auto_pg_from_label">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-merge-on-duplicate-labelspy387" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Merge-on-duplicate (Labels.py:387)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-the-file-boundary-step-apegmshjson-sidecar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. The file boundary: STEP + .apegmsh.json sidecar
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. The file boundary: STEP + .apegmsh.json sidecar">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-on-write-partsave-collect_anchors-_part_anchorspy81" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 On write (Part.save → collect_anchors, _part_anchors.py:81)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-on-read-partsadd-rebind_physical_groups-_part_anchorspy250" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 On read (parts.add → rebind_physical_groups, _part_anchors.py:250)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-why-coms-and-not-step-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Why COMs and not STEP metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-known-limitation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 Known limitation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-fallbacks-for-un-mapped-mutations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Fallbacks for un-mapped mutations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Fallbacks for un-mapped mutations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-cleanup_label_pgsremoved_dimtags-labelspy308" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1 cleanup_label_pgs(removed_dimtags) (Labels.py:308)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#72-reconcile_label_pgs-labelspy339" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.2 reconcile_label_pgs() (Labels.py:339)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-the-freeze-the-broker-is-where-drift-ends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. The freeze: the broker is where drift ends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-contributor-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Contributor checklist
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Contributor checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#91-anti-patterns-the-test-suite-catches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.1 Anti-patterns the test suite catches
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-summary-the-chain-of-trust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Summary: the chain of trust
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_light_theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-ground-truth-means-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What "ground truth" means here
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-two-tier-name-layer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The two-tier name layer
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-drift-surfaces-where-tags-move" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The drift surfaces — where tags move
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-the-central-invariant-snapshot-then-remap-around-every-boolean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The central invariant: snapshot-then-remap around every boolean
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. The central invariant: snapshot-then-remap around every boolean">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-snapshot-snapshot_physical_groups-labelspy155" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Snapshot (snapshot_physical_groups, Labels.py:155)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-remap-remap_physical_groups-labelspy178" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Remap (remap_physical_groups, Labels.py:178)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-the-_pgpreserver-wrapper-labelspy111" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 The _PGPreserver wrapper (Labels.py:111)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-creation-time-hook-label-kwargs-and-_auto_pg_from_label" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The creation-time hook: label= kwargs and _auto_pg_from_label
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. The creation-time hook: label= kwargs and _auto_pg_from_label">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-merge-on-duplicate-labelspy387" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Merge-on-duplicate (Labels.py:387)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-the-file-boundary-step-apegmshjson-sidecar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. The file boundary: STEP + .apegmsh.json sidecar
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. The file boundary: STEP + .apegmsh.json sidecar">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-on-write-partsave-collect_anchors-_part_anchorspy81" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 On write (Part.save → collect_anchors, _part_anchors.py:81)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-on-read-partsadd-rebind_physical_groups-_part_anchorspy250" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 On read (parts.add → rebind_physical_groups, _part_anchors.py:250)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-why-coms-and-not-step-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Why COMs and not STEP metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-known-limitation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 Known limitation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-fallbacks-for-un-mapped-mutations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Fallbacks for un-mapped mutations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Fallbacks for un-mapped mutations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-cleanup_label_pgsremoved_dimtags-labelspy308" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1 cleanup_label_pgs(removed_dimtags) (Labels.py:308)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#72-reconcile_label_pgs-labelspy339" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.2 reconcile_label_pgs() (Labels.py:339)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-the-freeze-the-broker-is-where-drift-ends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. The freeze: the broker is where drift ends
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-contributor-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Contributor checklist
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Contributor checklist">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#91-anti-patterns-the-test-suite-catches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9.1 Anti-patterns the test suite catches
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-summary-the-chain-of-trust" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Summary: the chain of trust
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="apegmsh-ground-truth">apeGmsh Ground Truth<a class="headerlink" href="#apegmsh-ground-truth" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>[!note] Companion document
+This file is the <em>defence-in-depth</em> chapter.
+It assumes you have read [[apeGmsh_principles]] (tenets (iii) "names
+survive operations" and (iv) "define before mesh, resolve after") and
+[[apeGmsh_architecture]] §1–§2.
+Line references are to the code at the time of writing; grep the symbols
+if the files have moved.</p>
+</blockquote>
+<p>The hardest promise apeGmsh makes is <strong>(iii)</strong>: a name assigned once is
+valid for the rest of the session — through booleans, STEP round-trips,
+re-fragmentation, and re-meshing. That promise is expensive because
+gmsh's ground truth — the <code>(dim, tag)</code> integer pair — is <em>not</em> stable
+across any of those operations. This document is the contributor-facing
+audit of how apeGmsh keeps the abstraction from drifting, and the rules
+that every new call site must follow so the abstraction <em>stays</em> un-drifted.</p>
+<p>If a contributor adds a code path that mutates the gmsh topology without
+passing through one of the mechanisms below, the abstraction breaks
+silently — the user's label still resolves, but to the wrong entity, or
+the entity they expect has been renumbered away. That is the failure
+mode this file exists to prevent.</p>
+<hr />
+<h2 id="1-what-ground-truth-means-here">1. What "ground truth" means here<a class="headerlink" href="#1-what-ground-truth-means-here" title="Permanent link">&para;</a></h2>
+<p>gmsh's Python API has exactly one identity for a geometry entity: the
+pair <code>(dim, tag)</code> where <code>dim ∈ {0, 1, 2, 3}</code> and <code>tag</code> is an
+OCC-assigned integer. Everything else — names, physical groups,
+<code>setEntityName</code>, our labels — is <em>metadata layered over that pair</em>.</p>
+<p>Three properties of <code>(dim, tag)</code> make it a hostile identity for
+engineering workflows:</p>
+<ol>
+<li><strong>Tags are not stable across OCC booleans.</strong> <code>fuse</code>, <code>cut</code>,
+   <code>intersect</code>, and <code>fragment</code> consume their inputs and emit new tags.
+   The <code>result_map</code> returned by each call is the <em>only</em> source of truth
+   for the remapping.</li>
+<li><strong>Tags are not stable across STEP round-trips.</strong> When a <code>Part</code> writes
+   its geometry to STEP and the assembly re-imports it, the tags are
+   freshly assigned by the importer.</li>
+<li><strong>Physical-group membership is evaluated against stale tags after
+   <code>synchronize()</code>.</strong> gmsh's PGs do not automatically follow <code>result_map</code>
+   — if you do nothing, the PG silently refers to entities that no
+   longer exist.</li>
+</ol>
+<p>apeGmsh does not try to replace this identity. Tenet (vii) forbids it:
+"Gmsh is a beautiful piece of software. We never hide it." Instead, we
+build a <strong>name layer</strong> on top, and invest heavily in keeping that name
+layer honest across every operation that mutates the tag space.</p>
+<hr />
+<h2 id="2-the-two-tier-name-layer">2. The two-tier name layer<a class="headerlink" href="#2-the-two-tier-name-layer" title="Permanent link">&para;</a></h2>
+<p>Every user-facing name in apeGmsh is ultimately stored as a gmsh
+physical group. The two tiers are distinguished by a name prefix:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Tier 1  (geometry bookkeeping)      &quot;_label:name&quot;     ─► g.labels
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Tier 2  (solver-facing)             &quot;name&quot;            ─► g.physical
+</span></code></pre></div>
+<p>The prefix <code>_label:</code> is the central convention.
+<a href="../src/apeGmsh/core/Labels.py"><code>core/Labels.py:68</code></a> defines
+<code>LABEL_PREFIX</code>, and three module-level helpers gate the two tiers:</p>
+<ul>
+<li><code>is_label_pg(name)</code> — True if the PG is Tier 1.</li>
+<li><code>strip_prefix(name)</code> / <code>add_prefix(name)</code> — the one-way doors.</li>
+</ul>
+<p>Tier 2 consumers (<code>g.physical.get_all</code>, <code>g.physical.summary</code>,
+<code>FEMData.physical</code>, the OpenSees exporter) <strong>always filter out PGs for
+which <code>is_label_pg</code> returns True</strong>. Tier 1 consumers (<code>g.labels.*</code>)
+filter the opposite way. Because the filter is a string prefix that no
+user would accidentally type, the tiers cannot bleed into each other.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>flowchart LR
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    U[&quot;user calls&lt;br/&gt;add_box(label=&#39;shaft&#39;)&quot;] --&gt; L[g.labels.add]
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    L --&gt;|&quot;_label:shaft&quot;| PG[(gmsh physical&lt;br/&gt;group store)]
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    U2[&quot;user calls&lt;br/&gt;g.physical.add_volume(name=&#39;shaft_mat&#39;)&quot;] --&gt; P[g.physical.add]
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    P --&gt;|&quot;shaft_mat&quot;| PG
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    PG --&gt;|filter on prefix| T1[Tier 1: g.labels]
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    PG --&gt;|filter on prefix| T2[Tier 2: g.physical]
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    T1 --&gt; FEM1[&quot;FEMData.labels&lt;br/&gt;(internal queries only)&quot;]
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    T2 --&gt; FEM2[&quot;FEMData.physical&lt;br/&gt;(solver export)&quot;]
+</span></code></pre></div>
+<p>The one purpose of this separation is to make it safe to call
+<code>g.model.geometry.add_box(..., label="shaft")</code> <em>without</em> polluting the
+solver's namespace. The user can slice, fragment, re-mesh — and only
+explicitly promote to a solver-facing PG when they are ready
+(<code>g.labels.promote_to_physical("shaft", pg_name="shaft_mat")</code>).</p>
+<blockquote>
+<p>[!important] Rule for new code
+If you add a composite that emits PGs, it <strong>must</strong> decide tier and
+use the helpers in <code>core/Labels.py</code>. Writing a bare name like
+<code>gmsh.model.setPhysicalName(dim, tag, "foo")</code> skips tier filtering
+and creates a PG that <em>both</em> tiers will see. That is a bug.</p>
+</blockquote>
+<hr />
+<h2 id="3-the-drift-surfaces-where-tags-move">3. The drift surfaces — where tags move<a class="headerlink" href="#3-the-drift-surfaces-where-tags-move" title="Permanent link">&para;</a></h2>
+<p>Five surfaces mutate the <code>(dim, tag)</code> space. Each has a dedicated
+protection mechanism. Contributors adding new call sites that touch any
+of these surfaces must route through the mechanism listed.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Surface</th>
+<th>Who touches it</th>
+<th>Protection</th>
+<th>Entry point</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>OCC booleans (fuse/cut/intersect/fragment)</td>
+<td><code>core/_model_boolean.py</code>, <code>core/_parts_fragmentation.py</code></td>
+<td><code>pg_preserved()</code> contextmanager</td>
+<td><code>core/Labels.py:135</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>Free-entity removal after booleans</td>
+<td><code>_Boolean.fragment</code> (cleanup of free surfaces)</td>
+<td><code>cleanup_label_pgs(removed_dimtags)</code></td>
+<td><code>core/Labels.py:308</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Un-mapped renumberings (<code>removeAllDuplicates</code>, anchor-less reimports)</td>
+<td>mesh-prep paths, future utilities</td>
+<td><code>reconcile_label_pgs()</code></td>
+<td><code>core/Labels.py:339</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>STEP round-trip (<code>Part.save</code> → <code>parts.add</code>)</td>
+<td><code>core/Part.py</code>, <code>core/_parts_registry.py</code></td>
+<td>COM-anchor sidecar + greedy rebind</td>
+<td><code>core/_part_anchors.py</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td>Mesh renumbering</td>
+<td><code>mesh/_mesh_partitioning.py</code></td>
+<td><strong>none needed</strong> — happens post-freeze</td>
+<td><code>FEMData.from_gmsh()</code></td>
+</tr>
+</tbody>
+</table>
+<p>Everything after row 5 is the broker's problem, not the label layer's
+problem — see §8.</p>
+<hr />
+<h2 id="4-the-central-invariant-snapshot-then-remap-around-every-boolean">4. The central invariant: snapshot-then-remap around every boolean<a class="headerlink" href="#4-the-central-invariant-snapshot-then-remap-around-every-boolean" title="Permanent link">&para;</a></h2>
+<p>All four OCC boolean operations (<code>fuse</code>, <code>cut</code>, <code>intersect</code>, <code>fragment</code>)
+destroy PG membership the moment <code>gmsh.model.occ.synchronize()</code> is
+called. apeGmsh's response is a context manager that every boolean call
+site in the codebase is required to wrap:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.core.Labels</span><span class="w"> </span><span class="kn">import</span> <span class="n">pg_preserved</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">with</span> <span class="n">pg_preserved</span><span class="p">()</span> <span class="k">as</span> <span class="n">pg</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">result</span><span class="p">,</span> <span class="n">result_map</span> <span class="o">=</span> <span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">occ</span><span class="o">.</span><span class="n">fragment</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">tool</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">occ</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">pg</span><span class="o">.</span><span class="n">set_result</span><span class="p">(</span><span class="n">obj</span> <span class="o">+</span> <span class="n">tool</span><span class="p">,</span> <span class="n">result_map</span><span class="p">)</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># PGs are re-created against the new tags here, on __exit__.</span>
+</span></code></pre></div>
+<p>The contract is symmetric: <code>pg_preserved()</code> snapshots <strong>every</strong> PG on
+entry (Tier 1 <em>and</em> Tier 2) and remaps <strong>every</strong> PG on exit, so a single
+protected boolean call takes care of both tiers at once. The user never
+invokes these helpers directly.</p>
+<h3 id="41-snapshot-snapshot_physical_groups-labelspy155">4.1 Snapshot (<code>snapshot_physical_groups</code>, <code>Labels.py:155</code>)<a class="headerlink" href="#41-snapshot-snapshot_physical_groups-labelspy155" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="s1">&#39;dim&#39;</span><span class="p">:</span>         <span class="nb">int</span><span class="p">,</span>     <span class="c1"># 0..3</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="s1">&#39;pg_tag&#39;</span><span class="p">:</span>      <span class="nb">int</span><span class="p">,</span>     <span class="c1"># gmsh internal PG tag</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="s1">&#39;name&#39;</span><span class="p">:</span>        <span class="nb">str</span><span class="p">,</span>     <span class="c1"># either &quot;name&quot; or &quot;_label:name&quot;</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="s1">&#39;entity_tags&#39;</span><span class="p">:</span> <span class="p">[</span><span class="nb">int</span><span class="p">],</span>   <span class="c1"># current membership (pre-boolean)</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Captured <em>before</em> synchronize, so the entity list is still truthful.</p>
+<h3 id="42-remap-remap_physical_groups-labelspy178">4.2 Remap (<code>remap_physical_groups</code>, <code>Labels.py:178</code>)<a class="headerlink" href="#42-remap-remap_physical_groups-labelspy178" title="Permanent link">&para;</a></h3>
+<p>For each snapshot entry, the remapper walks the <code>result_map</code> returned
+by the OCC call:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>flowchart TD
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    A[&quot;for each snapshot entry&quot;] --&gt; B{&quot;entity was a&lt;br/&gt;boolean input?&quot;}
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    B -- yes --&gt; C{&quot;result_map&lt;br/&gt;non-empty?&quot;}
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    B -- no  --&gt; D{&quot;still in current&lt;br/&gt;model entities?&quot;}
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    C -- yes --&gt; E[&quot;new_tags += result_map[...]&quot;]
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    C -- no  --&gt; F{&quot;absorbed_into_result&lt;br/&gt;(fuse/intersect)?&quot;}
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    F -- yes --&gt; G[&quot;fallback: result_by_dim[dim]&quot;]
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    F -- no  --&gt; H[&quot;warn: consumed by cut&quot;]
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    D -- yes --&gt; I[&quot;keep as-is&quot;]
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    D -- no  --&gt; J[&quot;warn: sub-topology casualty&quot;]
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    E --&gt; K[&quot;removePhysicalGroups(old)&lt;br/&gt;addPhysicalGroup(new_tags)&lt;br/&gt;setPhysicalName(name)&quot;]
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    G --&gt; K
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    I --&gt; K
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    H --&gt; L[&quot;drop from PG, warn&quot;]
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    J --&gt; L
+</span></code></pre></div>
+<p>Three details carry most of the weight:</p>
+<ul>
+<li><strong><code>absorbed_into_result</code></strong> (<code>Labels.py:199</code>) distinguishes <code>cut</code> (a
+  missing entry means "this was consumed, warn the user") from <code>fuse</code>
+  and <code>intersect</code> (a missing entry means "this material is still in the
+  model under a new tag, inherit"). <code>_Boolean._bool_op</code> passes the flag
+  as <code>fn_name in ('fuse', 'intersect')</code>.</li>
+<li><strong>Non-input entities in a PG</strong> are kept verbatim as long as they
+  still exist in the post-synchronize model. A PG that spans entities
+  some of which <em>weren't</em> boolean inputs survives the operation
+  unchanged for those tags.</li>
+<li><strong>Empty PGs produce a warning, not an error.</strong> A label whose
+  entities were all consumed is not recreated; the user is told the
+  label is now empty rather than having the call fail.</li>
+</ul>
+<h3 id="43-the-_pgpreserver-wrapper-labelspy111">4.3 The <code>_PGPreserver</code> wrapper (<code>Labels.py:111</code>)<a class="headerlink" href="#43-the-_pgpreserver-wrapper-labelspy111" title="Permanent link">&para;</a></h3>
+<p><code>pg_preserved()</code> yields a small <code>__slots__</code> object that stashes the
+snapshot and accepts the result mapping. The context manager's
+<code>__exit__</code> is where the remap happens, so the call site cannot
+accidentally forget to remap: if the block returns normally, the remap
+runs.</p>
+<p>The single flag the call site <em>does</em> have to pass correctly is
+<code>absorbed_into_result</code>. <code>_Boolean._bool_op</code>
+(<code>core/_model_boolean.py:26</code>) handles this automatically for the four
+user-facing boolean methods. <code>_PartsFragmentationMixin.fuse_group</code>
+(<code>core/_parts_fragmentation.py:233</code>) passes <code>absorbed_into_result=True</code>
+explicitly; <code>fragment_all</code> and <code>fragment_pair</code> pass the default
+(<code>False</code>) because <code>fragment</code> splits rather than absorbs.</p>
+<blockquote>
+<p>[!warning] Do not call <code>gmsh.model.occ.{fuse,cut,intersect,fragment}</code>
+outside a <code>pg_preserved()</code> block. If you need a new boolean
+primitive, add it to <code>_Boolean</code> — do not sprinkle raw OCC booleans
+into composites. The linter-equivalent is <code>git grep</code> for the OCC
+method names; any hit outside <code>_model_boolean.py</code>,
+<code>_parts_fragmentation.py</code>, and tests is a bug.</p>
+</blockquote>
+<hr />
+<h2 id="5-the-creation-time-hook-label-kwargs-and-_auto_pg_from_label">5. The creation-time hook: <code>label=</code> kwargs and <code>_auto_pg_from_label</code><a class="headerlink" href="#5-the-creation-time-hook-label-kwargs-and-_auto_pg_from_label" title="Permanent link">&para;</a></h2>
+<p>A user does not call <code>g.labels.add(...)</code> directly; they say
+<code>g.model.geometry.add_box(0, 0, 0, 1, 1, 3, label="shaft")</code> and expect
+the label to exist afterwards. The glue for that is
+<code>Model._register</code> (<code>core/Model.py:106</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">_register</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">,</span> <span class="n">label</span><span class="p">,</span> <span class="n">kind</span><span class="p">):</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_metadata</span><span class="p">[(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)]</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;kind&#39;</span><span class="p">:</span> <span class="n">kind</span><span class="p">}</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="k">if</span> <span class="n">label</span> <span class="ow">and</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_parent</span><span class="p">,</span> <span class="s1">&#39;_auto_pg_from_label&#39;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="p">[</span><span class="n">tag</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="n">label</span><span class="p">)</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="k">return</span> <span class="n">tag</span>
+</span></code></pre></div>
+<p>Two things matter here:</p>
+<ol>
+<li><strong><code>_auto_pg_from_label</code> is a session-level switch.</strong> Both <code>Part</code>
+   and <code>apeGmsh</code> set it True (see <code>_core.py:86</code> and <code>Part.__init__</code>).
+   If a future session subclass wants labels-as-annotations <em>without</em>
+   backing PGs, it can leave the flag False and <code>_register</code> will skip
+   the PG creation.</li>
+<li><strong>Label creation must never break geometry creation.</strong> If
+   <code>labels.add</code> raises (name collision, backend glitch), <code>_register</code>
+   catches it and emits a warning rather than aborting the <code>add_box</code>
+   call.</li>
+</ol>
+<p>The invariant this closes: a label assigned at geometry-creation time
+is a PG <em>before the user's next line runs</em>, so the first boolean
+operation already has something to snapshot. Without this, labels
+would only materialise on the first explicit <code>g.labels.add(...)</code> call
+and would silently fail to survive an intervening boolean.</p>
+<h3 id="51-merge-on-duplicate-labelspy387">5.1 Merge-on-duplicate (<code>Labels.py:387</code>)<a class="headerlink" href="#51-merge-on-duplicate-labelspy387" title="Permanent link">&para;</a></h3>
+<p><code>Labels.add(dim, tags, name)</code> performs an upsert, not a create-or-fail:</p>
+<ul>
+<li>If <code>(_label:name, dim)</code> exists, the new tags are merged into the
+  existing PG and a <code>UserWarning</code> is emitted (with a hint to use a
+  different name if the merge was unintentional).</li>
+<li>If <code>(_label:name, other_dim)</code> exists, a cross-dim shadowing warning
+  is emitted so the user knows <code>g.labels.entities("name")</code> may be
+  ambiguous.</li>
+</ul>
+<p>This is deliberate: after <code>slice()</code> or <code>fragment</code>, the same label often
+legitimately needs to span multiple child entities; an error would
+force the user to reconstruct a multi-tag PG by hand. The warning path
+is the compromise — the right thing happens, but the user is told.</p>
+<hr />
+<h2 id="6-the-file-boundary-step-apegmshjson-sidecar">6. The file boundary: STEP + <code>.apegmsh.json</code> sidecar<a class="headerlink" href="#6-the-file-boundary-step-apegmshjson-sidecar" title="Permanent link">&para;</a></h2>
+<p>Tag stability breaks harder at the STEP boundary than at the boolean
+boundary: the importer has <em>no</em> <code>result_map</code>. gmsh's <code>write("foo.step")</code>
+goes through OCC's plain STEP writer, which does not carry XDE /
+TDataStd_Name labels, and third-party writers silently drop them
+anyway. apeGmsh does not try to push labels through STEP; it writes
+them <strong>beside</strong> STEP.</p>
+<h3 id="61-on-write-partsave-collect_anchors-_part_anchorspy81">6.1 On write (<code>Part.save</code> → <code>collect_anchors</code>, <code>_part_anchors.py:81</code>)<a class="headerlink" href="#61-on-write-partsave-collect_anchors-_part_anchorspy81" title="Permanent link">&para;</a></h3>
+<p>When <code>Part.save("web.step")</code> is called, the Part session walks every
+<code>_label:*</code> PG and emits a JSON record per contained entity:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">&quot;format_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">&quot;part_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;web&quot;</span><span class="p">,</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">&quot;anchors&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;pg_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;top_flange&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;dim&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">     </span><span class="nt">&quot;com&quot;</span><span class="p">:</span><span class="w">  </span><span class="p">[</span><span class="mf">0.5</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">10.0</span><span class="p">],</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">     </span><span class="nt">&quot;bbox&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">-0.25</span><span class="p">,</span><span class="w"> </span><span class="mf">10.0</span><span class="p">,</span><span class="w"> </span><span class="mf">1.0</span><span class="p">,</span><span class="w"> </span><span class="mf">0.25</span><span class="p">,</span><span class="w"> </span><span class="mf">10.0</span><span class="p">]}</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">  </span><span class="p">]</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>The sidecar lives at <code>{cad}.apegmsh.json</code> (e.g.
+<code>web.step.apegmsh.json</code>), sharing the directory with the STEP file.
+Only Tier 1 labels are anchored — Tier 2 PGs are created explicitly in
+the Assembly and don't need to travel (<code>_part_anchors.py:85</code>).</p>
+<h3 id="62-on-read-partsadd-rebind_physical_groups-_part_anchorspy250">6.2 On read (<code>parts.add</code> → <code>rebind_physical_groups</code>, <code>_part_anchors.py:250</code>)<a class="headerlink" href="#62-on-read-partsadd-rebind_physical_groups-_part_anchorspy250" title="Permanent link">&para;</a></h3>
+<p>When the assembly session calls <code>g.parts.add(part_or_step,
+translate=..., rotate=...)</code>, three things happen in sequence:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>sequenceDiagram
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    participant A as Assembly
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    participant I as parts.add / _import_cad
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    participant S as sidecar
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    participant G as gmsh (OCC)
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    participant L as g.labels
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    A-&gt;&gt;I: parts.add(Part, translate, rotate)
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>    I-&gt;&gt;G: importShapes(...)  # new tags
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    I-&gt;&gt;G: occ.translate + rotate
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>    I-&gt;&gt;G: occ.synchronize()
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>    I-&gt;&gt;S: read_sidecar(&quot;{cad}.apegmsh.json&quot;)
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>    S--&gt;&gt;I: anchors[ ]
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    I-&gt;&gt;I: apply_transform_to_com(anchor.com, translate, rotate)
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>    I-&gt;&gt;G: getCenterOfMass(dim, tag) for each imported ent
+</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>    I-&gt;&gt;I: greedy exclusive match&lt;br/&gt;(com_dist, bbox_dist)
+</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>    I-&gt;&gt;L: addPhysicalGroup(name=_label:..., dim, [tags])
+</span></code></pre></div>
+<p>The rebind is <strong>greedy and exclusive</strong> (<code>_part_anchors.py:373</code>): each
+imported entity can be claimed by at most one anchor. Ties are broken
+by bbox distance when both sides have bbox data. Anchors that fail to
+match within tolerance emit a warning rather than raising — the import
+must still succeed so the user can inspect what happened
+(<code>_part_anchors.py:397</code>).</p>
+<h3 id="63-why-coms-and-not-step-metadata">6.3 Why COMs and not STEP metadata<a class="headerlink" href="#63-why-coms-and-not-step-metadata" title="Permanent link">&para;</a></h3>
+<p>Three reasons, stated in order of decreasing optimism:</p>
+<ol>
+<li>Embedding labels in STEP XDE would require bypassing gmsh's writer.
+   Tenet (vii) forbids hiding gmsh.</li>
+<li>Even if we embedded them, third-party readers drop XDE silently.</li>
+<li>A JSON sidecar is grep-able and trivially version-controllable,
+   which matches tenet (xiv)'s "notebook-ergonomic" bias.</li>
+</ol>
+<h3 id="64-known-limitation">6.4 Known limitation<a class="headerlink" href="#64-known-limitation" title="Permanent link">&para;</a></h3>
+<p>The rebind is valid <strong>at import time only</strong>. Subsequent
+<code>fragment_all()</code> or <code>fuse_group()</code> calls in the assembly go through
+<code>pg_preserved()</code> (§4) and the rebound PGs survive those, but the
+stored <code>label_to_tag</code> snapshot inside the sidecar is not re-read.
+Symmetric parts may tie — the first match by gmsh tag wins with a
+warning (<code>_part_anchors.py:381</code>).</p>
+<hr />
+<h2 id="7-fallbacks-for-un-mapped-mutations">7. Fallbacks for un-mapped mutations<a class="headerlink" href="#7-fallbacks-for-un-mapped-mutations" title="Permanent link">&para;</a></h2>
+<p>Some gmsh operations renumber entities <em>without</em> providing a
+<code>result_map</code> — <code>removeAllDuplicates</code>, some CAD healing paths, and any
+user who drops into <code>gmsh.*</code> directly per tenet (vii)'s escape-hatch
+clause. Two fallbacks exist:</p>
+<h3 id="71-cleanup_label_pgsremoved_dimtags-labelspy308">7.1 <code>cleanup_label_pgs(removed_dimtags)</code> (<code>Labels.py:308</code>)<a class="headerlink" href="#71-cleanup_label_pgsremoved_dimtags-labelspy308" title="Permanent link">&para;</a></h3>
+<p>Called when the caller <em>knows</em> exactly which entities were removed.
+Used by <code>_Boolean.fragment</code> (<code>_model_boolean.py:181</code>) after its
+free-surface sweep: after fragmenting in 3D, dim=2 surfaces with no
+upward adjacency to a volume are trimmed; <code>cleanup_label_pgs</code> drops
+those tags from any Tier 1 label that referenced them and removes
+labels that become empty.</p>
+<p>Only Tier 1 is touched. User-facing PGs are left alone because the
+caller may want different semantics (e.g. a surface PG that should
+warn rather than silently shrink).</p>
+<h3 id="72-reconcile_label_pgs-labelspy339">7.2 <code>reconcile_label_pgs()</code> (<code>Labels.py:339</code>)<a class="headerlink" href="#72-reconcile_label_pgs-labelspy339" title="Permanent link">&para;</a></h3>
+<p>Called when the caller does <em>not</em> know which entities moved. Walks
+every <code>_label:*</code> PG, compares membership against the current model's
+entity set, drops stale tags, and removes labels that become empty.</p>
+<p>This is the "nuclear option" for users who have dropped into
+<code>gmsh.*</code> per the tenet (vii) escape hatch and are returning to
+apeGmsh. It is not called automatically anywhere; advertising it in
+the public API is future work.</p>
+<hr />
+<h2 id="8-the-freeze-the-broker-is-where-drift-ends">8. The freeze: the broker is where drift ends<a class="headerlink" href="#8-the-freeze-the-broker-is-where-drift-ends" title="Permanent link">&para;</a></h2>
+<p>All of §3–§7 keeps labels honest in the <em>live</em> gmsh session. The
+final defence — tenet (xi), "pre-mesh is mutable; the broker is
+frozen" — is that <code>FEMData.from_gmsh(dim=..., session=g)</code> produces a
+snapshot that does not hold a gmsh reference.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>┌────────────────────┐        FEMData.from_gmsh()         ┌─────────────────────┐
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>│ live gmsh session  │  ────────────────────────────────► │   FEMData (frozen)  │
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>│   (dim, tag) can   │  one-way copy of nodes, elements,  │  node ids, coords,  │
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>│   still change     │  PG membership, labels, metadata   │  elements, PG sets, │
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>└────────────────────┘                                    │  LabelSet, records  │
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>                                                          └─────────────────────┘
+</span></code></pre></div>
+<p>Everything downstream — the OpenSees exporter, the MPCO recorders,
+the mesh viewer, the constraint resolver, the load resolver — reads
+from <code>FEMData</code>, never from gmsh. Mesh renumbering
+(<code>mesh/_mesh_partitioning.py</code>) can therefore run against the broker
+without any of the label-layer protections: the names are already
+resolved to node/element ids, and the mapping is captured in
+<code>NumberedMesh</code> / <code>RenumberResult</code>.</p>
+<p>The consequence for contributors: <strong>once the broker has been taken,
+any further tag drift in the gmsh session does not affect exported
+work.</strong> Re-meshing produces a fresh <code>FEMData</code>, not a mutation of the
+old one — tenet (xi).</p>
+<hr />
+<h2 id="9-contributor-checklist">9. Contributor checklist<a class="headerlink" href="#9-contributor-checklist" title="Permanent link">&para;</a></h2>
+<p>When writing a new composite, resolver, or utility that touches the
+gmsh topology, run down this list:</p>
+<ol>
+<li><strong>Am I calling any of <code>occ.fuse</code>, <code>occ.cut</code>, <code>occ.intersect</code>,
+   <code>occ.fragment</code>?</strong> → Wrap in <code>pg_preserved()</code> and call
+   <code>pg.set_result(input_dimtags, result_map, absorbed_into_result=...)</code>
+   before the block exits. Refer to
+   <code>core/_model_boolean.py:_Boolean._bool_op</code> for the canonical
+   pattern.</li>
+<li><strong>Am I calling <code>occ.remove</code> with a known list of dimtags?</strong> →
+   Call <code>cleanup_label_pgs(removed)</code> after <code>synchronize()</code>.</li>
+<li><strong>Am I calling an operation that renumbers without a result map
+   (<code>removeAllDuplicates</code>, some healing paths)?</strong> → Document it
+   loudly and provide a path for the caller to run
+   <code>reconcile_label_pgs()</code> afterwards. Do not call it implicitly; it
+   is a full-model scan.</li>
+<li><strong>Am I emitting a physical group?</strong> → Decide tier. Tier 1 uses
+   <code>g.labels.add(...)</code> which prefixes for you. Tier 2 uses
+   <code>g.physical.add(...)</code>. Never call
+   <code>gmsh.model.setPhysicalName(dim, tag, "raw_name")</code> directly from
+   a composite.</li>
+<li><strong>Am I accepting a name from the user?</strong> → Pass it through
+   <code>resolve_to_tags(ref, dim=dim, session=self._parent)</code>
+   (<code>core/_helpers.py:75</code>) so labels <em>and</em> PGs resolve with a single
+   call. Order is Tier 1 first, Tier 2 second — respect that.</li>
+<li><strong>Am I creating a new file format that round-trips geometry?</strong> →
+   Write a sidecar; do not try to embed labels in the CAD file.
+   Mimic the COM-anchor structure in <code>_part_anchors.py</code>; do not
+   reinvent the matching algorithm.</li>
+<li><strong>Am I about to touch <code>FEMData</code> after construction?</strong> → Don't.
+   <code>FEMData</code> is frozen by contract. If a new piece of information
+   needs to live on the broker, add it to <code>from_gmsh</code> so every user
+   gets it consistently.</li>
+</ol>
+<h3 id="91-anti-patterns-the-test-suite-catches">9.1 Anti-patterns the test suite catches<a class="headerlink" href="#91-anti-patterns-the-test-suite-catches" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Boolean without <code>pg_preserved</code> → a label disappears after fragment
+  (<code>tests/test_labels_boolean.py</code> style).</li>
+<li>PG with raw (unprefixed) internal name → leaks into the OpenSees
+  exporter (tested by Tier 2 filter assertions).</li>
+<li>Part imported without sidecar path → labels present in the Part
+  but absent in the Assembly after <code>parts.add</code> (tested by anchor
+  round-trip fixtures).</li>
+</ul>
+<p>If your change breaks any of these, the failure is a guide to which
+layer of the defence you have skipped.</p>
+<hr />
+<h2 id="10-summary-the-chain-of-trust">10. Summary: the chain of trust<a class="headerlink" href="#10-summary-the-chain-of-trust" title="Permanent link">&para;</a></h2>
+<p>The abstraction "a label survives the whole session" is held up by
+seven mechanisms, layered so that each one closes a different gap:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>geometry creation        ──► _register + labels.add         (§5)
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>boolean ops              ──► pg_preserved / remap           (§4)
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>free-entity removal      ──► cleanup_label_pgs              (§7.1)
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>un-mapped renumberings   ──► reconcile_label_pgs            (§7.2)
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>file round-trip          ──► sidecar + COM rebind           (§6)
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>assembly booleans        ──► pg_preserved (same as §4)      (§4 again)
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>export to solver         ──► FEMData.from_gmsh freeze       (§8)
+</span></code></pre></div>
+<p>No single mechanism is sufficient. Removing any one of them opens a
+drift surface that the remaining mechanisms cannot close. Every
+contribution that touches gmsh topology is either routed through one
+of these seven, or it is extending one of them — there is no third
+option.</p>
+<blockquote>
+<p>[!tip] Reading order for new contributors
+1. <code>core/Labels.py</code> — the whole file. Start with
+   <code>LABEL_PREFIX</code>, then <code>pg_preserved</code> and <code>remap_physical_groups</code>,
+   then <code>Labels.add</code>.
+2. <code>core/_model_boolean.py</code> — the canonical call site.
+3. <code>core/Model.py</code> — the <code>_register</code> hook.
+4. <code>core/_part_anchors.py</code> — read + write + rebind, in that
+   order.
+5. <code>core/_parts_fragmentation.py</code> — shows <code>pg_preserved</code> in an
+   assembly-scope boolean.
+6. <code>mesh/FEMData.py::from_gmsh</code> — the one-way valve.</p>
+</blockquote>
+<hr />
+<p><em>Cross-references:</em>
+[[apeGmsh_principles]] · [[apeGmsh_architecture]] · [[apeGmsh_navigation]] ·
+[[gmsh_basics]] · [[gmsh_selection]]</p>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
