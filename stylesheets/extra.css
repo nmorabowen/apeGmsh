@@ -14,10 +14,12 @@
   --ape-code-bg: #1a2430;
   --ape-code-fg: #e8ecf2;
 
-  --md-primary-fg-color:        var(--ape-ink);
-  --md-primary-fg-color--light: var(--ape-ink);
-  --md-primary-fg-color--dark:  var(--ape-ink);
-  --md-primary-bg-color:        var(--ape-bg);
+  /* Warm paper header so the dark-navy Suzanne mesh mark reads. */
+  --md-primary-fg-color:        var(--ape-bg);
+  --md-primary-fg-color--light: var(--ape-bg);
+  --md-primary-fg-color--dark:  var(--ape-bg-alt);
+  --md-primary-bg-color:        var(--ape-ink);
+  --md-primary-bg-color--light: var(--ape-ink-sub);
   --md-accent-fg-color:         var(--ape-accent);
   --md-default-bg-color:        var(--ape-bg);
   --md-default-fg-color:        var(--ape-ink);
@@ -81,6 +83,24 @@
   border-left: 3px solid var(--ape-accent);
 }
 
+/* ---------- Logo swap: use mesh-dark variant in slate scheme ---------- */
+[data-md-color-scheme="slate"] .md-header__button.md-logo img,
+[data-md-color-scheme="slate"] .ape-hero__mark {
+  content: url("../assets/logo-dark.svg");
+}
+
+/* Make the header bar look like warm paper in light mode (so the dark
+   mark reads) and deep-navy in dark mode (so the pale mark reads). */
+.md-header {
+  color: var(--md-primary-bg-color);
+  border-bottom: 1px solid var(--ape-hair);
+}
+.md-tabs {
+  background-color: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+  border-bottom: 1px solid var(--ape-hair);
+}
+
 /* ---------- Landing hero (docs/index.md) ---------- */
 .ape-hero {
   display: flex;
@@ -91,10 +111,10 @@
   margin-bottom: 1.5rem;
 }
 .ape-hero__mark {
-  width: 96px;
-  height: 96px;
-  color: var(--ape-ink);
+  width: 120px;
+  height: 120px;
   flex: 0 0 auto;
+  display: block;
 }
 .ape-hero__word {
   font-family: "Archivo Narrow", "Inter", system-ui, sans-serif;
