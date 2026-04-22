@@ -4,7 +4,7 @@
 
 v1.0 bundles two breaking changes: the package rename and the Model
 composition refactor. A full find-replace migration guide is at
-[`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md).
+[`internal_docs/MIGRATION_v1.md`](internal_docs/MIGRATION_v1.md).
 
 ### BREAKING
 
@@ -79,7 +79,7 @@ accesses Model state via `self._model._log(...)`,
 
 ### MIGRATION
 
-See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md) for the complete
+See [`internal_docs/MIGRATION_v1.md`](internal_docs/MIGRATION_v1.md) for the complete
 find-replace table and an automated migration script.
 
 **v0.3.0** is the last `pyGmsh` release (pre-rename safety tag).

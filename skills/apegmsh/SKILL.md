@@ -58,7 +58,7 @@ references are tight; reading them is cheap.
   before.
 
 If the user asks to modify the library itself (not just use it), also
-skim `docs/guide_*.md` in the project — they are the authoritative
+skim `internal_docs/guide_*.md` in the project — they are the authoritative
 user-facing docs and match the current source.
 
 ## Mental model

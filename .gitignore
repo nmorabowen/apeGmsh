@@ -27,6 +27,9 @@ opensees_venv/
 # Smoke-test output (regenerated on every run)
 tests_out/
 
+# MkDocs build output
+site/
+
 # Gmsh output
 *.msh
 *.step

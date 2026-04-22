@@ -1,0 +1,157 @@
+site_name: apeGmsh
+site_description: Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.
+site_url: https://nmorabowen.github.io/apeGmsh/
+repo_url: https://github.com/nmorabowen/apeGmsh
+repo_name: nmorabowen/apeGmsh
+edit_uri: edit/main/
+
+docs_dir: docs
+
+exclude_docs: |
+  _hooks.py
+  __pycache__/
+
+hooks:
+  - docs/_hooks.py
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path:
+        - .
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_root_heading: true
+            show_source: true
+            show_if_no_docstring: false
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            docstring_section_style: table
+            merge_init_into_class: true
+            filters:
+              - "!^_"
+
+nav:
+  - Home: index.md
+  - Guides:
+      - Basics: internal_docs/guide_basics.md
+      - Parts & Assembly: internal_docs/guide_parts_assembly.md
+      - Parts vs Session: internal_docs/guide_parts_vs_session.md
+      - CAD Import: internal_docs/guide_cad_import.md
+      - Meshing: internal_docs/guide_meshing.md
+      - Partitioning: internal_docs/guide_partitioning.md
+      - Selection: internal_docs/guide_selection.md
+      - Queries: internal_docs/guide_queries.md
+      - Transforms: internal_docs/guide_transforms.md
+      - Constraints: internal_docs/guide_constraints.md
+      - Loads: internal_docs/guide_loads.md
+      - Masses: internal_docs/guide_masses.md
+      - Sections: internal_docs/guide_sections.md
+      - FEM Broker: internal_docs/guide_fem_broker.md
+      - OpenSees: internal_docs/guide_opensees.md
+      - Results: internal_docs/guide_results.md
+      - Architecture overview: internal_docs/architecture.md
+  - Architecture:
+      - Overview: architecture/apeGmsh_architecture.md
+      - Principles: architecture/apeGmsh_principles.md
+      - Navigation: architecture/apeGmsh_navigation.md
+      - Broker: architecture/apeGmsh_broker.md
+      - Parts & Assembly: architecture/apeGmsh_partInstanceAssemble.md
+      - Constraints: architecture/apeGmsh_constraints.md
+      - Loads: architecture/apeGmsh_loads.md
+      - Visualization: architecture/apeGmsh_visualization.md
+      - Aesthetic: architecture/apeGmsh_aesthetic.md
+      - Ground truth: architecture/apeGmsh_groundTruth.md
+      - Type hinting: architecture/apeGmsh_hinting.md
+      - "Gmsh — Basics": architecture/gmsh_basics.md
+      - "Gmsh — Geometry": architecture/gmsh_geometry_basics.md
+      - "Gmsh — Interface": architecture/gmsh_interface.md
+      - "Gmsh — Meshing basics": architecture/gmsh_meshing_basics.md
+      - "Gmsh — Meshing advanced": architecture/gmsh_meshing_advanced.md
+      - "Gmsh — Selection": architecture/gmsh_selection.md
+      - "Gmsh — Partitioning": architecture/gmsh_partitioning.md
+      - "Gmsh — API reference": architecture/gmsh_api_reference.md
+  - API Reference:
+      - Overview: api/index.md
+      - Session (apeGmsh): api/session.md
+      - Model: api/model.md
+      - Parts: api/parts.md
+      - Mesh: api/mesh.md
+      - Constraints: api/constraints.md
+      - Loads: api/loads.md
+      - Masses: api/masses.md
+      - FEM Broker: api/fem.md
+      - OpenSees: api/opensees.md
+      - Results: api/results.md
+      - Viewers: api/viewers.md
+      - Viz: api/viz.md
+  - Planning:
+      - "v2 — Final plan": internal_docs/plan_v2_final.md
+      - "v2 — Unified architecture": internal_docs/plan_v2_unified_architecture.md
+      - Aesthetic system: internal_docs/plan_aesthetic.md
+      - Fuse group: internal_docs/plan_fuse_group.md
+      - Mesh selection sets: internal_docs/plan_mesh_selection_set.md
+      - Rigid element: internal_docs/plan_rigid_element.md
+      - "Viewer — Box select": internal_docs/plan_viewer_box_select.md
+      - "Viewer — Light theme": internal_docs/plan_viewer_light_theme.md
+      - "Viewer — PG persistence": internal_docs/plan_viewer_pg_persistence.md
+  - Migration: internal_docs/MIGRATION_v1.md
+  - Changelog: changelog.md

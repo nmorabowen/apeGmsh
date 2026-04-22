@@ -25,6 +25,11 @@ vtk = []  # VTKExport uses only numpy + stdlib
 g2o = ["gmsh2opensees"]
 dxf = ["ezdxf"]
 viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy"]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+]
 all = ["matplotlib", "scipy", "openseespy", "gmsh2opensees", "ezdxf",
        "PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy"]
 

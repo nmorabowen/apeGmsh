@@ -1,19 +1,32 @@
 # apeGmsh
 
+[![Docs](https://github.com/nmorabowen/apeGmsh/actions/workflows/docs.yml/badge.svg)](https://nmorabowen.github.io/apeGmsh/)
+
 Structural-FEM wrapper around [Gmsh](https://gmsh.info) with a composition-based API and a
 snapshot FEM broker. Designed to make it cheap to describe a model
 once (geometry + physical groups + loads + constraints) and feed it
 to any solver. OpenSees has first-class support; other solvers can be
 plugged in through the same `FEMData` contract.
 
+**Documentation:** <https://nmorabowen.github.io/apeGmsh/>
+
 ## Installation
 
-```bash
-git clone https://github.com/<your-fork>/apeGmsh.git
-cd apeGmsh
-pip install -e .
+Not on PyPI yet — install directly from the repo:
 
-# With all optional dependencies (plotting, OpenSees bridge, viewer)
+```bash
+# Pinned to a release
+pip install "git+https://github.com/nmorabowen/apeGmsh.git@v1.0.0"
+
+# With all optional dependencies
+pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@v1.0.0"
+```
+
+Or clone for editable development:
+
+```bash
+git clone https://github.com/nmorabowen/apeGmsh.git
+cd apeGmsh
 pip install -e ".[all]"
 ```
 
@@ -197,7 +210,8 @@ apeGmsh/
   pyproject.toml
   README.md
   CHANGELOG.md
-  docs/
+  docs/                        # mkdocs site source (index, api/, changelog)
+  internal_docs/               # authored guides, migration, plans
     MIGRATION_v1.md
     guide_basics.md
     guide_meshing.md
@@ -206,6 +220,7 @@ apeGmsh/
     guide_parts_assembly.md
     guide_parts_vs_session.md
     guide_selection.md
+  architecture/                # design notes (surfaced in docs site)
   examples/         # runnable notebooks and scripts
   tests/            # pytest suite (no Gmsh required)
   src/
@@ -294,7 +309,7 @@ See the `examples/` directory — every notebook runs in-place after
 
 ## Migrating from v0.x
 
-See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md) for the full
+See [`internal_docs/MIGRATION_v1.md`](internal_docs/MIGRATION_v1.md) for the full
 checklist. In short: package rename (`pyGmsh → apeGmsh`), `g.model.*`
 split into five sub-composites, `g.mesh.*` split into seven,
 `g.opensees.*` split into five (with `assign_element → assign`,
