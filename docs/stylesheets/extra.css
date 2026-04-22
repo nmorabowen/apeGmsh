@@ -1,0 +1,119 @@
+/* apeGmsh design suite — palette, typography, accents.
+   Values sourced from suite-components.jsx (PAL_LIGHT / PAL_DARK). */
+
+/* ---------- Light palette ---------- */
+[data-md-color-scheme="default"] {
+  --ape-bg:      #f4f0e6;
+  --ape-bg-alt:  #ede7d6;
+  --ape-ink:     #101820;
+  --ape-ink-sub: rgba(16, 24, 32, 0.70);
+  --ape-muted:   rgba(16, 24, 32, 0.55);
+  --ape-hair:    rgba(16, 24, 32, 0.18);
+  --ape-accent:  #c64a1a;
+  --ape-accent2: #0b2540;
+  --ape-code-bg: #1a2430;
+  --ape-code-fg: #e8ecf2;
+
+  --md-primary-fg-color:        var(--ape-ink);
+  --md-primary-fg-color--light: var(--ape-ink);
+  --md-primary-fg-color--dark:  var(--ape-ink);
+  --md-primary-bg-color:        var(--ape-bg);
+  --md-accent-fg-color:         var(--ape-accent);
+  --md-default-bg-color:        var(--ape-bg);
+  --md-default-fg-color:        var(--ape-ink);
+  --md-default-fg-color--light: var(--ape-ink-sub);
+  --md-default-fg-color--lighter: var(--ape-muted);
+  --md-typeset-a-color:         var(--ape-accent);
+  --md-footer-bg-color:         var(--ape-ink);
+  --md-footer-bg-color--dark:   var(--ape-ink);
+  --md-code-bg-color:           var(--ape-bg-alt);
+  --md-code-fg-color:           var(--ape-ink);
+}
+
+/* ---------- Dark palette ---------- */
+[data-md-color-scheme="slate"] {
+  --ape-bg:      #0b2540;
+  --ape-bg-alt:  #0f2c4d;
+  --ape-ink:     #f4eee1;
+  --ape-ink-sub: rgba(244, 238, 225, 0.70);
+  --ape-muted:   rgba(244, 238, 225, 0.55);
+  --ape-hair:    rgba(244, 238, 225, 0.18);
+  --ape-accent:  #f0a561;
+  --ape-accent2: #a5c8ea;
+  --ape-code-bg: #061a2e;
+  --ape-code-fg: #e8ecf2;
+
+  --md-primary-fg-color:        var(--ape-bg-alt);
+  --md-primary-fg-color--light: var(--ape-bg-alt);
+  --md-primary-fg-color--dark:  var(--ape-bg);
+  --md-primary-bg-color:        var(--ape-ink);
+  --md-accent-fg-color:         var(--ape-accent);
+  --md-default-bg-color:        var(--ape-bg);
+  --md-default-fg-color:        var(--ape-ink);
+  --md-default-fg-color--light: var(--ape-ink-sub);
+  --md-default-fg-color--lighter: var(--ape-muted);
+  --md-typeset-a-color:         var(--ape-accent);
+  --md-code-bg-color:           var(--ape-bg-alt);
+  --md-code-fg-color:           var(--ape-ink);
+}
+
+/* ---------- Typography ---------- */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-typeset h5,
+.md-typeset h6,
+.md-header__title,
+.md-nav__title {
+  font-family: "Archivo Narrow", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+/* ---------- Fenced code blocks: orange left-border accent ---------- */
+.md-typeset pre > code,
+.md-typeset .highlight pre {
+  border-left: 3px solid var(--ape-accent);
+}
+
+/* ---------- Landing hero (docs/index.md) ---------- */
+.ape-hero {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 1.5rem 0 1rem;
+  border-bottom: 1px solid var(--ape-hair);
+  margin-bottom: 1.5rem;
+}
+.ape-hero__mark {
+  width: 96px;
+  height: 96px;
+  color: var(--ape-ink);
+  flex: 0 0 auto;
+}
+.ape-hero__word {
+  font-family: "Archivo Narrow", "Inter", system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 3rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--ape-ink);
+}
+.ape-hero__sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.3em;
+  opacity: 0.6;
+  margin-top: 0.4rem;
+  color: var(--ape-ink);
+}
+
+/* Hide the auto-rendered H1 on the landing (README already has one) */
+.md-content[data-hero="index"] .md-typeset h1:first-of-type {
+  display: none;
+}

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-label="apeGmsh logo">
+  <!-- ears -->
+  <ellipse cx="52"  cy="108" rx="18" ry="22" stroke-width="3"/>
+  <ellipse cx="188" cy="108" rx="18" ry="22" stroke-width="3"/>
+  <ellipse cx="54"  cy="108" rx="8"  ry="12" stroke-width="1" opacity="0.5"/>
+  <ellipse cx="186" cy="108" rx="8"  ry="12" stroke-width="1" opacity="0.5"/>
+  <!-- head -->
+  <path d="M 80 42 C 72 42, 66 48, 66 58 L 66 80 C 58 84, 54 94, 56 108 C 54 122, 58 136, 68 146 L 68 160 C 70 174, 82 182, 96 184 C 106 194, 134 194, 144 184 C 158 182, 170 174, 172 160 L 172 146 C 182 136, 186 122, 184 108 C 186 94, 182 84, 174 80 L 174 58 C 174 48, 168 42, 160 42 C 148 36, 124 34, 120 34 C 116 34, 92 36, 80 42 Z" stroke-width="3"/>
+  <!-- brow ridge -->
+  <path d="M 88 78 C 104 72, 136 72, 152 78" stroke-width="2.4"/>
+  <!-- eyes -->
+  <ellipse cx="100" cy="94" rx="7" ry="5" fill="currentColor" stroke="none"/>
+  <ellipse cx="140" cy="94" rx="7" ry="5" fill="currentColor" stroke="none"/>
+  <!-- nose bridge -->
+  <path d="M 120 100 L 120 128" stroke-width="1" opacity="0.5"/>
+  <!-- muzzle -->
+  <path d="M 92 132 C 86 146, 92 162, 106 168 C 120 172, 134 170, 146 164 C 156 158, 158 144, 152 132 C 140 126, 104 126, 92 132 Z" stroke-width="2.6"/>
+  <!-- nostrils -->
+  <path d="M 112 148 C 114 152, 118 152, 120 148" stroke-width="1"/>
+  <path d="M 128 148 C 126 152, 122 152, 120 148" stroke-width="1"/>
+  <!-- mouth -->
+  <path d="M 108 168 C 118 172, 122 172, 132 168" stroke-width="2"/>
+</svg>
