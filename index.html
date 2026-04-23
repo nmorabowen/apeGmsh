@@ -2842,8 +2842,7 @@ underneath whenever you need it.</p>
 </span></code></pre></div>
 <p>Requires Gmsh (with Python bindings), NumPy, and Pandas. Optional
 extras: <code>matplotlib</code> (plotting), <code>openseespy</code> (analysis),
-<code>gmsh2opensees</code> (one-liner mesh transfer), <code>pyvista</code> + <code>PyQt6</code> (Qt
-viewers).</p>
+<code>pyvista</code> + <code>PyQt6</code> (Qt viewers).</p>
 <h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
@@ -2918,10 +2917,6 @@ session <em>is</em> the assembly. Parts are registered into
 <tr>
 <td><code>g.opensees</code></td>
 <td>OpenSees bridge (see sub-composites below)</td>
-</tr>
-<tr>
-<td><code>g.g2o</code></td>
-<td>Legacy one-liner <code>gmsh2opensees</code> transfer</td>
 </tr>
 <tr>
 <td><code>g.inspect</code></td>
@@ -3168,10 +3163,9 @@ fragmentation and re-tagging.</p>
 </span><span id="__span-5-60"><a id="__codelineno-5-60" name="__codelineno-5-60" href="#__codelineno-5-60"></a>        Loads.py
 </span><span id="__span-5-61"><a id="__codelineno-5-61" name="__codelineno-5-61" href="#__codelineno-5-61"></a>        Masses.py
 </span><span id="__span-5-62"><a id="__codelineno-5-62" name="__codelineno-5-62" href="#__codelineno-5-62"></a>        Numberer.py
-</span><span id="__span-5-63"><a id="__codelineno-5-63" name="__codelineno-5-63" href="#__codelineno-5-63"></a>        Gmsh2OpenSees.py
-</span><span id="__span-5-64"><a id="__codelineno-5-64" name="__codelineno-5-64" href="#__codelineno-5-64"></a>      viewers/                  # PyQt/PyVista viewers
-</span><span id="__span-5-65"><a id="__codelineno-5-65" name="__codelineno-5-65" href="#__codelineno-5-65"></a>      results/                  # VTU export + Results container
-</span><span id="__span-5-66"><a id="__codelineno-5-66" name="__codelineno-5-66" href="#__codelineno-5-66"></a>      viz/                      # Selection, Inspect, Plot, VTKExport
+</span><span id="__span-5-63"><a id="__codelineno-5-63" name="__codelineno-5-63" href="#__codelineno-5-63"></a>      viewers/                  # PyQt/PyVista viewers
+</span><span id="__span-5-64"><a id="__codelineno-5-64" name="__codelineno-5-64" href="#__codelineno-5-64"></a>      results/                  # VTU export + Results container
+</span><span id="__span-5-65"><a id="__codelineno-5-65" name="__codelineno-5-65" href="#__codelineno-5-65"></a>      viz/                      # Selection, Inspect, Plot, VTKExport
 </span></code></pre></div>
 <h2 id="viewers">Viewers<a class="headerlink" href="#viewers" title="Permanent link">&para;</a></h2>
 <p>apeGmsh ships two separate viewers because pre-solve inspection and

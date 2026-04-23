@@ -1974,17 +1974,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#solversgmsh2openseespy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        solvers/Gmsh2OpenSees.py
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -4674,17 +4663,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#solversgmsh2openseespy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        solvers/Gmsh2OpenSees.py
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -5260,29 +5238,28 @@ the <code>_COMPOSITES</code> tuple in <a href="../src/apeGmsh/_core.py"><code>_c
 </span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    G --&gt; PHYS[g.physical&lt;br/&gt;&lt;i&gt;mesh.PhysicalGroups&lt;/i&gt;]
 </span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    G --&gt; MSEL[g.mesh_selection&lt;br/&gt;&lt;i&gt;MeshSelectionSet&lt;/i&gt;]
 </span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    G --&gt; VIEW[g.view&lt;br/&gt;&lt;i&gt;mesh.View&lt;/i&gt;]
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    G --&gt; G2O[g.g2o&lt;br/&gt;&lt;i&gt;Gmsh2OpenSees&lt;/i&gt;]
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    G --&gt; OPS[g.opensees&lt;br/&gt;&lt;i&gt;solvers.OpenSees&lt;/i&gt;]
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    G --&gt; PLOT[g.plot&lt;br/&gt;&lt;i&gt;viz.Plot — lazy&lt;/i&gt;]
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    MODEL --&gt; MG[.geometry &lt;i&gt;_Geometry&lt;/i&gt;]
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    MODEL --&gt; MB[.boolean &lt;i&gt;_Boolean&lt;/i&gt;]
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    MODEL --&gt; MT[.transforms &lt;i&gt;_Transforms&lt;/i&gt;]
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    MODEL --&gt; MQ[.queries &lt;i&gt;_Queries&lt;/i&gt;]
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>    MODEL --&gt; MIO[.io &lt;i&gt;_IO&lt;/i&gt;]
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>    MESH --&gt; MESHGEN[.generation &lt;i&gt;_Generation&lt;/i&gt;]
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    MESH --&gt; MESHQ[.queries &lt;i&gt;_Queries&lt;/i&gt;]
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    MESH --&gt; MESHSZ[.sizing &lt;i&gt;_Sizing&lt;/i&gt;]
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    MESH --&gt; MESHF[.fields &lt;i&gt;FieldHelper&lt;/i&gt;]
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    MESH --&gt; MESHE[.editing &lt;i&gt;_Editing&lt;/i&gt;]
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    MESH --&gt; MESHS[.structured &lt;i&gt;_Structured&lt;/i&gt;]
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>    MESH --&gt; MESHP[.partitioning &lt;i&gt;_Partitioning&lt;/i&gt;]
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>    OPS --&gt; OMAT[.materials &lt;i&gt;_Materials&lt;/i&gt;]
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>    OPS --&gt; OELEM[.elements &lt;i&gt;_Elements&lt;/i&gt;]
-</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>    OPS --&gt; OING[.ingest &lt;i&gt;_Ingest&lt;/i&gt;]
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>    OPS --&gt; OEXP[.export &lt;i&gt;_Export&lt;/i&gt;]
-</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>    OPS --&gt; OINS[.inspect &lt;i&gt;_Inspect&lt;/i&gt;]
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    G --&gt; OPS[g.opensees&lt;br/&gt;&lt;i&gt;solvers.OpenSees&lt;/i&gt;]
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    G --&gt; PLOT[g.plot&lt;br/&gt;&lt;i&gt;viz.Plot — lazy&lt;/i&gt;]
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    MODEL --&gt; MG[.geometry &lt;i&gt;_Geometry&lt;/i&gt;]
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    MODEL --&gt; MB[.boolean &lt;i&gt;_Boolean&lt;/i&gt;]
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    MODEL --&gt; MT[.transforms &lt;i&gt;_Transforms&lt;/i&gt;]
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    MODEL --&gt; MQ[.queries &lt;i&gt;_Queries&lt;/i&gt;]
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    MODEL --&gt; MIO[.io &lt;i&gt;_IO&lt;/i&gt;]
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    MESH --&gt; MESHGEN[.generation &lt;i&gt;_Generation&lt;/i&gt;]
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>    MESH --&gt; MESHQ[.queries &lt;i&gt;_Queries&lt;/i&gt;]
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    MESH --&gt; MESHSZ[.sizing &lt;i&gt;_Sizing&lt;/i&gt;]
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    MESH --&gt; MESHF[.fields &lt;i&gt;FieldHelper&lt;/i&gt;]
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    MESH --&gt; MESHE[.editing &lt;i&gt;_Editing&lt;/i&gt;]
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    MESH --&gt; MESHS[.structured &lt;i&gt;_Structured&lt;/i&gt;]
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    MESH --&gt; MESHP[.partitioning &lt;i&gt;_Partitioning&lt;/i&gt;]
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>    OPS --&gt; OMAT[.materials &lt;i&gt;_Materials&lt;/i&gt;]
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>    OPS --&gt; OELEM[.elements &lt;i&gt;_Elements&lt;/i&gt;]
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>    OPS --&gt; OING[.ingest &lt;i&gt;_Ingest&lt;/i&gt;]
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>    OPS --&gt; OEXP[.export &lt;i&gt;_Export&lt;/i&gt;]
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>    OPS --&gt; OINS[.inspect &lt;i&gt;_Inspect&lt;/i&gt;]
 </span></code></pre></div>
 <p>The ASCII equivalent, for pasting into commit messages:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>g                                                       (apeGmsh session)
@@ -5311,14 +5288,13 @@ the <code>_COMPOSITES</code> tuple in <a href="../src/apeGmsh/_core.py"><code>_c
 </span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>├── physical         mesh.PhysicalGroups
 </span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>├── mesh_selection   mesh.MeshSelectionSet
 </span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>├── view             mesh.View
-</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>├── g2o              solvers.Gmsh2OpenSees
-</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>├── opensees         solvers.OpenSees
-</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>│   ├── .materials   _Materials
-</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>│   ├── .elements    _Elements
-</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>│   ├── .ingest      _Ingest
-</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>│   ├── .export      _Export
-</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>│   └── .inspect     _Inspect
-</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>└── plot             viz.Plot                           (lazy-loaded)
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>├── opensees         solvers.OpenSees
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>│   ├── .materials   _Materials
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>│   ├── .elements    _Elements
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>│   ├── .ingest      _Ingest
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>│   ├── .export      _Export
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>│   └── .inspect     _Inspect
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>└── plot             viz.Plot                           (lazy-loaded)
 </span></code></pre></div>
 <p>Output of the workflow is <code>fem = g.mesh.queries.get_fem_data(dim=N)</code> —
 a frozen <a href="../src/apeGmsh/mesh/FEMData.py"><code>FEMData</code></a> that has its own
@@ -5775,11 +5751,6 @@ for the full broker surface.</p>
 </thead>
 <tbody>
 <tr>
-<td>push the mesh straight into OpenSeesPy</td>
-<td><code>g.g2o.transfer()</code> (wraps <code>gmsh2opensees</code>)</td>
-<td><code>solvers/Gmsh2OpenSees.py</code></td>
-</tr>
-<tr>
 <td>build an OpenSees model in-process</td>
 <td><code>g.opensees.set_model(ndm=3, ndf=6); g.opensees.build()</code></td>
 <td><code>solvers/OpenSees.py</code></td>
@@ -5952,7 +5923,7 @@ and <code>Constraints</code> (the facade module).</p>
   Declares <code>_COMPOSITES</code> tuple that <code>_SessionBase._create_composites()</code>
   iterates; exposes typed attributes <code>inspect</code>, <code>model</code>, <code>labels</code>,
   <code>sections</code>, <code>parts</code>, <code>constraints</code>, <code>loads</code>, <code>masses</code>, <code>mesh</code>, <code>loader</code>,
-  <code>physical</code>, <code>mesh_selection</code>, <code>view</code>, <code>g2o</code>, <code>opensees</code>, <code>plot</code>.</li>
+  <code>physical</code>, <code>mesh_selection</code>, <code>view</code>, <code>opensees</code>, <code>plot</code>.</li>
 <li><code>.__init__(self, *, model_name="ModelName", verbose=False)</code></li>
 </ul>
 <h4 id="_sessionpy"><code>_session.py</code><a class="headerlink" href="#_sessionpy" title="Permanent link">&para;</a></h4>
@@ -6954,18 +6925,6 @@ tables.</p>
 <li><code>.get_slots(self, ndm)</code></li>
 <li><code>.expected_pg_dim</code> <strong>[property]</strong></li>
 <li>Module-level: <code>_render_tcl(...)</code>, <code>_render_py(...)</code>.</li>
-</ul>
-<h4 id="solversgmsh2openseespy"><code>solvers/Gmsh2OpenSees.py</code><a class="headerlink" href="#solversgmsh2openseespy" title="Permanent link">&para;</a></h4>
-<ul>
-<li><code>Gmsh2OpenSees</code> <strong>[composite]</strong> — thin shim over the external <code>gmsh2opensees</code> package (lazy-imported via <code>_import_g2o</code>).</li>
-<li><code>.__init__(self, parent)</code></li>
-<li><code>._is_session_active(self)</code></li>
-<li><code>.is_available()</code> <strong>[staticmethod]</strong></li>
-<li><code>.transfer(self, *, verbose=False)</code></li>
-<li><code>.transfer_from_file(self, msh_path, *, verbose=False)</code></li>
-<li><code>.save_and_transfer(self, msh_path="model.msh", *, verbose=False)</code></li>
-<li><code>.__repr__(self)</code></li>
-<li>Module helper: <code>_import_g2o()</code>.</li>
 </ul>
 <h3 id="45-sections-sections">4.5 Sections — <code>sections/</code><a class="headerlink" href="#45-sections-sections" title="Permanent link">&para;</a></h3>
 <h4 id="sections_builderpy"><code>sections/_builder.py</code><a class="headerlink" href="#sections_builderpy" title="Permanent link">&para;</a></h4>

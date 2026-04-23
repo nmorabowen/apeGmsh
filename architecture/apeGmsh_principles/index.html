@@ -2828,8 +2828,8 @@ between <em>works in notebooks</em> and <em>works in the notebook environment
 half the engineering world uses.</em></p>
 <p>Concrete rules:</p>
 <ul>
-<li>Optional heavyweight dependencies (Qt, matplotlib, openseespy,
-  <code>gmsh2opensees</code>) are imported at call time, not at module load.</li>
+<li>Optional heavyweight dependencies (Qt, matplotlib, openseespy)
+  are imported at call time, not at module load.</li>
 <li>Viewer modules detect the environment and route to an HTML backend
   when Qt is absent.</li>
 <li>No <code>gmsh.fltk.*</code> call appears in any import-time code path.</li>
