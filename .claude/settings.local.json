@@ -282,7 +282,27 @@
       "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -c \"import json; nb=json.load\\(open\\('examples/EOS Examples/example_visualization_and_quality.ipynb'\\)\\); print\\(f'{len\\(nb[\\\\\"cells\\\\\"]\\)} cells:'\\); [print\\(f'  {c[\\\\\"cell_type\\\\\"]:>8} — {\\\\\"\\\\\".join\\(c[\\\\\"source\\\\\"]\\)[:70].strip\\(\\)}'\\) for c in nb['cells']]\")",
       "Bash(MPLBACKEND=Agg \"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" \"examples/EOS Examples/07_load_patterns.py\")",
       "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" _build_notebook.py 07_load_patterns.py 07_load_patterns.ipynb)",
-      "Bash(MPLBACKEND=Agg \"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/test_vecxz_helper.py -v)"
+      "Bash(MPLBACKEND=Agg \"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/test_vecxz_helper.py -v)",
+      "Bash(git merge *)",
+      "Bash(git fetch *)",
+      "Bash(git branch *)",
+      "Bash(gh auth *)",
+      "Bash(gh workflow *)",
+      "Bash(gh run *)",
+      "Bash(gh api *)",
+      "Bash(awk 'NR==182 {print length\\($0\\)}' \"/c/Users/nmora/Downloads/apeGmsh Suite _standalone_.html\")",
+      "Bash(awk 'NR==182' \"/c/Users/nmora/Downloads/apeGmsh Suite _standalone_.html\")",
+      "Bash(grep -oE \"PAL_LIGHT[^;]{0,2000}\")",
+      "Bash(grep -oE \"const PAL_LIGHT[^;]{0,1500}\")",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m mkdocs build)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe scripts/gen_suzanne_mesh.py)",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe \"examples/EOS Examples/_build_notebook.py\" examples/21_mppy_block_2parts.py examples/21_mppy_block_2parts.ipynb)",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe 21_mppy_block_2parts.py)",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe \"examples/EOS Examples/_build_notebook.py\" \"examples/EOS Examples/21_opensesmp_block_2parts.py\" \"examples/EOS Examples/21_opensesmp_block_2parts.ipynb\")",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe 21_opensesmp_block_2parts.py)",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pip show nbconvert)",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=180 21_opensesmp_block_2parts.ipynb)"
     ]
   }
 }

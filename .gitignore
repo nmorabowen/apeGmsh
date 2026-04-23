@@ -17,6 +17,7 @@ opensees_venv/
 # IDE
 .vscode/
 .idea/
+.obsidian/
 *.swp
 *.swo
 *~
