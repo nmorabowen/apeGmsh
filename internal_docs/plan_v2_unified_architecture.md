@@ -7,7 +7,7 @@ pyGmsh becomes the single full-featured runtime. Whether you model one body or a
 ## Current State
 
 ```
-pyGmsh (_core.py)     → composites: model, mesh, physical, partition, view, g2o, opensees, plot, inspect, loader
+pyGmsh (_core.py)     → composites: model, mesh, physical, partition, view, opensees, plot, inspect, loader
 Assembly (Assembly.py) → same composites + instances + constraints + fragment
 Part (Part.py)         → composites: model, inspect, plot
 ```

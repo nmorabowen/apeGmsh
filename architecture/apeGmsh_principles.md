@@ -237,8 +237,8 @@ half the engineering world uses.*
 
 Concrete rules:
 
-- Optional heavyweight dependencies (Qt, matplotlib, openseespy,
-  `gmsh2opensees`) are imported at call time, not at module load.
+- Optional heavyweight dependencies (Qt, matplotlib, openseespy)
+  are imported at call time, not at module load.
 - Viewer modules detect the environment and route to an HTML backend
   when Qt is absent.
 - No `gmsh.fltk.*` call appears in any import-time code path.

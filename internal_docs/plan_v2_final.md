@@ -38,7 +38,6 @@ g.constraints    # define + resolve kinematic interactions (NEW)
 
 # Solvers & Export
 g.opensees       # OpenSees builder (unchanged API)
-g.g2o            # gmsh2opensees bridge (unchanged)
 g.partition      # Metis partitioning (unchanged)
 g.view           # Gmsh post-processing views (unchanged)
 g.plot           # Matplotlib visualization (unchanged)

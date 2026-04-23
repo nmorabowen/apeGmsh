@@ -23,10 +23,10 @@ Not on PyPI yet — install directly from the repo:
 
 ```bash
 # Pinned to a release
-pip install "git+https://github.com/nmorabowen/apeGmsh.git@v1.0.0"
+pip install "git+https://github.com/nmorabowen/apeGmsh.git@v1.0.2"
 
 # With all optional dependencies
-pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@v1.0.0"
+pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@v1.0.2"
 ```
 
 Or clone for editable development:
@@ -39,8 +39,7 @@ pip install -e ".[all]"
 
 Requires Gmsh (with Python bindings), NumPy, and Pandas. Optional
 extras: `matplotlib` (plotting), `openseespy` (analysis),
-`gmsh2opensees` (one-liner mesh transfer), `pyvista` + `PyQt6` (Qt
-viewers).
+`pyvista` + `PyQt6` (Qt viewers).
 
 ## Quick start
 
@@ -90,7 +89,6 @@ session *is* the assembly. Parts are registered into
 | `g.loads`        | Load patterns & definitions (resolved into `fem.loads`) |
 | `g.masses`       | Mass definitions (resolved into `fem.masses`) |
 | `g.opensees`     | OpenSees bridge (see sub-composites below) |
-| `g.g2o`          | Legacy one-liner `gmsh2opensees` transfer |
 | `g.inspect`      | Session-level diagnostics |
 | `g.plot`         | Matplotlib visualisations (optional) |
 | `g.view`         | Gmsh post-processing scalar/vector views |
@@ -275,7 +273,6 @@ apeGmsh/
         Loads.py
         Masses.py
         Numberer.py
-        Gmsh2OpenSees.py
       viewers/                  # PyQt/PyVista viewers
       results/                  # VTU export + Results container
       viz/                      # Selection, Inspect, Plot, VTKExport

@@ -6,8 +6,6 @@ These tests stub out the heavy third-party dependencies (``gmsh``,
 They verify:
 
 * Top-level package imports expose the canonical public names.
-* The ``Gmsh2OpenSees`` wrapper calls into ``gmsh2opensees.gmsh2ops``
-  when the owning session is active.
 * :func:`apeGmsh.mesh._fem_extract.build_fem_data` correctly extracts
   a 3D element set from a faked Gmsh model.
 * The surface-tessellation helper
@@ -44,7 +42,6 @@ class LibraryContractTests(unittest.TestCase):
     def setUp(self) -> None:
         _purge_apegmsh_modules()
         self._saved_gmsh = sys.modules.get("gmsh")
-        self._saved_g2o = sys.modules.get("gmsh2opensees")
         _install_fake_gmsh()
 
     def tearDown(self) -> None:
@@ -53,11 +50,6 @@ class LibraryContractTests(unittest.TestCase):
             sys.modules.pop("gmsh", None)
         else:
             sys.modules["gmsh"] = self._saved_gmsh
-
-        if self._saved_g2o is None:
-            sys.modules.pop("gmsh2opensees", None)
-        else:
-            sys.modules["gmsh2opensees"] = self._saved_g2o
 
     # ------------------------------------------------------------------
     # Package-level API
@@ -70,33 +62,6 @@ class LibraryContractTests(unittest.TestCase):
         # The v1.0 API does not (and must not) expose Assembly — the
         # session IS the assembly.
         self.assertFalse(hasattr(pkg, "Assembly"))
-
-    # ------------------------------------------------------------------
-    # Gmsh2OpenSees live-session wrapper
-    # ------------------------------------------------------------------
-
-    def test_g2o_transfer_calls_gmsh2ops_when_active(self) -> None:
-        calls: list[str] = []
-        fake_g2o = types.ModuleType("gmsh2opensees")
-        fake_g2o.gmsh2ops = lambda: calls.append("gmsh2ops")
-        fake_g2o.msh2ops = lambda path: calls.append(path)
-        sys.modules["gmsh2opensees"] = fake_g2o
-
-        mod = importlib.import_module("apeGmsh.solvers.Gmsh2OpenSees")
-        wrapper = mod.Gmsh2OpenSees(
-            types.SimpleNamespace(is_active=True, _verbose=False),
-        )
-        wrapper.transfer()
-
-        self.assertEqual(calls, ["gmsh2ops"])
-
-    def test_g2o_transfer_raises_when_session_inactive(self) -> None:
-        mod = importlib.import_module("apeGmsh.solvers.Gmsh2OpenSees")
-        wrapper = mod.Gmsh2OpenSees(
-            types.SimpleNamespace(is_active=False, _verbose=False),
-        )
-        with self.assertRaises(RuntimeError):
-            wrapper.transfer()
 
     # ------------------------------------------------------------------
     # _fem_extract.build_fem_data (3D path)

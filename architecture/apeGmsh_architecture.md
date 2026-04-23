@@ -561,7 +561,7 @@ to grow.
 
 ## 8. The solver adapter
 
-`Gmsh2OpenSees` at `g.opensees` is the reference adapter. It reads
+`OpenSees` at `g.opensees` is the reference adapter. It reads
 `FEMData` and emits either openseespy calls or Tcl. Nothing in the
 adapter calls gmsh.
 

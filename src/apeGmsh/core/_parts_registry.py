@@ -199,43 +199,92 @@ class PartsRegistry(_PartsFragmentationMixin):
     # Entry point 2: Manual registration
     # ------------------------------------------------------------------
 
-    def register(self, label: str, dimtags: list[DimTag]) -> Instance:
-        """Tag existing entities under a part label.
+    def register(
+        self,
+        name: str,
+        dimtags: list[DimTag] | None = None,
+        *,
+        label: str | None = None,
+        pg: str | None = None,
+        dim: int | None = None,
+    ) -> Instance:
+        """Tag existing entities under a part name.
+
+        Exactly one of ``dimtags``, ``label``, or ``pg`` must be given.
 
         Parameters
         ----------
-        label : str
+        name : str
             Unique part name.
-        dimtags : list of (dim, tag)
-            Entities to assign.
+        dimtags : list of (dim, tag), optional
+            Entities to assign directly.  Also accepted positionally
+            as the second argument.
+        label : str, optional
+            Name of an apeGmsh label (``g.labels``) whose entities
+            should be adopted.
+        pg : str, optional
+            Name of a physical group (``g.physical``) whose entities
+            should be adopted.
+        dim : int, optional
+            Forwarded to ``g.labels.entities(label, dim=dim)`` when
+            using ``label=`` and the label spans multiple dimensions.
 
         Returns
         -------
         Instance
         """
-        if label in self._instances:
-            raise ValueError(f"Part label '{label}' already exists.")
+        provided = sum(x is not None for x in (dimtags, label, pg))
+        if provided != 1:
+            raise TypeError(
+                "register() requires exactly one of dimtags=, label=, "
+                f"or pg= (got {provided})."
+            )
+
+        if label is not None:
+            labels_comp = self._parent.labels
+            if dim is not None:
+                tags = labels_comp.entities(label, dim=dim)
+                resolved: list[DimTag] = [(dim, int(t)) for t in tags]
+            else:
+                # Raises ValueError on multi-dim, KeyError on missing
+                labels_comp.entities(label)
+                resolved = []
+                for d in range(4):
+                    try:
+                        d_tags = labels_comp.entities(label, dim=d)
+                    except KeyError:
+                        continue
+                    resolved = [(d, int(t)) for t in d_tags]
+                    break
+        elif pg is not None:
+            resolved = [(int(d), int(t))
+                        for d, t in self._parent.physical.dim_tags(pg)]
+        else:
+            resolved = [(int(d), int(t)) for d, t in dimtags]
+
+        if name in self._instances:
+            raise ValueError(f"Part label '{name}' already exists.")
 
         # Ownership check — each entity can belong to at most one part
-        for dim, tag in dimtags:
+        for d, t in resolved:
             for existing_label, existing_inst in self._instances.items():
-                if int(tag) in existing_inst.entities.get(int(dim), []):
+                if t in existing_inst.entities.get(d, []):
                     raise ValueError(
-                        f"Entity (dim={dim}, tag={tag}) already belongs to "
+                        f"Entity (dim={d}, tag={t}) already belongs to "
                         f"part '{existing_label}'. Remove it first."
                     )
 
         entities: dict[int, list[int]] = {}
-        for dim, tag in dimtags:
-            entities.setdefault(int(dim), []).append(int(tag))
+        for d, t in resolved:
+            entities.setdefault(d, []).append(t)
 
         inst = Instance(
-            label=label,
-            part_name=label,
+            label=name,
+            part_name=name,
             entities=entities,
-            bbox=self._compute_bbox(dimtags) if dimtags else None,
+            bbox=self._compute_bbox(resolved) if resolved else None,
         )
-        self._instances[label] = inst
+        self._instances[name] = inst
         return inst
 
     # ------------------------------------------------------------------

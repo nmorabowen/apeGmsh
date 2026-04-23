@@ -377,17 +377,7 @@ for i in range(mesh.n_nodes):
 
 Best for: full control, custom loads, multi-material models, bandwidth optimization.
 
-### Path 2: g2o wrapper (quick prototype)
-
-```python
-if g.g2o.is_available():
-    g.g2o.transfer(verbose=True)
-    # Nodes and elements created automatically using Gmsh tags as IDs
-```
-
-Best for: rapid prototyping with standard elements. Less control over numbering and orphan filtering. Uses Gmsh tags directly as OpenSees IDs.
-
-### Path 3: Manual loop (basic example)
+### Path 2: Manual loop (basic example)
 
 ```python
 gmsh_to_ops = {}
@@ -407,7 +397,6 @@ Best for: understanding the flow, teaching.
 | Scenario                               | Recommended path                          |
 |----------------------------------------|-------------------------------------------|
 | Standard workflow (most cases)         | `get_numbered_mesh()` + maps              |
-| Quick prototype, standard elements     | `g.g2o.transfer()`                        |
 | Custom edge loads (like pressure here) | Numberer + raw `get_fem_data`             |
 | Bandwidth optimization needed          | `get_numbered_mesh(method="rcm")`         |
 | Multi-material with different elements | Numberer + physical group maps            |

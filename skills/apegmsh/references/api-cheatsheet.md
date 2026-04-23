@@ -22,8 +22,7 @@ with apeGmsh(model_name="...") as g:
 ```
 
 Optional extras (pip): `matplotlib` (plots), `openseespy` (analysis),
-`gmsh2opensees` (legacy `g.g2o`), `pyvista` + `PySide6` + `vtk` + `qtpy`
-(viewers), `ezdxf` (DXF).
+`pyvista` + `PySide6` + `vtk` + `qtpy` (viewers), `ezdxf` (DXF).
 
 ## Top-level composites on `g`
 
@@ -42,7 +41,6 @@ Optional extras (pip): `matplotlib` (plots), `openseespy` (analysis),
 | `g.physical`       | `PhysicalGroups`    | Solver-facing named groups |
 | `g.mesh_selection` | `MeshSelectionSet`  | Post-mesh node/element selection sets |
 | `g.view`           | `View`              | Gmsh post-processing scalar/vector views |
-| `g.g2o`            | `Gmsh2OpenSees`     | Legacy one-liner transfer (keep for back-compat) |
 | `g.opensees`       | `OpenSees`          | OpenSees bridge (5 sub-composites) |
 | `g.plot`           | `Plot`              | Matplotlib visualisations (optional extra) |
 

@@ -60,7 +60,6 @@ graph TD
     G --> PHYS[g.physical<br/><i>mesh.PhysicalGroups</i>]
     G --> MSEL[g.mesh_selection<br/><i>MeshSelectionSet</i>]
     G --> VIEW[g.view<br/><i>mesh.View</i>]
-    G --> G2O[g.g2o<br/><i>Gmsh2OpenSees</i>]
     G --> OPS[g.opensees<br/><i>solvers.OpenSees</i>]
     G --> PLOT[g.plot<br/><i>viz.Plot — lazy</i>]
 
@@ -114,7 +113,6 @@ g                                                       (apeGmsh session)
 ├── physical         mesh.PhysicalGroups
 ├── mesh_selection   mesh.MeshSelectionSet
 ├── view             mesh.View
-├── g2o              solvers.Gmsh2OpenSees
 ├── opensees         solvers.OpenSees
 │   ├── .materials   _Materials
 │   ├── .elements    _Elements
@@ -241,7 +239,6 @@ for the full broker surface.
 
 | I want to…                              | Call                                                     | Lives in                                         |
 | --------------------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
-| push the mesh straight into OpenSeesPy  | `g.g2o.transfer()` (wraps `gmsh2opensees`)               | `solvers/Gmsh2OpenSees.py`                       |
 | build an OpenSees model in-process      | `g.opensees.set_model(ndm=3, ndf=6); g.opensees.build()` | `solvers/OpenSees.py`                            |
 | emit a `.tcl` or `.py` script           | `g.opensees.export.tcl(path)` / `.py(path)`              | `solvers/_opensees_export.py`                    |
 | ingest FEMData into opensees            | `g.opensees.ingest.loads(fem)` / `.sp(fem)` / `.masses(fem)` / `.constraints(fem)` | `solvers/_opensees_ingest.py`                    |
@@ -315,7 +312,7 @@ and `Constraints` (the facade module).
   Declares `_COMPOSITES` tuple that `_SessionBase._create_composites()`
   iterates; exposes typed attributes `inspect`, `model`, `labels`,
   `sections`, `parts`, `constraints`, `loads`, `masses`, `mesh`, `loader`,
-  `physical`, `mesh_selection`, `view`, `g2o`, `opensees`, `plot`.
+  `physical`, `mesh_selection`, `view`, `opensees`, `plot`.
   - `.__init__(self, *, model_name="ModelName", verbose=False)`
 
 #### `_session.py`
@@ -1292,17 +1289,6 @@ Module-level helpers:
   - `.get_slots(self, ndm)`
   - `.expected_pg_dim` **[property]**
 - Module-level: `_render_tcl(...)`, `_render_py(...)`.
-
-#### `solvers/Gmsh2OpenSees.py`
-- `Gmsh2OpenSees` **[composite]** — thin shim over the external `gmsh2opensees` package (lazy-imported via `_import_g2o`).
-  - `.__init__(self, parent)`
-  - `._is_session_active(self)`
-  - `.is_available()` **[staticmethod]**
-  - `.transfer(self, *, verbose=False)`
-  - `.transfer_from_file(self, msh_path, *, verbose=False)`
-  - `.save_and_transfer(self, msh_path="model.msh", *, verbose=False)`
-  - `.__repr__(self)`
-- Module helper: `_import_g2o()`.
 
 ### 4.5 Sections — `sections/`
 

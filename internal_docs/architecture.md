@@ -89,7 +89,6 @@ g
   |     |-- .inspect      Post-build tables and summaries
   |     +-- .export       TCL/Python script emission
   |
-  |-- .g2o                Gmsh2OpenSees wrapper (optional)
   |-- .inspect            Geometry/mesh summary (DataFrames)
   +-- .plot               Matplotlib plotting (optional)
 ```

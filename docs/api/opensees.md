@@ -34,7 +34,3 @@ lifecycle methods.
 ::: apeGmsh.solvers.Numberer.Numberer
 
 ::: apeGmsh.solvers.Numberer.NumberedMesh
-
-## Legacy bridge — `g.g2o`
-
-::: apeGmsh.solvers.Gmsh2OpenSees.Gmsh2OpenSees

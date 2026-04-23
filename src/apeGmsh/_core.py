@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from .mesh.MeshSelectionSet import MeshSelectionSet
     from .mesh.Partition import Partition  # noqa: F401 (backward compat)
     from .mesh.View import View
-    from .solvers.Gmsh2OpenSees import Gmsh2OpenSees
     from .solvers.OpenSees import OpenSees
     from .viz.Plot import Plot
 
@@ -51,7 +50,6 @@ class apeGmsh(_SessionBase):
         # ("partition",    ".mesh.Partition",             "Partition",             False),
         # ^ Removed: consolidated into g.mesh.partitioning
         ("view",            ".mesh.View",                  "View",                  False),
-        ("g2o",             ".solvers.Gmsh2OpenSees",      "Gmsh2OpenSees",         False),
         ("opensees",        ".solvers.OpenSees",           "OpenSees",              False),
         ("plot",            ".viz.Plot",                   "Plot",                  True),
     )
@@ -71,7 +69,6 @@ class apeGmsh(_SessionBase):
     mesh_selection: MeshSelectionSet
     # partition: Partition  # removed — use g.mesh.partitioning
     view: View
-    g2o: Gmsh2OpenSees
     opensees: OpenSees
     plot: Plot
 
