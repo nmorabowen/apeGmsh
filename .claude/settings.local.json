@@ -302,7 +302,11 @@
       "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe \"examples/EOS Examples/_build_notebook.py\" \"examples/EOS Examples/21_opensesmp_block_2parts.py\" \"examples/EOS Examples/21_opensesmp_block_2parts.ipynb\")",
       "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe 21_opensesmp_block_2parts.py)",
       "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pip show nbconvert)",
-      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=180 21_opensesmp_block_2parts.ipynb)"
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=180 21_opensesmp_block_2parts.ipynb)",
+      "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/test_library_contracts.py -v)",
+      "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -c \"from apeGmsh import apeGmsh; g = apeGmsh\\(model_name='t'\\); print\\('composites:', [c[0] for c in g._COMPOSITES]\\); print\\('has g2o attr:', hasattr\\(g, 'g2o'\\)\\)\")",
+      "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/)",
+      "Bash(python -c \"import json; json.load\\(open\\('.claude/settings.local.json'\\)\\); print\\('settings.local.json — valid JSON'\\)\")"
     ]
   }
 }
