@@ -2327,13 +2327,220 @@ block in your analysis script.
 
 ---
 
+## Lesson 14 — Masses
+
+Masses are the third pre-mesh record type (after constraints and
+loads). The API mirrors loads — four factories, same
+target-resolution kwargs — but masses **only ever land on
+nodes**, never elements. There is no element-level mass record;
+everything reduces to nodal masses at resolution time.
+
+### 14.1  The pipeline
+
+Same two-stage contract:
+
+```python
+# Stage 1 — declare
+g.masses.volume("Concrete", density=2400)
+g.masses.point("TopAnchor", mass=1500)
+
+# Stage 2 — resolve at broker build
+fem = g.mesh.queries.get_fem_data(dim=3)
+# fem.nodes.masses now carries per-node MassRecord entries
+```
+
+Mass declarations know nothing about nodes until the broker is
+built. Declare against labels and PGs; the resolver lumps
+everything onto the mesh nodes at extraction time.
+
+### 14.2  The four factories
+
+| Method | Applies to | Parameter |
+|---|---|---|
+| `point(target, mass=, rotational=)` | Nodes of `target` | `mass` (scalar) + optional `(Ixx, Iyy, Izz)` |
+| `line(target, linear_density=)` | Curves | kg / m |
+| `surface(target, areal_density=)` | Faces | kg / m² |
+| `volume(target, density=)` | Volumes | kg / m³ |
+
+All four take:
+
+- The same four target-resolution forms as loads — positional,
+  `label=`, `pg=`, `tag=`.
+- `reduction="lumped"` *(default — currently the only supported
+  mode).*
+- `name=` — optional human-readable tag for the definition.
+
+```python
+# Point mass — 1500 kg plus rotational inertia at an anchor
+g.masses.point(
+    "TopAnchor",
+    mass=1500,
+    rotational=(50, 50, 100),   # (Ixx, Iyy, Izz)
+)
+
+# Line mass — 5 kg/m along every beam
+g.masses.line("Beams", linear_density=5.0)
+
+# Surface mass — 120 kg/m² on floor slabs (finishes + partitions)
+g.masses.surface("FloorSlabs", areal_density=120)
+
+# Volume mass — concrete at 2400 kg/m³
+g.masses.volume("Concrete", density=2400)
+```
+
+### 14.3  The rotational-inertia argument
+
+Only `point()` accepts rotational inertia. The other three derive
+rotational moments from the translational integration and the
+geometry's shape functions — you don't set them explicitly.
+
+```python
+# 6-DOF mass: mx=my=mz=1500, Ixx=50, Iyy=50, Izz=100
+g.masses.point("Lumped", mass=1500, rotational=(50, 50, 100))
+
+# 3-DOF — no rotation
+g.masses.point("Lumped", mass=1500)
+```
+
+If `rotational=` is omitted, the broker's `MassRecord` has
+`Ixx=Iyy=Izz=0`. OpenSees ignores the rotational components if
+your model's `ndf` doesn't include rotations.
+
+### 14.4  Where masses land on the broker
+
+One destination: **`fem.nodes.masses` — `MassSet`**. Every
+`MassRecord` carries a full 6-DOF mass vector:
+
+```python
+for m in fem.nodes.masses:
+    m.node_id       # int
+    m.mass          # (mx, my, mz, Ixx, Iyy, Izz) — always 6-tuple
+```
+
+The 6-tuple is always present even for models where some
+components are zero (3D solids typically have `Ixx=Iyy=Izz=0`).
+The solver side slices to match `ndf`.
+
+There is no `fem.elements.masses`. Element-level mass isn't a
+first-class record type because every solver ultimately needs
+nodal mass to assemble the mass matrix; apeGmsh just does that
+reduction eagerly, at resolution time.
+
+### 14.5  Accumulation — declarations sum per node
+
+If two declarations contribute to the same node, their masses
+**add**. This is useful and also a trap.
+
+```python
+# Both contribute to the nodes on the slab
+g.masses.volume("Slab", density=2400)          # structural mass
+g.masses.surface("Slab", areal_density=120)    # finishes + partitions
+```
+
+A node on both the volume and its face picks up a share of both.
+That's the intended behaviour — structural + non-structural mass,
+integrated together, one `ops.mass(...)` call per node at
+emission.
+
+Declare the same mass twice by accident and you get double mass.
+The broker does not de-duplicate by definition — every `_add_def`
+call stores a distinct entry. `fem.nodes.masses.summary()` is
+worth checking on complex models.
+
+### 14.6  Introspection — did I get the mass I expected?
+
+```python
+# Total translational mass — sum of mx across all records
+fem.nodes.masses.total_mass()
+
+# Lookup a specific node
+rec = fem.nodes.masses.by_node(42)
+if rec is not None:
+    print(rec.mass)       # (mx, my, mz, Ixx, Iyy, Izz)
+
+# Full summary — one row per node
+fem.nodes.masses.summary()   # DataFrame: node_id, mx, my, mz, Ixx, Iyy, Izz
+
+# Indexed access
+fem.nodes.masses[0]          # first MassRecord
+```
+
+`total_mass()` is the fastest sanity check — it should match
+your hand-calc of total structural mass plus whatever
+non-structural you added. If it's off by orders of magnitude, you
+probably picked the wrong density units (kg/m³ vs t/m³).
+
+### 14.7  Emission template for OpenSees
+
+```python
+for m in fem.nodes.masses:
+    # 6-DOF — pass the full tuple, OpenSees slices as needed
+    ops.mass(m.node_id, *m.mass)
+```
+
+That's it. No pattern grouping, no ordering concerns, no
+reduction choice. The broker has done the accumulation; the
+solver just consumes. `g.opensees.ingest.masses(fem)` does this
+loop internally.
+
+### 14.8  The typical full declaration
+
+```python
+with apeGmsh(model_name="tower") as g:
+    # ... geometry + PGs ...
+
+    # Structural mass from materials
+    g.masses.volume("Concrete", density=2400)
+    g.masses.volume("Steel",    density=7850)
+
+    # Non-structural — finishes, partitions, mechanical loads
+    g.masses.surface("FloorSlabs", areal_density=120)
+
+    # Lumped equipment at specific anchors
+    g.masses.point("MechanicalFloorMass",
+                   mass=50_000,
+                   rotational=(2e6, 2e6, 4e6))
+
+    # ... mesh + renumber + fem = get_fem_data ...
+
+    g.opensees.ingest.masses(fem)
+
+    print(f"Total mass: {fem.nodes.masses.total_mass():,.0f} kg")
+```
+
+### 14.9  Pitfalls
+
+- **Units must match across the session.** `density` in kg/m³,
+  coordinates in metres, `ops.mass` eating kg — consistent SI.
+  If you built geometry in millimetres, your density needs to be
+  kg/mm³ (density × 1e-9) or your `total_mass()` comes out wrong
+  by a factor of 10⁹. apeGmsh does not convert for you.
+- **`rotational=` is only accepted by `point()`.** The other
+  three factories compute rotational moments from the mass
+  distribution implicitly. For a specific rotational inertia on
+  a distributed mass, convert to an equivalent point mass at the
+  centroid.
+- **Accumulation is not idempotent.** Declaring
+  `g.masses.volume("Concrete", density=2400)` twice gives you
+  double mass. Review `summary()` or `total_mass()` to catch
+  duplicates.
+- **Rebuild the broker after editing mass declarations.** Same
+  as with loads — the broker is a snapshot. Forgetting to
+  rebuild `fem` after a density change means the solver sees
+  stale data.
+- **`ops.mass` with zero rotational components is fine** for
+  solids (ndf=3 models don't use rotations), but beam/shell
+  models care. Don't forget `rotational=` on lumped point masses
+  when the host DOFs include rotations.
+
+---
+
 ## Roadmap — what's still coming
 
-Two more lessons to complete the solver half:
+One more lesson to complete the solver half:
 
 | # | Lesson | Scope |
 |---|---|---|
-| 14 | **Masses** | `g.masses.volume("Body", density=...)`, `g.masses.node`, `g.masses.surface`. Per-node accumulation and `fem.nodes.masses.total_mass()`. |
 | 15 | **OpenSees bridge** | `set_model`, `materials.add_nd_material`, `elements.assign`, `elements.fix`, `ingest.loads(fem).masses(fem).constraints(fem)`, `build`, `export.tcl/py`. The full pipeline from broker to runnable solver. |
 
 Two optional follow-ons:
