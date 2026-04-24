@@ -159,6 +159,7 @@ nav:
       - Fuse group: internal_docs/plan_fuse_group.md
       - Mesh selection sets: internal_docs/plan_mesh_selection_set.md
       - Rigid element: internal_docs/plan_rigid_element.md
+      - Instance computed view (deferred): internal_docs/plan_instance_computed_view.md
       - "Viewer — Box select": internal_docs/plan_viewer_box_select.md
       - "Viewer — Light theme": internal_docs/plan_viewer_light_theme.md
       - "Viewer — PG persistence": internal_docs/plan_viewer_pg_persistence.md
