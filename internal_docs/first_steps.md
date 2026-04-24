@@ -1247,7 +1247,8 @@ geometry  →  sizing  →  generate  →  (order, optimize, refine)  →  renum
 ```
 
 Every step is a sub-composite call. The whole flow fits in about
-five lines once you've written it a few times.
+half a dozen lines once you've written it a few times — see §10.10
+for the canonical form.
 
 ### 10.2  Sizing — the bedrock
 
@@ -1281,6 +1282,18 @@ g.mesh.sizing.set_size_sources(
 
 For inline geometry, the defaults are usually fine. For CAD
 imports, **disable `from_points`**.
+
+**Underlying Gmsh options.** Every sizing call ends up as a
+`gmsh.option.setNumber(...)`. Good to know in case you're reading
+the Gmsh reference or want to set an option apeGmsh doesn't wrap:
+
+| apeGmsh call | Gmsh option |
+|---|---|
+| `set_global_size(max=, min=)` | `Mesh.MeshSizeMax`, `Mesh.MeshSizeMin` |
+| `set_size_sources(from_points=…)` | `Mesh.MeshSizeFromPoints` |
+| `set_size_sources(from_curvature=…)` | `Mesh.MeshSizeFromCurvature` |
+| `set_size_sources(extend_from_boundary=…)` | `Mesh.MeshSizeExtendFromBoundary` |
+| `set_size([(dim, tag)], s)` | `gmsh.model.mesh.setSize(...)` (not an option — per-entity API call) |
 
 ### 10.3  Generation — one call, dim matters
 
@@ -1317,6 +1330,16 @@ g.mesh.generation.set_order(2)     # must call AFTER generate
 `set_order(2)` adds mid-edge nodes to existing elements in place.
 Common values: 1 (linear), 2 (quadratic), 3 (cubic).
 
+!!! warning "Curved geometry + coarse mesh"
+    When you elevate to order ≥ 2 on a curved surface, the
+    newly-added mid-edge nodes are projected onto the underlying
+    OCC geometry. On a coarse mesh over a sharply curved face,
+    this projection can **flip the element's Jacobian** —
+    producing invalid elements that OpenSees will reject at
+    assembly. Two fixes: refine the mesh before `set_order`, or
+    run `g.mesh.generation.optimize("HighOrder")` after elevation
+    to untangle the bad elements. See §10.6.
+
 ### 10.5  Algorithm choice
 
 Default works most of the time. When you need to override:
@@ -1329,26 +1352,133 @@ g.mesh.generation.set_algorithm("WebSurface", "frontal_delaunay_quads")
 g.mesh.generation.set_algorithm(0, "hxt", dim=3)
 ```
 
-Main 2D algorithms: `delaunay` (default, robust),
-`frontal_delaunay` (higher quality), `packing_of_parallelograms`
-(quad-dominant), `frontal_delaunay_quads` (full-quad).
-
-Main 3D algorithms: `delaunay` (default), `hxt` (much faster for
-large tet meshes), `frontal`, `mmg3d`.
-
 `set_algorithm` takes labels and PG names for the `tag` arg, so
 you can target specific regions without handling tags.
 
-### 10.6  Renumbering — mandatory before `get_fem_data`
+**2D algorithms — `Mesh.Algorithm`:**
 
-Gmsh's internal tag numbering is non-contiguous after booleans,
-labels, and PGs do their work. OpenSees (and most other solvers)
-want **dense, 1-based IDs**. `renumber` provides that, and
-optionally reorders for bandwidth or cache locality:
+| Name | Gmsh code | Notes |
+|---|---:|---|
+| `automatic` *(alias: `auto`, `default`)* | 2 | Gmsh picks per-surface. Default. |
+| `mesh_adapt` *(alias: `meshadapt`)* | 1 | Adaptive; good for curved surfaces with non-uniform sizing. |
+| `initial_mesh_only` | 3 | Stops after the initial mesh — no optimisation. |
+| `delaunay` | 5 | Classic Delaunay. Robust, fast. |
+| `frontal_delaunay` *(alias: `frontal`, `front`, `tri`)* | 6 | Higher quality triangles; slower than Delaunay. |
+| `bamg` | 7 | Anisotropic remesher — needs a background size field. |
+| `frontal_delaunay_quads` *(alias: `quad`, `quads`)* | 8 | Full-quad output. |
+| `packing_parallelograms` *(alias: `pack`, `packing`)* | 9 | Quad-dominant packing. |
+| `quasi_structured_quad` *(alias: `qsq`)* | 11 | Experimental structured-quad generator. |
+
+**3D algorithms — `Mesh.Algorithm3D`:**
+
+| Name | Gmsh code | Notes |
+|---|---:|---|
+| `hxt` *(alias: `auto`, `default`, `automatic`)* | 10 | Default. Modern, fast tet mesher; recommended for large models. |
+| `delaunay` | 1 | Classic Delaunay tets. Stable fallback. |
+| `initial_mesh_only` | 3 | Stops after initial mesh. |
+| `frontal` | 4 | Advancing-front tets; better quality, slower. |
+| `mmg3d` *(alias: `mmg`)* | 7 | Remesher — needs a valid input mesh. |
+| `r_tree` *(alias: `rtree`)* | 9 | Legacy R-tree based; rarely used. |
+
+**Optimisation methods — `g.mesh.generation.optimize(method=...)`:**
+
+```python
+g.mesh.generation.optimize("Netgen")   # common
+g.mesh.generation.optimize("HighOrder")  # for order >= 2 elements
+```
+
+Accepted strings: `""` (default), `"Netgen"`, `"HighOrder"`,
+`"HighOrderElastic"`, `"HighOrderFastCurving"`, `"Laplace2D"`,
+`"Relocate2D"`, `"Relocate3D"`, `"QuadQuasiStructured"`,
+`"UntangleMeshGeometry"`. Available under the `OptimizeMethod`
+constant class if you prefer typed names.
+
+**Underlying Gmsh options:**
+
+| apeGmsh call | Gmsh option / API |
+|---|---|
+| `set_algorithm(tag, alg, dim=2)` | `gmsh.model.mesh.setAlgorithm(2, tag, code)` (per-surface) |
+| `set_algorithm(0, alg, dim=3)` | `Mesh.Algorithm3D` (global option) |
+| `optimize(method)` | `gmsh.model.mesh.optimize(method, ...)` |
+
+If you pass a name apeGmsh doesn't recognise it raises a
+`ValueError` that lists every canonical name for the dimension —
+no silent Gmsh errors downstream.
+
+### 10.6  Optimisation — smoothing bad elements after the fact
+
+Generation produces a mesh; optimisation tries to improve it.
+Ships as a post-generation pass that nudges nodes around to
+reduce sliver elements, fix inverted Jacobians, and smooth poor
+shape functions.
+
+```python
+g.mesh.generation.optimize()                 # default pass
+g.mesh.generation.optimize("Netgen", niter=3)
+g.mesh.generation.optimize("HighOrder")      # for order ≥ 2 meshes
+```
+
+Signature:
+
+```python
+optimize(
+    method: str = "",
+    *,
+    force: bool = False,
+    niter: int = 1,
+    dim_tags: list[(dim, tag)] | None = None,
+)
+```
+
+- `method` — the algorithm. Empty string is Gmsh's default smoother.
+- `force` — apply even to already-valid elements (otherwise Gmsh
+  skips elements it considers OK).
+- `niter` — number of passes. Diminishing returns past ~3.
+- `dim_tags` — limit to specific entities. `None` = the whole mesh.
+
+**When to reach for each method:**
+
+| Method | Use when |
+|---|---|
+| `""` (default) | First pass, linear meshes, no special needs |
+| `"Netgen"` | Tet-mesh quality improvement — most common for 3D solids |
+| `"HighOrder"` | After `set_order(2)` fixes invalid mid-edge nodes |
+| `"HighOrderElastic"` | `HighOrder` plus elastic relaxation — slower, often better |
+| `"HighOrderFastCurving"` | Fast high-order curving near boundaries |
+| `"Laplace2D"` | Classical 2D Laplace smoothing (tris/quads) |
+| `"Relocate2D"` / `"Relocate3D"` | Minimise element deformation per-dim |
+| `"QuadQuasiStructured"` | Clean up quad meshes from `quasi_structured_quad` |
+| `"UntangleMeshGeometry"` | Nuclear option — fix tangled / inverted elements |
+
+All accepted strings also live as typed constants under
+`OptimizeMethod` (import from `apeGmsh` or `apeGmsh.mesh`) if you
+prefer autocompletion.
+
+**Where in the flow:** after `generate`, after `set_order` if used.
+Before `renumber`.
+
+```python
+g.mesh.generation.generate(dim=3)
+g.mesh.generation.set_order(2)
+g.mesh.generation.optimize("HighOrder")   # fix any invalid mid-edge nodes
+g.mesh.generation.optimize("Netgen")      # general quality cleanup
+g.mesh.partitioning.renumber(dim=3, method="rcm")
+```
+
+If an optimisation pass can't improve the mesh it returns silently
+— no error. Run `quality_report()` (§10.9) afterwards to see what
+actually changed.
+
+### 10.7  Renumbering — mandatory before `get_fem_data`
+
+Gmsh's internal mesh numbering is non-contiguous after booleans
+and meshing. OpenSees (and most other solvers) want **dense,
+1-based IDs**. `renumber` provides that, and optionally reorders
+for bandwidth or cache locality:
 
 ```python
 g.mesh.partitioning.renumber(
-    dim=3,              # the dim you'll later extract
+    dim=3,              # element dimension to use for bandwidth + element renumbering
     method="rcm",       # "simple" | "rcm" | "hilbert" | "metis"
     base=1,             # OpenSees / Abaqus convention
 )
@@ -1364,7 +1494,32 @@ g.mesh.partitioning.renumber(
 **Call it once, right before `get_fem_data`.** Renumbering after
 the broker is built defeats the purpose.
 
-### 10.7  The FEM broker — handing off to the solver
+#### What renumber actually renumbers
+
+The name lives under `g.mesh.partitioning`, which makes it sound
+like it touches geometry or partitioning. It does not. It calls
+`gmsh.model.mesh.renumberNodes(...)` and
+`gmsh.model.mesh.renumberElements(...)` — **mesh node tags and
+mesh element tags only**. Everything else is untouched:
+
+| Thing | Renumbered? |
+|---|---|
+| Mesh **node tags** | ✅ renumbered to dense `base, base+1, ...` |
+| Mesh **element tags** | ✅ renumbered, same scheme |
+| OCC **entity tags** (volume/surface/curve/point) | ❌ unchanged |
+| **Labels** (Tier 1) | ❌ unchanged — they index OCC entities, not nodes |
+| **Physical groups** (Tier 2) | ❌ unchanged — same reason |
+| Instance registry (`g.parts.*`) | ❌ unchanged |
+
+In other words, your naming layer is completely undisturbed. The
+names you used to build the model (`"Base"`, `"Body"`, `"shaft"`)
+keep pointing at the same OCC entities; only the *mesh nodes and
+elements sitting on those entities* get new IDs. That is why
+`fem.nodes.get(pg="Base")` still works after a `renumber` — the
+PG→entity→nodes lookup chain is intact; only the last link
+returns fresh integers.
+
+### 10.8  The FEM broker — handing off to the solver
 
 ```python
 fem = g.mesh.queries.get_fem_data(dim=3)
@@ -1379,7 +1534,7 @@ solver.
 Covered in detail in the next lesson. For meshing purposes, just
 remember: `get_fem_data(dim)` gets you the handoff object.
 
-### 10.8  Quality check
+### 10.9  Quality check
 
 ```python
 g.mesh.queries.quality_report()       # returns a DataFrame
@@ -1389,9 +1544,9 @@ Reports element counts and quality metrics (Jacobian range,
 skewness, etc.) grouped by physical group. Skim it before you
 waste time running an analysis on slivers or inverted elements.
 
-### 10.9  The canonical mesh flow
+### 10.10  The canonical mesh flow
 
-Five lines, every time:
+Six lines, every time (two of them optional):
 
 ```python
 # Assume geometry + physical groups are already set up.
@@ -1399,13 +1554,14 @@ Five lines, every time:
 g.mesh.sizing.set_global_size(5.0)                   # 1. ceiling
 g.mesh.generation.generate(dim=3)                    # 2. mesh
 g.mesh.generation.set_order(2)                       # 3. (optional) quadratic
-g.mesh.partitioning.renumber(dim=3, method="rcm")    # 4. solver-ready IDs
-fem = g.mesh.queries.get_fem_data(dim=3)             # 5. handoff
+g.mesh.generation.optimize("Netgen")                 # 4. (optional) quality pass
+g.mesh.partitioning.renumber(dim=3, method="rcm")    # 5. solver-ready IDs
+fem = g.mesh.queries.get_fem_data(dim=3)             # 6. handoff
 ```
 
 That is a complete, conformal, solver-ready mesh.
 
-### 10.10  When defaults aren't enough
+### 10.11  When defaults aren't enough
 
 This lesson stays on the straight path. For more:
 
@@ -1427,4 +1583,279 @@ This lesson stays on the straight path. For more:
 
 ---
 
-_More lessons will be appended here as the guide grows._
+## Lesson 11 — The FEM broker
+
+Every lesson since Lesson 3 has mentioned
+`fem = g.mesh.queries.get_fem_data(...)`. Time to open it up. The
+broker is the **single contract between apeGmsh and any
+downstream solver**. Understand its shape and you understand how
+to wire OpenSees (or anything else) to your model.
+
+### 11.1  What the broker is
+
+> An **immutable snapshot** of nodes, elements, and all
+> pre-declared constraint / load / mass records, taken at a
+> specific moment in the session's life.
+
+Three words matter:
+
+- **Immutable** — once built, it doesn't change. Modifying the
+  session afterwards doesn't touch `fem`. Rebuild if you need to
+  reflect changes.
+- **Snapshot** — it's a copy of the data you need, not a live
+  view into Gmsh. The Gmsh session can be closed and `fem` still
+  works.
+- **Contract** — every solver bridge consumes it through the same
+  API. Code that reads `fem.nodes.get(pg=...)` works regardless
+  of the solver on the other end.
+
+```python
+g.mesh.generation.generate(dim=3)
+g.mesh.partitioning.renumber(dim=3, method="rcm")
+fem = g.mesh.queries.get_fem_data(dim=3)     # ← the broker
+```
+
+### 11.2  The top-level shape
+
+```
+fem
+├── .nodes           NodeComposite   — everything indexed by node ID
+├── .elements        ElementComposite — everything indexed by element ID
+├── .info            MeshInfo        — n_nodes, n_elems, bandwidth, elem_type_name
+└── .inspect         InspectComposite — summary, tables, source tracing
+```
+
+Two big composites (**nodes** and **elements**) mirror each
+other. Each carries its own IDs and coords/connectivity, plus
+per-node and per-element records (constraints, loads, masses).
+
+Why the split? Because different solver concepts live at
+different levels:
+
+| Level | What lives there |
+|---|---|
+| **Nodes** | Point forces, lumped masses, BCs, equalDOF constraints, rigid links |
+| **Elements** | Pressure loads, body forces, surface ties, embedded constraints |
+
+The broker mirrors this split. Pressure is `fem.elements.loads`;
+a point force is `fem.nodes.loads`. No confusion about where a
+record belongs.
+
+### 11.3  Nodes — bulk access vs filtered access
+
+**Bulk:** all nodes, in one shot.
+
+```python
+fem.nodes.ids              # ndarray(N,) — every node ID
+fem.nodes.coords           # ndarray(N, 3) — every coordinate
+fem.nodes.index(node_id)   # O(1) ID → row index lookup
+```
+
+**Filtered by name:** the common case. `get()` returns a
+`NodeResult`:
+
+```python
+# By physical group
+result = fem.nodes.get(pg="Base")
+
+# By label
+result = fem.nodes.get(label="shaft")
+
+result.ids             # ndarray of node IDs in this subset
+result.coords          # ndarray(k, 3) of their coords
+result.to_dataframe()  # pandas
+```
+
+And crucially — **iterable**. The most common idiom in solver
+code:
+
+```python
+for nid, xyz in fem.nodes.get(pg="Base"):
+    ops.node(nid, *xyz)
+    ops.fix(nid, 1, 1, 1)
+```
+
+One line per node, IDs and coordinates unpacked automatically.
+
+#### Per-node record sets
+
+The `.nodes` composite also carries resolved records — the output
+of the two-stage pipeline (declare pre-mesh, resolve at broker
+build time):
+
+```python
+fem.nodes.constraints     # NodeConstraintSet — equalDOF, rigidLink, node_to_surface, ...
+fem.nodes.loads           # NodalLoadSet — point forces + moments
+fem.nodes.masses          # MassSet — lumped nodal masses
+fem.nodes.physical        # PhysicalGroupSet — PGs that survived into the broker
+fem.nodes.labels          # LabelSet — labels that did the same
+```
+
+Each of these is iterable and/or filterable. We'll go deep on
+them in the constraints / loads / masses lessons.
+
+### 11.4  Elements — connectivity and type heterogeneity
+
+Elements are trickier than nodes because a single model can
+contain multiple element types (tets + hexes, tris + quads, etc.).
+The broker handles this with two access patterns.
+
+**Bulk (homogeneous mesh only):**
+
+```python
+fem.elements.ids             # ndarray(E,) — every element ID
+fem.elements.connectivity    # ndarray(E, npe) — ONLY if mesh is homogeneous
+```
+
+If your mesh has mixed element types, `.connectivity` raises
+`TypeError` — a single 2D array can't hold elements of different
+node counts.
+
+**Filtered by name:**
+
+```python
+result = fem.elements.get(pg="Body")    # GroupResult
+for group in result:
+    group.element_type       # e.g. "Tetrahedron4"
+    group.ids                # ndarray for this element type
+    group.connectivity       # ndarray(k, npe) for this element type
+```
+
+**The single-type fast path:** if you know a PG has exactly one
+element type, `resolve()` flattens it:
+
+```python
+ids, conn = fem.elements.resolve(pg="Body", element_type="Tetrahedron4")
+# Flat (ids, conn) tuple for the single type
+```
+
+This is the common OpenSees pattern — one element type per PG,
+one call to get the connectivity.
+
+#### Per-element record sets
+
+Parallel to nodes:
+
+```python
+fem.elements.constraints     # SurfaceConstraintSet — tie, mortar, tied_contact
+fem.elements.loads           # ElementLoadSet — pressure, body force
+```
+
+### 11.5  Introspection — "what's actually in here?"
+
+Before you start writing a thousand lines of OpenSees code, check
+what the broker actually captured:
+
+```python
+print(fem.inspect.summary())
+# Compact text summary: node count, element count, PGs, labels,
+# constraint kinds, load patterns, mass records.
+
+fem.inspect.node_table()         # pandas DataFrame of all nodes
+fem.inspect.physical_table()     # DataFrame of PGs + their member counts
+fem.inspect.constraint_summary() # constraint kind counts + source names
+```
+
+Run `fem.inspect.summary()` the first time you build a broker on
+a new model. It's the fastest way to catch *"oh I forgot to
+promote that label to a PG"* kinds of mistakes.
+
+### 11.6  `fem.info` — mesh statistics at a glance
+
+```python
+fem.info.n_nodes           # total node count
+fem.info.n_elems           # total element count
+fem.info.bandwidth         # matrix bandwidth (after renumber)
+fem.info.elem_type_name    # e.g. "Tetrahedron4" for homogeneous meshes
+```
+
+Useful for logging, sanity checks, and deciding whether your
+solver config is sensible for the problem size.
+
+### 11.7  Why immutability matters
+
+Because the broker is the solver contract, it has to be stable.
+Consider:
+
+```python
+fem = g.mesh.queries.get_fem_data(dim=3)
+
+# ... some time later, inside solver code ...
+g.model.geometry.add_box(0, 0, 0, 1, 1, 1)   # session mutates
+g.parts.fragment_all()                        # everything renumbers
+
+for nid, xyz in fem.nodes.get(pg="Base"):    # still works, same IDs & coords
+    ops.fix(nid, 1, 1, 1)
+```
+
+The solver loop runs against a *frozen* world. If `fem` were
+live, that loop would see inconsistent state. By making it a
+snapshot, apeGmsh gives the solver code a contract it can depend
+on.
+
+When you need the current state, build a new broker:
+
+```python
+fem = g.mesh.queries.get_fem_data(dim=3)    # fresh snapshot
+```
+
+### 11.8  The canonical handoff
+
+Everything we've built so far meets the broker here:
+
+```python
+with apeGmsh(model_name="frame") as g:
+    # ... geometry + PGs + constraints + loads + masses (pre-mesh declarations)
+    # ... mesh generation + renumber
+
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+    # Solver side — consume via the broker
+    g.opensees.set_model(ndm=3, ndf=3)
+    g.opensees.materials.add_nd_material("Concrete", "ElasticIsotropic",
+                                         E=30e9, nu=0.2, rho=2400)
+    g.opensees.elements.assign("Body", "FourNodeTetrahedron",
+                               material="Concrete")
+
+    # These read from fem internally
+    g.opensees.ingest.loads(fem).masses(fem).constraints(fem)
+    g.opensees.build()
+```
+
+The `ingest` methods are where the broker's constraint / load /
+mass record sets get consumed — each iterates `fem.nodes.*` or
+`fem.elements.*` and emits OpenSees commands. The next three
+lessons open those record types up.
+
+---
+
+## Roadmap — what's still coming
+
+This guide is a work in progress. Lessons 1–11 cover the
+**geometry half** end-to-end: you can now open a session, build
+geometry (inline, CAD, Parts, sections), name it, query it, turn
+touching bodies into conformal assemblies, clean up CAD imports,
+mesh the result, and hand it off to a broker ready for a solver.
+
+Four more lessons — the **solver half** — are pending:
+
+| # | Lesson | Scope |
+|---|---|---|
+| 12 | **Constraints** | Two-stage pipeline (declare pre-mesh, resolve into the broker). `equal_dof`, `tie`, `rigid_link`, `rigid_diaphragm`, `node_to_surface`, `distributing_coupling`. Node-level (`fem.nodes.constraints`) vs surface-level (`fem.elements.constraints`) records. |
+| 13 | **Loads** | Point, surface, body-force, gravity. The `with g.loads.pattern("Gravity"):` grouping idiom. How resolution splits between `fem.nodes.loads` and `fem.elements.loads`. |
+| 14 | **Masses** | `g.masses.volume("Body", density=...)`, `g.masses.node`, `g.masses.surface`. Per-node accumulation and `fem.nodes.masses.total_mass()`. |
+| 15 | **OpenSees bridge** | `set_model`, `materials.add_nd_material`, `elements.assign`, `elements.fix`, `ingest.loads(fem).masses(fem).constraints(fem)`, `build`, `export.tcl/py`. The full pipeline from broker to runnable solver. |
+
+Two optional follow-ons:
+
+- **Viewers** — `g.model.viewer()` for BRep inspection,
+  `g.mesh.viewer(fem=fem)` for FEM overlays (loads, masses,
+  constraints visualised on the mesh).
+- **Worked end-to-end example** — one 40-line script that
+  exercises Lessons 1–15 on a real structural model.
+
+When they land, the guide will end with a complete
+declare → mesh → broker → solver pipeline. Until then, the
+[existing guides](guide_basics.md) cover the same ground in
+reference form; use them as a cross-reference while the
+conversational versions catch up.
