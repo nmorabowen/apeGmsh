@@ -32,6 +32,44 @@ class _PartsFragmentationMixin:
             dimtags: list[DimTag],
         ) -> tuple[float, float, float, float, float, float] | None: ...
 
+    def _remap_from_result(
+        self,
+        input_ents: list[DimTag],
+        result_map: list[list[DimTag]],
+    ) -> None:
+        """Rewrite ``Instance.entities`` using an OCC boolean's result_map.
+
+        ``input_ents[i]`` corresponds to ``result_map[i]`` — the old
+        dimtag and the list of new dimtags that replaced it.  We build
+        a per-dim ``old_tag -> [new_tag, ...]`` table (matching each
+        input dimtag to outputs at the *same* dim so surface
+        entries do not absorb new volumes and vice versa) and apply it
+        to every tracked Instance in place.  Tags that are not present
+        in any Instance are silently ignored.
+
+        Safe no-op for empty inputs.  Called by every low-level boolean
+        (``_bool_op``) and by the Parts-level fragment/fuse methods so
+        remap logic lives in a single place.
+        """
+        if not input_ents:
+            return
+
+        per_dim: dict[int, dict[int, list[int]]] = {}
+        for old_dt, new_dts in zip(input_ents, result_map):
+            old_dim, old_tag = old_dt
+            same_dim_news = [t for d, t in new_dts if d == old_dim]
+            per_dim.setdefault(old_dim, {})[old_tag] = same_dim_news
+
+        for inst in self._instances.values():
+            for d, old_to_new in per_dim.items():
+                old_tags = inst.entities.get(d, [])
+                if not old_tags:
+                    continue
+                new_tags: list[int] = []
+                for ot in old_tags:
+                    new_tags.extend(old_to_new.get(ot, [ot]))
+                inst.entities[d] = new_tags
+
     def fragment_all(self, *, dim: int | None = None) -> list[int]:
         """Fragment all entities so interfaces become conformal.
 
@@ -87,21 +125,7 @@ class _PartsFragmentationMixin:
             )
             gmsh.model.occ.synchronize()
             pg.set_result(input_ents, result_map)
-
-        # old-tag -> new-tags mapping
-        old_to_new: dict[int, list[int]] = {}
-        for old_dt, new_dts in zip(input_ents, result_map):
-            old_dim, old_tag = old_dt
-            if old_dim == dim:
-                old_to_new[old_tag] = [t for d, t in new_dts if d == dim]
-
-        # Update instance entities in-place
-        for inst in self._instances.values():
-            old_tags = inst.entities.get(dim, [])
-            new_tags: list[int] = []
-            for ot in old_tags:
-                new_tags.extend(old_to_new.get(ot, [ot]))
-            inst.entities[dim] = new_tags
+            self._remap_from_result(input_ents, result_map)
 
         return [t for _, t in result]
 
@@ -142,6 +166,7 @@ class _PartsFragmentationMixin:
             )
             gmsh.model.occ.synchronize()
             pg.set_result(input_ents, result_map)
+            self._remap_from_result(input_ents, result_map)
 
         return [t for _, t in result]
 
@@ -236,6 +261,7 @@ class _PartsFragmentationMixin:
             )
             gmsh.model.occ.synchronize()
             pg.set_result(input_ents, result_map, absorbed_into_result=True)
+            self._remap_from_result(input_ents, result_map)
 
         # ── Drop old instances from registry ────────────────────────
         for lbl in labels:
