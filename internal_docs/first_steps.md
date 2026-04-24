@@ -2096,13 +2096,243 @@ shape-function interpolation is well-defined.
 
 ---
 
+## Lesson 13 — Loads
+
+Loads share the same two-stage pipeline as constraints: declare
+against labels and PGs pre-mesh, resolve to concrete
+node/element records at broker build. Five factory methods cover
+the common cases, and one context manager (`pattern`) groups them
+into OpenSees-compatible load patterns.
+
+### 13.1  The two-stage pipeline
+
+```python
+# Stage 1 — declare against named targets
+g.loads.gravity("Concrete", g=(0, 0, -9.81), density=2400)
+g.loads.surface("RoofSlab", magnitude=-3e3, normal=True)
+
+# Stage 2 — at broker build, definitions become resolved records
+fem = g.mesh.queries.get_fem_data(dim=3)
+# fem.nodes.loads now has concrete NodalLoadRecord entries
+# fem.elements.loads has ElementLoadRecord entries where applicable
+```
+
+Same idea as constraints: you don't know node IDs at declaration
+time, but you do know the names — so the library records intent
+and resolves later.
+
+### 13.2  The `pattern` idiom — grouping loads
+
+OpenSees organises loads into **load patterns** (dead, live,
+wind, seismic, …). apeGmsh exposes this with a context manager:
+
+```python
+with g.loads.pattern("Dead"):
+    g.loads.gravity("Concrete", density=2400)
+    g.loads.line("Beams", magnitude=-2e3, direction=(0, 0, -1))
+
+with g.loads.pattern("Live"):
+    g.loads.surface("Slabs", magnitude=-3e3)
+```
+
+Every load declaration inside the `with` block is tagged with the
+active pattern name. At the solver side,
+`g.opensees.ingest.loads(fem)` emits one OpenSees `pattern` /
+`load` block per name. Loads declared outside any `with` end up
+in the default/untagged pattern.
+
+```python
+g.loads.patterns()   # list[str] of declared pattern names
+```
+
+### 13.3  The five factory methods
+
+| Method | Applies to | Typical use |
+|---|---|---|
+| `point(target, force_xyz=, moment_xyz=)` | Nodes of `target` | Concentrated force or moment at specific points |
+| `line(target, magnitude=, direction=)` | Curves | Distributed load along a beam |
+| `surface(target, magnitude=, normal=True)` | Faces | Pressure (`normal=True`) or traction |
+| `gravity(target, g=, density=)` | Volumes | Self-weight from density × gravity |
+| `body(target, force_per_volume=)` | Volumes | Generic volumetric body force |
+| `face_load(target, force_xyz=, moment_xyz=)` | Face centroids | Total load spread from centroid to face nodes |
+
+All take the same target-resolution kwargs (§13.4) and all
+respect the active `pattern`.
+
+Concrete shapes:
+
+```python
+# Concentrated at the nodes of "TopAnchor"
+g.loads.point("TopAnchor", force_xyz=(0, 0, -50e3))
+
+# 2 kN/m downward on "Beams"
+g.loads.line("Beams", magnitude=-2e3, direction=(0, 0, -1))
+
+# 3 kN/m² normal-inward on "RoofSlab"
+g.loads.surface("RoofSlab", magnitude=-3e3, normal=True)
+
+# Self-weight of a concrete volume
+g.loads.gravity("Concrete", g=(0, 0, -9.81), density=2400)
+
+# Generic body force (e.g. seepage or centrifugal)
+g.loads.body("Aquifer", force_per_volume=(0, 0, -9810))
+```
+
+### 13.4  Target resolution — four ways to name a thing
+
+Every factory method accepts four targeting kwargs:
+
+```python
+g.loads.point("TopAnchor", force_xyz=(0, 0, -1))  # positional: label first, then PG
+g.loads.point(label="TopAnchor", force_xyz=(0, 0, -1))   # explicit label
+g.loads.point(pg="TopAnchor", force_xyz=(0, 0, -1))      # explicit PG
+g.loads.point(tag=(0, 42), force_xyz=(0, 0, -1))         # raw (dim, tag)
+```
+
+Positional tries **label first, then PG** — same order as
+`resolve_to_tags` uses elsewhere. Use explicit `label=` or `pg=`
+when a name exists at both layers and you want to disambiguate.
+
+### 13.5  Where loads land on the broker
+
+The broker splits loads the same way it splits constraints — by
+what they connect.
+
+**`fem.nodes.loads` — `NodalLoadSet`:** concentrated forces and
+moments resolved to specific nodes. Also how distributed loads
+land when `target_form="nodal"` (the default).
+
+```python
+for load in fem.nodes.loads:
+    load.node_id        # int
+    load.force_xyz      # tuple[float, float, float] | None
+    load.moment_xyz     # tuple[float, float, float] | None
+    load.pattern        # pattern name
+```
+
+**`fem.elements.loads` — `ElementLoadSet`:** loads that stay
+attached to elements (pressure on an element face, body force on
+an element volume) when `target_form="element"`.
+
+```python
+for eload in fem.elements.loads:
+    eload.element_id
+    eload.load_type     # e.g. "Pressure", "BodyForce"
+    eload.params        # dict — kind-specific parameters
+    eload.pattern
+```
+
+#### `target_form` — which side of the broker
+
+Every load factory accepts `target_form` with two valid values:
+
+- `"nodal"` *(default)* — reduces to equivalent nodal forces via
+  the selected `reduction` strategy. Lands on `fem.nodes.loads`.
+  Works for every solver.
+- `"element"` — stays attached to elements as a
+  pressure / body-force record. Lands on `fem.elements.loads`.
+  Only works with solvers that accept `ops.eleLoad` (OpenSees
+  does).
+
+#### `reduction` — how distributed loads become nodal values
+
+For `target_form="nodal"`, pick how the continuous field
+collapses onto mesh nodes:
+
+- `"tributary"` *(default)* — each node gets the load integrated
+  over its tributary area / volume. Fast, simple, always correct
+  in the limit of fine meshes.
+- `"consistent"` — the proper weak-form consistent load vector
+  via shape functions. More accurate on coarse meshes,
+  especially for moments.
+
+You almost always want `"tributary"` unless you're comparing
+against a benchmark that specifies consistent loading.
+
+### 13.6  Emission template for OpenSees
+
+```python
+# Nodal loads — one per pattern
+for pattern_name in g.loads.patterns():
+    ops.pattern("Plain", pattern_tag, ts_tag)
+    for load in fem.nodes.loads:
+        if load.pattern != pattern_name:
+            continue
+        fx, fy, fz = load.force_xyz or (0, 0, 0)
+        mx, my, mz = load.moment_xyz or (0, 0, 0)
+        ops.load(load.node_id, fx, fy, fz, mx, my, mz)   # 3D, ndf=6
+
+# Element loads (pressure, body force)
+for eload in fem.elements.loads:
+    ops.eleLoad(eload.element_id, eload.load_type, **eload.params)
+```
+
+Note: apeGmsh stores spatial vectors only; **it doesn't know
+`ndf`**. You pick the slice that matches your model (3 components
+for `ndf=3`, 6 for `ndf=6`). The `ingest.loads(fem)` helper does
+this automatically using the `ndm`/`ndf` you set via
+`set_model`.
+
+### 13.7  The typical full declaration
+
+```python
+with apeGmsh(model_name="building") as g:
+    # ... geometry + PGs ...
+
+    with g.loads.pattern("Dead"):
+        g.loads.gravity("Concrete", g=(0, 0, -9.81), density=2400)
+        g.loads.gravity("Steel",    g=(0, 0, -9.81), density=7850)
+
+    with g.loads.pattern("Live"):
+        g.loads.surface("FloorSlabs", magnitude=-2.4e3, normal=True)
+
+    with g.loads.pattern("Wind"):
+        g.loads.surface("Facade", magnitude=1.5e3, normal=True)
+        g.loads.point("WindApexPt", force_xyz=(5e4, 0, 0))
+
+    # ... mesh + renumber + fem = get_fem_data ...
+
+    g.opensees.ingest.loads(fem)    # emits all three patterns
+```
+
+Three patterns, each with any mix of `gravity` / `surface` /
+`point` declarations. The solver side treats each pattern as an
+independent load case — apply with a `timeSeries` + `pattern`
+block in your analysis script.
+
+### 13.8  Pitfalls
+
+- **`surface` with `normal=True` vs `direction=`.** If
+  `normal=True` (default), `magnitude` is a scalar pressure
+  applied in the outward-normal direction. If `normal=False`,
+  pass `direction=(dx, dy, dz)` for the traction axis. Don't mix
+  — pick one.
+- **Sign convention.** apeGmsh doesn't flip signs for you.
+  Gravity with `g=(0, 0, -9.81)` is downward; a negative
+  `magnitude` on `surface` is inward (opposite the outward
+  normal). Write it as you'd expect to see it in equilibrium.
+- **Loads declared outside a `pattern` go to the default
+  pattern.** Fine for quick tests, surprising in a multi-case
+  analysis. When in doubt, always open a
+  `with g.loads.pattern(...)` block.
+- **`target_form="element"` requires solver support.** Most
+  generic solvers only accept nodal loads. Stick with the
+  default `"nodal"` unless your solver specifically handles
+  element load records.
+- **Changing pre-mesh declarations doesn't invalidate an
+  existing broker.** Rebuild
+  (`fem = g.mesh.queries.get_fem_data(...)` again) after you
+  edit load declarations, or your changes won't make it into the
+  solver input.
+
+---
+
 ## Roadmap — what's still coming
 
-Three more lessons to round out the solver half:
+Two more lessons to complete the solver half:
 
 | # | Lesson | Scope |
 |---|---|---|
-| 13 | **Loads** | Point, surface, body-force, gravity. The `with g.loads.pattern("Gravity"):` grouping idiom. How resolution splits between `fem.nodes.loads` and `fem.elements.loads`. |
 | 14 | **Masses** | `g.masses.volume("Body", density=...)`, `g.masses.node`, `g.masses.surface`. Per-node accumulation and `fem.nodes.masses.total_mass()`. |
 | 15 | **OpenSees bridge** | `set_model`, `materials.add_nd_material`, `elements.assign`, `elements.fix`, `ingest.loads(fem).masses(fem).constraints(fem)`, `build`, `export.tcl/py`. The full pipeline from broker to runnable solver. |
 
