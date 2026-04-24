@@ -306,7 +306,16 @@
       "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/test_library_contracts.py -v)",
       "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -c \"from apeGmsh import apeGmsh; g = apeGmsh\\(model_name='t'\\); print\\('composites:', [c[0] for c in g._COMPOSITES]\\); print\\('has g2o attr:', hasattr\\(g, 'g2o'\\)\\)\")",
       "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/)",
-      "Bash(python -c \"import json; json.load\\(open\\('.claude/settings.local.json'\\)\\); print\\('settings.local.json — valid JSON'\\)\")"
+      "Bash(python -c \"import json; json.load\\(open\\('.claude/settings.local.json'\\)\\); print\\('settings.local.json — valid JSON'\\)\")",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ -x --tb=short)",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_boolean_parts_integration.py -x --tb=short)",
+      "Bash(C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -c \"import apeGmsh; print\\(apeGmsh.__file__\\)\")",
+      "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -c \"import apeGmsh; print\\(apeGmsh.__file__\\)\")",
+      "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_boolean_parts_integration.py -x --tb=short)",
+      "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_boolean_parts_integration.py --tb=short)",
+      "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ -x --tb=short)",
+      "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ --tb=short --deselect tests/test_part_anchors.py::TestSidecar::test_missing_sidecar_is_graceful)",
+      "Bash(git commit *)"
     ]
   }
 }

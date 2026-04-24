@@ -161,6 +161,131 @@ def resolve_to_tags(
     )
 
 
+def resolve_to_dimtags(
+    ref: EntityRefs,
+    *,
+    default_dim: int,
+    session: "_SessionBase",
+) -> list[DimTag]:
+    """Resolve a flexible entity reference to a flat list of ``(dim, tag)``.
+
+    Companion to :func:`resolve_to_tags` — returns dimtags instead of
+    flat tags, which matches the shape every OCC boolean call expects.
+    Handles label / PG references that span multiple dimensions by
+    enumerating each dim and emitting one dimtag per (dim, tag) hit;
+    callers never have to coerce a single dim when the reference
+    naturally lives at several.
+
+    Accepted inputs (same shape as :func:`resolve_to_tags`)
+    -------------------------------------------------------
+    * ``int`` — raw tag; dim resolved from the live model, falling back
+      to *default_dim* if not found.
+    * ``str`` — label name first, then user physical-group name (same
+      order as :func:`resolve_to_tags`).
+    * ``(dim, tag)`` — passthrough.
+    * ``list`` — mixed refs resolved independently and concatenated.
+    * ``None`` — all entities at *default_dim*.
+
+    Raises
+    ------
+    KeyError
+        When a string reference is not found as a label or PG.
+    TypeError
+        When an element is not one of the supported shapes.
+    """
+    if ref is None:
+        return [(default_dim, int(t))
+                for _, t in gmsh.model.getEntities(default_dim)]
+
+    if isinstance(ref, (list, tuple)) and not _is_dimtag_tuple(ref):
+        out: list[DimTag] = []
+        for item in ref:
+            out.extend(
+                resolve_to_dimtags(
+                    item, default_dim=default_dim, session=session,
+                )
+            )
+        return out
+
+    if isinstance(ref, tuple) and _is_dimtag_tuple(ref):
+        return [(int(ref[0]), int(ref[1]))]
+
+    if isinstance(ref, bool):
+        raise TypeError(
+            "resolve_to_dimtags: expected int, str, or (dim, tag); got bool."
+        )
+
+    if isinstance(ref, int):
+        return [(resolve_dim(int(ref), default_dim), int(ref))]
+
+    if isinstance(ref, str):
+        return _resolve_string_to_dimtags(
+            ref, default_dim=default_dim, session=session,
+        )
+
+    raise TypeError(
+        f"resolve_to_dimtags: unsupported ref type {type(ref).__name__!r}. "
+        f"Expected int, str, (dim, tag), or list thereof."
+    )
+
+
+def _resolve_string_to_dimtags(
+    name: str,
+    *,
+    default_dim: int,
+    session: "_SessionBase",
+) -> list[DimTag]:
+    """Resolve a string ref to dimtags — label first, then user PG.
+
+    Mirrors :func:`_resolve_string`'s order (label Tier 1, then PG
+    Tier 2) but emits ``(dim, tag)`` and handles multi-dim names by
+    enumerating all dims the name exists at.
+    """
+    labels_comp = getattr(session, 'labels', None)
+    if labels_comp is not None:
+        hits: list[DimTag] = []
+        for d in range(4):
+            try:
+                tags = labels_comp.entities(name, dim=d)
+            except KeyError:
+                continue
+            hits.extend((d, int(t)) for t in tags)
+        if hits:
+            return hits
+
+    physical_comp = getattr(session, 'physical', None)
+    if physical_comp is not None:
+        try:
+            return [(int(d), int(t))
+                    for d, t in physical_comp.dim_tags(name)]
+        except (KeyError, TypeError):
+            pass
+
+    available_labels: list[str] = []
+    available_pgs: list[str] = []
+    if labels_comp is not None:
+        try:
+            available_labels = labels_comp.get_all()
+        except Exception:
+            pass
+    if physical_comp is not None:
+        try:
+            available_pgs = [
+                gmsh.model.getPhysicalName(d, t)
+                for d, t in physical_comp.get_all()
+            ]
+        except Exception:
+            pass
+
+    raise KeyError(
+        f"Entity reference {name!r} not found as a label or physical "
+        f"group.  Pass a label name (Tier 1, g.labels) or a physical "
+        f"group name (Tier 2, g.physical)."
+        f"\n  Available labels: {available_labels}"
+        f"\n  Available PGs: {available_pgs}"
+    )
+
+
 def _is_dimtag_tuple(val) -> bool:
     """True if *val* looks like a ``(dim, tag)`` pair."""
     return (

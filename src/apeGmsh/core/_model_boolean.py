@@ -4,8 +4,9 @@ from typing import TYPE_CHECKING
 
 import gmsh
 
-from ._helpers import Tag, TagsLike
+from ._helpers import Tag, resolve_to_dimtags
 from .Labels import pg_preserved, cleanup_label_pgs
+from apeGmsh._types import EntityRefs
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -21,20 +22,29 @@ class _Boolean:
     # Boolean operations
     # ------------------------------------------------------------------
     # Every boolean op returns a list[Tag] of the surviving volumes.
-    # ``objects`` and ``tools`` accept any TagsLike form.
+    # ``objects`` and ``tools`` accept any :data:`EntityRefs` form —
+    # raw tags, dimtags, label names, physical-group names, or lists
+    # mixing all of the above.  Resolution order for strings matches
+    # :func:`resolve_to_tags`: label (Tier 1) first, then user PG
+    # (Tier 2).  Identical shape to what ``g.physical.add`` accepts.
 
     def _bool_op(
         self,
         fn_name   : str,
-        objects   : TagsLike,
-        tools     : TagsLike,
+        objects   : EntityRefs,
+        tools     : EntityRefs,
         default_dim   : int  = 3,
         remove_object : bool = True,
         remove_tool   : bool = True,
         sync          : bool = True,
     ) -> list[Tag]:
-        obj_dt  = self._model._as_dimtags(objects, default_dim)
-        tool_dt = self._model._as_dimtags(tools,   default_dim)
+        parent = self._model._parent
+        obj_dt  = resolve_to_dimtags(
+            objects, default_dim=default_dim, session=parent,
+        )
+        tool_dt = resolve_to_dimtags(
+            tools, default_dim=default_dim, session=parent,
+        )
         fn      = getattr(gmsh.model.occ, fn_name)
 
         with pg_preserved() as pg:
@@ -49,6 +59,9 @@ class _Boolean:
                 obj_dt + tool_dt, result_map,
                 absorbed_into_result=(fn_name in ('fuse', 'intersect')),
             )
+            parts = getattr(parent, 'parts', None)
+            if parts is not None:
+                parts._remap_from_result(obj_dt + tool_dt, result_map)
 
         # Clean up registry: remove consumed objects/tools
         result_set = set(result)
@@ -69,8 +82,8 @@ class _Boolean:
 
     def fuse(
         self,
-        objects : TagsLike,
-        tools   : TagsLike,
+        objects : EntityRefs,
+        tools   : EntityRefs,
         *,
         dim           : int  = 3,
         remove_object : bool = True,
@@ -88,8 +101,8 @@ class _Boolean:
 
     def cut(
         self,
-        objects : TagsLike,
-        tools   : TagsLike,
+        objects : EntityRefs,
+        tools   : EntityRefs,
         *,
         dim           : int  = 3,
         remove_object : bool = True,
@@ -107,8 +120,8 @@ class _Boolean:
 
     def intersect(
         self,
-        objects : TagsLike,
-        tools   : TagsLike,
+        objects : EntityRefs,
+        tools   : EntityRefs,
         *,
         dim           : int  = 3,
         remove_object : bool = True,
@@ -120,8 +133,8 @@ class _Boolean:
 
     def fragment(
         self,
-        objects : TagsLike,
-        tools   : TagsLike,
+        objects : EntityRefs,
+        tools   : EntityRefs,
         *,
         dim           : int  = 3,
         remove_object : bool = True,

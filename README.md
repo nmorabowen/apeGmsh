@@ -23,10 +23,10 @@ Not on PyPI yet — install directly from the repo:
 
 ```bash
 # Pinned to a release
-pip install "git+https://github.com/nmorabowen/apeGmsh.git@v1.0.2"
+pip install "git+https://github.com/nmorabowen/apeGmsh.git@v1.0.4"
 
 # With all optional dependencies
-pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@v1.0.2"
+pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@v1.0.4"
 ```
 
 Or clone for editable development:

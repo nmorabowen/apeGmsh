@@ -1,5 +1,40 @@
 # Changelog
 
+## v1.0.4 — Low-level booleans preserve Instances + accept label/PG refs
+
+### FIXED
+
+- `g.model.boolean.{fuse,cut,intersect,fragment}` now keep
+  `Instance.entities` consistent when called directly on tags that
+  happen to belong to a tracked Instance.  Previously the remap only
+  ran inside `g.parts.fragment_all` / `fragment_pair` / `fuse_group`,
+  so a low-level boolean left Instance entries pointing at consumed
+  tags.  The remap-from-result walk has been extracted into
+  `PartsRegistry._remap_from_result` and every OCC boolean call site
+  (both `_bool_op` and the Parts-level methods) now routes through
+  that single implementation.
+
+### ADDED
+
+- `g.model.boolean.*` accepts label names and user physical-group
+  names in `objects=` / `tools=`, matching the input shape of
+  `g.physical.add`.  Strings resolve via the shared resolver: label
+  (Tier 1) first, then user PG (Tier 2).  Raw tags, dimtags, and
+  mixed lists still work.
+
+### INTERNAL
+
+- New `resolve_to_dimtags` helper in `apeGmsh.core._helpers` —
+  companion to `resolve_to_tags` that emits `(dim, tag)` pairs.
+  Handles labels / PGs that span multiple dimensions without the
+  caller having to coerce a single dim.
+- Plan B (`Instance.entities` as a computed label-backed property)
+  was weighed against this conservative fix and deferred; see
+  `internal_docs/plan_instance_computed_view.md` for the signals that
+  would trigger revisiting it.
+
+---
+
 ## v1.0.0 — Clean Architecture (breaking)
 
 v1.0 bundles two breaking changes: the package rename and the Model
