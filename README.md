@@ -8,6 +8,11 @@ once (geometry + physical groups + loads + constraints) and feed it
 to any solver. OpenSees has first-class support; other solvers can be
 plugged in through the same `FEMData` contract.
 
+**New to the library?** Start with the [**First steps guide**](internal_docs/first_steps.md) —
+a conversational walk through the session model, naming system
+(tags / labels / physical groups), queries and selection, booleans,
+and CAD import.
+
 **Documentation:** <https://nmorabowen.github.io/apeGmsh/>
 
 > [!NOTE]
