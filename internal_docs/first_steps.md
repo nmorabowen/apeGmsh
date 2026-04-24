@@ -1829,19 +1829,279 @@ lessons open those record types up.
 
 ---
 
+## Lesson 12 — Constraints
+
+Constraints are where the solver world gets interesting. apeGmsh
+has **fifteen** constraint kinds across five categories. Picking
+the right one matters for both correctness and convergence. The
+library uses a **two-stage pipeline** that decouples *what you
+want* from *what the mesh makes concrete*.
+
+### 12.1  The two-stage pipeline
+
+**Stage 1 — declare, pre-mesh, against labels and PGs:**
+
+```python
+g.constraints.equal_dof("col", "beam", dofs=[1, 2, 3], tolerance=1e-3)
+```
+
+At declaration time `"col"` and `"beam"` are just names. No mesh
+exists yet. apeGmsh records the *intent*.
+
+**Stage 2 — resolve, at broker build time, to concrete node pairs:**
+
+```python
+fem = g.mesh.queries.get_fem_data(dim=3)
+# fem.nodes.constraints now carries NodePairRecord objects
+# with resolved master_node, slave_node, dofs fields.
+```
+
+The resolver walks every declaration, matches entities to mesh
+nodes, applies the tolerance test, and emits records into the
+broker. The solver side (Lesson 15) reads those records and emits
+`ops` commands.
+
+Why the split? Because you can't talk about node IDs before
+you've meshed, but you *can* talk about "col" and "beam." The
+two-stage pipeline lets you write model-level intent early and
+have it become solver-level commands automatically later.
+
+### 12.2  The constraint taxonomy
+
+Five categories, grouped by **what the constraint connects** and
+**where the resolved record lives on the broker**:
+
+| Category | Methods | Record type | Lives on |
+|---|---|---|---|
+| **Node-to-node** (1:1) | `equal_dof`, `rigid_link` *(beam/rod)*, `penalty` | `NodePairRecord` | `fem.nodes.constraints` |
+| **Node-to-group** (1:N) | `rigid_diaphragm`, `rigid_body`, `kinematic_coupling` | `NodeGroupRecord` | `fem.nodes.constraints` |
+| **Mixed-DOF** (node → surface, different meshes) | `node_to_surface`, `node_to_surface_spring` | `NodeToSurfaceRecord` *(with phantom nodes)* | `fem.nodes.constraints` |
+| **Surface interpolation** | `tie`, `distributing_coupling`, `embedded` | `InterpolationRecord` | `fem.elements.constraints` |
+| **Surface-to-surface** | `tied_contact`, `mortar` | `SurfaceCouplingRecord` | `fem.elements.constraints` |
+
+Top three categories land on **nodes**; bottom two land on
+**elements**. Pressure is an element load, a point force is a
+node load — and the same split applies to constraints. A surface
+interpolation *is* element-valued; a rigid link between two nodes
+is node-valued.
+
+### 12.3  The common declarations
+
+Most models only use these four:
+
+```python
+# equal_dof — co-located nodes must have identical DOF values.
+# Use when master and slave share nodes at the interface (e.g.
+# after fragment_all creates a shared face).
+g.constraints.equal_dof("col", "beam", dofs=[1, 2, 3], tolerance=1e-3)
+
+# rigid_link — master and slave move as a rigid body.
+g.constraints.rigid_link("col_end", "beam_start", link_type="beam")
+# link_type="beam" couples all 6 DOFs; "rod" couples translations only.
+
+# tie — shape-function interpolation for NON-matching meshes.
+g.constraints.tie(
+    master_label="shell",
+    slave_label="beam",
+    master_entities=[(2, face_tag)],
+    slave_entities=[(1, edge_tag)],
+    dofs=[1, 2, 3, 4, 5, 6],
+    tolerance=5.0,
+)
+
+# rigid_diaphragm — all member nodes move as a rigid diaphragm
+# in-plane. Classic use: floor slab as a rigid horizontal
+# diaphragm.
+g.constraints.rigid_diaphragm(
+    master_label="diaphragm_node",
+    slave_label="column_tops",
+    dofs=[1, 2, 6],   # in-plane translations + rotation about vertical
+)
+```
+
+### 12.4  Choosing the right kind
+
+| Situation | Reach for |
+|---|---|
+| Co-located nodes, same mesh (after `fragment_all`) | `equal_dof` — cheapest |
+| Non-matching meshes at an interface | `tie` |
+| Slave should follow master rigidly | `rigid_link` (1:1) or `rigid_body` (1:N) |
+| 1D rebar embedded in a 3D solid | `embedded` |
+| Beam-to-shell junction, spread load over multiple nodes | `distributing_coupling` |
+| Floor slab acts rigid in-plane | `rigid_diaphragm` |
+| Contact between two touching surfaces | `tied_contact` (small gap) or `mortar` (larger gap) |
+| Node floats in master volume, not at a mesh node | `node_to_surface` — phantom nodes created automatically |
+
+### 12.5  The node-to-surface special case
+
+`node_to_surface` is the workhorse for mixed-DOF coupling where
+the slave node floats in space, not on the master mesh. Example:
+a beam end connecting to a solid column's face.
+
+```python
+g.constraints.node_to_surface(
+    master="col_face",           # the 3D face
+    slave="beam_end_node",        # the 1D beam's free end
+    dofs=[1, 2, 3, 4, 5, 6],
+    tolerance=1.0,
+)
+```
+
+Behind the scenes apeGmsh creates **phantom nodes** on the master
+surface at the barycentric projection of the slave, and ties them
+to the slave via `equal_dof`. The phantom nodes must be emitted
+first at the solver side (see §12.8).
+
+Shared-edge mesh nodes are deduplicated, so each slave gets
+exactly one phantom — no double constraints on shared boundaries.
+
+### 12.6  How records land on the broker
+
+**Node-level constraints** live on `fem.nodes.constraints`:
+
+```python
+# Flat iteration — every pair, with compound records auto-expanded
+for pair in fem.nodes.constraints.pairs():
+    pair.kind            # "equal_dof", "rigid_beam", ...
+    pair.master_node     # int
+    pair.slave_node      # int
+    pair.dofs            # list[int]
+
+# Grouped iteration — preferred for solvers with native multi-slave commands
+for master, slaves in fem.nodes.constraints.rigid_link_groups():
+    for slave in slaves:
+        ops.rigidLink("beam", master, slave)
+
+for master, slaves in fem.nodes.constraints.rigid_diaphragms():
+    ops.rigidDiaphragm(3, master, *slaves)
+
+# Typed iteration — just equal_dof records
+for pair in fem.nodes.constraints.equal_dofs():
+    ops.equalDOF(pair.master_node, pair.slave_node, *pair.dofs)
+
+# Raw compound records — when you need phantom_coords or extras
+for nts in fem.nodes.constraints.node_to_surfaces():
+    nts.master_node, nts.slave_node, nts.phantom_coords, ...
+```
+
+**Surface-level constraints** live on `fem.elements.constraints`:
+
+```python
+# Interpolation records — tie, distributing, embedded
+for interp in fem.elements.constraints.interpolations():
+    interp.slave_node
+    interp.master_nodes     # list[int]
+    interp.weights          # ndarray — shape-function weights
+    interp.dofs
+
+# Coupling records — tied_contact, mortar
+for coup in fem.elements.constraints.couplings():
+    ...
+```
+
+### 12.7  The `Kind` enum — no magic strings
+
+```python
+K = fem.nodes.constraints.Kind
+
+for c in fem.nodes.constraints.pairs():
+    if c.kind == K.RIGID_BEAM:
+        ops.rigidLink("beam", c.master_node, c.slave_node)
+    elif c.kind == K.EQUAL_DOF:
+        ops.equalDOF(c.master_node, c.slave_node, *c.dofs)
+```
+
+Bulk classification:
+
+```python
+K.NODE_PAIR_KINDS   # frozenset — all node-pair kind strings
+K.SURFACE_KINDS     # frozenset — all surface kind strings
+```
+
+Thirteen named kinds total: `EQUAL_DOF`, `RIGID_BEAM`,
+`RIGID_BEAM_STIFF`, `RIGID_ROD`, `RIGID_DIAPHRAGM`, `RIGID_BODY`,
+`KINEMATIC_COUPLING`, `PENALTY`, `NODE_TO_SURFACE`,
+`NODE_TO_SURFACE_SPRING`, `TIE`, `DISTRIBUTING`, `EMBEDDED`,
+`TIED_CONTACT`, `MORTAR`.
+
+### 12.8  Emission template for OpenSees
+
+The order matters. Phantom nodes first, then node-level
+constraints, then element-level:
+
+```python
+# 1. Phantom nodes from node_to_surface constraints
+for nid, xyz in fem.nodes.constraints.phantom_nodes():
+    ops.node(nid, *xyz)
+
+# 2. Rigid links (grouped by master — covers every rigid kind)
+for master, slaves in fem.nodes.constraints.rigid_link_groups():
+    for slave in slaves:
+        ops.rigidLink("beam", master, slave)
+
+# 3. Equal DOFs (includes expanded node_to_surface pairs)
+for pair in fem.nodes.constraints.equal_dofs():
+    ops.equalDOF(pair.master_node, pair.slave_node, *pair.dofs)
+
+# 4. Rigid diaphragms
+for master, slaves in fem.nodes.constraints.rigid_diaphragms():
+    ops.rigidDiaphragm(3, master, *slaves)
+
+# 5. Surface constraints
+for interp in fem.elements.constraints.interpolations():
+    ...
+for coup in fem.elements.constraints.couplings():
+    ...
+```
+
+**You almost never write this by hand.** `g.opensees.ingest
+.constraints(fem)` does it for you. Lesson 15.
+
+### 12.9  `tie` emission note — `ASDEmbeddedNodeElement`
+
+apeGmsh emits `tie` as `ASDEmbeddedNodeElement` (a penalty
+element), not as Lagrange multipliers. Default stiffness K=1e18.
+If Newton fails to converge, drop it:
+
+```python
+g.opensees.ingest.constraints(fem, tie_penalty=1e12)
+```
+
+Quad-4 master faces are auto-split into triangles so the
+shape-function interpolation is well-defined.
+
+### 12.10  Pitfalls
+
+- **`equal_dof` needs co-located nodes.** `tolerance=1e-3`
+  covers floating-point noise; it does **not** cover real mesh
+  mismatch. Use `tie` for non-matching meshes.
+- **`tie` penalty defaults to 1e18.** Drop to 1e10–1e12 if
+  Newton fails. The element only needs K >> parent element
+  stiffness, not K → ∞.
+- **`rigid_diaphragm` DOF choice is model-dependent.** For a
+  horizontal floor slab in 3D: `dofs=[1, 2, 6]` (in-plane
+  translations + rotation about vertical). For a 2D plane:
+  `dofs=[1, 2, 3]`. Get this wrong and the diaphragm either
+  under-constrains or over-constrains the slab.
+- **`node_to_surface` phantom nodes must be emitted before
+  equal_dof.** Order matters. `ingest.constraints` handles it
+  automatically; if you emit by hand, walk `phantom_nodes()`
+  first.
+- **Multi-kind rigid links merge.**
+  `fem.nodes.constraints.rigid_link_groups()` accumulates across
+  `rigid_beam`, `rigid_rod`, `rigid_diaphragm`, `rigid_body`,
+  `kinematic_coupling`, **and** expanded `node_to_surface`
+  phantom links. One grouped iteration covers all rigid-style
+  constraints.
+
+---
+
 ## Roadmap — what's still coming
 
-This guide is a work in progress. Lessons 1–11 cover the
-**geometry half** end-to-end: you can now open a session, build
-geometry (inline, CAD, Parts, sections), name it, query it, turn
-touching bodies into conformal assemblies, clean up CAD imports,
-mesh the result, and hand it off to a broker ready for a solver.
-
-Four more lessons — the **solver half** — are pending:
+Three more lessons to round out the solver half:
 
 | # | Lesson | Scope |
 |---|---|---|
-| 12 | **Constraints** | Two-stage pipeline (declare pre-mesh, resolve into the broker). `equal_dof`, `tie`, `rigid_link`, `rigid_diaphragm`, `node_to_surface`, `distributing_coupling`. Node-level (`fem.nodes.constraints`) vs surface-level (`fem.elements.constraints`) records. |
 | 13 | **Loads** | Point, surface, body-force, gravity. The `with g.loads.pattern("Gravity"):` grouping idiom. How resolution splits between `fem.nodes.loads` and `fem.elements.loads`. |
 | 14 | **Masses** | `g.masses.volume("Body", density=...)`, `g.masses.node`, `g.masses.surface`. Per-node accumulation and `fem.nodes.masses.total_mass()`. |
 | 15 | **OpenSees bridge** | `set_model`, `materials.add_nd_material`, `elements.assign`, `elements.fix`, `ingest.loads(fem).masses(fem).constraints(fem)`, `build`, `export.tcl/py`. The full pipeline from broker to runnable solver. |
@@ -1849,13 +2109,6 @@ Four more lessons — the **solver half** — are pending:
 Two optional follow-ons:
 
 - **Viewers** — `g.model.viewer()` for BRep inspection,
-  `g.mesh.viewer(fem=fem)` for FEM overlays (loads, masses,
-  constraints visualised on the mesh).
-- **Worked end-to-end example** — one 40-line script that
-  exercises Lessons 1–15 on a real structural model.
-
-When they land, the guide will end with a complete
-declare → mesh → broker → solver pipeline. Until then, the
-[existing guides](guide_basics.md) cover the same ground in
-reference form; use them as a cross-reference while the
-conversational versions catch up.
+  `g.mesh.viewer(fem=fem)` for FEM overlays.
+- **Worked end-to-end example** — one 40-line script exercising
+  Lessons 1–15 on a real structural model.
