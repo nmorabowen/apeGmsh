@@ -314,7 +314,8 @@
       "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_boolean_parts_integration.py -x --tb=short)",
       "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_boolean_parts_integration.py --tb=short)",
       "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ -x --tb=short)",
-      "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ --tb=short --deselect tests/test_part_anchors.py::TestSidecar::test_missing_sidecar_is_graceful)"
+      "Bash(PYTHONPATH=\"C:/Users/nmora/Github/apeGmsh/.claude/worktrees/jovial-dijkstra-567946/src\" C:/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ --tb=short --deselect tests/test_part_anchors.py::TestSidecar::test_missing_sidecar_is_graceful)",
+      "Bash(git commit *)"
     ]
   }
 }
