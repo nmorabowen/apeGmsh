@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.3 — Low-level booleans preserve Instances + accept label/PG refs
+## v1.0.4 — Low-level booleans preserve Instances + accept label/PG refs
 
 ### FIXED
 
