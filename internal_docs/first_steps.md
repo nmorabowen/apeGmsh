@@ -2535,17 +2535,345 @@ with apeGmsh(model_name="tower") as g:
 
 ---
 
-## Roadmap — what's still coming
+## Lesson 15 — The OpenSees bridge
 
-One more lesson to complete the solver half:
+The final core lesson. Everything we've built — geometry, naming,
+mesh, broker — funnels into `g.opensees`, the solver bridge. It
+has its own five sub-composites and produces either a live
+in-process OpenSees model (via `openseespy`) or standalone
+`.tcl` / `.py` files you can run anywhere.
 
-| # | Lesson | Scope |
-|---|---|---|
-| 15 | **OpenSees bridge** | `set_model`, `materials.add_nd_material`, `elements.assign`, `elements.fix`, `ingest.loads(fem).masses(fem).constraints(fem)`, `build`, `export.tcl/py`. The full pipeline from broker to runnable solver. |
+### 15.1  The composite shape
 
-Two optional follow-ons:
+`g.opensees` mirrors the rest of the library — focused
+sub-composites instead of one flat object:
+
+| Sub-composite | What it does |
+|---|---|
+| `g.opensees.materials`  | `add_nd_material`, `add_uni_material`, `add_section` |
+| `g.opensees.elements`   | `assign`, `fix`, `add_geom_transf`, `vecxz` |
+| `g.opensees.ingest`     | `loads(fem)`, `masses(fem)`, `constraints(fem)`, `sp(fem)` |
+| `g.opensees.inspect`    | `node_table`, `element_table`, `summary` |
+| `g.opensees.export`     | `tcl(path)`, `py(path)` |
+
+Plus two top-level entry points:
+
+- `g.opensees.set_model(ndm=, ndf=)` — the first call
+- `g.opensees.build()` — the last
+
+### 15.2  `set_model` — declare the DOF space
+
+```python
+g.opensees.set_model(ndm=3, ndf=3)
+```
+
+Two numbers you have to commit to early:
+
+- **`ndm`** — spatial dimension. `3` for 3D solids, `2` for plane
+  models, `1` for truss lines.
+- **`ndf`** — DOFs per node. `3` for 3D solids (`ux, uy, uz`),
+  `6` for 3D frame/shell (`ux, uy, uz, rx, ry, rz`), `2` for
+  plane stress, etc.
+
+apeGmsh uses `ndf` to slice the 6-tuples coming out of the
+broker. `fem.nodes.loads` carries `force_xyz + moment_xyz` (6
+components); if you set `ndf=3`, the ingest helper slices to the
+first 3 automatically.
+
+**Call `set_model` first, before any material, element, or
+ingest call.** Everything downstream depends on it.
+
+### 15.3  Materials
+
+Three registration methods covering the OpenSees material
+taxonomy:
+
+```python
+# Continuum (ND) material — for solids
+g.opensees.materials.add_nd_material(
+    "Concrete", "ElasticIsotropic",
+    E=30e9, nu=0.2, rho=2400,
+)
+
+# Uniaxial material — for truss, spring, fibre sections
+g.opensees.materials.add_uni_material(
+    "Steel", "Steel02",
+    Fy=420e6, E=200e9, b=0.01,
+)
+
+# Section — for beams and shells
+g.opensees.materials.add_section(
+    "WSection", "WFSection2d",
+    matTag="Steel", d=0.3, tw=0.01, bf=0.15, tf=0.02,
+)
+```
+
+The first argument is your **chosen name**, not a Gmsh tag —
+apeGmsh assigns the underlying OpenSees numeric tag internally.
+You refer to the material by its name everywhere downstream.
+
+Behind the scenes these **register definitions**; nothing is
+emitted to OpenSees until `build()`.
+
+### 15.4  Elements — assigning types and DOFs
+
+#### `assign` — PG → element type + material
+
+```python
+g.opensees.elements.assign(
+    "Body", "FourNodeTetrahedron",
+    material="Concrete",
+)
+
+g.opensees.elements.assign(
+    "Beams", "ElasticBeamColumn",
+    section="WSection",
+    geom_transf="global_z",
+)
+```
+
+- First argument is the **physical-group name**, not a label. If
+  you only have a label, promote it with
+  `g.physical.from_label(...)` first.
+- Second argument is the OpenSees element type string
+  (`FourNodeTetrahedron`, `ShellMITC4`, `ElasticBeamColumn`,
+  `ASDShellQ4`, …).
+- Kwargs depend on the element — a solid needs `material=`, a
+  beam needs `section=` + `geom_transf=`.
+
+The full element catalogue is in `_element_specs.py`. Each
+element advertises its required kwargs; passing the wrong set
+raises at declaration time, not at `build()`.
+
+#### `fix` — boundary conditions
+
+```python
+g.opensees.elements.fix("Base", dofs=[1, 1, 1])
+# Fix all three translations on every node of the "Base" PG.
+```
+
+`dofs` is a list of 0/1 flags of length `ndf`. `1` = constrained,
+`0` = free.
+
+| Model | `ndf` | Pin | Roller (z) |
+|---|---|---|---|
+| 3D solid | 3 | `[1, 1, 1]` | `[0, 0, 1]` |
+| 3D frame | 6 | `[1, 1, 1, 0, 0, 0]` | `[0, 0, 1, 0, 0, 0]` |
+| 2D plane | 2 | `[1, 1]` | `[0, 1]` |
+
+#### `add_geom_transf` + `vecxz` — beam local frames
+
+Beam elements need a local coordinate frame. Most of the time you
+want one of the global directions:
+
+```python
+g.opensees.elements.add_geom_transf("global_z", type="Linear", vecxz=(0, 0, 1))
+```
+
+Then pass `geom_transf="global_z"` to `assign` for any beam
+element. For arbitrary orientations, `vecxz(...)` computes the
+local z-axis from two points — useful for inclined members.
+
+### 15.5  `ingest` — consume the broker
+
+This is where broker records become `ops` commands. Four
+chainable methods:
+
+```python
+(g.opensees.ingest
+    .loads(fem)
+    .masses(fem)
+    .sp(fem)                 # single-point constraints from face_sp declarations
+    .constraints(fem, tie_penalty=1e12))
+```
+
+Each method:
+
+1. Iterates the relevant record set on `fem`
+   (`fem.nodes.loads`, `fem.nodes.masses`, etc.).
+2. Emits OpenSees commands via the live `openseespy` state or via
+   the export accumulator.
+3. Returns `self` for chaining.
+
+`tie_penalty` is the only knob worth flagging — passes through to
+`ASDEmbeddedNodeElement` when `tie` constraints are present
+(Lesson 12.9). Default 1e18; drop to 1e10–1e12 if Newton fails.
+
+### 15.6  `build()` — commit everything
+
+```python
+g.opensees.build()
+```
+
+Emits every registered material, element assignment, fix, and
+ingested record to the live OpenSees model (or the export
+accumulator). Nothing is in `ops.*` until you call it.
+
+After `build()`, the model is ready for analysis:
+
+```python
+import openseespy.opensees as ops
+
+ops.system("BandSPD")
+ops.numberer("RCM")
+ops.constraints("Plain")
+ops.integrator("LoadControl", 1.0)
+ops.algorithm("Linear")
+ops.analysis("Static")
+ops.analyze(1)
+```
+
+### 15.7  `inspect` — what's in the model?
+
+```python
+g.opensees.inspect.summary()         # text summary
+g.opensees.inspect.node_table()      # DataFrame of every ops node
+g.opensees.inspect.element_table()   # DataFrame of every ops element
+```
+
+Useful after `build()` to confirm the model matches expectation —
+counts, materials, element types, BCs. Catches *"I forgot to
+assign a PG"*-style mistakes before you waste time running an
+analysis.
+
+### 15.8  `export` — reproducible `.tcl` / `.py` files
+
+```python
+g.opensees.export.tcl("model.tcl").py("model.py")
+```
+
+Two formats, chainable:
+
+- **`.tcl`** — classic OpenSees scripting. Runs in the standalone
+  OpenSees binary.
+- **`.py`** — `openseespy` equivalent. Runs in any Python with
+  `openseespy` installed.
+
+Both capture everything: materials, elements, BCs, nodal loads,
+masses, constraints, geom transformations. Drop the file on a
+cluster or share it with a collaborator — no apeGmsh required at
+runtime.
+
+Can be combined with `build()` or used in lieu of it — export
+does not require a live `ops` session.
+
+### 15.9  The canonical full pipeline
+
+The whole library in one script:
+
+```python
+from apeGmsh import apeGmsh
+
+with apeGmsh(model_name="bracket") as g:
+    # === 1. Geometry ===
+    g.model.io.load_step("bracket.step")
+    g.mesh.sizing.set_size_sources(from_points=False)
+    g.model.queries.remove_duplicates(tolerance=1e-3)
+    g.model.queries.make_conformal(tolerance=1.0)
+    g.parts.from_model("bracket")
+
+    # === 2. Physical groups (the solver-facing names) ===
+    g.physical.add_surface(
+        g.model.selection.select_surfaces(on_plane=("z", 0, 1e-3)).tags,
+        name="Base",
+    )
+    g.physical.from_label("bracket", name="Body")
+
+    # === 3. Pre-mesh declarations ===
+    g.masses.volume("Body", density=2400)
+
+    with g.loads.pattern("Dead"):
+        g.loads.gravity("Body", g=(0, 0, -9.81), density=2400)
+
+    # === 4. Mesh ===
+    g.mesh.sizing.set_global_size(5.0)
+    g.mesh.generation.generate(dim=3)
+    g.mesh.partitioning.renumber(dim=3, method="rcm")
+
+    # === 5. Broker ===
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+    # === 6. Solver ===
+    g.opensees.set_model(ndm=3, ndf=3)
+    g.opensees.materials.add_nd_material(
+        "Concrete", "ElasticIsotropic",
+        E=30e9, nu=0.2, rho=2400,
+    )
+    g.opensees.elements.assign(
+        "Body", "FourNodeTetrahedron", material="Concrete",
+    )
+    g.opensees.elements.fix("Base", dofs=[1, 1, 1])
+
+    (g.opensees.ingest
+        .loads(fem)
+        .masses(fem)
+        .constraints(fem, tie_penalty=1e12))
+
+    g.opensees.build()
+
+    # === 7. Export + sanity check ===
+    print(g.opensees.inspect.summary())
+    g.opensees.export.tcl("bracket.tcl").py("bracket.py")
+```
+
+Every stage built up across Lessons 1–14 meets at Lesson 15:
+geometry, naming, booleans, mesh, broker, solver. That is the
+full declare → mesh → broker → solver pipeline.
+
+### 15.10  Pitfalls
+
+- **`set_model` must come first.** Every other call reads `ndm` /
+  `ndf` at declaration time to validate arguments. Calling
+  materials or elements before `set_model` gives you a clear
+  error; calling `ingest` before it gets you wrong-sized slices.
+- **`assign` takes PG names, not labels.** The solver needs a
+  named group; labels (Tier 1) are apeGmsh-only. Promote via
+  `g.physical.from_label("shaft", name="Body")` or declare the
+  PG directly.
+- **Nothing goes to `ops.*` until `build()`.** Register as much
+  as you want; everything is stored as pending definitions. Call
+  `build()` when you're done. Calling twice rebuilds from
+  scratch.
+- **Export is independent of build.** You can `export.tcl(...)`
+  without calling `build()` — it will still write the full file.
+  Useful for cluster runs where you don't need a live `ops`
+  session locally.
+- **Element kwargs must match the element spec.** Passing the
+  wrong kwargs to `assign` raises at declaration time (before
+  `build()`), not at analysis time. The error message lists the
+  expected kwargs for the element type.
+- **`fix` dofs length must equal `ndf`.** `[1, 1, 1]` for
+  `ndf=3`, `[1, 1, 1, 0, 0, 0]` for `ndf=6`. Mismatched length
+  is an immediate error.
+
+---
+
+## Epilogue
+
+You've reached the end of the core guide. Lessons 1–15 cover:
+
+- **Geometry** — inline primitives, Parts, sections, CAD import.
+- **Naming** — tags, labels (Tier 1), physical groups (Tier 2).
+- **Queries and selection** — name, topology, spatial; derive
+  → cache → consume.
+- **Booleans** — four ops, two levels, conformal assemblies.
+- **Mesh** — sizing, generation, order, optimise, renumbering.
+- **The FEM broker** — immutable snapshot, nodes + elements +
+  records, solver contract.
+- **Constraints / loads / masses** — the two-stage declare /
+  resolve pipeline.
+- **OpenSees** — materials, elements, fix, ingest, build,
+  export.
+
+Two optional follow-ons are still to come:
 
 - **Viewers** — `g.model.viewer()` for BRep inspection,
   `g.mesh.viewer(fem=fem)` for FEM overlays.
 - **Worked end-to-end example** — one 40-line script exercising
-  Lessons 1–15 on a real structural model.
+  Lessons 1–15 on a real structural model (probably a column on a
+  footing).
+
+Until those land, the canonical pipeline at the top of §15.9 is
+a working substitute — copy it into a notebook, swap in your own
+geometry and PG names, and you have a minimum-viable-apeGmsh
+structural analysis.
