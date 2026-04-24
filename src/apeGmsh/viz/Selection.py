@@ -50,6 +50,48 @@ _DIM_NAME   = {0: 'points', 1: 'curves', 2: 'surfaces', 3: 'volumes'}
 _AXIS_IDX   = {'x': 0, 'y': 1, 'z': 2}
 
 
+_FILTER_DOC_COMMON = """
+Filter families (all keyword-only, default ``None``; combined with AND).
+
+Identity:
+
+* ``tags=[t, ...]`` — keep entities with these tags.
+* ``exclude_tags=[t, ...]`` — drop entities with these tags.
+* ``labels="glob" | [...]`` — keep entities whose label matches (fnmatch).
+* ``kinds="box" | [...]`` — keep entities by registered kind.
+* ``physical="name" | tag`` — keep entities in this physical group.
+
+Spatial:
+
+* ``in_box=(x0, y0, z0, x1, y1, z1)`` — inside an axis-aligned bbox.
+* ``in_sphere=(cx, cy, cz, r)`` — centroid within radius ``r``.
+* ``on_plane=(axis, value, tol)`` — bbox intersects ``axis=value`` within
+  ``tol`` (``axis`` is ``"x"``, ``"y"``, or ``"z"``).
+* ``on_axis=(axis, tol)`` — centroid lies on the given coordinate axis
+  (off-axis components within ``tol``).
+* ``at_point=(x, y, z, tol)`` — bbox contains ``(x, y, z)`` within ``tol``.
+
+Metrics / orientation (dim-specific; silently skipped on other dims):
+
+* ``length_range=(lo, hi)`` — curves (dim=1).
+* ``area_range=(lo, hi)`` — surfaces (dim=2).
+* ``volume_range=(lo, hi)`` — volumes (dim=3).
+* ``aligned=(axis, atol_deg)`` — curves within ``atol_deg`` of the axis.
+* ``horizontal=True`` — curves perpendicular to ``z``.
+* ``vertical=True`` — curves parallel to ``z``.
+
+Escape hatch:
+
+* ``predicate=fn`` — callable ``(dim, tag) -> bool``.
+
+Example::
+
+    sel = g.model.selection.select_curves(
+        vertical=True, length_range=(2.0, 4.0),
+    ).filter(physical="columns")
+"""
+
+
 # ===========================================================================
 # Selection — immutable result object
 # ===========================================================================
@@ -182,15 +224,42 @@ class Selection:
     # Refinement
     # ------------------------------------------------------------------
 
-    def filter(self, **kwargs) -> Selection:
+    def filter(
+        self,
+        *,
+        tags           : Sequence[Tag] | None = None,
+        exclude_tags   : Sequence[Tag] | None = None,
+        labels         : str | Sequence[str] | None = None,
+        kinds          : str | Sequence[str] | None = None,
+        physical       : str | Tag | None     = None,
+        in_box         : BBox | None          = None,
+        in_sphere      : tuple[float, float, float, float] | None = None,
+        on_plane       : tuple[str, float, float] | None = None,
+        on_axis        : tuple[str, float] | None = None,
+        at_point       : tuple[float, float, float, float] | None = None,
+        length_range   : tuple[float, float] | None = None,
+        area_range     : tuple[float, float] | None = None,
+        volume_range   : tuple[float, float] | None = None,
+        aligned        : tuple[str, float] | None = None,
+        horizontal     : bool | None          = None,
+        vertical       : bool | None          = None,
+        predicate      : Callable[[int, int], bool] | None = None,
+    ) -> Selection:
         """Re-apply filters to this selection."""
         if self._dim == -1:
             raise ValueError("Cannot filter a mixed-dim selection.")
         filtered = _apply_filters(
-            list(self._dimtags), dim=self._dim,
-            parent=self._parent, **kwargs,
+            list(self._dimtags), dim=self._dim, parent=self._parent,
+            tags=tags, exclude_tags=exclude_tags, labels=labels,
+            kinds=kinds, physical=physical, in_box=in_box,
+            in_sphere=in_sphere, on_plane=on_plane, on_axis=on_axis,
+            at_point=at_point, length_range=length_range,
+            area_range=area_range, volume_range=volume_range,
+            aligned=aligned, horizontal=horizontal, vertical=vertical,
+            predicate=predicate,
         )
         return Selection(filtered, self._parent)
+    filter.__doc__ = (filter.__doc__ or "") + "\n" + _FILTER_DOC_COMMON
 
     def limit(self, n: int) -> Selection:
         """Keep at most *n* entries."""
@@ -599,23 +668,164 @@ class SelectionComposite(_HasLogging):
     # Per-dim query methods
     # ------------------------------------------------------------------
 
-    def select_points(self, **kwargs) -> Selection:
+    def select_points(
+        self,
+        *,
+        tags           : Sequence[Tag] | None = None,
+        exclude_tags   : Sequence[Tag] | None = None,
+        labels         : str | Sequence[str] | None = None,
+        kinds          : str | Sequence[str] | None = None,
+        physical       : str | Tag | None     = None,
+        in_box         : BBox | None          = None,
+        in_sphere      : tuple[float, float, float, float] | None = None,
+        on_plane       : tuple[str, float, float] | None = None,
+        on_axis        : tuple[str, float] | None = None,
+        at_point       : tuple[float, float, float, float] | None = None,
+        length_range   : tuple[float, float] | None = None,
+        area_range     : tuple[float, float] | None = None,
+        volume_range   : tuple[float, float] | None = None,
+        aligned        : tuple[str, float] | None = None,
+        horizontal     : bool | None          = None,
+        vertical       : bool | None          = None,
+        predicate      : Callable[[int, int], bool] | None = None,
+    ) -> Selection:
         """Select BRep points (dim=0) matching all given filters."""
-        return self._query(0, **kwargs)
+        return self._query(
+            0,
+            tags=tags, exclude_tags=exclude_tags, labels=labels,
+            kinds=kinds, physical=physical, in_box=in_box,
+            in_sphere=in_sphere, on_plane=on_plane, on_axis=on_axis,
+            at_point=at_point, length_range=length_range,
+            area_range=area_range, volume_range=volume_range,
+            aligned=aligned, horizontal=horizontal, vertical=vertical,
+            predicate=predicate,
+        )
+    select_points.__doc__ = (select_points.__doc__ or "") + "\n" + _FILTER_DOC_COMMON
 
-    def select_curves(self, **kwargs) -> Selection:
+    def select_curves(
+        self,
+        *,
+        tags           : Sequence[Tag] | None = None,
+        exclude_tags   : Sequence[Tag] | None = None,
+        labels         : str | Sequence[str] | None = None,
+        kinds          : str | Sequence[str] | None = None,
+        physical       : str | Tag | None     = None,
+        in_box         : BBox | None          = None,
+        in_sphere      : tuple[float, float, float, float] | None = None,
+        on_plane       : tuple[str, float, float] | None = None,
+        on_axis        : tuple[str, float] | None = None,
+        at_point       : tuple[float, float, float, float] | None = None,
+        length_range   : tuple[float, float] | None = None,
+        area_range     : tuple[float, float] | None = None,
+        volume_range   : tuple[float, float] | None = None,
+        aligned        : tuple[str, float] | None = None,
+        horizontal     : bool | None          = None,
+        vertical       : bool | None          = None,
+        predicate      : Callable[[int, int], bool] | None = None,
+    ) -> Selection:
         """Select BRep curves (dim=1) matching all given filters."""
-        return self._query(1, **kwargs)
+        return self._query(
+            1,
+            tags=tags, exclude_tags=exclude_tags, labels=labels,
+            kinds=kinds, physical=physical, in_box=in_box,
+            in_sphere=in_sphere, on_plane=on_plane, on_axis=on_axis,
+            at_point=at_point, length_range=length_range,
+            area_range=area_range, volume_range=volume_range,
+            aligned=aligned, horizontal=horizontal, vertical=vertical,
+            predicate=predicate,
+        )
+    select_curves.__doc__ = (select_curves.__doc__ or "") + "\n" + _FILTER_DOC_COMMON
 
-    def select_surfaces(self, **kwargs) -> Selection:
+    def select_surfaces(
+        self,
+        *,
+        tags           : Sequence[Tag] | None = None,
+        exclude_tags   : Sequence[Tag] | None = None,
+        labels         : str | Sequence[str] | None = None,
+        kinds          : str | Sequence[str] | None = None,
+        physical       : str | Tag | None     = None,
+        in_box         : BBox | None          = None,
+        in_sphere      : tuple[float, float, float, float] | None = None,
+        on_plane       : tuple[str, float, float] | None = None,
+        on_axis        : tuple[str, float] | None = None,
+        at_point       : tuple[float, float, float, float] | None = None,
+        length_range   : tuple[float, float] | None = None,
+        area_range     : tuple[float, float] | None = None,
+        volume_range   : tuple[float, float] | None = None,
+        aligned        : tuple[str, float] | None = None,
+        horizontal     : bool | None          = None,
+        vertical       : bool | None          = None,
+        predicate      : Callable[[int, int], bool] | None = None,
+    ) -> Selection:
         """Select BRep surfaces (dim=2) matching all given filters."""
-        return self._query(2, **kwargs)
+        return self._query(
+            2,
+            tags=tags, exclude_tags=exclude_tags, labels=labels,
+            kinds=kinds, physical=physical, in_box=in_box,
+            in_sphere=in_sphere, on_plane=on_plane, on_axis=on_axis,
+            at_point=at_point, length_range=length_range,
+            area_range=area_range, volume_range=volume_range,
+            aligned=aligned, horizontal=horizontal, vertical=vertical,
+            predicate=predicate,
+        )
+    select_surfaces.__doc__ = (select_surfaces.__doc__ or "") + "\n" + _FILTER_DOC_COMMON
 
-    def select_volumes(self, **kwargs) -> Selection:
+    def select_volumes(
+        self,
+        *,
+        tags           : Sequence[Tag] | None = None,
+        exclude_tags   : Sequence[Tag] | None = None,
+        labels         : str | Sequence[str] | None = None,
+        kinds          : str | Sequence[str] | None = None,
+        physical       : str | Tag | None     = None,
+        in_box         : BBox | None          = None,
+        in_sphere      : tuple[float, float, float, float] | None = None,
+        on_plane       : tuple[str, float, float] | None = None,
+        on_axis        : tuple[str, float] | None = None,
+        at_point       : tuple[float, float, float, float] | None = None,
+        length_range   : tuple[float, float] | None = None,
+        area_range     : tuple[float, float] | None = None,
+        volume_range   : tuple[float, float] | None = None,
+        aligned        : tuple[str, float] | None = None,
+        horizontal     : bool | None          = None,
+        vertical       : bool | None          = None,
+        predicate      : Callable[[int, int], bool] | None = None,
+    ) -> Selection:
         """Select BRep volumes (dim=3) matching all given filters."""
-        return self._query(3, **kwargs)
+        return self._query(
+            3,
+            tags=tags, exclude_tags=exclude_tags, labels=labels,
+            kinds=kinds, physical=physical, in_box=in_box,
+            in_sphere=in_sphere, on_plane=on_plane, on_axis=on_axis,
+            at_point=at_point, length_range=length_range,
+            area_range=area_range, volume_range=volume_range,
+            aligned=aligned, horizontal=horizontal, vertical=vertical,
+            predicate=predicate,
+        )
+    select_volumes.__doc__ = (select_volumes.__doc__ or "") + "\n" + _FILTER_DOC_COMMON
 
-    def select_all(self, dim: int = -1, **kwargs) -> Selection:
+    def select_all(
+        self,
+        dim: int = -1,
+        *,
+        tags           : Sequence[Tag] | None = None,
+        exclude_tags   : Sequence[Tag] | None = None,
+        labels         : str | Sequence[str] | None = None,
+        kinds          : str | Sequence[str] | None = None,
+        physical       : str | Tag | None     = None,
+        in_box         : BBox | None          = None,
+        in_sphere      : tuple[float, float, float, float] | None = None,
+        on_plane       : tuple[str, float, float] | None = None,
+        on_axis        : tuple[str, float] | None = None,
+        at_point       : tuple[float, float, float, float] | None = None,
+        length_range   : tuple[float, float] | None = None,
+        area_range     : tuple[float, float] | None = None,
+        volume_range   : tuple[float, float] | None = None,
+        aligned        : tuple[str, float] | None = None,
+        horizontal     : bool | None          = None,
+        vertical       : bool | None          = None,
+        predicate      : Callable[[int, int], bool] | None = None,
+    ) -> Selection:
         """
         Select entities of any (or given) dimension.
 
@@ -623,6 +833,15 @@ class SelectionComposite(_HasLogging):
         that require a single dim (e.g. ``length_range``) will be
         applied per-dim-slice.
         """
+        kwargs = dict(
+            tags=tags, exclude_tags=exclude_tags, labels=labels,
+            kinds=kinds, physical=physical, in_box=in_box,
+            in_sphere=in_sphere, on_plane=on_plane, on_axis=on_axis,
+            at_point=at_point, length_range=length_range,
+            area_range=area_range, volume_range=volume_range,
+            aligned=aligned, horizontal=horizontal, vertical=vertical,
+            predicate=predicate,
+        )
         if dim >= 0:
             return self._query(dim, **kwargs)
         parts: list[DimTag] = []
@@ -632,6 +851,7 @@ class SelectionComposite(_HasLogging):
                 universe, dim=d, parent=self._parent, **kwargs,
             ))
         return Selection(parts, self._parent)
+    select_all.__doc__ = (select_all.__doc__ or "") + "\n" + _FILTER_DOC_COMMON
 
     # ------------------------------------------------------------------
     # Topology helpers
