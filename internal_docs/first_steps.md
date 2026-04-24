@@ -1231,4 +1231,200 @@ you rename each one separately.
 
 ---
 
+## Lesson 10 — Meshing basics
+
+With clean, named geometry in hand, meshing is the next step. The
+good news: the common path is short. The subtle bits (fields,
+transfinite, partitioning) are deferred to the meshing deep-dive
+(`guide_meshing.md`) — this lesson covers what you actually need
+on day one.
+
+### 10.1  The mesh pipeline
+
+```
+geometry  →  sizing  →  generate  →  (order, optimize, refine)  →  renumber  →  get_fem_data
+             g.mesh.sizing            g.mesh.generation            g.mesh.partitioning  g.mesh.queries
+```
+
+Every step is a sub-composite call. The whole flow fits in about
+five lines once you've written it a few times.
+
+### 10.2  Sizing — the bedrock
+
+Gmsh picks an element size at every node by taking the **minimum**
+of every active size source. So "sizing" is really about
+**constraining the upper bound** — your global is a ceiling, not a
+target.
+
+The three levers:
+
+```python
+# 1. Global band
+g.mesh.sizing.set_global_size(max_size, min_size=0.0)
+
+# 2. Per-entity size
+g.mesh.sizing.set_size([(3, vol_tag)], 10.0)
+
+# 3. Per-physical-group size
+g.mesh.sizing.set_size_by_physical("WeldArea", 2.0)
+```
+
+Which size sources Gmsh consults (recall Lesson 8.6):
+
+```python
+g.mesh.sizing.set_size_sources(
+    from_points=True,         # per-BRep-point lc — disable for CAD imports
+    from_curvature=False,     # adaptive refinement near curves
+    extend_from_boundary=True # propagate boundary sizes into the interior
+)
+```
+
+For inline geometry, the defaults are usually fine. For CAD
+imports, **disable `from_points`**.
+
+### 10.3  Generation — one call, dim matters
+
+```python
+g.mesh.generation.generate(dim=3)
+```
+
+The `dim` parameter says **what dimension of elements to
+produce**:
+
+| `dim=` | Produces | Typical use |
+|---|---|---|
+| 1 | Edge mesh only | Wireframe / 1D frame |
+| 2 | 2D elements (tris, quads) | Shell models; surface check of a solid |
+| 3 | 3D elements (tets, hexes) | Solid / bulk models |
+
+Lower dims are meshed automatically as prerequisites.
+`generate(dim=3)` implicitly meshes curves and surfaces first,
+then the volume.
+
+You can call `generate(dim=2)` on a 3D solid to get just its
+surface mesh — handy for sanity-checking the geometry before
+paying the cost of a 3D mesh.
+
+### 10.4  Element order
+
+Default is **linear**. Elevate to quadratic after generation:
+
+```python
+g.mesh.generation.generate(dim=3)
+g.mesh.generation.set_order(2)     # must call AFTER generate
+```
+
+`set_order(2)` adds mid-edge nodes to existing elements in place.
+Common values: 1 (linear), 2 (quadratic), 3 (cubic).
+
+### 10.5  Algorithm choice
+
+Default works most of the time. When you need to override:
+
+```python
+# Per-surface for dim=2
+g.mesh.generation.set_algorithm("WebSurface", "frontal_delaunay_quads")
+
+# Global for dim=3 (pass tag=0)
+g.mesh.generation.set_algorithm(0, "hxt", dim=3)
+```
+
+Main 2D algorithms: `delaunay` (default, robust),
+`frontal_delaunay` (higher quality), `packing_of_parallelograms`
+(quad-dominant), `frontal_delaunay_quads` (full-quad).
+
+Main 3D algorithms: `delaunay` (default), `hxt` (much faster for
+large tet meshes), `frontal`, `mmg3d`.
+
+`set_algorithm` takes labels and PG names for the `tag` arg, so
+you can target specific regions without handling tags.
+
+### 10.6  Renumbering — mandatory before `get_fem_data`
+
+Gmsh's internal tag numbering is non-contiguous after booleans,
+labels, and PGs do their work. OpenSees (and most other solvers)
+want **dense, 1-based IDs**. `renumber` provides that, and
+optionally reorders for bandwidth or cache locality:
+
+```python
+g.mesh.partitioning.renumber(
+    dim=3,              # the dim you'll later extract
+    method="rcm",       # "simple" | "rcm" | "hilbert" | "metis"
+    base=1,             # OpenSees / Abaqus convention
+)
+```
+
+| Method | What it does | When |
+|---|---|---|
+| `"simple"` | Just makes IDs contiguous | When you don't care about ordering — fastest |
+| `"rcm"` | Reverse Cuthill-McKee — minimises matrix bandwidth | Default for direct solvers |
+| `"hilbert"` | Hilbert space-filling curve — improves cache locality | Dense iterative solvers |
+| `"metis"` | METIS graph-partitioner ordering | Preparation for parallel partitioning |
+
+**Call it once, right before `get_fem_data`.** Renumbering after
+the broker is built defeats the purpose.
+
+### 10.7  The FEM broker — handing off to the solver
+
+```python
+fem = g.mesh.queries.get_fem_data(dim=3)
+```
+
+`fem` is the snapshot we've been mentioning since Lesson 3 — an
+immutable `FEMData` object with `.nodes`, `.elements`, and the
+resolved constraint / load / mass records organised underneath.
+It's the single contract between the session and any downstream
+solver.
+
+Covered in detail in the next lesson. For meshing purposes, just
+remember: `get_fem_data(dim)` gets you the handoff object.
+
+### 10.8  Quality check
+
+```python
+g.mesh.queries.quality_report()       # returns a DataFrame
+```
+
+Reports element counts and quality metrics (Jacobian range,
+skewness, etc.) grouped by physical group. Skim it before you
+waste time running an analysis on slivers or inverted elements.
+
+### 10.9  The canonical mesh flow
+
+Five lines, every time:
+
+```python
+# Assume geometry + physical groups are already set up.
+
+g.mesh.sizing.set_global_size(5.0)                   # 1. ceiling
+g.mesh.generation.generate(dim=3)                    # 2. mesh
+g.mesh.generation.set_order(2)                       # 3. (optional) quadratic
+g.mesh.partitioning.renumber(dim=3, method="rcm")    # 4. solver-ready IDs
+fem = g.mesh.queries.get_fem_data(dim=3)             # 5. handoff
+```
+
+That is a complete, conformal, solver-ready mesh.
+
+### 10.10  When defaults aren't enough
+
+This lesson stays on the straight path. For more:
+
+- **Adaptive sizing with fields** —
+  `g.mesh.field.distance / threshold / box / boundary_layer /
+  minimum`. Useful for refining near edges, around a weld, or in
+  a boundary layer. See `guide_meshing.md`.
+- **Structured / transfinite meshing** —
+  `g.mesh.structured.set_transfinite_curve / surface / volume` +
+  `recombine`. For hex-dominant meshes where element alignment
+  matters. Same guide.
+- **Parallel partitioning** —
+  `g.mesh.partitioning.partition(n_parts=, method=)`. For
+  OpenSeesMP / other MPI runs. See `guide_partitioning.md`.
+- **Per-physical-group element types** —
+  `g.opensees.elements.assign("Body",
+  "FourNodeTetrahedron", ...)`. Covered when we get to the
+  OpenSees bridge.
+
+---
+
 _More lessons will be appended here as the guide grows._
