@@ -18,6 +18,25 @@ hide:
     and an OpenSees bridge. You still have the full Gmsh API underneath
     whenever you need it.
 
+<div class="grid cards" markdown>
+
+-   :material-school:{ .lg .middle } &nbsp; __[First steps](internal_docs/first_steps.md)__
+
+    ---
+
+    A conversational walkthrough — the session model, naming system
+    (tags / labels / physical groups), queries and selection, booleans,
+    and CAD import. The right place to start.
+
+-   :material-book-open-variant:{ .lg .middle } &nbsp; __[API reference](api/index.md)__
+
+    ---
+
+    Complete API surface — session composites, mesh, OpenSees bridge,
+    parts, constraints, loads, masses.
+
+</div>
+
 --8<-- "README.md"
 
 ---
