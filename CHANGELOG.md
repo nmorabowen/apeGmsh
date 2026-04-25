@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.0.5 — Line loads with `normal=True` (radial / curve-perpendicular pressure)
+
+### ADDED
+
+- `g.loads.line(..., normal=True)` applies a pressure perpendicular
+  to each edge instead of along a fixed direction.  Useful for
+  internal/external pressure on curved 2-D boundaries (Lamé-style
+  problems, fluid-loaded arcs, etc.) where the cartesian direction
+  varies along the curve.
+- Default sign comes from Gmsh's surface boundary orientation —
+  `gmsh.model.getBoundary([(2, surface)], oriented=True)` tells the
+  composite which side of the curve the structure sits on, so
+  `magnitude > 0` always pushes *into* the structure (matching
+  `g.loads.surface(..., normal=True)`).
+- Optional `away_from=(x0, y0, z0)` reference point overrides the
+  Gmsh path — flips the in-plane normal so it points away from that
+  point.  Use for ambiguous cases (a curve bounding two surfaces, or
+  a free curve not bounding any surface) or when you want to be
+  explicit.
+- Both `reduction="tributary"` (default) and `reduction="consistent"`
+  honour `normal=True`.
+- New worked example
+  `examples/EOS Examples/example_plate_pyGmsh_v2.ipynb` rewrites the
+  thick-walled-cylinder Lamé problem on top of the new API —
+  replaces ~30 lines of manual consistent-force integration on the
+  inner arc with a single `g.loads.line(pg='Pressure', magnitude=p,
+  normal=True)` declaration.
+
+### INTERNAL
+
+- New resolver methods `LoadResolver.resolve_line_per_edge_tributary`
+  and `resolve_line_per_edge_consistent` accept a list of
+  `(edge, q_xyz)` items so the composite can pre-compute per-edge
+  force-per-length vectors (which vary along curved boundaries).
+  Constant-direction line loads still use the original
+  `resolve_line_*` methods unchanged.
+- Per-edge normal computation lives in `LoadsComposite` (it needs
+  Gmsh queries for the boundary-orientation path); the resolver
+  stays pure-math.
+
+---
+
 ## v1.0.4 — Low-level booleans preserve Instances + accept label/PG refs
 
 ### FIXED

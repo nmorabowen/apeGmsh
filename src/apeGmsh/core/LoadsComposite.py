@@ -182,16 +182,25 @@ class LoadsComposite:
 
     def line(self, target=None, *, pg=None, label=None, tag=None,
              magnitude=None, direction=(0., 0., -1.),
-             q_xyz=None, reduction="tributary", target_form="nodal",
+             q_xyz=None, normal=False, away_from=None,
+             reduction="tributary", target_form="nodal",
              name=None) -> LineLoadDef:
-        """Distributed line load along curve(s) of *target*."""
+        """Distributed line load along curve(s) of *target*.
+
+        When ``normal=True``, the load acts along each edge's in-plane
+        (xy) normal with magnitude ``magnitude``; ``away_from`` picks
+        the sign so the normal points away from that reference point.
+        """
         if magnitude is None and q_xyz is None:
             raise ValueError("line() requires either magnitude or q_xyz.")
+        if normal and magnitude is None:
+            raise ValueError("line(normal=True) requires magnitude=.")
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(LineLoadDef(
             target=t, target_source=src,
             pattern=self._active_pattern, name=name,
             magnitude=magnitude or 0.0, direction=direction, q_xyz=q_xyz,
+            normal=normal, away_from=away_from,
             reduction=reduction, target_form=target_form,
         ))
 
@@ -640,13 +649,131 @@ class LoadsComposite:
 
     def _resolve_line_tributary(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
+        if defn.normal:
+            items = self._collect_line_normal_items(defn, src, resolver, full=False)
+            return resolver.resolve_line_per_edge_tributary(defn, items)
         edges = self._target_edges(defn.target, source=src)
         return resolver.resolve_line_tributary(defn, edges)
 
     def _resolve_line_consistent(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
+        if defn.normal:
+            items = self._collect_line_normal_items(defn, src, resolver, full=True)
+            return resolver.resolve_line_per_edge_consistent(defn, items)
         edges = self._target_edges_full(defn.target, source=src)
         return resolver.resolve_line_consistent(defn, edges)
+
+    # ------------------------------------------------------------------
+    # Per-edge normal-pressure helpers
+    # ------------------------------------------------------------------
+
+    def _curve_inplane_sign(self, curve_tag: int) -> int:
+        """Return ±1 from Gmsh's surface boundary orientation.
+
+        With sign ``+1`` (curve runs forward in the bounding loop), the
+        in-plane "into-structure" direction at an edge with chord
+        tangent ``T = (Tx, Ty, 0)`` is ``(-Ty, Tx, 0)``.  Sign ``-1``
+        flips it.
+
+        Raises ``ValueError`` when the curve has no adjacent 2-D
+        surface or bounds more than one — in those cases the user
+        should pass ``away_from=`` or use ``direction=``/``q_xyz=``.
+        """
+        import gmsh
+        upward, _ = gmsh.model.getAdjacencies(1, int(curve_tag))
+        surfaces = [int(s) for s in upward]
+        if len(surfaces) == 0:
+            raise ValueError(
+                f"line(normal=True): curve {curve_tag} has no adjacent "
+                f"surface. Provide away_from= or use direction=/q_xyz=."
+            )
+        if len(surfaces) > 1:
+            raise ValueError(
+                f"line(normal=True): curve {curve_tag} bounds "
+                f"{len(surfaces)} surfaces — outward direction is "
+                f"ambiguous. Provide away_from= or split the load."
+            )
+        boundary = gmsh.model.getBoundary(
+            [(2, surfaces[0])], oriented=True, recursive=False)
+        for _, t in boundary:
+            if int(abs(t)) == int(curve_tag):
+                return 1 if int(t) > 0 else -1
+        return 1
+
+    @staticmethod
+    def _edge_normal_q(magnitude: float,
+                       p1: np.ndarray, p2: np.ndarray,
+                       sign: int | None,
+                       away_from: np.ndarray | None) -> np.ndarray | None:
+        """Force-per-length for normal pressure on one edge.
+
+        Convention: ``magnitude > 0`` pushes into the structure.
+
+        * ``away_from`` given → in-plane normal flipped to point away
+          from that reference point (which is treated as the load
+          source, on the *outside* of the structure).
+        * Otherwise → uses Gmsh boundary ``sign`` and chord tangent.
+        """
+        t = p2 - p1
+        L = float(np.linalg.norm(t))
+        if L < 1e-30:
+            return None
+        Tn = t / L
+        if away_from is not None:
+            n = np.array([Tn[1], -Tn[0], 0.0])
+            if float(np.linalg.norm(n)) < 1e-30:
+                return None
+            mid = 0.5 * (p1 + p2)
+            if float(np.dot(mid - away_from, n)) < 0.0:
+                n = -n
+            return float(magnitude) * n
+        # Gmsh-orientation path: into-structure = sign * (-Ty, Tx, 0)
+        s = float(sign if sign is not None else 1)
+        n = np.array([-s * Tn[1], s * Tn[0], 0.0])
+        if float(np.linalg.norm(n)) < 1e-30:
+            return None
+        return float(magnitude) * n
+
+    def _collect_line_normal_items(self, defn, src, resolver, *, full: bool):
+        """Build per-edge ``(..., q_xyz)`` items for ``normal=True`` line loads.
+
+        ``full=False`` returns ``(n1, n2, q)`` tuples (tributary path).
+        ``full=True``  returns ``(node_seq, q)`` tuples (consistent path).
+        """
+        import gmsh
+        away = (np.asarray(defn.away_from, dtype=float)
+                if defn.away_from is not None else None)
+        dts = self._resolve_target(defn.target, source=src)
+        if dts and dts[0] and dts[0][0] == "__ms__":
+            return []
+        items: list = []
+        for d, t in dts:
+            if d != 1:
+                continue
+            sign = None if away is not None else self._curve_inplane_sign(int(t))
+            try:
+                etypes, _, enodes_list = gmsh.model.mesh.getElements(d, t)
+            except Exception:
+                continue
+            for etype, enodes in zip(etypes, enodes_list):
+                etype = int(etype)
+                npe = {1: 2, 8: 3}.get(etype)
+                if npe is None:
+                    continue
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                for row in arr:
+                    n_first, n_last = int(row[0]), int(row[-1])
+                    p1 = resolver.coords_of(n_first)
+                    p2 = resolver.coords_of(n_last)
+                    q = self._edge_normal_q(
+                        defn.magnitude, p1, p2, sign, away)
+                    if q is None:
+                        continue
+                    if full:
+                        items.append(([int(n) for n in row], q))
+                    else:
+                        items.append((n_first, n_last, q))
+        return items
 
     def _resolve_line_element(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')

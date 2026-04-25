@@ -59,17 +59,24 @@ class PointLoadDef(LoadDef):
 class LineLoadDef(LoadDef):
     """Distributed load along a 1-D entity (curve / beam element).
 
-    Two ways to specify:
+    Three ways to specify the load vector:
 
     * ``magnitude`` + ``direction`` — scalar magnitude (force per unit
       length) and a direction vector or axis name (``"x"``, ``"y"``,
       ``"z"``).
     * ``q_xyz`` — explicit ``(qx, qy, qz)`` force-per-length vector.
+    * ``normal=True`` + ``away_from=(x0, y0, z0)`` — pressure
+      perpendicular to each edge in the xy-plane.  The in-plane normal
+      ``(t_y, -t_x, 0)`` is sign-flipped per edge so it points away
+      from ``away_from``; ``magnitude`` is then force per unit length
+      along that normal.
     """
     kind: str = field(init=False, default="line")
     magnitude: float = 0.0
     direction: object = (0.0, 0.0, -1.0)   # tuple or "x"/"y"/"z"
     q_xyz: tuple[float, float, float] | None = None
+    normal: bool = False
+    away_from: tuple[float, float, float] | None = None
 
 
 @dataclass
@@ -435,6 +442,27 @@ class LoadResolver:
             _accumulate_nodal(accum, n2, f6)
         return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
 
+    def resolve_line_per_edge_tributary(
+        self,
+        defn: LineLoadDef,
+        items: list[tuple[int, int, ndarray]],
+    ) -> list[NodalLoadRecord]:
+        """Tributary line-load reduction with a per-edge force-per-length.
+
+        *items* is a list of ``(n1, n2, q_xyz)`` triples; each ``q_xyz``
+        is the force-per-length vector applied to that single edge.
+        Used by the composite for ``normal=True`` loads where the
+        direction varies edge-by-edge.
+        """
+        accum: dict[int, ndarray] = {}
+        for n1, n2, q in items:
+            half_L = 0.5 * self.edge_length(n1, n2)
+            f3 = np.asarray(q, dtype=float) * half_L
+            f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
+            _accumulate_nodal(accum, n1, f6)
+            _accumulate_nodal(accum, n2, f6)
+        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
+
     def resolve_surface_tributary(
         self,
         defn: SurfaceLoadDef,
@@ -548,6 +576,32 @@ class LoadResolver:
             weights = integrate_edge(coords, len(edge))
             for i, nid in enumerate(edge):
                 f3 = q * float(weights[i])
+                f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
+                _accumulate_nodal(accum, int(nid), f6)
+        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
+
+    def resolve_line_per_edge_consistent(
+        self,
+        defn: LineLoadDef,
+        items: list[tuple[list[int], ndarray]],
+    ) -> list[NodalLoadRecord]:
+        """Consistent line-load reduction with a per-edge force-per-length.
+
+        *items* is a list of ``(node_seq, q_xyz)`` pairs; each
+        ``q_xyz`` is treated as constant along that edge.  Shape-
+        function integration is otherwise identical to
+        :meth:`resolve_line_consistent`.
+        """
+        from ._consistent_quadrature import integrate_edge
+
+        accum: dict[int, ndarray] = {}
+        for edge, q in items:
+            edge = list(edge)
+            coords = np.array([self.coords_of(n) for n in edge])
+            weights = integrate_edge(coords, len(edge))
+            q_arr = np.asarray(q, dtype=float)
+            for i, nid in enumerate(edge):
+                f3 = q_arr * float(weights[i])
                 f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
                 _accumulate_nodal(accum, int(nid), f6)
         return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)

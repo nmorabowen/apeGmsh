@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apeGmsh"
-version = "1.0.4"
+version = "1.0.5"
 description = "Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration."
 requires-python = ">= 3.10"
 license = {text = "MIT"}

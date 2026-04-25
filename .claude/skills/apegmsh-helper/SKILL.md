@@ -327,6 +327,12 @@ with g.loads.pattern("Gravity"):
     g.loads.gravity("Body", density=2400)
 with g.loads.pattern("Wind"):
     g.loads.surface("facade", magnitude=1.2e3, normal=True)
+with g.loads.pattern("InternalPressure"):
+    # 2-D curve pressure: normal=True picks side from Gmsh boundary
+    # orientation; positive magnitude pushes into the structure.
+    g.loads.line("InnerArc", magnitude=p, normal=True)
+    # Override the auto-side via away_from= for ambiguous interfaces:
+    # g.loads.line("Iface", magnitude=p, normal=True, away_from=(0,0,0))
 ```
 
 After get_fem_data(), loads split:
