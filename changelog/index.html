@@ -2403,6 +2403,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#v105-line-loads-with-normaltrue-radial-curve-perpendicular-pressure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0.5 — Line loads with normal=True (radial / curve-perpendicular pressure)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.0.5 — Line loads with normal=True (radial / curve-perpendicular pressure)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#internal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        INTERNAL
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#v104-low-level-booleans-preserve-instances-accept-labelpg-refs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2426,7 +2465,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         ADDED
@@ -2437,7 +2476,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#internal" class="md-nav__link">
+  <a href="#internal_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         INTERNAL
@@ -2487,7 +2526,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#internal_1" class="md-nav__link">
+  <a href="#internal_2" class="md-nav__link">
     <span class="md-ellipsis">
       
         INTERNAL
@@ -2592,6 +2631,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#v105-line-loads-with-normaltrue-radial-curve-perpendicular-pressure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0.5 — Line loads with normal=True (radial / curve-perpendicular pressure)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.0.5 — Line loads with normal=True (radial / curve-perpendicular pressure)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#internal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        INTERNAL
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#v104-low-level-booleans-preserve-instances-accept-labelpg-refs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2615,7 +2693,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         ADDED
@@ -2626,7 +2704,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#internal" class="md-nav__link">
+  <a href="#internal_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         INTERNAL
@@ -2676,7 +2754,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#internal_1" class="md-nav__link">
+  <a href="#internal_2" class="md-nav__link">
     <span class="md-ellipsis">
       
         INTERNAL
@@ -2767,6 +2845,46 @@
 
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
+<h2 id="v105-line-loads-with-normaltrue-radial-curve-perpendicular-pressure">v1.0.5 — Line loads with <code>normal=True</code> (radial / curve-perpendicular pressure)<a class="headerlink" href="#v105-line-loads-with-normaltrue-radial-curve-perpendicular-pressure" title="Permanent link">&para;</a></h2>
+<h3 id="added">ADDED<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>g.loads.line(..., normal=True)</code> applies a pressure perpendicular
+  to each edge instead of along a fixed direction.  Useful for
+  internal/external pressure on curved 2-D boundaries (Lamé-style
+  problems, fluid-loaded arcs, etc.) where the cartesian direction
+  varies along the curve.</li>
+<li>Default sign comes from Gmsh's surface boundary orientation —
+  <code>gmsh.model.getBoundary([(2, surface)], oriented=True)</code> tells the
+  composite which side of the curve the structure sits on, so
+  <code>magnitude &gt; 0</code> always pushes <em>into</em> the structure (matching
+  <code>g.loads.surface(..., normal=True)</code>).</li>
+<li>Optional <code>away_from=(x0, y0, z0)</code> reference point overrides the
+  Gmsh path — flips the in-plane normal so it points away from that
+  point.  Use for ambiguous cases (a curve bounding two surfaces, or
+  a free curve not bounding any surface) or when you want to be
+  explicit.</li>
+<li>Both <code>reduction="tributary"</code> (default) and <code>reduction="consistent"</code>
+  honour <code>normal=True</code>.</li>
+<li>New worked example
+  <code>examples/EOS Examples/example_plate_pyGmsh_v2.ipynb</code> rewrites the
+  thick-walled-cylinder Lamé problem on top of the new API —
+  replaces ~30 lines of manual consistent-force integration on the
+  inner arc with a single <code>g.loads.line(pg='Pressure', magnitude=p,
+  normal=True)</code> declaration.</li>
+</ul>
+<h3 id="internal">INTERNAL<a class="headerlink" href="#internal" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New resolver methods <code>LoadResolver.resolve_line_per_edge_tributary</code>
+  and <code>resolve_line_per_edge_consistent</code> accept a list of
+  <code>(edge, q_xyz)</code> items so the composite can pre-compute per-edge
+  force-per-length vectors (which vary along curved boundaries).
+  Constant-direction line loads still use the original
+  <code>resolve_line_*</code> methods unchanged.</li>
+<li>Per-edge normal computation lives in <code>LoadsComposite</code> (it needs
+  Gmsh queries for the boundary-orientation path); the resolver
+  stays pure-math.</li>
+</ul>
+<hr />
 <h2 id="v104-low-level-booleans-preserve-instances-accept-labelpg-refs">v1.0.4 — Low-level booleans preserve Instances + accept label/PG refs<a class="headerlink" href="#v104-low-level-booleans-preserve-instances-accept-labelpg-refs" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">FIXED<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2780,7 +2898,7 @@
   (both <code>_bool_op</code> and the Parts-level methods) now routes through
   that single implementation.</li>
 </ul>
-<h3 id="added">ADDED<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<h3 id="added_1">ADDED<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>g.model.boolean.*</code> accepts label names and user physical-group
   names in <code>objects=</code> / <code>tools=</code>, matching the input shape of
@@ -2788,7 +2906,7 @@
   (Tier 1) first, then user PG (Tier 2).  Raw tags, dimtags, and
   mixed lists still work.</li>
 </ul>
-<h3 id="internal">INTERNAL<a class="headerlink" href="#internal" title="Permanent link">&para;</a></h3>
+<h3 id="internal_1">INTERNAL<a class="headerlink" href="#internal_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>New <code>resolve_to_dimtags</code> helper in <code>apeGmsh.core._helpers</code> —
   companion to <code>resolve_to_tags</code> that emits <code>(dim, tag)</code> pairs.
@@ -2880,7 +2998,7 @@ composition refactor. A full find-replace migration guide is at
   <code>_IO</code>, <code>_Queries</code>), each of which is a concrete class with explicit
   methods. No MRO walking across 5 mixin files.</li>
 </ul>
-<h3 id="internal_1">INTERNAL<a class="headerlink" href="#internal_1" title="Permanent link">&para;</a></h3>
+<h3 id="internal_2">INTERNAL<a class="headerlink" href="#internal_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>_GeometryMixin</code> → <code>_Geometry</code></li>
 <li><code>_BooleanMixin</code> → <code>_Boolean</code></li>
