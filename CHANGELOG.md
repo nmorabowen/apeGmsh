@@ -1,5 +1,182 @@
 # Changelog
 
+## v1.0.7 — Selection upgrades + `set_transfinite_box`
+
+Polish pass on the v1.0.6 selection API.  Eliminates the hand-rolled
+patterns that kept showing up in scripts (two-step boundary queries,
+`_apply_hex` helpers, manual node-count-by-axis loops) and adds the
+predicates and combinators users were reaching for.
+
+### ADDED — boundary helpers
+
+- `g.model.queries.boundary_curves(tag)` — returns every unique
+  curve on the boundary of an entity.  Encapsulates the two-step
+  query (faces → individual face boundaries with `combined=False` →
+  deduplicate) that's needed because Gmsh's `getBoundary(vol,
+  recursive=True)` skips dim=1 and goes straight to vertices.
+  Accepts a label, PG name, int tag, dimtag, or list of any.
+- `g.model.queries.boundary_points(tag)` — symmetric helper for
+  the eight corner points of a volume.
+
+### ADDED — `select()` upgrades
+
+- `select()` now accepts a label string with a `dim=` keyword:
+  `select('box', dim=2, on={'z': 0})` resolves the label, walks
+  to dim 2, and applies the predicate — no manual `boundary()`
+  call beforehand.
+- `not_on=` and `not_crossing=` negation predicates.  Same
+  signed-distance computation as the positive forms; useful for
+  *all faces except the bottom* style queries.
+- The `Selection.to_label()` call on a mixed-dim selection no
+  longer triggers the labels-composite collision warning — using
+  the same name across multiple dims is the documented intent
+  here.
+
+### ADDED — `Selection` ergonomics
+
+- Set operations: `selection | other` (union with deduplication),
+  `selection & other` (intersection), `selection - other`
+  (difference).  All three preserve the back-reference to
+  `_Queries` so chaining keeps working.
+- `selection.partition_by(axis=None)` groups entities by their
+  dominant bounding-box axis.  Returns a `dict[str, Selection]`
+  keyed by `'x'`, `'y'`, `'z'`, or — if `axis=` is given — a
+  single `Selection`.  Semantics are dim-aware:
+  - **curves** group by the *largest* extent (curve direction);
+  - **surfaces** group by the *smallest* extent (perpendicular /
+    normal direction).
+
+### ADDED — primitive factories
+
+- `g.model.queries.plane(z=0)`, `plane(p1, p2, p3)`, and
+  `plane(normal=..., through=...)` build a `Plane` you can pass to
+  any `select(on=..., crossing=...)` call (positive or negated).
+- `g.model.queries.line(p1, p2)` builds a `Line`.
+- Define a primitive once, reuse across many selections — useful
+  when the same cutting plane appears in several queries.
+
+### ADDED — `set_transfinite_box`
+
+- `g.mesh.structured.set_transfinite_box(vol, *, size=None, n=None,
+  recombine=True)` — collapses the full transfinite-hex setup
+  (curve node counts, face transfinite + recombine, volume
+  transfinite) into a single call.  Accepts either `size=` (target
+  element size; node counts derived per edge from
+  `round(length / size) + 1`) or `n=` (uniform node count per
+  edge).  Pass `recombine=False` for a transfinite tet mesh
+  instead of hex.
+
+### CHANGED
+
+- `examples/EOS Examples/22_geometric_selection.ipynb` rewrites
+  the 3-D section to use `set_transfinite_box`,
+  `select('box', dim=2, ...)`, the `plane()` factory,
+  `not_on=`, set operations, `partition_by`, and chained
+  `to_label / to_physical` — every v1.0.7 feature is exercised.
+
+### FIXED
+
+- `g.model.queries.bounding_box(tag, dim=N)`,
+  `center_of_mass(tag, dim=N)`, and `mass(tag, dim=N)` now honour
+  `dim` as an explicit hint when ``tag`` is a bare integer.
+  Previously these went through `resolve_to_single_dimtag` →
+  `resolve_dim`, which always searches dimensions 3 → 0 and
+  returns the first match — so on a model containing both volume
+  1 and curve 1, `bounding_box(1, dim=1)` silently returned the
+  volume's bounding box.  Bare ints are now passed straight to
+  the corresponding Gmsh OCC call at the requested dim.  String
+  labels and `(dim, tag)` tuples still go through resolution.
+- `g.model.geometry.slice` now passes its plane reference as an
+  explicit `(2, plane_tag)` dimtag to the downstream
+  `cut_by_surface` / `cut_by_plane` calls.  Previously it passed
+  a bare int, which triggered `resolve_dim` to scan the live
+  Gmsh model — and because `add_axis_cutting_plane` is called
+  with `sync=False`, the new plane wasn't yet visible to
+  `getEntities(2)`, causing the resolver to fall through to the
+  curves and fail with `"surface ref N resolved to dim=1"`.
+  Together these two fixes recover ≈14 previously-failing tests
+  in `test_geometry_cutting`, `test_sections`, and
+  `test_part_anchors`.
+
+### INTERNAL
+
+- New `_Queries._resolve_to_dimtags(tag)` helper consolidates the
+  string / int / dimtag resolution path used by `boundary_curves`,
+  `boundary_points`, and the new `select()` label-string branch.
+- `_select_impl` now takes `not_on` / `not_crossing` and inverts
+  the predicate result (`hit ^ invert`).  The four kwargs are
+  mutually exclusive — exactly one must be passed.
+- `Selection` is parameterised on `DimTag` (a `tuple[int, int]`
+  alias).  Method signatures use proper type hints throughout.
+- 29 new test cases in `tests/test_selection.py` covering the new
+  helpers, the negation predicates, set operations, `partition_by`
+  for both curves and surfaces, the primitive factories, and
+  `set_transfinite_box`.  Total: 55 cases passing.
+
+---
+
+## v1.0.6 — Geometric selection API (`g.model.queries.select`)
+
+### ADDED
+
+- `g.model.queries.select(entities, on=..., crossing=...)` filters
+  curves, surfaces, or volumes by a geometric predicate. Replaces
+  the noisy `entities_in_bounding_box(xmin,ymin,zmin,xmax,ymax,zmax)`
+  pattern with a readable description of *what* you want.
+- Predicates work on the bounding-box corners of each candidate:
+  - `on=` — every corner within `tol` of the primitive (entity lies
+    on it).
+  - `crossing=` — corners exist on both sides of the primitive
+    (entity straddles it). Same signed-distance computation
+    underlies both.
+- Primitive formats — no imports needed:
+  - `{'z': 0}` → axis-aligned plane z = 0.
+  - `[(p1), (p2)]` (2 points) → infinite line, for cutting 2-D
+    geometry.
+  - `[(p1), (p2), (p3)]` (3 points) → infinite plane through 3
+    non-collinear points. Use for surfaces and volumes.
+- `select()` returns a `Selection` — a `list` subclass with three
+  chainable methods:
+  - `.select(...)` — filter further (AND logic when stacked).
+  - `.to_label(name)` — register every entity as a label, grouped
+    by dimension.
+  - `.to_physical(name)` — register every entity as a physical
+    group, grouped by dimension.
+  Each returns `self` so you can keep chaining: `select → label →
+  select again → physical`.
+- `Selection.__repr__` describes the count by dimension and reminds
+  the user how to chain — IDE autocomplete + the repr are the only
+  discovery surface needed.
+- New curriculum notebook
+  `examples/EOS Examples/22_geometric_selection.ipynb` walks the
+  full workflow: predicate intro → stacking → unstructured baseline
+  → transfinite quad mesh of a plate → 3-D hex of a box.
+- Companion script
+  `examples/example_unstructured_and_transfinite.py` shows the
+  unstructured-vs-transfinite contrast for two adjacent boxes.
+- API docs page extended at `docs/api/model.md` with `Selection`,
+  `Plane`, and `Line` (the latter two documented as internal but
+  exposed so the format reference is auto-generated from
+  docstrings).
+
+### INTERNAL
+
+- New module `src/apeGmsh/core/_selection.py` holds `Plane`, `Line`,
+  the `_parse_primitive` dispatcher, the `_select_impl` core, and
+  the `Selection` class. `Plane` and `Line` are not part of the
+  public API — they are only constructed by `_parse_primitive` from
+  raw user input passed to `select()`.
+- `Selection` carries a back-reference to the originating `_Queries`
+  so `.select()`, `.to_label()`, and `.to_physical()` can route to
+  the session's `labels` / `physical` composites without the user
+  having to thread context.
+- Tests in `tests/test_selection.py` (26 cases) cover predicates in
+  2-D and 3-D, primitive parsing (including degenerate / collinear /
+  coincident input), the Selection chain, label / PG registration
+  for both single-dim and mixed-dim selections, and error paths.
+
+---
+
 ## v1.0.5 — Line loads with `normal=True` (radial / curve-perpendicular pressure)
 
 ### ADDED
@@ -185,8 +362,9 @@ pin to this version.
 
 - New `g.loads` composite with pattern context managers
 - New `g.mass` composite (renamed to `g.masses` in v1.0)
-- Read-only Loads/Mass tabs in the model viewer
 - `fem.loads` / `fem.mass` auto-resolved by `get_fem_data()`
+- Loads/masses/constraints overlays live on `g.mesh.viewer(fem=...)` —
+  they are mesh-resolved concepts and never landed on `g.model.viewer()`
 
 ## v0.2.0 — Composites architecture
 
