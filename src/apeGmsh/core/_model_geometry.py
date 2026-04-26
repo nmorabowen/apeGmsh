@@ -1171,7 +1171,10 @@ class _Geometry:
             for i in range(4)
         ]
         loop_tag = self.add_curve_loop(ln_tags, sync=False)
-        tag      = self.add_plane_surface(loop_tag, sync=False, label=label)
+        # Defer the label until AFTER the sync below: a label PG bind
+        # via gmsh.model.addPhysicalGroup requires the entity to be
+        # visible to Gmsh, which only happens post-synchronize.
+        tag      = self.add_plane_surface(loop_tag, sync=False)
 
         if sync:
             gmsh.model.occ.synchronize()
@@ -1180,14 +1183,18 @@ class _Geometry:
             f"add_cutting_plane(point={tuple(p)}, normal={tuple(n)}, "
             f"size={size}) -> tag {tag}"
         )
-        # ``add_plane_surface`` already registered the tag as
-        # ``plane_surface``.  Re-label it as a cutting plane and stash
-        # the defining point + unit normal so downstream operations
-        # (``cut_by_plane``) can recover the orientation without
-        # re-querying Gmsh or re-parsing the geometry.
+        # Re-register as a cutting plane (overwrites the
+        # ``plane_surface`` metadata kind from add_plane_surface) and,
+        # now that the surface is synced, bind the label PG.  When
+        # sync=False the caller has opted out of syncing, so we only
+        # update the metadata kind and skip label registration to
+        # avoid the "Unknown entity" warning.
+        if sync:
+            self._model._register(2, tag, label, 'cutting_plane')
+        else:
+            self._model._metadata[(2, tag)] = {'kind': 'cutting_plane'}
         entry = self._model._metadata.get((2, tag))
         if entry is not None:
-            entry['kind']   = 'cutting_plane'
             entry['point']  = tuple(float(x) for x in p)
             entry['normal'] = tuple(float(x) for x in n)
         return tag
@@ -1389,7 +1396,7 @@ class _Geometry:
     def cut_by_surface(
         self,
         solid          : Tag | str | list[Tag | str] | None,
-        surface        : Tag,
+        surface        : Tag | str,
         *,
         keep_surface   : bool = True,
         remove_original: bool = True,
@@ -1411,10 +1418,11 @@ class _Geometry:
         solid : Tag, list[Tag], or None
             Volume(s) to cut.  When ``None``, every registered volume
             in the model is cut against the surface.
-        surface : Tag
+        surface : Tag or str
             The cutting surface.  Can be any registered 2-D entity —
             a plane from :meth:`add_cutting_plane`, a STEP-imported
-            trimmed surface, a Coons patch, etc.
+            trimmed surface, a Coons patch, etc.  A string is resolved
+            against the labels composite at dim=2.
         keep_surface : bool, default True
             Leave the (now-trimmed) surface in the model after the
             cut.  Useful when you want to mesh the cut interface as a
@@ -1449,8 +1457,26 @@ class _Geometry:
         """
         solid_tags = self._normalize_solid_input(solid, self._collect_volume_tags)
 
+        # Resolve a string surface ref via the labels composite —
+        # mirrors the flexible-ref behaviour on the ``solid`` side so
+        # ``cut_by_surface('box', 'cutter')`` works after add_cutting_plane(label=...).
+        if isinstance(surface, str):
+            labels_comp = getattr(self._model._parent, 'labels', None)
+            if labels_comp is None:
+                raise ValueError(
+                    f"surface={surface!r} is a string but no labels "
+                    f"composite is available to resolve it"
+                )
+            surface_tags = labels_comp.entities(surface, dim=2)
+            if not surface_tags:
+                raise ValueError(
+                    f"label {surface!r} resolved to no dim=2 entities"
+                )
+        else:
+            surface_tags = [int(surface)]
+
         obj_dt = [(3, int(t)) for t in solid_tags]
-        tool_dt = [(2, int(surface))]
+        tool_dt = [(2, int(t)) for t in surface_tags]
 
         # Collect the original labels BEFORE the boolean so we can
         # propagate them to fragments afterwards.
@@ -1500,7 +1526,7 @@ class _Geometry:
                     self._model._register(2, t, None, 'cut_interface')
 
         self._model._log(
-            f"cut_by_surface(solids={solid_tags}, surface={int(surface)}) "
+            f"cut_by_surface(solids={solid_tags}, surface={surface_tags}) "
             f"-> {len(new_volume_tags)} volume fragment(s): {new_volume_tags}"
         )
         return new_volume_tags
