@@ -376,9 +376,9 @@ class TestAnchorRebinding:
         assert a.translate == (0.0, 0.0, 0.0)
         assert b.translate == (4.0, 0.0, 0.0)
         assert set(g.parts.labels()) == {"col_0", "col_1"}
-        # Part has no labels → no sidecar → no umbrella label.
-        assert a.label_names == []
-        assert b.label_names == []
+        # No sidecar → no extra labels beyond the explicit ``label=`` kwarg.
+        assert a.label_names == ["col_0"]
+        assert b.label_names == ["col_1"]
 
 
 # =====================================================================
