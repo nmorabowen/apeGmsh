@@ -53,12 +53,18 @@ class SelectionTreePanel:
         on_select_only: Callable[[list[tuple[int, int]]], None] | None = None,
         on_add_to_selection: Callable[[list[tuple[int, int]]], None] | None = None,
         on_remove_from_selection: Callable[[list[tuple[int, int]]], None] | None = None,
+        on_hide: Callable[[list[tuple[int, int]]], None] | None = None,
+        on_isolate: Callable[[list[tuple[int, int]]], None] | None = None,
+        on_reveal_all: Callable[[], None] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
         self._on_select_only = on_select_only
         self._on_add_to_selection = on_add_to_selection
         self._on_remove_from_selection = on_remove_from_selection
+        self._on_hide = on_hide
+        self._on_isolate = on_isolate
+        self._on_reveal_all = on_reveal_all
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -190,13 +196,32 @@ class SelectionTreePanel:
         act_add = menu.addAction(f"Add to selection ({n})")
         act_remove = menu.addAction(f"Remove from selection ({n})")
 
+        # Visibility actions — only added when callbacks were provided
+        act_hide = act_isolate = act_reveal = None
+        if self._on_hide or self._on_isolate or self._on_reveal_all:
+            menu.addSeparator()
+        if self._on_hide:
+            act_hide = menu.addAction(f"Hide ({n})")
+        if self._on_isolate:
+            act_isolate = menu.addAction(f"Isolate ({n})")
+        if self._on_reveal_all:
+            act_reveal = menu.addAction("Reveal all")
+
         action = menu.exec_(self._tree.viewport().mapToGlobal(pos))
+        if action is None:
+            return
         if action == act_only and self._on_select_only:
             self._on_select_only(list(dts))
         elif action == act_add and self._on_add_to_selection:
             self._on_add_to_selection(list(dts))
         elif action == act_remove and self._on_remove_from_selection:
             self._on_remove_from_selection(list(dts))
+        elif action == act_hide and self._on_hide:
+            self._on_hide(list(dts))
+        elif action == act_isolate and self._on_isolate:
+            self._on_isolate(list(dts))
+        elif action == act_reveal and self._on_reveal_all:
+            self._on_reveal_all()
 
     def _make_item(self, parent, dim, label, tag, color, bold=False):
         from qtpy.QtWidgets import QTreeWidgetItem

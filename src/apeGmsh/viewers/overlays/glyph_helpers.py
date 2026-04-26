@@ -67,31 +67,38 @@ def rebuild_node_cloud(
     scene: Any,
     new_size: float,
 ) -> None:
-    """Rebuild the mesh-viewer node cloud with a new marker size.
+    """Rebuild the mesh-viewer node clouds with a new marker size.
 
-    Parameters
-    ----------
-    plotter : pv.Plotter
-    scene : MeshSceneData
-        Must have ``.node_cloud``, ``.node_actor``, ``.model_diagonal``.
-    new_size : float
-        New marker size value (passed to ``build_node_cloud``).
+    Iterates the per-dim node-cloud actors in the registry and
+    rebuilds each in place. The pre-refactor single global cloud
+    (``scene.node_cloud`` / ``scene.node_actor``) no longer exists;
+    use ``registry.dim_node_actors`` as the source of truth.
     """
     from ..scene.glyph_points import build_node_cloud
 
-    if scene.node_cloud is None or scene.node_cloud.n_points == 0:
+    registry = getattr(scene, "registry", None)
+    if registry is None:
         return
 
-    if scene.node_actor is not None:
-        try:
-            plotter.remove_actor(scene.node_actor)
-        except Exception:
-            pass
+    diag = getattr(scene, "model_diagonal", 1.0)
+    new_clouds: dict[int, Any] = {}
+    new_actors: dict[int, Any] = {}
+    for dim, cloud in list(registry.dim_node_clouds.items()):
+        if cloud is None or cloud.n_points == 0:
+            continue
+        old_actor = registry.dim_node_actors.get(dim)
+        if old_actor is not None:
+            try:
+                plotter.remove_actor(old_actor)
+            except Exception:
+                pass
+        nc, na = build_node_cloud(
+            plotter, cloud.points,
+            model_diagonal=diag,
+            marker_size=new_size,
+        )
+        new_clouds[dim] = nc
+        new_actors[dim] = na
 
-    new_cloud, new_actor = build_node_cloud(
-        plotter, scene.node_cloud.points,
-        model_diagonal=scene.model_diagonal,
-        marker_size=new_size,
-    )
-    scene.node_cloud = new_cloud
-    scene.node_actor = new_actor
+    registry.dim_node_clouds.update(new_clouds)
+    registry.dim_node_actors.update(new_actors)

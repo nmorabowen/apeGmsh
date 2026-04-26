@@ -44,6 +44,9 @@ class BrowserTab:
         on_new_group: Callable[[], None] | None = None,
         on_rename_group: Callable[[str], None] | None = None,
         on_delete_group: Callable[[str], None] | None = None,
+        on_hide: Callable[[list[tuple[int, int]]], None] | None = None,
+        on_isolate: Callable[[list[tuple[int, int]]], None] | None = None,
+        on_reveal_all: Callable[[], None] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._selection = selection
@@ -52,6 +55,9 @@ class BrowserTab:
         self._on_new_group = on_new_group
         self._on_rename_group = on_rename_group
         self._on_delete_group = on_delete_group
+        self._on_hide = on_hide
+        self._on_isolate = on_isolate
+        self._on_reveal_all = on_reveal_all
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -215,17 +221,56 @@ class BrowserTab:
         if not item:
             return
         data = item.data(0, 0x0100)
-        if not data or data[0] != "group":
+        if not data:
             return
-        name = data[1]
+        kind = data[0]
+        if kind not in ("group", "entity"):
+            return
+
+        # Resolve target DimTag list for visibility actions
+        if kind == "group":
+            name = data[1]
+            dts: list[tuple[int, int]] = []
+            for i in range(item.childCount()):
+                cd = item.child(i).data(0, 0x0100)
+                if cd and cd[0] == "entity":
+                    dts.append(cd[1])
+        else:  # entity
+            name = None
+            dts = [data[1]]
+
         menu = QtWidgets.QMenu()
-        act_rename = menu.addAction("Rename")
-        act_delete = menu.addAction("Delete")
+        act_rename = act_delete = None
+        if kind == "group":
+            act_rename = menu.addAction("Rename")
+            act_delete = menu.addAction("Delete")
+
+        # Visibility actions — only added when callbacks were provided
+        act_hide = act_isolate = act_reveal = None
+        if self._on_hide or self._on_isolate or self._on_reveal_all:
+            if kind == "group":
+                menu.addSeparator()
+            n = len(dts)
+            if self._on_hide and dts:
+                act_hide = menu.addAction(f"Hide ({n})")
+            if self._on_isolate and dts:
+                act_isolate = menu.addAction(f"Isolate ({n})")
+            if self._on_reveal_all:
+                act_reveal = menu.addAction("Reveal all")
+
         action = menu.exec_(self._tree.viewport().mapToGlobal(pos))
+        if action is None:
+            return
         if action == act_rename and self._on_rename_group:
             self._on_rename_group(name)
         elif action == act_delete and self._on_delete_group:
             self._on_delete_group(name)
+        elif action == act_hide and self._on_hide:
+            self._on_hide(dts)
+        elif action == act_isolate and self._on_isolate:
+            self._on_isolate(dts)
+        elif action == act_reveal and self._on_reveal_all:
+            self._on_reveal_all()
 
     def _action_new(self):
         if self._on_new_group:

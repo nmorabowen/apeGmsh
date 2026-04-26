@@ -391,7 +391,11 @@
       "Bash(git -C .claude/worktrees/__TRACKED_VAR__ commit -m 'wip\\(salvage\\): preserve uncommitted work before worktree prune')",
       "Bash(set -e)",
       "Bash(python -c \"import json; json.load\\(open\\('.claude/settings.local.json'\\)\\); print\\('JSON valid'\\)\")",
-      "Bash(git -c core.editor=true cherry-pick --continue)"
+      "Bash(git -c core.editor=true cherry-pick --continue)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\(r'C:\\\\Users\\\\nmora\\\\Github\\\\apeGmsh\\\\src\\\\apeGmsh\\\\viewers\\\\model_viewer.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -c \"from apeGmsh.viewers.scene.mesh_scene import GMSH_LINEAR, build_mesh_scene; print\\('ok', len\\(GMSH_LINEAR\\), 'entries'\\)\")",
+      "Bash(grep -Ev '^Info|^$')",
+      "Bash(git switch *)"
     ]
   }
 }
