@@ -71,12 +71,41 @@ class _ElemSpec:
     slots_2d    : tuple[str, ...] | None = None  # overrides slots for ndm=2
     slots_3d    : tuple[str, ...] | None = None  # overrides slots for ndm=3
 
+    # Recorder capabilities — used by g.opensees.recorders.resolve()
+    # to validate at declaration time. ``has_*`` describes whether the
+    # element class *can* expose results at that topology level —
+    # specific instances may or may not, but the class supports it.
+    has_gauss          : bool = False     # continuum integration points
+    has_fibers         : bool = False     # fiber-section beams
+    has_layers         : bool = False     # layered shells / through-thickness
+    has_line_stations  : bool = False     # beam section forces along length
+
     def get_slots(self, ndm: int) -> tuple[str, ...]:
         if ndm == 2 and self.slots_2d is not None:
             return self.slots_2d
         if ndm == 3 and self.slots_3d is not None:
             return self.slots_3d
         return self.slots
+
+    def supports(self, recorder_category: str) -> bool:
+        """True if this element class supports the given recorder category.
+
+        Categories are the ones used by ``g.opensees.recorders.*`` —
+        ``"gauss"``, ``"fibers"``, ``"layers"``, ``"line_stations"``.
+        ``"nodes"`` and ``"elements"`` (per-element-node forces) are
+        always supported and not checked here.
+        """
+        if recorder_category == "gauss":
+            return self.has_gauss
+        if recorder_category == "fibers":
+            return self.has_fibers
+        if recorder_category == "layers":
+            return self.has_layers
+        if recorder_category == "line_stations":
+            return self.has_line_stations
+        if recorder_category in ("nodes", "elements"):
+            return True
+        return False
 
     @property
     def expected_pg_dim(self) -> int | None:
@@ -100,6 +129,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({4}),
         node_reorder={4: (0, 1, 2, 3)},
         slots=("nodes", "matTag", "bodyForce"),
+        has_gauss=True,
     ),
     "TenNodeTetrahedron": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -107,6 +137,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({11}),
         node_reorder={11: (0,1,2,3,4,5,6,7,8,9)},
         slots=("nodes", "matTag", "bodyForce"),
+        has_gauss=True,
     ),
     "stdBrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -114,6 +145,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({5}),
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag", "bodyForce"),
+        has_gauss=True,
     ),
     "bbarBrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -121,6 +153,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({5}),
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag", "bodyForce"),
+        has_gauss=True,
     ),
     "SSPbrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -128,6 +161,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({5}),
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag", "bodyForce"),
+        has_gauss=True,
     ),
 
     # ── 2-D solid ──────────────────────────────────────────────────────────
@@ -137,6 +171,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({3}),
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "thick", "eleType", "matTag"),
+        has_gauss=True,
     ),
     "tri31": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -144,6 +179,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({2}),
         node_reorder={2: (0,1,2)},
         slots=("nodes", "thick", "eleType", "matTag"),
+        has_gauss=True,
     ),
     "SSPquad": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -151,15 +187,19 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({3}),
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "matTag", "thick", "eleType"),
+        has_gauss=True,
     ),
 
     # ── 3-D shell (section-based) ──────────────────────────────────────────
+    # Shells use a section; with a layered section they expose
+    # through-thickness layer responses (has_layers).
     "ShellMITC3": _ElemSpec(
         mat_family="section", needs_transf=False,
         ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),
         gmsh_etypes=frozenset({2}),
         node_reorder={2: (0, 1, 2)},
         slots=("nodes", "secTag"),
+        has_gauss=True, has_layers=True,
     ),
     "ShellMITC4": _ElemSpec(
         mat_family="section", needs_transf=False,
@@ -167,6 +207,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({3}),
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "secTag"),
+        has_gauss=True, has_layers=True,
     ),
     "ShellDKGQ": _ElemSpec(
         mat_family="section", needs_transf=False,
@@ -174,6 +215,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({3}),
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "secTag"),
+        has_gauss=True, has_layers=True,
     ),
     "ASDShellQ4": _ElemSpec(
         mat_family="section", needs_transf=False,
@@ -181,9 +223,12 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({3}),
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "secTag"),
+        has_gauss=True, has_layers=True,
     ),
 
     # ── 1-D truss (uniaxial material) ──────────────────────────────────────
+    # Trusses report force as a single per-element scalar (no GPs,
+    # no along-length stations, no fibers).
     "truss": _ElemSpec(
         mat_family="uni", needs_transf=False,
         ndm_ok=frozenset({2, 3}), ndf_ok=frozenset({2, 3, 6}),
@@ -207,6 +252,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={1: (0, 1)},
         slots_2d=("nodes", "A", "E", "Iz", "transfTag"),
         slots_3d=("nodes", "A", "E", "G", "Jx", "Iy", "Iz", "transfTag"),
+        has_line_stations=True,
     ),
     "ElasticTimoshenkoBeam": _ElemSpec(
         mat_family="none", needs_transf=True,
@@ -215,6 +261,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={1: (0, 1)},
         slots_2d=("nodes", "E", "G", "A", "Iz", "Avy", "transfTag"),
         slots_3d=("nodes", "E", "G", "A", "Jx", "Iy", "Iz", "Avy", "Avz", "transfTag"),
+        has_line_stations=True,
     ),
 }
 

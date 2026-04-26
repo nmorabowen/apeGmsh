@@ -138,6 +138,12 @@ class OpenSees(_HasLogging):
         self.ingest    = _Ingest(self)
         self.inspect   = _Inspect(self)
         self.export    = _Export(self)
+        # Recorders is fully standalone; surfaced here for ergonomic
+        # ``g.opensees.recorders.*`` access. Designed so the future
+        # ``apeSees`` split can move it without API churn (see
+        # internal_docs/Results_architecture.md).
+        from .Recorders import Recorders as _Recorders
+        self.recorders = _Recorders()
 
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._opensees._*)
