@@ -30,11 +30,14 @@ class _Structured:
     # ------------------------------------------------------------------
 
     def _resolve(self, tag, dim: int) -> list[int]:
-        """Resolve a tag/label/PG ref to concrete tags."""
+        """Resolve a flexible ref (int, str, dim-tag, or list) to tags.
+
+        Delegates to the central :func:`resolve_to_tags` helper so all
+        structured methods accept the same ref shapes used elsewhere in
+        the API.
+        """
         from apeGmsh.core._helpers import resolve_to_tags
-        if isinstance(tag, str):
-            return resolve_to_tags(tag, dim=dim, session=self._mesh._parent)
-        return [int(tag)]
+        return resolve_to_tags(tag, dim=dim, session=self._mesh._parent)
 
     def set_transfinite_curve(
         self,
@@ -135,6 +138,82 @@ class _Structured:
             f"set_transfinite_automatic("
             f"corner_angle={math.degrees(corner_angle):.1f}°, "
             f"recombine={recombine})"
+        )
+        return self
+
+    def set_transfinite_box(
+        self,
+        vol,
+        *,
+        size: float | None = None,
+        n   : int | None   = None,
+        recombine: bool    = True,
+    ) -> "_Structured":
+        """
+        Apply transfinite + recombine constraints to a clean 6-face hex
+        volume — captures the full unstructured-to-hex setup in one call.
+
+        Walks the volume's bounding curves and assigns a node count
+        per edge, marks every bounding surface as transfinite (and
+        recombined to quads if ``recombine=True``), then marks the
+        volume as transfinite.
+
+        Parameters
+        ----------
+        vol :
+            int tag, label string, PG name, or ``(3, tag)`` tuple.
+        size :
+            Target element size — node count per edge is
+            ``round(length / size) + 1``.
+        n :
+            Uniform node count on every edge (overrides ``size``).
+        recombine :
+            Recombine each face to quads.  Default True (gives a hex mesh).
+            Set False for a transfinite tet mesh.
+
+        Notes
+        -----
+        Requires the volume to be hex-decomposable — exactly 6 faces,
+        each a 4-sided patch.  After ``fragment()`` operations, volumes
+        may end up with split faces and stop being transfinite-compatible;
+        in that case use ``set_transfinite_automatic()`` instead.
+
+        Example
+        -------
+        ::
+
+            m.mesh.structured.set_transfinite_box('box', size=0.5)
+            m.mesh.structured.set_transfinite_box(vol_tag, n=11)
+        """
+        if (size is None) == (n is None):
+            raise ValueError("Pass exactly one of size= or n=.")
+
+        # Resolve volume → list of dim=3 tags
+        tags = self._resolve(vol, dim=3)
+
+        for vtag in tags:
+            edges = self._mesh._parent.model.queries.boundary_curves(vtag)
+            faces = self._mesh._parent.model.queries.boundary(vtag, oriented=False)
+
+            for _, ctag in edges:
+                if n is not None:
+                    n_edge = n
+                else:
+                    bb = self._mesh._parent.model.queries.bounding_box(ctag, dim=1)
+                    L  = max(bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
+                    n_edge = max(2, round(L / size) + 1)
+                self.set_transfinite_curve(ctag, n_edge)
+
+            for _, stag in faces:
+                self.set_transfinite_surface(stag)
+                if recombine:
+                    self.set_recombine(stag, dim=2)
+
+            self.set_transfinite_volume(vtag)
+
+        self._mesh._log(
+            f"set_transfinite_box(vol={vol!r}, size={size}, n={n}, "
+            f"recombine={recombine}) — applied to {len(tags)} volume(s)"
         )
         return self
 
@@ -260,11 +339,10 @@ class _Structured:
     def set_compound(self, dim: int, tags) -> "_Structured":
         """Merge entities so they are meshed together as a single compound.
 
-        ``tags`` accepts an int / label / PG name / list mixing those.
-        Bare ints are interpreted at *dim*.
+        ``tags`` accepts int, label/PG name, ``(dim, tag)`` tuple, or a
+        list of any mix.
         """
-        from apeGmsh.core._helpers import resolve_to_tags
-        resolved = resolve_to_tags(tags, dim=dim, session=self._mesh._parent)
+        resolved = self._resolve(tags, dim=dim)
         gmsh.model.mesh.setCompound(dim, resolved)
         self._mesh._log(f"set_compound(dim={dim}, tags={resolved})")
         return self

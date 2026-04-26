@@ -67,8 +67,8 @@ class _Editing:
 
     def set_periodic(
         self,
-        tags       : list[int],
-        master_tags: list[int],
+        tags,
+        master_tags,
         transform  : list[float],
         *,
         dim        : int = 2,
@@ -78,15 +78,34 @@ class _Editing:
 
         Parameters
         ----------
-        tags        : slave entity tags
-        master_tags : master entity tags
+        tags        : slave entity reference(s) — int, label, PG name,
+                      ``(dim, tag)`` tuple, or list of any mix.
+        master_tags : master entity reference(s) — same flexible form.
         transform   : 16-element row-major 4×4 affine matrix mapping
                       master -> slave coordinates
         dim         : entity dimension (1 = curves, 2 = surfaces)
         """
-        gmsh.model.mesh.setPeriodic(dim, tags, master_tags, transform)
+        from apeGmsh.core._helpers import resolve_to_tags
+        slave_resolved = resolve_to_tags(
+            tags, dim=dim, session=self._mesh._parent,
+        )
+        master_resolved = resolve_to_tags(
+            master_tags, dim=dim, session=self._mesh._parent,
+        )
+        if len(slave_resolved) != len(master_resolved):
+            raise ValueError(
+                f"set_periodic: slave/master count mismatch — "
+                f"slaves={slave_resolved} ({len(slave_resolved)}), "
+                f"masters={master_resolved} ({len(master_resolved)}). "
+                f"Each slave needs exactly one master under the same "
+                f"transform."
+            )
+        gmsh.model.mesh.setPeriodic(
+            dim, slave_resolved, master_resolved, transform,
+        )
         self._mesh._log(
-            f"set_periodic(dim={dim}, tags={tags}, master={master_tags})"
+            f"set_periodic(dim={dim}, tags={slave_resolved}, "
+            f"master={master_resolved})"
         )
         return self
 

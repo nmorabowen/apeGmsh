@@ -40,6 +40,73 @@ class FieldHelper:
         if self._mesh._parent._verbose:
             print(f"[Field] {msg}")
 
+    def _resolve_at_dim(self, refs, expected_dim: int, what: str) -> list[int]:
+        """Resolve refs and require every hit to live at *expected_dim*.
+
+        Used by field builders where the parameter (``curves`` / ``surfaces``
+        / ``points``) is dim-restricted by Gmsh.  Accepts int, label/PG
+        string, ``(d, t)`` tuple, or list of any mix.
+
+        Bare int refs are trusted at *expected_dim* — the parameter
+        name disambiguates them, so a tag value that collides with an
+        entity at another dim does not silently route to the wrong
+        dim.  Strings and ``(d, t)`` tuples are validated and raise on
+        dim mismatch.
+        """
+        if refs is None:
+            return []
+
+        # Normalise to a list of refs.  Treat a (dim, tag) tuple as a
+        # single ref, not a 2-element list.
+        is_dimtag_tuple = (
+            isinstance(refs, tuple) and len(refs) == 2
+            and isinstance(refs[0], int) and isinstance(refs[1], int)
+        )
+        if is_dimtag_tuple or not isinstance(refs, (list, tuple)):
+            refs_list = [refs]
+        else:
+            refs_list = list(refs)
+
+        out: list[int] = []
+        for r in refs_list:
+            if isinstance(r, bool):
+                raise TypeError(
+                    f"{what}: bool refs are not supported (got {r!r})."
+                )
+            if isinstance(r, int):
+                out.append(int(r))
+                continue
+            if (
+                isinstance(r, tuple) and len(r) == 2
+                and isinstance(r[0], int) and isinstance(r[1], int)
+            ):
+                d, t = r
+                if d != expected_dim:
+                    raise ValueError(
+                        f"{what}: expected dim={expected_dim} but got "
+                        f"({d}, {t}) in ref list."
+                    )
+                out.append(int(t))
+                continue
+            if isinstance(r, str):
+                from apeGmsh.core._helpers import resolve_to_dimtags
+                dimtags = resolve_to_dimtags(
+                    r, default_dim=expected_dim, session=self._mesh._parent,
+                )
+                bad = [(d, t) for d, t in dimtags if d != expected_dim]
+                if bad:
+                    raise ValueError(
+                        f"{what}: label/PG {r!r} resolved to {bad}; "
+                        f"expected dim={expected_dim}."
+                    )
+                out.extend(int(t) for _, t in dimtags)
+                continue
+            raise TypeError(
+                f"{what}: unsupported ref type {type(r).__name__!r} "
+                f"(value {r!r})."
+            )
+        return out
+
     # ------------------------------------------------------------------
     # Raw control
     # ------------------------------------------------------------------
@@ -90,23 +157,32 @@ class FieldHelper:
     def distance(
         self,
         *,
-        curves  : list[int] | None = None,
-        surfaces: list[int] | None = None,
-        points  : list[int] | None = None,
-        sampling: int              = 100,
+        curves  = None,
+        surfaces = None,
+        points   = None,
+        sampling: int = 100,
     ) -> int:
-        """Create a ``Distance`` field measuring shortest distance to entities."""
+        """Create a ``Distance`` field measuring shortest distance to entities.
+
+        Each of ``curves``, ``surfaces``, ``points`` accepts an int, a
+        label or PG name, a ``(dim, tag)`` tuple, or a list of any mix.
+        Refs are validated against the expected dimension.
+        """
+        curve_tags = self._resolve_at_dim(curves, 1, "distance(curves=)")
+        surf_tags  = self._resolve_at_dim(surfaces, 2, "distance(surfaces=)")
+        point_tags = self._resolve_at_dim(points, 0, "distance(points=)")
+
         tag = gmsh.model.mesh.field.add("Distance")
-        if curves:
-            gmsh.model.mesh.field.setNumbers(tag, "CurvesList",   curves)
-        if surfaces:
-            gmsh.model.mesh.field.setNumbers(tag, "SurfacesList", surfaces)
-        if points:
-            gmsh.model.mesh.field.setNumbers(tag, "PointsList",   points)
+        if curve_tags:
+            gmsh.model.mesh.field.setNumbers(tag, "CurvesList",   curve_tags)
+        if surf_tags:
+            gmsh.model.mesh.field.setNumbers(tag, "SurfacesList", surf_tags)
+        if point_tags:
+            gmsh.model.mesh.field.setNumbers(tag, "PointsList",   point_tags)
         gmsh.model.mesh.field.setNumber(tag, "Sampling", sampling)
         self._log(
-            f"distance(curves={curves!r}, surfaces={surfaces!r}, "
-            f"points={points!r}) -> field {tag}"
+            f"distance(curves={curve_tags!r}, surfaces={surf_tags!r}, "
+            f"points={point_tags!r}) -> field {tag}"
         )
         return tag
 
@@ -186,22 +262,31 @@ class FieldHelper:
     def boundary_layer(
         self,
         *,
-        curves     : list[int] | None = None,
-        points     : list[int] | None = None,
+        curves     = None,
+        points     = None,
         size_near  : float,
-        ratio      : float            = 1.2,
-        n_layers   : int              = 5,
-        thickness  : float | None     = None,
-        fan_points : list[int] | None = None,
+        ratio      : float        = 1.2,
+        n_layers   : int          = 5,
+        thickness  : float | None = None,
+        fan_points = None,
     ) -> int:
-        """Create a ``BoundaryLayer`` field for wall-resolved meshes."""
+        """Create a ``BoundaryLayer`` field for wall-resolved meshes.
+
+        ``curves``, ``points``, and ``fan_points`` accept any flexible
+        reference shape (int / label / PG / ``(dim, tag)`` / list).
+        """
+        curve_tags = self._resolve_at_dim(curves, 1, "boundary_layer(curves=)")
+        point_tags = self._resolve_at_dim(points, 0, "boundary_layer(points=)")
+        fan_tags   = self._resolve_at_dim(fan_points, 0,
+                                          "boundary_layer(fan_points=)")
+
         tag = gmsh.model.mesh.field.add("BoundaryLayer")
-        if curves:
-            gmsh.model.mesh.field.setNumbers(tag, "CurvesList",    curves)
-        if points:
-            gmsh.model.mesh.field.setNumbers(tag, "PointsList",    points)
-        if fan_points:
-            gmsh.model.mesh.field.setNumbers(tag, "FanPointsList", fan_points)
+        if curve_tags:
+            gmsh.model.mesh.field.setNumbers(tag, "CurvesList",    curve_tags)
+        if point_tags:
+            gmsh.model.mesh.field.setNumbers(tag, "PointsList",    point_tags)
+        if fan_tags:
+            gmsh.model.mesh.field.setNumbers(tag, "FanPointsList", fan_tags)
         gmsh.model.mesh.field.setNumber(tag, "Size",     size_near)
         gmsh.model.mesh.field.setNumber(tag, "Ratio",    ratio)
         gmsh.model.mesh.field.setNumber(tag, "NbLayers", n_layers)

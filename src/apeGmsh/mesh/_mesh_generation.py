@@ -52,16 +52,22 @@ class _Generation:
             if comp is not None and hasattr(comp, "validate_pre_mesh"):
                 comp.validate_pre_mesh()
 
-    def set_order(self, order: int) -> "_Generation":
+    def set_order(self, order: int, *, bubble: bool = True) -> "_Generation":
         """
         Elevate elements to high order.
 
         Parameters
         ----------
-        order : 1 = linear, 2 = quadratic, 3 = cubic, …
+        order  : 1 = linear, 2 = quadratic, 3 = cubic, …
+        bubble : include interior (bubble) nodes for order ≥ 2.
+                 True  → complete Lagrange (e.g. Q9, T6+bubble).
+                 False → serendipity / incomplete (e.g. Q8, T6).
+                 Global Gmsh flag — applies to the entire mesh.
         """
+        if order >= 2:
+            gmsh.option.setNumber("Mesh.SecondOrderIncomplete", 0 if bubble else 1)
         gmsh.model.mesh.setOrder(order)
-        self._mesh._log(f"set_order({order})")
+        self._mesh._log(f"set_order({order}, bubble={bubble})")
         return self
 
     def refine(self) -> "_Generation":
