@@ -27,8 +27,38 @@ class _Export:
     # Tcl
     # ------------------------------------------------------------------
 
-    def tcl(self, path: Path | str) -> "_Export":
-        """Write an OpenSees Tcl input script to *path*."""
+    def tcl(
+        self,
+        path: Path | str,
+        *,
+        recorders=None,
+        recorders_output_dir: str = "",
+        recorders_file_format: str = "out",
+        manifest_path: Path | str | None = None,
+    ) -> "_Export":
+        """Write an OpenSees Tcl input script to *path*.
+
+        Parameters
+        ----------
+        path : str or Path
+            Where to write the Tcl script.
+        recorders : ResolvedRecorderSpec, optional
+            If provided, emit one ``recorder ...`` line per resolved
+            record after the model definition. The spec must have
+            been resolved against the same FEMData this OpenSees
+            bridge was built from (no enforcement here — the user is
+            responsible for matching them).
+        recorders_output_dir : str
+            Directory prefix for recorder output files (default ``""``
+            = same dir as the script). Trailing ``/`` optional.
+        recorders_file_format : str
+            ``"out"`` (text) or ``"xml"``. Default text.
+        manifest_path : str or Path, optional
+            Where to write the recorder manifest sidecar (HDF5).
+            Required for the transcoder (Phase 6) to decode the
+            emitted output files. Defaults to ``<path>.manifest.h5``
+            when ``recorders`` is given.
+        """
         ops = self._opensees
         ops._require_built("export.tcl")
         path = Path(path)
@@ -200,6 +230,25 @@ class _Export:
                         )
             lines.append("}")
 
+        if recorders is not None:
+            hdr(f"Recorders  ({len(recorders.records)})")
+            if recorders_file_format == "mpco":
+                lines.append(recorders.to_mpco_tcl_command(
+                    output_dir=recorders_output_dir,
+                    filename=path.with_suffix(".mpco").name,
+                ))
+            else:
+                lines.extend(recorders.to_tcl_commands(
+                    output_dir=recorders_output_dir,
+                    file_format=recorders_file_format,
+                ))
+            mpath = (
+                Path(manifest_path) if manifest_path is not None
+                else path.with_suffix(path.suffix + ".manifest.h5")
+            )
+            recorders.to_manifest_h5(mpath)
+            ops._log(f"export.tcl recorders manifest -> {mpath}")
+
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         ops._log(f"export.tcl -> {path}  ({len(lines)} lines)")
         return self
@@ -208,8 +257,21 @@ class _Export:
     # openseespy
     # ------------------------------------------------------------------
 
-    def py(self, path: Path | str) -> "_Export":
-        """Write an openseespy Python script to *path*."""
+    def py(
+        self,
+        path: Path | str,
+        *,
+        recorders=None,
+        recorders_output_dir: str = "",
+        recorders_file_format: str = "out",
+        manifest_path: Path | str | None = None,
+    ) -> "_Export":
+        """Write an openseespy Python script to *path*.
+
+        Recorder kwargs mirror :meth:`tcl`. When ``recorders`` is
+        provided, ``ops.recorder(...)`` calls are appended to the
+        script after the model definition.
+        """
         ops = self._opensees
         ops._require_built("export.py")
         path = Path(path)
@@ -387,6 +449,25 @@ class _Export:
                         lines.append(
                             f"# unsupported eleLoad type {lt!r} for element {eid}"
                         )
+
+        if recorders is not None:
+            hdr(f"Recorders  ({len(recorders.records)})")
+            if recorders_file_format == "mpco":
+                lines.append(recorders.to_mpco_python_command(
+                    output_dir=recorders_output_dir,
+                    filename=path.with_suffix(".mpco").name,
+                ))
+            else:
+                lines.extend(recorders.to_python_commands(
+                    output_dir=recorders_output_dir,
+                    file_format=recorders_file_format,
+                ))
+            mpath = (
+                Path(manifest_path) if manifest_path is not None
+                else path.with_suffix(path.suffix + ".manifest.h5")
+            )
+            recorders.to_manifest_h5(mpath)
+            ops._log(f"export.py recorders manifest -> {mpath}")
 
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         ops._log(f"export.py -> {path}  ({len(lines)} lines)")

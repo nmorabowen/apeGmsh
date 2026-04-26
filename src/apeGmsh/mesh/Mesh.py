@@ -272,15 +272,15 @@ class Mesh(_HasLogging):
             from apeGmshViewer import show
             show(results, blocking=blocking)
         elif point_data is not None or cell_data is not None:
-            from ..results.Results import Results
-            fem = self.queries.get_fem_data()
-            r = Results.from_fem(
-                fem,
-                point_data=point_data,
-                cell_data=cell_data,
-                name=self._parent.name,
+            raise NotImplementedError(
+                "g.mesh.viewer(point_data=..., cell_data=...) was a thin "
+                "wrapper around the legacy Results class which has been "
+                "rebuilt. The new flow is being designed as part of the "
+                "viewer rebuild project — see internal_docs/"
+                "Results_architecture.md (Phase 9). Until then, call "
+                "g.mesh.viewer() to show the bare mesh, or pass results=path "
+                "to load a pre-written .vtu/.pvd file."
             )
-            r.viewer(blocking=blocking)
         else:
             import tempfile
 

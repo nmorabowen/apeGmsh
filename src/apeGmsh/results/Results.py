@@ -1,1033 +1,413 @@
-"""
-Results — Self-contained FEM post-processing container.
-=======================================================
+"""Results — backend-agnostic FEM post-processing container.
 
-Combines mesh geometry with analysis result fields (displacements,
-stresses, mode shapes) in a single object that requires no live Gmsh
-or OpenSees session.
+Mirrors the ``FEMData`` composite shape: ``results.nodes``,
+``results.elements.gauss``, ``results.elements.fibers`` etc., with
+the same ``pg=`` / ``label=`` / ``ids=`` selection vocabulary.
 
 Construction
 ------------
 ::
 
-    # From FEMData + numpy arrays (primary workflow)
-    results = Results.from_fem(fem,
-        point_data={"Displacement": u_array},
-        cell_data={"Stress_xx": s_array},
-    )
+    # Native HDF5 (apeGmsh-produced or domain capture)
+    results = Results.from_native("run.h5")
+    results = Results.from_native("run.h5", fem=fem)   # explicit bind
 
-    # From VTU/VTK/PVD file
-    results = Results.from_file("output.vtu")
+    # MPCO HDF5 (Phase 3)
+    results = Results.from_mpco("run.mpco")
 
-    # Time-series (modal / transient)
-    results = Results.from_fem(fem, steps=[
-        {"time": freq1, "point_data": {"ModeShape": phi1}},
-        {"time": freq2, "point_data": {"ModeShape": phi2}},
-    ])
+    # Recorder transcoder (Phase 6)
+    results = Results.from_recorders(spec, output_dir="out/", fem=fem)
 
-Usage
+Stage scoping
+-------------
+Top-level ``Results`` carries all stages. Reads disambiguate
+automatically when there is only one stage; with multiple stages,
+pick one explicitly::
+
+    gravity = results.stage("gravity")              # stage-scoped Results
+    disp = gravity.nodes.get(component="displacement_z", pg="Top")
+
+Modes
 -----
-::
+Modes are stages with ``kind="mode"``. The ``.modes`` accessor is
+sugar that filters and returns each as a stage-scoped ``Results``::
 
-    results.viewer()                  # open apeGmshViewer (no session needed)
-    results.to_vtu("output.vtu")     # export single step
-    results.to_pvd("modes")          # export time-series (.pvd + .vtu files)
-    results.get_point_field("Displacement")       # retrieve field
-    results.get_point_field("ModeShape", step=2)  # time-series field
+    for mode in results.modes:
+        print(mode.mode_index, mode.frequency_hz, mode.period_s)
+        shape = mode.nodes.get(component="displacement_z")
+
+Bind contract
+-------------
+A results file embeds (native) or synthesizes (MPCO) a ``FEMData``
+snapshot tagged with a ``snapshot_id``. Calling ``.bind(other_fem)``
+validates the candidate's hash matches and swaps it in (useful when
+re-using session-side labels and Parts).
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Optional
 
-import numpy as np
 from numpy import ndarray
 
+from ._bind import resolve_bound_fem
+from ._composites import (
+    ElementResultsComposite,
+    NodeResultsComposite,
+)
+from ._inspect import ResultsInspect
+from .readers._protocol import ResultsReader, StageInfo
+
 if TYPE_CHECKING:
-    from apeGmsh.mesh.FEMData import FEMData
+    from ..mesh.FEMData import FEMData
 
 
-# ======================================================================
-# VTK cell type constants
-# ======================================================================
-VTK_VERTEX     = 1
-VTK_LINE       = 3
-VTK_TRIANGLE   = 5
-VTK_QUAD       = 9
-VTK_TETRA      = 10
-VTK_HEXAHEDRON = 12
-VTK_WEDGE      = 13
-
-# (element_dim, nodes_per_element) -> VTK cell type
-_DIM_NPE_TO_VTK: dict[tuple[int, int], int] = {
-    (0, 1): VTK_VERTEX,
-    (1, 2): VTK_LINE,
-    (2, 3): VTK_TRIANGLE,
-    (2, 4): VTK_QUAD,
-    (3, 4): VTK_TETRA,
-    (3, 6): VTK_WEDGE,
-    (3, 8): VTK_HEXAHEDRON,
-}
-
-# Fallback: npe-only lookup (for legacy or when dim is unknown)
-_NPE_TO_VTK: dict[int, int] = {1: VTK_VERTEX, 2: VTK_LINE, 3: VTK_TRIANGLE,
-                                 4: VTK_TETRA, 6: VTK_WEDGE, 8: VTK_HEXAHEDRON}
+# Sentinel for ``Results._derive`` so we can distinguish
+# "not passed" from "None" in the fem= / stage_id= overrides.
+class _Sentinel:
+    pass
 
 
-# ======================================================================
-# VTK cell-array builders
-# ======================================================================
+_SENTINEL = _Sentinel()
 
-def _remap_connectivity(
-    conn: ndarray,
-    tag_to_idx: dict[int, int],
-) -> ndarray:
-    """Convert node-tag connectivity to 0-based VTK indices.
-
-    Parameters
-    ----------
-    conn : ndarray (E, npe)
-        Connectivity in Gmsh node tags.
-    tag_to_idx : dict
-        Mapping from node tag -> 0-based point index.
-
-    Returns
-    -------
-    ndarray (E, npe), dtype int64
-        Connectivity in 0-based indices.
-    """
-    out = np.empty_like(conn, dtype=np.int64)
-    for i in range(conn.shape[0]):
-        for j in range(conn.shape[1]):
-            out[i, j] = tag_to_idx[int(conn[i, j])]
-    return out
-
-
-def _build_vtk_cells_from_fem(
-    fem: "FEMData",
-    primary_dim: int = 2,
-    include_pgs: list | None = None,
-) -> tuple[ndarray, ndarray, int, dict[int, int]]:
-    """Build mixed-type VTK cell arrays from FEMData.
-
-    Collects:
-    1. Primary-dim elements from ``fem.elements.connectivity``
-    2. Elements from physical groups of *higher* dimension
-    3. Any explicitly-named physical groups in ``include_pgs``
-       (regardless of dimension — used to force lower-dim PGs like
-       standalone frame lines into the viewer mesh).
-
-    Parameters
-    ----------
-    fem : FEMData
-    primary_dim : int
-        The dimension of the primary connectivity (passed to
-        ``get_fem_data(dim=...)``).
-    include_pgs : list, optional
-        Physical groups to include regardless of dimension. Each
-        entry may be a name string or a ``(dim, tag)`` tuple. Use
-        this to add standalone lower-dim element groups (e.g. frame
-        beams inside a solid model) that would otherwise be filtered
-        out to avoid boundary-face z-fighting.
-
-    Returns
-    -------
-    cells_flat : ndarray
-        Flat VTK cell array ``[npe0, idx0, idx1, …, npe1, …]``.
-    cell_types : ndarray (uint8)
-        Per-cell VTK type codes.
-    n_primary : int
-        Number of primary-dim cells (first in the array).
-    tag_to_idx : dict
-        Node-tag -> 0-based index mapping used for the conversion.
-    """
-    # Node ID -> 0-based index mapping
-    tag_to_idx: dict[int, int] = {
-        int(t): i for i, t in enumerate(fem.nodes.ids)
-    }
-
-    primary_elem_ids: set[int] = set(int(e) for e in fem.elements.ids)
-    cell_blocks: list[tuple[ndarray, int]] = []   # (conn_0based, vtk_type)
-
-    # ── 1.  Primary connectivity (per element-type group) ────────
-    # Only include groups at the primary dim — lower-dim groups would
-    # duplicate the boundary geometry of higher-dim cells and produce
-    # z-fighting in the viewer.
-    n_primary = 0
-    for group in fem.elements:
-        if group.connectivity.size == 0:
-            continue
-        if group.dim != primary_dim:
-            continue
-        vtk_type = _DIM_NPE_TO_VTK.get(
-            (group.dim, group.npe),
-            _NPE_TO_VTK.get(group.npe, VTK_TRIANGLE),
-        )
-        conn_0 = _remap_connectivity(group.connectivity, tag_to_idx)
-        cell_blocks.append((conn_0, vtk_type))
-        n_primary += len(group)
-
-    # ── 2.  Extra elements from physical groups of higher dim ────
-    # Lower-dim PGs (e.g. surface PGs in a 3D model) would duplicate
-    # boundary geometry already implied by the primary cells and cause
-    # z-fighting in the viewer — so they are skipped. Add them explicitly
-    # via synthetic cells if you need to visualize them.
-    if fem.nodes.physical is not None:
-        for pg_dim, pg_tag in fem.nodes.physical.get_all():
-            if pg_dim <= primary_dim:
-                continue
-            try:
-                pg_elem_ids = fem.nodes.physical.element_ids((pg_dim, pg_tag))
-                pg_conn = fem.nodes.physical.connectivity((pg_dim, pg_tag))
-            except (ValueError, KeyError):
-                continue
-
-            mask = np.array(
-                [int(eid) not in primary_elem_ids for eid in pg_elem_ids],
-                dtype=bool,
-            )
-            if not mask.any():
-                continue
-
-            new_conn = pg_conn[mask]
-            new_ids = pg_elem_ids[mask]
-            new_npe = new_conn.shape[1]
-            vtk_type = _DIM_NPE_TO_VTK.get(
-                (pg_dim, new_npe),
-                _NPE_TO_VTK.get(new_npe, VTK_LINE),
-            )
-
-            conn_0 = _remap_connectivity(new_conn, tag_to_idx)
-            cell_blocks.append((conn_0, vtk_type))
-            primary_elem_ids.update(int(e) for e in new_ids)
-
-    # ── 2b. Explicitly requested physical groups (any dim) ───────
-    # Used to add standalone lower-dim element groups — e.g. a frame
-    # line embedded next to a tet4 solid. Unlike step 2 we do NOT
-    # deduplicate against existing elements: the user explicitly
-    # asked for these cells, so we honour the request. Duplicates
-    # here would be the user's responsibility.
-    if include_pgs and fem.nodes.physical is not None:
-        for target in include_pgs:
-            try:
-                pg_elem_ids = fem.nodes.physical.element_ids(target)
-                pg_conn = fem.nodes.physical.connectivity(target)
-            except (ValueError, KeyError):
-                continue
-            if pg_elem_ids is None or pg_conn is None:
-                continue
-            if pg_conn.size == 0:
-                continue
-
-            # Look up (dim, tag) for the VTK type table.
-            target_dim: int | None = None
-            if isinstance(target, tuple) and len(target) == 2:
-                target_dim = int(target[0])
-            else:
-                # Resolve by name via get_all()
-                for (d, t) in fem.nodes.physical.get_all():
-                    try:
-                        if fem.nodes.physical.get_name(d, t) == target:
-                            target_dim = d
-                            break
-                    except Exception:
-                        continue
-
-            new_npe = pg_conn.shape[1]
-            # target_dim may be None if the PG name didn't resolve; in
-            # that case the lookup falls through to the npe-only fallback.
-            if target_dim is not None:
-                vtk_type = _DIM_NPE_TO_VTK.get(
-                    (target_dim, new_npe),
-                    _NPE_TO_VTK.get(new_npe, VTK_LINE),
-                )
-            else:
-                vtk_type = _NPE_TO_VTK.get(new_npe, VTK_LINE)
-
-            conn_0 = _remap_connectivity(pg_conn, tag_to_idx)
-            cell_blocks.append((conn_0, vtk_type))
-
-    # ── 3.  Assemble flat VTK cell array ─────────────────────────
-    flat_parts: list[ndarray] = []
-    type_parts: list[ndarray] = []
-
-    for conn_0, vtk_type in cell_blocks:
-        n_cells = conn_0.shape[0]
-        npe = conn_0.shape[1]
-        # Flat format: [npe, n0, n1, ..., npe, n0, n1, ...]
-        prefix = np.full((n_cells, 1), npe, dtype=np.int64)
-        block = np.hstack([prefix, conn_0])
-        flat_parts.append(block.ravel())
-        type_parts.append(np.full(n_cells, vtk_type, dtype=np.uint8))
-
-    if flat_parts:
-        cells_flat = np.concatenate(flat_parts)
-        cell_types = np.concatenate(type_parts)
-    else:
-        cells_flat = np.array([], dtype=np.int64)
-        cell_types = np.array([], dtype=np.uint8)
-
-    return cells_flat, cell_types, n_primary, tag_to_idx
-
-
-def _pad_cell_data(
-    cell_data: dict[str, ndarray] | None,
-    n_primary: int,
-    n_total: int,
-) -> dict[str, ndarray]:
-    """Pad cell-data arrays with NaN when extra (lower-dim) cells exist.
-
-    If an array has exactly ``n_primary`` entries and ``n_total > n_primary``,
-    it is padded with ``NaN`` for the extra cells.  Arrays that already
-    match ``n_total`` are passed through unchanged.
-    """
-    if cell_data is None:
-        return {}
-    if n_primary == n_total:
-        return dict(cell_data)
-
-    padded: dict[str, ndarray] = {}
-    n_extra = n_total - n_primary
-
-    for name, arr in cell_data.items():
-        arr = np.asarray(arr, dtype=np.float64)
-
-        if arr.shape[0] == n_primary:
-            # Pad with NaN for the extra cells
-            if arr.ndim == 1:
-                pad = np.full(n_extra, np.nan, dtype=np.float64)
-            else:
-                pad = np.full((n_extra, arr.shape[1]), np.nan, dtype=np.float64)
-            padded[name] = np.concatenate([arr, pad], axis=0)
-        elif arr.shape[0] == n_total:
-            padded[name] = arr
-        else:
-            raise ValueError(
-                f"Cell field '{name}' has {arr.shape[0]} entries, "
-                f"expected {n_primary} (primary) or {n_total} (total)."
-            )
-
-    return padded
-
-
-# ======================================================================
-# Legacy single-type builder (kept for from_file path)
-# ======================================================================
-
-def _fem_to_vtk_cells(
-    fem: "FEMData",
-) -> tuple[ndarray, ndarray]:
-    """Convert FEMData connectivity to VTK cell arrays (legacy).
-
-    Used only by ``from_file`` path.  For ``from_fem``, use
-    :func:`_build_vtk_cells_from_fem` which handles mixed types and
-    proper index remapping.
-    """
-    flat_parts: list[ndarray] = []
-    type_parts: list[ndarray] = []
-    for group in fem.elements:
-        if group.connectivity.size == 0:
-            continue
-        npe = group.npe
-        n_cells = len(group)
-        vtk_type = _DIM_NPE_TO_VTK.get(
-            (group.dim, npe), _NPE_TO_VTK.get(npe, VTK_TRIANGLE))
-        prefix = np.full((n_cells, 1), npe, dtype=np.int64)
-        block = np.hstack([prefix, group.connectivity.astype(np.int64)])
-        flat_parts.append(block.ravel())
-        type_parts.append(np.full(n_cells, vtk_type, dtype=np.uint8))
-    if flat_parts:
-        return np.concatenate(flat_parts), np.concatenate(type_parts)
-    return np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
-
-
-# ======================================================================
-# Results
-# ======================================================================
 
 class Results:
-    """Self-contained FEM results container.
+    """Top-level results object. Returned by ``Results.from_*`` constructors.
 
-    Holds mesh geometry + result fields (static or time-series).
-    No dependency on ``gmsh`` module.  Optional dependencies on
-    ``pyvista`` and ``apeGmshViewer`` are deferred to call-time.
-
-    Use the classmethods :meth:`from_fem` or :meth:`from_file` to
-    construct instances.
+    Stage scoping
+    -------------
+    Instances may be unscoped (top-level — accesses any stage) or
+    scoped to one stage (returned by ``.stage(name)``,
+    ``.modes[i]``). Scoped instances expose stage metadata as
+    properties (``.kind``, ``.time``, ``.n_steps``); mode-scoped
+    instances additionally expose ``.eigenvalue``, ``.frequency_hz``,
+    ``.period_s``, ``.mode_index``.
     """
-
-    # Type declarations for __slots__ (consumed by mypy / pyright).
-    # The underscore-prefixed backing fields are written via
-    # object.__setattr__ in __init__ and exposed through public
-    # @property accessors below.
-    _node_coords: ndarray
-    _cells: Any
-    _cell_types: ndarray
-    _point_fields: dict[str, ndarray]
-    _cell_fields: dict[str, ndarray]
-    _time_steps: list[float] | None
-    _step_point_fields: dict[str, list[ndarray]] | None
-    _step_cell_fields: dict[str, list[ndarray]] | None
-    _physical_groups: Any
-    _name: str
-    _n_primary_cells: int
-
-    __slots__ = (
-        "_node_coords",
-        "_cells",
-        "_cell_types",
-        "_point_fields",
-        "_cell_fields",
-        "_time_steps",
-        "_step_point_fields",
-        "_step_cell_fields",
-        "_physical_groups",
-        "_name",
-        "_n_primary_cells",
-    )
 
     def __init__(
         self,
+        reader: ResultsReader,
         *,
-        node_coords: ndarray,
-        cells: Any,
-        cell_types: ndarray,
-        point_fields: dict[str, ndarray] | None = None,
-        cell_fields: dict[str, ndarray] | None = None,
-        time_steps: list[float] | None = None,
-        step_point_fields: dict[str, list[ndarray]] | None = None,
-        step_cell_fields: dict[str, list[ndarray]] | None = None,
-        physical_groups: Any = None,
-        name: str = "results",
-        n_primary_cells: int | None = None,
+        fem: "Optional[FEMData]" = None,
+        stage_id: Optional[str] = None,
+        path: Optional[Path] = None,
     ) -> None:
-        object.__setattr__(self, "_node_coords", np.asarray(node_coords))
-        object.__setattr__(self, "_cells", cells)
-        object.__setattr__(self, "_cell_types", np.asarray(cell_types))
-        object.__setattr__(self, "_point_fields", dict(point_fields or {}))
-        object.__setattr__(self, "_cell_fields", dict(cell_fields or {}))
-        object.__setattr__(self, "_time_steps", list(time_steps) if time_steps else None)
-        object.__setattr__(self, "_step_point_fields", dict(step_point_fields) if step_point_fields else None)
-        object.__setattr__(self, "_step_cell_fields", dict(step_cell_fields) if step_cell_fields else None)
-        object.__setattr__(self, "_physical_groups", physical_groups)
-        object.__setattr__(self, "_name", name)
+        self._reader = reader
+        self._fem = fem
+        self._stage_id = stage_id
+        self._path = path
+        self._stages_cache: Optional[list[StageInfo]] = None
 
-        n_total = len(np.asarray(cell_types))
-        object.__setattr__(
-            self, "_n_primary_cells",
-            n_primary_cells if n_primary_cells is not None else n_total,
-        )
+        # Composites
+        self.nodes = NodeResultsComposite(self)
+        self.elements = ElementResultsComposite(self)
+        self.inspect = ResultsInspect(self)
 
     # ------------------------------------------------------------------
-    # Classmethods
+    # Constructors
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_fem(
+    def from_native(
         cls,
-        fem: "FEMData",
+        path: str | Path,
         *,
-        point_data: dict[str, ndarray] | None = None,
-        cell_data: dict[str, ndarray] | None = None,
-        steps: list[dict] | None = None,
-        name: str = "results",
-        include_pgs: list | None = None,
+        fem: "Optional[FEMData]" = None,
     ) -> "Results":
-        """Create from a :class:`FEMData` + numpy result arrays.
+        """Open an apeGmsh native HDF5 results file.
 
-        Automatically includes elements at the primary (highest)
-        dimension and any higher-dim physical groups. Lower-dim PGs
-        are skipped by default to avoid z-fighting with boundary
-        faces of higher-dim cells; pass ``include_pgs`` to force
-        specific lower-dim PGs (e.g. a standalone frame line) into
-        the viewer mesh.
-
-        Parameters
-        ----------
-        fem : FEMData
-            Mesh geometry (from ``g.mesh.queries.get_fem_data()``).
-        point_data : dict, optional
-            Static nodal fields: ``{name: ndarray (N,) or (N,3)}``.
-        cell_data : dict, optional
-            Static element fields: ``{name: ndarray (E,) or (E,3)}``.
-            If the array length matches only the primary-dim elements,
-            it is automatically padded with ``NaN`` for extra cells.
-        steps : list[dict], optional
-            Time-series steps.  Each dict has ``"time"`` (float) and
-            optional ``"point_data"`` / ``"cell_data"`` dicts.
-            Mutually exclusive with ``point_data`` / ``cell_data``.
-        name : str
-            Display name.
-        include_pgs : list, optional
-            Physical groups to force into the viewer mesh regardless
-            of their dimension. Each entry may be a name string or a
-            ``(dim, tag)`` tuple. Useful for mixed solid+frame models
-            where 1-D beam elements sit disjoint from a 3-D solid and
-            would otherwise be filtered out by the z-fighting guard.
-            Example: ``include_pgs=['pg_frame']``.
+        If ``fem`` is omitted, the embedded ``/model/`` snapshot is
+        used as the bound FEMData. If ``fem`` is provided and the file
+        embeds a snapshot, the two ``snapshot_id`` hashes must match.
         """
-        if steps is not None and (point_data or cell_data):
-            raise ValueError(
-                "Cannot provide both point_data/cell_data and steps. "
-                "Use steps for time-series, or point_data/cell_data "
-                "for a single static result set."
-            )
-
-        # Infer primary dimension from connectivity npe
-        primary_dim = _guess_primary_dim(fem)
-
-        cells_flat, cell_types, n_primary, tag_to_idx = \
-            _build_vtk_cells_from_fem(
-                fem,
-                primary_dim=primary_dim,
-                include_pgs=include_pgs,
-            )
-
-        n_total = len(cell_types)
-
-        if steps is not None:
-            return cls._from_fem_steps(
-                fem, cells_flat, cell_types,
-                n_primary, n_total, steps, name,
-            )
-
-        # Pad cell_data if needed (primary-only -> full)
-        padded_cell_data = _pad_cell_data(cell_data, n_primary, n_total)
-
-        return cls(
-            node_coords=fem.nodes.coords,
-            cells=cells_flat,
-            cell_types=cell_types,
-            point_fields=point_data,
-            cell_fields=padded_cell_data if padded_cell_data else None,
-            physical_groups=fem.nodes.physical,
-            name=name,
-            n_primary_cells=n_primary,
-        )
+        from .readers._native import NativeReader
+        reader = NativeReader(path)
+        bound_fem = resolve_bound_fem(reader, fem)
+        return cls(reader, fem=bound_fem, path=Path(path))
 
     @classmethod
-    def _from_fem_steps(
+    def from_recorders(
         cls,
-        fem: "FEMData",
-        cells: ndarray,
-        cell_types: ndarray,
-        n_primary: int,
-        n_total: int,
-        steps: list[dict],
-        name: str,
-    ) -> "Results":
-        """Build a time-series Results from FEMData + step dicts."""
-        time_values: list[float] = []
-        step_pf: dict[str, list[ndarray]] = {}
-        step_cf: dict[str, list[ndarray]] = {}
-
-        for i, step in enumerate(steps):
-            t = step.get("time", float(i))
-            time_values.append(t)
-
-            for field_name, arr in step.get("point_data", {}).items():
-                step_pf.setdefault(field_name, []).append(
-                    np.asarray(arr),
-                )
-            for field_name, arr in step.get("cell_data", {}).items():
-                arr = np.asarray(arr, dtype=np.float64)
-                # Pad if only primary-dim cells provided
-                if arr.shape[0] == n_primary and n_total > n_primary:
-                    n_extra = n_total - n_primary
-                    if arr.ndim == 1:
-                        pad = np.full(n_extra, np.nan, dtype=np.float64)
-                    else:
-                        pad = np.full(
-                            (n_extra, arr.shape[1]), np.nan, dtype=np.float64,
-                        )
-                    arr = np.concatenate([arr, pad], axis=0)
-                step_cf.setdefault(field_name, []).append(arr)
-
-        # Validate consistent step counts
-        n = len(steps)
-        for field_name, arrays in step_pf.items():
-            if len(arrays) != n:
-                raise ValueError(
-                    f"Point field '{field_name}' has {len(arrays)} "
-                    f"arrays but {n} steps were provided."
-                )
-        for field_name, arrays in step_cf.items():
-            if len(arrays) != n:
-                raise ValueError(
-                    f"Cell field '{field_name}' has {len(arrays)} "
-                    f"arrays but {n} steps were provided."
-                )
-
-        return cls(
-            node_coords=fem.nodes.coords,
-            cells=cells,
-            cell_types=cell_types,
-            time_steps=time_values,
-            step_point_fields=step_pf if step_pf else None,
-            step_cell_fields=step_cf if step_cf else None,
-            physical_groups=fem.nodes.physical,
-            name=name,
-            n_primary_cells=n_primary,
-        )
-
-    @classmethod
-    def from_file(
-        cls,
-        filepath: str | Path,
+        spec,
+        output_dir: str | Path,
         *,
-        name: str | None = None,
+        fem: "FEMData",
+        cache_root: str | Path | None = None,
+        stage_name: str = "analysis",
+        stage_kind: str = "transient",
+        file_format: str = "out",
     ) -> "Results":
-        """Load results from a VTU / VTK / PVD file.
+        """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
-        Parameters
-        ----------
-        filepath : str or Path
-            Path to the results file.
-        name : str, optional
-            Display name (defaults to filename stem).
+        Parses the ``.out`` / ``.xml`` files emitted at
+        ``output_dir`` (matching what ``g.opensees.export.tcl(...,
+        recorders=spec)`` produced) into an apeGmsh native HDF5,
+        caches the result at ``cache_root``, and opens it through
+        ``NativeReader``.
+
+        Caching: subsequent calls with unchanged input files return
+        the cached HDF5 directly (file mtime + size + spec
+        ``snapshot_id`` form the cache key). See
+        ``writers/_cache.py``.
+
+        Phase 6 v1 supports nodal records only; element-level records
+        in the spec are skipped with a note. The capture flow
+        (Phase 7) handles modal recorders.
         """
-        from apeGmshViewer.loaders.vtu_loader import load_file
+        from .schema._versions import PARSER_VERSION
+        from .transcoders import RecorderTranscoder
+        from .writers import _cache
 
-        filepath = Path(filepath)
-        mesh_data = load_file(filepath)
-        display_name = name or mesh_data.name or filepath.stem
+        if fem is None:
+            raise TypeError(
+                "Results.from_recorders(...) requires fem= "
+                "(the spec's snapshot_id must match)."
+            )
 
-        grid = mesh_data.mesh
-        node_coords = np.array(grid.points)
-        cells = grid.cells
-        cell_types = np.array(grid.celltypes)
+        out_dir = Path(output_dir)
+        cache_dir = _cache.resolve_cache_root(cache_root)
 
-        point_fields = {
-            k: np.array(grid.point_data[k])
-            for k in mesh_data.point_field_names
-        }
-        cell_fields = {
-            k: np.array(grid.cell_data[k])
-            for k in mesh_data.cell_field_names
-        }
-
-        # Time-series (PVD)
-        time_steps: list[float] | None = None
-        step_pf: dict[str, list[ndarray]] | None = None
-        step_cf: dict[str, list[ndarray]] | None = None
-
-        if mesh_data.has_time_series and mesh_data.step_meshes:
-            time_steps = list(mesh_data.time_steps)
-            step_pf = {}
-            step_cf = {}
-
-            for step_mesh in mesh_data.step_meshes:
-                for k in step_mesh.point_data:
-                    step_pf.setdefault(k, []).append(
-                        np.array(step_mesh.point_data[k]),
-                    )
-                for k in step_mesh.cell_data:
-                    step_cf.setdefault(k, []).append(
-                        np.array(step_mesh.cell_data[k]),
-                    )
-
-            # Clear static fields if time-series is present
-            point_fields = {}
-            cell_fields = {}
-
-        return cls(
-            node_coords=node_coords,
-            cells=cells,
-            cell_types=cell_types,
-            point_fields=point_fields if point_fields else None,
-            cell_fields=cell_fields if cell_fields else None,
-            time_steps=time_steps,
-            step_point_fields=step_pf if step_pf else None,
-            step_cell_fields=step_cf if step_cf else None,
-            name=display_name,
+        source_files = _cache.list_source_files(
+            spec, out_dir, file_format=file_format,
         )
+        key = _cache.compute_cache_key(
+            source_files,
+            parser_version=PARSER_VERSION,
+            fem_snapshot_id=fem.snapshot_id,
+        )
+        cached_h5, _ = _cache.cache_paths(cache_dir, key)
+
+        if not cached_h5.exists():
+            transcoder = RecorderTranscoder(
+                spec, out_dir, cached_h5, fem,
+                stage_name=stage_name,
+                stage_kind=stage_kind,
+                file_format=file_format,
+            )
+            transcoder.run()
+
+        return cls.from_native(cached_h5, fem=fem)
+
+    @classmethod
+    def from_mpco(
+        cls,
+        path: str | Path,
+        *,
+        fem: "Optional[FEMData]" = None,
+    ) -> "Results":
+        """Open a STKO ``.mpco`` HDF5 results file.
+
+        Synthesizes a partial FEMData from the MPCO ``MODEL/`` group
+        if ``fem`` is omitted. Phase 3 supports nodal results
+        (DISPLACEMENT, ROTATION, VELOCITY, ACCELERATION, REACTIONS,
+        PRESSURE) — element-level reads return empty slabs (full
+        support lands in a later phase).
+        """
+        from .readers._mpco import MPCOReader
+        reader = MPCOReader(path)
+        bound_fem = resolve_bound_fem(reader, fem)
+        return cls(reader, fem=bound_fem, path=Path(path))
 
     # ------------------------------------------------------------------
-    # Properties
+    # FEM access & binding
     # ------------------------------------------------------------------
 
     @property
-    def node_coords(self) -> ndarray:
-        return self._node_coords
+    def fem(self) -> "Optional[FEMData]":
+        """The bound FEMData snapshot, or None if not bound."""
+        return self._fem
+
+    def bind(self, fem: "FEMData") -> "Results":
+        """Re-bind to ``fem`` after validating ``snapshot_id`` matches.
+
+        Useful when you've re-built the same mesh in a fresh session
+        and want labels / Parts that the embedded snapshot doesn't
+        carry. Raises ``BindError`` on hash mismatch.
+        """
+        bound = resolve_bound_fem(self._reader, fem)
+        return self._derive(fem=bound)
+
+    # ------------------------------------------------------------------
+    # Stages
+    # ------------------------------------------------------------------
 
     @property
-    def cells(self) -> Any:
-        return self._cells
+    def stages(self) -> list[StageInfo]:
+        """All stages in the file (scoped instances also list them)."""
+        return list(self._all_stages())
+
+    def stage(self, name_or_id: str) -> "Results":
+        """Return a Results scoped to a stage (matched by id or name)."""
+        info = self._lookup_stage(name_or_id)
+        return self._derive(stage_id=info.id)
 
     @property
-    def cell_types(self) -> ndarray:
-        return self._cell_types
+    def modes(self) -> list["Results"]:
+        """Stages with ``kind='mode'`` as a list of mode-scoped Results.
+
+        Order is the order the modes were written (typically by
+        ascending mode_index). For a stable lookup by index, sort:
+        ``sorted(results.modes, key=lambda m: m.mode_index)``.
+        """
+        return [
+            self._derive(stage_id=s.id)
+            for s in self._all_stages() if s.kind == "mode"
+        ]
+
+    # ------------------------------------------------------------------
+    # Stage-scoped properties (raise on unscoped or wrong-kind access)
+    # ------------------------------------------------------------------
 
     @property
-    def point_fields(self) -> dict[str, ndarray]:
-        return self._point_fields
-
-    @property
-    def cell_fields(self) -> dict[str, ndarray]:
-        return self._cell_fields
-
-    @property
-    def time_steps(self) -> list[float] | None:
-        return self._time_steps
-
-    @property
-    def physical_groups(self) -> Any:
-        return self._physical_groups
-
-    @property
-    def has_time_series(self) -> bool:
-        return self._time_steps is not None and len(self._time_steps) > 1
-
-    @property
-    def n_steps(self) -> int:
-        if self._time_steps is None:
-            return 1
-        return len(self._time_steps)
-
-    @property
-    def n_primary_cells(self) -> int:
-        """Number of primary-dimension cells (before extra groups)."""
-        return self._n_primary_cells
-
-    @property
-    def n_total_cells(self) -> int:
-        """Total cell count (primary + extra physical-group elements)."""
-        return len(self._cell_types)
+    def kind(self) -> str:
+        return self._require_scoped().kind
 
     @property
     def name(self) -> str:
-        return self._name
+        return self._require_scoped().name
 
     @property
-    def field_names(self) -> dict[str, list[str]]:
-        """All field names: ``{"point": [...], "cell": [...]}``."""
-        point = list(self._point_fields.keys())
-        cell = list(self._cell_fields.keys())
-        if self._step_point_fields:
-            for k in self._step_point_fields:
-                if k not in point:
-                    point.append(k)
-        if self._step_cell_fields:
-            for k in self._step_cell_fields:
-                if k not in cell:
-                    cell.append(k)
-        return {"point": point, "cell": cell}
+    def n_steps(self) -> int:
+        return self._require_scoped().n_steps
+
+    @property
+    def time(self) -> ndarray:
+        info = self._require_scoped()
+        return self._reader.time_vector(info.id)
+
+    @property
+    def eigenvalue(self) -> float:
+        info = self._require_mode()
+        assert info.eigenvalue is not None
+        return info.eigenvalue
+
+    @property
+    def frequency_hz(self) -> float:
+        info = self._require_mode()
+        assert info.frequency_hz is not None
+        return info.frequency_hz
+
+    @property
+    def period_s(self) -> float:
+        info = self._require_mode()
+        assert info.period_s is not None
+        return info.period_s
+
+    @property
+    def mode_index(self) -> Optional[int]:
+        return self._require_mode().mode_index
 
     # ------------------------------------------------------------------
-    # Field access
+    # Lifecycle
     # ------------------------------------------------------------------
 
-    def get_point_field(
-        self, name: str, step: int | None = None,
-    ) -> ndarray:
-        """Retrieve a nodal field array.
+    def close(self) -> None:
+        """Close the underlying reader (releases the HDF5 file handle)."""
+        if hasattr(self._reader, "close"):
+            self._reader.close()
 
-        Parameters
-        ----------
-        name : str
-            Field name.
-        step : int, optional
-            Time-step index (required for time-series fields).
-        """
-        # Static field
-        if name in self._point_fields and step is None:
-            return self._point_fields[name]
+    def __enter__(self) -> "Results":
+        return self
 
-        # Step field
-        if self._step_point_fields and name in self._step_point_fields:
-            if step is None:
-                raise ValueError(
-                    f"Field '{name}' is time-series — provide step=<int>. "
-                    f"Available steps: 0..{self.n_steps - 1}"
-                )
-            arrays = self._step_point_fields[name]
-            if step < 0 or step >= len(arrays):
-                raise IndexError(
-                    f"Step {step} out of range for field '{name}' "
-                    f"(0..{len(arrays) - 1})"
-                )
-            return arrays[step]
-
-        available = self.field_names["point"]
-        raise KeyError(
-            f"Point field '{name}' not found. "
-            f"Available: {available}"
-        )
-
-    def get_cell_field(
-        self, name: str, step: int | None = None,
-    ) -> ndarray:
-        """Retrieve an element field array.
-
-        Parameters
-        ----------
-        name : str
-            Field name.
-        step : int, optional
-            Time-step index (required for time-series fields).
-        """
-        if name in self._cell_fields and step is None:
-            return self._cell_fields[name]
-
-        if self._step_cell_fields and name in self._step_cell_fields:
-            if step is None:
-                raise ValueError(
-                    f"Field '{name}' is time-series — provide step=<int>. "
-                    f"Available steps: 0..{self.n_steps - 1}"
-                )
-            arrays = self._step_cell_fields[name]
-            if step < 0 or step >= len(arrays):
-                raise IndexError(
-                    f"Step {step} out of range for field '{name}' "
-                    f"(0..{len(arrays) - 1})"
-                )
-            return arrays[step]
-
-        available = self.field_names["cell"]
-        raise KeyError(
-            f"Cell field '{name}' not found. "
-            f"Available: {available}"
-        )
-
-    # ------------------------------------------------------------------
-    # Internal: build PyVista grid
-    # ------------------------------------------------------------------
-
-    def _build_grid(self, step: int | None = None):
-        """Build a ``pv.UnstructuredGrid`` on demand.
-
-        Parameters
-        ----------
-        step : int, optional
-            Time-step index.  If None, uses static fields.
-        """
-        import pyvista as pv
-
-        grid = pv.UnstructuredGrid(
-            self._cells, self._cell_types, self._node_coords,
-        )
-
-        if step is None:
-            # Attach static fields
-            for k, v in self._point_fields.items():
-                grid.point_data[k] = v
-            for k, v in self._cell_fields.items():
-                grid.cell_data[k] = v
-        else:
-            # Attach fields from the requested step
-            if self._step_point_fields:
-                for k, arrays in self._step_point_fields.items():
-                    if step < len(arrays):
-                        grid.point_data[k] = arrays[step]
-            if self._step_cell_fields:
-                for k, arrays in self._step_cell_fields.items():
-                    if step < len(arrays):
-                        grid.cell_data[k] = arrays[step]
-
-        return grid
-
-    # ------------------------------------------------------------------
-    # Viewer bridge
-    # ------------------------------------------------------------------
-
-    def to_mesh_data(self):
-        """Convert to a apeGmshViewer ``MeshData`` (no file I/O).
-
-        Transfers mesh geometry and all fields directly in memory.
-
-        Returns
-        -------
-        apeGmshViewer.loaders.vtu_loader.MeshData
-        """
-        from apeGmshViewer.loaders.vtu_loader import from_arrays
-
-        if self.has_time_series:
-            return from_arrays(
-                self._node_coords,
-                self._cells,
-                self._cell_types,
-                time_steps=self._time_steps,
-                step_point_data=self._step_point_fields,
-                step_cell_data=self._step_cell_fields,
-                name=self._name,
-            )
-        return from_arrays(
-            self._node_coords,
-            self._cells,
-            self._cell_types,
-            point_data=self._point_fields,
-            cell_data=self._cell_fields,
-            name=self._name,
-        )
-
-    # ------------------------------------------------------------------
-    # Export
-    # ------------------------------------------------------------------
-
-    def to_vtu(self, filepath: str | Path) -> Path:
-        """Write a single VTU file.
-
-        For time-series, writes step 0 only.  Use :meth:`to_pvd` for
-        the full series.
-
-        Returns the written file path.
-        """
-        filepath = Path(filepath)
-        step = 0 if self.has_time_series else None
-        grid = self._build_grid(step=step)
-        grid.save(str(filepath))
-        return filepath
-
-    def to_pvd(self, base_path: str | Path) -> list[Path]:
-        """Write a PVD time-series (multiple VTU files + collection).
-
-        Parameters
-        ----------
-        base_path : str or Path
-            Base path *without* extension.  Produces::
-
-                base_path.pvd
-                base_path_000.vtu
-                base_path_001.vtu
-                ...
-
-        Returns list of all written file paths (PVD first).
-        """
-        base = Path(base_path)
-        parent = base.parent
-        stem = base.stem
-        parent.mkdir(parents=True, exist_ok=True)
-
-        n = self.n_steps
-        written: list[Path] = []
-
-        # Write individual VTU files
-        vtu_names: list[str] = []
-        for i in range(n):
-            vtu_name = f"{stem}_{i:03d}.vtu"
-            vtu_path = parent / vtu_name
-            grid = self._build_grid(step=i)
-            grid.save(str(vtu_path))
-            vtu_names.append(vtu_name)
-            written.append(vtu_path)
-
-        # Write PVD collection file
-        pvd_path = parent / f"{stem}.pvd"
-        times = self._time_steps or [float(i) for i in range(n)]
-
-        lines = [
-            '<?xml version="1.0"?>',
-            '<VTKFile type="Collection" version="0.1">',
-            "  <Collection>",
-        ]
-        for t, vtu_name in zip(times, vtu_names):
-            lines.append(
-                f'    <DataSet timestep="{t}" file="{vtu_name}"/>',
-            )
-        lines.append("  </Collection>")
-        lines.append("</VTKFile>")
-
-        pvd_path.write_text("\n".join(lines), encoding="utf-8")
-        written.insert(0, pvd_path)
-        return written
-
-    # ------------------------------------------------------------------
-    # Viewer
-    # ------------------------------------------------------------------
-
-    def viewer(self, *, blocking: bool = False) -> None:
-        """Open the results in apeGmshViewer.
-
-        No live Gmsh session required.
-
-        Parameters
-        ----------
-        blocking : bool
-            If False (default), writes temp files and launches a
-            subprocess so the notebook / script keeps running.
-            If True, opens the viewer in-process with direct memory
-            transfer (no temp files) and blocks until closed.
-        """
-        if blocking:
-            from apeGmshViewer import show_mesh_data
-            show_mesh_data(self.to_mesh_data(), blocking=True)
-        else:
-            import tempfile
-            import shutil
-            import atexit
-            from apeGmshViewer import show
-
-            tmp_dir = tempfile.mkdtemp(prefix="apeGmsh_results_")
-            atexit.register(shutil.rmtree, tmp_dir, True)
-
-            if self.has_time_series:
-                paths = self.to_pvd(Path(tmp_dir) / self._name)
-                show(str(paths[0]), blocking=False)
-            else:
-                vtu_path = Path(tmp_dir) / f"{self._name}.vtu"
-                self.to_vtu(vtu_path)
-                show(str(vtu_path), blocking=False)
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     # ------------------------------------------------------------------
     # Display
     # ------------------------------------------------------------------
 
-    def summary(self) -> str:
-        """Multi-line human-readable summary."""
-        lines = [f"Results: '{self._name}'"]
-
-        n_total = self.n_total_cells
-        n_primary = self._n_primary_cells
-        if n_total == n_primary:
-            lines.append(
-                f"  Mesh: {len(self._node_coords)} nodes, "
-                f"{n_total} elements"
-            )
-        else:
-            lines.append(
-                f"  Mesh: {len(self._node_coords)} nodes, "
-                f"{n_total} elements "
-                f"({n_primary} primary + {n_total - n_primary} extra)"
-            )
-
-        pf = self.field_names["point"]
-        cf = self.field_names["cell"]
-        if pf:
-            lines.append(f"  Point fields: {', '.join(pf)}")
-        if cf:
-            lines.append(f"  Cell fields:  {', '.join(cf)}")
-        if self.has_time_series:
-            ts = self._time_steps
-            assert ts is not None   # has_time_series == True implies non-None
-            lines.append(
-                f"  Time-series: {self.n_steps} steps "
-                f"({ts[0]:.4g} .. {ts[-1]:.4g})"
-            )
-        if self._physical_groups is not None:
-            lines.append(f"  Physical groups: {len(self._physical_groups)}")
-        return "\n".join(lines)
-
     def __repr__(self) -> str:
-        n_fields = len(self.field_names["point"]) + len(self.field_names["cell"])
-        parts = [
-            f"'{self._name}'",
-            f"{len(self._node_coords)} nodes",
-            f"{self.n_total_cells} cells",
-            f"{n_fields} fields",
-        ]
-        if self.has_time_series:
-            parts.append(f"{self.n_steps} steps")
-        return f"<Results {', '.join(parts)}>"
+        return self.inspect.summary()
 
+    # ------------------------------------------------------------------
+    # Internal helpers (used by composites and inspect)
+    # ------------------------------------------------------------------
 
-# ======================================================================
-# Helpers
-# ======================================================================
+    def _all_stages(self) -> list[StageInfo]:
+        if self._stages_cache is None:
+            self._stages_cache = self._reader.stages()
+        return self._stages_cache
 
-def _guess_primary_dim(fem: "FEMData") -> int:
-    """Infer the primary element dimension from element groups.
+    def _lookup_stage(self, name_or_id: str) -> StageInfo:
+        for s in self._all_stages():
+            if s.id == name_or_id or s.name == name_or_id:
+                return s
+        names = sorted({s.name for s in self._all_stages()} |
+                        {s.id for s in self._all_stages()})
+        raise KeyError(
+            f"No stage matches {name_or_id!r}. Available: {names}"
+        )
 
-    Returns the highest dimension present in the mesh.
-    """
-    dims = {g.dim for g in fem.elements}
-    return max(dims) if dims else 2
+    def _resolve_stage(self, requested: str | None) -> str:
+        """Pick the stage_id for a read.
+
+        Resolution order:
+          1. explicit ``stage=`` argument
+          2. ``self._stage_id`` (set by ``.stage()`` / ``.modes``)
+          3. the only stage when there is exactly one
+          4. raise (multiple stages, none picked)
+        """
+        if requested is not None:
+            return self._lookup_stage(requested).id
+        if self._stage_id is not None:
+            return self._stage_id
+        stages = self._all_stages()
+        if len(stages) == 1:
+            return stages[0].id
+        if not stages:
+            raise RuntimeError("No stages in this results file.")
+        names = [s.name for s in stages]
+        raise RuntimeError(
+            f"Multiple stages present ({names}). Pick one with "
+            f"results.stage(name_or_id) or pass stage=."
+        )
+
+    def _require_scoped(self) -> StageInfo:
+        if self._stage_id is None:
+            raise AttributeError(
+                "This attribute is only available on a stage-scoped Results "
+                "(use results.stage(...) or results.modes[i])."
+            )
+        # Refresh from the cache.
+        for s in self._all_stages():
+            if s.id == self._stage_id:
+                return s
+        raise KeyError(
+            f"Scoped stage_id={self._stage_id!r} not found in reader."
+        )
+
+    def _require_mode(self) -> StageInfo:
+        info = self._require_scoped()
+        if info.kind != "mode":
+            raise AttributeError(
+                f"Stage {info.id!r} has kind={info.kind!r}, not 'mode'. "
+                f"This attribute is only available on mode-scoped Results."
+            )
+        return info
+
+    def _reader_path(self) -> str:
+        return str(self._path) if self._path else "(in-memory)"
+
+    def _derive(
+        self,
+        *,
+        fem=_SENTINEL,
+        stage_id=_SENTINEL,
+    ) -> "Results":
+        """Create a copy of this Results with a few fields overridden.
+
+        Sharing the underlying reader (and stages cache) avoids
+        re-opening the file or re-listing stages.
+        """
+        new = Results.__new__(Results)
+        new._reader = self._reader
+        new._fem = self._fem if isinstance(fem, _Sentinel) else fem
+        new._stage_id = (
+            self._stage_id if isinstance(stage_id, _Sentinel) else stage_id
+        )
+        new._path = self._path
+        new._stages_cache = self._stages_cache
+        new.nodes = NodeResultsComposite(new)
+        new.elements = ElementResultsComposite(new)
+        new.inspect = ResultsInspect(new)
+        return new
