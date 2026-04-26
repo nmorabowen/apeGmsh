@@ -2403,6 +2403,56 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#v109-viewer-higher-order-rendering-filter-overhaul-wip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0.9 — Viewer: higher-order rendering + filter overhaul (WIP)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.0.9 — Viewer: higher-order rendering + filter overhaul (WIP)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — viewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — viewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-viewerscorevisibility-doc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — viewers.core.visibility doc
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#v108-embedded-node-constraint-resolver-asdembeddednodeelement" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2847,6 +2897,56 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#v109-viewer-higher-order-rendering-filter-overhaul-wip" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0.9 — Viewer: higher-order rendering + filter overhaul (WIP)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.0.9 — Viewer: higher-order rendering + filter overhaul (WIP)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — viewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-viewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — viewer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-viewerscorevisibility-doc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — viewers.core.visibility doc
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#v108-embedded-node-constraint-resolver-asdembeddednodeelement" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3277,6 +3377,52 @@
 
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
+<h2 id="v109-viewer-higher-order-rendering-filter-overhaul-wip">v1.0.9 — Viewer: higher-order rendering + filter overhaul (WIP)<a class="headerlink" href="#v109-viewer-higher-order-rendering-filter-overhaul-wip" title="Permanent link">&para;</a></h2>
+<p>Lands the viewer fixes and refactor scaffolding from PR #11.  Higher-
+order elements (Q8/Q9, Tri6, Tet10, etc.) no longer render as VTK's
+sub-triangle tessellation fans.  The dim filter actually hides actors
+now, and node display scopes to the dim filter.  Step 5 (corner /
+midside / bubble node differentiation) is deferred to the next release.</p>
+<h3 id="fixed-viewer">FIXED — viewer<a class="headerlink" href="#fixed-viewer" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Q9 / higher-order surface fill</strong> — the fill layer is now built from
+  linearized corner-only cells (<code>mesh_scene.GMSH_LINEAR</code>), so a Q9 quad
+  renders as a single quad and a Tri6 as a single triangle.  31 element
+  types covered including P3 / P4 and bubble variants; unknown types
+  warn instead of being silently dropped.</li>
+<li><strong>Dim filter (1D/2D/3D checkboxes)</strong> — was overridden in
+  <code>mesh_viewer._on_mesh_filter</code> setup so it only set the pick mask;
+  now also flips fill / wire / node-cloud actor visibility per dim.</li>
+<li><strong>Phantom wireframe on Reveal</strong> — <code>VisibilityManager._rebuild_actors</code>
+  now rebuilds the wire actor alongside the fill on hide / reveal, so
+  hidden entities lose their edges and revealed entities regain them.</li>
+<li><strong>BRep surface fill for higher-order meshes</strong> — <code>brep_scene</code> got the
+  same linearization treatment for Tri6 / Quad8 / Quad9.</li>
+</ul>
+<h3 id="changed-viewer">CHANGED — viewer<a class="headerlink" href="#changed-viewer" title="Permanent link">&para;</a></h3>
+<ul>
+<li>New <strong>wireframe layer</strong> built via <code>extract_all_edges()</code> per dim&gt;=2,
+  registered as <code>EntityRegistry.dim_wire_actors</code>.  Replaces VTK's
+  built-in <code>show_edges</code> (which rendered the higher-order cell
+  tessellation, not the FE element boundary).  Clipping plane,
+  visibility manager, and dim filter all participate.</li>
+<li><strong>Per-dim node clouds</strong> — single global <code>node_actor</code> replaced by
+  <code>EntityRegistry.dim_node_actors</code> keyed by dim, each containing the
+  nodes used by entities of that dim (with <code>includeBoundary=True</code>).
+  The dim filter now scopes node display: unchecking 1D drops 1D-only
+  nodes, but boundary nodes shared with a visible 2D dim stay.</li>
+<li><strong>Tree right-click Hide / Isolate / Reveal-all</strong> — added to BRep
+  <code>SelectionTreePanel</code> and <code>BrowserTab</code> (group + entity rows).  Backed
+  by new <code>VisibilityManager.hide_dts(dts)</code> / <code>isolate_dts(dts)</code>
+  programmatic counterparts of the pick-driven <code>hide()</code> / <code>isolate()</code>.</li>
+</ul>
+<h3 id="added-viewerscorevisibility-doc">ADDED — <code>viewers.core.visibility</code> doc<a class="headerlink" href="#added-viewerscorevisibility-doc" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Spelled out the <strong>filter state model</strong> in the module docstring:
+  cosmetic dim toggle (<code>SetVisibility</code>), entity hide
+  (<code>VisibilityManager._hidden</code>), and clipping (render-time) are three
+  independent layers, intentionally not unified.</li>
+</ul>
 <h2 id="v108-embedded-node-constraint-resolver-asdembeddednodeelement">v1.0.8 — Embedded-node constraint resolver (<code>ASDEmbeddedNodeElement</code>)<a class="headerlink" href="#v108-embedded-node-constraint-resolver-asdembeddednodeelement" title="Permanent link">&para;</a></h2>
 <p>Closes Phase 11b.  Replaces the <code>NotImplementedError</code> on
 <code>ConstraintsComposite._resolve_embedded</code> with a working resolver, so
