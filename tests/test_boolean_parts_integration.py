@@ -45,6 +45,46 @@ class TestLowLevelBooleanRemapsInstances:
         assert set(a_tags) | set(b_tags) == all_vols
         assert len(all_vols) == 3
 
+    def test_fuse_on_registered_box_cylinder_instances(self, g):
+        """Fuse via g.model.boolean must keep both Part instances pointing
+        at the merged volume.  Box+cylinder is the pathological case:
+        OCC returns ``result_map=[[], []]`` even though the union exists,
+        so without the absorbed-fallback both Parts get ``entities[3]=[]``."""
+        box = g.model.geometry.add_box(0, 0, 0, 5, 5, 5)
+        cyl = g.model.geometry.add_cylinder(2.5, 2.5, 2.5, 0, 0, 5, 1)
+        g.parts.register("solid_box", [(3, box)])
+        g.parts.register("solid_cyl", [(3, cyl)])
+
+        result = g.model.boolean.fuse(box, cyl)
+        assert len(result) == 1
+        fused = result[0]
+
+        box_tags = g.parts.get("solid_box").entities.get(3, [])
+        cyl_tags = g.parts.get("solid_cyl").entities.get(3, [])
+        assert box_tags == [fused], (
+            f"solid_box lost the fused volume; got {box_tags}"
+        )
+        assert cyl_tags == [fused], (
+            f"solid_cyl lost the fused volume; got {cyl_tags}"
+        )
+
+    def test_intersect_on_registered_box_cylinder_instances(self, g):
+        """Mirrors the fuse test for intersect — already worked because
+        OCC populates ``result_map`` for intersect, but lock the contract."""
+        box = g.model.geometry.add_box(0, 0, 0, 5, 5, 5)
+        cyl = g.model.geometry.add_cylinder(2.5, 2.5, 2.5, 0, 0, 5, 1)
+        g.parts.register("solid_box", [(3, box)])
+        g.parts.register("solid_cyl", [(3, cyl)])
+
+        result = g.model.boolean.intersect(box, cyl)
+        assert len(result) == 1
+        inter = result[0]
+
+        box_tags = g.parts.get("solid_box").entities.get(3, [])
+        cyl_tags = g.parts.get("solid_cyl").entities.get(3, [])
+        assert box_tags == [inter]
+        assert cyl_tags == [inter]
+
     def test_cut_on_registered_instances(self, g):
         """Cut via g.model.boolean must rewrite the object's entities."""
         box = g.model.geometry.add_box(0, 0, 0, 2, 2, 2)

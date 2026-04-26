@@ -37,6 +37,7 @@ class _Boolean:
         remove_object : bool = True,
         remove_tool   : bool = True,
         sync          : bool = True,
+        label         : str | None = None,
     ) -> list[Tag]:
         parent = self._model._parent
         obj_dt  = resolve_to_dimtags(
@@ -47,6 +48,16 @@ class _Boolean:
         )
         fn      = getattr(gmsh.model.occ, fn_name)
 
+        # Snapshot label names attached to inputs before the op.  Used
+        # below when ``label=`` is set so we can drop the old labels
+        # off the result and replace them with the new one.
+        labels_comp = getattr(parent, 'labels', None)
+        input_label_names: set[str] = set()
+        if label is not None and labels_comp is not None:
+            for d, t in obj_dt + tool_dt:
+                input_label_names.update(labels_comp.labels_for_entity(d, t))
+
+        absorbed = fn_name in ('fuse', 'intersect')
         with pg_preserved() as pg:
             result, result_map = fn(
                 obj_dt, tool_dt,
@@ -57,11 +68,16 @@ class _Boolean:
                 gmsh.model.occ.synchronize()
             pg.set_result(
                 obj_dt + tool_dt, result_map,
-                absorbed_into_result=(fn_name in ('fuse', 'intersect')),
+                result=result,
+                absorbed_into_result=absorbed,
             )
             parts = getattr(parent, 'parts', None)
             if parts is not None:
-                parts._remap_from_result(obj_dt + tool_dt, result_map)
+                parts._remap_from_result(
+                    obj_dt + tool_dt, result_map,
+                    result=result,
+                    absorbed_into_result=absorbed,
+                )
 
         # Clean up registry: remove consumed objects/tools
         result_set = set(result)
@@ -77,6 +93,32 @@ class _Boolean:
         tags = [t for _, t in result]
         for d, t in result:
             self._model._register(d, t, None, fn_name)
+
+        # Apply the label override.  Strip input-side labels off the
+        # result entities (per-dim, so a 3-D result does not affect a
+        # surface label of the same name), then attach the new label.
+        # Labels with no remaining entities after the strip are
+        # removed entirely.  User-defined PGs are untouched.
+        if label is not None and labels_comp is not None and result:
+            result_by_dim: dict[int, list[int]] = {}
+            for d, t in result:
+                result_by_dim.setdefault(int(d), []).append(int(t))
+            for nm in input_label_names:
+                for d, res_tags in result_by_dim.items():
+                    try:
+                        existing = labels_comp.entities(nm, dim=d)
+                    except (KeyError, ValueError):
+                        continue
+                    res_set = set(res_tags)
+                    kept = [t for t in existing if t not in res_set]
+                    if len(kept) == len(existing):
+                        continue
+                    labels_comp.remove(nm, dim=d)
+                    if kept:
+                        labels_comp.add(d, kept, name=nm)
+            for d, res_tags in result_by_dim.items():
+                labels_comp.add(d, res_tags, name=label)
+
         self._model._log(f"{fn_name}(obj={obj_dt}, tool={tool_dt}) -> tags {tags}")
         return tags
 
@@ -89,15 +131,24 @@ class _Boolean:
         remove_object : bool = True,
         remove_tool   : bool = True,
         sync          : bool = True,
+        label         : str | None = None,
     ) -> list[Tag]:
         """
         Boolean union (A \u222a B).  Returns surviving volume tags.
 
+        When ``label=`` is supplied, the labels carried by the inputs
+        are dropped from the result and the new ``label`` is attached
+        instead.  Without ``label=``, all input labels survive on the
+        merged volume.
+
         Example
         -------
-        ``result = g.model.boolean.fuse(box, sphere)``
+        ``result = g.model.boolean.fuse(box, sphere, label='merged')``
         """
-        return self._bool_op('fuse', objects, tools, dim, remove_object, remove_tool, sync)
+        return self._bool_op(
+            'fuse', objects, tools, dim,
+            remove_object, remove_tool, sync, label=label,
+        )
 
     def cut(
         self,
@@ -108,15 +159,22 @@ class _Boolean:
         remove_object : bool = True,
         remove_tool   : bool = True,
         sync          : bool = True,
+        label         : str | None = None,
     ) -> list[Tag]:
         """
         Boolean difference (A \u2212 B).  Returns surviving volume tags.
 
+        When ``label=`` is supplied, the object's label is dropped
+        from the result and the new ``label`` is attached instead.
+
         Example
         -------
-        ``result = g.model.boolean.cut(box, cylinder)``
+        ``result = g.model.boolean.cut(box, cylinder, label='holey')``
         """
-        return self._bool_op('cut', objects, tools, dim, remove_object, remove_tool, sync)
+        return self._bool_op(
+            'cut', objects, tools, dim,
+            remove_object, remove_tool, sync, label=label,
+        )
 
     def intersect(
         self,
@@ -127,9 +185,17 @@ class _Boolean:
         remove_object : bool = True,
         remove_tool   : bool = True,
         sync          : bool = True,
+        label         : str | None = None,
     ) -> list[Tag]:
-        """Boolean intersection (A \u2229 B).  Returns surviving volume tags."""
-        return self._bool_op('intersect', objects, tools, dim, remove_object, remove_tool, sync)
+        """Boolean intersection (A \u2229 B).  Returns surviving volume tags.
+
+        When ``label=`` is supplied, the input labels are dropped from
+        the intersection and the new ``label`` is attached instead.
+        """
+        return self._bool_op(
+            'intersect', objects, tools, dim,
+            remove_object, remove_tool, sync, label=label,
+        )
 
     def fragment(
         self,
