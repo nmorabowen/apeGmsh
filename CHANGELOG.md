@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.0.9 — Viewer: higher-order rendering + filter overhaul (WIP)
+
+Lands the viewer fixes and refactor scaffolding from PR #11.  Higher-
+order elements (Q8/Q9, Tri6, Tet10, etc.) no longer render as VTK's
+sub-triangle tessellation fans.  The dim filter actually hides actors
+now, and node display scopes to the dim filter.  Step 5 (corner /
+midside / bubble node differentiation) is deferred to the next release.
+
+### FIXED — viewer
+
+- **Q9 / higher-order surface fill** — the fill layer is now built from
+  linearized corner-only cells (`mesh_scene.GMSH_LINEAR`), so a Q9 quad
+  renders as a single quad and a Tri6 as a single triangle.  31 element
+  types covered including P3 / P4 and bubble variants; unknown types
+  warn instead of being silently dropped.
+- **Dim filter (1D/2D/3D checkboxes)** — was overridden in
+  `mesh_viewer._on_mesh_filter` setup so it only set the pick mask;
+  now also flips fill / wire / node-cloud actor visibility per dim.
+- **Phantom wireframe on Reveal** — `VisibilityManager._rebuild_actors`
+  now rebuilds the wire actor alongside the fill on hide / reveal, so
+  hidden entities lose their edges and revealed entities regain them.
+- **BRep surface fill for higher-order meshes** — `brep_scene` got the
+  same linearization treatment for Tri6 / Quad8 / Quad9.
+
+### CHANGED — viewer
+
+- New **wireframe layer** built via `extract_all_edges()` per dim>=2,
+  registered as `EntityRegistry.dim_wire_actors`.  Replaces VTK's
+  built-in `show_edges` (which rendered the higher-order cell
+  tessellation, not the FE element boundary).  Clipping plane,
+  visibility manager, and dim filter all participate.
+- **Per-dim node clouds** — single global `node_actor` replaced by
+  `EntityRegistry.dim_node_actors` keyed by dim, each containing the
+  nodes used by entities of that dim (with `includeBoundary=True`).
+  The dim filter now scopes node display: unchecking 1D drops 1D-only
+  nodes, but boundary nodes shared with a visible 2D dim stay.
+- **Tree right-click Hide / Isolate / Reveal-all** — added to BRep
+  `SelectionTreePanel` and `BrowserTab` (group + entity rows).  Backed
+  by new `VisibilityManager.hide_dts(dts)` / `isolate_dts(dts)`
+  programmatic counterparts of the pick-driven `hide()` / `isolate()`.
+
+### ADDED — `viewers.core.visibility` doc
+
+- Spelled out the **filter state model** in the module docstring:
+  cosmetic dim toggle (`SetVisibility`), entity hide
+  (`VisibilityManager._hidden`), and clipping (render-time) are three
+  independent layers, intentionally not unified.
+
 ## v1.0.8 — Embedded-node constraint resolver (`ASDEmbeddedNodeElement`)
 
 Closes Phase 11b.  Replaces the `NotImplementedError` on
