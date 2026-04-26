@@ -111,12 +111,13 @@ def add_prefix(name: str) -> str:
 class _PGPreserver:
     """Collects boolean result info and remaps PGs on context exit."""
 
-    __slots__ = ('_snap', '_input_dts', '_result_map', '_absorbed')
+    __slots__ = ('_snap', '_input_dts', '_result_map', '_result', '_absorbed')
 
     def __init__(self, snap: list[dict]) -> None:
         self._snap = snap
         self._input_dts: list[DimTag] | None = None
         self._result_map: list[list[DimTag]] | None = None
+        self._result: list[DimTag] | None = None
         self._absorbed = False
 
     def set_result(
@@ -124,10 +125,12 @@ class _PGPreserver:
         input_dimtags: list[DimTag],
         result_map: list[list[DimTag]],
         *,
+        result: list[DimTag] | None = None,
         absorbed_into_result: bool = False,
     ) -> None:
         self._input_dts = input_dimtags
         self._result_map = result_map
+        self._result = result
         self._absorbed = absorbed_into_result
 
 
@@ -139,7 +142,7 @@ def pg_preserved() -> Iterator[_PGPreserver]:
 
         with pg_preserved() as pg:
             result, result_map = gmsh.model.occ.fragment(obj, tool, ...)
-            pg.set_result(obj + tool, result_map)
+            pg.set_result(obj + tool, result_map, result=result)
         # PGs are automatically remapped here
     """
     snap = snapshot_physical_groups()
@@ -148,6 +151,7 @@ def pg_preserved() -> Iterator[_PGPreserver]:
     if ctx._input_dts is not None and ctx._result_map is not None:
         remap_physical_groups(
             ctx._snap, ctx._input_dts, ctx._result_map,
+            result=ctx._result,
             absorbed_into_result=ctx._absorbed,
         )
 
@@ -180,6 +184,7 @@ def remap_physical_groups(
     input_dimtags: list[DimTag],
     result_map: list[list[DimTag]],
     *,
+    result: list[DimTag] | None = None,
     absorbed_into_result: bool = False,
 ) -> None:
     """Recreate PGs with remapped entity tags after a boolean operation.
@@ -196,6 +201,12 @@ def remap_physical_groups(
     result_map
         The second return value of the OCC boolean call.  ``result_map[i]``
         lists the dimtags that ``input_dimtags[i]`` became.
+    result
+        The first return value of the OCC boolean call — the list of
+        all surviving dimtags.  Required for the absorbed-fallback
+        when ``absorbed_into_result=True``: OCC's fuse returns
+        ``result_map=[[], []]`` even though the merged volume exists,
+        so ``result_map`` alone cannot tell us where to remap to.
     absorbed_into_result : bool, default False
         When True, entities whose ``result_map`` entry is empty are
         remapped to the **result** entities at the same dimension
@@ -223,12 +234,17 @@ def remap_physical_groups(
         key = (int(old_dt[0]), int(old_dt[1]))
         dt_map[key] = [(int(d), int(t)) for d, t in new_dts]
 
-    # -- Collect result entities per dimension (for absorbed-entity fallback)
+    # -- Collect surviving entities per dimension (for absorbed-entity
+    # fallback).  Prefer ``result`` (the first OCC return value) when
+    # available because OCC's ``fuse`` leaves ``result_map`` empty
+    # even when the merged entity exists in ``result``.  Fall back to
+    # what ``result_map`` exposes for callers that did not pass it.
     result_by_dim: dict[int, list[int]] = {}
-    for new_dts in result_map:
-        for d, t in new_dts:
-            result_by_dim.setdefault(int(d), []).append(int(t))
-    # Deduplicate
+    source = result if result is not None else [
+        dt for new_dts in result_map for dt in new_dts
+    ]
+    for d, t in source:
+        result_by_dim.setdefault(int(d), []).append(int(t))
     for d in result_by_dim:
         result_by_dim[d] = sorted(set(result_by_dim[d]))
 

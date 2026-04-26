@@ -36,6 +36,9 @@ class _PartsFragmentationMixin:
         self,
         input_ents: list[DimTag],
         result_map: list[list[DimTag]],
+        *,
+        result: list[DimTag] | None = None,
+        absorbed_into_result: bool = False,
     ) -> None:
         """Rewrite ``Instance.entities`` using an OCC boolean's result_map.
 
@@ -47,6 +50,13 @@ class _PartsFragmentationMixin:
         to every tracked Instance in place.  Tags that are not present
         in any Instance are silently ignored.
 
+        For ``fuse``/``intersect`` (``absorbed_into_result=True``) OCC
+        often returns ``result_map=[[], []]`` even though a merged
+        entity exists in ``result``.  In that case inputs whose map
+        is empty are remapped to all surviving same-dim entities in
+        ``result`` so Part registries retain ownership of the merged
+        volume rather than getting silently emptied.
+
         Safe no-op for empty inputs.  Called by every low-level boolean
         (``_bool_op``) and by the Parts-level fragment/fuse methods so
         remap logic lives in a single place.
@@ -54,10 +64,19 @@ class _PartsFragmentationMixin:
         if not input_ents:
             return
 
+        result_by_dim: dict[int, list[int]] = {}
+        if absorbed_into_result and result is not None:
+            for d, t in result:
+                result_by_dim.setdefault(int(d), []).append(int(t))
+            for d in result_by_dim:
+                result_by_dim[d] = sorted(set(result_by_dim[d]))
+
         per_dim: dict[int, dict[int, list[int]]] = {}
         for old_dt, new_dts in zip(input_ents, result_map):
             old_dim, old_tag = old_dt
             same_dim_news = [t for d, t in new_dts if d == old_dim]
+            if not same_dim_news and absorbed_into_result:
+                same_dim_news = list(result_by_dim.get(old_dim, []))
             per_dim.setdefault(old_dim, {})[old_tag] = same_dim_news
 
         for inst in self._instances.values():

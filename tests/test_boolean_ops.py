@@ -42,6 +42,33 @@ class TestFuse:
         assert "part_A" in labels_a, f"part_A missing after fuse; got {labels_a}"
         assert "part_B" in labels_b, f"part_B missing after fuse; got {labels_b}"
 
+    def test_fuse_box_cylinder_preserves_labels(self, g):
+        """Box+cylinder fuse — OCC returns ``result_map=[[], []]`` here, which
+        previously caused both labels to be dropped because the absorbed
+        fallback had no surviving entities to remap to.  Regression for
+        the diagnosis where the two-box fuse test passed by accident."""
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 5, label="box")
+        g.model.geometry.add_cylinder(2.5, 2.5, 2.5, 0, 0, 5, 1, label="cyl")
+        result = g.model.boolean.fuse("box", "cyl")
+        assert len(result) == 1
+        fused_tag = result[0]
+        labels = g.labels.labels_for_entity(3, fused_tag)
+        assert "box" in labels, f"box label missing after fuse; got {labels}"
+        assert "cyl" in labels, f"cyl label missing after fuse; got {labels}"
+
+    def test_intersect_box_cylinder_preserves_labels(self, g):
+        """Same shape as the fuse regression — locks the contract for
+        intersect, which already worked but only because OCC's intersect
+        populates ``result_map`` (unlike fuse)."""
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 5, label="box")
+        g.model.geometry.add_cylinder(2.5, 2.5, 2.5, 0, 0, 5, 1, label="cyl")
+        result = g.model.boolean.intersect("box", "cyl")
+        assert len(result) == 1
+        inter_tag = result[0]
+        labels = g.labels.labels_for_entity(3, inter_tag)
+        assert "box" in labels, f"box label missing after intersect; got {labels}"
+        assert "cyl" in labels, f"cyl label missing after intersect; got {labels}"
+
 
 # =====================================================================
 # cut
@@ -116,6 +143,60 @@ class TestFragment:
             assert len(up) > 0, (
                 f"Surface {surf_tag} is free (unbounded) after fragment cleanup"
             )
+
+
+# =====================================================================
+# label= override
+# =====================================================================
+
+class TestLabelOverride:
+    """``label=`` on cut/fuse/intersect drops input labels and attaches
+    a single new label to the result entities."""
+
+    def test_fuse_label_replaces_inputs(self, g):
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 5, label="box")
+        g.model.geometry.add_cylinder(2.5, 2.5, 2.5, 0, 0, 5, 1, label="cyl")
+        result = g.model.boolean.fuse("box", "cyl", label="merged")
+        labels = g.labels.labels_for_entity(3, result[0])
+        assert "merged" in labels
+        assert "box" not in labels
+        assert "cyl" not in labels
+
+    def test_cut_label_replaces_object(self, g):
+        g.model.geometry.add_box(0, 0, 0, 2, 2, 2, label="box")
+        g.model.geometry.add_cylinder(1, 1, 0, 0, 0, 2, 0.5, label="cyl")
+        result = g.model.boolean.cut("box", "cyl", label="holey")
+        labels = g.labels.labels_for_entity(3, result[0])
+        assert "holey" in labels
+        assert "box" not in labels
+
+    def test_intersect_label_replaces_inputs(self, g):
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 5, label="box")
+        g.model.geometry.add_cylinder(2.5, 2.5, 2.5, 0, 0, 5, 1, label="cyl")
+        result = g.model.boolean.intersect("box", "cyl", label="overlap")
+        labels = g.labels.labels_for_entity(3, result[0])
+        assert "overlap" in labels
+        assert "box" not in labels
+        assert "cyl" not in labels
+
+    def test_label_override_keeps_unrelated_label_membership(self, g):
+        """A label that points at the input AND at an unrelated entity
+        must keep the unrelated entity after the override — only the
+        result tag should be stripped."""
+        # Two boxes share the label "shared"; only one participates in
+        # the fuse with the cylinder.
+        g.model.geometry.add_box(0, 0, 0, 5, 5, 5, label="shared")
+        g.model.geometry.add_box(20, 0, 0, 1, 1, 1, label="shared")
+        g.model.geometry.add_cylinder(2.5, 2.5, 2.5, 0, 0, 5, 1, label="cyl")
+        # The "shared" label now points at both boxes (dim=3).
+        before = set(g.labels.entities("shared", dim=3))
+        assert len(before) == 2
+        result = g.model.boolean.fuse("cyl", g.labels.entities("shared", dim=3)[:1],
+                                       label="merged")
+        # "shared" should still exist with the unrelated box as its only entity.
+        after = set(g.labels.entities("shared", dim=3))
+        assert len(after) == 1
+        assert result[0] not in after
 
 
 # =====================================================================
