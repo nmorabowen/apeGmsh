@@ -2403,6 +2403,78 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#v108-embedded-node-constraint-resolver-asdembeddednodeelement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0.8 — Embedded-node constraint resolver (ASDEmbeddedNodeElement)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.0.8 — Embedded-node constraint resolver (ASDEmbeddedNodeElement)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added-solvers_constraint_resolverpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — solvers/_constraint_resolver.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-regression-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — regression coverage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-infrastructure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — infrastructure
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#v107-selection-upgrades-set_transfinite_box" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2775,6 +2847,78 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#v108-embedded-node-constraint-resolver-asdembeddednodeelement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.0.8 — Embedded-node constraint resolver (ASDEmbeddedNodeElement)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.0.8 — Embedded-node constraint resolver (ASDEmbeddedNodeElement)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added-solvers_constraint_resolverpy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — solvers/_constraint_resolver.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — integration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-regression-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — regression coverage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-infrastructure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — infrastructure
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#v107-selection-upgrades-set_transfinite_box" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3133,6 +3277,55 @@
 
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
+<h2 id="v108-embedded-node-constraint-resolver-asdembeddednodeelement">v1.0.8 — Embedded-node constraint resolver (<code>ASDEmbeddedNodeElement</code>)<a class="headerlink" href="#v108-embedded-node-constraint-resolver-asdembeddednodeelement" title="Permanent link">&para;</a></h2>
+<p>Closes Phase 11b.  Replaces the <code>NotImplementedError</code> on
+<code>ConstraintsComposite._resolve_embedded</code> with a working resolver, so
+embedded-rebar and similar non-conforming inclusions can be expressed
+without fragmenting the host mesh.</p>
+<h3 id="added-solvers_constraint_resolverpy">ADDED — <code>solvers/_constraint_resolver.py</code><a class="headerlink" href="#added-solvers_constraint_resolverpy" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>_barycentric_tri3(p, p0, p1, p2)</code> — barycentric coordinates of <code>p</code>
+  inside a 2D triangle, with projection onto the triangle's plane for
+  off-plane points.</li>
+<li><code>_barycentric_tet4(p, p0, p1, p2, p3)</code> — same for a 3D tetrahedron.</li>
+<li><code>ConstraintResolver.resolve_embedded(...)</code> — given embedded nodes and
+  host element connectivity, locates each embedded node in its host
+  via KD-tree spatial indexing + barycentric coordinates, then emits
+  <code>InterpolationRecord</code> shape-function couplings that match
+  <code>ASDEmbeddedNodeElement</code> kinematics.</li>
+</ul>
+<h3 id="added-integration">ADDED — integration<a class="headerlink" href="#added-integration" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ConstraintsComposite._resolve_embedded</code> now dispatches to the new
+  resolver, collects host element connectivity from a labeled master
+  region (tri3 / tet4), filters out embedded nodes that coincide with
+  host corners, and returns the coupling records.</li>
+<li><code>examples/EOS Examples/15_embedded_rebar.py</code> rewritten to use the
+  embedded path instead of the old fragment-based conformal rebar.</li>
+</ul>
+<h3 id="added-tests">ADDED — tests<a class="headerlink" href="#added-tests" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>tests/test_constraint_resolver.py</code> — 4 cases (tri3 interior + corner,
+  tet4 centroid, multi-element search).</li>
+</ul>
+<h3 id="added-regression-coverage">ADDED — regression coverage<a class="headerlink" href="#added-regression-coverage" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>tests/test_target_resolution.py</code> — locks in <code>FEMData.nodes.get()</code> /
+  <code>.elements.get()</code> <code>target=</code> precedence (<code>label &gt; PG</code>) and raw
+  <code>[(dim, tag)]</code> passthrough.</li>
+<li><code>tests/test_boolean_ops.py</code> — guards the 2D <code>fragment(cleanup_free=True)</code>
+  bug so it can't regress.</li>
+<li><code>tests/test_parts_advanced.py</code> — covers <code>g.parts.add(part, label=...,
+  translate=...)</code> on an unlabeled Part (no sidecar).</li>
+</ul>
+<h3 id="added-infrastructure">ADDED — infrastructure<a class="headerlink" href="#added-infrastructure" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>pyproject.toml</code> <code>[tool.pytest.ini_options]</code> with
+  <code>pythonpath = ["src"]</code>, so pytest run from a worktree picks up the
+  worktree's source instead of the editable install pointing at the
+  main checkout.</li>
+</ul>
+<hr />
 <h2 id="v107-selection-upgrades-set_transfinite_box">v1.0.7 — Selection upgrades + <code>set_transfinite_box</code><a class="headerlink" href="#v107-selection-upgrades-set_transfinite_box" title="Permanent link">&para;</a></h2>
 <p>Polish pass on the v1.0.6 selection API.  Eliminates the hand-rolled
 patterns that kept showing up in scripts (two-step boundary queries,
