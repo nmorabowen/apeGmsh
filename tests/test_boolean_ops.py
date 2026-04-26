@@ -131,6 +131,39 @@ class TestFragment:
         vols = [t for _, t in gmsh.model.getEntities(3)]
         assert len(vols) == 3
 
+    def test_fragment_2d_preserves_surfaces_with_default_cleanup(self, g):
+        """2D fragment must not drop surfaces even with cleanup_free=True.
+
+        Regression: in a 2D model every surface has zero upward-volume
+        adjacency, so the free-surface heuristic used to delete all
+        surfaces and produce an empty model.
+        """
+        p_BL = g.model.geometry.add_point(0.0, 0.0, 0.0, lc=0.5)
+        p_BR = g.model.geometry.add_point(2.0, 0.0, 0.0, lc=0.5)
+        p_TR = g.model.geometry.add_point(2.0, 1.0, 0.0, lc=0.5)
+        p_TL = g.model.geometry.add_point(0.0, 1.0, 0.0, lc=0.5)
+        lB = g.model.geometry.add_line(p_BL, p_BR)
+        lR = g.model.geometry.add_line(p_BR, p_TR)
+        lT = g.model.geometry.add_line(p_TR, p_TL)
+        lL = g.model.geometry.add_line(p_TL, p_BL)
+        loop = g.model.geometry.add_curve_loop([lB, lR, lT, lL])
+        surf = g.model.geometry.add_plane_surface([loop])
+
+        p0 = g.model.geometry.add_point(0.0, 0.5, 0.0, lc=0.5)
+        p1 = g.model.geometry.add_point(2.0, 0.5, 0.0, lc=0.5)
+        cutting_line = g.model.geometry.add_line(p0, p1)
+        g.model.sync()
+
+        g.model.boolean.fragment(
+            objects=[(2, surf)],
+            tools=[(1, cutting_line)],
+            dim=2,
+        )
+        surfs = [t for _, t in gmsh.model.getEntities(2)]
+        assert len(surfs) >= 2, (
+            f"2D fragment should split the surface into >=2 pieces, got {surfs}"
+        )
+
     def test_fragment_cleanup_free_removes_orphan_surfaces(self, g):
         """With cleanup_free=True, no surface should be unbounded after fragment."""
         box = g.model.geometry.add_box(0, 0, 0, 2, 2, 2)
