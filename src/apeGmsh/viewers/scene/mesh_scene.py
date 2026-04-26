@@ -29,24 +29,62 @@ from .glyph_points import build_node_cloud
 
 
 # ======================================================================
-# Gmsh -> VTK element type mapping
+# Gmsh -> VTK linearized element mapping
 # ======================================================================
+#
+# The mesh viewer always renders the *fill* layer with linear VTK cells,
+# regardless of the underlying Gmsh element order. Higher-order nodes
+# (midside, face bubble, volume bubble) are sliced off here; a separate
+# wireframe layer (built from per-element edge connectivity) is what
+# actually shows the FE element boundaries to the user. This avoids
+# VTK's higher-order cell tessellation, which subdivides each cell into
+# a fan of sub-triangles and is not what an FE preprocessor wants.
+#
+# Maps Gmsh element type id -> (vtk cell type, corner-node count).
 
-GMSH_TO_VTK: dict[int, int] = {
-    1:  3,    # 2-node line                    -> VTK_LINE
-    2:  5,    # 3-node triangle                -> VTK_TRIANGLE
-    3:  9,    # 4-node quad                    -> VTK_QUAD
-    4:  10,   # 4-node tet                     -> VTK_TETRA
-    5:  12,   # 8-node hex                     -> VTK_HEXAHEDRON
-    6:  13,   # 6-node prism                   -> VTK_WEDGE
-    7:  14,   # 5-node pyramid                 -> VTK_PYRAMID
-    8:  21,   # 3-node line (2nd)              -> VTK_QUADRATIC_EDGE
-    9:  22,   # 6-node tri (2nd)               -> VTK_QUADRATIC_TRIANGLE
-    10: 28,   # 9-node quad (2nd, complete)    -> VTK_BIQUADRATIC_QUAD
-    11: 24,   # 10-node tet (2nd)              -> VTK_QUADRATIC_TETRA
-    16: 23,   # 8-node quad (2nd, serendipity) -> VTK_QUADRATIC_QUAD
-    15: 1,    # 1-node point                   -> VTK_VERTEX
+GMSH_LINEAR: dict[int, tuple[int, int]] = {
+    # ── points ──────────────────────────────────────────────────
+    15: (1,  1),    # 1-node point                   -> VTK_VERTEX
+    # ── lines ───────────────────────────────────────────────────
+    1:  (3,  2),    # 2-node line                    -> VTK_LINE
+    8:  (3,  2),    # 3-node line     (P2)
+    26: (3,  2),    # 4-node line     (P3)
+    27: (3,  2),    # 5-node line     (P4)
+    28: (3,  2),    # 6-node line     (P5)
+    # ── triangles ───────────────────────────────────────────────
+    2:  (5,  3),    # 3-node tri                     -> VTK_TRIANGLE
+    9:  (5,  3),    # 6-node tri      (P2)
+    21: (5,  3),    # 10-node tri     (P3)
+    23: (5,  3),    # 15-node tri     (P4)
+    25: (5,  3),    # 21-node tri     (P5)
+    # ── quads ───────────────────────────────────────────────────
+    3:  (9,  4),    # 4-node quad                    -> VTK_QUAD
+    16: (9,  4),    # 8-node quad     (P2 serendipity)
+    10: (9,  4),    # 9-node quad     (P2 + bubble)
+    36: (9,  4),    # 16-node quad    (P3)
+    37: (9,  4),    # 25-node quad    (P4)
+    # ── tets ────────────────────────────────────────────────────
+    4:  (10, 4),    # 4-node tet                     -> VTK_TETRA
+    11: (10, 4),    # 10-node tet     (P2)
+    29: (10, 4),    # 20-node tet     (P3)
+    30: (10, 4),    # 35-node tet     (P4)
+    # ── hexes ───────────────────────────────────────────────────
+    5:  (12, 8),    # 8-node hex                     -> VTK_HEXAHEDRON
+    17: (12, 8),    # 20-node hex     (P2 serendipity)
+    12: (12, 8),    # 27-node hex     (P2 + bubbles)
+    92: (12, 8),    # 64-node hex     (P3)
+    93: (12, 8),    # 125-node hex    (P4)
+    # ── prisms (wedges) ─────────────────────────────────────────
+    6:  (13, 6),    # 6-node prism                   -> VTK_WEDGE
+    18: (13, 6),    # 15-node prism   (P2 serendipity)
+    13: (13, 6),    # 18-node prism   (P2 + bubbles)
+    # ── pyramids ────────────────────────────────────────────────
+    7:  (14, 5),    # 5-node pyramid                 -> VTK_PYRAMID
+    19: (14, 5),    # 13-node pyramid (P2 serendipity)
+    14: (14, 5),    # 14-node pyramid (P2 + bubble)
 }
+
+_warned_etypes: set[int] = set()
 
 # Element type name -> color palette key
 ELEM_TYPE_COLORS: dict[str, str] = {
@@ -173,10 +211,22 @@ def _collect_entity_cells(
     for etype, etags, enodes in zip(
         elem_types, elem_tags_list, elem_node_tags_list,
     ):
-        vtk_type = GMSH_TO_VTK.get(int(etype))
-        if vtk_type is None:
+        etype_int = int(etype)
+        mapping = GMSH_LINEAR.get(etype_int)
+        if mapping is None:
+            if etype_int not in _warned_etypes:
+                _warned_etypes.add(etype_int)
+                try:
+                    name = gmsh.model.mesh.getElementProperties(etype_int)[0]
+                except Exception:
+                    name = "unknown"
+                print(
+                    f"[mesh_scene] WARNING: Gmsh element type {etype_int} "
+                    f"({name!r}) has no GMSH_LINEAR entry — skipped."
+                )
             continue
-        props = _get_elem_props(int(etype))
+        vtk_type, n_corner = mapping
+        props = _get_elem_props(etype_int)
         type_name: str = props[0]
         n_nodes: int = props[3]
 
@@ -190,25 +240,29 @@ def _collect_entity_cells(
             dominant_type_name = type_name
 
         node_rows = enodes_arr.reshape(n_elems, n_nodes)
+        # Slice to corner nodes only for VTK fill cells. Gmsh element
+        # node order places corners first, then midside, then face/volume
+        # bubbles — so [:, :n_corner] yields a valid linear cell.
+        corner_rows = node_rows[:, :n_corner]
         if tag_to_idx is not None and len(tag_to_idx) > 0:
             max_allowed = len(tag_to_idx) - 1
             in_range = (
-                np.all(node_rows <= max_allowed)
-                and np.all(node_rows >= 0)
+                np.all(corner_rows <= max_allowed)
+                and np.all(corner_rows >= 0)
             )
             if in_range:
-                idx_arr = tag_to_idx[node_rows]
+                idx_arr = tag_to_idx[corner_rows]
                 valid_mask = np.all(idx_arr >= 0, axis=1)
             else:
-                clipped = np.clip(node_rows, 0, max_allowed)
+                clipped = np.clip(corner_rows, 0, max_allowed)
                 idx_arr = tag_to_idx[clipped]
                 valid_mask = (
                     np.all(idx_arr >= 0, axis=1)
-                    & np.all(node_rows >= 0, axis=1)
-                    & np.all(node_rows <= max_allowed, axis=1)
+                    & np.all(corner_rows >= 0, axis=1)
+                    & np.all(corner_rows <= max_allowed, axis=1)
                 )
         else:
-            idx_arr = np.zeros_like(node_rows)
+            idx_arr = np.zeros_like(corner_rows)
             valid_mask = np.zeros(n_elems, dtype=bool)
 
         valid_idx_arr = idx_arr[valid_mask]
@@ -217,7 +271,7 @@ def _collect_entity_cells(
         if n_valid == 0:
             continue
 
-        prefix = np.full((n_valid, 1), n_nodes, dtype=np.int64)
+        prefix = np.full((n_valid, 1), n_corner, dtype=np.int64)
         all_cells.append(np.hstack([prefix, valid_idx_arr]).ravel())
         all_types.append(np.full(n_valid, vtk_type, dtype=np.uint8))
 
@@ -379,12 +433,16 @@ def build_mesh_scene(
         grid["colors"] = colors
         grid.cell_data["entity_tag"] = np.array(all_entity_tags, dtype=np.int64)
 
-        show_edges = show_surface_edges and dim >= 2
+        # Fill layer never draws cell edges for dim>=2 — the dedicated
+        # wireframe layer (built from per-element corner edges) is what
+        # draws FE element boundaries. VTK's edge rendering on linearized
+        # higher-order cells would also be visually wrong (it tessellates
+        # quadratic cells into sub-triangle fans).
         opacity = surface_opacity if dim >= 2 else 1.0
         dim_kwargs: dict[str, Any] = dict(
             scalars="colors", rgb=True,
             opacity=opacity,
-            show_edges=show_edges,
+            show_edges=False,
             edge_color=edge_color,
             line_width=line_width if dim == 1 else 0.5,
             render_lines_as_tubes=(dim == 1),
@@ -413,24 +471,84 @@ def build_mesh_scene(
         batch_cell_to_elem[dim] = np.asarray(all_elem_tags_flat, dtype=np.int64)
         n_actors += 1
 
+        # ── wireframe layer (dim>=2 only) ───────────────────────────
+        # Built from the linearized fill grid via ``extract_all_edges``,
+        # which produces unique corner-to-corner edges per cell. This
+        # is what the user sees as the FE element wireframe — separate
+        # from VTK's higher-order tessellation, which would subdivide
+        # quadratic cells into sub-triangle fans and is not what an
+        # FE preprocessor wants.
+        if show_surface_edges and dim >= 2:
+            try:
+                wire_mesh = grid.extract_all_edges()
+                wire_actor = plotter.add_mesh(
+                    wire_mesh,
+                    color=edge_color,
+                    line_width=0.5,
+                    pickable=False,
+                    reset_camera=False,
+                )
+                registry.register_wire(dim, wire_mesh, wire_actor)
+                n_actors += 1
+            except Exception as exc:
+                if verbose:
+                    print(f"[mesh_scene] wireframe build failed for dim={dim}: {exc}")
+
     plotter.reset_camera()  # type: ignore[call-arg]  # pyvista stub quirk
     t_actors_elapsed = time.perf_counter() - t_actors
 
-    # ── node cloud ──────────────────────────────────────────────────
-    # Show ALL mesh nodes — including embedded reference points that
-    # may not appear in the displayed element connectivity.
+    # ── node cloud (per-dim) ────────────────────────────────────────
+    # One glyph actor per dim, each rendering the nodes used by
+    # entities of that dim (including their boundary). A node shared
+    # across dims appears in each owner's cloud — overlapping at the
+    # same coords but invisible. This makes the dim filter scope the
+    # node display (uncheck 1D → 1D-only nodes disappear; nodes also
+    # used by 2D stay visible).
     filt_tags = node_tags
     filt_coords = node_coords
 
+    # Map node tag -> set of dims that own it (via gmsh entity nodes).
+    dim_node_indices: dict[int, np.ndarray] = {}
+    if len(node_tags) > 0 and len(tag_to_idx) > 0:
+        max_t = len(tag_to_idx) - 1
+        for d in sorted(set(dims)):
+            tag_set: set[int] = set()
+            for _, ent_tag in gmsh.model.getEntities(dim=d):
+                try:
+                    ntags, _, _ = gmsh.model.mesh.getNodes(
+                        dim=d, tag=ent_tag, includeBoundary=True,
+                    )
+                except Exception:
+                    continue
+                if len(ntags) == 0:
+                    continue
+                tag_set.update(int(t) for t in ntags)
+            if not tag_set:
+                continue
+            arr = np.fromiter(tag_set, dtype=np.int64, count=len(tag_set))
+            in_range = (arr >= 0) & (arr <= max_t)
+            arr = arr[in_range]
+            idx = tag_to_idx[arr]
+            idx = idx[idx >= 0]
+            if len(idx) > 0:
+                dim_node_indices[d] = np.unique(idx)
+
+    # Build one node-cloud actor per dim. Kept as scene fields for
+    # backward-compat with glyph_helpers.rebuild_node_cloud — set to
+    # None so callers know there's no longer a single global cloud.
     node_cloud = None
     node_actor = None
-    if len(filt_coords) > 0:
-        node_cloud, node_actor = build_node_cloud(
-            plotter, filt_coords,
+    for d, idx_arr in dim_node_indices.items():
+        coords_d = filt_coords[idx_arr]
+        if len(coords_d) == 0:
+            continue
+        cloud_d, actor_d = build_node_cloud(
+            plotter, coords_d,
             model_diagonal=diag,
             marker_size=node_marker_size,
             color=node_color,
         )
+        registry.register_node_cloud(d, cloud_d, actor_d)
 
     # KD-tree for nearest-node picking
     node_tree = None

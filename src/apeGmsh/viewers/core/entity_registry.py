@@ -37,6 +37,10 @@ class EntityRegistry:
     __slots__ = (
         "dim_meshes",
         "dim_actors",
+        "dim_wire_meshes",
+        "dim_wire_actors",
+        "dim_node_clouds",
+        "dim_node_actors",
         "_full_meshes",
         "_actor_id_to_dim",
         "_cell_to_dt",
@@ -49,7 +53,19 @@ class EntityRegistry:
 
     def __init__(self) -> None:
         self.dim_meshes: dict[int, Any] = {}          # dim -> PolyData | UnstructuredGrid
-        self.dim_actors: dict[int, Any] = {}           # dim -> vtkActor
+        self.dim_actors: dict[int, Any] = {}           # dim -> vtkActor (fill)
+        # Wireframe layer: corner-edge PolyData per dim>=2. Independent
+        # of the fill actor; participates in clipping and dim filtering
+        # but not in color modes or pick resolution.
+        self.dim_wire_meshes: dict[int, Any] = {}      # dim -> PolyData
+        self.dim_wire_actors: dict[int, Any] = {}      # dim -> vtkActor
+        # Node cloud layer: one glyph actor per dim, each containing the
+        # nodes used by entities of that dim (incl. boundary). Nodes
+        # shared across dims appear in each owner's cloud — overlapping
+        # at the same coords but invisible. Lets the dim filter scope
+        # node visibility (hide 1D → 1D-only nodes go away).
+        self.dim_node_clouds: dict[int, Any] = {}      # dim -> PolyData
+        self.dim_node_actors: dict[int, Any] = {}      # dim -> vtkActor
         self._full_meshes: dict[int, Any] = {}         # dim -> original (unfiltered) mesh
         self._actor_id_to_dim: dict[int, int] = {}     # id(actor) -> dim
         self._cell_to_dt: dict[int, dict[int, DimTag]] = {}   # dim -> {cell_idx: DimTag}
@@ -115,6 +131,21 @@ class EntityRegistry:
             for dt, c in centroids.items():
                 if dt not in self._bboxes:
                     self._bboxes[dt] = np.tile(c, (8, 1))
+
+    def register_wire(self, dim: int, mesh: Any, actor: Any) -> None:
+        """Register the wireframe (corner-edge) layer for *dim*.
+
+        The wireframe is a separate actor that draws one line segment
+        per FE element edge. It is built from the linearized fill cells
+        via ``extract_all_edges`` and is not part of pick resolution.
+        """
+        self.dim_wire_meshes[dim] = mesh
+        self.dim_wire_actors[dim] = actor
+
+    def register_node_cloud(self, dim: int, cloud: Any, actor: Any) -> None:
+        """Register a per-dim node-glyph actor."""
+        self.dim_node_clouds[dim] = cloud
+        self.dim_node_actors[dim] = actor
 
     def swap_dim(self, dim: int, new_mesh: Any, new_actor: Any) -> None:
         """Replace the mesh+actor for *dim* after extract_cells.

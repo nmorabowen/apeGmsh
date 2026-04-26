@@ -343,8 +343,14 @@ class MeshViewer:
         pick_engine.on_box_select = self._handle_box_select
         pick_engine.set_hidden_check(vis_mgr.is_hidden)
 
-        # Filter (BRep-style pickable-dim mask)
-        filter_tab._on_filter = pick_engine.set_pickable_dims
+        # Dim checkboxes: drive both actor visibility (the user-visible
+        # effect) and the pick-engine pickable-dims mask (so picks ignore
+        # hidden dims). Earlier this only set the pickable mask, making
+        # the checkboxes appear to do nothing visually.
+        def _on_dim_filter(active_dims: set[int]) -> None:
+            self._on_mesh_filter(active_dims)
+            pick_engine.set_pickable_dims(active_dims)
+        filter_tab._on_filter = _on_dim_filter
 
         # Selection changed -> recolor
         sel.on_changed.append(self._handle_sel_changed)
@@ -623,15 +629,15 @@ class MeshViewer:
         plotter = self._plotter
         if registry is None or plotter is None:
             return
+        # Mesh edges are drawn by the dedicated wireframe actor (per-dim
+        # corner-edge PolyData). Toggling edges = toggling that actor's
+        # visibility — color/width are owned by the theme, not this
+        # callback.
         for dim in registry.dims:
-            actor = registry.dim_actors.get(dim)
-            if actor is None or dim < 2:
+            wire_actor = registry.dim_wire_actors.get(dim)
+            if wire_actor is None:
                 continue
-            prop = actor.GetProperty()
-            prop.SetEdgeVisibility(checked)
-            if checked:
-                prop.SetEdgeColor(0.17, 0.29, 0.43)  # #2C4A6E
-                prop.SetLineWidth(0.5)
+            wire_actor.SetVisibility(checked)
         plotter.render()
 
     def _on_color_mode(self, mode: str) -> None:
@@ -651,11 +657,23 @@ class MeshViewer:
         plotter = self._plotter
         if registry is None or plotter is None:
             return
-        for dim in registry.dims:
-            actor = registry.dim_actors.get(dim)
-            if actor is None:
-                continue
-            actor.SetVisibility(dim in active_dims)
+        # The set of dims that have any actor (fill, wire, or node cloud)
+        # — node-cloud dims may extend beyond fill dims (e.g. dim=0
+        # entities only exist as nodes).
+        all_dims = (
+            set(registry.dims)
+            | set(registry.dim_node_actors.keys())
+        )
+        for dim in all_dims:
+            visible = dim in active_dims
+            for actor in (
+                registry.dim_actors.get(dim),
+                registry.dim_wire_actors.get(dim),
+                registry.dim_node_actors.get(dim),
+            ):
+                if actor is None:
+                    continue
+                actor.SetVisibility(visible)
         plotter.render()
 
     def _on_mesh_probes_changed(self, show_tangents: bool, show_normals: bool) -> None:

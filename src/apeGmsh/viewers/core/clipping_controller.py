@@ -47,12 +47,15 @@ class ClippingController:
         if self._enabled:
             return
         for dim in self._registry.dims:
-            actor = self._registry.dim_actors.get(dim)
-            if actor is None:
-                continue
-            mapper = actor.GetMapper()
-            if mapper is not None:
-                mapper.AddClippingPlane(self._plane)
+            for actor in (
+                self._registry.dim_actors.get(dim),
+                self._registry.dim_wire_actors.get(dim),
+            ):
+                if actor is None:
+                    continue
+                mapper = actor.GetMapper()
+                if mapper is not None:
+                    mapper.AddClippingPlane(self._plane)
 
         try:
             self._plotter.add_plane_widget(
@@ -72,12 +75,15 @@ class ClippingController:
         if not self._enabled:
             return
         for dim in self._registry.dims:
-            actor = self._registry.dim_actors.get(dim)
-            if actor is None:
-                continue
-            mapper = actor.GetMapper()
-            if mapper is not None:
-                mapper.RemoveAllClippingPlanes()
+            for actor in (
+                self._registry.dim_actors.get(dim),
+                self._registry.dim_wire_actors.get(dim),
+            ):
+                if actor is None:
+                    continue
+                mapper = actor.GetMapper()
+                if mapper is not None:
+                    mapper.RemoveAllClippingPlanes()
 
         try:
             self._plotter.clear_plane_widgets()
