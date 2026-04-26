@@ -25,6 +25,7 @@ _ALLOWED_CONSTANTS = {
     "PARTITION_COLORS",       # mesh_scene.py — partition id coloring
     "_CONSTRAINT_COLORS",     # constraints_tab.py — constraint-kind legend
     "_FALLBACK_COLOR",        # constraints_tab.py — unknown-kind fallback
+    "_FALLBACK_RGB",          # color_mode_controller.py — unknown-entity fallback
 }
 
 # Files that are legitimately allowed to define palette color constants
