@@ -1,5 +1,57 @@
 # Changelog
 
+## v1.0.8 — Embedded-node constraint resolver (`ASDEmbeddedNodeElement`)
+
+Closes Phase 11b.  Replaces the `NotImplementedError` on
+`ConstraintsComposite._resolve_embedded` with a working resolver, so
+embedded-rebar and similar non-conforming inclusions can be expressed
+without fragmenting the host mesh.
+
+### ADDED — `solvers/_constraint_resolver.py`
+
+- `_barycentric_tri3(p, p0, p1, p2)` — barycentric coordinates of `p`
+  inside a 2D triangle, with projection onto the triangle's plane for
+  off-plane points.
+- `_barycentric_tet4(p, p0, p1, p2, p3)` — same for a 3D tetrahedron.
+- `ConstraintResolver.resolve_embedded(...)` — given embedded nodes and
+  host element connectivity, locates each embedded node in its host
+  via KD-tree spatial indexing + barycentric coordinates, then emits
+  `InterpolationRecord` shape-function couplings that match
+  `ASDEmbeddedNodeElement` kinematics.
+
+### ADDED — integration
+
+- `ConstraintsComposite._resolve_embedded` now dispatches to the new
+  resolver, collects host element connectivity from a labeled master
+  region (tri3 / tet4), filters out embedded nodes that coincide with
+  host corners, and returns the coupling records.
+- `examples/EOS Examples/15_embedded_rebar.py` rewritten to use the
+  embedded path instead of the old fragment-based conformal rebar.
+
+### ADDED — tests
+
+- `tests/test_constraint_resolver.py` — 4 cases (tri3 interior + corner,
+  tet4 centroid, multi-element search).
+
+### ADDED — regression coverage
+
+- `tests/test_target_resolution.py` — locks in `FEMData.nodes.get()` /
+  `.elements.get()` `target=` precedence (`label > PG`) and raw
+  `[(dim, tag)]` passthrough.
+- `tests/test_boolean_ops.py` — guards the 2D `fragment(cleanup_free=True)`
+  bug so it can't regress.
+- `tests/test_parts_advanced.py` — covers `g.parts.add(part, label=...,
+  translate=...)` on an unlabeled Part (no sidecar).
+
+### ADDED — infrastructure
+
+- `pyproject.toml` `[tool.pytest.ini_options]` with
+  `pythonpath = ["src"]`, so pytest run from a worktree picks up the
+  worktree's source instead of the editable install pointing at the
+  main checkout.
+
+---
+
 ## v1.0.7 — Selection upgrades + `set_transfinite_box`
 
 Polish pass on the v1.0.6 selection API.  Eliminates the hand-rolled
