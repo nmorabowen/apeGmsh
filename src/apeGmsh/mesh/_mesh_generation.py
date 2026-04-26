@@ -160,24 +160,18 @@ class _Generation:
         *,
         dim      : int = 2,
     ) -> "_Generation":
-        """
-        Apply :meth:`set_algorithm` to every entity in a physical group.
+        """Deprecated.  ``set_algorithm`` accepts a PG name directly.
 
-        Only meaningful for ``dim=2`` (per-surface algorithm selection).
-        With ``dim=3`` this still calls ``set_algorithm`` once because
-        ``Mesh.Algorithm3D`` is a global option.
+        With ``dim=3`` the original wrapper passed tag=0 (since
+        ``Mesh.Algorithm3D`` is a global option); preserve that here.
         """
-        if dim not in (2, 3):
-            raise ValueError(
-                f"set_algorithm_by_physical: dim must be 2 or 3, got {dim!r}"
-            )
-        tags = self._mesh._resolve_physical(name, dim)
-        self._mesh._log(
-            f"set_algorithm_by_physical(name={name!r}, dim={dim}, "
-            f"tags={tags}, alg={algorithm!r})"
+        import warnings
+        warnings.warn(
+            "set_algorithm_by_physical is deprecated; pass the "
+            "physical-group name to set_algorithm() as tag.",
+            DeprecationWarning,
+            stacklevel=2,
         )
         if dim == 3:
             return self.set_algorithm(0, algorithm, dim=3)
-        for t in tags:
-            self.set_algorithm(t, algorithm, dim=2)
-        return self
+        return self.set_algorithm(name, algorithm, dim=dim)

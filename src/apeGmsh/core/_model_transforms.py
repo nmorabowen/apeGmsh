@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 
 import gmsh
 
-from ._helpers import Tag, DimTag, TagsLike
+from ._helpers import Tag, DimTag, resolve_to_dimtags
+from apeGmsh._types import EntityRefs
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -17,13 +18,24 @@ class _Transforms:
     def __init__(self, model: "Model") -> None:
         self._model = model
 
+    def _resolve_dt(self, refs: EntityRefs, dim: int) -> list[DimTag]:
+        """Resolve any flexible-ref form to ``[(dim, tag), ...]``.
+
+        Accepts int / str (label or PG name) / ``(dim, tag)`` / list of
+        any mix; bare ints fall back to *dim* when the live model has
+        no entry for that tag.
+        """
+        return resolve_to_dimtags(
+            refs, default_dim=dim, session=self._model._parent,
+        )
+
     # ------------------------------------------------------------------
     # Transforms  (all return self for chaining)
     # ------------------------------------------------------------------
 
     def translate(
         self,
-        tags: TagsLike,
+        tags: EntityRefs,
         dx: float, dy: float, dz: float,
         *,
         dim : int  = 3,
@@ -32,11 +44,17 @@ class _Transforms:
         """
         Translate entities by (dx, dy, dz).
 
+        ``tags`` accepts int / label / PG name / ``(dim, tag)`` / list
+        of any mix.  *dim* is the fallback for bare ints.
+
         Example
         -------
-        ``g.model.transforms.translate(box, 5, 0, 0)``
+        ::
+
+            g.model.transforms.translate(box, 5, 0, 0)
+            g.model.transforms.translate("col.body", 0, 0, 5)
         """
-        gmsh.model.occ.translate(self._model._as_dimtags(tags, dim), dx, dy, dz)
+        gmsh.model.occ.translate(self._resolve_dt(tags, dim), dx, dy, dz)
         if sync:
             gmsh.model.occ.synchronize()
         self._model._log(f"translate by ({dx}, {dy}, {dz})")
@@ -44,7 +62,7 @@ class _Transforms:
 
     def rotate(
         self,
-        tags  : TagsLike,
+        tags  : EntityRefs,
         angle : float,
         *,
         ax: float = 0.0, ay: float = 0.0, az: float = 1.0,
@@ -56,12 +74,14 @@ class _Transforms:
         Rotate entities around an axis through (cx, cy, cz) with direction
         (ax, ay, az) by ``angle`` radians.
 
+        ``tags`` accepts any flexible-ref form (see :meth:`translate`).
+
         Example
         -------
         ``g.model.transforms.rotate(box, math.pi / 4, az=1)``
         """
         gmsh.model.occ.rotate(
-            self._model._as_dimtags(tags, dim),
+            self._resolve_dt(tags, dim),
             cx, cy, cz,
             ax, ay, az,
             angle,
@@ -76,7 +96,7 @@ class _Transforms:
 
     def scale(
         self,
-        tags: TagsLike,
+        tags: EntityRefs,
         sx: float, sy: float, sz: float,
         *,
         cx: float = 0.0, cy: float = 0.0, cz: float = 0.0,
@@ -86,12 +106,14 @@ class _Transforms:
         """
         Scale (dilate) entities by (sx, sy, sz) from centre (cx, cy, cz).
 
+        ``tags`` accepts any flexible-ref form (see :meth:`translate`).
+
         Example
         -------
         ``g.model.transforms.scale(box, 2, 2, 2)``   # uniform double
         """
         gmsh.model.occ.dilate(
-            self._model._as_dimtags(tags, dim),
+            self._resolve_dt(tags, dim),
             cx, cy, cz,
             sx, sy, sz,
         )
@@ -102,7 +124,7 @@ class _Transforms:
 
     def mirror(
         self,
-        tags: TagsLike,
+        tags: EntityRefs,
         a: float, b: float, c: float, d: float,
         *,
         dim : int  = 3,
@@ -111,11 +133,13 @@ class _Transforms:
         """
         Mirror entities through the plane ax + by + cz + d = 0.
 
+        ``tags`` accepts any flexible-ref form (see :meth:`translate`).
+
         Example
         -------
         ``g.model.transforms.mirror(box, 1, 0, 0, 0)``   # reflect through YZ plane
         """
-        gmsh.model.occ.mirror(self._model._as_dimtags(tags, dim), a, b, c, d)
+        gmsh.model.occ.mirror(self._resolve_dt(tags, dim), a, b, c, d)
         if sync:
             gmsh.model.occ.synchronize()
         self._model._log(f"mirror through plane {a}x + {b}y + {c}z + {d} = 0")
@@ -123,7 +147,7 @@ class _Transforms:
 
     def copy(
         self,
-        tags: TagsLike,
+        tags: EntityRefs,
         *,
         dim : int  = 3,
         sync: bool = True,
@@ -131,11 +155,13 @@ class _Transforms:
         """
         Duplicate entities.  Returns the tags of the new copies.
 
+        ``tags`` accepts any flexible-ref form (see :meth:`translate`).
+
         Example
         -------
         ``copies = g.model.transforms.copy([box, sphere])``
         """
-        new_dimtags = gmsh.model.occ.copy(self._model._as_dimtags(tags, dim))
+        new_dimtags = gmsh.model.occ.copy(self._resolve_dt(tags, dim))
         if sync:
             gmsh.model.occ.synchronize()
         new_tags = [t for _, t in new_dimtags]
@@ -148,7 +174,7 @@ class _Transforms:
 
     def extrude(
         self,
-        tags: TagsLike,
+        tags: EntityRefs,
         dx: float, dy: float, dz: float,
         *,
         dim          : int             = 2,
@@ -191,7 +217,7 @@ class _Transforms:
             out  = g.model.transforms.extrude(surf, 0, 0, 3.0, num_elements=[10])
             # out[0] = (2, top_face), out[1] = (3, volume), ...
         """
-        dt = self._model._as_dimtags(tags, dim)
+        dt = self._resolve_dt(tags, dim)
         ne = num_elements if num_elements is not None else []
         ht = heights if heights is not None else []
         result: list[tuple[int, int]] = gmsh.model.occ.extrude(
@@ -211,7 +237,7 @@ class _Transforms:
 
     def revolve(
         self,
-        tags  : TagsLike,
+        tags  : EntityRefs,
         angle : float,
         *,
         x : float = 0.0, y : float = 0.0, z : float = 0.0,
@@ -247,7 +273,7 @@ class _Transforms:
             # Revolve a cross-section 360\u00b0 around the Y axis
             out = g.model.transforms.revolve(profile, 2 * math.pi, ay=1)
         """
-        dt = self._model._as_dimtags(tags, dim)
+        dt = self._resolve_dt(tags, dim)
         ne = num_elements if num_elements is not None else []
         ht = heights if heights is not None else []
         result: list[tuple[int, int]] = gmsh.model.occ.revolve(
@@ -273,7 +299,7 @@ class _Transforms:
 
     def sweep(
         self,
-        profiles : TagsLike,
+        profiles : EntityRefs,
         path     : Tag,
         *,
         dim       : int        = 2,
@@ -330,7 +356,7 @@ class _Transforms:
             path    = g.model.geometry.add_wire([arc1, line1, arc2], label="beam_path")
             out     = g.model.transforms.sweep(section, path, label="curved_beam")
         """
-        dt = self._model._as_dimtags(profiles, dim)
+        dt = self._resolve_dt(profiles, dim)
         result: list[tuple[int, int]] = gmsh.model.occ.addPipe(
             dt, int(path), trihedron=trihedron,
         )

@@ -146,27 +146,38 @@ class _Structured:
         **kwargs,
     ) -> "_Structured":
         """
-        Apply the appropriate ``set_transfinite_*`` call to every
-        entity in a physical group.
+        Deprecated.  ``set_transfinite_curve/surface/volume`` already
+        accept a label or physical-group name directly — pass it as
+        ``tag``.
+
+        Example
+        -------
+        ::
+
+            # old
+            g.mesh.structured.set_transfinite_by_physical("flange", dim=2,
+                                                          arrangement="Left")
+            # new
+            g.mesh.structured.set_transfinite_surface("flange",
+                                                      arrangement="Left")
         """
-        tags = self._mesh._resolve_physical(name, dim)
-        self._mesh._log(
-            f"set_transfinite_by_physical(name={name!r}, dim={dim}, tags={tags})"
+        import warnings
+        warnings.warn(
+            "set_transfinite_by_physical is deprecated; "
+            "set_transfinite_curve/surface/volume already accept a "
+            "physical-group name as tag.",
+            DeprecationWarning,
+            stacklevel=2,
         )
         if dim == 1:
-            for t in tags:
-                self.set_transfinite_curve(t, **kwargs)
-        elif dim == 2:
-            for t in tags:
-                self.set_transfinite_surface(t, **kwargs)
-        elif dim == 3:
-            for t in tags:
-                self.set_transfinite_volume(t, **kwargs)
-        else:
-            raise ValueError(
-                f"set_transfinite_by_physical: dim must be 1, 2, or 3, got {dim!r}"
-            )
-        return self
+            return self.set_transfinite_curve(name, **kwargs)
+        if dim == 2:
+            return self.set_transfinite_surface(name, **kwargs)
+        if dim == 3:
+            return self.set_transfinite_volume(name, **kwargs)
+        raise ValueError(
+            f"set_transfinite_by_physical: dim must be 1, 2, or 3, got {dim!r}"
+        )
 
     # ------------------------------------------------------------------
     # Recombination
@@ -201,14 +212,15 @@ class _Structured:
         dim  : int = 2,
         angle: float = 45.0,
     ) -> "_Structured":
-        """Apply :meth:`set_recombine` to every entity in a physical group."""
-        tags = self._mesh._resolve_physical(name, dim)
-        self._mesh._log(
-            f"set_recombine_by_physical(name={name!r}, dim={dim}, tags={tags})"
+        """Deprecated.  ``set_recombine`` accepts a PG name directly."""
+        import warnings
+        warnings.warn(
+            "set_recombine_by_physical is deprecated; pass the "
+            "physical-group name to set_recombine() as tag.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        for t in tags:
-            self.set_recombine(t, dim=dim, angle=angle)
-        return self
+        return self.set_recombine(name, dim=dim, angle=angle)
 
     # ------------------------------------------------------------------
     # Smoothing
@@ -231,31 +243,46 @@ class _Structured:
         *,
         dim : int = 2,
     ) -> "_Structured":
-        """Apply :meth:`set_smoothing` to every entity in a physical group."""
-        tags = self._mesh._resolve_physical(name, dim)
-        self._mesh._log(
-            f"set_smoothing_by_physical(name={name!r}, dim={dim}, "
-            f"tags={tags}, val={val})"
+        """Deprecated.  ``set_smoothing`` accepts a PG name directly."""
+        import warnings
+        warnings.warn(
+            "set_smoothing_by_physical is deprecated; pass the "
+            "physical-group name to set_smoothing() as tag.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        for t in tags:
-            self.set_smoothing(t, val, dim=dim)
-        return self
+        return self.set_smoothing(name, val, dim=dim)
 
     # ------------------------------------------------------------------
     # Compound + constraint removal
     # ------------------------------------------------------------------
 
-    def set_compound(self, dim: int, tags: list[int]) -> "_Structured":
-        """Merge entities so they are meshed together as a single compound."""
-        gmsh.model.mesh.setCompound(dim, tags)
-        self._mesh._log(f"set_compound(dim={dim}, tags={tags})")
+    def set_compound(self, dim: int, tags) -> "_Structured":
+        """Merge entities so they are meshed together as a single compound.
+
+        ``tags`` accepts an int / label / PG name / list mixing those.
+        Bare ints are interpreted at *dim*.
+        """
+        from apeGmsh.core._helpers import resolve_to_tags
+        resolved = resolve_to_tags(tags, dim=dim, session=self._mesh._parent)
+        gmsh.model.mesh.setCompound(dim, resolved)
+        self._mesh._log(f"set_compound(dim={dim}, tags={resolved})")
         return self
 
-    def remove_constraints(
-        self,
-        dim_tags: list[DimTag] | None = None,
-    ) -> "_Structured":
-        """Remove all meshing constraints from the given (or all) entities."""
-        gmsh.model.mesh.removeConstraints(dimTags=dim_tags or [])
-        self._mesh._log("remove_constraints()")
+    def remove_constraints(self, dim_tags=None) -> "_Structured":
+        """Remove all meshing constraints from the given (or all) entities.
+
+        ``dim_tags`` accepts any flexible-ref form (int, label/PG name,
+        ``(dim, tag)``, or list thereof).  ``None`` clears every
+        entity in the model.
+        """
+        if dim_tags is None:
+            dts: list[DimTag] = []
+        else:
+            from apeGmsh.core._helpers import resolve_to_dimtags
+            dts = resolve_to_dimtags(
+                dim_tags, default_dim=3, session=self._mesh._parent,
+            )
+        gmsh.model.mesh.removeConstraints(dimTags=dts)
+        self._mesh._log(f"remove_constraints(dim_tags={dim_tags})")
         return self
