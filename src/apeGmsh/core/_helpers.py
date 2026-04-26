@@ -286,6 +286,46 @@ def _resolve_string_to_dimtags(
     )
 
 
+def resolve_to_single_dimtag(
+    ref,
+    *,
+    default_dim: int,
+    session: "_SessionBase",
+    what: str = "entity",
+) -> DimTag:
+    """Resolve a flexible ref expected to identify a single entity.
+
+    Wraps :func:`resolve_to_dimtags` and enforces a single-hit
+    resolution.  Raises ``ValueError`` with a clear, actionable
+    message when the ref resolves to zero or multiple dimtags.
+
+    Parameters
+    ----------
+    ref : int, str, (dim, tag), or list — same shapes as
+        :func:`resolve_to_dimtags`.
+    default_dim : fallback dim for bare-int refs.
+    session : the active session (for label/PG lookup).
+    what : human-readable noun for error messages, e.g. ``"surface"``,
+        ``"cutting plane"``, ``"volume"``.
+
+    Returns
+    -------
+    (dim, tag) — exactly one dimtag.
+    """
+    dimtags = resolve_to_dimtags(ref, default_dim=default_dim, session=session)
+    if not dimtags:
+        raise ValueError(
+            f"Could not resolve {what} from {ref!r} — no entities found."
+        )
+    if len(dimtags) > 1:
+        raise ValueError(
+            f"Ambiguous {what} reference {ref!r} — resolved to "
+            f"{len(dimtags)} entities {dimtags}. Pass an explicit "
+            f"(dim, tag) tuple or a label that identifies a single entity."
+        )
+    return dimtags[0]
+
+
 def _is_dimtag_tuple(val) -> bool:
     """True if *val* looks like a ``(dim, tag)`` pair."""
     return (

@@ -6,7 +6,7 @@ import gmsh
 import numpy as np
 from numpy import ndarray
 
-from ._helpers import Tag
+from ._helpers import DimTag, Tag
 from .Labels import pg_preserved, cleanup_label_pgs
 
 if TYPE_CHECKING:
@@ -1396,7 +1396,7 @@ class _Geometry:
     def cut_by_surface(
         self,
         solid          : Tag | str | list[Tag | str] | None,
-        surface        : Tag | str,
+        surface,
         *,
         keep_surface   : bool = True,
         remove_original: bool = True,
@@ -1418,11 +1418,12 @@ class _Geometry:
         solid : Tag, list[Tag], or None
             Volume(s) to cut.  When ``None``, every registered volume
             in the model is cut against the surface.
-        surface : Tag or str
+        surface : Tag, str, or (2, tag)
             The cutting surface.  Can be any registered 2-D entity —
             a plane from :meth:`add_cutting_plane`, a STEP-imported
-            trimmed surface, a Coons patch, etc.  A string is resolved
-            against the labels composite at dim=2.
+            trimmed surface, a Coons patch, etc.  Accepts a raw tag,
+            a label or PG name, or an explicit ``(2, tag)`` tuple.
+            Must resolve to exactly one surface.
         keep_surface : bool, default True
             Leave the (now-trimmed) surface in the model after the
             cut.  Useful when you want to mesh the cut interface as a
@@ -1457,26 +1458,24 @@ class _Geometry:
         """
         solid_tags = self._normalize_solid_input(solid, self._collect_volume_tags)
 
-        # Resolve a string surface ref via the labels composite —
-        # mirrors the flexible-ref behaviour on the ``solid`` side so
-        # ``cut_by_surface('box', 'cutter')`` works after add_cutting_plane(label=...).
-        if isinstance(surface, str):
-            labels_comp = getattr(self._model._parent, 'labels', None)
-            if labels_comp is None:
-                raise ValueError(
-                    f"surface={surface!r} is a string but no labels "
-                    f"composite is available to resolve it"
-                )
-            surface_tags = labels_comp.entities(surface, dim=2)
-            if not surface_tags:
-                raise ValueError(
-                    f"label {surface!r} resolved to no dim=2 entities"
-                )
-        else:
-            surface_tags = [int(surface)]
+        # Sync before resolving: the dim auto-detector queries
+        # gmsh.model.getEntities, which only sees synced OCC state.
+        # Without this, an unsynced surface tag can be misread as a
+        # stale curve sharing the same numeric tag value.
+        from ._helpers import resolve_to_single_dimtag
+        gmsh.model.occ.synchronize()
+        surf_dim, surf_tag = resolve_to_single_dimtag(
+            surface, default_dim=2, session=self._model._parent,
+            what="cutting surface",
+        )
+        if surf_dim != 2:
+            raise ValueError(
+                f"cut_by_surface: surface ref {surface!r} resolved to "
+                f"dim={surf_dim} (tag {surf_tag}); expected a 2-D entity."
+            )
 
         obj_dt = [(3, int(t)) for t in solid_tags]
-        tool_dt = [(2, int(t)) for t in surface_tags]
+        tool_dt = [(2, int(surf_tag))]
 
         # Collect the original labels BEFORE the boolean so we can
         # propagate them to fragments afterwards.
@@ -1526,7 +1525,7 @@ class _Geometry:
                     self._model._register(2, t, None, 'cut_interface')
 
         self._model._log(
-            f"cut_by_surface(solids={solid_tags}, surface={surface_tags}) "
+            f"cut_by_surface(solids={solid_tags}, surface={int(surf_tag)}) "
             f"-> {len(new_volume_tags)} volume fragment(s): {new_volume_tags}"
         )
         return new_volume_tags
@@ -1534,7 +1533,7 @@ class _Geometry:
     def cut_by_plane(
         self,
         solid          : Tag | str | list[Tag | str] | None,
-        plane          : Tag,
+        plane,
         *,
         keep_plane     : bool = True,
         remove_original: bool = True,
@@ -1563,7 +1562,9 @@ class _Geometry:
         solid : Tag, list[Tag], or None
             Volume(s) to cut.  ``None`` = every registered volume.
         plane : Tag
-            Planar surface to cut with.  Ideally built by
+            Planar surface to cut with.  Accepts a raw tag, a label
+            or PG name, or an explicit ``(2, tag)`` tuple — must
+            resolve to exactly one 2-D entity.  Ideally built by
             :meth:`add_cutting_plane` so its normal and point are in
             the registry; other planar surfaces work too but require
             an explicit ``above_direction`` or fall back to querying
@@ -1601,7 +1602,22 @@ class _Geometry:
                 label_above="col_upper", label_below="col_lower",
             )
         """
-        plane_tag = int(plane)
+        # Sync before resolving: the dim auto-detector queries
+        # gmsh.model.getEntities, which only sees synced OCC state.
+        # Without this, an unsynced plane tag can be misread as a
+        # stale curve sharing the same numeric tag value.
+        from ._helpers import resolve_to_single_dimtag
+        gmsh.model.occ.synchronize()
+        plane_dim, plane_tag = resolve_to_single_dimtag(
+            plane, default_dim=2, session=self._model._parent,
+            what="cutting plane",
+        )
+        if plane_dim != 2:
+            raise ValueError(
+                f"cut_by_plane: plane ref {plane!r} resolved to "
+                f"dim={plane_dim} (tag {plane_tag}); expected a 2-D entity."
+            )
+        plane_tag = int(plane_tag)
         normal, point = self._resolve_plane_normal(
             plane_tag, above_direction,
         )
@@ -1873,9 +1889,13 @@ class _Geometry:
             axis, offset=offset, sync=False,
         )
 
+        # add_axis_cutting_plane just produced a 2-D surface but didn't
+        # synchronise — pass an explicit (2, plane_tag) dimtag so the
+        # downstream resolve_dim() doesn't need to query getEntities(2).
+        plane_dt: DimTag = (2, plane_tag)
         if classify:
             above, below = self.cut_by_plane(
-                solid, plane_tag,
+                solid, plane_dt,
                 keep_plane=False,
                 label_above=label,
                 label_below=label,
@@ -1884,7 +1904,7 @@ class _Geometry:
             result: list[Tag] | tuple[list[Tag], list[Tag]] = (above, below)
         else:
             fragments = self.cut_by_surface(
-                solid, plane_tag,
+                solid, plane_dt,
                 keep_surface=False,
                 label=label,
                 sync=False,
