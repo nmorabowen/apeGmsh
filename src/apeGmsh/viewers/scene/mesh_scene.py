@@ -33,17 +33,19 @@ from .glyph_points import build_node_cloud
 # ======================================================================
 
 GMSH_TO_VTK: dict[int, int] = {
-    1:  3,    # 2-node line          -> VTK_LINE
-    2:  5,    # 3-node triangle      -> VTK_TRIANGLE
-    3:  9,    # 4-node quad          -> VTK_QUAD
-    4:  10,   # 4-node tet           -> VTK_TETRA
-    5:  12,   # 8-node hex           -> VTK_HEXAHEDRON
-    6:  13,   # 6-node prism         -> VTK_WEDGE
-    7:  14,   # 5-node pyramid       -> VTK_PYRAMID
-    8:  21,   # 6-node tri (2nd)     -> VTK_QUADRATIC_TRIANGLE
-    9:  23,   # 8-node quad (2nd)    -> VTK_QUADRATIC_QUAD
-    11: 24,   # 10-node tet (2nd)    -> VTK_QUADRATIC_TETRA
-    15: 1,    # 1-node point         -> VTK_VERTEX
+    1:  3,    # 2-node line                    -> VTK_LINE
+    2:  5,    # 3-node triangle                -> VTK_TRIANGLE
+    3:  9,    # 4-node quad                    -> VTK_QUAD
+    4:  10,   # 4-node tet                     -> VTK_TETRA
+    5:  12,   # 8-node hex                     -> VTK_HEXAHEDRON
+    6:  13,   # 6-node prism                   -> VTK_WEDGE
+    7:  14,   # 5-node pyramid                 -> VTK_PYRAMID
+    8:  21,   # 3-node line (2nd)              -> VTK_QUADRATIC_EDGE
+    9:  22,   # 6-node tri (2nd)               -> VTK_QUADRATIC_TRIANGLE
+    10: 28,   # 9-node quad (2nd, complete)    -> VTK_BIQUADRATIC_QUAD
+    11: 24,   # 10-node tet (2nd)              -> VTK_QUADRATIC_TETRA
+    16: 23,   # 8-node quad (2nd, serendipity) -> VTK_QUADRATIC_QUAD
+    15: 1,    # 1-node point                   -> VTK_VERTEX
 }
 
 # Element type name -> color palette key
@@ -112,7 +114,7 @@ class MeshSceneData:
     elem_to_brep: dict[int, DimTag] = field(default_factory=dict)
     brep_to_elems: dict[DimTag, list[int]] = field(default_factory=dict)
     brep_dominant_type: dict[DimTag, str] = field(default_factory=dict)
-    batch_cell_to_elem: dict[int, dict[int, int]] = field(default_factory=dict)
+    batch_cell_to_elem: dict[int, np.ndarray] = field(default_factory=dict)
 
     # Node cloud
     node_cloud: pv.PolyData | None = None
@@ -122,6 +124,11 @@ class MeshSceneData:
     # Physical group mappings
     group_to_breps: dict[str, list[DimTag]] = field(default_factory=dict)
     brep_to_group: dict[DimTag, str] = field(default_factory=dict)
+
+    # Lazy element-quality cache: quality[metric][dim] -> per-cell array
+    # aligned with the cell ordering of dim_meshes[dim]. Populated on
+    # first request via gmsh.model.mesh.getElementQualities.
+    quality: dict[str, dict[int, np.ndarray]] = field(default_factory=dict)
 
 
 # ======================================================================
@@ -304,7 +311,7 @@ def build_mesh_scene(
     elem_to_brep: dict[int, DimTag] = {}
     brep_to_elems: dict[DimTag, list[int]] = {}
     brep_dominant_type: dict[DimTag, str] = {}
-    batch_cell_to_elem: dict[int, dict[int, int]] = {}
+    batch_cell_to_elem: dict[int, np.ndarray] = {}
 
     # ── build batched actors per dim ────────────────────────────────
     t_actors = time.perf_counter()
@@ -403,9 +410,7 @@ def build_mesh_scene(
             dim, grid, actor, cell_to_dt, centroids_dim,
             add_mesh_kwargs=dim_kwargs,
         )
-        batch_cell_to_elem[dim] = {
-            i: etag for i, etag in enumerate(all_elem_tags_flat)
-        }
+        batch_cell_to_elem[dim] = np.asarray(all_elem_tags_flat, dtype=np.int64)
         n_actors += 1
 
     plotter.reset_camera()  # type: ignore[call-arg]  # pyvista stub quirk

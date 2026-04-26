@@ -128,32 +128,88 @@ class _Sizing:
         tags,
         size: float,
         *,
-        dim : int = 0,
+        dim : int | None = None,
     ) -> "_Sizing":
         """
-        Assign a target element size to specific points.
+        Assign a target element size by walking to the entity's points.
 
-        ``tags`` accepts int, str (label/PG), (dim, tag), or a list.
+        Gmsh's ``setSize`` only honours characteristic lengths on
+        points (dim=0).  This method accepts any reference shape and
+        recursively walks higher-dimensional entities down to their
+        BRep points before applying the size — so passing a volume
+        label, surface PG, or ``(3, vol_tag)`` dimtag does what you
+        expect.
+
+        Parameters
+        ----------
+        tags : int, str, (dim, tag), or list of those
+            Entity reference.  Strings resolve via labels first, then
+            physical groups, at the entity's native dimension.
+        size : float
+            Target characteristic length on the resolved points.
+        dim : int, optional
+            Disambiguation hint.  Used only when the input is a raw
+            int tag or when a label exists at multiple dimensions.
+            Leave as ``None`` (default) for label/PG/dimtag inputs.
 
         Example
         -------
         ::
 
+            # Per-volume sizing by label (auto-walks to corner points)
+            g.mesh.sizing.set_size("box",   1.0)
+            g.mesh.sizing.set_size("box_2", 0.3)
+
+            # Direct point list still works
             g.mesh.sizing.set_size([p1, p2, p3], 0.05)
-            g.mesh.sizing.set_size("col.start_face", 10, dim=0)
+
+            # Dimtag form for an explicit volume
+            g.mesh.sizing.set_size([(3, vol_tag)], 10.0)
         """
-        if isinstance(tags, str):
-            from apeGmsh.core._helpers import resolve_to_tags
-            resolved = resolve_to_tags(tags, dim=dim, session=self._mesh._parent)
-            dimtags = [(dim, t) for t in resolved]
-        else:
-            dimtags = self._mesh._as_dimtags(tags, dim)
-        gmsh.model.mesh.setSize(dimtags, size)
+        from apeGmsh.core._helpers import resolve_to_dimtags
+
+        # Resolve to dimtags at native dim (label/PG aware).
+        # `dim` falls back to 0 only as the raw-int default to
+        # preserve the historical "bare ints are points" behaviour.
+        default_dim = 0 if dim is None else dim
+        dimtags = resolve_to_dimtags(
+            tags, default_dim=default_dim, session=self._mesh._parent,
+        )
+
+        # Walk any non-point entity to its boundary points.
+        point_dimtags: list[tuple[int, int]] = []
+        seen: set[int] = set()
+        for d, t in dimtags:
+            if d == 0:
+                if t not in seen:
+                    seen.add(t)
+                    point_dimtags.append((0, t))
+                continue
+            boundary = gmsh.model.getBoundary(
+                [(d, t)], combined=False, oriented=False, recursive=True,
+            )
+            for _, pt in boundary:
+                pt = abs(int(pt))
+                if pt not in seen:
+                    seen.add(pt)
+                    point_dimtags.append((0, pt))
+
+        if not point_dimtags:
+            raise ValueError(
+                f"set_size: no points resolved from {tags!r} "
+                f"(dimtags={dimtags}). Cannot apply characteristic length."
+            )
+
+        gmsh.model.mesh.setSize(point_dimtags, size)
         self._mesh._directives.append({
-            'kind': 'set_size', 'dim': dim,
-            'tags': [t for _, t in dimtags], 'size': size,
+            'kind': 'set_size', 'dim': 0,
+            'tags': [t for _, t in point_dimtags], 'size': size,
+            'source_ref': repr(tags),
         })
-        self._mesh._log(f"set_size(dim={dim}, size={size})")
+        self._mesh._log(
+            f"set_size(ref={tags!r}, size={size}, "
+            f"n_points={len(point_dimtags)})"
+        )
         return self
 
     def set_size_all_points(self, size: float) -> "_Sizing":
@@ -205,20 +261,35 @@ class _Sizing:
         name : str,
         size : float,
         *,
-        dim  : int = 0,
+        dim  : int | None = None,
     ) -> "_Sizing":
         """
         Apply :meth:`set_size` to every entity in a physical group.
 
-        Only effective for ``dim=0`` (points) — Gmsh ignores
-        characteristic lengths set on higher-dimensional entities.
-        For surface or volume size control prefer a mesh field
-        (``g.mesh.field``).
+        Resolves the PG (optionally restricted to ``dim``), then
+        delegates to :meth:`set_size`, which walks higher-dimensional
+        entities down to their boundary points automatically.
+
+        Parameters
+        ----------
+        name : physical-group name.
+        size : target characteristic length.
+        dim  : optional dimension filter; ``None`` resolves at the
+               PG's native dim.
         """
-        tags = self._mesh._resolve_physical(name, dim)
-        self._mesh._log(
-            f"set_size_by_physical(name={name!r}, dim={dim}, "
-            f"tags={tags}, size={size})"
-        )
-        self.set_size(tags, size, dim=dim)
+        # If dim is given, restrict resolution; otherwise let set_size
+        # auto-resolve via the string path (label-then-PG).
+        if dim is not None:
+            tags = self._mesh._resolve_physical(name, dim)
+            dimtags = [(dim, t) for t in tags]
+            self._mesh._log(
+                f"set_size_by_physical(name={name!r}, dim={dim}, "
+                f"tags={tags}, size={size})"
+            )
+            self.set_size(dimtags, size)
+        else:
+            self._mesh._log(
+                f"set_size_by_physical(name={name!r}, size={size})"
+            )
+            self.set_size(name, size)
         return self

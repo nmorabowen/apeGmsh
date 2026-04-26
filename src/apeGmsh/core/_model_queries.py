@@ -12,6 +12,7 @@ from .Labels import (
     cleanup_label_pgs,
     reconcile_label_pgs,
 )
+from ._selection import Selection, _select_impl, Plane, Line
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -279,12 +280,19 @@ class _Queries:
 
     def bounding_box(
         self,
-        tag: Tag,
+        tag,
         *,
         dim: int = 3,
     ) -> tuple[float, float, float, float, float, float]:
         """
         Return the axis-aligned bounding box of an entity.
+
+        ``tag`` accepts an int, a label, a PG name, or a ``(dim, tag)``
+        tuple.  Must resolve to exactly one entity.  When ``tag`` is a
+        bare int, ``dim`` is honoured as an explicit dimension hint
+        (no live-model lookup) — important because Gmsh tag spaces are
+        per-dimension, so the same int can refer to different entities
+        at different dims.
 
         Returns
         -------
@@ -292,30 +300,46 @@ class _Queries:
 
         Example
         -------
-        ``xmin, ymin, zmin, xmax, ymax, zmax = g.model.queries.bounding_box(vol)``
+        ``xmin, ymin, zmin, xmax, ymax, zmax = g.model.queries.bounding_box("box")``
         """
-        d = self._model._resolve_dim(tag, dim)
-        return gmsh.model.getBoundingBox(d, tag)
+        if isinstance(tag, int) and not isinstance(tag, bool):
+            return gmsh.model.getBoundingBox(dim, tag)
+        from ._helpers import resolve_to_single_dimtag
+        d, t = resolve_to_single_dimtag(
+            tag, default_dim=dim, session=self._model._parent,
+            what="bounding_box target",
+        )
+        return gmsh.model.getBoundingBox(d, t)
 
     def center_of_mass(
         self,
-        tag: Tag,
+        tag,
         *,
         dim: int = 3,
     ) -> tuple[float, float, float]:
         """
         Return the center of mass of an entity.
 
+        ``tag`` accepts an int, a label, a PG name, or a ``(dim, tag)``
+        tuple.  Must resolve to exactly one entity.  Bare ints are
+        interpreted at ``dim`` directly (no live-model lookup).
+
         Example
         -------
-        ``cx, cy, cz = g.model.queries.center_of_mass(vol)``
+        ``cx, cy, cz = g.model.queries.center_of_mass("box")``
         """
-        d = self._model._resolve_dim(tag, dim)
-        return gmsh.model.occ.getCenterOfMass(d, tag)
+        if isinstance(tag, int) and not isinstance(tag, bool):
+            return gmsh.model.occ.getCenterOfMass(dim, tag)
+        from ._helpers import resolve_to_single_dimtag
+        d, t = resolve_to_single_dimtag(
+            tag, default_dim=dim, session=self._model._parent,
+            what="center_of_mass target",
+        )
+        return gmsh.model.occ.getCenterOfMass(d, t)
 
     def mass(
         self,
-        tag: Tag,
+        tag,
         *,
         dim: int = 3,
     ) -> float:
@@ -323,12 +347,22 @@ class _Queries:
         Return the mass (volume for 3D, area for 2D, length for 1D)
         of an entity.
 
+        ``tag`` accepts an int, a label, a PG name, or a ``(dim, tag)``
+        tuple.  Must resolve to exactly one entity.  Bare ints are
+        interpreted at ``dim`` directly (no live-model lookup).
+
         Example
         -------
-        ``vol = g.model.queries.mass(solid_tag)``
+        ``vol = g.model.queries.mass("box")``
         """
-        d = self._model._resolve_dim(tag, dim)
-        return gmsh.model.occ.getMass(d, tag)
+        if isinstance(tag, int) and not isinstance(tag, bool):
+            return gmsh.model.occ.getMass(dim, tag)
+        from ._helpers import resolve_to_single_dimtag
+        d, t = resolve_to_single_dimtag(
+            tag, default_dim=dim, session=self._model._parent,
+            what="mass target",
+        )
+        return gmsh.model.occ.getMass(d, t)
 
     def boundary(
         self,
@@ -368,6 +402,76 @@ class _Queries:
             oriented=oriented,
             recursive=recursive,
         )
+
+    def _resolve_to_dimtags(self, tag) -> list[DimTag]:
+        """Resolve int / label / PG / dimtag (or list of) to dimtags."""
+        if isinstance(tag, str):
+            from ._helpers import _resolve_string_to_dimtags
+            return _resolve_string_to_dimtags(
+                tag, default_dim=3, session=self._model._parent,
+            )
+        return self._model._as_dimtags(tag)
+
+    def boundary_curves(self, tag) -> list[DimTag]:
+        """
+        Return all unique curves (dim = 1) on the boundary of an entity.
+
+        Wraps the two-step query needed to get a volume's edges:
+        ``boundary(vol)`` skips straight to vertices when ``recursive=True``,
+        so the correct pattern is to fetch faces first, then walk each face's
+        boundary individually with ``combined=False`` (so shared edges are not
+        cancelled), and deduplicate the result.
+
+        Parameters
+        ----------
+        tag : int, label, PG name, ``(dim, tag)`` tuple, or list thereof.
+
+        Returns
+        -------
+        list[DimTag]
+            ``(1, curve_tag)`` pairs, deduplicated.
+
+        Example
+        -------
+        ::
+
+            edges = g.model.queries.boundary_curves('box')   # 12 edges
+            edges = g.model.queries.boundary_curves(surf)    # 4 edges of a face
+        """
+        owners = self._resolve_to_dimtags(tag)
+        # If the entities are already curves, return them deduplicated.
+        if all(d == 1 for d, _ in owners):
+            return list(dict.fromkeys(owners))
+        # Surfaces → walk one more level with combined=False to keep shared edges.
+        if all(d == 2 for d, _ in owners):
+            return list(dict.fromkeys(
+                self.boundary(owners, combined=False, oriented=False)
+            ))
+        # Volumes (or mixed): faces first, then their individual boundaries.
+        faces = self.boundary(owners, oriented=False)
+        return list(dict.fromkeys(
+            self.boundary(faces, combined=False, oriented=False)
+        ))
+
+    def boundary_points(self, tag) -> list[DimTag]:
+        """
+        Return all unique points (dim = 0) on the boundary of an entity.
+
+        Equivalent to ``boundary(tag, recursive=True)`` for volumes —
+        Gmsh's recursive walk goes straight to dim=0 — but provided as a
+        named alias for symmetry with ``boundary_curves``.
+
+        Example
+        -------
+        ::
+
+            corners = g.model.queries.boundary_points('box')   # 8 corners
+        """
+        owners = self._resolve_to_dimtags(tag)
+        return list(dict.fromkeys(
+            dt for dt in self.boundary(owners, oriented=False, recursive=True)
+            if dt[0] == 0
+        ))
 
     def adjacencies(
         self,
@@ -429,6 +533,178 @@ class _Queries:
         return gmsh.model.getEntitiesInBoundingBox(
             xmin, ymin, zmin, xmax, ymax, zmax, dim,
         )
+
+    # ------------------------------------------------------------------
+    # Geometric primitives — factories so users never need to import
+    # ------------------------------------------------------------------
+
+    def plane(self, *args, **kwargs) -> Plane:
+        """
+        Construct a :class:`Plane` for use with ``select(on=...)`` /
+        ``select(crossing=...)`` (or any future API that accepts a plane).
+
+        Forms accepted
+        --------------
+        ``plane(z=0)`` / ``plane(x=5)``
+            Axis-aligned plane.
+        ``plane(p1, p2, p3)``
+            Plane through three non-collinear points.
+        ``plane(normal=(0, 0, 1), through=(0, 0, 5))``
+            Direct construction from a normal and an anchor point.
+
+        Example
+        -------
+        ::
+
+            mid = m.model.queries.plane(z=2.5)
+            faces_cut = m.model.queries.select(faces, crossing=mid)
+            below     = m.model.queries.select(faces, not_crossing=mid)
+        """
+        if args and not kwargs:
+            if len(args) == 3:
+                return Plane.through(*args)
+            raise ValueError(
+                "plane(*args) needs 3 points; got "
+                f"{len(args)}.  Did you mean plane(z=0)?"
+            )
+        if kwargs and not args:
+            if 'normal' in kwargs and 'through' in kwargs:
+                import numpy as _np
+                n = _np.asarray(kwargs['normal'], dtype=float)
+                n = n / _np.linalg.norm(n)
+                a = _np.asarray(kwargs['through'], dtype=float)
+                return Plane(normal=n, anchor=a)
+            return Plane.at(**kwargs)
+        raise ValueError(
+            "plane() takes either an axis kwarg (z=0), 3 positional points, "
+            "or normal=/through= kwargs."
+        )
+
+    def line(self, p1, p2) -> Line:
+        """
+        Construct a :class:`Line` for use with ``select(on=...)`` /
+        ``select(crossing=...)``.
+
+        Example
+        -------
+        ::
+
+            mid_line = m.model.queries.line((0, 5, 0), (5, 5, 0))
+            crossing = m.model.queries.select(curves, crossing=mid_line)
+        """
+        return Line.through(p1, p2)
+
+    # ------------------------------------------------------------------
+    # Geometric selection
+    # ------------------------------------------------------------------
+
+    def select(
+        self,
+        tags: "TagsLike | Selection | str",
+        *,
+        dim: int | None = None,
+        on=None,
+        crossing=None,
+        not_on=None,
+        not_crossing=None,
+        tol: float = 1e-6,
+    ) -> Selection:
+        """
+        Filter entities by a geometric predicate.
+
+        Parameters
+        ----------
+        tags :
+            A dimtag list, a ``Selection``, or anything accepted by
+            ``boundary()`` — e.g. a label string or bare integer with ``dim``.
+        on :
+            Keep entities that lie **entirely on** the primitive
+            (all bounding-box corners within ``tol``).
+        crossing :
+            Keep entities that **straddle** the primitive
+            (bounding-box corners on both sides).
+        not_on :
+            Keep entities that **do not** lie on the primitive (negation
+            of ``on``).  Useful for "all faces except the bottom".
+        not_crossing :
+            Keep entities that **do not** straddle the primitive (negation
+            of ``crossing``).  Selects entities entirely on one side.
+        tol :
+            Distance tolerance. Default ``1e-6``.
+
+        Primitive formats — no imports needed
+        --------------------------------------
+        ``{'z': 0}``
+            Axis-aligned plane z = 0.
+        ``{'x': 5}``
+            Axis-aligned plane x = 5.
+        ``[(x1,y1,z1), (x2,y2,z2)]``
+            Infinite line through 2 points  (use for curves in 2-D).
+        ``[(x1,y1,z1), (x2,y2,z2), (x3,y3,z3)]``
+            Infinite plane through 3 points (use for surfaces / volumes).
+
+        Returns
+        -------
+        Selection
+            A list subclass of ``(dim, tag)`` pairs. Call ``.select()``
+            on it to filter further, or ``.tags()`` for bare integers.
+
+        Examples
+        --------
+        ::
+
+            surf   = m.model.geometry.add_rectangle(0, 0, 0, 5, 10)
+            curves = m.model.queries.boundary(surf, dim=2, oriented=False)
+
+            # by axis-aligned plane
+            bottom = m.model.queries.select(curves, on={'y': 0})
+            left   = m.model.queries.select(curves, on={'x': 0})
+
+            # by arbitrary line (2 points)
+            mid    = m.model.queries.select(curves, crossing=[(0,5,0),(5,5,0)])
+
+            # by arbitrary plane (3 points) on surfaces
+            faces  = m.model.queries.boundary('box', dim=3, oriented=False)
+            bottom_face = m.model.queries.select(faces, on={'z': 0})
+            cut_faces   = m.model.queries.select(faces,
+                              crossing=[(0,0,2),(5,0,2),(0,5,2)])
+
+            # stack: curves on z=0 AND crossing x=2.5
+            result = (m.model.queries
+                          .select(curves, on={'z': 0})
+                          .select(crossing={'x': 2.5}))
+
+            # bare tags for downstream calls
+            m.mesh.structured.set_transfinite_curve(bottom.tags(), n=11)
+        """
+        # Normalise input to list of dimtags
+        if isinstance(tags, Selection):
+            dimtags = list(tags)
+        elif isinstance(tags, str):
+            # Resolve a label or PG name, then walk down to *dim* if requested.
+            from ._helpers import _resolve_string_to_dimtags
+            owners = _resolve_string_to_dimtags(
+                tags, default_dim=dim or 3, session=self._model._parent,
+            )
+            if dim is None or all(d == dim for d, _ in owners):
+                dimtags = owners
+            elif dim == 0:
+                dimtags = self.boundary_points(owners)
+            elif dim == 1:
+                dimtags = self.boundary_curves(owners)
+            elif dim == 2:
+                # 3-D owners → faces (single-step boundary).
+                dimtags = list(dict.fromkeys(
+                    self.boundary(owners, oriented=False)
+                ))
+            else:
+                dimtags = owners
+        else:
+            dimtags = self._model._as_dimtags(tags)
+
+        return _select_impl(dimtags, on=on, crossing=crossing,
+                            not_on=not_on, not_crossing=not_crossing,
+                            tol=tol, _queries=self)
 
     # ------------------------------------------------------------------
     # Registry

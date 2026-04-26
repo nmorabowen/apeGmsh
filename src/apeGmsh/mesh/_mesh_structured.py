@@ -30,11 +30,14 @@ class _Structured:
     # ------------------------------------------------------------------
 
     def _resolve(self, tag, dim: int) -> list[int]:
-        """Resolve a tag/label/PG ref to concrete tags."""
+        """Resolve a flexible ref (int, str, dim-tag, or list) to tags.
+
+        Delegates to the central :func:`resolve_to_tags` helper so all
+        structured methods accept the same ref shapes used elsewhere in
+        the API.
+        """
         from apeGmsh.core._helpers import resolve_to_tags
-        if isinstance(tag, str):
-            return resolve_to_tags(tag, dim=dim, session=self._mesh._parent)
-        return [int(tag)]
+        return resolve_to_tags(tag, dim=dim, session=self._mesh._parent)
 
     def set_transfinite_curve(
         self,
@@ -138,6 +141,82 @@ class _Structured:
         )
         return self
 
+    def set_transfinite_box(
+        self,
+        vol,
+        *,
+        size: float | None = None,
+        n   : int | None   = None,
+        recombine: bool    = True,
+    ) -> "_Structured":
+        """
+        Apply transfinite + recombine constraints to a clean 6-face hex
+        volume — captures the full unstructured-to-hex setup in one call.
+
+        Walks the volume's bounding curves and assigns a node count
+        per edge, marks every bounding surface as transfinite (and
+        recombined to quads if ``recombine=True``), then marks the
+        volume as transfinite.
+
+        Parameters
+        ----------
+        vol :
+            int tag, label string, PG name, or ``(3, tag)`` tuple.
+        size :
+            Target element size — node count per edge is
+            ``round(length / size) + 1``.
+        n :
+            Uniform node count on every edge (overrides ``size``).
+        recombine :
+            Recombine each face to quads.  Default True (gives a hex mesh).
+            Set False for a transfinite tet mesh.
+
+        Notes
+        -----
+        Requires the volume to be hex-decomposable — exactly 6 faces,
+        each a 4-sided patch.  After ``fragment()`` operations, volumes
+        may end up with split faces and stop being transfinite-compatible;
+        in that case use ``set_transfinite_automatic()`` instead.
+
+        Example
+        -------
+        ::
+
+            m.mesh.structured.set_transfinite_box('box', size=0.5)
+            m.mesh.structured.set_transfinite_box(vol_tag, n=11)
+        """
+        if (size is None) == (n is None):
+            raise ValueError("Pass exactly one of size= or n=.")
+
+        # Resolve volume → list of dim=3 tags
+        tags = self._resolve(vol, dim=3)
+
+        for vtag in tags:
+            edges = self._mesh._parent.model.queries.boundary_curves(vtag)
+            faces = self._mesh._parent.model.queries.boundary(vtag, oriented=False)
+
+            for _, ctag in edges:
+                if n is not None:
+                    n_edge = n
+                else:
+                    bb = self._mesh._parent.model.queries.bounding_box(ctag, dim=1)
+                    L  = max(bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2])
+                    n_edge = max(2, round(L / size) + 1)
+                self.set_transfinite_curve(ctag, n_edge)
+
+            for _, stag in faces:
+                self.set_transfinite_surface(stag)
+                if recombine:
+                    self.set_recombine(stag, dim=2)
+
+            self.set_transfinite_volume(vtag)
+
+        self._mesh._log(
+            f"set_transfinite_box(vol={vol!r}, size={size}, n={n}, "
+            f"recombine={recombine}) — applied to {len(tags)} volume(s)"
+        )
+        return self
+
     def set_transfinite_by_physical(
         self,
         name : str,
@@ -146,27 +225,38 @@ class _Structured:
         **kwargs,
     ) -> "_Structured":
         """
-        Apply the appropriate ``set_transfinite_*`` call to every
-        entity in a physical group.
+        Deprecated.  ``set_transfinite_curve/surface/volume`` already
+        accept a label or physical-group name directly — pass it as
+        ``tag``.
+
+        Example
+        -------
+        ::
+
+            # old
+            g.mesh.structured.set_transfinite_by_physical("flange", dim=2,
+                                                          arrangement="Left")
+            # new
+            g.mesh.structured.set_transfinite_surface("flange",
+                                                      arrangement="Left")
         """
-        tags = self._mesh._resolve_physical(name, dim)
-        self._mesh._log(
-            f"set_transfinite_by_physical(name={name!r}, dim={dim}, tags={tags})"
+        import warnings
+        warnings.warn(
+            "set_transfinite_by_physical is deprecated; "
+            "set_transfinite_curve/surface/volume already accept a "
+            "physical-group name as tag.",
+            DeprecationWarning,
+            stacklevel=2,
         )
         if dim == 1:
-            for t in tags:
-                self.set_transfinite_curve(t, **kwargs)
-        elif dim == 2:
-            for t in tags:
-                self.set_transfinite_surface(t, **kwargs)
-        elif dim == 3:
-            for t in tags:
-                self.set_transfinite_volume(t, **kwargs)
-        else:
-            raise ValueError(
-                f"set_transfinite_by_physical: dim must be 1, 2, or 3, got {dim!r}"
-            )
-        return self
+            return self.set_transfinite_curve(name, **kwargs)
+        if dim == 2:
+            return self.set_transfinite_surface(name, **kwargs)
+        if dim == 3:
+            return self.set_transfinite_volume(name, **kwargs)
+        raise ValueError(
+            f"set_transfinite_by_physical: dim must be 1, 2, or 3, got {dim!r}"
+        )
 
     # ------------------------------------------------------------------
     # Recombination
@@ -201,14 +291,15 @@ class _Structured:
         dim  : int = 2,
         angle: float = 45.0,
     ) -> "_Structured":
-        """Apply :meth:`set_recombine` to every entity in a physical group."""
-        tags = self._mesh._resolve_physical(name, dim)
-        self._mesh._log(
-            f"set_recombine_by_physical(name={name!r}, dim={dim}, tags={tags})"
+        """Deprecated.  ``set_recombine`` accepts a PG name directly."""
+        import warnings
+        warnings.warn(
+            "set_recombine_by_physical is deprecated; pass the "
+            "physical-group name to set_recombine() as tag.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        for t in tags:
-            self.set_recombine(t, dim=dim, angle=angle)
-        return self
+        return self.set_recombine(name, dim=dim, angle=angle)
 
     # ------------------------------------------------------------------
     # Smoothing
@@ -231,31 +322,45 @@ class _Structured:
         *,
         dim : int = 2,
     ) -> "_Structured":
-        """Apply :meth:`set_smoothing` to every entity in a physical group."""
-        tags = self._mesh._resolve_physical(name, dim)
-        self._mesh._log(
-            f"set_smoothing_by_physical(name={name!r}, dim={dim}, "
-            f"tags={tags}, val={val})"
+        """Deprecated.  ``set_smoothing`` accepts a PG name directly."""
+        import warnings
+        warnings.warn(
+            "set_smoothing_by_physical is deprecated; pass the "
+            "physical-group name to set_smoothing() as tag.",
+            DeprecationWarning,
+            stacklevel=2,
         )
-        for t in tags:
-            self.set_smoothing(t, val, dim=dim)
-        return self
+        return self.set_smoothing(name, val, dim=dim)
 
     # ------------------------------------------------------------------
     # Compound + constraint removal
     # ------------------------------------------------------------------
 
-    def set_compound(self, dim: int, tags: list[int]) -> "_Structured":
-        """Merge entities so they are meshed together as a single compound."""
-        gmsh.model.mesh.setCompound(dim, tags)
-        self._mesh._log(f"set_compound(dim={dim}, tags={tags})")
+    def set_compound(self, dim: int, tags) -> "_Structured":
+        """Merge entities so they are meshed together as a single compound.
+
+        ``tags`` accepts int, label/PG name, ``(dim, tag)`` tuple, or a
+        list of any mix.
+        """
+        resolved = self._resolve(tags, dim=dim)
+        gmsh.model.mesh.setCompound(dim, resolved)
+        self._mesh._log(f"set_compound(dim={dim}, tags={resolved})")
         return self
 
-    def remove_constraints(
-        self,
-        dim_tags: list[DimTag] | None = None,
-    ) -> "_Structured":
-        """Remove all meshing constraints from the given (or all) entities."""
-        gmsh.model.mesh.removeConstraints(dimTags=dim_tags or [])
-        self._mesh._log("remove_constraints()")
+    def remove_constraints(self, dim_tags=None) -> "_Structured":
+        """Remove all meshing constraints from the given (or all) entities.
+
+        ``dim_tags`` accepts any flexible-ref form (int, label/PG name,
+        ``(dim, tag)``, or list thereof).  ``None`` clears every
+        entity in the model.
+        """
+        if dim_tags is None:
+            dts: list[DimTag] = []
+        else:
+            from apeGmsh.core._helpers import resolve_to_dimtags
+            dts = resolve_to_dimtags(
+                dim_tags, default_dim=3, session=self._mesh._parent,
+            )
+        gmsh.model.mesh.removeConstraints(dimTags=dts)
+        self._mesh._log(f"remove_constraints(dim_tags={dim_tags})")
         return self

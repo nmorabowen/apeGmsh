@@ -92,6 +92,21 @@ class VisibilityManager:
         self._reset_colors()
         self._fire()
 
+    def set_hidden(self, dts) -> None:
+        """Replace the hidden set with *dts* and rebuild affected dims.
+
+        Programmatic counterpart of hide/isolate/reveal_all — used by
+        the browser tab to express "the current hidden set is exactly
+        these entities", with no dependency on selection state.
+        """
+        new_hidden = {dt for dt in dts}
+        if new_hidden == self._hidden:
+            return
+        self._hidden = new_hidden
+        self._rebuild_actors()
+        self._reset_colors()
+        self._fire()
+
     def _reset_colors(self) -> None:
         """Reset all visible entity colors to idle, re-apply pick highlights."""
         self._color_mgr.reset_all_idle()

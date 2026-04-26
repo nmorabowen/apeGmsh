@@ -98,7 +98,10 @@ class TestSidecar:
         try:
             with apeGmsh(model_name="asm") as g:
                 inst = g.parts.add(col)
-                assert inst.label_names == []
+                # Umbrella label is always created; no sidecar means
+                # no dotted sub-labels were rebound.
+                assert inst.label_names == [inst.label]
+                assert not any('.' in n for n in inst.label_names)
         finally:
             col.cleanup()
 

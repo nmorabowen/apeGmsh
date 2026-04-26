@@ -29,6 +29,8 @@ def _qt():
 class MeshInfoTab:
     """Tree widget showing details of picked elements and nodes."""
 
+    _HISTORY_LIMIT = 50
+
     def __init__(self) -> None:
         QtWidgets, _, _ = _qt()
 
@@ -40,7 +42,18 @@ class MeshInfoTab:
         self._tree.setHeaderLabels(["Property", "Value"])
         self._tree.setColumnCount(2)
         self._tree.setAlternatingRowColors(True)
-        layout.addWidget(self._tree)
+        layout.addWidget(self._tree, stretch=2)
+
+        history_group = QtWidgets.QGroupBox("Pick history")
+        history_layout = QtWidgets.QVBoxLayout(history_group)
+        history_layout.setContentsMargins(4, 4, 4, 4)
+        self._history = QtWidgets.QListWidget()
+        self._history.setAlternatingRowColors(True)
+        history_layout.addWidget(self._history)
+        clear_btn = QtWidgets.QPushButton("Clear history")
+        clear_btn.clicked.connect(self._history.clear)
+        history_layout.addWidget(clear_btn)
+        layout.addWidget(history_group, stretch=1)
 
     def show_element(self, elem_tag: int, elem_data: dict) -> None:
         """Display element details."""
@@ -87,6 +100,12 @@ class MeshInfoTab:
             item.setText(0, label)
             item.setText(1, val)
 
+    def append_history(self, text: str) -> None:
+        """Append a one-line entry to the pick history (capped at limit)."""
+        self._history.insertItem(0, text)
+        while self._history.count() > self._HISTORY_LIMIT:
+            self._history.takeItem(self._history.count() - 1)
+
     def clear(self) -> None:
         self._tree.clear()
 
@@ -95,7 +114,7 @@ class MeshInfoTab:
 # DisplayTab — color mode, labels, wireframe
 # ======================================================================
 
-COLOR_MODES = ["Default", "Partition", "Quality", "Element Type", "Physical Group"]
+COLOR_MODES = ["Default", "Element Type", "Physical Group", "Quality"]
 
 
 class DisplayTab:
@@ -168,9 +187,11 @@ class MeshFilterTab:
         dims: list[int],
         *,
         on_filter_changed: Callable[[set[int]], None] | None = None,
+        on_mesh_probes_changed: Callable[[bool, bool], None] | None = None,
     ) -> None:
         QtWidgets, _, _ = _qt()
         self._on_filter = on_filter_changed
+        self._on_mesh_probes_changed = on_mesh_probes_changed
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -189,9 +210,37 @@ class MeshFilterTab:
             dim_layout.addWidget(cb)
 
         layout.addWidget(dim_group)
+
+        # ── Mesh probes group ───────────────────────────────────────
+        probes_group = QtWidgets.QGroupBox("Mesh probes")
+        probes_layout = QtWidgets.QVBoxLayout(probes_group)
+
+        self._show_mesh_tangents = QtWidgets.QCheckBox(
+            "Show element tangents (dim=1)"
+        )
+        self._show_mesh_tangents.setChecked(False)
+        self._show_mesh_tangents.toggled.connect(self._fire_probes)
+        probes_layout.addWidget(self._show_mesh_tangents)
+
+        self._show_mesh_normals = QtWidgets.QCheckBox(
+            "Show element normals (dim=2)"
+        )
+        self._show_mesh_normals.setChecked(False)
+        self._show_mesh_normals.toggled.connect(self._fire_probes)
+        probes_layout.addWidget(self._show_mesh_normals)
+
+        layout.addWidget(probes_group)
         layout.addStretch()
 
     def _on_dim_toggled(self, _checked: bool) -> None:
         active = {d for d, cb in self._dim_cbs.items() if cb.isChecked()}
         if self._on_filter:
             self._on_filter(active)
+
+    def _fire_probes(self, *_args) -> None:
+        if self._on_mesh_probes_changed is None:
+            return
+        self._on_mesh_probes_changed(
+            self._show_mesh_tangents.isChecked(),
+            self._show_mesh_normals.isChecked(),
+        )

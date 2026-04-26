@@ -67,8 +67,8 @@ class _Editing:
 
     def set_periodic(
         self,
-        tags       : list[int],
-        master_tags: list[int],
+        tags,
+        master_tags,
         transform  : list[float],
         *,
         dim        : int = 2,
@@ -78,15 +78,34 @@ class _Editing:
 
         Parameters
         ----------
-        tags        : slave entity tags
-        master_tags : master entity tags
+        tags        : slave entity reference(s) — int, label, PG name,
+                      ``(dim, tag)`` tuple, or list of any mix.
+        master_tags : master entity reference(s) — same flexible form.
         transform   : 16-element row-major 4×4 affine matrix mapping
                       master -> slave coordinates
         dim         : entity dimension (1 = curves, 2 = surfaces)
         """
-        gmsh.model.mesh.setPeriodic(dim, tags, master_tags, transform)
+        from apeGmsh.core._helpers import resolve_to_tags
+        slave_resolved = resolve_to_tags(
+            tags, dim=dim, session=self._mesh._parent,
+        )
+        master_resolved = resolve_to_tags(
+            master_tags, dim=dim, session=self._mesh._parent,
+        )
+        if len(slave_resolved) != len(master_resolved):
+            raise ValueError(
+                f"set_periodic: slave/master count mismatch — "
+                f"slaves={slave_resolved} ({len(slave_resolved)}), "
+                f"masters={master_resolved} ({len(master_resolved)}). "
+                f"Each slave needs exactly one master under the same "
+                f"transform."
+            )
+        gmsh.model.mesh.setPeriodic(
+            dim, slave_resolved, master_resolved, transform,
+        )
         self._mesh._log(
-            f"set_periodic(dim={dim}, tags={tags}, master={master_tags})"
+            f"set_periodic(dim={dim}, tags={slave_resolved}, "
+            f"master={master_resolved})"
         )
         return self
 
@@ -145,22 +164,91 @@ class _Editing:
     # Mesh editing
     # ------------------------------------------------------------------
 
-    def clear(self, dim_tags: list[DimTag] | None = None) -> "_Editing":
-        """Clear mesh data (nodes + elements)."""
-        gmsh.model.mesh.clear(dimTags=dim_tags or [])
+    def clear(self, dim_tags=None) -> "_Editing":
+        """Clear mesh data (nodes + elements).
+
+        ``dim_tags`` accepts any flexible-ref form — int, label/PG name,
+        ``(dim, tag)``, or a list mixing those — resolved via
+        :func:`resolve_to_dimtags` (default_dim=3).  ``None`` (the
+        default) clears every entity in the model.
+
+        Example
+        -------
+        ::
+
+            g.mesh.editing.clear()                  # clear everything
+            g.mesh.editing.clear("col.body")        # clear a labelled volume
+            g.mesh.editing.clear([(2, 5), "fillet"]) # mixed refs
+        """
+        if dim_tags is None:
+            dts: list[DimTag] = []
+        else:
+            from apeGmsh.core._helpers import resolve_to_dimtags
+            dts = resolve_to_dimtags(
+                dim_tags, default_dim=3, session=self._mesh._parent,
+            )
+        gmsh.model.mesh.clear(dimTags=dts)
         self._mesh._log(f"clear(dim_tags={dim_tags})")
         return self
 
-    def reverse(self, dim_tags: list[DimTag] | None = None) -> "_Editing":
-        """Reverse the orientation of mesh elements in the given entities."""
-        gmsh.model.mesh.reverse(dimTags=dim_tags or [])
-        self._mesh._log("reverse()")
+    def reverse(self, dim_tags=None) -> "_Editing":
+        """Reverse the orientation of mesh elements in the given entities.
+
+        ``dim_tags`` accepts any flexible-ref form (int, label/PG name,
+        ``(dim, tag)``, or list thereof).  ``None`` reverses every
+        entity in the model.
+
+        Example
+        -------
+        ::
+
+            g.mesh.editing.reverse("inverted_face")
+            g.mesh.editing.reverse([(2, 5), (2, 6)])
+        """
+        if dim_tags is None:
+            dts: list[DimTag] = []
+        else:
+            from apeGmsh.core._helpers import resolve_to_dimtags
+            dts = resolve_to_dimtags(
+                dim_tags, default_dim=3, session=self._mesh._parent,
+            )
+        gmsh.model.mesh.reverse(dimTags=dts)
+        self._mesh._log(f"reverse(dim_tags={dim_tags})")
         return self
 
-    def relocate_nodes(self, *, dim: int = -1, tag: int = -1) -> "_Editing":
-        """Project mesh nodes back onto their underlying geometry."""
-        gmsh.model.mesh.relocateNodes(dim=dim, tag=tag)
-        self._mesh._log(f"relocate_nodes(dim={dim}, tag={tag})")
+    def relocate_nodes(self, *, dim: int = -1, tag=-1) -> "_Editing":
+        """Project mesh nodes back onto their underlying geometry.
+
+        ``tag`` accepts an int, label/PG name, ``(dim, tag)``, or a
+        list mixing those.  Because gmsh's ``relocateNodes`` operates
+        on a single entity at a time, when a reference resolves to
+        multiple entities the wrapper iterates and calls gmsh once
+        per resolved ``(dim, tag)``.
+
+        ``tag=-1`` (the default) relocates nodes for every entity in
+        the model; ``dim`` is forwarded to gmsh in that case.
+
+        Example
+        -------
+        ::
+
+            g.mesh.editing.relocate_nodes()                 # all entities
+            g.mesh.editing.relocate_nodes(tag="col.faces")  # whole label
+            g.mesh.editing.relocate_nodes(tag=(2, 5))
+        """
+        if tag == -1:
+            gmsh.model.mesh.relocateNodes(dim=dim, tag=-1)
+            self._mesh._log(f"relocate_nodes(dim={dim}, tag=-1)")
+            return self
+
+        from apeGmsh.core._helpers import resolve_to_dimtags
+        default_dim = dim if dim != -1 else 3
+        dts = resolve_to_dimtags(
+            tag, default_dim=default_dim, session=self._mesh._parent,
+        )
+        for d, t in dts:
+            gmsh.model.mesh.relocateNodes(dim=d, tag=t)
+        self._mesh._log(f"relocate_nodes(resolved={dts})")
         return self
 
     def remove_duplicate_nodes(self, verbose: bool = True) -> "_Editing":
@@ -208,12 +296,30 @@ class _Editing:
     def affine_transform(
         self,
         matrix  : list[float],
-        dim_tags: list[DimTag] | None = None,
+        dim_tags=None,
     ) -> "_Editing":
         """
         Apply an affine transformation to mesh nodes (12 coefficients,
-        row-major 4×3 matrix — translation in last column).
+        row-major 4x3 matrix — translation in last column).
+
+        ``dim_tags`` accepts any flexible-ref form (int, label/PG name,
+        ``(dim, tag)``, or list thereof).  ``None`` transforms every
+        entity in the model.
+
+        Example
+        -------
+        ::
+
+            identity = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0]
+            g.mesh.editing.affine_transform(identity, "col.body")
         """
-        gmsh.model.mesh.affineTransform(matrix, dimTags=dim_tags or [])
-        self._mesh._log("affine_transform()")
+        if dim_tags is None:
+            dts: list[DimTag] = []
+        else:
+            from apeGmsh.core._helpers import resolve_to_dimtags
+            dts = resolve_to_dimtags(
+                dim_tags, default_dim=3, session=self._mesh._parent,
+            )
+        gmsh.model.mesh.affineTransform(matrix, dimTags=dts)
+        self._mesh._log(f"affine_transform(dim_tags={dim_tags})")
         return self

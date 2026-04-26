@@ -76,6 +76,9 @@ class Preferences:
     origin_marker_show_coords: bool = True
     origin_marker_include_world_origin: bool = True
 
+    # ── Geometry probes (tangent / normal arrows) ───────────────────
+    tangent_normal_scale: float = 0.05    # Fraction of model diagonal
+
     # ── Interaction & UI ────────────────────────────────────────────
     drag_threshold: int = 8               # Pixels moved before click → drag
     # One of: "left", "top", "right", "bottom"

@@ -12,7 +12,7 @@ Provides the same public API as the old ``SelectionPicker``:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import gmsh
 import numpy as np
@@ -45,8 +45,6 @@ class ModelViewer:
         Which entity dimensions to show (default: ``[0, 1, 2, 3]``).
     point_size, line_width, surface_opacity, show_surface_edges
         Visual properties forwarded to the scene builder.
-    fast : bool
-        Ignored (always fast). Kept for backward compatibility.
     """
 
     def __init__(
@@ -62,8 +60,6 @@ class ModelViewer:
         show_surface_edges: bool | None = None,
         origin_markers: list[tuple[float, float, float]] | None = None,
         origin_marker_show_coords: bool | None = None,
-        fast: bool = True,
-        **kwargs: Any,
     ) -> None:
         from .ui.preferences_manager import PREFERENCES
         p = PREFERENCES.current
@@ -149,13 +145,27 @@ class ModelViewer:
             try:
                 n = sel.flush_to_gmsh()
             except Exception as exc:
+                # Log the full traceback so the user can debug, then surface
+                # a dialog. Do NOT re-raise — the user is closing the window;
+                # crashing their program after-the-fact loses session state.
+                import sys
+                import traceback
+                print(
+                    f"[viewer] flush_to_gmsh failed on close: {exc}",
+                    file=sys.stderr,
+                )
+                traceback.print_exc(file=sys.stderr)
                 try:
-                    win.set_status(
-                        f"Failed to write physical groups: {exc}", 8000,
+                    from qtpy import QtWidgets
+                    QtWidgets.QMessageBox.critical(
+                        win.window,
+                        "Failed to write physical groups",
+                        f"{exc}\n\nSee console for full traceback. "
+                        "Pending picks were not committed.",
                     )
                 except Exception:
                     pass
-                raise
+                return
             if self._parent._verbose:
                 print(f"[viewer] closed — {n} physical group(s) written, "
                       f"{len(sel.picks)} picks in working set")
@@ -232,7 +242,25 @@ class ModelViewer:
             on_delete_group=_on_delete_group,
         )
 
-        filter_tab = FilterTab(self._dims)
+        # Filter -> pick engine + visual dim feedback. The closure references
+        # plotter / registry / pick_engine which are bound later in this
+        # method; safe because the callback only fires after ``win.exec()``.
+        def _on_filter(active_dims: set[int]):
+            pick_engine.set_pickable_dims(active_dims)
+            # Dim non-pickable dimension actors
+            for dim in registry.dims:
+                actor = registry.dim_actors.get(dim)
+                if actor is None:
+                    continue
+                if dim in active_dims:
+                    actor.GetProperty().SetOpacity(
+                        self._surface_opacity if dim >= 2 else 1.0
+                    )
+                else:
+                    actor.GetProperty().SetOpacity(0.1)
+            plotter.render()
+
+        filter_tab = FilterTab(self._dims, on_filter_changed=_on_filter)
 
         # ── View tab (entity labels) ────────────────────────────────
         _label_actors: list = []
@@ -406,9 +434,18 @@ class ModelViewer:
 
             plotter.render()
 
+        # ``tn_overlay`` is constructed later in this method (it needs the
+        # registry's origin shift, only known after ``build_brep_scene``).
+        # The closure resolves it lazily — safe because the callback only
+        # fires after ``win.exec()``.
+        def _on_geometry_probes_changed(show_tangents: bool, show_normals: bool):
+            tn_overlay.set_show_tangents(show_tangents)
+            tn_overlay.set_show_normals(show_normals)
+
         view_tab = ViewTab(
             self._dims,
             on_labels_changed=_on_labels_changed,
+            on_geometry_probes_changed=_on_geometry_probes_changed,
         )
 
         # ── Selection tree panel ────────────────────────────────────
@@ -481,6 +518,71 @@ class ModelViewer:
             on_size_changed=origin_overlay.set_size,
         )
         win.add_tab("Markers", origin_panel.widget)
+
+        # ── Model info panel (read-only diagnostics) ──────────────
+        from ._model_info_panel import ModelInfoPanel
+        info_panel = ModelInfoPanel(parts_registry=getattr(self._parent, 'parts', None))
+        win.add_tab("Info", info_panel.widget)
+
+        # ── Section / clipping plane ────────────────────────────────
+        from ..overlays.clip_plane_overlay import ClipPlaneOverlay
+        from ._clip_plane_panel import ClipPlanePanel
+        clip_overlay = ClipPlaneOverlay(
+            plotter, registry, origin_shift=registry.origin_shift,
+        )
+
+        def _world_bbox() -> tuple[float, float, float, float, float, float]:
+            try:
+                return tuple(gmsh.model.getBoundingBox(-1, -1))
+            except Exception:
+                return (0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
+
+        clip_panel = ClipPlanePanel(clip_overlay, world_bbox=_world_bbox())
+        win.add_tab("Section", clip_panel.widget)
+
+        # ── Measure tool (entity-centroid distance) ─────────────────
+        from ..overlays.measure_overlay import MeasureOverlay
+        from ._measure_panel import MeasurePanel
+        measure_overlay = MeasureOverlay(plotter, registry)
+
+        def _push_measure_status() -> None:
+            measure_panel.update_status(
+                num_points=measure_overlay.num_points,
+                endpoints=measure_overlay.last_endpoints,
+                distance=measure_overlay.last_distance,
+                delta=measure_overlay.last_delta,
+            )
+
+        def _on_measure_active(active: bool) -> None:
+            # Leaving measure mode wipes any in-flight measurement so
+            # the next time the user enters they start fresh.
+            if not active:
+                measure_overlay.reset()
+            _push_measure_status()
+            win.set_status(
+                "Measure mode ON — click two entities" if active
+                else "Measure mode off",
+                3000,
+            )
+
+        def _on_measure_clear() -> None:
+            measure_overlay.reset()
+            _push_measure_status()
+
+        measure_panel = MeasurePanel(
+            on_active_changed=_on_measure_active,
+            on_clear=_on_measure_clear,
+        )
+        win.add_tab("Measure", measure_panel.widget)
+
+        # ── Tangent / normal overlay (geometry probes in View tab) ──
+        from .overlays.tangent_normal_overlay import TangentNormalOverlay
+        tn_overlay = TangentNormalOverlay(
+            plotter,
+            origin_shift=registry.origin_shift,
+            model_diagonal=_compute_model_diagonal(),
+            scale=_PREF.current.tangent_normal_scale,
+        )
 
         # ── Preferences (created AFTER scene — needs registry) ─────
         from .overlays.pref_helpers import make_line_width_cb, make_opacity_cb, make_edges_cb
@@ -642,6 +744,8 @@ class ModelViewer:
 
                 # Re-sync origin markers with the fresh registry's shift
                 origin_overlay.set_origin_shift(registry.origin_shift)
+                tn_overlay.set_model_diagonal(_compute_model_diagonal())
+                tn_overlay.set_origin_shift(registry.origin_shift)
 
                 # Clear stale selection / active group
                 sel.clear()
@@ -651,6 +755,16 @@ class ModelViewer:
                     parts_tree.refresh()
                 browser.refresh()
                 sel_tree.update(sel.picks)
+                info_panel.refresh()
+
+                # Re-bind the clip plane to the fresh mappers + new bbox
+                clip_overlay.set_origin_shift(registry.origin_shift)
+                clip_overlay.rebind()
+                clip_panel.refresh_bbox(_world_bbox())
+
+                # Stored centroids are stale after a rebuild
+                measure_overlay.reset()
+                _push_measure_status()
 
                 # Restore camera
                 cam.SetPosition(*cam_pos)
@@ -686,8 +800,12 @@ class ModelViewer:
 
         # ── Wire callbacks ──────────────────────────────────────────
 
-        # Pick -> selection
+        # Pick -> selection (or measure overlay when measure mode is on)
         def _on_pick(dt: DimTag, ctrl: bool):
+            if measure_panel.is_active():
+                measure_overlay.add_entity(dt)
+                _push_measure_status()
+                return
             if ctrl:
                 sel.unpick(dt)
             else:
@@ -695,24 +813,6 @@ class ModelViewer:
 
         pick_engine.on_pick = _on_pick
         pick_engine.set_hidden_check(vis_mgr.is_hidden)
-
-        # Filter -> pick engine + visual dim feedback
-        def _on_filter(active_dims: set[int]):
-            pick_engine.set_pickable_dims(active_dims)
-            # Dim non-pickable dimension actors
-            for dim in registry.dims:
-                actor = registry.dim_actors.get(dim)
-                if actor is None:
-                    continue
-                if dim in active_dims:
-                    actor.GetProperty().SetOpacity(
-                        self._surface_opacity if dim >= 2 else 1.0
-                    )
-                else:
-                    actor.GetProperty().SetOpacity(0.1)
-            plotter.render()
-
-        filter_tab._on_filter_changed = _on_filter
 
         # Hover -> color
         _prev_hover: list[DimTag | None] = [None]
@@ -746,6 +846,7 @@ class ModelViewer:
         sel.on_changed.append(_on_sel_changed)
         # Repaint idle colors when the theme palette changes
         win.on_theme_changed(lambda _p: _on_sel_changed())
+        win.on_theme_changed(lambda _p: tn_overlay.refresh_theme())
         sel.on_changed.append(lambda: sel_tree.update(sel.picks))
         sel.on_changed.append(lambda: browser.update_active())
         if parts_tree is not None:
