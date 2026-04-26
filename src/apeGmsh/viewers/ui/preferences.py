@@ -191,10 +191,11 @@ class PreferencesTab:
         self._overlay_labels: dict[str, Any] = {}
 
         _OVERLAY_ITEMS = [
-            ("load_arrow",        "Load arrows"),
-            ("mass_sphere",       "Mass spheres"),
-            ("constraint_marker", "Constraint markers"),
-            ("constraint_line",   "Constraint lines"),
+            ("load_arrow",           "Load arrows"),
+            ("mass_sphere",          "Mass spheres"),
+            ("constraint_marker",    "Constraint markers"),
+            ("constraint_line",      "Constraint lines"),
+            ("tangent_normal_arrow", "Tangent/normal arrows"),
         ]
 
         for key, label in _OVERLAY_ITEMS:

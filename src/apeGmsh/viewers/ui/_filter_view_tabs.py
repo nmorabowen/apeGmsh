@@ -98,6 +98,7 @@ class ViewTab:
         dims: list[int],
         *,
         on_labels_changed: Callable[..., None] | None = None,
+        on_geometry_probes_changed: Callable[[bool, bool], None] | None = None,
     ) -> None:
         """
         Parameters
@@ -107,9 +108,12 @@ class ViewTab:
         on_labels_changed : callable
             ``fn(active_dims_dict, font_size, use_names, show_parts)`` called when
             any toggle or setting changes.
+        on_geometry_probes_changed : callable
+            ``fn(show_tangents, show_normals)`` — fires on either toggle.
         """
         QtWidgets, _, _ = _qt()
         self._on_labels_changed = on_labels_changed
+        self._on_geometry_probes_changed = on_geometry_probes_changed
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -164,7 +168,31 @@ class ViewTab:
         style_layout.addRow(self._use_names)
 
         layout.addWidget(style_group)
+
+        # ── Geometry probes ─────────────────────────────────────────
+        probes_group = QtWidgets.QGroupBox("Geometry probes")
+        probes_layout = QtWidgets.QVBoxLayout(probes_group)
+
+        self._show_tangents = QtWidgets.QCheckBox("Show curve tangents (dim=1)")
+        self._show_tangents.setChecked(False)
+        self._show_tangents.toggled.connect(self._fire_probes)
+        probes_layout.addWidget(self._show_tangents)
+
+        self._show_normals = QtWidgets.QCheckBox("Show surface normals (dim=2)")
+        self._show_normals.setChecked(False)
+        self._show_normals.toggled.connect(self._fire_probes)
+        probes_layout.addWidget(self._show_normals)
+
+        layout.addWidget(probes_group)
         layout.addStretch(1)
+
+    def _fire_probes(self, *_args) -> None:
+        if self._on_geometry_probes_changed is None:
+            return
+        self._on_geometry_probes_changed(
+            self._show_tangents.isChecked(),
+            self._show_normals.isChecked(),
+        )
 
     def _fire(self, *_args) -> None:
         if self._on_labels_changed is None:

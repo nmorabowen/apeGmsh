@@ -289,6 +289,10 @@ class ViewerWindow:
         self._add_toolbar_action(
             bar, "\u2399", "Copy screenshot to clipboard", self._screenshot,
         )
+        self._add_toolbar_action(
+            bar, "\u2913", "Save screenshot to file\u2026",
+            self._save_screenshot,
+        )
 
         self._toolbar = bar
         self._window.addToolBar(QtCore.Qt.LeftToolBarArea, bar)
@@ -463,6 +467,22 @@ class ViewerWindow:
             self.set_status("Screenshot copied to clipboard", 4000)
         except Exception as exc:
             self.set_status(f"Screenshot failed: {exc}", 4000)
+
+    def _save_screenshot(self) -> None:
+        QtWidgets = self._QtWidgets
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self._window,
+            "Save screenshot",
+            "viewer.png",
+            "PNG image (*.png);;JPEG image (*.jpg *.jpeg);;TIFF image (*.tif *.tiff)",
+        )
+        if not path:
+            return
+        try:
+            self._qt_interactor.screenshot(path, transparent_background=False)
+            self.set_status(f"Screenshot saved: {path}", 4000)
+        except Exception as exc:
+            self.set_status(f"Save failed: {exc}", 4000)
 
     # ------------------------------------------------------------------
     # Helpers
