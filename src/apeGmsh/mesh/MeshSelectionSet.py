@@ -845,6 +845,56 @@ class MeshSelectionStore:
             "connectivity": np.asarray(conn).astype(object),
         }
 
+    # ── Name-based lookups (mirrors PhysicalGroupSet API) ─────
+
+    def names(self, dim: int = -1) -> list[str]:
+        """All non-empty selection names, optionally filtered by dim."""
+        out = []
+        for (d, _), info in sorted(self._sets.items()):
+            n = info.get("name", "")
+            if n and (dim == -1 or d == dim):
+                out.append(n)
+        return out
+
+    def node_ids(self, name: str) -> np.ndarray:
+        """Node IDs for any selection matching ``name`` (any dim).
+
+        For ``dim=0`` selections returns the explicit node IDs.
+        For ``dim>=1`` selections returns the node IDs implied by the
+        elements' connectivity.
+
+        Raises ``KeyError`` if no selection matches ``name``.
+        """
+        for (dim, tag), info in self._sets.items():
+            if info.get("name", "") == name:
+                return np.asarray(info["node_ids"], dtype=np.int64)
+        raise KeyError(
+            f"No mesh selection named {name!r}. "
+            f"Available: {self.names()}"
+        )
+
+    def element_ids(self, name: str) -> np.ndarray:
+        """Element IDs for an element-bearing selection matching ``name``.
+
+        Searches ``dim>=1`` selections only (``dim=0`` selections have
+        no element data).
+
+        Raises ``KeyError`` if no element-bearing selection matches.
+        """
+        for (dim, tag), info in self._sets.items():
+            if dim < 1:
+                continue
+            if info.get("name", "") == name:
+                eids = info.get("element_ids")
+                if eids is None:
+                    continue
+                return np.asarray(eids, dtype=np.int64)
+        raise KeyError(
+            f"No element-bearing mesh selection named {name!r}. "
+            f"Available (dim>=1): "
+            f"{self.names(1) + self.names(2) + self.names(3)}"
+        )
+
     # ── Display ───────────────────────────────────────────────
 
     def summary(self) -> pd.DataFrame:

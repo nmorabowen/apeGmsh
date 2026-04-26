@@ -1121,6 +1121,23 @@ class FEMData:
         """Sorted list of partition IDs."""
         return self.nodes.partitions
 
+    @property
+    def snapshot_id(self) -> str:
+        """Deterministic content hash identifying this FEMData snapshot.
+
+        Computed once and cached. Used by the Results module to bind
+        result files to their producing geometry — see
+        ``internal_docs/Results_architecture.md`` § "FEMData embedding
+        & binding".
+        """
+        cached = getattr(self, "_snapshot_id_cache", None)
+        if cached is not None:
+            return cached
+        from ._femdata_hash import compute_snapshot_id
+        digest = compute_snapshot_id(self)
+        self._snapshot_id_cache = digest
+        return digest
+
     @classmethod
     def from_gmsh(
         cls,
@@ -1161,11 +1178,63 @@ class FEMData:
         return _from_msh(cls, path=path, dim=dim,
                          remove_orphans=remove_orphans)
 
+    def to_native_h5(self, group) -> None:
+        """Embed this FEMData into an open HDF5 group (``/model/``).
+
+        Used by ``NativeWriter`` to snapshot the geometry alongside
+        results. The reconstructed FEMData (via ``from_native_h5``)
+        will produce the same ``snapshot_id`` — this is the linking
+        contract for ``Results.bind()``.
+        """
+        from ._femdata_native_io import write_fem_to_h5
+        write_fem_to_h5(self, group)
+
+    @classmethod
+    def from_native_h5(cls, group) -> "FEMData":
+        """Reconstruct a FEMData from its embedded ``/model/`` group.
+
+        The reconstructed object carries nodes, elements (per type),
+        physical groups, and labels. Loads/masses/constraints are not
+        round-tripped (they don't affect ``snapshot_id`` and the
+        viewer doesn't need them).
+        """
+        from ._femdata_native_io import read_fem_from_h5
+        return read_fem_from_h5(group)
+
+    @classmethod
+    def from_mpco_model(cls, group) -> "FEMData":
+        """Synthesize a partial FEMData from an MPCO ``MODEL/`` group.
+
+        Carries: nodes, elements (per OpenSees class tag), physical
+        groups derived from MPCO Regions (``MODEL/SETS``).
+
+        Missing vs. native:
+        - apeGmsh-specific ``labels``
+        - Pre-mesh declarations (loads / masses / constraints)
+        - STKO named selection sets (those live in ``.cdata`` sidecars)
+        - Gmsh-style element type codes (uses negated class_tag instead)
+
+        ``snapshot_id`` will not match a native FEMData of the same
+        mesh — that's expected. ``Results.bind()`` will refuse such
+        mismatches.
+        """
+        from ._femdata_mpco_io import read_fem_from_mpco
+        return read_fem_from_mpco(group)
+
     def viewer(self, *, blocking: bool = False) -> None:
-        """Open a non-interactive mesh viewer from this snapshot."""
-        from ..results.Results import Results
-        r = Results.from_fem(self, name="FEMData")
-        r.viewer(blocking=blocking)
+        """Open a non-interactive mesh viewer from this snapshot.
+
+        Currently disabled — the legacy ``Results.from_fem(...).viewer()``
+        path was removed when the Results module was rebuilt. The new
+        flow is being designed as part of the viewer rebuild project;
+        see ``internal_docs/Results_architecture.md`` (Phase 9).
+        """
+        raise NotImplementedError(
+            "fem.viewer() relied on the legacy Results class which has "
+            "been rebuilt. The replacement is part of the viewer rebuild "
+            "project (Phase 9 in Results_architecture.md). For mesh-only "
+            "viewing in the meantime, use g.mesh.viewer() with no args."
+        )
 
     def __repr__(self) -> str:
         return self.inspect.summary()
