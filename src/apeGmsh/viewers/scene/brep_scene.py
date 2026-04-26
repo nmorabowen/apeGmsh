@@ -48,21 +48,30 @@ def _surface_polydata_from_global_mesh(
     n_cells = 0
     max_tag = len(tag_to_idx) - 1
 
+    # Surface element types: (total nodes per elem, corner-node count).
+    # Gmsh orders corner nodes first, so slicing [:, :corners] gives a
+    # linear face for the BRep tessellation regardless of order.
+    surface_etypes = {
+        2:  (3, 3),   # Tri3
+        3:  (4, 4),   # Quad4
+        9:  (6, 3),   # Tri6  (2nd-order triangle)
+        10: (9, 4),   # Quad9 (2nd-order quad, with bubble)
+        16: (8, 4),   # Quad8 (2nd-order serendipity)
+    }
+
     for etype, enodes in zip(elem_types, enodes_list):
         etype = int(etype)
-        if etype == 2:
-            npe = 3
-        elif etype == 3:
-            npe = 4
-        else:
+        spec = surface_etypes.get(etype)
+        if spec is None:
             continue
+        npe_full, npe = spec
 
         enodes_arr = np.asarray(enodes, dtype=np.int64)
         if len(enodes_arr) == 0:
             continue
 
-        n_elems = len(enodes_arr) // npe
-        node_mat = enodes_arr.reshape(n_elems, npe)
+        n_elems = len(enodes_arr) // npe_full
+        node_mat = enodes_arr.reshape(n_elems, npe_full)[:, :npe]
         in_range = (
             np.all(node_mat >= 0, axis=1)
             & np.all(node_mat <= max_tag, axis=1)

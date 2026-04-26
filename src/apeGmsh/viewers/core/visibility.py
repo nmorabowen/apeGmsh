@@ -7,6 +7,31 @@ silhouettes, no rendering overhead.
 
 The original (full) meshes are stored in the EntityRegistry for
 ``reveal_all`` to restore them.
+
+Filter state model
+------------------
+The viewer has **two independent filter states** that do not share a
+backing store:
+
+1. **Dim filter** (cosmetic) — driven by FilterTab / MeshFilterTab dim
+   checkboxes. Calls ``actor.SetVisibility(bool)`` on the fill *and*
+   wire actors of a whole dimension. Does NOT enter ``_hidden``. Cheap:
+   no mesh rebuild. Toggling a dim back on restores whatever state the
+   actor was in (hidden entities stay hidden).
+
+2. **Entity hide** (this class) — driven by browser-tab checkboxes
+   (groups / element types) and pick-driven actions (``_act_hide`` /
+   ``_act_isolate`` / ``_act_reveal_all``). Stores a ``frozenset[DimTag]``
+   in ``_hidden`` and rebuilds the affected dim's fill + wire actor via
+   ``extract_cells(mask)``.
+
+These two states are deliberately independent. The dim filter is a
+view-time toggle; entity hide is a model-state edit. Re-enabling a dim
+does NOT clear the hidden set — that's a separate user action
+(``reveal_all``).
+
+A third mechanism exists in :class:`ClippingController` (render-time
+clipping plane) which is independent of both above.
 """
 from __future__ import annotations
 
@@ -91,6 +116,28 @@ class VisibilityManager:
         self._rebuild_actors()
         self._reset_colors()
         self._fire()
+
+    def hide_dts(self, dts) -> None:
+        """Add *dts* to the hidden set (programmatic, no pick dependency).
+
+        Counterpart of :meth:`hide` for tree right-click menus and other
+        callers that already know which entities to hide.
+        """
+        new = self._hidden | {dt for dt in dts}
+        if new == self._hidden:
+            return
+        self.set_hidden(new)
+
+    def isolate_dts(self, dts) -> None:
+        """Hide everything except *dts*.
+
+        Counterpart of :meth:`isolate` for tree right-click menus.
+        """
+        keep = {dt for dt in dts}
+        if not keep:
+            return
+        new = {d for d in self._registry.all_entities() if d not in keep}
+        self.set_hidden(new)
 
     def set_hidden(self, dts) -> None:
         """Replace the hidden set with *dts* and rebuild affected dims.
@@ -188,20 +235,28 @@ class VisibilityManager:
                     if mask.all():
                         visible = full_mesh
                     elif not mask.any():
-                        # All cells hidden — remove actor
+                        # All cells hidden — remove fill and wire actors
                         old = reg.dim_actors.get(dim)
                         if old is not None:
                             try:
                                 plotter.remove_actor(old)
                             except Exception:
                                 pass
+                        old_wire = reg.dim_wire_actors.get(dim)
+                        if old_wire is not None:
+                            try:
+                                plotter.remove_actor(old_wire)
+                            except Exception:
+                                pass
+                            reg.dim_wire_actors.pop(dim, None)
+                            reg.dim_wire_meshes.pop(dim, None)
                         continue
                     else:
                         visible = full_mesh.extract_cells(
                             np.where(mask)[0]
                         )
 
-            # Remove old actor
+            # Remove old fill actor
             old = reg.dim_actors.get(dim)
             if old is not None:
                 try:
@@ -209,7 +264,7 @@ class VisibilityManager:
                 except Exception:
                     pass
 
-            # Add new actor with same visual properties
+            # Add new fill actor with same visual properties
             new_actor = plotter.add_mesh(
                 visible,
                 reset_camera=False,
@@ -217,6 +272,44 @@ class VisibilityManager:
                 **kwargs,
             )
             reg.swap_dim(dim, visible, new_actor)
+
+            # Rebuild wire actor from the visible (post-mask) grid so
+            # hidden entities also lose their wireframe. Only rebuild
+            # if the dim already had a registered wire — the mesh
+            # viewer registers one during scene build, the BRep model
+            # viewer does not (it uses silhouette + dim=1 curves).
+            old_wire = reg.dim_wire_actors.get(dim)
+            if old_wire is not None:
+                try:
+                    plotter.remove_actor(old_wire)
+                except Exception:
+                    pass
+                try:
+                    new_wire_mesh = visible.extract_all_edges()
+                    wire_color = "#666666"
+                    wire_width = 0.5
+                    try:
+                        prop = old_wire.GetProperty()
+                        rgb = prop.GetColor()
+                        wire_color = (
+                            float(rgb[0]),
+                            float(rgb[1]),
+                            float(rgb[2]),
+                        )
+                        wire_width = float(prop.GetLineWidth()) or 0.5
+                    except Exception:
+                        pass
+                    new_wire_actor = plotter.add_mesh(
+                        new_wire_mesh,
+                        color=wire_color,
+                        line_width=wire_width,
+                        pickable=False,
+                        reset_camera=False,
+                    )
+                    reg.register_wire(dim, new_wire_mesh, new_wire_actor)
+                except Exception:
+                    reg.dim_wire_actors.pop(dim, None)
+                    reg.dim_wire_meshes.pop(dim, None)
 
         if self._verbose:
             import time as _time

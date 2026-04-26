@@ -240,6 +240,9 @@ class ModelViewer:
             on_new_group=_on_new_group,
             on_rename_group=_on_rename_group,
             on_delete_group=_on_delete_group,
+            on_hide=lambda dts: (vis_mgr.hide_dts(dts), plotter.render()),
+            on_isolate=lambda dts: (vis_mgr.isolate_dts(dts), plotter.render()),
+            on_reveal_all=lambda: (vis_mgr.reveal_all(), plotter.render()),
         )
 
         # Filter -> pick engine + visual dim feedback. The closure references
@@ -458,10 +461,27 @@ class ModelViewer:
         def _tree_remove(dts):
             sel.box_remove(dts)
 
+        # Visibility callbacks — late-binding on vis_mgr (defined later
+        # in this same method).
+        def _tree_hide(dts):
+            vis_mgr.hide_dts(dts)
+            plotter.render()
+
+        def _tree_isolate(dts):
+            vis_mgr.isolate_dts(dts)
+            plotter.render()
+
+        def _tree_reveal_all():
+            vis_mgr.reveal_all()
+            plotter.render()
+
         sel_tree = SelectionTreePanel(
             on_select_only=_tree_select_only,
             on_add_to_selection=_tree_add,
             on_remove_from_selection=_tree_remove,
+            on_hide=_tree_hide,
+            on_isolate=_tree_isolate,
+            on_reveal_all=_tree_reveal_all,
         )
 
         # Add tabs to window
@@ -520,13 +540,13 @@ class ModelViewer:
         win.add_tab("Markers", origin_panel.widget)
 
         # ── Model info panel (read-only diagnostics) ──────────────
-        from ._model_info_panel import ModelInfoPanel
+        from .ui._model_info_panel import ModelInfoPanel
         info_panel = ModelInfoPanel(parts_registry=getattr(self._parent, 'parts', None))
         win.add_tab("Info", info_panel.widget)
 
         # ── Section / clipping plane ────────────────────────────────
-        from ..overlays.clip_plane_overlay import ClipPlaneOverlay
-        from ._clip_plane_panel import ClipPlanePanel
+        from .overlays.clip_plane_overlay import ClipPlaneOverlay
+        from .ui._clip_plane_panel import ClipPlanePanel
         clip_overlay = ClipPlaneOverlay(
             plotter, registry, origin_shift=registry.origin_shift,
         )
@@ -541,8 +561,8 @@ class ModelViewer:
         win.add_tab("Section", clip_panel.widget)
 
         # ── Measure tool (entity-centroid distance) ─────────────────
-        from ..overlays.measure_overlay import MeasureOverlay
-        from ._measure_panel import MeasurePanel
+        from .overlays.measure_overlay import MeasureOverlay
+        from .ui._measure_panel import MeasurePanel
         measure_overlay = MeasureOverlay(plotter, registry)
 
         def _push_measure_status() -> None:
@@ -919,9 +939,9 @@ class ModelViewer:
                 key,
                 lambda ds=dim_set: _on_filter(ds),
             )
-        # 9 = all dims
+        # 4 = all dims
         plotter.add_key_event(
-            "9", lambda: _on_filter(set(self._dims)),
+            "4", lambda: _on_filter(set(self._dims)),
         )
 
         # Window-level (work regardless of focus / mouse position)
