@@ -218,13 +218,31 @@ def emit_tie_elements(ops: "OpenSees") -> dict[str, int]:
         ops._log(msg)
 
     for rec in cs.interpolations():
-        if rec.kind != "tie":
+        if rec.kind not in ("tie", "embedded"):
             continue
 
-        retained = _pick_retained_nodes(rec, _log, int(rec.slave_node))
-        if retained is None:
-            counts["tie_skipped"] += 1
-            continue
+        if rec.kind == "embedded":
+            # Embedded records come straight from
+            # ``resolve_embedded`` with 3 retained nodes (tri3 host,
+            # 2D) or 4 retained nodes (tet4 host, 3D).  No face
+            # splitting is needed: the retained set IS the host
+            # element's corners, and ASDEmbeddedNodeElement treats
+            # 4-retained as a volumetric tet — which is exactly the
+            # kinematics we want.
+            n = len(rec.master_nodes)
+            if n not in (3, 4):
+                _log(
+                    f"embedded: UNSUPPORTED host with {n} retained "
+                    f"nodes for slave {rec.slave_node} — skipped"
+                )
+                counts["tie_skipped"] += 1
+                continue
+            retained = [int(m) for m in rec.master_nodes]
+        else:
+            retained = _pick_retained_nodes(rec, _log, int(rec.slave_node))
+            if retained is None:
+                counts["tie_skipped"] += 1
+                continue
 
         # -rot flag: required when the slave node has rotational DOFs
         # and the user declared them in the tie definition's DOF list.

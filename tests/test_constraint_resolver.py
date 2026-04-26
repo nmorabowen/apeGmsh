@@ -15,6 +15,7 @@ import numpy as np
 from apeGmsh.solvers.Constraints import (
     ConstraintResolver,
     DistributingCouplingDef,
+    EmbeddedDef,
     EqualDOFDef,
     InterpolationRecord,
     KinematicCouplingDef,
@@ -442,6 +443,93 @@ class TestInterpolationConstraintMatrix(unittest.TestCase):
         np.testing.assert_allclose(C[0], [0.5, 0, 0, 0.3, 0, 0, 0.2, 0, 0])
         np.testing.assert_allclose(C[1], [0, 0.5, 0, 0, 0.3, 0, 0, 0.2, 0])
         np.testing.assert_allclose(C[2], [0, 0, 0.5, 0, 0, 0.3, 0, 0, 0.2])
+
+
+# =====================================================================
+# resolve_embedded
+# =====================================================================
+
+class TestResolveEmbedded(unittest.TestCase):
+    """Embed a point inside a synthetic 2D tri3 mesh and assert the
+    returned shape-function weights equal the barycentric coords."""
+
+    def test_tri3_embedded_weights_at_known_xi_eta(self):
+        # Single tri3 with corners at (0,0), (1,0), (0,1).
+        # Embed a node at (0.25, 0.25) → barycentric (0.5, 0.25, 0.25).
+        coords = {
+            1: (0.0, 0.0, 0.0),
+            2: (1.0, 0.0, 0.0),
+            3: (0.0, 1.0, 0.0),
+            99: (0.25, 0.25, 0.0),
+        }
+        r = _make_resolver(coords)
+        host_elems = np.array([[1, 2, 3]], dtype=int)
+        defn = EmbeddedDef(
+            master_label="host", slave_label="rebar", tolerance=1.0,
+        )
+
+        records = r.resolve_embedded(defn, host_elems, {99})
+        self.assertEqual(len(records), 1)
+        rec = records[0]
+        self.assertEqual(rec.kind, "embedded")
+        self.assertEqual(rec.slave_node, 99)
+        self.assertEqual(rec.master_nodes, [1, 2, 3])
+        np.testing.assert_allclose(rec.weights, [0.5, 0.25, 0.25], atol=1e-12)
+        # Partition of unity.
+        self.assertAlmostEqual(float(np.sum(rec.weights)), 1.0, places=12)
+        # Parametric coords (v, w) should correspond to corners 1 and 2.
+        np.testing.assert_allclose(rec.parametric_coords, [0.25, 0.25],
+                                   atol=1e-12)
+
+    def test_tri3_corner_node_gets_unit_weight(self):
+        coords = {
+            1: (0.0, 0.0, 0.0),
+            2: (2.0, 0.0, 0.0),
+            3: (0.0, 2.0, 0.0),
+            99: (2.0, 0.0, 0.0),   # sits exactly on corner 2
+        }
+        r = _make_resolver(coords)
+        defn = EmbeddedDef(master_label="h", slave_label="e")
+        records = r.resolve_embedded(defn, np.array([[1, 2, 3]]), {99})
+        self.assertEqual(len(records), 1)
+        np.testing.assert_allclose(records[0].weights, [0, 1, 0], atol=1e-12)
+
+    def test_tet4_centroid_gets_equal_weights(self):
+        # Unit tet with corners at the canonical reference positions.
+        coords = {
+            1: (0.0, 0.0, 0.0),
+            2: (1.0, 0.0, 0.0),
+            3: (0.0, 1.0, 0.0),
+            4: (0.0, 0.0, 1.0),
+            99: (0.25, 0.25, 0.25),   # centroid → weights 1/4 each
+        }
+        r = _make_resolver(coords)
+        defn = EmbeddedDef(master_label="h", slave_label="e")
+        records = r.resolve_embedded(
+            defn, np.array([[1, 2, 3, 4]]), {99},
+        )
+        self.assertEqual(len(records), 1)
+        np.testing.assert_allclose(records[0].weights, [0.25] * 4, atol=1e-12)
+        self.assertEqual(records[0].master_nodes, [1, 2, 3, 4])
+
+    def test_picks_containing_tri_among_many(self):
+        # Two tris sharing an edge.  Embedded point clearly inside tri 2.
+        coords = {
+            1: (0.0, 0.0, 0.0),
+            2: (1.0, 0.0, 0.0),
+            3: (0.0, 1.0, 0.0),
+            4: (1.0, 1.0, 0.0),
+            99: (0.7, 0.7, 0.0),
+        }
+        r = _make_resolver(coords)
+        host = np.array([[1, 2, 3], [2, 4, 3]], dtype=int)
+        defn = EmbeddedDef(master_label="h", slave_label="e")
+        records = r.resolve_embedded(defn, host, {99})
+        self.assertEqual(len(records), 1)
+        # The containing triangle is (2, 4, 3).
+        self.assertEqual(records[0].master_nodes, [2, 4, 3])
+        # Weights must be non-negative (point is inside).
+        self.assertTrue((records[0].weights >= -1e-12).all())
 
 
 if __name__ == "__main__":

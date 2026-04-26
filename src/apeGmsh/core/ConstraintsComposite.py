@@ -129,7 +129,7 @@ class ConstraintsComposite:
     def _add_def(self, defn: _ConstraintT) -> _ConstraintT:
         """Validate labels and store a constraint definition.
         Label validation is skipped for NodeToSurfaceDef (bare tags)."""
-        if not isinstance(defn, NodeToSurfaceDef):
+        if not isinstance(defn, (NodeToSurfaceDef, EmbeddedDef)):
             parts = getattr(self._parent, "parts", None)
             if parts is not None and hasattr(parts, "_instances"):
                 for lbl in (defn.master_label, defn.slave_label):
@@ -505,7 +505,122 @@ class ConstraintsComposite:
         return resolver_fn(defn, master_node, slave_nodes)
 
     def _resolve_embedded(self, resolver, defn, node_map, face_map, all_nodes):
-        raise NotImplementedError("Embedded constraint resolution is not implemented yet.")
+        """Resolve an embedded constraint.
+
+        Host elements are the tet4 (dim=3) or tri3 (dim=2) elements
+        belonging to ``defn.master_label``. Embedded nodes come from
+        the ``defn.slave_label`` part (all nodes of that part's
+        entities, typically the mesh nodes along a rebar curve).
+        """
+        import gmsh
+
+        host_entities = (
+            defn.host_entities if defn.host_entities
+            else self._entities_for_label(defn.master_label)
+        )
+        embedded_entities = (
+            defn.embedded_entities if defn.embedded_entities
+            else self._entities_for_label(defn.slave_label)
+        )
+
+        host_elems = self._collect_host_elems(host_entities)
+        if host_elems.size == 0:
+            import warnings
+            warnings.warn(
+                f"embedded: host label '{defn.master_label}' has no "
+                f"tet4 or tri3 elements; constraint skipped.",
+                stacklevel=2,
+            )
+            return []
+
+        embedded_nodes: set[int] = set()
+        for dim, tag in embedded_entities:
+            try:
+                nt, _, _ = gmsh.model.mesh.getNodes(
+                    dim=int(dim), tag=int(tag),
+                    includeBoundary=True, returnParametricCoord=False)
+                embedded_nodes.update(int(t) for t in nt)
+            except Exception:
+                pass
+        if not embedded_nodes:
+            import warnings
+            warnings.warn(
+                f"embedded: embedded label '{defn.slave_label}' has no "
+                f"mesh nodes; constraint skipped.",
+                stacklevel=2,
+            )
+            return []
+
+        # Don't embed a node that coincides with a host corner — it's
+        # already rigidly attached via shared connectivity.
+        host_corner_nodes = set(int(t) for t in np.unique(host_elems))
+        embedded_nodes = embedded_nodes - host_corner_nodes
+
+        return resolver.resolve_embedded(defn, host_elems, embedded_nodes)
+
+    def _entities_for_label(self, label: str) -> list[tuple[int, int]]:
+        """Look up geometric entities for *label*.
+
+        Tries, in order: a part instance in ``g.parts``, then a
+        physical group by name. Returns ``[]`` if neither matches.
+        """
+        import gmsh
+        parts = getattr(self._parent, "parts", None)
+        if parts is not None and label in getattr(parts, "_instances", {}):
+            inst = parts._instances[label]
+            return [
+                (int(dim), int(tag))
+                for dim, tags in inst.entities.items()
+                for tag in tags
+            ]
+        # Physical-group fallback.
+        ents: list[tuple[int, int]] = []
+        for d, pg_tag in gmsh.model.getPhysicalGroups():
+            try:
+                name = gmsh.model.getPhysicalName(int(d), int(pg_tag))
+            except Exception:
+                continue
+            if name != label:
+                continue
+            for ent in gmsh.model.getEntitiesForPhysicalGroup(
+                    int(d), int(pg_tag)):
+                ents.append((int(d), int(ent)))
+        return ents
+
+    @staticmethod
+    def _collect_host_elems(
+        entities: list[tuple[int, int]],
+    ) -> np.ndarray:
+        """Gather tet4 / tri3 connectivity rows from *entities*.
+
+        Gmsh element type codes: 2 = tri3, 4 = tet4. Other host types
+        (hex, quad, higher-order) are not supported by
+        ``ASDEmbeddedNodeElement`` and are silently ignored.
+        """
+        import gmsh
+        tri_rows: list[np.ndarray] = []
+        tet_rows: list[np.ndarray] = []
+        for dim, tag in entities:
+            try:
+                etypes, _, enodes = gmsh.model.mesh.getElements(
+                    dim=int(dim), tag=int(tag))
+            except Exception:
+                continue
+            for etype, nodes in zip(etypes, enodes):
+                if len(nodes) == 0:
+                    continue
+                if int(etype) == 2:
+                    tri_rows.append(
+                        np.asarray(nodes, dtype=int).reshape(-1, 3))
+                elif int(etype) == 4:
+                    tet_rows.append(
+                        np.asarray(nodes, dtype=int).reshape(-1, 4))
+        # Prefer 3D host if present; otherwise fall back to 2D tris.
+        if tet_rows:
+            return np.vstack(tet_rows)
+        if tri_rows:
+            return np.vstack(tri_rows)
+        return np.empty((0, 0), dtype=int)
 
     # ------------------------------------------------------------------
     # Queries

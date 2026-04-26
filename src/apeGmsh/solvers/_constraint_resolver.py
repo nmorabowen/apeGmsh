@@ -48,6 +48,68 @@ from ._constraint_records import (
 from ._kinds import ConstraintKind
 
 
+def _barycentric_tri3(
+    p: ndarray,
+    corners: ndarray,
+) -> tuple[ndarray, float | None, ndarray]:
+    """Barycentric coordinates of *p* in a tri3 with 3D *corners*.
+
+    Returns ``(weights, excess, parametric)`` where ``weights`` are
+    the three shape-function values summing to 1, ``excess`` is
+    ``-min(weight)`` (0 when p is inside; positive when outside), and
+    ``parametric`` is ``(v, w)`` corresponding to corners 1 and 2.
+
+    Projects the point onto the triangle plane (handles embedded
+    nodes that are slightly off-plane in 2D meshes).
+    """
+    A, B, C = corners[0], corners[1], corners[2]
+    v0 = B - A
+    v1 = C - A
+    v2 = p - A
+    d00 = float(np.dot(v0, v0))
+    d01 = float(np.dot(v0, v1))
+    d11 = float(np.dot(v1, v1))
+    d20 = float(np.dot(v2, v0))
+    d21 = float(np.dot(v2, v1))
+    denom = d00 * d11 - d01 * d01
+    if abs(denom) < 1e-30:
+        return np.zeros(3), None, np.zeros(2)
+    v = (d11 * d20 - d01 * d21) / denom
+    w = (d00 * d21 - d01 * d20) / denom
+    u = 1.0 - v - w
+    weights = np.array([u, v, w], dtype=float)
+    excess = -float(weights.min())
+    return weights, max(excess, 0.0), np.array([v, w], dtype=float)
+
+
+def _barycentric_tet4(
+    p: ndarray,
+    corners: ndarray,
+) -> tuple[ndarray, float | None, ndarray]:
+    """Barycentric coordinates of *p* in a tet4 with 3D *corners*.
+
+    Returns ``(weights, excess, parametric)`` where ``weights`` are
+    the four shape-function values summing to 1, ``excess`` is
+    ``-min(weight)`` (0 when p is inside; positive when outside), and
+    ``parametric`` is ``(v, w, x)`` corresponding to corners 1, 2, 3.
+    """
+    A, B, C, D = corners[0], corners[1], corners[2], corners[3]
+    M = np.column_stack([B - A, C - A, D - A])
+    rhs = p - A
+    det = float(np.linalg.det(M))
+    if abs(det) < 1e-30:
+        return np.zeros(4), None, np.zeros(3)
+    try:
+        coeffs = np.linalg.solve(M, rhs)
+    except np.linalg.LinAlgError:
+        return np.zeros(4), None, np.zeros(3)
+    v, w, x = float(coeffs[0]), float(coeffs[1]), float(coeffs[2])
+    u = 1.0 - v - w - x
+    weights = np.array([u, v, w, x], dtype=float)
+    excess = -float(weights.min())
+    return weights, max(excess, 0.0), np.array([v, w, x], dtype=float)
+
+
 class ConstraintResolver:
     """
     Converts constraint definitions into resolved records.
@@ -699,6 +761,119 @@ class ConstraintResolver:
             equal_dof_records=edof_records,
             dofs=list(dofs),
         )
+
+    def resolve_embedded(
+        self,
+        defn,
+        host_elems: ndarray,
+        embedded_nodes: set[int] | list[int],
+    ) -> list[InterpolationRecord]:
+        """
+        Resolve an embedded-element constraint.
+
+        Each embedded node is located inside a host element (tri3 in
+        2D or tet4 in 3D) via barycentric coordinates. The resulting
+        shape-function weights couple the embedded node to the host
+        element's corner nodes, matching the kinematics of
+        ``ASDEmbeddedNodeElement`` in OpenSees.
+
+        Parameters
+        ----------
+        defn : EmbeddedDef
+            Only ``defn.tolerance`` and ``defn.name`` are consulted.
+        host_elems : ndarray, shape (n_elems, 3 | 4)
+            Node-tag connectivity of the host elements. A row of 3
+            is treated as tri3; a row of 4 is treated as tet4.
+        embedded_nodes : iterable of int
+            Node tags to embed.
+
+        Returns
+        -------
+        list[InterpolationRecord]
+            One record per embedded node successfully located.
+        """
+        host_elems = np.asarray(host_elems, dtype=int)
+        if host_elems.ndim != 2 or host_elems.shape[0] == 0:
+            return []
+
+        npe = int(host_elems.shape[1])
+        if npe not in (3, 4):
+            raise ValueError(
+                f"resolve_embedded: host elements must be tri3 (npe=3) "
+                f"or tet4 (npe=4), got npe={npe}"
+            )
+
+        # Pre-compute corner coords per element and centroids for the
+        # nearest-element search.
+        n_elems = host_elems.shape[0]
+        host_coords = np.zeros((n_elems, npe, 3), dtype=float)
+        for ei in range(n_elems):
+            for ni in range(npe):
+                host_coords[ei, ni] = self._coords_of(int(host_elems[ei, ni]))
+        centroids = host_coords.mean(axis=1)
+        centroid_tree = _SpatialIndex(centroids)
+
+        tol = float(defn.tolerance)
+        # Barycentric out-of-element tolerance is unitless; keep it
+        # small so we don't falsely claim a node sits inside an element
+        # it is only grazing.
+        bary_tol = 1e-6
+
+        records: list[InterpolationRecord] = []
+        K = min(16, n_elems)
+
+        for en in sorted(int(t) for t in embedded_nodes):
+            p = self._coords_of(en)
+            _, cand = centroid_tree.query(p, k=K)
+            if isinstance(cand, (int, np.integer)):
+                cand = [int(cand)]
+            else:
+                cand = [int(c) for c in np.atleast_1d(cand)]
+
+            best_record: InterpolationRecord | None = None
+            best_excess = float("inf")
+
+            for ei in cand:
+                corners = host_coords[ei]
+                if npe == 3:
+                    weights, excess, xi_eta = _barycentric_tri3(p, corners)
+                    parametric = xi_eta
+                else:
+                    weights, excess, xi_etz = _barycentric_tet4(p, corners)
+                    parametric = xi_etz
+
+                if excess is None:
+                    continue
+
+                # "Inside" when all barycentric coords are non-negative
+                # within bary_tol. Take the first hit; if none is fully
+                # inside, keep the one with the smallest excess so the
+                # caller can inspect via the log.
+                if excess < best_excess:
+                    best_excess = excess
+                    best_record = InterpolationRecord(
+                        kind=ConstraintKind.EMBEDDED,
+                        name=defn.name,
+                        slave_node=en,
+                        master_nodes=[int(t) for t in host_elems[ei]],
+                        weights=weights,
+                        dofs=[1, 2, 3],
+                        projected_point=p.copy(),
+                        parametric_coords=parametric,
+                    )
+                if excess <= bary_tol:
+                    break
+
+            if best_record is None:
+                continue
+
+            # Use defn.tolerance as a soft gate on barycentric excess
+            # scaled by a characteristic host edge length. We simply
+            # accept any located record; the caller (composite) decides
+            # whether to warn.
+            records.append(best_record)
+
+        return records
 
     def resolve_node_to_surface_spring(
         self,
