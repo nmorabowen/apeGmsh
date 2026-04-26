@@ -42,6 +42,13 @@ include = ["apeGmsh*", "apeGmshViewer*"]
 [tool.setuptools.package-data]
 apeGmsh = ["py.typed"]
 
+[tool.pytest.ini_options]
+# Prefer the in-tree source over any site-packages install. Matters when
+# running pytest from a git worktree: the editable install points at the
+# main checkout, so without this, pytest would silently test the wrong
+# source tree.
+pythonpath = ["src"]
+
 [tool.pyright]
 pythonVersion = "3.10"
 # Point pyright at the project's opensees_venv so Qt/PyVista imports resolve.

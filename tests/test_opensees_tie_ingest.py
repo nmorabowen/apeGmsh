@@ -386,22 +386,44 @@ class TestEmitTieElements(_TieTestBase):
         self.assertEqual(counts["tie_skipped"], 1)
         self.assertEqual(ops._tie_elements, [])
 
-    def test_non_tie_interpolation_records_are_ignored(self):
-        """Ties filter on ``kind`` — embedded/distributing are skipped."""
+    def test_distributing_interpolation_records_are_ignored(self):
+        """Only ``tie`` and ``embedded`` kinds are emitted; others skipped."""
         tie = self._mk(
             slave_node=99, master_nodes=[10, 11, 12],
             dofs=[1, 2, 3], xi=0.1, eta=0.1,
         )
-        embedded = self._mk(
-            slave_node=100, master_nodes=[20, 21, 22, 23],
+        distributing = self._mk(
+            slave_node=200, master_nodes=[30, 31, 32],
             dofs=[1, 2, 3], xi=0.0, eta=0.0,
-            kind="embedded",
+            kind="distributing",
         )
-        ops = _FakeBroker(constraint_records=self._cs([tie, embedded]))
+        ops = _FakeBroker(constraint_records=self._cs([tie, distributing]))
         counts = self.emit_tie_elements(ops)
         self.assertEqual(counts["tie"], 1)
         self.assertEqual(len(ops._tie_elements), 1)
         self.assertEqual(ops._tie_elements[0]["cNode"], 99)
+
+    def test_embedded_interpolation_records_are_emitted(self):
+        """Embedded records (tet4 host: 4 retained) are emitted as-is."""
+        tet_embedded = self._mk(
+            slave_node=100, master_nodes=[20, 21, 22, 23],
+            dofs=[1, 2, 3], xi=0.0, eta=0.0,
+            kind="embedded",
+        )
+        tri_embedded = self._mk(
+            slave_node=101, master_nodes=[30, 31, 32],
+            dofs=[1, 2, 3], xi=0.0, eta=0.0,
+            kind="embedded",
+        )
+        ops = _FakeBroker(constraint_records=self._cs(
+            [tet_embedded, tri_embedded]))
+        counts = self.emit_tie_elements(ops)
+        self.assertEqual(counts["tie"], 2)
+        self.assertEqual(len(ops._tie_elements), 2)
+        # 4-node tet passes all 4 retained nodes through (no quad split).
+        self.assertEqual(ops._tie_elements[0]["cNode"], 100)
+        self.assertEqual(ops._tie_elements[0]["rNodes"], [20, 21, 22, 23])
+        self.assertEqual(ops._tie_elements[1]["rNodes"], [30, 31, 32])
 
     def test_sequential_tie_tags(self):
         recs = [

@@ -316,6 +316,18 @@ def two_label_part():
     p.cleanup()
 
 
+@pytest.fixture
+def unlabeled_line_part():
+    """Part with a single line, no labels (hence no sidecar)."""
+    p = Part("col")
+    with p:
+        p0 = p.model.geometry.add_point(0, 0, 0, lc=0.5)
+        p1 = p.model.geometry.add_point(0, 0, 3, lc=0.5)
+        p.model.geometry.add_line(p0, p1)
+    yield p
+    p.cleanup()
+
+
 class TestAnchorRebinding:
 
     def test_rebind_symmetric_part(self, symmetric_part, g):
@@ -348,6 +360,25 @@ class TestAnchorRebinding:
         inst = g.parts.add(two_label_part, label="dual_inst")
         assert "dual_inst.near" in inst.label_names
         assert "dual_inst.far_away" in inst.label_names
+
+    def test_add_unlabeled_part_with_translate(self, unlabeled_line_part, g):
+        """Regression: ``add(part, translate=...)`` on a Part with no
+        labels (hence no sidecar) must not hit UnboundLocalError on
+        ``labels_comp`` inside ``_import_cad``.
+        """
+        a = g.parts.add(unlabeled_line_part, label="col_0",
+                        translate=(0.0, 0.0, 0.0))
+        b = g.parts.add(unlabeled_line_part, label="col_1",
+                        translate=(4.0, 0.0, 0.0))
+
+        assert a.label == "col_0"
+        assert b.label == "col_1"
+        assert a.translate == (0.0, 0.0, 0.0)
+        assert b.translate == (4.0, 0.0, 0.0)
+        assert set(g.parts.labels()) == {"col_0", "col_1"}
+        # No sidecar → no extra labels beyond the explicit ``label=`` kwarg.
+        assert a.label_names == ["col_0"]
+        assert b.label_names == ["col_1"]
 
 
 # =====================================================================
