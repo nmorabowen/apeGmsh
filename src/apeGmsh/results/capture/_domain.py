@@ -63,21 +63,27 @@ from numpy import ndarray
 from ...solvers._element_response import (
     CUSTOM_RULE_CATALOG,
     INFERRED_SECTION_CODES_TABLE,
+    NODAL_FORCE_CATALOG,
     RESPONSE_CATALOG,
     CustomRuleLayout,
     IntRule,
+    NodalForceLayout,
     ResponseLayout,
     catalog_token_for_keyword,
     class_dimension,
     gauss_keyword_for_canonical,
+    gauss_routing_for_canonical,
     infer_section_codes,
     is_catalogued,
     is_custom_rule_catalogued,
+    is_nodal_force_catalogued,
     lookup,
     lookup_custom_rule,
+    lookup_nodal_force,
     normalise_integration_points,
     resolve_layout_from_gp_x,
     unflatten,
+    unflatten_nodal,
 )
 
 # Re-exports under their original underscore-prefixed names so the
@@ -241,6 +247,7 @@ class DomainCapture:
         # still raise NotImplementedError below.
         self._gauss_capturers: list[_GaussCapturer] = []
         self._line_station_capturers: list[_LineStationCapturer] = []
+        self._nodal_force_capturers: list[_NodalForcesCapturer] = []
         # Records that fall through every supported capturer — surface
         # in step() for visibility.
         self._element_level_records: list = []
@@ -284,6 +291,10 @@ class DomainCapture:
                 self._line_station_capturers.append(
                     _LineStationCapturer(rec),
                 )
+            elif rec.category == "elements":
+                self._nodal_force_capturers.append(
+                    _NodalForcesCapturer(rec),
+                )
             else:
                 self._element_level_records.append(rec)
         return self
@@ -325,6 +336,8 @@ class DomainCapture:
             gc.reset()
         for lc in self._line_station_capturers:
             lc.reset()
+        for nfc in self._nodal_force_capturers:
+            nfc.reset()
         # Stage gets a placeholder time vector that we'll fill at end_stage.
         # We can't pre-create the time dataset here because we don't yet
         # know how many steps. We start the stage with an empty time
@@ -342,10 +355,10 @@ class DomainCapture:
             raise NotImplementedError(
                 f"DomainCapture does not yet support element-level "
                 f"records of category {cats}. Gauss-level continuum "
-                f"stress/strain (Phase 11a) and line-stations beam "
-                f"section forces (Phase 11b) are supported; fibers / "
-                f"layers / per-element-node forces still need their "
-                f"catalog entries."
+                f"stress/strain (Phase 11a), line-stations beam "
+                f"section forces (Phase 11b Step 2b), and per-element-"
+                f"node forces (Phase 11b Step 3b) are supported; "
+                f"fibers / layers still need their catalog entries."
             )
         ops = self._lazy_ops()
         if self._needs_reactions:
@@ -357,6 +370,8 @@ class DomainCapture:
             gc.step(t, ops)
         for lc in self._line_station_capturers:
             lc.step(t, ops)
+        for nfc in self._nodal_force_capturers:
+            nfc.step(t, ops)
 
     def end_stage(self) -> None:
         """Flush buffered data for the current stage to disk.
@@ -387,6 +402,11 @@ class DomainCapture:
                 if lc._times:
                     time_vec = np.array(lc._times, dtype=np.float64)
                     break
+        if time_vec.size == 0:
+            for nfc in self._nodal_force_capturers:
+                if nfc._times:
+                    time_vec = np.array(nfc._times, dtype=np.float64)
+                    break
 
         sid = self._writer.begin_stage(
             name=self._current_stage,
@@ -398,6 +418,7 @@ class DomainCapture:
             self._flush_nodes_merged(sid, time_vec)
             self._flush_gauss(sid)
             self._flush_line_stations(sid)
+            self._flush_nodal_forces(sid)
         finally:
             # Always close the stage — even if the merge raised, we
             # want the stage closed so subsequent ``begin_stage`` works.
@@ -414,6 +435,11 @@ class DomainCapture:
         """Write each line-stations capturer's per-class buffers to disk."""
         for lc in self._line_station_capturers:
             lc.write_to(self._writer, stage_id, "partition_0")
+
+    def _flush_nodal_forces(self, stage_id: str) -> None:
+        """Write each nodal-forces capturer's per-class buffers to disk."""
+        for nfc in self._nodal_force_capturers:
+            nfc.write_to(self._writer, stage_id, "partition_0")
 
     def _flush_nodes_merged(
         self, stage_id: str, time_vec: ndarray,
@@ -936,5 +962,159 @@ class _LineStationCapturer:
                 int_rule=IntRule.Custom,
                 element_index=np.array(grp.element_ids, dtype=np.int64),
                 station_natural_coord=grp.gp_x,
+                components=decoded,
+            )
+
+
+# =====================================================================
+# Per-record nodal-forces capturer (Phase 11b Step 3b)
+# =====================================================================
+#
+# Closed-form line elements (``ElasticBeam{2d,3d}``,
+# ``ElasticTimoshenkoBeam{2d,3d}``, ``ModElasticBeam2d``) expose
+# per-element-node force vectors via ``ops.eleResponse(eid,
+# "globalForce")`` (or ``"localForce"``). No integration points,
+# no section codes — the layout is fully baked in
+# :data:`NODAL_FORCE_CATALOG`. The capturer reads one frame per
+# record (the record's components dictate which) and writes one
+# write_nodal_forces_group per element class encountered.
+#
+# Frame derivation: a record's components must all map to the same
+# ``ops`` keyword (all global, or all local). Mixing the two in one
+# record is rejected at construction.
+
+@dataclass
+class _NodalForcesGroup:
+    """Per-class buffer for one nodal-forces record."""
+    layout: NodalForceLayout
+    element_ids: list[int] = field(default_factory=list)
+    steps: list[ndarray] = field(default_factory=list)
+
+
+class _NodalForcesCapturer:
+    """Buffers ``ops.eleResponse(eid, "globalForce" | "localForce")`` per step.
+
+    Mirrors :class:`_GaussCapturer` and :class:`_LineStationCapturer`
+    for the nodal-forces topology. Element classes are discovered on
+    first ``step()`` via ``ops.eleType(eid)``; uncatalogued classes
+    are tracked in ``skipped_elements``.
+    """
+
+    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+        self._rec = record
+        self._times: list[float] = []
+        # Derive (ops_keyword, catalog_token) once from the record's
+        # components. v1 requires homogeneous frame within one record.
+        self._ops_keyword, self._catalog_token = self._derive_frame_routing()
+        # Built lazily on first step — needs the live ops domain.
+        self._groups: Optional[dict[str, _NodalForcesGroup]] = None
+        self.skipped_elements: list[tuple[int, str]] = []
+
+    def _derive_frame_routing(self) -> tuple[str, str]:
+        """Resolve a single (ops_keyword, catalog_token) pair for the record.
+
+        Each component must route through the nodal-forces topology;
+        all components must share the same frame (all global, or all
+        local). Mixed frames → ValueError.
+        """
+        keywords: set[str] = set()
+        catalog_tokens: set[str] = set()
+        for comp in self._rec.components:
+            routing = gauss_routing_for_canonical(
+                comp, topology="nodal_forces",
+            )
+            if routing is None:
+                continue
+            keyword, token = routing
+            keywords.add(keyword)
+            catalog_tokens.add(token)
+        if not keywords:
+            raise ValueError(
+                f"Record {self._rec.name!r} (category=elements) has "
+                f"no recognised nodal-forces components. Expected "
+                f"``nodal_resisting_*`` canonicals from "
+                f"PER_ELEMENT_NODAL_FORCES."
+            )
+        if len(keywords) > 1:
+            raise ValueError(
+                f"Record {self._rec.name!r} mixes global and local "
+                f"frames ({sorted(keywords)}); split into separate "
+                f"records (one per ops.eleResponse keyword)."
+            )
+        return next(iter(keywords)), next(iter(catalog_tokens))
+
+    def reset(self) -> None:
+        """Clear per-stage step buffers (preserves group structure)."""
+        self._times.clear()
+        if self._groups is not None:
+            for grp in self._groups.values():
+                grp.steps.clear()
+
+    def _build_groups(self, ops: Any) -> None:
+        groups: dict[str, _NodalForcesGroup] = {}
+        skipped: list[tuple[int, str]] = []
+        if self._rec.element_ids is None:
+            self._groups = groups
+            self.skipped_elements = skipped
+            return
+        for eid in (int(e) for e in self._rec.element_ids):
+            try:
+                class_name = ops.eleType(eid)
+            except Exception as exc:
+                skipped.append((eid, f"ops.eleType failed: {exc}"))
+                continue
+            if not is_nodal_force_catalogued(class_name, self._catalog_token):
+                skipped.append((
+                    eid,
+                    f"({class_name}, {self._catalog_token}) not in "
+                    f"NODAL_FORCE_CATALOG",
+                ))
+                continue
+            layout = lookup_nodal_force(class_name, self._catalog_token)
+            grp = groups.setdefault(
+                class_name, _NodalForcesGroup(layout=layout),
+            )
+            grp.element_ids.append(eid)
+        self._groups = groups
+        self.skipped_elements = skipped
+
+    def step(self, t: float, ops: Any) -> None:
+        if self._groups is None:
+            self._build_groups(ops)
+        self._times.append(float(t))
+        assert self._groups is not None
+        for grp in self._groups.values():
+            buf: list[ndarray] = []
+            for eid in grp.element_ids:
+                vals = ops.eleResponse(eid, self._ops_keyword)
+                arr = np.asarray(vals, dtype=np.float64).flatten()
+                if arr.size != grp.layout.flat_size_per_element:
+                    raise ValueError(
+                        f"ops.eleResponse({eid}, {self._ops_keyword!r}) "
+                        f"returned {arr.size} values; layout for "
+                        f"class_tag={grp.layout.class_tag} expects "
+                        f"{grp.layout.flat_size_per_element} "
+                        f"({grp.layout.n_nodes_per_element} nodes × "
+                        f"{grp.layout.n_components_per_node} comps)."
+                    )
+                buf.append(arr)
+            grp.steps.append(np.stack(buf, axis=0))    # (E_g, flat_size)
+
+    def write_to(
+        self, writer: Any, stage_id: str, partition_id: str,
+    ) -> None:
+        if not self._times or self._groups is None:
+            return
+        for i, (class_name, grp) in enumerate(self._groups.items()):
+            if not grp.steps:
+                continue
+            flat = np.stack(grp.steps, axis=0)        # (T, E_g, flat_size)
+            decoded = unflatten_nodal(flat, grp.layout)
+            writer.write_nodal_forces_group(
+                stage_id, partition_id,
+                group_id=f"{self._rec.name}_{class_name}_{i}",
+                class_tag=grp.layout.class_tag,
+                frame=grp.layout.frame,
+                element_index=np.array(grp.element_ids, dtype=np.int64),
                 components=decoded,
             )
