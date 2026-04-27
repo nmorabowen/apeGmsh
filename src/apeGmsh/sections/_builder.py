@@ -101,12 +101,18 @@ class SectionsBuilder(_HasLogging):
         if new_pts:
             gmsh.model.mesh.setSize([(0, t) for t in new_pts], lc)
 
-        # Apply anchor/align in the section's local frame BEFORE the
-        # user's translate/rotate.  ``affected`` is the entire set of
-        # entities the build_fn introduced — passing it scopes the
-        # in-session PG snapshot/restore to this section's PGs and
-        # leaves any pre-existing parts in the parent session alone.
-        if entities and (anchor is not None or align is not None):
+        # Compose anchor/align (local-frame placement) AND the user's
+        # translate/rotate into one affine matrix and apply via a
+        # single OCC call.  Each separate sync would renumber boundary
+        # sub-topology and force its own snap/restore cycle — composing
+        # avoids that entirely.  ``affected`` is the build_fn's entity
+        # delta so PG handling stays scoped to this section in a
+        # shared session.
+        needs_placement = (
+            anchor is not None or align is not None
+            or translate != (0.0, 0.0, 0.0) or rotate is not None
+        )
+        if entities and needs_placement:
             top_dim = max(entities)
             placement_dimtags = [(top_dim, t) for t in entities[top_dim]]
             affected: list[tuple[int, int]] = [
@@ -118,30 +124,11 @@ class SectionsBuilder(_HasLogging):
                 anchor if anchor is not None else "start",
                 align if align is not None else "z",
                 length=length,
+                user_translate=translate,
+                user_rotate=rotate,
                 dimtags=placement_dimtags,
                 affected=affected,
             )
-
-        # Apply transforms to the new entities (top-dim only)
-        if entities:
-            top_dim = max(entities)
-            transform_dimtags = [(top_dim, t) for t in entities[top_dim]]
-            dx, dy, dz = translate
-            if rotate is not None:
-                if len(rotate) == 4:
-                    angle, ax, ay, az = rotate
-                    gmsh.model.occ.rotate(
-                        transform_dimtags, 0, 0, 0, ax, ay, az, angle,
-                    )
-                elif len(rotate) == 7:
-                    angle, ax, ay, az, cx, cy, cz = rotate
-                    gmsh.model.occ.rotate(
-                        transform_dimtags, cx, cy, cz, ax, ay, az, angle,
-                    )
-                gmsh.model.occ.synchronize()
-            if dx != 0.0 or dy != 0.0 or dz != 0.0:
-                gmsh.model.occ.translate(transform_dimtags, dx, dy, dz)
-                gmsh.model.occ.synchronize()
 
         # Harvest labels created during the build
         labels_comp = getattr(self._parent, 'labels', None)

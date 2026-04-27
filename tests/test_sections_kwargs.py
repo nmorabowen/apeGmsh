@@ -494,6 +494,40 @@ class TestBuilderPlacementInteractions:
             # And the section's labels are also present.
             assert "c.web" in g.labels.get_all()
 
+    def test_user_rotate_after_anchor_preserves_labels(self):
+        # anchor=midspan applies a translate (which apply_placement
+        # snapshots/restores).  Then the user passes rotate=, which the
+        # builder applies via raw occ.rotate + synchronize().  That
+        # second sync is exactly the operation that drops PGs whose
+        # boundary sub-topology was renumbered.  If the second pass
+        # isn't snapshot-protected, the section's face labels go away.
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.W_solid(
+                bf=150, tf=20, h=300, tw=10, length=1000,
+                anchor="midspan",
+                rotate=(math.pi / 2, 1.0, 0.0, 0.0),  # 90° about +X
+                label="c",
+            )
+            labels = g.labels.get_all()
+            # Volume labels — these survive rotate (top-dim tags don't
+            # get renumbered).
+            assert "c.web" in labels
+            assert "c.top_flange" in labels
+            # Face labels — these reference dim=2 boundary entities
+            # whose tag IDs get renumbered by the rotate's OCC sync.
+            assert "c.start_face" in labels
+            assert "c.end_face" in labels
+            # And they must still resolve to live entities.
+            assert len(g.labels.entities("c.start_face")) >= 1
+            assert len(g.labels.entities("c.end_face")) >= 1
+            # Sanity on bbox: a 1000-long bar rotated 90° about X should
+            # have its Z extent compressed and its Y extent stretched
+            # to length/2 ± length/2 (anchor=midspan put it at Z ∈
+            # [-500, 500], and a +90° rotation about X maps +Z → -Y).
+            _, ymin, _, _, ymax, _ = _bbox_of_inst(inst)
+            assert abs(ymin - (-500.0)) <= _TOL
+            assert abs(ymax - 500.0) <= _TOL
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
