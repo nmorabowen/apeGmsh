@@ -25,6 +25,7 @@ from .._slabs import (
 )
 from .._time import resolve_time_slice
 from . import _mpco_element_io as _melem
+from . import _mpco_line_io as _mline
 from . import _mpco_translation as _mtr
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
@@ -184,8 +185,11 @@ class MPCOReader:
         if level.value == "gauss":
             return self._gauss_available_components(mpco_name)
 
-        # Other element levels (line_stations / fibers / layers /
-        # elements) remain stubbed until their catalog entries land.
+        if level.value == "line_stations":
+            return self._line_stations_available_components(mpco_name)
+
+        # Other element levels (fibers / layers / elements) remain
+        # stubbed until their catalog entries land.
         return []
 
     def _gauss_available_components(self, mpco_name: str) -> list[str]:
@@ -201,6 +205,34 @@ class MPCOReader:
             )
             for b in buckets:
                 out.update(b.layout.component_layout)
+        return sorted(out)
+
+    def _line_stations_available_components(
+        self, mpco_name: str,
+    ) -> list[str]:
+        stage_grp = self._h5[mpco_name]
+        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
+        model_elements = stage_grp.get("MODEL/ELEMENTS")
+        if on_elements is None or model_elements is None:
+            return []
+        # Discover line-stations buckets via any line-station canonical
+        # (the routing only depends on the topology, not the specific
+        # component name); ``axial_force`` is always present in v1.
+        _, buckets = _mline.discover_line_station_buckets(
+            on_elements, canonical_component="axial_force",
+        )
+        out: set[str] = set()
+        for bucket in buckets:
+            try:
+                token_grp = on_elements["section.force"][bucket.bracket_key]
+                layout, _ = _mline.resolve_bucket_layout(
+                    model_elements, token_grp, bucket,
+                )
+            except (ValueError, KeyError):
+                # Unsupported section codes / missing GP_X — silent skip
+                # at availability discovery (still raises on .get()).
+                continue
+            out.update(layout.component_layout)
         return sorted(out)
 
     # ------------------------------------------------------------------
@@ -284,15 +316,60 @@ class MPCOReader:
         return _empty_element_slab(component, self.time_vector(stage_id),
                                     time_slice)
 
-    def read_line_stations(self, stage_id, component, *, element_ids=None,
-                            time_slice=None) -> LineStationSlab:
+    def read_line_stations(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> LineStationSlab:
+        self._ensure_stages()
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
+
+        mpco_name = self._stage_to_mpco.get(stage_id)
+        if mpco_name is None:
+            return _empty_line_station_slab(component, time, t_idx)
+        stage_grp = self._h5[mpco_name]
+        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
+        model_elements = stage_grp.get("MODEL/ELEMENTS")
+        if on_elements is None or model_elements is None:
+            return _empty_line_station_slab(component, time, t_idx)
+
+        token, buckets = _mline.discover_line_station_buckets(
+            on_elements, canonical_component=component,
+        )
+        if not buckets:
+            return _empty_line_station_slab(component, time, t_idx)
+        token_grp = on_elements[token]
+
+        # Read per-bucket slabs and stitch on the station axis.
+        values_parts: list[ndarray] = []
+        element_index_parts: list[ndarray] = []
+        station_coord_parts: list[ndarray] = []
+
+        for bucket in buckets:
+            bucket_grp = token_grp[bucket.bracket_key]
+            result = _mline.read_line_bucket_slab(
+                bucket_grp, model_elements, bucket, component,
+                t_idx=t_idx, element_ids=element_ids,
+            )
+            if result is None:
+                continue
+            values, element_index, station_coord = result
+            values_parts.append(values)
+            element_index_parts.append(element_index)
+            station_coord_parts.append(station_coord)
+
+        if not values_parts:
+            return _empty_line_station_slab(component, time, t_idx)
+
         return LineStationSlab(
             component=component,
-            values=np.zeros((t_idx.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            station_natural_coord=np.array([], dtype=np.float64),
+            values=np.concatenate(values_parts, axis=1),
+            element_index=np.concatenate(element_index_parts),
+            station_natural_coord=np.concatenate(station_coord_parts),
             time=time[t_idx],
         )
 
@@ -487,5 +564,17 @@ def _empty_gauss_slab(component: str, time: ndarray, t_idx) -> GaussSlab:
         element_index=np.array([], dtype=np.int64),
         natural_coords=np.zeros((0, 3), dtype=np.float64),
         local_axes_quaternion=None,
+        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
+    )
+
+
+def _empty_line_station_slab(
+    component: str, time: ndarray, t_idx,
+) -> LineStationSlab:
+    return LineStationSlab(
+        component=component,
+        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
+        element_index=np.array([], dtype=np.int64),
+        station_natural_coord=np.array([], dtype=np.float64),
         time=time[t_idx] if time.size else np.array([], dtype=np.float64),
     )
