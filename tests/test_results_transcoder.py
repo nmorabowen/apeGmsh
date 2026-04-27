@@ -214,9 +214,9 @@ def test_transcode_snapshot_mismatch_raises(tmp_path: Path) -> None:
 def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
     """Element-level records the transcoder doesn't yet handle don't crash.
 
-    Phase 11a wired ``gauss`` (continuum stress/strain). The remaining
-    element-level categories (``elements`` / ``line_stations`` /
-    ``fibers`` / ``layers``) still skip silently — surface in
+    Phase 11a wired ``gauss``. Phase 11b wired ``line_stations``. The
+    remaining element-level categories (``elements`` / ``fibers`` /
+    ``layers``) still skip silently — surface in
     ``transcoder.unsupported`` for inspection.
     """
     fem = _MockFem([1])
@@ -233,8 +233,8 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
                 node_ids=np.array([1]),
             ),
             ResolvedRecorderRecord(
-                category="line_stations", name="b",
-                components=("axial_force",),
+                category="elements", name="b",
+                components=("nodal_resisting_force_x",),
                 dt=None, n_steps=None,
                 element_ids=np.array([10]),
             ),
@@ -248,12 +248,12 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
         dofs=[1],
         value_fn=lambda k, nid, dof: 0.5,
     )
-    # Note: no b_line_stations.out file; the line-station record is skipped.
+    # Note: no b_elements.out file; the elements record is skipped.
 
     target = tmp_path / "out.h5"
     transcoder = RecorderTranscoder(spec, output_dir, target, fem)
     transcoder.run()
-    assert "line_stations:b" in transcoder.unsupported
+    assert "elements:b" in transcoder.unsupported
 
     with Results.from_native(target, fem=fem) as r:
         # Node data parsed
