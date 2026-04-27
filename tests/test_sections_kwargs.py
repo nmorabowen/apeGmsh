@@ -353,5 +353,147 @@ class TestSimpleSolidsPlacement:
             rod.cleanup()
 
 
+# ---------------------------------------------------------------------
+# Builder: g.sections.W_solid anchor + align
+# ---------------------------------------------------------------------
+
+class TestBuilderWSolidPlacement:
+    def test_default_extrudes_along_positive_z(self):
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.W_solid(
+                bf=150, tf=20, h=300, tw=10, length=1000, label="c",
+            )
+            _, _, zmin, _, _, zmax = _bbox_of_inst(inst)
+            assert abs(zmin - 0.0) <= _TOL
+            assert abs(zmax - 1000.0) <= _TOL
+
+    def test_midspan_centers_z(self):
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.W_solid(
+                bf=150, tf=20, h=300, tw=10, length=1000,
+                anchor="midspan", label="c",
+            )
+            _, _, zmin, _, _, zmax = _bbox_of_inst(inst)
+            assert abs(zmin - (-500.0)) <= _TOL
+            assert abs(zmax - 500.0) <= _TOL
+
+    def test_align_x_routes_extrusion_to_world_x(self):
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.W_solid(
+                bf=150, tf=20, h=300, tw=10, length=1000,
+                align="x", label="c",
+            )
+            xmin, _, _, xmax, _, _ = _bbox_of_inst(inst)
+            assert abs(xmin - 0.0) <= _TOL
+            assert abs(xmax - 1000.0) <= _TOL
+
+    def test_midspan_plus_align_x_centers_x_about_origin(self):
+        # Builder mirror of the headline factory sanity check.
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.W_solid(
+                bf=150, tf=20, h=300, tw=10, length=1000,
+                anchor="midspan", align="x", label="c",
+            )
+            xmin, _, _, xmax, _, _ = _bbox_of_inst(inst)
+            assert abs(xmin - (-500.0)) <= _TOL
+            assert abs(xmax - 500.0) <= _TOL
+
+    def test_labels_survive_placement(self):
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.W_solid(
+                bf=150, tf=20, h=300, tw=10, length=1000,
+                anchor="midspan", align="x", label="c",
+            )
+            labels = g.labels.get_all()
+            # Builder labels are dotted directly during build_fn.
+            assert "c.web" in labels
+            assert "c.top_flange" in labels
+            assert "c.bottom_flange" in labels
+            assert "c.start_face" in labels
+            assert "c.end_face" in labels
+            assert len(g.labels.entities("c.web")) >= 1
+            assert len(g.labels.entities("c.start_face")) >= 1
+
+    def test_unknown_anchor_raises(self):
+        with apeGmsh(model_name="t") as g:
+            with pytest.raises(ValueError, match="Unknown anchor"):
+                g.sections.W_solid(
+                    bf=150, tf=20, h=300, tw=10, length=1000,
+                    anchor="middle", label="c",
+                )
+
+
+# ---------------------------------------------------------------------
+# Builder: g.sections.rect_solid + W_shell
+# ---------------------------------------------------------------------
+
+class TestBuilderSimpleSectionsPlacement:
+    def test_rect_solid_midspan(self):
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.rect_solid(
+                b=100, h=200, length=500, anchor="midspan", label="r",
+            )
+            _, _, zmin, _, _, zmax = _bbox_of_inst(inst)
+            assert abs(zmin - (-250.0)) <= _TOL
+            assert abs(zmax - 250.0) <= _TOL
+            assert "r.body" in g.labels.get_all()
+
+    def test_W_shell_align_y(self):
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.W_shell(
+                bf=190, tf=14, h=428, tw=9, length=4000,
+                align="y", label="b",
+            )
+            _, ymin, _, _, ymax, _ = _bbox_of_inst(inst)
+            assert abs(ymin - 0.0) <= _TOL
+            assert abs(ymax - 4000.0) <= _TOL
+            labels = g.labels.get_all()
+            assert "b.top_flange" in labels
+            assert "b.web" in labels
+
+
+# ---------------------------------------------------------------------
+# Builder: anchor/align coexists with user translate/rotate and with
+# pre-existing parts in the same session.
+# ---------------------------------------------------------------------
+
+class TestBuilderPlacementInteractions:
+    def test_user_translate_stacks_on_anchor(self):
+        # midspan first centers Z about 0, then user translate=(0,0,100)
+        # shifts the whole thing — Z becomes [-400, +600].
+        with apeGmsh(model_name="t") as g:
+            inst = g.sections.W_solid(
+                bf=150, tf=20, h=300, tw=10, length=1000,
+                anchor="midspan",
+                translate=(0.0, 0.0, 100.0),
+                label="c",
+            )
+            _, _, zmin, _, _, zmax = _bbox_of_inst(inst)
+            assert abs(zmin - (-400.0)) <= _TOL
+            assert abs(zmax - 600.0) <= _TOL
+
+    def test_other_part_in_session_is_not_disturbed(self):
+        # Add a plain volume first, then build a section with align=x
+        # and verify the plain volume's labels and bbox are intact —
+        # the in-session PG snapshot/restore must scope to the section.
+        with apeGmsh(model_name="t") as g:
+            tag = g.model.geometry.add_box(
+                10, 0, 0, 1, 1, 1, label="bystander",
+            )
+            assert "bystander" in g.labels.get_all()
+            bystander_tags_before = g.labels.entities("bystander")
+
+            g.sections.W_solid(
+                bf=150, tf=20, h=300, tw=10, length=1000,
+                anchor="midspan", align="x", label="c",
+            )
+
+            # Bystander label still resolves to the same entity tags.
+            assert "bystander" in g.labels.get_all()
+            assert g.labels.entities("bystander") == bystander_tags_before
+            # And the section's labels are also present.
+            assert "c.web" in g.labels.get_all()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

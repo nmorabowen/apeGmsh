@@ -240,6 +240,7 @@ def apply_placement(
     length: float | None = None,
     *,
     dimtags: Sequence[tuple[int, int]] | None = None,
+    affected: Sequence[tuple[int, int]] | None = None,
 ) -> None:
     """Apply ``anchor`` translation then ``align`` rotation in-place.
 
@@ -263,6 +264,15 @@ def apply_placement(
         right default for section factories building in their own
         Part session.  Builders that share a session with other parts
         must pass an explicit list to avoid moving unrelated geometry.
+    affected : list of (dim, tag), optional
+        Full set of entities whose tag IDs may be invalidated by the
+        transform — usually ``dimtags`` plus the recursive boundary
+        sub-topology (faces of rotated volumes get renumbered even
+        though the volumes themselves keep their tag).  Used to scope
+        the PG snapshot/restore so untouched PGs in a shared parent
+        session are left alone.  Defaults to ``None`` — every entity
+        in the model is treated as affected, which is correct for the
+        Part-only case where the section has the session to itself.
     """
     if dimtags is None:
         all_ents = gmsh.model.getEntities()
@@ -282,14 +292,21 @@ def apply_placement(
     if not (needs_translate or needs_rotate):
         return
 
+    if affected is None:
+        affected_set: set[tuple[int, int]] | None = None
+    else:
+        affected_set = {(int(d), int(t)) for d, t in affected}
+
     # Rigid OCC transforms followed by synchronize() drop the
     # physical groups whose entities were touched.  Top-dim entity
     # tags survive translate/rotate, but the OCC kernel renumbers
     # the boundary sub-topology (faces of rotated volumes).  So we
     # snapshot per-entity COMs before the transform and re-find each
     # entity by COM after — same matching strategy that the import
-    # path uses, just in-process.
-    snap = _snapshot_physical_groups()
+    # path uses, just in-process.  ``affected_set`` (when given) keeps
+    # us from touching PGs in a shared session that the transform
+    # didn't move.
+    snap = _snapshot_physical_groups(affected_set)
 
     if needs_translate:
         gmsh.model.occ.translate(dimtags, dx, dy, dz)
@@ -300,29 +317,46 @@ def apply_placement(
         gmsh.model.occ.rotate(dimtags, 0.0, 0.0, 0.0, ax, ay, az, angle)
         gmsh.model.occ.synchronize()
 
-    _restore_physical_groups(snap, (dx, dy, dz), rot)
+    _restore_physical_groups(snap, (dx, dy, dz), rot, affected_set)
 
 
-def _snapshot_physical_groups() -> list[dict]:
-    """Capture all PGs (label and user) before a placement transform.
+def _snapshot_physical_groups(
+    affected_set: set[tuple[int, int]] | None = None,
+) -> list[dict]:
+    """Capture PGs (label and user) before a placement transform.
 
     Records ``{dim, pg_tag, name, entity_coms}`` per group, where
-    ``entity_coms`` is a list of ``(tag, (cx, cy, cz))`` for every
-    entity in the group at snapshot time.  The COM is read fresh so
-    the post-transform restore can match by transformed-COM rather
-    than by potentially-renumbered entity tag.
+    ``entity_coms`` is a list of ``(tag, (cx, cy, cz), is_affected)``
+    for every entity in the group at snapshot time.  The COM is read
+    fresh so the post-transform restore can match by transformed-COM
+    rather than by potentially-renumbered entity tag.
+
+    When ``affected_set`` is given, only PGs that contain at least one
+    affected entity are snapshotted.  Untouched PGs are left alone —
+    the OCC sync did not drop them.
     """
     snap: list[dict] = []
     for d, pg in gmsh.model.getPhysicalGroups():
         name = gmsh.model.getPhysicalName(d, pg)
         ents = list(gmsh.model.getEntitiesForPhysicalGroup(d, pg))
-        coms: list[tuple[int, tuple[float, float, float]]] = []
+        coms: list[tuple[int, tuple[float, float, float], bool]] = []
+        any_affected = False
         for t in ents:
             try:
                 cx, cy, cz = gmsh.model.occ.getCenterOfMass(int(d), int(t))
             except Exception:
                 continue
-            coms.append((int(t), (float(cx), float(cy), float(cz))))
+            is_aff = (
+                affected_set is None
+                or (int(d), int(t)) in affected_set
+            )
+            if is_aff:
+                any_affected = True
+            coms.append(
+                (int(t), (float(cx), float(cy), float(cz)), is_aff),
+            )
+        if affected_set is not None and not any_affected:
+            continue
         snap.append({
             'dim':          int(d),
             'pg_tag':       int(pg),
@@ -336,14 +370,14 @@ def _restore_physical_groups(
     snap: list[dict],
     translate: tuple[float, float, float],
     rotate: tuple[float, float, float, float] | None,
+    affected_set: set[tuple[int, int]] | None = None,
 ) -> None:
     """Recreate snapshot PGs by matching transformed COMs.
 
-    For each snapshotted entity COM, applies the same translate/rotate
-    that was applied to the geometry, then finds the live entity at
-    that dim whose current COM is closest.  Falls back to the original
-    tag when COM matching is unavailable (e.g. no live entities at
-    that dim — should not happen for normal section factories).
+    For each snapshotted entity COM, applies the placement transform
+    only to entities that were ``affected``, then finds the live
+    entity at that dim whose current COM is closest.  Entities that
+    were not affected keep their tag and original COM as-is.
     """
     if not snap:
         return
@@ -368,11 +402,15 @@ def _restore_physical_groups(
 
         new_tags: list[int] = []
         live = live_by_dim.get(d, [])
-        for old_tag, com in entry['entity_coms']:
-            expected = _transform_point(com, translate, rotate)
-            best_tag = _nearest_tag(live, expected)
-            if best_tag is not None:
-                new_tags.append(best_tag)
+        for old_tag, com, is_aff in entry['entity_coms']:
+            if is_aff:
+                expected = _transform_point(com, translate, rotate)
+                best_tag = _nearest_tag(live, expected)
+                if best_tag is not None:
+                    new_tags.append(best_tag)
+            else:
+                # Entity was not transformed — keep the original tag.
+                new_tags.append(old_tag)
 
         new_tags = sorted(set(new_tags))
         if not new_tags:

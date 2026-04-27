@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 
 from apeGmsh._logging import _HasLogging
+from apeGmsh.core._section_placement import apply_placement
 
 
 class SectionsBuilder(_HasLogging):
@@ -48,6 +49,10 @@ class SectionsBuilder(_HasLogging):
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
         lc: float = 1e22,
+        *,
+        anchor=None,
+        align=None,
+        length: float | None = None,
     ) -> "Instance":
         """Shared helper: snapshot entities before/after the build
         function, register the delta as an Instance, apply transforms.
@@ -95,6 +100,27 @@ class SectionsBuilder(_HasLogging):
         new_pts = entities.get(0, [])
         if new_pts:
             gmsh.model.mesh.setSize([(0, t) for t in new_pts], lc)
+
+        # Apply anchor/align in the section's local frame BEFORE the
+        # user's translate/rotate.  ``affected`` is the entire set of
+        # entities the build_fn introduced — passing it scopes the
+        # in-session PG snapshot/restore to this section's PGs and
+        # leaves any pre-existing parts in the parent session alone.
+        if entities and (anchor is not None or align is not None):
+            top_dim = max(entities)
+            placement_dimtags = [(top_dim, t) for t in entities[top_dim]]
+            affected: list[tuple[int, int]] = [
+                (int(d), int(t))
+                for d, tags in entities.items()
+                for t in tags
+            ]
+            apply_placement(
+                anchor if anchor is not None else "start",
+                align if align is not None else "z",
+                length=length,
+                dimtags=placement_dimtags,
+                affected=affected,
+            )
 
         # Apply transforms to the new entities (top-dim only)
         if entities:
@@ -192,6 +218,8 @@ class SectionsBuilder(_HasLogging):
         tw: float,
         length: float,
         *,
+        anchor="start",
+        align="z",
         label: str = "W_solid",
         lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -205,6 +233,13 @@ class SectionsBuilder(_HasLogging):
 
         Parameters
         ----------
+        anchor : str or (x, y, z), default ``"start"``
+            Re-origin the section in its local frame before optional
+            ``align`` and before the user's ``translate``/``rotate``.
+            See :func:`apeGmsh.core._section_placement.compute_anchor_offset`.
+        align : str or (ax, ay, az), default ``"z"``
+            Reorient the local +Z axis to a world direction.
+            See :func:`apeGmsh.core._section_placement.compute_alignment_rotation`.
         lc : float
             Target element size for this section's BRep points.
             Default ``1e22`` imposes no constraint — element size
@@ -277,7 +312,10 @@ class SectionsBuilder(_HasLogging):
             if end_tags:
                 labels.add(2, end_tags, name=f"{label}.end_face")
 
-        return self._build_section(_build, label, translate, rotate, lc=lc)
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
 
     # ------------------------------------------------------------------
     # Rectangular solid
@@ -289,6 +327,8 @@ class SectionsBuilder(_HasLogging):
         h: float,
         length: float,
         *,
+        anchor="start",
+        align="z",
         label: str = "rect",
         lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -307,7 +347,10 @@ class SectionsBuilder(_HasLogging):
                 -b/2, -h/2, 0, b, h, length,
             )
             self._parent.labels.add(3, [tag], name=f"{label}.body")
-        return self._build_section(_build, label, translate, rotate, lc=lc)
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
 
     # ------------------------------------------------------------------
     # W-shape shell (mid-surfaces)
@@ -321,6 +364,8 @@ class SectionsBuilder(_HasLogging):
         tw: float,
         length: float,
         *,
+        anchor="start",
+        align="z",
         label: str = "W_shell",
         lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -360,4 +405,7 @@ class SectionsBuilder(_HasLogging):
             )
             self._parent.model.sync()
 
-        return self._build_section(_build, label, translate, rotate, lc=lc)
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
