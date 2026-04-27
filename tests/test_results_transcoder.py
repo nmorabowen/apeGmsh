@@ -211,8 +211,14 @@ def test_transcode_snapshot_mismatch_raises(tmp_path: Path) -> None:
 # Element-level records are skipped (Phase 6 v1 limitation)
 # =====================================================================
 
-def test_element_records_skipped_silently(tmp_path: Path) -> None:
-    """Element records produce no output but don't crash the transcoder."""
+def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
+    """Element-level records the transcoder doesn't yet handle don't crash.
+
+    Phase 11a wired ``gauss`` (continuum stress/strain). The remaining
+    element-level categories (``elements`` / ``line_stations`` /
+    ``fibers`` / ``layers``) still skip silently — surface in
+    ``transcoder.unsupported`` for inspection.
+    """
     fem = _MockFem([1])
     output_dir = tmp_path / "out"
     output_dir.mkdir()
@@ -227,8 +233,8 @@ def test_element_records_skipped_silently(tmp_path: Path) -> None:
                 node_ids=np.array([1]),
             ),
             ResolvedRecorderRecord(
-                category="gauss", name="g",
-                components=("stress_xx",),
+                category="line_stations", name="b",
+                components=("axial_force",),
                 dt=None, n_steps=None,
                 element_ids=np.array([10]),
             ),
@@ -242,18 +248,19 @@ def test_element_records_skipped_silently(tmp_path: Path) -> None:
         dofs=[1],
         value_fn=lambda k, nid, dof: 0.5,
     )
-    # Note: no g_gauss.out file; the element record is skipped.
+    # Note: no b_line_stations.out file; the line-station record is skipped.
 
     target = tmp_path / "out.h5"
-    RecorderTranscoder(spec, output_dir, target, fem).run()
+    transcoder = RecorderTranscoder(spec, output_dir, target, fem)
+    transcoder.run()
+    assert "line_stations:b" in transcoder.unsupported
 
     with Results.from_native(target, fem=fem) as r:
         # Node data parsed
         np.testing.assert_allclose(
             r.nodes.get(component="displacement_x").values, [[0.5], [0.5]],
         )
-        # Element-level not present (no gauss components available)
-        from apeGmsh.results import ResultLevel
+        # Line-stations level not present (no components available)
         assert r.elements.gauss.available_components() == []
 
 

@@ -401,15 +401,20 @@ def test_snapshot_mismatch_raises(tmp_path: Path) -> None:
 
 
 # =====================================================================
-# Element-level records: NotImplementedError
+# Element-level records still without catalog wiring: NotImplementedError
 # =====================================================================
+#
+# Phase 11a wired ``gauss`` records (continuum stress/strain) — see
+# ``test_results_domain_capture_gauss.py``. The remaining element-level
+# categories (line_stations, fibers, layers, per-element-node forces)
+# still raise from step() until their catalog entries land.
 
-def test_element_level_records_raise_in_step(tmp_path: Path) -> None:
+def test_unwired_element_level_records_raise_in_step(tmp_path: Path) -> None:
     fem = _MockFem([1])
     spec = _make_spec(
         ResolvedRecorderRecord(
-            category="gauss", name="r",
-            components=("stress_xx",),
+            category="line_stations", name="r",
+            components=("axial_force",),
             dt=None, n_steps=None,
             element_ids=np.array([10, 20]),
         ),
@@ -420,11 +425,8 @@ def test_element_level_records_raise_in_step(tmp_path: Path) -> None:
     path = tmp_path / "run.h5"
     with DomainCapture(spec, path, fem, ops=fake) as cap:
         cap.begin_stage("g")
-        with pytest.raises(NotImplementedError, match="element-level"):
+        with pytest.raises(NotImplementedError, match="line_stations"):
             cap.step(t=0.0)
-        # Cleanly end the stage so close() doesn't double-error.
-        # We don't call end_stage because the buffers are partial.
-        # Just close — __exit__ will handle it.
 
 
 # =====================================================================

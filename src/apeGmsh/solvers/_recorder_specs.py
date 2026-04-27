@@ -94,6 +94,15 @@ class ResolvedRecorderRecord:
     node_ids: Optional[ndarray] = None
     element_ids: Optional[ndarray] = None
 
+    # Optional OpenSees C++ class name shared by all elements in this
+    # record. Populated by the bridge when the user assigned a single
+    # class to the underlying PG/label. Used by the .out transcoder
+    # to disambiguate catalog entries that share a flat size for the
+    # same response token (e.g. FourNodeTetrahedron vs SSPbrick).
+    # Other paths (DomainCapture via ``ops.eleType``, MPCO via the
+    # bracket key) get class info directly and do not consume this.
+    element_class_name: Optional[str] = None
+
     # Modal-only
     n_modes: Optional[int] = None
 
@@ -194,6 +203,8 @@ class ResolvedRecorderSpec:
                     sub.attrs["n_steps"] = int(r.n_steps)
                 if r.n_modes is not None:
                     sub.attrs["n_modes"] = int(r.n_modes)
+                if r.element_class_name is not None:
+                    sub.attrs["element_class_name"] = r.element_class_name
                 # Components
                 sub.create_dataset(
                     "components",
@@ -330,5 +341,9 @@ class ResolvedRecorderSpec:
                     n_modes=int(attrs["n_modes"]) if "n_modes" in attrs else None,
                     node_ids=node_ids,
                     element_ids=element_ids,
+                    element_class_name=(
+                        str(attrs["element_class_name"])
+                        if "element_class_name" in attrs else None
+                    ),
                 ))
         return cls(fem_snapshot_id=snapshot_id, records=tuple(records))

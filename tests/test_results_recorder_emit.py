@@ -190,7 +190,9 @@ def test_gauss_emits_element_stress_recorder() -> None:
     assert line.startswith("recorder Element ")
     assert "-ele 10 20" in line
     assert "-dT 0.01" in line
-    assert line.rstrip().endswith("stress  ;# body gauss")
+    # OpenSees solid elements register the keyword "stresses" (plural)
+    # in setResponse — see _recorder_emit._ELEMENT_CATEGORY_RESPONSE.
+    assert line.rstrip().endswith("stresses  ;# body gauss")
 
 
 def test_elements_emits_globalForce() -> None:
@@ -285,7 +287,7 @@ def test_python_element() -> None:
     [line] = spec.to_python_commands()
     assert "'Element'" in line
     assert "'-ele', 100" in line
-    assert "'stress'" in line
+    assert "'stresses'" in line
 
 
 # =====================================================================

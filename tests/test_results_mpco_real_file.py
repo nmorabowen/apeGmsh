@@ -143,18 +143,22 @@ def test_partial_fem_snapshot_id_is_stable(mpco_path: Path) -> None:
 
 
 # =====================================================================
-# Element-level reads return empty slabs in Phase 3
+# Element-level reads on this fixture
 # =====================================================================
+#
+# elasticFrame.mpco is an elastic beam frame — it does NOT record
+# continuum stress or fiber data. The empty-slab returns below are the
+# correct behaviour, not a stub. End-to-end gauss decoding of a real
+# MPCO file is exercised by ``test_results_mpco_element_real.py``.
 
-def test_gauss_returns_empty_in_phase_3(mpco_path: Path) -> None:
+def test_gauss_empty_when_fixture_has_no_stress(mpco_path: Path) -> None:
     with Results.from_mpco(mpco_path) as r:
         s0 = r.stage(r.stages[0].id)
         slab = s0.elements.gauss.get(component="stress_xx")
-        # Phase 3 stub: empty until element-level MPCO support lands.
         assert slab.values.shape[1] == 0
 
 
-def test_fibers_returns_empty_in_phase_3(mpco_path: Path) -> None:
+def test_fibers_empty_when_fixture_has_no_fibers(mpco_path: Path) -> None:
     with Results.from_mpco(mpco_path) as r:
         s0 = r.stage(r.stages[0].id)
         slab = s0.elements.fibers.get(component="fiber_stress")

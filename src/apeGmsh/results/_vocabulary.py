@@ -68,6 +68,39 @@ LINE_DIAGRAMS: tuple[str, ...] = (
 STRESS: tuple[str, ...] = tuple(f"stress_{idx}" for idx in _TENSOR_INDICES)
 STRAIN: tuple[str, ...] = tuple(f"strain_{idx}" for idx in _TENSOR_INDICES)
 
+# Plane (2-D) tensor subsets — three independent components in plane
+# stress / plane strain (σ_xx, σ_yy, σ_xy). 2-D continuum elements
+# return three values per Gauss point in this order; the catalog uses
+# these to declare layouts for plane-element classes.
+STRESS_2D: tuple[str, ...] = ("stress_xx", "stress_yy", "stress_xy")
+STRAIN_2D: tuple[str, ...] = ("strain_xx", "strain_yy", "strain_xy")
+
+# Shell stress resultants — 8 components per surface Gauss point that
+# OpenSees shell elements return from ``ops.eleResponse(eid, "stresses")``
+# via ``section->getStressResultant()``. Order matches OpenSees source
+# (e.g. ``ShellMITC4.cpp:732`` writes ``sigma(0)..sigma(7)`` in this
+# order):
+#
+#   0..2 : in-plane membrane forces N_xx, N_yy, N_xy   (force per length)
+#   3..5 : bending moments       M_xx, M_yy, M_xy      (moment per length)
+#   6..7 : transverse shears     V_xz, V_yz            (force per length)
+#
+# Distinct from the LINE_DIAGRAMS beam-station vocabulary (different
+# topology level, different physical units).
+SHELL_STRESS_RESULTANTS: tuple[str, ...] = (
+    "membrane_force_xx", "membrane_force_yy", "membrane_force_xy",
+    "bending_moment_xx", "bending_moment_yy", "bending_moment_xy",
+    "transverse_shear_xz", "transverse_shear_yz",
+)
+
+# Shell generalized strains — conjugate work-pair to the resultants.
+# Returned by ``section->getSectionDeformation()``; same per-GP order.
+SHELL_GENERALIZED_STRAINS: tuple[str, ...] = (
+    "membrane_strain_xx", "membrane_strain_yy", "membrane_strain_xy",
+    "curvature_xx", "curvature_yy", "curvature_xy",
+    "transverse_shear_strain_xz", "transverse_shear_strain_yz",
+)
+
 DERIVED_SCALARS: tuple[str, ...] = (
     "von_mises_stress", "pressure_hydrostatic",
     "principal_stress_1", "principal_stress_2", "principal_stress_3",

@@ -1,12 +1,11 @@
 """MPCOReader — reads STKO ``.mpco`` files through the unified protocol.
 
-Phase 3 scope: nodal results (DISPLACEMENT, ROTATION, VELOCITY,
+Phase 3 covered nodal results (DISPLACEMENT, ROTATION, VELOCITY,
 ACCELERATION, REACTION_FORCE, …) translated to canonical apeGmsh
-names. Element-level reads (gauss, fibers, layers, line stations)
-are stubbed — the META unflattening is non-trivial and lands in a
-later phase. Empty slabs are returned for those levels with a
-clear "not supported in Phase 3" log message via the slab itself
-(values is empty (T, 0)).
+names. Phase 11a wires Gauss-level reads through the shared response
+catalog in :mod:`apeGmsh.solvers._element_response`; fibers, layers,
+line stations, and per-element-node forces remain stubbed (empty
+slabs) until their catalog entries land.
 """
 from __future__ import annotations
 
@@ -25,6 +24,7 @@ from .._slabs import (
     NodeSlab,
 )
 from .._time import resolve_time_slice
+from . import _mpco_element_io as _melem
 from . import _mpco_translation as _mtr
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
@@ -160,27 +160,47 @@ class MPCOReader:
     def available_components(
         self, stage_id: str, level: ResultLevel,
     ) -> list[str]:
-        if level.value != "nodes":
-            # Element-level not supported in Phase 3.
-            return []
         self._ensure_stages()
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return []
-        on_nodes = self._h5[mpco_name].get("RESULTS/ON_NODES")
-        if on_nodes is None:
-            return []
 
+        if level.value == "nodes":
+            on_nodes = self._h5[mpco_name].get("RESULTS/ON_NODES")
+            if on_nodes is None:
+                return []
+            out: set[str] = set()
+            for result_name in on_nodes:
+                grp = on_nodes[result_name]
+                comps = _parse_components_attr(grp.attrs.get("COMPONENTS"))
+                for comp_label in comps:
+                    canonical = _mtr.canonical_node_component(
+                        result_name, comp_label,
+                    )
+                    if canonical is not None:
+                        out.add(canonical)
+            return sorted(out)
+
+        if level.value == "gauss":
+            return self._gauss_available_components(mpco_name)
+
+        # Other element levels (line_stations / fibers / layers /
+        # elements) remain stubbed until their catalog entries land.
+        return []
+
+    def _gauss_available_components(self, mpco_name: str) -> list[str]:
+        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        if on_elements is None:
+            return []
         out: set[str] = set()
-        for result_name in on_nodes:
-            grp = on_nodes[result_name]
-            comps = _parse_components_attr(grp.attrs.get("COMPONENTS"))
-            for comp_label in comps:
-                canonical = _mtr.canonical_node_component(
-                    result_name, comp_label,
-                )
-                if canonical is not None:
-                    out.add(canonical)
+        # Probe each gauss-eligible canonical prefix; the discover
+        # helper handles the canonical→MPCO group-name translation.
+        for prefix in ("stress", "strain"):
+            _, buckets = _melem.discover_gauss_buckets(
+                on_elements, canonical_component=f"{prefix}_xx",
+            )
+            for b in buckets:
+                out.update(b.layout.component_layout)
         return sorted(out)
 
     # ------------------------------------------------------------------
@@ -276,15 +296,58 @@ class MPCOReader:
             time=time[t_idx],
         )
 
-    def read_gauss(self, stage_id, component, *, element_ids=None,
-                    time_slice=None) -> GaussSlab:
+    def read_gauss(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> GaussSlab:
+        self._ensure_stages()
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
+
+        mpco_name = self._stage_to_mpco.get(stage_id)
+        if mpco_name is None:
+            return _empty_gauss_slab(component, time, t_idx)
+        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        if on_elements is None:
+            return _empty_gauss_slab(component, time, t_idx)
+
+        token, buckets = _melem.discover_gauss_buckets(
+            on_elements, canonical_component=component,
+        )
+        if not buckets:
+            return _empty_gauss_slab(component, time, t_idx)
+        token_grp = on_elements[token]
+
+        # Read per-bucket slabs and stitch on the GP/element axis.
+        values_parts: list[ndarray] = []
+        element_index_parts: list[ndarray] = []
+        natural_coords_parts: list[ndarray] = []
+
+        for bucket in buckets:
+            bucket_grp = token_grp[bucket.bracket_key]
+            result = _melem.read_bucket_slab(
+                bucket_grp, bucket, component,
+                t_idx=t_idx, element_ids=element_ids,
+            )
+            if result is None:
+                continue
+            values, element_index, natural_coords = result
+            values_parts.append(values)
+            element_index_parts.append(element_index)
+            natural_coords_parts.append(natural_coords)
+
+        if not values_parts:
+            return _empty_gauss_slab(component, time, t_idx)
+
         return GaussSlab(
             component=component,
-            values=np.zeros((t_idx.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            natural_coords=np.zeros((0, 3), dtype=np.float64),
+            values=np.concatenate(values_parts, axis=1),
+            element_index=np.concatenate(element_index_parts),
+            natural_coords=np.concatenate(natural_coords_parts, axis=0),
             local_axes_quaternion=None,
             time=time[t_idx],
         )
@@ -414,4 +477,15 @@ def _empty_element_slab(component: str, time: ndarray, time_slice) -> ElementSla
         values=np.zeros((t_idx.size, 0, 0), dtype=np.float64),
         element_ids=np.array([], dtype=np.int64),
         time=time[t_idx],
+    )
+
+
+def _empty_gauss_slab(component: str, time: ndarray, t_idx) -> GaussSlab:
+    return GaussSlab(
+        component=component,
+        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
+        element_index=np.array([], dtype=np.int64),
+        natural_coords=np.zeros((0, 3), dtype=np.float64),
+        local_axes_quaternion=None,
+        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
     )

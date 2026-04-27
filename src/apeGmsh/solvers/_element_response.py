@@ -1,0 +1,1123 @@
+"""Element response metadata catalog (Phase 11a).
+
+Three sites in the Results module need to decode element-level recorder
+output (gauss / fibers / layers / line stations / per-element-node
+forces) into per-component arrays:
+
+- ``results.readers._mpco.MPCOReader`` — reads MPCO ``ON_ELEMENTS``
+  buckets. MPCO carries a ``META`` self-description for column layout,
+  but does **not** carry natural Gauss-point coordinates for standard
+  integration rules; we look those up here.
+- ``results.transcoders._recorder.RecorderTranscoder`` — parses
+  OpenSees ``.out`` files. There is no META; the catalog is the only
+  source of truth for column ordering.
+- ``results.capture._domain.DomainCapture`` — calls
+  ``ops.eleResponse(eid, *tokens)`` and gets a flat list of doubles.
+  Same: catalog is the only authority on what each entry means.
+
+This module is the single shared keystone. v1 covers the few
+``_ELEM_REGISTRY`` classes whose response shape is fixed by their
+class + integration rule alone; richer cases (custom rules,
+heterogeneous fiber sections, layered shells) are deferred.
+
+Out of scope for v1 (raise / log on encounter)
+----------------------------------------------
+- ``CustomIntegrationRule`` (1000) — force-based beams with user IPs;
+  these store their own ``GP_X`` in MPCO.
+- ``CUSTOM_INTEGRATION_RULE_DIMENSION == 2`` (MVLEM family).
+- ``state_variable_<n>`` material outputs.
+- Multiple ``headerIdx`` buckets in MPCO (heterogeneous fiber sections,
+  variable-length section responses) — first bucket only in v1.
+
+References
+----------
+- Source-of-truth for integration-rule enum values and per-geometry
+  parent domains: ``mpco-recorder/references/integration-rules-and-gauss.md``.
+- Element class tags: ``OpenSees/SRC/classTags.h``.
+- Gauss-point natural coordinates verified against
+  ``OpenSees/SRC/element/tetrahedron/{FourNodeTetrahedron,TenNodeTetrahedron}.cpp``.
+"""
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+
+import numpy as np
+from numpy import ndarray
+
+from ..results._vocabulary import (
+    SHELL_GENERALIZED_STRAINS,
+    SHELL_STRESS_RESULTANTS,
+    STRAIN,
+    STRAIN_2D,
+    STRESS,
+    STRESS_2D,
+)
+
+
+# =====================================================================
+# Integration-rule enum (subset; values mirror mpco::ElementIntegrationRuleType)
+# =====================================================================
+
+class IntRule:
+    """Integer codes that appear in MPCO bracket keys ``[<rule>:<cust>:<hdr>]``.
+
+    Values match ``mpco::ElementIntegrationRuleType`` in
+    ``MPCORecorder.cpp`` line 1313.
+    """
+    NoIntegrationRule = 0
+
+    Line_GL_1 = 1
+    Line_GL_2 = 2
+    Line_GL_3 = 3
+
+    Triangle_GL_1 = 100
+    Triangle_GL_2 = 101
+    Triangle_GL_2B = 102
+    Triangle_GL_2C = 103
+
+    Quad_GL_1 = 200
+    Quad_GL_2 = 201
+    Quad_GL_3 = 202
+
+    Tet_GL_1 = 300
+    Tet_GL_2 = 301
+
+    Hex_GL_1 = 400
+    Hex_GL_2 = 401
+    Hex_GL_3 = 402
+
+    Custom = 1000
+
+
+# =====================================================================
+# Element class tags (subset; values mirror SRC/classTags.h)
+# =====================================================================
+#
+# We hard-code the tags we use rather than depend on the C++ header,
+# because (a) the catalog needs Python-level constants for keys and
+# (b) the values are stable parts of the OpenSees ABI.
+
+ELE_TAG_FourNodeTetrahedron = 179
+ELE_TAG_TenNodeTetrahedron = 256
+ELE_TAG_Brick = 56
+ELE_TAG_BbarBrick = 57
+ELE_TAG_SSPbrick = 121
+ELE_TAG_FourNodeQuad = 31
+ELE_TAG_Tri31 = 33
+ELE_TAG_SSPquad = 119
+ELE_TAG_Twenty_Node_Brick = 49
+ELE_TAG_EightNodeQuad = 208
+# Shells
+ELE_TAG_ShellMITC4 = 53
+ELE_TAG_ShellMITC9 = 54
+ELE_TAG_ShellDKGQ = 156
+ELE_TAG_ShellNLDKGQ = 157
+ELE_TAG_ShellDKGT = 167
+ELE_TAG_ShellNLDKGT = 168
+ELE_TAG_ASDShellQ4 = 203
+ELE_TAG_ASDShellT3 = 204
+# Line elements — trusses
+ELE_TAG_Truss = 12
+ELE_TAG_TrussSection = 13
+ELE_TAG_CorotTruss = 14
+ELE_TAG_CorotTrussSection = 15
+ELE_TAG_Truss2 = 138
+ELE_TAG_CorotTruss2 = 139
+ELE_TAG_InertiaTruss = 218
+
+
+# =====================================================================
+# ResponseLayout — describes one (class, rule, token) entry
+# =====================================================================
+
+@dataclass(frozen=True)
+class ResponseLayout:
+    """How a single ``ops.eleResponse(eid, token)`` flat array unflattens.
+
+    The flat array layout is ``[gp0_c0, gp0_c1, ..., gp0_cK,
+    gp1_c0, ..., gp(G-1)_c(K-1)]`` — Gauss point varies slowest,
+    component varies fastest. This matches both OpenSees's element
+    ``setResponse`` ordering and MPCO's META block layout.
+
+    Parameters
+    ----------
+    n_gauss_points
+        Number of integration points the response covers.
+    natural_coords
+        ``(n_gauss_points, dim)`` parent-domain coordinates of the GPs.
+        The parent domain depends on the geometry — see ``coord_system``.
+    coord_system
+        Tag describing the parent domain so the reader can interpret
+        ``natural_coords`` correctly:
+
+        - ``"isoparametric"`` — ``[-1, +1]^dim`` (line, quad, hex).
+        - ``"barycentric_tet"`` — volume coordinates ``(L1, L2, L3)``
+          with the implicit fourth ``L4 = 1 - L1 - L2 - L3`` (tet).
+        - ``"barycentric_tri"`` — area coordinates ``(L1, L2)`` with
+          ``L3 = 1 - L1 - L2`` (triangle).
+    n_components_per_gp
+        Number of scalar components emitted per Gauss point.
+    component_layout
+        Canonical apeGmsh names (in flat order) for the
+        ``n_components_per_gp`` columns at each GP.
+    class_tag
+        OpenSees ``ELE_TAG_*`` integer for this element class. Lets
+        callers stamp the class tag onto the native HDF5 group.
+    flat_size_per_element
+        Convenience: ``n_gauss_points * n_components_per_gp``.
+    """
+
+    n_gauss_points: int
+    natural_coords: ndarray
+    coord_system: str
+    n_components_per_gp: int
+    component_layout: tuple[str, ...]
+    class_tag: int
+
+    @property
+    def flat_size_per_element(self) -> int:
+        return self.n_gauss_points * self.n_components_per_gp
+
+    def __post_init__(self) -> None:
+        if self.natural_coords.shape[0] != self.n_gauss_points:
+            raise ValueError(
+                f"natural_coords first dim {self.natural_coords.shape[0]} "
+                f"does not match n_gauss_points={self.n_gauss_points}."
+            )
+        if len(self.component_layout) != self.n_components_per_gp:
+            raise ValueError(
+                f"component_layout has {len(self.component_layout)} names "
+                f"but n_components_per_gp={self.n_components_per_gp}."
+            )
+
+
+# =====================================================================
+# Gauss-point coordinate tables
+# =====================================================================
+
+# Tet_GL_1 — single point at the volume centroid.
+# FourNodeTetrahedron.cpp:226 — sg = {0.25}, weight 1/6.
+_TET_GL_1_COORDS: ndarray = np.array([[0.25, 0.25, 0.25]], dtype=np.float64)
+
+# Tet_GL_2 — 4-point Hammer-Stroud rule.
+# TenNodeTetrahedron.cpp:223–226 — sg = {alpha, beta, beta, beta}
+# with alpha = (5 + 3*sqrt(5))/20, beta = (5 - sqrt(5))/20, all weights 1/24.
+# Loop body picks (sg[k], sg[|1-k|], sg[|2-k|]) for k = 0..3.
+_TET_GL_2_ALPHA = (5.0 + 3.0 * math.sqrt(5.0)) / 20.0
+_TET_GL_2_BETA = (5.0 - math.sqrt(5.0)) / 20.0
+_TET_GL_2_COORDS: ndarray = np.array([
+    # k=0: (alpha, beta, beta)
+    [_TET_GL_2_ALPHA, _TET_GL_2_BETA, _TET_GL_2_BETA],
+    # k=1: (beta, alpha, beta)   — sg[|1-1|]=sg[0]=alpha, sg[|2-1|]=sg[1]=beta
+    [_TET_GL_2_BETA, _TET_GL_2_ALPHA, _TET_GL_2_BETA],
+    # k=2: (beta, beta, alpha)   — sg[|1-2|]=sg[1]=beta, sg[|2-2|]=sg[0]=alpha
+    [_TET_GL_2_BETA, _TET_GL_2_BETA, _TET_GL_2_ALPHA],
+    # k=3: (beta, beta, beta)    — sg[|1-3|]=sg[2]=beta, sg[|2-3|]=sg[1]=beta
+    [_TET_GL_2_BETA, _TET_GL_2_BETA, _TET_GL_2_BETA],
+], dtype=np.float64)
+
+# Hex_GL_1 — single point at the parent-cube centroid.
+# SSPbrick.cpp uses one Gauss point at (0, 0, 0) in [-1, +1]³.
+_HEX_GL_1_COORDS: ndarray = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+
+# Hex_GL_2 — tensor product of 1-D 2-point Gauss-Legendre on [-1, +1]³.
+# Brick.cpp:124–125 — sg = {-1/√3, +1/√3}, weights all 1.0.
+# Triple loop ``for i: for j: for k: gaussPoint = (sg[i], sg[j], sg[k])``
+# (Brick.cpp:540–542) advances ζ fastest, then η, then ξ. So GP index
+# i*4 + j*2 + k.
+_HEX_GL_2_M = -1.0 / math.sqrt(3.0)
+_HEX_GL_2_P = +1.0 / math.sqrt(3.0)
+_HEX_GL_2_COORDS: ndarray = np.array([
+    [_HEX_GL_2_M, _HEX_GL_2_M, _HEX_GL_2_M],   # 0  (-, -, -)
+    [_HEX_GL_2_M, _HEX_GL_2_M, _HEX_GL_2_P],   # 1  (-, -, +)
+    [_HEX_GL_2_M, _HEX_GL_2_P, _HEX_GL_2_M],   # 2  (-, +, -)
+    [_HEX_GL_2_M, _HEX_GL_2_P, _HEX_GL_2_P],   # 3  (-, +, +)
+    [_HEX_GL_2_P, _HEX_GL_2_M, _HEX_GL_2_M],   # 4  (+, -, -)
+    [_HEX_GL_2_P, _HEX_GL_2_M, _HEX_GL_2_P],   # 5  (+, -, +)
+    [_HEX_GL_2_P, _HEX_GL_2_P, _HEX_GL_2_M],   # 6  (+, +, -)
+    [_HEX_GL_2_P, _HEX_GL_2_P, _HEX_GL_2_P],   # 7  (+, +, +)
+], dtype=np.float64)
+
+# Quad_GL_1 — single point at the parent-square centroid.
+# SSPquad and similar single-IP plane elements use this rule.
+_QUAD_GL_1_COORDS: ndarray = np.array([[0.0, 0.0]], dtype=np.float64)
+
+# Quad_GL_2 — 4 GPs at (±1/√3, ±1/√3) in [-1, +1]².
+# FourNodeQuad.cpp:298–305 stores the points in counter-clockwise
+# order around the parent square (NOT the i-slowest tensor product
+# Brick uses): (−,−), (+,−), (+,+), (−,+).
+_QUAD_GL_2_M = -1.0 / math.sqrt(3.0)
+_QUAD_GL_2_P = +1.0 / math.sqrt(3.0)
+_QUAD_GL_2_COORDS: ndarray = np.array([
+    [_QUAD_GL_2_M, _QUAD_GL_2_M],   # 0  (-, -)
+    [_QUAD_GL_2_P, _QUAD_GL_2_M],   # 1  (+, -)
+    [_QUAD_GL_2_P, _QUAD_GL_2_P],   # 2  (+, +)
+    [_QUAD_GL_2_M, _QUAD_GL_2_P],   # 3  (-, +)
+], dtype=np.float64)
+
+# Triangle_GL_1 — single point at the area-coord centroid (1/3, 1/3).
+# The third area coord is implicit: L3 = 1 - L1 - L2 = 1/3.
+_TRI_GL_1_COORDS: ndarray = np.array(
+    [[1.0 / 3.0, 1.0 / 3.0]], dtype=np.float64,
+)
+
+# Hex_GL_3 — 27 GPs in OpenSees Twenty_Node_Brick's corner-edge-face-
+# centroid order (NOT a tensor product). The element shares its
+# 27-GP rule with the 27-node hex via ``shp3dv.cpp::brcshl``
+# (lines 251–277), where parent-cube node positions are stored as
+# RA/SA/TA in {-0.5, 0.0, +0.5} and scaled by ``G = 2*sqrt(3/5)`` to
+# place each GP at the same parent-cube point as the corresponding
+# node would be in a 27-node element. The order is:
+#   L=0..7   : 8 corners        (all sign combinations of ±√(3/5))
+#   L=8..19  : 12 edge midpoints (one coord 0, two are ±√(3/5))
+#   L=20..25 : 6 face centers   (two coords 0, one is ±√(3/5))
+#   L=26     : 1 body centroid  (all zero)
+_HEX_GL_3_RA: tuple[float, ...] = (
+    -0.5,  0.5,  0.5, -0.5, -0.5,  0.5,  0.5, -0.5,
+     0.0,  0.5,  0.0, -0.5,  0.0,  0.5,  0.0, -0.5,
+    -0.5,  0.5,  0.5, -0.5,  0.5,  0.0,  0.0, -0.5,
+     0.0,  0.0,  0.0,
+)
+_HEX_GL_3_SA: tuple[float, ...] = (
+    -0.5, -0.5,  0.5,  0.5, -0.5, -0.5,  0.5,  0.5,
+    -0.5,  0.0,  0.5,  0.0, -0.5,  0.0,  0.5,  0.0,
+    -0.5, -0.5,  0.5,  0.5,  0.0,  0.5,  0.0,  0.0,
+    -0.5,  0.0,  0.0,
+)
+_HEX_GL_3_TA: tuple[float, ...] = (
+    -0.5, -0.5, -0.5, -0.5,  0.5,  0.5,  0.5,  0.5,
+    -0.5, -0.5, -0.5, -0.5,  0.5,  0.5,  0.5,  0.5,
+     0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.5,  0.0,
+     0.0, -0.5,  0.0,
+)
+_HEX_GL_3_G = 2.0 * math.sqrt(3.0 / 5.0)
+_HEX_GL_3_COORDS: ndarray = _HEX_GL_3_G * np.array(
+    list(zip(_HEX_GL_3_RA, _HEX_GL_3_SA, _HEX_GL_3_TA)),
+    dtype=np.float64,
+)
+
+# Quad_GL_3 (EightNodeQuad order) — 9 GPs at all combinations of
+# (-√(3/5), 0, +√(3/5))² in EightNodeQuad's corner-edge-centroid
+# order: 4 corners CCW, 4 edge midpoints CCW starting at the bottom
+# edge, then the centroid. EightNodeQuad.cpp:128–144 stores the
+# literal ±0.7745966 coordinates explicitly.
+_QUAD_GL_3_S = math.sqrt(3.0 / 5.0)
+_QUAD_GL_3_COORDS_QUAD8: ndarray = np.array([
+    [-_QUAD_GL_3_S, -_QUAD_GL_3_S],   # 0  corner (-, -)
+    [+_QUAD_GL_3_S, -_QUAD_GL_3_S],   # 1  corner (+, -)
+    [+_QUAD_GL_3_S, +_QUAD_GL_3_S],   # 2  corner (+, +)
+    [-_QUAD_GL_3_S, +_QUAD_GL_3_S],   # 3  corner (-, +)
+    [          0.0, -_QUAD_GL_3_S],   # 4  bottom edge (0, -)
+    [+_QUAD_GL_3_S,           0.0],   # 5  right edge  (+, 0)
+    [          0.0, +_QUAD_GL_3_S],   # 6  top edge    (0, +)
+    [-_QUAD_GL_3_S,           0.0],   # 7  left edge   (-, 0)
+    [          0.0,           0.0],   # 8  centroid
+], dtype=np.float64)
+
+# Quad_GL_3 (ShellMITC9 order) — same 9 GP positions, different walk
+# order: alternating corner-edge CCW around the parent square, with
+# the centroid last. ShellMITC9.cpp:107–124 sg/tg arrays.
+_QUAD_GL_3_COORDS_MITC9: ndarray = np.array([
+    [-_QUAD_GL_3_S, -_QUAD_GL_3_S],   # 0  corner SW
+    [          0.0, -_QUAD_GL_3_S],   # 1  edge   S
+    [+_QUAD_GL_3_S, -_QUAD_GL_3_S],   # 2  corner SE
+    [+_QUAD_GL_3_S,           0.0],   # 3  edge   E
+    [+_QUAD_GL_3_S, +_QUAD_GL_3_S],   # 4  corner NE
+    [          0.0, +_QUAD_GL_3_S],   # 5  edge   N
+    [-_QUAD_GL_3_S, +_QUAD_GL_3_S],   # 6  corner NW
+    [-_QUAD_GL_3_S,           0.0],   # 7  edge   W
+    [          0.0,           0.0],   # 8  centroid
+], dtype=np.float64)
+
+# Triangle_GL_2B — 3 GPs at the area-coord midpoints of the triangle
+# edges. Used by ASDShellT3 (ASDShellT3.cpp:148–150 mid-edge XI/ETA).
+# The (XI, ETA) values from the source map directly to (L1, L2)
+# pairs with L3 = 1 - L1 - L2 implicit.
+_TRI_GL_2B_COORDS: ndarray = np.array([
+    [0.5, 0.5],   # edge between vertices 1-2 (L3 = 0)
+    [0.0, 0.5],   # edge between vertices 1-3 (L1 = 0)
+    [0.5, 0.0],   # edge between vertices 2-3 (L2 = 0)
+], dtype=np.float64)
+
+# Triangle_GL_2C — 4-point quadrature used by ShellDKGT / ShellNLDKGT
+# (ShellDKGT.cpp:238–250 sg/tg arrays). One centroid + three
+# barycentric points each at (1/5, 1/5, 3/5)-type permutations.
+_TRI_GL_2C_COORDS: ndarray = np.array([
+    [1.0 / 3.0, 1.0 / 3.0],   # 0  centroid
+    [1.0 / 5.0, 3.0 / 5.0],   # 1  near vertex 2
+    [3.0 / 5.0, 1.0 / 5.0],   # 2  near vertex 1
+    [1.0 / 5.0, 1.0 / 5.0],   # 3  near vertex 3
+], dtype=np.float64)
+
+# Line_GL_1 — single point at the parent-line midpoint. Used by
+# trusses, zero-length elements, and simple bearings (anything in
+# the MPCO Line_2N + Line_GaussLegendre_1 bucket). One coordinate
+# in 1-D parametric space ξ ∈ [-1, +1].
+_LINE_GL_1_COORDS: ndarray = np.array([[0.0]], dtype=np.float64)
+
+
+# =====================================================================
+# RESPONSE_CATALOG — the master table
+# =====================================================================
+#
+# Key: (class_name, int_rule, response_token) where:
+#   - class_name is the C++ class as it appears in MPCO bracket keys
+#     (Element::getClassType()), NOT necessarily the Tcl element name.
+#   - int_rule is the IntRule enum integer.
+#   - response_token is the broad OpenSees response keyword
+#     (e.g. "stress", "strain", "globalForce").
+#
+# The "stress" and "strain" tokens emit identical layouts (both are
+# rank-2 symmetric tensors at every GP), so they share constructors.
+
+def _continuum_layout(
+    *,
+    n_gp: int,
+    natural_coords: ndarray,
+    coord_system: str,
+    component_names: tuple[str, ...],
+    class_tag: int,
+) -> ResponseLayout:
+    return ResponseLayout(
+        n_gauss_points=n_gp,
+        natural_coords=natural_coords,
+        coord_system=coord_system,
+        n_components_per_gp=len(component_names),
+        component_layout=component_names,
+        class_tag=class_tag,
+    )
+
+
+RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
+    # ── FourNodeTetrahedron (1 GP) ────────────────────────────────────
+    ("FourNodeTetrahedron", IntRule.Tet_GL_1, "stress"): _continuum_layout(
+        n_gp=1, natural_coords=_TET_GL_1_COORDS,
+        coord_system="barycentric_tet",
+        component_names=STRESS,
+        class_tag=ELE_TAG_FourNodeTetrahedron,
+    ),
+    ("FourNodeTetrahedron", IntRule.Tet_GL_1, "strain"): _continuum_layout(
+        n_gp=1, natural_coords=_TET_GL_1_COORDS,
+        coord_system="barycentric_tet",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_FourNodeTetrahedron,
+    ),
+
+    # ── TenNodeTetrahedron (4 GPs) ────────────────────────────────────
+    # NOTE: This catalog entry is correct for MPCO reads (which probe
+    # materials directly). It is **not** correct for ``ops.eleResponse``
+    # in builds before the upstream fix at
+    # ``SRC/element/tetrahedron/TenNodeTetrahedron.cpp:1845``: that file
+    # declares ``static Vector stresses(6)`` but writes 24 floats,
+    # causing heap corruption and returning only 6 values. Until that
+    # is patched to ``Vector(24)``, DomainCapture and the .out
+    # transcoder will see broken stress on TenNodeTet.
+    ("TenNodeTetrahedron", IntRule.Tet_GL_2, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_TET_GL_2_COORDS,
+        coord_system="barycentric_tet",
+        component_names=STRESS,
+        class_tag=ELE_TAG_TenNodeTetrahedron,
+    ),
+    ("TenNodeTetrahedron", IntRule.Tet_GL_2, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_TET_GL_2_COORDS,
+        coord_system="barycentric_tet",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_TenNodeTetrahedron,
+    ),
+
+    # ── Brick (8-node, 8 GPs Hex_GL_2) ───────────────────────────────
+    # C++ class: Brick (Tcl element name: ``stdBrick``).
+    ("Brick", IntRule.Hex_GL_2, "stress"): _continuum_layout(
+        n_gp=8, natural_coords=_HEX_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS,
+        class_tag=ELE_TAG_Brick,
+    ),
+    ("Brick", IntRule.Hex_GL_2, "strain"): _continuum_layout(
+        n_gp=8, natural_coords=_HEX_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_Brick,
+    ),
+
+    # ── BbarBrick (8-node, 8 GPs Hex_GL_2) ───────────────────────────
+    # C++ class: BbarBrick (Tcl element name: ``bbarBrick``).
+    # Uses the same setResponse keyword and component layout as Brick.
+    # NOTE: in current OpenSees builds, BbarBrick's
+    # ``ops.eleResponse(eid, "stresses")`` returns zeros even after a
+    # converged analysis (the resisting forces and ``"strains"`` paths
+    # are correct). MPCO probes materials directly and works around
+    # this; DomainCapture and the .out transcoder hit the broken path.
+    # Catalog entry retained for MPCO read support.
+    ("BbarBrick", IntRule.Hex_GL_2, "stress"): _continuum_layout(
+        n_gp=8, natural_coords=_HEX_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS,
+        class_tag=ELE_TAG_BbarBrick,
+    ),
+    ("BbarBrick", IntRule.Hex_GL_2, "strain"): _continuum_layout(
+        n_gp=8, natural_coords=_HEX_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_BbarBrick,
+    ),
+
+    # ── SSPbrick (8-node, 1 GP Hex_GL_1) ─────────────────────────────
+    # C++ class: SSPbrick. setResponse delegates "stresses" / "strains"
+    # to the bound nDMaterial; for ElasticIsotropic and the standard
+    # plasticity materials, the material returns the same 6-component
+    # vector layout as Brick.
+    ("SSPbrick", IntRule.Hex_GL_1, "stress"): _continuum_layout(
+        n_gp=1, natural_coords=_HEX_GL_1_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS,
+        class_tag=ELE_TAG_SSPbrick,
+    ),
+    ("SSPbrick", IntRule.Hex_GL_1, "strain"): _continuum_layout(
+        n_gp=1, natural_coords=_HEX_GL_1_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_SSPbrick,
+    ),
+
+    # ── FourNodeQuad (4 GPs Quad_GL_2) ───────────────────────────────
+    # C++ class: FourNodeQuad (Tcl element name: ``quad``).
+    # Plane element: 3 stress components per GP (σ_xx, σ_yy, σ_xy).
+    # FourNodeQuad.cpp:1370 accepts both ``stresses`` and ``stress``.
+    ("FourNodeQuad", IntRule.Quad_GL_2, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_FourNodeQuad,
+    ),
+    ("FourNodeQuad", IntRule.Quad_GL_2, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_FourNodeQuad,
+    ),
+
+    # ── Tri31 (3-node triangle, 1 GP Triangle_GL_1) ──────────────────
+    # C++ class: Tri31 (Tcl element name: ``tri31``).
+    # Single Gauss point at the area-coord centroid (1/3, 1/3, 1/3).
+    ("Tri31", IntRule.Triangle_GL_1, "stress"): _continuum_layout(
+        n_gp=1, natural_coords=_TRI_GL_1_COORDS,
+        coord_system="barycentric_tri",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_Tri31,
+    ),
+    ("Tri31", IntRule.Triangle_GL_1, "strain"): _continuum_layout(
+        n_gp=1, natural_coords=_TRI_GL_1_COORDS,
+        coord_system="barycentric_tri",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_Tri31,
+    ),
+
+    # ── SSPquad (4-node, 1 GP Quad_GL_1) ─────────────────────────────
+    # C++ class: SSPquad. Stabilized single-point quad; setResponse
+    # exposes its own ``stress`` / ``strain`` keywords (Vector(3))
+    # plus delegates to the material for ``stresses`` / ``strains``.
+    ("SSPquad", IntRule.Quad_GL_1, "stress"): _continuum_layout(
+        n_gp=1, natural_coords=_QUAD_GL_1_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_SSPquad,
+    ),
+    ("SSPquad", IntRule.Quad_GL_1, "strain"): _continuum_layout(
+        n_gp=1, natural_coords=_QUAD_GL_1_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_SSPquad,
+    ),
+
+    # ── Twenty_Node_Brick (20-node, 27 GPs Hex_GL_3) ─────────────────
+    # C++ class: Twenty_Node_Brick. Tcl name: ``20NodeBrick``.
+    # 27-GP rule emitted in corner-edge-face-centroid order (see the
+    # _HEX_GL_3_* tables above). Twenty_Node_Brick.cpp:1769 declares
+    # ``static Vector stresses(162)`` (correctly sized: 27 × 6).
+    # NOTE: the 20-node serendipity hex uses an undocumented node
+    # ordering; an incorrect order triggers ``exit(-1)`` from
+    # ``Jacobian3d`` (line ~1995) — see the live-ops test skip in
+    # ``test_results_catalog_solids_real.py``. The catalog GP layout
+    # is absolute and unaffected.
+    ("Twenty_Node_Brick", IntRule.Hex_GL_3, "stress"): _continuum_layout(
+        n_gp=27, natural_coords=_HEX_GL_3_COORDS,
+        coord_system="isoparametric",
+        component_names=STRESS,
+        class_tag=ELE_TAG_Twenty_Node_Brick,
+    ),
+    ("Twenty_Node_Brick", IntRule.Hex_GL_3, "strain"): _continuum_layout(
+        n_gp=27, natural_coords=_HEX_GL_3_COORDS,
+        coord_system="isoparametric",
+        component_names=STRAIN,
+        class_tag=ELE_TAG_Twenty_Node_Brick,
+    ),
+
+    # ── EightNodeQuad (8-node, 9 GPs Quad_GL_3) ──────────────────────
+    # C++ class: EightNodeQuad. 9-point 3×3 rule in corner-edge-centroid
+    # order (EightNodeQuad.cpp:128–144). 3 components per GP (plane
+    # stress / plane strain).
+    ("EightNodeQuad", IntRule.Quad_GL_3, "stress"): _continuum_layout(
+        n_gp=9, natural_coords=_QUAD_GL_3_COORDS_QUAD8,
+        coord_system="isoparametric",
+        component_names=STRESS_2D,
+        class_tag=ELE_TAG_EightNodeQuad,
+    ),
+    ("EightNodeQuad", IntRule.Quad_GL_3, "strain"): _continuum_layout(
+        n_gp=9, natural_coords=_QUAD_GL_3_COORDS_QUAD8,
+        coord_system="isoparametric",
+        component_names=STRAIN_2D,
+        class_tag=ELE_TAG_EightNodeQuad,
+    ),
+
+    # =================================================================
+    # Shell elements — surface-GP stress resultants (8 components per GP).
+    # =================================================================
+    #
+    # Every shell class returns the same 8-vector per surface GP from
+    # ``ops.eleResponse(eid, "stresses")``: 3 membrane forces + 3
+    # bending moments + 2 transverse shears. The component layout is
+    # identical across shell classes; only the GP rule and walk-order
+    # differ. Layered shells (LayeredShellFiberSection) appear here
+    # with the *same* entry as their non-layered siblings — the
+    # layered behavior is on the section, transparent to the element
+    # at this topology level. Through-thickness layer probing maps to
+    # apeGmsh's ``layers/`` topology level (Phase 11c).
+
+    # ── Quad shells, 4 GPs (Quad_GL_2) ───────────────────────────────
+    # ShellMITC4, ShellDKGQ, ShellNLDKGQ, ASDShellQ4 all share the same
+    # CCW 4-GP order at (±1/√3, ±1/√3) — same array as FourNodeQuad.
+    # ShellMITC4.cpp:234, ShellDKGQ.cpp:223, ShellNLDKGQ.cpp:227,
+    # ASDShellQ4.cpp:173–175.
+    #
+    # NOTE: ShellMITC4 / ShellDKGQ / ShellNLDKGQ have a broken
+    # ``ops.eleResponse(eid, "stresses")`` path in current OpenSees
+    # builds — ``materialPointers[i]->getStressResultant()`` returns
+    # zeros after a converged analysis (the analysis itself runs
+    # fine, displacements and ``"forces"`` are correct, only the
+    # per-GP probe is broken). MPCO works around this via direct
+    # section probing. Catalog entries retained for MPCO support.
+    # ASDShellQ4 is correct via DomainCapture as well.
+    ("ShellMITC4", IntRule.Quad_GL_2, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=SHELL_STRESS_RESULTANTS,
+        class_tag=ELE_TAG_ShellMITC4,
+    ),
+    ("ShellMITC4", IntRule.Quad_GL_2, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=SHELL_GENERALIZED_STRAINS,
+        class_tag=ELE_TAG_ShellMITC4,
+    ),
+    ("ShellDKGQ", IntRule.Quad_GL_2, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=SHELL_STRESS_RESULTANTS,
+        class_tag=ELE_TAG_ShellDKGQ,
+    ),
+    ("ShellDKGQ", IntRule.Quad_GL_2, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=SHELL_GENERALIZED_STRAINS,
+        class_tag=ELE_TAG_ShellDKGQ,
+    ),
+    ("ShellNLDKGQ", IntRule.Quad_GL_2, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=SHELL_STRESS_RESULTANTS,
+        class_tag=ELE_TAG_ShellNLDKGQ,
+    ),
+    ("ShellNLDKGQ", IntRule.Quad_GL_2, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=SHELL_GENERALIZED_STRAINS,
+        class_tag=ELE_TAG_ShellNLDKGQ,
+    ),
+    ("ASDShellQ4", IntRule.Quad_GL_2, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=SHELL_STRESS_RESULTANTS,
+        class_tag=ELE_TAG_ASDShellQ4,
+    ),
+    ("ASDShellQ4", IntRule.Quad_GL_2, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_QUAD_GL_2_COORDS,
+        coord_system="isoparametric",
+        component_names=SHELL_GENERALIZED_STRAINS,
+        class_tag=ELE_TAG_ASDShellQ4,
+    ),
+
+    # ── ShellMITC9 (9-node quad, 9 GPs Quad_GL_3, alt CCW order) ─────
+    # Distinct GP walk order from EightNodeQuad — see
+    # _QUAD_GL_3_COORDS_MITC9 above. ShellMITC9.cpp:107–124.
+    # NOTE: ShellMITC9.cpp:518 has ``static Vector stresses(84)`` but
+    # the loop fills only 9*8 = 72 entries — ``ops.eleResponse(eid,
+    # "stresses")`` returns 84 values (the last 12 are uninitialized).
+    # The catalog reflects the *correct* 72-component layout that
+    # MPCO writes; DomainCapture against this element rejects the
+    # 84-value return. Catalog correct for MPCO.
+    ("ShellMITC9", IntRule.Quad_GL_3, "stress"): _continuum_layout(
+        n_gp=9, natural_coords=_QUAD_GL_3_COORDS_MITC9,
+        coord_system="isoparametric",
+        component_names=SHELL_STRESS_RESULTANTS,
+        class_tag=ELE_TAG_ShellMITC9,
+    ),
+    ("ShellMITC9", IntRule.Quad_GL_3, "strain"): _continuum_layout(
+        n_gp=9, natural_coords=_QUAD_GL_3_COORDS_MITC9,
+        coord_system="isoparametric",
+        component_names=SHELL_GENERALIZED_STRAINS,
+        class_tag=ELE_TAG_ShellMITC9,
+    ),
+
+    # ── Triangle shells, 4 GPs (Triangle_GL_2C) ──────────────────────
+    # ShellDKGT and ShellNLDKGT share the 4-point degree-3 rule.
+    # ShellDKGT.cpp:238–250.
+    # NOTE: same broken-eleResponse pattern as the older quad shells
+    # above — ``ops.eleResponse(eid, "stresses")`` returns zeros.
+    # Catalog correct for MPCO. Use ASDShellT3 if you need
+    # DomainCapture support on triangles.
+    ("ShellDKGT", IntRule.Triangle_GL_2C, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
+        coord_system="barycentric_tri",
+        component_names=SHELL_STRESS_RESULTANTS,
+        class_tag=ELE_TAG_ShellDKGT,
+    ),
+    ("ShellDKGT", IntRule.Triangle_GL_2C, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
+        coord_system="barycentric_tri",
+        component_names=SHELL_GENERALIZED_STRAINS,
+        class_tag=ELE_TAG_ShellDKGT,
+    ),
+    ("ShellNLDKGT", IntRule.Triangle_GL_2C, "stress"): _continuum_layout(
+        n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
+        coord_system="barycentric_tri",
+        component_names=SHELL_STRESS_RESULTANTS,
+        class_tag=ELE_TAG_ShellNLDKGT,
+    ),
+    ("ShellNLDKGT", IntRule.Triangle_GL_2C, "strain"): _continuum_layout(
+        n_gp=4, natural_coords=_TRI_GL_2C_COORDS,
+        coord_system="barycentric_tri",
+        component_names=SHELL_GENERALIZED_STRAINS,
+        class_tag=ELE_TAG_ShellNLDKGT,
+    ),
+
+    # ── ASDShellT3 (3-node triangle, 3 mid-edge GPs Triangle_GL_2B) ──
+    # ASDShellT3.cpp:148–150. Petracca's shell.
+    ("ASDShellT3", IntRule.Triangle_GL_2B, "stress"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2B_COORDS,
+        coord_system="barycentric_tri",
+        component_names=SHELL_STRESS_RESULTANTS,
+        class_tag=ELE_TAG_ASDShellT3,
+    ),
+    ("ASDShellT3", IntRule.Triangle_GL_2B, "strain"): _continuum_layout(
+        n_gp=3, natural_coords=_TRI_GL_2B_COORDS,
+        coord_system="barycentric_tri",
+        component_names=SHELL_GENERALIZED_STRAINS,
+        class_tag=ELE_TAG_ASDShellT3,
+    ),
+
+    # =================================================================
+    # Truss family — single GP at the line midpoint, scalar axial force.
+    # =================================================================
+    #
+    # All MPCO-classified ``Line_2N + Line_GL_1`` (rule 1) elements
+    # whose response is a single scalar ``axial_force``.
+    # ``ops.eleResponse(eid, "axialForce")`` returns Vector(1) for
+    # these. MPCO writes them under
+    # ``ON_ELEMENTS/axialForce/<tag>-<Class>[1:0:0]``.
+    #
+    # NOTE: this is the only catalog topology where the component
+    # layout is a 1-tuple of a scalar name (no tensor / axis suffix).
+    # The prefix splitter recognises ``"axial_force"`` as a scalar
+    # canonical via the full-name fallback in
+    # ``gauss_keyword_for_canonical``.
+    #
+    # The TrussSection / CorotTrussSection family is *not* covered
+    # here — they expose section-level forces (Vector(3) for the basic
+    # axial-shear-moment system) under a different response keyword.
+    # That's Round B (line_stations / nodal_forces topology).
+    ("Truss", IntRule.Line_GL_1, "axial_force"): _continuum_layout(
+        n_gp=1, natural_coords=_LINE_GL_1_COORDS,
+        coord_system="isoparametric_1d",
+        component_names=("axial_force",),
+        class_tag=ELE_TAG_Truss,
+    ),
+    ("CorotTruss", IntRule.Line_GL_1, "axial_force"): _continuum_layout(
+        n_gp=1, natural_coords=_LINE_GL_1_COORDS,
+        coord_system="isoparametric_1d",
+        component_names=("axial_force",),
+        class_tag=ELE_TAG_CorotTruss,
+    ),
+    ("Truss2", IntRule.Line_GL_1, "axial_force"): _continuum_layout(
+        n_gp=1, natural_coords=_LINE_GL_1_COORDS,
+        coord_system="isoparametric_1d",
+        component_names=("axial_force",),
+        class_tag=ELE_TAG_Truss2,
+    ),
+    ("CorotTruss2", IntRule.Line_GL_1, "axial_force"): _continuum_layout(
+        n_gp=1, natural_coords=_LINE_GL_1_COORDS,
+        coord_system="isoparametric_1d",
+        component_names=("axial_force",),
+        class_tag=ELE_TAG_CorotTruss2,
+    ),
+    ("InertiaTruss", IntRule.Line_GL_1, "axial_force"): _continuum_layout(
+        n_gp=1, natural_coords=_LINE_GL_1_COORDS,
+        coord_system="isoparametric_1d",
+        component_names=("axial_force",),
+        class_tag=ELE_TAG_InertiaTruss,
+    ),
+}
+
+
+# =====================================================================
+# Public API
+# =====================================================================
+
+class CatalogLookupError(KeyError):
+    """Raised when ``(class_name, int_rule, token)`` is not in the catalog.
+
+    Subclass of ``KeyError`` so callers can ``except KeyError`` if
+    they want lenient skip-on-miss behaviour.
+    """
+
+
+def lookup(class_name: str, int_rule: int, token: str) -> ResponseLayout:
+    """Catalog access with a helpful error message.
+
+    Parameters
+    ----------
+    class_name
+        OpenSees C++ class name as it appears in MPCO bracket keys
+        (e.g. ``"FourNodeTetrahedron"``).
+    int_rule
+        Integration-rule enum integer (see ``IntRule``).
+    token
+        Broad response keyword (``"stress"``, ``"strain"``, ...).
+    """
+    key = (class_name, int_rule, token)
+    try:
+        return RESPONSE_CATALOG[key]
+    except KeyError:
+        raise CatalogLookupError(
+            f"No ResponseLayout for (class={class_name!r}, "
+            f"int_rule={int_rule}, token={token!r}). "
+            f"Add an entry to RESPONSE_CATALOG in "
+            f"src/apeGmsh/solvers/_element_response.py if this "
+            f"combination should be supported."
+        ) from None
+
+
+def is_catalogued(class_name: str, int_rule: int, token: str) -> bool:
+    """True if ``(class_name, int_rule, token)`` has a layout entry."""
+    return (class_name, int_rule, token) in RESPONSE_CATALOG
+
+
+# ---------------------------------------------------------------------
+# Canonical-component prefix routing (shared by all three sites)
+# ---------------------------------------------------------------------
+#
+# A canonical Gauss-level component name decomposes into ``<prefix>_<suffix>``
+# where ``<suffix>`` is a tensor index (``xx`` / ``yy`` / ``zz`` / ``xy`` /
+# ``yz`` / ``xz``) or vector axis (``x`` / ``y`` / ``z``). For shell
+# resultants the prefix is multi-word (``membrane_force_xx`` →
+# prefix=``membrane_force``); a naive split-on-first-underscore would
+# break those, so we strip a known suffix instead.
+#
+# The prefix in turn maps to an OpenSees ``setResponse`` keyword
+# (``stresses`` / ``strains``) — the same keyword used by
+# ``ops.eleResponse``, the same MPCO ``ON_ELEMENTS/<token>/`` group
+# name, and the same routing for the .out transcoder. Shell
+# resultants (``membrane_force_*``, ``bending_moment_*``,
+# ``transverse_shear_*``) share the ``stresses`` keyword with
+# continuum stress; their per-class catalog entry carries the
+# 8-component layout.
+
+_KNOWN_COMPONENT_SUFFIXES: tuple[str, ...] = (
+    # Tensor indices (try longer first so ``stress_xz`` doesn't match ``z``).
+    "xx", "yy", "zz", "xy", "yz", "xz",
+    # Vector axes.
+    "x", "y", "z",
+)
+
+
+def split_canonical_component(name: str) -> tuple[str, str] | None:
+    """Split a canonical name into ``(prefix, suffix)``.
+
+    Recognizes tensor-index suffixes (``xx`` / ``yy`` / ``zz`` / ``xy``
+    / ``yz`` / ``xz``) and vector-axis suffixes (``x`` / ``y`` / ``z``).
+    Returns ``None`` for scalar names without an axis suffix
+    (e.g. ``"pore_pressure"``, ``"damage"``).
+
+    Examples
+    --------
+    ``"stress_xx"``           → ``("stress", "xx")``
+    ``"membrane_force_xy"``   → ``("membrane_force", "xy")``
+    ``"transverse_shear_xz"`` → ``("transverse_shear", "xz")``
+    ``"displacement_x"``      → ``("displacement", "x")``
+    ``"pore_pressure"``       → ``None``
+    """
+    for suf in _KNOWN_COMPONENT_SUFFIXES:
+        sep = "_" + suf
+        if name.endswith(sep):
+            return name[: -len(sep)], suf
+    return None
+
+
+# Canonical prefix (or full scalar name) → OpenSees ``setResponse``
+# keyword. The keyword is *also* the on-disk MPCO group name
+# (``ON_ELEMENTS/<keyword>/``).
+_GAUSS_PREFIX_TO_KEYWORD: dict[str, str] = {
+    # Continuum stress / strain.
+    "stress": "stresses",
+    "strain": "strains",
+    # Shell stress resultants.
+    "membrane_force": "stresses",
+    "bending_moment": "stresses",
+    "transverse_shear": "stresses",
+    # Shell generalized strains.
+    "membrane_strain": "strains",
+    "curvature": "strains",
+    "transverse_shear_strain": "strains",
+    # Truss / line scalar — full canonical name (no axis suffix).
+    # OpenSees Truss::setResponse accepts ``"axialForce"``,
+    # ``"basicForce"``, and ``"basicForces"`` as aliases for the same
+    # scalar response (Truss.cpp:1194–1196).
+    "axial_force": "axialForce",
+}
+
+
+# OpenSees keyword → catalog token (the third element of
+# ``RESPONSE_CATALOG`` keys).
+_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
+    "stresses": "stress",
+    "strains": "strain",
+    "axialForce": "axial_force",
+}
+
+
+def gauss_keyword_for_canonical(name: str) -> str | None:
+    """Return the ``ops.eleResponse`` keyword for a Gauss-level component.
+
+    Vectors / tensors decompose via :func:`split_canonical_component`
+    and route through their prefix (``"stress_xx"`` →
+    ``"stresses"``, ``"membrane_force_xy"`` → ``"stresses"``).
+    Scalar canonical names (``"axial_force"``, no axis suffix) fall
+    through to a full-name lookup in the same table.
+
+    Returns ``None`` for components without a Gauss routing (nodal
+    kinematics, derived scalars without a registered keyword, etc.).
+    """
+    parts = split_canonical_component(name)
+    if parts is not None:
+        prefix, _ = parts
+        return _GAUSS_PREFIX_TO_KEYWORD.get(prefix)
+    # Scalar fallback: the full canonical name *is* the prefix.
+    return _GAUSS_PREFIX_TO_KEYWORD.get(name)
+
+
+def catalog_token_for_keyword(keyword: str) -> str | None:
+    """Map an OpenSees keyword (``stresses`` / ``strains``) to a catalog token."""
+    return _KEYWORD_TO_CATALOG_TOKEN.get(keyword)
+
+
+def gauss_routing_for_canonical(name: str) -> tuple[str, str] | None:
+    """Return ``(ops_keyword, catalog_token)`` for a Gauss-level component.
+
+    Convenience wrapper combining the two lookups above. Used by the
+    MPCO reader where both pieces are needed at the same time.
+    Returns ``None`` for components that don't have a Gauss routing.
+    """
+    keyword = gauss_keyword_for_canonical(name)
+    if keyword is None:
+        return None
+    catalog_token = _KEYWORD_TO_CATALOG_TOKEN.get(keyword)
+    if catalog_token is None:
+        return None
+    return (keyword, catalog_token)
+
+
+# ---------------------------------------------------------------------
+# MPCO bracket-key parser
+# ---------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class MPCOElementKey:
+    """Parsed MPCO bracket key for an element bucket.
+
+    Two on-disk forms are supported:
+
+    - ``MODEL/ELEMENTS/<tag>-<Class>[<rule>:<cust>]`` — connectivity.
+    - ``RESULTS/ON_ELEMENTS/<token>/<tag>-<Class>[<rule>:<cust>:<hdr>]`` —
+      results buckets with an extra ``<hdr>`` (response-shape index).
+    """
+    class_tag: int
+    class_name: str
+    int_rule: int
+    custom_rule_idx: int
+    header_idx: int   # 0 when the source path was MODEL/ELEMENTS
+
+    @property
+    def is_custom_rule(self) -> bool:
+        return self.int_rule == IntRule.Custom
+
+
+_MPCO_KEY_RE = re.compile(
+    r"""
+    ^\s*
+    (?P<tag>-?\d+)              # signed for safety; tags are normally positive
+    -
+    (?P<name>[^[\]]+?)
+    \[
+    (?P<rule>-?\d+)
+    :
+    (?P<cust>-?\d+)
+    (?: : (?P<hdr>-?\d+) )?     # optional header index (only on results path)
+    \]
+    \s*$
+    """,
+    re.VERBOSE,
+)
+
+
+def parse_mpco_element_key(key: str) -> MPCOElementKey:
+    """Parse ``"<tag>-<Class>[<rule>:<cust>(:<hdr>)?]"``.
+
+    Examples (verified against the mpco-recorder skill's
+    ``hdf5-layout.md`` §3 worked examples)::
+
+        parse_mpco_element_key("179-FourNodeTetrahedron[300:0]")
+        # MPCOElementKey(class_tag=179, class_name='FourNodeTetrahedron',
+        #                int_rule=300, custom_rule_idx=0, header_idx=0)
+
+        parse_mpco_element_key("31-ASDShellQ4[202:0:0]")
+        # ... header_idx=0
+
+        parse_mpco_element_key("73-ForceBeamColumn3d[1000:3:0]")
+        # ... header_idx=0, is_custom_rule=True
+    """
+    m = _MPCO_KEY_RE.match(key)
+    if m is None:
+        raise ValueError(
+            f"Could not parse MPCO element key {key!r}; expected "
+            f"'<tag>-<Class>[<rule>:<cust>]' or "
+            f"'<tag>-<Class>[<rule>:<cust>:<hdr>]'."
+        )
+    hdr = m.group("hdr")
+    return MPCOElementKey(
+        class_tag=int(m.group("tag")),
+        class_name=m.group("name"),
+        int_rule=int(m.group("rule")),
+        custom_rule_idx=int(m.group("cust")),
+        header_idx=int(hdr) if hdr is not None else 0,
+    )
+
+
+# ---------------------------------------------------------------------
+# unflatten — the keystone shape transform
+# ---------------------------------------------------------------------
+
+def unflatten(
+    flat: ndarray,
+    layout: ResponseLayout,
+) -> dict[str, ndarray]:
+    """Convert ``(T, E_g, flat_size)`` → per-component ``(T, E_g, n_GP)``.
+
+    ``flat`` is the raw response array, with the canonical ordering
+    GP-slowest / component-fastest::
+
+        flat[t, e, g * K + k] = component k at GP g of element e at time t
+
+    where ``G = layout.n_gauss_points`` and
+    ``K = layout.n_components_per_gp``.
+
+    Returns
+    -------
+    dict[str, ndarray]
+        ``{component_name: (T, E_g, G)}`` keyed by canonical apeGmsh
+        names from ``layout.component_layout``.
+    """
+    flat = np.asarray(flat)
+    if flat.ndim != 3:
+        raise ValueError(
+            f"unflatten expects a 3-D flat array (T, E_g, flat_size); "
+            f"got shape {flat.shape}."
+        )
+    T, E_g, flat_size = flat.shape
+    expected = layout.flat_size_per_element
+    if flat_size != expected:
+        raise ValueError(
+            f"flat_size {flat_size} does not match layout's "
+            f"n_gauss_points * n_components_per_gp = "
+            f"{layout.n_gauss_points} * {layout.n_components_per_gp} "
+            f"= {expected}."
+        )
+
+    # Reshape (T, E_g, G * K) → (T, E_g, G, K) — GP slowest.
+    reshaped = flat.reshape(T, E_g, layout.n_gauss_points,
+                             layout.n_components_per_gp)
+    return {
+        comp_name: np.ascontiguousarray(reshaped[:, :, :, k])
+        for k, comp_name in enumerate(layout.component_layout)
+    }
+
+
+def flatten(
+    components: dict[str, ndarray],
+    layout: ResponseLayout,
+) -> ndarray:
+    """Inverse of ``unflatten`` — pack per-component arrays into the flat form.
+
+    Used by tests and (potentially) by transcoder code paths that build
+    flat arrays from already-decoded per-component data.
+
+    Parameters
+    ----------
+    components
+        ``{component_name: (T, E_g, n_GP)}`` keyed by canonical names.
+        Must contain every name in ``layout.component_layout``; extra
+        keys raise.
+    layout
+        The matching ``ResponseLayout``.
+
+    Returns
+    -------
+    ndarray
+        Shape ``(T, E_g, layout.flat_size_per_element)``.
+    """
+    expected_names = set(layout.component_layout)
+    got_names = set(components.keys())
+    if got_names != expected_names:
+        missing = expected_names - got_names
+        extra = got_names - expected_names
+        raise ValueError(
+            f"flatten requires exactly the catalog's components. "
+            f"missing={sorted(missing)}, extra={sorted(extra)}."
+        )
+
+    first = components[layout.component_layout[0]]
+    if first.ndim != 3:
+        raise ValueError(
+            f"components must have shape (T, E_g, n_GP); got {first.shape}."
+        )
+    T, E_g, n_gp = first.shape
+    if n_gp != layout.n_gauss_points:
+        raise ValueError(
+            f"component arrays have {n_gp} GPs but layout specifies "
+            f"{layout.n_gauss_points}."
+        )
+
+    out = np.empty(
+        (T, E_g, layout.flat_size_per_element), dtype=np.float64,
+    )
+    for k, name in enumerate(layout.component_layout):
+        arr = np.asarray(components[name])
+        if arr.shape != (T, E_g, n_gp):
+            raise ValueError(
+                f"component {name!r} has shape {arr.shape}; expected "
+                f"{(T, E_g, n_gp)}."
+            )
+        # GP-slowest packing: stride n_components_per_gp through flat axis.
+        out[:, :, k::layout.n_components_per_gp] = arr
+    return out

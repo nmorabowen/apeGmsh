@@ -84,11 +84,42 @@ _NODAL_SCALAR_TABLE: dict[str, tuple[str, int]] = {
 # These are the canonical OpenSees responses for each topology level.
 # For categories that don't have a clean single-token response
 # (fibers, layers, modal), we emit a TODO comment instead.
+#
+# Gauss is special: the actual ops keyword (``stresses`` vs ``strains``)
+# depends on the record's components, not on the category alone. The
+# fallback ``"stresses"`` here is only used if component derivation
+# returns nothing — kept so older callers don't silently break.
 _ELEMENT_CATEGORY_RESPONSE: dict[str, str] = {
     "elements": "globalForce",        # per-element-node force vector
-    "gauss": "stress",                # full stress tensor at GPs
+    "gauss": "stresses",              # fallback only — real choice is per-record
     "line_stations": "section force", # beam section forces along length
 }
+
+
+def _gauss_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
+    """Return the ops keyword (``"stresses"`` / ``"strains"``) for a gauss record.
+
+    Raises ``ValueError`` if the record mixes work-conjugate families
+    (e.g. stress + strain, or membrane_force + curvature) — those
+    can't be emitted under a single Element recorder. Mixing within
+    one keyword is OK (membrane_force + bending_moment both go under
+    ``stresses``).
+    """
+    from ._element_response import gauss_keyword_for_canonical
+    keywords: set[str] = set()
+    for comp in rec.components:
+        keyword = gauss_keyword_for_canonical(comp)
+        if keyword is not None:
+            keywords.add(keyword)
+    if not keywords:
+        return None
+    if len(keywords) > 1:
+        raise ValueError(
+            f"Record {rec.name!r} (category=gauss) mixes work-conjugate "
+            f"families ({sorted(keywords)}); split into separate records "
+            f"(one per ops keyword)."
+        )
+    return next(iter(keywords))
 
 
 # =====================================================================
@@ -249,9 +280,17 @@ def _emit_element_simple(
     if rec.element_ids is None or rec.element_ids.size == 0:
         return
 
-    response_str = _ELEMENT_CATEGORY_RESPONSE.get(rec.category)
-    if response_str is None:
-        return
+    if rec.category == "gauss":
+        # Token depends on components (stresses vs strains), not on
+        # category alone. None means no recognised gauss components.
+        keyword = _gauss_record_ops_keyword(rec)
+        if keyword is None:
+            return
+        response_str = keyword
+    else:
+        response_str = _ELEMENT_CATEGORY_RESPONSE.get(rec.category)
+        if response_str is None:
+            return
 
     response_tokens = tuple(response_str.split())
     target_ids = tuple(int(e) for e in rec.element_ids)
@@ -428,13 +467,15 @@ _MPCO_NODE_SCALAR_TOKENS: dict[str, str] = {
 }
 
 # Element-level (gauss / line_stations / nodal_forces) — by prefix.
+# Continuum stress/strain tokens are plural (``stresses``/``strains``) —
+# see the comment on ``_ELEMENT_CATEGORY_RESPONSE`` above.
 _MPCO_ELEMENT_PREFIX_TOKENS: dict[str, str] = {
-    "stress": "stress",
-    "strain": "strain",
-    "von_mises_stress": "stress",       # derived; recorded via "stress"
-    "principal_stress": "stress",
-    "pressure_hydrostatic": "stress",
-    "equivalent_plastic_strain": "strain",
+    "stress": "stresses",
+    "strain": "strains",
+    "von_mises_stress": "stresses",       # derived; recorded via "stresses"
+    "principal_stress": "stresses",
+    "pressure_hydrostatic": "stresses",
+    "equivalent_plastic_strain": "strains",
     "axial_force": "section.force",
     "shear": "section.force",
     "torsion": "section.force",

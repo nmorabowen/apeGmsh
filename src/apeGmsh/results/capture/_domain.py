@@ -3,24 +3,29 @@
 Wraps a ``ResolvedRecorderSpec`` and a target HDF5 path; the user
 drives the analysis loop and calls ``step(t)`` after each
 ``ops.analyze(...)``. The capture queries the openseespy domain
-directly (``ops.nodeDisp``, ``ops.nodeReaction``, etc.), buffers
-per-record values in RAM, and writes a chunk to the native HDF5
-file at ``end_stage()``.
+directly (``ops.nodeDisp``, ``ops.nodeReaction``, ``ops.eleResponse``,
+…), buffers per-record values in RAM, and writes a chunk to the
+native HDF5 file at ``end_stage()``.
 
-Phase 7 v1 scope
-----------------
+Scope
+-----
 - **Nodes records**: full support for kinematic components
   (``displacement_*``, ``rotation_*``, ``velocity_*``,
   ``acceleration_*``, ``angular_velocity_*``,
   ``angular_acceleration_*``), reactions, and pore pressure.
 - **Modal records**: ``capture_modes()`` runs ``ops.eigen()``
   and writes one stage per mode (``kind="mode"``).
-- **Element-level records** (``elements``, ``gauss``,
-  ``line_stations``, ``fibers``, ``layers``): emit a
-  ``NotImplementedError`` at ``step()`` time. The
-  unflattening required for ``ops.eleResponse(...)`` returns
-  shares logic with the Phase 6 transcoder; both will land
-  together in a follow-up.
+- **Gauss records** (Phase 11a): continuum stress/strain at GPs,
+  for catalogued element classes. Per-element class is queried
+  via ``ops.eleType(eid)``; the response catalog
+  (``apeGmsh.solvers._element_response``) maps it to a
+  ``ResponseLayout``; per-step flat arrays from
+  ``ops.eleResponse`` are unflattened and persisted via
+  ``NativeWriter.write_gauss_group``.
+- **Other element-level records** (``elements`` /
+  ``line_stations`` / ``fibers`` / ``layers``): still raise
+  ``NotImplementedError`` at ``step()`` time — their catalog
+  entries land in later phases.
 
 Usage
 -----
@@ -47,12 +52,23 @@ Usage
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 from numpy import ndarray
+
+from ...solvers._element_response import (
+    RESPONSE_CATALOG,
+    ResponseLayout,
+    catalog_token_for_keyword,
+    gauss_keyword_for_canonical,
+    is_catalogued,
+    lookup,
+    unflatten,
+)
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
@@ -118,6 +134,57 @@ def _component_needs_reactions(canonical: str) -> bool:
 
 
 # =====================================================================
+# Gauss-record token derivation
+# =====================================================================
+
+def _gauss_record_tokens(record: "ResolvedRecorderRecord") -> tuple[str, str] | None:
+    """Return ``(catalog_token, ops_keyword)`` for a gauss-category record.
+
+    Returns ``None`` if the record has no Gauss-level components.
+    Raises ``ValueError`` if components mix work-conjugate families
+    (e.g. stress + strain, or membrane_force + curvature) — those land
+    under different ``ops.eleResponse`` keywords and can't share one
+    call.
+
+    Mixing within one keyword is OK: a shell record with components
+    ``("membrane_force_xx", "bending_moment_yy", "transverse_shear_xz")``
+    routes through a single ``ops.eleResponse(eid, "stresses")`` call.
+    """
+    keywords: set[str] = set()
+    for comp in record.components:
+        keyword = gauss_keyword_for_canonical(comp)
+        if keyword is not None:
+            keywords.add(keyword)
+    if not keywords:
+        return None
+    if len(keywords) > 1:
+        raise ValueError(
+            f"Record {record.name!r} mixes work-conjugate families "
+            f"({sorted(keywords)}); split into separate gauss records "
+            f"(one per ops.eleResponse keyword)."
+        )
+    keyword = next(iter(keywords))
+    catalog_token = catalog_token_for_keyword(keyword)
+    if catalog_token is None:
+        return None
+    return (catalog_token, keyword)
+
+
+def _class_int_rule(class_name: str) -> int | None:
+    """Return the catalog's int_rule for a class (or None if ambiguous/unknown).
+
+    v1 catalog: each class has one int_rule. When future entries add
+    multiple rules per class (e.g. force-based beams with different
+    IP counts), this helper will need richer context — but for the
+    standard rules this scope covers, one rule per class is the truth.
+    """
+    rules = {rule for (cls, rule, _tok) in RESPONSE_CATALOG if cls == class_name}
+    if len(rules) == 1:
+        return next(iter(rules))
+    return None
+
+
+# =====================================================================
 # DomainCapture
 # =====================================================================
 
@@ -150,7 +217,11 @@ class DomainCapture:
         self._current_stage: Optional[str] = None
         self._stage_kind: Optional[str] = None
         self._buffers: list[_NodesCapturer] = []
-        # Track records the user declared but we don't capture in v1.
+        # Element-level capturers (gauss in v1; line_stations / fibers /
+        # layers / elements still raise NotImplementedError).
+        self._gauss_capturers: list[_GaussCapturer] = []
+        # Records that fall through every supported capturer — surface
+        # in step() for visibility.
         self._element_level_records: list = []
         # Whether any nodes record needs reactions per-step.
         self._needs_reactions: bool = False
@@ -186,6 +257,8 @@ class DomainCapture:
                 self._buffers.append(_NodesCapturer(rec))
             elif rec.category == "modal":
                 pass    # captured separately via capture_modes()
+            elif rec.category == "gauss":
+                self._gauss_capturers.append(_GaussCapturer(rec))
             else:
                 self._element_level_records.append(rec)
         return self
@@ -223,6 +296,8 @@ class DomainCapture:
         # Reset per-stage buffers
         for cap in self._buffers:
             cap.reset()
+        for gc in self._gauss_capturers:
+            gc.reset()
         # Stage gets a placeholder time vector that we'll fill at end_stage.
         # We can't pre-create the time dataset here because we don't yet
         # know how many steps. We start the stage with an empty time
@@ -238,11 +313,11 @@ class DomainCapture:
         if self._element_level_records:
             cats = sorted({r.category for r in self._element_level_records})
             raise NotImplementedError(
-                f"DomainCapture v1 does not yet support element-level "
-                f"records ({cats}). Use Strategy A (Tcl emission + "
-                f"transcoder, Phase 6) or Strategy C (MPCO bridge, "
-                f"Phase 8) for these recorders. Nodes and modal "
-                f"records are fully supported."
+                f"DomainCapture does not yet support element-level "
+                f"records of category {cats}. Gauss-level continuum "
+                f"stress/strain capture is supported as of Phase 11a; "
+                f"line_stations / fibers / layers / per-element-node "
+                f"forces still need their catalog entries."
             )
         ops = self._lazy_ops()
         if self._needs_reactions:
@@ -250,6 +325,8 @@ class DomainCapture:
             ops.reactions()
         for cap in self._buffers:
             cap.step(t, ops)
+        for gc in self._gauss_capturers:
+            gc.step(t, ops)
 
     def end_stage(self) -> None:
         """Flush buffered data for the current stage to disk.
@@ -270,6 +347,11 @@ class DomainCapture:
             if cap._times:
                 time_vec = np.array(cap._times, dtype=np.float64)
                 break
+        if time_vec.size == 0:
+            for gc in self._gauss_capturers:
+                if gc._times:
+                    time_vec = np.array(gc._times, dtype=np.float64)
+                    break
 
         sid = self._writer.begin_stage(
             name=self._current_stage,
@@ -279,12 +361,18 @@ class DomainCapture:
 
         try:
             self._flush_nodes_merged(sid, time_vec)
+            self._flush_gauss(sid)
         finally:
             # Always close the stage — even if the merge raised, we
             # want the stage closed so subsequent ``begin_stage`` works.
             self._writer.end_stage()
             self._current_stage = None
             self._stage_kind = None
+
+    def _flush_gauss(self, stage_id: str) -> None:
+        """Write each gauss capturer's per-class buffers to disk."""
+        for gc in self._gauss_capturers:
+            gc.write_to(self._writer, stage_id, "partition_0")
 
     def _flush_nodes_merged(
         self, stage_id: str, time_vec: ndarray,
@@ -477,3 +565,114 @@ class _NodesCapturer:
             node_ids=np.asarray(self._rec.node_ids, dtype=np.int64),
             components=components,
         )
+
+
+# =====================================================================
+# Per-record gauss capturer (Phase 11a)
+# =====================================================================
+
+@dataclass
+class _GaussClassGroup:
+    """Per-(class_name, int_rule) buffer for one gauss record."""
+    layout: ResponseLayout
+    element_ids: list[int] = field(default_factory=list)
+    steps: list[ndarray] = field(default_factory=list)
+
+
+class _GaussCapturer:
+    """Buffers ``ops.eleResponse(eid, "stresses"/"strains")`` for one record.
+
+    Each capturer holds one ``ResolvedRecorderRecord`` of category
+    ``"gauss"``. Element classes are discovered from the live ops
+    domain on the first ``step()`` call (``ops.eleType(eid)``);
+    elements whose ``(class, int_rule, token)`` tuple is not
+    catalogued in :mod:`apeGmsh.solvers._element_response` are skipped
+    with a tracked reason.
+    """
+
+    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+        self._rec = record
+        self._times: list[float] = []
+        tokens = _gauss_record_tokens(record)
+        if tokens is None:
+            raise ValueError(
+                f"Record {record.name!r} (category=gauss) has no "
+                f"continuum stress/strain components."
+            )
+        self._catalog_token, self._ops_keyword = tokens
+        # Built lazily on the first step (needs the live ops domain).
+        self._groups: Optional[dict[tuple[str, int], _GaussClassGroup]] = None
+        # (eid, reason) for any elements skipped during group-building.
+        self.skipped_elements: list[tuple[int, str]] = []
+
+    def reset(self) -> None:
+        """Clear per-stage step buffers (preserves group structure)."""
+        self._times.clear()
+        if self._groups is not None:
+            for grp in self._groups.values():
+                grp.steps.clear()
+
+    def _build_groups(self, ops: Any) -> None:
+        """Group element_ids by ``(class_name, int_rule)`` via ``ops.eleType``."""
+        groups: dict[tuple[str, int], _GaussClassGroup] = {}
+        skipped: list[tuple[int, str]] = []
+        for eid in (int(e) for e in self._rec.element_ids):
+            class_name = ops.eleType(eid)
+            int_rule = _class_int_rule(class_name)
+            if int_rule is None:
+                skipped.append((eid, f"class {class_name!r} not in catalog"))
+                continue
+            if not is_catalogued(class_name, int_rule, self._catalog_token):
+                skipped.append((
+                    eid,
+                    f"({class_name}, {int_rule}, {self._catalog_token}) "
+                    f"not catalogued",
+                ))
+                continue
+            layout = lookup(class_name, int_rule, self._catalog_token)
+            grp = groups.setdefault(
+                (class_name, int_rule), _GaussClassGroup(layout=layout),
+            )
+            grp.element_ids.append(eid)
+        self._groups = groups
+        self.skipped_elements = skipped
+
+    def step(self, t: float, ops: Any) -> None:
+        if self._groups is None:
+            self._build_groups(ops)
+        self._times.append(float(t))
+        for grp in self._groups.values():
+            buf: list[ndarray] = []
+            for eid in grp.element_ids:
+                vals = ops.eleResponse(eid, self._ops_keyword)
+                arr = np.asarray(vals, dtype=np.float64)
+                if arr.size != grp.layout.flat_size_per_element:
+                    raise ValueError(
+                        f"ops.eleResponse({eid}, {self._ops_keyword!r}) "
+                        f"returned {arr.size} values but the catalog "
+                        f"layout for {grp.layout.class_tag} expects "
+                        f"{grp.layout.flat_size_per_element}."
+                    )
+                buf.append(arr)
+            # (E_g, flat_size); stacked along time at write_to.
+            grp.steps.append(np.stack(buf, axis=0))
+
+    def write_to(
+        self, writer: Any, stage_id: str, partition_id: str,
+    ) -> None:
+        if not self._times or self._groups is None:
+            return
+        for i, ((class_name, _int_rule), grp) in enumerate(self._groups.items()):
+            if not grp.steps:
+                continue
+            flat = np.stack(grp.steps, axis=0)        # (T, E_g, flat_size)
+            decoded = unflatten(flat, grp.layout)
+            writer.write_gauss_group(
+                stage_id, partition_id,
+                group_id=f"{self._rec.name}_{class_name}_{i}",
+                class_tag=grp.layout.class_tag,
+                int_rule=_int_rule,
+                element_index=np.array(grp.element_ids, dtype=np.int64),
+                natural_coords=grp.layout.natural_coords,
+                components=decoded,
+            )

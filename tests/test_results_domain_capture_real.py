@@ -145,3 +145,90 @@ def test_single_tet_static_capture(tmp_path: Path) -> None:
 # The mocked modal test in test_results_domain_capture.py already covers
 # the DomainCapture modal flow logic; full openseespy modal validation
 # is a separate integration test for a future phase.
+
+
+# =====================================================================
+# Phase 11a Step C — gauss capture against real openseespy
+# =====================================================================
+
+def test_single_tet_gauss_capture(tmp_path: Path) -> None:
+    """Same physics as the MPCO real-file test → numbers should match."""
+    ops.wipe()
+    ops.model("basic", "-ndm", 3, "-ndf", 3)
+
+    coords = np.array([
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.5, 0.5, 1.0],
+    ], dtype=np.float64)
+    node_ids = np.array([1, 2, 3, 4], dtype=np.int64)
+    for nid, xyz in zip(node_ids, coords):
+        ops.node(int(nid), float(xyz[0]), float(xyz[1]), float(xyz[2]))
+    for nid in (1, 2, 3):
+        ops.fix(nid, 1, 1, 1)
+    ops.nDMaterial("ElasticIsotropic", 1, 200e9, 0.3)
+    ops.element("FourNodeTetrahedron", 1, 1, 2, 3, 4, 1)
+    ops.timeSeries("Linear", 1)
+    ops.pattern("Plain", 1, 1)
+    ops.load(4, 0.0, 0.0, -1.0e6)
+    ops.system("ProfileSPD")
+    ops.numberer("RCM")
+    ops.constraints("Plain")
+    ops.algorithm("Linear")
+    ops.integrator("LoadControl", 1.0)
+    ops.analysis("Static")
+
+    fem = _MinimalFem(node_ids=node_ids, coords=coords)
+
+    from apeGmsh.results.capture._domain import DomainCapture
+    from apeGmsh.solvers._recorder_specs import (
+        ResolvedRecorderRecord,
+        ResolvedRecorderSpec,
+    )
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(
+            ResolvedRecorderRecord(
+                category="gauss", name="solid_stress",
+                components=(
+                    "stress_xx", "stress_yy", "stress_zz",
+                    "stress_xy", "stress_yz", "stress_xz",
+                ),
+                dt=None, n_steps=None,
+                element_ids=np.array([1]),
+            ),
+        ),
+    )
+
+    capture_path = tmp_path / "tet_gauss.h5"
+    with DomainCapture(spec, capture_path, fem, ndm=3, ndf=3) as cap:
+        cap.begin_stage("static_load", kind="static")
+        ok = ops.analyze(1)
+        assert ok == 0
+        cap.step(t=ops.getTime())
+        cap.end_stage()
+
+    from apeGmsh.results import Results
+    with Results.from_native(capture_path, fem=fem) as r:
+        s = r.stage(r.stages[0].id)
+
+        sxx = s.elements.gauss.get(component="stress_xx")
+        assert sxx.values.shape == (1, 1)
+        assert sxx.element_index.tolist() == [1]
+        np.testing.assert_allclose(
+            sxx.natural_coords, [[0.25, 0.25, 0.25]], atol=1e-12,
+        )
+
+        # Match the MPCO real-file numbers for this model:
+        # E=200e9, ν=0.3, 1 MN apex compression.
+        # σ_xx ≈ σ_yy ≈ -2.571e6, σ_zz ≈ -6.0e6, shears ≈ 0.
+        sxx_v = float(sxx.values[0, 0])
+        syy_v = float(s.elements.gauss.get(component="stress_yy").values[0, 0])
+        szz_v = float(s.elements.gauss.get(component="stress_zz").values[0, 0])
+        sxy_v = float(s.elements.gauss.get(component="stress_xy").values[0, 0])
+
+        np.testing.assert_allclose(sxx_v, -2.571428571428e6, rtol=1e-6)
+        np.testing.assert_allclose(syy_v, -2.571428571428e6, rtol=1e-6)
+        np.testing.assert_allclose(szz_v, -6.0e6, rtol=1e-6)
+        assert abs(sxy_v) < 1e-6
