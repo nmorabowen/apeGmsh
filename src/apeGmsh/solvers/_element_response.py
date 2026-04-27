@@ -1230,6 +1230,89 @@ def is_nodal_force_catalogued(class_name: str, token: str) -> bool:
 
 
 # ---------------------------------------------------------------------
+# Section-shape inference + parent-coordinate normalisation
+# ---------------------------------------------------------------------
+#
+# These helpers serve every Phase 11b consumer that has to decode
+# line-station data without a META block — i.e. DomainCapture (which
+# probes ops live) and the .out transcoder (which reads text recorder
+# files). MPCO read does not use them: META/COMPONENTS carries the
+# section codes verbatim.
+
+# Inferred section codes by ``(dimension, n_components)`` under
+# canonical aggregation order. Codes match
+# :data:`SECTION_RESPONSE_TO_CANONICAL`.
+INFERRED_SECTION_CODES_TABLE: dict[tuple[int, int], tuple[int, ...]] = {
+    # 2D
+    (2, 2): (2, 1),                # P, Mz
+    (2, 3): (2, 1, 3),             # P, Mz, Vy
+    # 3D
+    (3, 3): (2, 1, 4),             # P, Mz, My
+    (3, 4): (2, 1, 4, 6),          # P, Mz, My, T
+    (3, 5): (2, 1, 4, 6, 3),       # P, Mz, My, T, Vy
+    (3, 6): (2, 1, 4, 6, 3, 5),    # P, Mz, My, T, Vy, Vz
+}
+
+
+def class_dimension(class_name: str) -> int:
+    """Infer 2D vs 3D from an OpenSees beam-column class name suffix."""
+    lower = class_name.lower()
+    if lower.endswith("2d"):
+        return 2
+    if lower.endswith("3d"):
+        return 3
+    raise ValueError(
+        f"Cannot infer dimension from class name {class_name!r}; "
+        f"expected a suffix of '2d' or '3d'."
+    )
+
+
+def infer_section_codes(
+    class_name: str, n_components: int,
+) -> tuple[int, ...]:
+    """Map ``(class_dim, n_components)`` to canonical section codes.
+
+    Used when the section's ``getType()`` is not directly available
+    — e.g. from a ``.out`` recorder file (no META) or live openseespy
+    (no section-introspection API). Assumes canonical aggregation
+    order (P, Mz, My, T, Vy, Vz in 3D — inner section codes first,
+    aggregated codes last in user-listed order). Non-canonical
+    SectionAggregator orderings cannot be reliably decoded; users
+    with such sections should use MPCO recording where META carries
+    the actual code names.
+
+    Raises ``ValueError`` for shapes outside the canonical table.
+    """
+    dim = class_dimension(class_name)
+    key = (dim, int(n_components))
+    if key in INFERRED_SECTION_CODES_TABLE:
+        return INFERRED_SECTION_CODES_TABLE[key]
+    raise ValueError(
+        f"Cannot infer section codes for {class_name} with "
+        f"{n_components} section.force components. Canonical "
+        f"layouts: 2D ∈ {{2 (P,Mz), 3 (P,Mz,Vy)}}; "
+        f"3D ∈ {{3 (P,Mz,My), 4 (+T), 5 (+Vy), 6 (+Vy,Vz)}}. "
+        f"Non-canonical SectionAggregator orderings are not "
+        f"supported by inference; use MPCO recording instead."
+    )
+
+
+def normalise_integration_points(
+    xi_phys: ndarray, L: float,
+) -> ndarray:
+    """Map physical IP positions ``[0, L]`` to natural ``[-1, +1]``.
+
+    OpenSees's ``ops.eleResponse(eid, "integrationPoints")`` returns
+    physical positions ``pts[i] * L`` along the beam (per
+    ``ForceBeamColumn3d.cpp:3338–3346``). MPCO's ``GP_X`` and
+    apeGmsh's catalog use natural ξ ∈ [-1, +1]; this helper bridges.
+    """
+    if L <= 0:
+        raise ValueError(f"Element length {L} must be positive.")
+    return 2.0 * xi_phys / L - 1.0
+
+
+# ---------------------------------------------------------------------
 # Canonical-component prefix routing (shared by all three sites)
 # ---------------------------------------------------------------------
 #

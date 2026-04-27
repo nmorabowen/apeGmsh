@@ -62,19 +62,32 @@ from numpy import ndarray
 
 from ...solvers._element_response import (
     CUSTOM_RULE_CATALOG,
+    INFERRED_SECTION_CODES_TABLE,
     RESPONSE_CATALOG,
     CustomRuleLayout,
     IntRule,
     ResponseLayout,
     catalog_token_for_keyword,
+    class_dimension,
     gauss_keyword_for_canonical,
+    infer_section_codes,
     is_catalogued,
     is_custom_rule_catalogued,
     lookup,
     lookup_custom_rule,
+    normalise_integration_points,
     resolve_layout_from_gp_x,
     unflatten,
 )
+
+# Re-exports under their original underscore-prefixed names so the
+# Step 2b tests (which import the private names) keep working
+# without churn. Public consumers (e.g. the .out transcoder) should
+# import these from ``apeGmsh.solvers._element_response`` directly.
+_INFERRED_SECTION_CODES = INFERRED_SECTION_CODES_TABLE
+_class_dimension = class_dimension
+_infer_section_codes = infer_section_codes
+_normalise_integration_points = normalise_integration_points
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
@@ -734,71 +747,10 @@ class _GaussCapturer:
 # elements are silently skipped by DomainCapture v1 and recorded
 # via MPCO instead.
 
-# Inferred section codes by (dimension, n_components) under canonical
-# aggregation order. Codes match ``SECTION_RESPONSE_*`` from
-# :data:`apeGmsh.solvers._element_response.SECTION_RESPONSE_TO_CANONICAL`.
-_INFERRED_SECTION_CODES: dict[tuple[int, int], tuple[int, ...]] = {
-    # 2D
-    (2, 2): (2, 1),                # P, Mz
-    (2, 3): (2, 1, 3),             # P, Mz, Vy
-    # 3D
-    (3, 3): (2, 1, 4),             # P, Mz, My
-    (3, 4): (2, 1, 4, 6),          # P, Mz, My, T
-    (3, 5): (2, 1, 4, 6, 3),       # P, Mz, My, T, Vy
-    (3, 6): (2, 1, 4, 6, 3, 5),    # P, Mz, My, T, Vy, Vz
-}
-
-
-def _class_dimension(class_name: str) -> int:
-    """Infer 2D vs 3D from the class name suffix (``2d`` / ``3d``)."""
-    lower = class_name.lower()
-    if lower.endswith("2d"):
-        return 2
-    if lower.endswith("3d"):
-        return 3
-    raise ValueError(
-        f"Cannot infer dimension from class name {class_name!r}; "
-        f"expected a suffix of '2d' or '3d'."
-    )
-
-
-def _infer_section_codes(
-    class_name: str, n_components: int,
-) -> tuple[int, ...]:
-    """Map ``(dim, n_components)`` to canonical section codes.
-
-    Raises ``ValueError`` for shapes outside the canonical
-    aggregation table — non-canonical aggregations (Vy before T, or
-    user-defined section orders) cannot be reliably decoded without
-    introspecting the section's ``getType()``, which openseespy does
-    not expose.
-    """
-    dim = _class_dimension(class_name)
-    key = (dim, int(n_components))
-    if key in _INFERRED_SECTION_CODES:
-        return _INFERRED_SECTION_CODES[key]
-    raise ValueError(
-        f"Cannot infer section codes for {class_name} with "
-        f"{n_components} section.force components. Canonical "
-        f"layouts: 2D ∈ {{2 (P,Mz), 3 (P,Mz,Vy)}}; "
-        f"3D ∈ {{3 (P,Mz,My), 4 (+T), 5 (+Vy), 6 (+Vy,Vz)}}. "
-        f"Non-canonical SectionAggregator orderings are not "
-        f"supported by DomainCapture; use MPCO recording instead."
-    )
-
-
-def _normalise_integration_points(
-    xi_phys: ndarray, L: float,
-) -> ndarray:
-    """Map physical IP positions ``[0, L]`` to natural ``[-1, +1]``.
-
-    OpenSees ``getResponse(10)`` returns ``pts[i] * L`` per
-    ``ForceBeamColumn3d.cpp:3338–3346`` — physical position along
-    the beam in [0, L]. Natural coordinate is ``2*xi/L - 1``.
-    """
-    if L <= 0:
-        raise ValueError(f"Element length {L} must be positive.")
-    return 2.0 * xi_phys / L - 1.0
+# Section-code inference + parent-coordinate normalisation moved
+# to :mod:`apeGmsh.solvers._element_response` (Step 2c). The Phase
+# 11b Step 2b underscore-prefixed names above re-export the public
+# helpers, so existing imports continue to work.
 
 
 @dataclass

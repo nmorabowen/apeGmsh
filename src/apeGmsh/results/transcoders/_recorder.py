@@ -33,12 +33,23 @@ from numpy import ndarray
 
 from ...solvers._element_response import (
     RESPONSE_CATALOG,
+    CustomRuleLayout,
+    IntRule,
     ResponseLayout,
     catalog_token_for_keyword,
     gauss_keyword_for_canonical,
+    infer_section_codes,
+    is_custom_rule_catalogued,
+    lookup_custom_rule,
+    normalise_integration_points,
+    resolve_layout_from_gp_x,
     unflatten,
 )
-from ...solvers._recorder_emit import emit_logical, _DEFERRED_CATEGORIES
+from ...solvers._recorder_emit import (
+    _DEFERRED_CATEGORIES,
+    emit_logical,
+    line_station_gpx_path,
+)
 from ..writers._native import NativeWriter
 from . import _txt
 
@@ -89,6 +100,7 @@ class RecorderTranscoder:
         # once we know the time vector + merged node IDs.
         node_records: list[_NodeRecordPayload] = []
         gauss_records: list[_GaussRecordPayload] = []
+        line_records: list[_LineStationRecordPayload] = []
         unsupported: list[str] = []
 
         for rec in self._spec.records:
@@ -101,9 +113,12 @@ class RecorderTranscoder:
                 payload = self._parse_gauss_record(rec)
                 if payload is not None:
                     gauss_records.append(payload)
+            elif rec.category == "line_stations":
+                payload = self._parse_line_station_record(rec)
+                if payload is not None:
+                    line_records.append(payload)
             else:
-                # elements (per-element-node forces) / line_stations —
-                # not yet wired in the transcoder.
+                # elements (per-element-node forces) — not yet wired.
                 unsupported.append(f"{rec.category}:{rec.name}")
 
         if unsupported:
@@ -142,6 +157,20 @@ class RecorderTranscoder:
                         f"have {time_vec.size}. Recorder cadences must "
                         f"match within one stage."
                     )
+        for lr in line_records:
+            if lr.time.size and time_vec.size:
+                if lr.time.shape != time_vec.shape:
+                    raise ValueError(
+                        f"Recorder {lr.record_name!r} has "
+                        f"{lr.time.size} time steps, but other records "
+                        f"have {time_vec.size}. Recorder cadences must "
+                        f"match within one stage."
+                    )
+        if time_vec.size == 0:
+            for lr in line_records:
+                if lr.time.size:
+                    time_vec = lr.time
+                    break
 
         # Write
         with NativeWriter(self._target_path) as w:
@@ -157,6 +186,7 @@ class RecorderTranscoder:
             )
             self._write_merged_nodes(w, sid, node_records, time_vec)
             self._write_gauss_records(w, sid, gauss_records)
+            self._write_line_station_records(w, sid, line_records)
             w.end_stage()
 
         return self._target_path
@@ -307,6 +337,189 @@ class RecorderTranscoder:
             )
 
     # ------------------------------------------------------------------
+    # Per-record parsing — line_stations (Phase 11b Step 2c.2)
+    # ------------------------------------------------------------------
+
+    def _parse_line_station_record(
+        self, rec: "ResolvedRecorderRecord",
+    ) -> "_LineStationRecordPayload | None":
+        """Parse a paired ``.out`` + ``_gpx.out`` set into per-group payloads.
+
+        The line-stations record emits two LogicalRecorders (Step
+        2c.1): the section.force file and the integrationPoints
+        ``_gpx.out`` companion. We read both to reconstruct what
+        MPCO carries in META + GP_X attribute:
+
+        1. gpx file → first row of physical IP positions ``xi*L``
+           per element (IPs are static, so only step 0 is needed).
+        2. fem element-end coords → element length ``L`` per eid.
+        3. ``xi*L → [-1, +1]`` natural coords per element.
+        4. section.force file → ``(T, E, n_IP * n_components)`` flat,
+           with ``n_components`` derived from the column count.
+        5. ``infer_section_codes(class_name, n_components)`` → codes.
+        6. Group elements by ``(gp_x signature, section_codes)`` so
+           heterogeneous beam-integration assignments produce
+           separate write_line_stations_group calls.
+        """
+        if rec.element_class_name is None:
+            raise ValueError(
+                f"Line-stations record {rec.name!r} requires "
+                f"``element_class_name`` on the spec — the .out "
+                f"transcoder cannot infer the element class from the "
+                f"file alone (no META). Add the class hint via the "
+                f"recorder builder or pass it through "
+                f"ResolvedRecorderRecord.element_class_name."
+            )
+        class_name = rec.element_class_name
+        if not is_custom_rule_catalogued(class_name, "section_force"):
+            raise ValueError(
+                f"Class {class_name!r} is not in CUSTOM_RULE_CATALOG; "
+                f"add an entry in apeGmsh.solvers._element_response if "
+                f"this beam-column class should be supported."
+            )
+
+        logicals = list(emit_logical(
+            rec, output_dir=str(self._output_dir),
+            file_format=self._file_format,
+        ))
+        if len(logicals) != 2:
+            raise ValueError(
+                f"Line-stations record {rec.name!r} expected to emit "
+                f"2 logical recorders (section.force + "
+                f"integrationPoints), got {len(logicals)}."
+            )
+        section_lr, gpx_lr = logicals[0], logicals[1]
+        if "integrationPoints" not in gpx_lr.response_tokens:
+            raise ValueError(
+                f"Line-stations record {rec.name!r}: second logical "
+                f"recorder is not the integrationPoints pair "
+                f"(tokens={gpx_lr.response_tokens})."
+            )
+
+        # ── Read the gpx file's first row (IPs are static) ─────────
+        first_gpx_row = np.loadtxt(
+            gpx_lr.file_path, dtype=np.float64, max_rows=1,
+        )
+        if first_gpx_row.ndim == 0 or first_gpx_row.size < 2:
+            raise ValueError(
+                f"{gpx_lr.file_path}: integrationPoints file is empty "
+                f"or has too few columns."
+            )
+        n_elements = len(rec.element_ids)
+        gpx_data_cols = first_gpx_row.size - 1   # subtract -time column
+        if gpx_data_cols % n_elements != 0:
+            raise ValueError(
+                f"{gpx_lr.file_path}: {gpx_data_cols} data columns is "
+                f"not divisible by {n_elements} elements. The integration"
+                f"Points file should be element-major with n_IP "
+                f"columns per element."
+            )
+        n_ip = gpx_data_cols // n_elements
+        # Reshape to (E, n_IP) of physical xi*L.
+        xi_phys = first_gpx_row[1:].reshape(n_elements, n_ip)
+
+        # ── Element lengths from FEM (one length per element) ──────
+        element_lengths = _resolve_element_lengths(
+            self._fem, rec.element_ids,
+        )
+
+        # ── Per-element natural coords ──────────────────────────────
+        xi_natural = np.empty_like(xi_phys)
+        for i, L in enumerate(element_lengths):
+            xi_natural[i] = normalise_integration_points(xi_phys[i], L)
+
+        # ── Read the section.force file: total cols = 1 + E*n_IP*K ──
+        first_section_row = np.loadtxt(
+            section_lr.file_path, dtype=np.float64, max_rows=1,
+        )
+        if first_section_row.ndim == 0 or first_section_row.size < 2:
+            raise ValueError(
+                f"{section_lr.file_path}: section.force file is empty."
+            )
+        section_data_cols = first_section_row.size - 1
+        per_element_cols = section_data_cols // n_elements
+        if section_data_cols % n_elements != 0:
+            raise ValueError(
+                f"{section_lr.file_path}: {section_data_cols} data "
+                f"columns is not divisible by {n_elements} elements."
+            )
+        if per_element_cols % n_ip != 0:
+            raise ValueError(
+                f"{section_lr.file_path}: {per_element_cols} columns "
+                f"per element is not divisible by {n_ip} IPs (from the "
+                f"paired integrationPoints file). Check that both "
+                f"files were emitted from the same recorder spec."
+            )
+        n_components = per_element_cols // n_ip
+        flat_size_per_element = n_ip * n_components
+
+        section_codes = infer_section_codes(class_name, n_components)
+        custom = lookup_custom_rule(class_name, "section_force")
+
+        time, flat = _txt.parse_element_file(
+            section_lr.file_path, section_lr, flat_size_per_element,
+        )
+        # flat shape: (T, E, n_IP * n_components) — element-major.
+
+        # ── Group elements by (gp_x signature, section_codes) ─────
+        # Custom-rule beams sharing the same beamIntegration produce
+        # the same xi vector; differing beamIntegrations land in
+        # different groups (one write_line_stations_group call each).
+        groups: dict[
+            tuple[tuple[float, ...], tuple[int, ...]],
+            list[int],
+        ] = {}
+        for i in range(n_elements):
+            sig = tuple(np.round(xi_natural[i], 10).tolist())
+            key = (sig, section_codes)
+            groups.setdefault(key, []).append(i)
+
+        payloads: list[_LineStationGroupPayload] = []
+        for (sig, codes), idxs in groups.items():
+            row_idxs = np.array(idxs, dtype=np.int64)
+            eids = np.asarray(
+                [rec.element_ids[i] for i in idxs], dtype=np.int64,
+            )
+            gp_x = xi_natural[idxs[0]]
+            layout = resolve_layout_from_gp_x(custom, gp_x, codes)
+            group_flat = flat[:, row_idxs, :]
+            payloads.append(_LineStationGroupPayload(
+                class_name=class_name,
+                element_ids=eids,
+                gp_x=gp_x,
+                layout=layout,
+                flat=group_flat,
+            ))
+
+        return _LineStationRecordPayload(
+            record_name=rec.name,
+            time=time,
+            groups=payloads,
+        )
+
+    def _write_line_station_records(
+        self,
+        writer: NativeWriter,
+        stage_id: str,
+        records: list["_LineStationRecordPayload"],
+    ) -> None:
+        """Write each line-stations payload as one group per (xi, codes)."""
+        for record in records:
+            for i, gp in enumerate(record.groups):
+                decoded = unflatten(gp.flat, gp.layout)
+                writer.write_line_stations_group(
+                    stage_id, "partition_0",
+                    group_id=(
+                        f"{record.record_name}_{gp.class_name}_{i}"
+                    ),
+                    class_tag=gp.layout.class_tag,
+                    int_rule=IntRule.Custom,
+                    element_index=gp.element_ids,
+                    station_natural_coord=gp.gp_x,
+                    components=decoded,
+                )
+
+    # ------------------------------------------------------------------
     # Merge logic (mirror of DomainCapture._flush_nodes_merged)
     # ------------------------------------------------------------------
 
@@ -390,6 +603,83 @@ class _GaussRecordPayload:
         self.layout = layout
         self.time = time
         self.flat = flat
+
+
+class _LineStationGroupPayload:
+    """One (gp_x signature, section_codes) bucket within a record."""
+    __slots__ = ("class_name", "element_ids", "gp_x", "layout", "flat")
+
+    def __init__(
+        self,
+        class_name: str,
+        element_ids: ndarray,
+        gp_x: ndarray,
+        layout: ResponseLayout,
+        flat: ndarray,
+    ) -> None:
+        self.class_name = class_name
+        self.element_ids = element_ids
+        self.gp_x = gp_x
+        self.layout = layout
+        self.flat = flat
+
+
+class _LineStationRecordPayload:
+    __slots__ = ("record_name", "time", "groups")
+
+    def __init__(
+        self,
+        record_name: str,
+        time: ndarray,
+        groups: list[_LineStationGroupPayload],
+    ) -> None:
+        self.record_name = record_name
+        self.time = time
+        self.groups = groups
+
+
+# =====================================================================
+# Element-length resolver (line-stations transcoder helper)
+# =====================================================================
+
+def _resolve_element_lengths(fem, element_ids) -> ndarray:
+    """Return per-element lengths for line-stations transcoding.
+
+    Tries a duck-typed test-fixture API first
+    (``fem.element_end_coords(eid) -> (c1, c2)``), then falls back to
+    the real :class:`apeGmsh.mesh.FEMData.FEMData` path
+    (``fem.elements.get(tag=eid).resolve()`` + ``fem.nodes.get_coords()``).
+
+    The duck-typed shortcut keeps test fixtures simple — they don't
+    need a fully-built ElementComposite when the only thing the
+    transcoder needs is per-element length.
+    """
+    eids = np.asarray(element_ids, dtype=np.int64)
+    out = np.empty(eids.size, dtype=np.float64)
+
+    if hasattr(fem, "element_end_coords"):
+        for i, eid in enumerate(eids):
+            c1, c2 = fem.element_end_coords(int(eid))
+            out[i] = float(np.linalg.norm(
+                np.asarray(c2, dtype=np.float64)
+                - np.asarray(c1, dtype=np.float64),
+            ))
+        return out
+
+    for i, eid in enumerate(eids):
+        ids, conn = fem.elements.get(tag=int(eid)).resolve()
+        if conn.size == 0:
+            raise ValueError(
+                f"Element {eid} has no connectivity in the bound FEMData."
+            )
+        # ``conn`` is (n_elements_resolved, n_nodes_per_element). For a
+        # tag lookup we expect 1 row; take its first and last node.
+        node_a = int(conn.flat[0])
+        node_b = int(conn.flat[-1])
+        c1 = np.asarray(fem.nodes.get_coords(node_a), dtype=np.float64)
+        c2 = np.asarray(fem.nodes.get_coords(node_b), dtype=np.float64)
+        out[i] = float(np.linalg.norm(c2 - c1))
+    return out
 
 
 # =====================================================================
