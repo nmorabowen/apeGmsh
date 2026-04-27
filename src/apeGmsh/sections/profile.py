@@ -12,6 +12,7 @@ surface (no extrusion).  Useful for:
 from __future__ import annotations
 
 from apeGmsh.core.Part import Part
+from apeGmsh.core._section_placement import apply_placement
 
 
 def W_profile(
@@ -20,6 +21,8 @@ def W_profile(
     h: float,
     tw: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "W_profile",
 ) -> Part:
     """Create a W-shape 2D cross-section (no extrusion).
@@ -72,5 +75,10 @@ def W_profile(
         for _, tag in gmsh.model.getEntities(2):
             part.labels.add(2, [tag], name="profile")
             break
+
+        # Profile has no extrusion length; only "start" and tuple
+        # anchors apply.  Pass length=None — named modes other than
+        # "start" raise (consistent with helper contract).
+        apply_placement(anchor, align, length=None)
 
     return part

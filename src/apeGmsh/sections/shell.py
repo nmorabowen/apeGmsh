@@ -12,6 +12,7 @@ These produce surfaces (dim=2) suitable for meshing with
 from __future__ import annotations
 
 from apeGmsh.core.Part import Part
+from apeGmsh.core._section_placement import apply_placement
 
 
 def _build_rect_surface(geo, x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3, *, label=None):
@@ -41,6 +42,8 @@ def W_shell(
     tw: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "W_shell",
 ) -> Part:
     """Create a W-shape as 3 mid-surface shell rectangles.
@@ -120,5 +123,6 @@ def W_shell(
         )
 
         part.model.sync()
+        apply_placement(anchor, align, length=length)
 
     return part

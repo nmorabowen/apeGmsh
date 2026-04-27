@@ -228,3 +228,212 @@ def compute_alignment_rotation(
         return (math.pi, 1.0, 0.0, 0.0)
     angle = math.acos(nz)
     return (angle, -ny, nx, 0.0)
+
+
+# ---------------------------------------------------------------------
+# Apply (translate + rotate)
+# ---------------------------------------------------------------------
+
+def apply_placement(
+    anchor,
+    align,
+    length: float | None = None,
+    *,
+    dimtags: Sequence[tuple[int, int]] | None = None,
+) -> None:
+    """Apply ``anchor`` translation then ``align`` rotation in-place.
+
+    Convenience wrapper that resolves both kwargs via the pure helpers
+    above and calls ``gmsh.model.occ.translate`` / ``rotate`` on the
+    chosen entities.  Skips the gmsh call when the resolved transform
+    is the identity.
+
+    Parameters
+    ----------
+    anchor : str or (x, y, z) tuple
+        Passed through to :func:`compute_anchor_offset`.
+    align : str or (ax, ay, az) tuple
+        Passed through to :func:`compute_alignment_rotation`.
+    length : float, optional
+        Required for ``"end"``, ``"midspan"``, and ``"centroid"``
+        anchors.  Ignored for ``"start"`` and tuple anchors.
+    dimtags : list of (dim, tag), optional
+        Entities to transform.  When ``None``, walks all entities of
+        the highest dimension present in the active gmsh model — the
+        right default for section factories building in their own
+        Part session.  Builders that share a session with other parts
+        must pass an explicit list to avoid moving unrelated geometry.
+    """
+    if dimtags is None:
+        all_ents = gmsh.model.getEntities()
+        if not all_ents:
+            return
+        top_dim = max(d for d, _ in all_ents)
+        dimtags = [(d, t) for d, t in all_ents if d == top_dim]
+    else:
+        dimtags = [(int(d), int(t)) for d, t in dimtags]
+    if not dimtags:
+        return
+
+    dx, dy, dz = compute_anchor_offset(anchor, length=length, dimtags=dimtags)
+    rot = compute_alignment_rotation(align)
+    needs_translate = (dx != 0.0 or dy != 0.0 or dz != 0.0)
+    needs_rotate = rot is not None
+    if not (needs_translate or needs_rotate):
+        return
+
+    # Rigid OCC transforms followed by synchronize() drop the
+    # physical groups whose entities were touched.  Top-dim entity
+    # tags survive translate/rotate, but the OCC kernel renumbers
+    # the boundary sub-topology (faces of rotated volumes).  So we
+    # snapshot per-entity COMs before the transform and re-find each
+    # entity by COM after — same matching strategy that the import
+    # path uses, just in-process.
+    snap = _snapshot_physical_groups()
+
+    if needs_translate:
+        gmsh.model.occ.translate(dimtags, dx, dy, dz)
+        gmsh.model.occ.synchronize()
+
+    if needs_rotate:
+        angle, ax, ay, az = rot
+        gmsh.model.occ.rotate(dimtags, 0.0, 0.0, 0.0, ax, ay, az, angle)
+        gmsh.model.occ.synchronize()
+
+    _restore_physical_groups(snap, (dx, dy, dz), rot)
+
+
+def _snapshot_physical_groups() -> list[dict]:
+    """Capture all PGs (label and user) before a placement transform.
+
+    Records ``{dim, pg_tag, name, entity_coms}`` per group, where
+    ``entity_coms`` is a list of ``(tag, (cx, cy, cz))`` for every
+    entity in the group at snapshot time.  The COM is read fresh so
+    the post-transform restore can match by transformed-COM rather
+    than by potentially-renumbered entity tag.
+    """
+    snap: list[dict] = []
+    for d, pg in gmsh.model.getPhysicalGroups():
+        name = gmsh.model.getPhysicalName(d, pg)
+        ents = list(gmsh.model.getEntitiesForPhysicalGroup(d, pg))
+        coms: list[tuple[int, tuple[float, float, float]]] = []
+        for t in ents:
+            try:
+                cx, cy, cz = gmsh.model.occ.getCenterOfMass(int(d), int(t))
+            except Exception:
+                continue
+            coms.append((int(t), (float(cx), float(cy), float(cz))))
+        snap.append({
+            'dim':          int(d),
+            'pg_tag':       int(pg),
+            'name':         name,
+            'entity_coms':  coms,
+        })
+    return snap
+
+
+def _restore_physical_groups(
+    snap: list[dict],
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+) -> None:
+    """Recreate snapshot PGs by matching transformed COMs.
+
+    For each snapshotted entity COM, applies the same translate/rotate
+    that was applied to the geometry, then finds the live entity at
+    that dim whose current COM is closest.  Falls back to the original
+    tag when COM matching is unavailable (e.g. no live entities at
+    that dim — should not happen for normal section factories).
+    """
+    if not snap:
+        return
+
+    # Cache live (tag, com) per dim so we don't re-walk for every PG.
+    live_by_dim: dict[int, list[tuple[int, tuple[float, float, float]]]] = {}
+    for d, t in gmsh.model.getEntities():
+        try:
+            cx, cy, cz = gmsh.model.occ.getCenterOfMass(int(d), int(t))
+        except Exception:
+            continue
+        live_by_dim.setdefault(int(d), []).append(
+            (int(t), (float(cx), float(cy), float(cz))),
+        )
+
+    for entry in snap:
+        d = entry['dim']
+        try:
+            gmsh.model.removePhysicalGroups([(d, entry['pg_tag'])])
+        except Exception:
+            pass
+
+        new_tags: list[int] = []
+        live = live_by_dim.get(d, [])
+        for old_tag, com in entry['entity_coms']:
+            expected = _transform_point(com, translate, rotate)
+            best_tag = _nearest_tag(live, expected)
+            if best_tag is not None:
+                new_tags.append(best_tag)
+
+        new_tags = sorted(set(new_tags))
+        if not new_tags:
+            continue
+        new_pg = gmsh.model.addPhysicalGroup(d, new_tags)
+        if entry['name']:
+            gmsh.model.setPhysicalName(d, new_pg, entry['name'])
+
+
+def _transform_point(
+    p: tuple[float, float, float],
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+) -> tuple[float, float, float]:
+    """Apply translate-then-rotate (the order ``apply_placement`` uses)
+    to a point.  Rotation is about the world origin via Rodrigues.
+    """
+    px, py, pz = p
+    dx, dy, dz = translate
+    px, py, pz = px + dx, py + dy, pz + dz
+    if rotate is None:
+        return (px, py, pz)
+    angle, ax, ay, az = rotate
+    norm = math.sqrt(ax * ax + ay * ay + az * az)
+    if norm == 0.0:
+        return (px, py, pz)
+    kx, ky, kz = ax / norm, ay / norm, az / norm
+    c, s = math.cos(angle), math.sin(angle)
+    # v' = v c + (k × v) s + k (k·v)(1-c)
+    cross_x = ky * pz - kz * py
+    cross_y = kz * px - kx * pz
+    cross_z = kx * py - ky * px
+    dot = kx * px + ky * py + kz * pz
+    return (
+        px * c + cross_x * s + kx * dot * (1.0 - c),
+        py * c + cross_y * s + ky * dot * (1.0 - c),
+        pz * c + cross_z * s + kz * dot * (1.0 - c),
+    )
+
+
+def _nearest_tag(
+    live: list[tuple[int, tuple[float, float, float]]],
+    target: tuple[float, float, float],
+    *,
+    tol: float = 1e-3,
+) -> int | None:
+    """Return the live entity tag whose COM is nearest ``target``.
+
+    Returns None if no live entity is within ``tol`` distance.
+    """
+    if not live:
+        return None
+    best_tag = None
+    best_d2 = float('inf')
+    tx, ty, tz = target
+    for tag, (cx, cy, cz) in live:
+        dx, dy, dz = cx - tx, cy - ty, cz - tz
+        d2 = dx * dx + dy * dy + dz * dz
+        if d2 < best_d2:
+            best_d2 = d2
+            best_tag = tag
+    if best_d2 > tol * tol:
+        return None
+    return best_tag
