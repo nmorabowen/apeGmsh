@@ -122,6 +122,36 @@ def _gauss_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
     return next(iter(keywords))
 
 
+def _nodal_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
+    """Return the ops keyword (``"globalForce"`` / ``"localForce"``) for an elements record.
+
+    Closed-form line elements (Phase 11b Step 3) expose per-element-
+    node forces under both ``globalForce`` and ``localForce`` recorder
+    tokens. The frame is derived from the record's canonical
+    components: ``nodal_resisting_force_local_*`` /
+    ``nodal_resisting_moment_local_*`` → ``localForce``; everything
+    else → ``globalForce``. Returns ``None`` if no components route
+    through the nodal-forces topology.
+
+    Raises ``ValueError`` if the record mixes the two frames.
+    """
+    from ._element_response import gauss_keyword_for_canonical
+    keywords: set[str] = set()
+    for comp in rec.components:
+        keyword = gauss_keyword_for_canonical(comp, topology="nodal_forces")
+        if keyword is not None:
+            keywords.add(keyword)
+    if not keywords:
+        return None
+    if len(keywords) > 1:
+        raise ValueError(
+            f"Record {rec.name!r} (category=elements) mixes global and "
+            f"local frames ({sorted(keywords)}); split into separate "
+            f"records (one per ops keyword)."
+        )
+    return next(iter(keywords))
+
+
 # =====================================================================
 # Logical recorder spec — backend-agnostic intermediate
 # =====================================================================
@@ -297,6 +327,18 @@ def _emit_element_simple(
         if keyword is None:
             return
         response_str = keyword
+    elif rec.category == "elements":
+        # Phase 11b Step 3c: keyword depends on components
+        # (globalForce vs localForce) — local-frame components emit
+        # a localForce recorder; everything else falls through to
+        # the category default ("globalForce").
+        keyword = _nodal_record_ops_keyword(rec)
+        if keyword is not None:
+            response_str = keyword
+        else:
+            response_str = _ELEMENT_CATEGORY_RESPONSE.get(rec.category)
+            if response_str is None:
+                return
     else:
         response_str = _ELEMENT_CATEGORY_RESPONSE.get(rec.category)
         if response_str is None:

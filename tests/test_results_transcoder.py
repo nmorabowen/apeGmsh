@@ -214,10 +214,10 @@ def test_transcode_snapshot_mismatch_raises(tmp_path: Path) -> None:
 def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
     """Element-level records the transcoder doesn't yet handle don't crash.
 
-    Phase 11a wired ``gauss``. Phase 11b wired ``line_stations``. The
-    remaining element-level categories (``elements`` / ``fibers`` /
-    ``layers``) still skip silently — surface in
-    ``transcoder.unsupported`` for inspection.
+    Phase 11a wired ``gauss``. Phase 11b wired ``line_stations``
+    (Step 2c) and ``elements`` (Step 3c). Only ``fibers`` / ``layers``
+    still skip silently — surface in ``transcoder.unsupported`` for
+    inspection.
     """
     fem = _MockFem([1])
     output_dir = tmp_path / "out"
@@ -233,8 +233,8 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
                 node_ids=np.array([1]),
             ),
             ResolvedRecorderRecord(
-                category="elements", name="b",
-                components=("nodal_resisting_force_x",),
+                category="fibers", name="b",
+                components=("fiber_stress",),
                 dt=None, n_steps=None,
                 element_ids=np.array([10]),
             ),
@@ -248,12 +248,13 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
         dofs=[1],
         value_fn=lambda k, nid, dof: 0.5,
     )
-    # Note: no b_elements.out file; the elements record is skipped.
+    # Note: no b_fibers.out file; the fibers record is skipped via
+    # the deferred-category branch before any file lookup happens.
 
     target = tmp_path / "out.h5"
     transcoder = RecorderTranscoder(spec, output_dir, target, fem)
     transcoder.run()
-    assert "elements:b" in transcoder.unsupported
+    assert "fibers:b" in transcoder.unsupported
 
     with Results.from_native(target, fem=fem) as r:
         # Node data parsed

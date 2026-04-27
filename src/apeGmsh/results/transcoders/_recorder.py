@@ -35,15 +35,20 @@ from ...solvers._element_response import (
     RESPONSE_CATALOG,
     CustomRuleLayout,
     IntRule,
+    NodalForceLayout,
     ResponseLayout,
     catalog_token_for_keyword,
     gauss_keyword_for_canonical,
+    gauss_routing_for_canonical,
     infer_section_codes,
     is_custom_rule_catalogued,
+    is_nodal_force_catalogued,
     lookup_custom_rule,
+    lookup_nodal_force,
     normalise_integration_points,
     resolve_layout_from_gp_x,
     unflatten,
+    unflatten_nodal,
 )
 from ...solvers._recorder_emit import (
     _DEFERRED_CATEGORIES,
@@ -101,6 +106,7 @@ class RecorderTranscoder:
         node_records: list[_NodeRecordPayload] = []
         gauss_records: list[_GaussRecordPayload] = []
         line_records: list[_LineStationRecordPayload] = []
+        nodal_records: list[_NodalForceRecordPayload] = []
         unsupported: list[str] = []
 
         for rec in self._spec.records:
@@ -117,8 +123,12 @@ class RecorderTranscoder:
                 payload = self._parse_line_station_record(rec)
                 if payload is not None:
                     line_records.append(payload)
+            elif rec.category == "elements":
+                payload = self._parse_nodal_force_record(rec)
+                if payload is not None:
+                    nodal_records.append(payload)
             else:
-                # elements (per-element-node forces) — not yet wired.
+                # fibers / layers — not yet wired.
                 unsupported.append(f"{rec.category}:{rec.name}")
 
         if unsupported:
@@ -166,10 +176,24 @@ class RecorderTranscoder:
                         f"have {time_vec.size}. Recorder cadences must "
                         f"match within one stage."
                     )
+        for nr in nodal_records:
+            if nr.time.size and time_vec.size:
+                if nr.time.shape != time_vec.shape:
+                    raise ValueError(
+                        f"Recorder {nr.record_name!r} has "
+                        f"{nr.time.size} time steps, but other records "
+                        f"have {time_vec.size}. Recorder cadences must "
+                        f"match within one stage."
+                    )
         if time_vec.size == 0:
             for lr in line_records:
                 if lr.time.size:
                     time_vec = lr.time
+                    break
+        if time_vec.size == 0:
+            for nr in nodal_records:
+                if nr.time.size:
+                    time_vec = nr.time
                     break
 
         # Write
@@ -187,6 +211,7 @@ class RecorderTranscoder:
             self._write_merged_nodes(w, sid, node_records, time_vec)
             self._write_gauss_records(w, sid, gauss_records)
             self._write_line_station_records(w, sid, line_records)
+            self._write_nodal_force_records(w, sid, nodal_records)
             w.end_stage()
 
         return self._target_path
@@ -520,6 +545,124 @@ class RecorderTranscoder:
                 )
 
     # ------------------------------------------------------------------
+    # Per-record parsing — nodal_forces (Phase 11b Step 3c.2)
+    # ------------------------------------------------------------------
+
+    def _parse_nodal_force_record(
+        self, rec: "ResolvedRecorderRecord",
+    ) -> "_NodalForceRecordPayload | None":
+        """Parse one ``elements`` record's ``.out`` file.
+
+        Closed-form line elements have a fully-baked layout in
+        :data:`NODAL_FORCE_CATALOG` — no IP positions to recover, no
+        section codes to infer. The transcoder needs only:
+
+        1. ``rec.element_class_name`` — the .out file carries no
+           class info, so the spec hint is required.
+        2. The frame (``"global"`` or ``"local"``), derived from the
+           record's components like the emit side does. Drives the
+           ``catalog_token`` lookup (``"global_force"`` /
+           ``"local_force"``).
+        3. The .out file emitted by ``_emit_element_simple`` (one
+           file per record — no pairing needed).
+
+        Builds one :class:`_NodalForceRecordPayload` (one bucket per
+        class — but v1 transcoder requires homogeneous-class records
+        like the gauss path does).
+        """
+        if rec.element_class_name is None:
+            raise ValueError(
+                f"Elements record {rec.name!r} requires "
+                f"``element_class_name`` on the spec — the .out "
+                f"transcoder cannot infer the element class from "
+                f"the file alone (no META). Add the class hint via "
+                f"the recorder builder or pass it through "
+                f"ResolvedRecorderRecord.element_class_name."
+            )
+        class_name = rec.element_class_name
+
+        # Derive the frame (global / local) from the record's
+        # components — same logic as _nodal_record_ops_keyword in
+        # the emit module.
+        frame_keywords: set[str] = set()
+        catalog_tokens: set[str] = set()
+        for comp in rec.components:
+            routing = gauss_routing_for_canonical(
+                comp, topology="nodal_forces",
+            )
+            if routing is None:
+                continue
+            kw, tok = routing
+            frame_keywords.add(kw)
+            catalog_tokens.add(tok)
+        if not frame_keywords:
+            raise ValueError(
+                f"Elements record {rec.name!r} has no recognised "
+                f"nodal-forces components — expected "
+                f"``nodal_resisting_*`` canonicals."
+            )
+        if len(frame_keywords) > 1:
+            raise ValueError(
+                f"Elements record {rec.name!r} mixes global and "
+                f"local frames ({sorted(frame_keywords)}); split "
+                f"into separate records."
+            )
+        catalog_token = next(iter(catalog_tokens))
+
+        if not is_nodal_force_catalogued(class_name, catalog_token):
+            raise ValueError(
+                f"({class_name!r}, {catalog_token!r}) is not in "
+                f"NODAL_FORCE_CATALOG; add an entry in "
+                f"apeGmsh.solvers._element_response if this class "
+                f"+ frame should be supported."
+            )
+        layout = lookup_nodal_force(class_name, catalog_token)
+
+        logicals = list(emit_logical(
+            rec, output_dir=str(self._output_dir),
+            file_format=self._file_format,
+        ))
+        if len(logicals) != 1:
+            raise ValueError(
+                f"Elements record {rec.name!r}: expected 1 logical "
+                f"recorder (no pairing for nodal_forces), got "
+                f"{len(logicals)}."
+            )
+        lr = logicals[0]
+
+        time, flat = _txt.parse_element_file(
+            lr.file_path, lr, layout.flat_size_per_element,
+        )
+        # flat shape: (T, E, n_nodes * n_components_per_node).
+
+        return _NodalForceRecordPayload(
+            record_name=rec.name,
+            element_ids=np.asarray(rec.element_ids, dtype=np.int64),
+            class_name=class_name,
+            layout=layout,
+            time=time,
+            flat=flat,
+        )
+
+    def _write_nodal_force_records(
+        self,
+        writer: NativeWriter,
+        stage_id: str,
+        records: list["_NodalForceRecordPayload"],
+    ) -> None:
+        """Write each nodal-forces payload as one nodal_forces group."""
+        for i, nr in enumerate(records):
+            decoded = unflatten_nodal(nr.flat, nr.layout)
+            writer.write_nodal_forces_group(
+                stage_id, "partition_0",
+                group_id=f"{nr.record_name}_{nr.class_name}_{i}",
+                class_tag=nr.layout.class_tag,
+                frame=nr.layout.frame,
+                element_index=nr.element_ids,
+                components=decoded,
+            )
+
+    # ------------------------------------------------------------------
     # Merge logic (mirror of DomainCapture._flush_nodes_merged)
     # ------------------------------------------------------------------
 
@@ -636,6 +779,30 @@ class _LineStationRecordPayload:
         self.record_name = record_name
         self.time = time
         self.groups = groups
+
+
+class _NodalForceRecordPayload:
+    """One ``elements`` record's ``.out`` parse output."""
+    __slots__ = (
+        "record_name", "element_ids", "class_name", "layout",
+        "time", "flat",
+    )
+
+    def __init__(
+        self,
+        record_name: str,
+        element_ids: ndarray,
+        class_name: str,
+        layout: NodalForceLayout,
+        time: ndarray,
+        flat: ndarray,
+    ) -> None:
+        self.record_name = record_name
+        self.element_ids = element_ids
+        self.class_name = class_name
+        self.layout = layout
+        self.time = time
+        self.flat = flat
 
 
 # =====================================================================
