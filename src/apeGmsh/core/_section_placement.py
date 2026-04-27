@@ -19,6 +19,16 @@ Two pure functions:
 Both raise :class:`ValueError` on bad input.  ``compute_anchor_offset``
 reads ``gmsh.model.occ`` only for the ``"centroid"`` mode (mass-weighted
 XY centroid over the active model's top-dimension entities).
+
+:func:`apply_placement` composes anchor + align + optional user
+translate/rotate into a single 4×4 affine matrix and applies it via
+one ``gmsh.model.occ.affineTransform`` call.  This deliberately avoids
+the chained ``occ.translate`` → ``synchronize`` → ``occ.rotate`` →
+``synchronize`` pattern: each intermediate sync renumbers boundary
+sub-topology, so chaining transforms means each step has to re-derive
+the section's current entity set and re-find every PG entity by COM.
+With matrix composition, there is exactly one sync and one PG
+snapshot/restore — every label survives by construction.
 """
 from __future__ import annotations
 
@@ -33,6 +43,10 @@ import gmsh
 # tolerances (1e-3) since we're operating on normalized direction
 # vectors, but loose enough to handle float round-trip from user input.
 _PARALLEL_TOL = 1e-9
+
+# Tolerance for treating a composed 4x4 as identity (skip the
+# affineTransform call entirely).
+_IDENTITY_TOL = 1e-12
 
 
 # ---------------------------------------------------------------------
@@ -231,48 +245,64 @@ def compute_alignment_rotation(
 
 
 # ---------------------------------------------------------------------
-# Apply (translate + rotate)
+# Apply (compose all transforms into one matrix, single OCC call)
 # ---------------------------------------------------------------------
 
 def apply_placement(
-    anchor,
-    align,
+    anchor=None,
+    align=None,
     length: float | None = None,
     *,
+    user_translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+    user_rotate: tuple[float, ...] | None = None,
     dimtags: Sequence[tuple[int, int]] | None = None,
     affected: Sequence[tuple[int, int]] | None = None,
 ) -> None:
-    """Apply ``anchor`` translation then ``align`` rotation in-place.
+    """Compose anchor + align + user transforms into one affine matrix
+    and apply it with a single ``gmsh.model.occ.affineTransform`` call.
 
-    Convenience wrapper that resolves both kwargs via the pure helpers
-    above and calls ``gmsh.model.occ.translate`` / ``rotate`` on the
-    chosen entities.  Skips the gmsh call when the resolved transform
-    is the identity.
+    Order of application (left to right; rightmost is applied first):
+
+        M = T_user · R_user · R_align · T_anchor
+
+    A point ``p`` in the section's local frame is mapped to
+    ``M · p`` in world coordinates.  Anchor translates first (re-origin
+    in the local frame), align rotates the extrusion axis, then the
+    user's rotate/translate stack as the last operations — matching
+    the historical behavior where user kwargs ran *after* anchor/align.
+
+    Composing into one matrix means exactly one ``synchronize()`` and
+    one PG snapshot/restore: no chained sync cycles, no stale
+    boundary-tag bookkeeping between steps.
 
     Parameters
     ----------
-    anchor : str or (x, y, z) tuple
-        Passed through to :func:`compute_anchor_offset`.
-    align : str or (ax, ay, az) tuple
-        Passed through to :func:`compute_alignment_rotation`.
+    anchor : str or (x, y, z), optional
+        Passed to :func:`compute_anchor_offset`.  ``None`` is treated
+        as ``"start"`` (identity translate).
+    align : str or (ax, ay, az), optional
+        Passed to :func:`compute_alignment_rotation`.  ``None`` is
+        treated as ``"z"`` (identity rotate).
     length : float, optional
-        Required for ``"end"``, ``"midspan"``, and ``"centroid"``
-        anchors.  Ignored for ``"start"`` and tuple anchors.
+        Required for ``"end"``, ``"midspan"``, ``"centroid"`` anchors.
+    user_translate : (dx, dy, dz), default ``(0, 0, 0)``
+        Translation applied AFTER anchor + align + user_rotate.
+    user_rotate : (angle, ax, ay, az) or (angle, ax, ay, az, cx, cy, cz), optional
+        4-tuple rotates about the world origin; 7-tuple rotates about
+        ``(cx, cy, cz)``.  Applied AFTER anchor + align, BEFORE
+        user_translate.  ``None`` means no user rotation.
     dimtags : list of (dim, tag), optional
         Entities to transform.  When ``None``, walks all entities of
         the highest dimension present in the active gmsh model — the
-        right default for section factories building in their own
-        Part session.  Builders that share a session with other parts
-        must pass an explicit list to avoid moving unrelated geometry.
+        right default for section factories with the session to
+        themselves.  Builders sharing a session must pass an explicit
+        list.
     affected : list of (dim, tag), optional
-        Full set of entities whose tag IDs may be invalidated by the
-        transform — usually ``dimtags`` plus the recursive boundary
-        sub-topology (faces of rotated volumes get renumbered even
-        though the volumes themselves keep their tag).  Used to scope
-        the PG snapshot/restore so untouched PGs in a shared parent
-        session are left alone.  Defaults to ``None`` — every entity
-        in the model is treated as affected, which is correct for the
-        Part-only case where the section has the session to itself.
+        Set of (dim, tag) whose PG membership might be affected by the
+        transform.  Used to scope the PG snapshot/restore so untouched
+        PGs in a shared parent session are left alone.  ``None`` means
+        "every PG in the model is potentially affected" — correct when
+        the section owns the session.
     """
     if dimtags is None:
         all_ents = gmsh.model.getEntities()
@@ -285,40 +315,170 @@ def apply_placement(
     if not dimtags:
         return
 
-    dx, dy, dz = compute_anchor_offset(anchor, length=length, dimtags=dimtags)
-    rot = compute_alignment_rotation(align)
-    needs_translate = (dx != 0.0 or dy != 0.0 or dz != 0.0)
-    needs_rotate = rot is not None
-    if not (needs_translate or needs_rotate):
+    # Build the four constituent matrices.
+    offset = compute_anchor_offset(
+        anchor if anchor is not None else "start",
+        length=length,
+        dimtags=dimtags,
+    )
+    T_anchor = _translate_matrix(*offset)
+
+    align_rot = compute_alignment_rotation(align if align is not None else "z")
+    R_align = (
+        _identity_matrix()
+        if align_rot is None
+        else _rotate_matrix(*align_rot)
+    )
+
+    if user_rotate is None:
+        R_user = _identity_matrix()
+    elif len(user_rotate) == 4:
+        angle, ax, ay, az = (float(v) for v in user_rotate)
+        R_user = _rotate_matrix(angle, ax, ay, az)
+    elif len(user_rotate) == 7:
+        angle, ax, ay, az, cx, cy, cz = (float(v) for v in user_rotate)
+        R_user = _rotate_matrix(angle, ax, ay, az, cx=cx, cy=cy, cz=cz)
+    else:
+        raise ValueError(
+            f"user_rotate must be a 4-tuple (angle, ax, ay, az) or a "
+            f"7-tuple (angle, ax, ay, az, cx, cy, cz); got "
+            f"{len(user_rotate)} components."
+        )
+
+    T_user = _translate_matrix(*(float(v) for v in user_translate))
+
+    # Compose: M = T_user · R_user · R_align · T_anchor.  Right-most
+    # matrix applies first to a point.
+    M = _matmul(T_user, _matmul(R_user, _matmul(R_align, T_anchor)))
+
+    if _is_identity(M):
         return
 
-    if affected is None:
-        affected_set: set[tuple[int, int]] | None = None
-    else:
-        affected_set = {(int(d), int(t)) for d, t in affected}
+    affected_set: set[tuple[int, int]] | None = (
+        None if affected is None
+        else {(int(d), int(t)) for d, t in affected}
+    )
 
-    # Rigid OCC transforms followed by synchronize() drop the
-    # physical groups whose entities were touched.  Top-dim entity
-    # tags survive translate/rotate, but the OCC kernel renumbers
-    # the boundary sub-topology (faces of rotated volumes).  So we
-    # snapshot per-entity COMs before the transform and re-find each
-    # entity by COM after — same matching strategy that the import
-    # path uses, just in-process.  ``affected_set`` (when given) keeps
-    # us from touching PGs in a shared session that the transform
-    # didn't move.
+    # Rigid OCC transforms followed by synchronize() drop physical
+    # groups whose entities were touched: top-dim tags survive but
+    # boundary sub-topology gets renumbered.  Snapshot per-entity
+    # COMs first; after the single sync, re-find each entity by the
+    # transformed COM.  affected_set scopes this to the section's
+    # PGs so a shared parent session's untouched PGs are left alone.
     snap = _snapshot_physical_groups(affected_set)
 
-    if needs_translate:
-        gmsh.model.occ.translate(dimtags, dx, dy, dz)
-        gmsh.model.occ.synchronize()
+    gmsh.model.occ.affineTransform(dimtags, _matrix_to_gmsh(M))
+    gmsh.model.occ.synchronize()
 
-    if needs_rotate:
-        angle, ax, ay, az = rot
-        gmsh.model.occ.rotate(dimtags, 0.0, 0.0, 0.0, ax, ay, az, angle)
-        gmsh.model.occ.synchronize()
+    _restore_physical_groups(snap, M, affected_set)
 
-    _restore_physical_groups(snap, (dx, dy, dz), rot, affected_set)
 
+# ---------------------------------------------------------------------
+# 4×4 matrix helpers (plain Python, no numpy dependency)
+# ---------------------------------------------------------------------
+
+# Matrix layout: list of 4 rows, each a list of 4 floats. (Row-major.)
+_Mat4 = list
+
+
+def _identity_matrix() -> _Mat4:
+    return [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+def _translate_matrix(dx: float, dy: float, dz: float) -> _Mat4:
+    return [
+        [1.0, 0.0, 0.0, float(dx)],
+        [0.0, 1.0, 0.0, float(dy)],
+        [0.0, 0.0, 1.0, float(dz)],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+
+
+def _rotate_matrix(
+    angle: float,
+    ax: float, ay: float, az: float,
+    *,
+    cx: float = 0.0, cy: float = 0.0, cz: float = 0.0,
+) -> _Mat4:
+    """Rotation by ``angle`` radians about axis ``(ax, ay, az)`` through
+    point ``(cx, cy, cz)``.  Implemented as T(c) · R · T(-c).
+    """
+    norm = math.sqrt(ax * ax + ay * ay + az * az)
+    if norm == 0.0:
+        return _identity_matrix()
+    kx, ky, kz = ax / norm, ay / norm, az / norm
+    c, s = math.cos(angle), math.sin(angle)
+    C = 1.0 - c
+    R = [
+        [c + kx * kx * C,      kx * ky * C - kz * s, kx * kz * C + ky * s, 0.0],
+        [ky * kx * C + kz * s, c + ky * ky * C,      ky * kz * C - kx * s, 0.0],
+        [kz * kx * C - ky * s, kz * ky * C + kx * s, c + kz * kz * C,      0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+    if cx == 0.0 and cy == 0.0 and cz == 0.0:
+        return R
+    return _matmul(
+        _translate_matrix(cx, cy, cz),
+        _matmul(R, _translate_matrix(-cx, -cy, -cz)),
+    )
+
+
+def _matmul(A: _Mat4, B: _Mat4) -> _Mat4:
+    """4×4 matrix product."""
+    out = [[0.0] * 4 for _ in range(4)]
+    for i in range(4):
+        for j in range(4):
+            out[i][j] = (
+                A[i][0] * B[0][j]
+                + A[i][1] * B[1][j]
+                + A[i][2] * B[2][j]
+                + A[i][3] * B[3][j]
+            )
+    return out
+
+
+def _apply_matrix(
+    M: _Mat4, p: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    px, py, pz = p
+    return (
+        M[0][0] * px + M[0][1] * py + M[0][2] * pz + M[0][3],
+        M[1][0] * px + M[1][1] * py + M[1][2] * pz + M[1][3],
+        M[2][0] * px + M[2][1] * py + M[2][2] * pz + M[2][3],
+    )
+
+
+def _is_identity(M: _Mat4, tol: float = _IDENTITY_TOL) -> bool:
+    I = _identity_matrix()
+    for i in range(4):
+        for j in range(4):
+            if abs(M[i][j] - I[i][j]) > tol:
+                return False
+    return True
+
+
+def _matrix_to_gmsh(M: _Mat4) -> list[float]:
+    """Flatten the first 3 rows into a 12-element list.
+
+    ``gmsh.model.occ.affineTransform`` takes the first 3 rows of the
+    4×4 affine matrix in row-major order; the implicit last row
+    ``[0, 0, 0, 1]`` is added by gmsh.
+    """
+    return [
+        M[0][0], M[0][1], M[0][2], M[0][3],
+        M[1][0], M[1][1], M[1][2], M[1][3],
+        M[2][0], M[2][1], M[2][2], M[2][3],
+    ]
+
+
+# ---------------------------------------------------------------------
+# Physical-group snapshot/restore
+# ---------------------------------------------------------------------
 
 def _snapshot_physical_groups(
     affected_set: set[tuple[int, int]] | None = None,
@@ -368,16 +528,15 @@ def _snapshot_physical_groups(
 
 def _restore_physical_groups(
     snap: list[dict],
-    translate: tuple[float, float, float],
-    rotate: tuple[float, float, float, float] | None,
+    M: _Mat4,
     affected_set: set[tuple[int, int]] | None = None,
 ) -> None:
     """Recreate snapshot PGs by matching transformed COMs.
 
-    For each snapshotted entity COM, applies the placement transform
-    only to entities that were ``affected``, then finds the live
-    entity at that dim whose current COM is closest.  Entities that
-    were not affected keep their tag and original COM as-is.
+    For each snapshotted entity COM, applies ``M`` only to entities
+    that were ``affected``, then finds the live entity at that dim
+    whose current COM is closest.  Entities that were not affected
+    keep their tag and original COM as-is.
     """
     if not snap:
         return
@@ -404,7 +563,7 @@ def _restore_physical_groups(
         live = live_by_dim.get(d, [])
         for old_tag, com, is_aff in entry['entity_coms']:
             if is_aff:
-                expected = _transform_point(com, translate, rotate)
+                expected = _apply_matrix(M, com)
                 best_tag = _nearest_tag(live, expected)
                 if best_tag is not None:
                     new_tags.append(best_tag)
@@ -418,37 +577,6 @@ def _restore_physical_groups(
         new_pg = gmsh.model.addPhysicalGroup(d, new_tags)
         if entry['name']:
             gmsh.model.setPhysicalName(d, new_pg, entry['name'])
-
-
-def _transform_point(
-    p: tuple[float, float, float],
-    translate: tuple[float, float, float],
-    rotate: tuple[float, float, float, float] | None,
-) -> tuple[float, float, float]:
-    """Apply translate-then-rotate (the order ``apply_placement`` uses)
-    to a point.  Rotation is about the world origin via Rodrigues.
-    """
-    px, py, pz = p
-    dx, dy, dz = translate
-    px, py, pz = px + dx, py + dy, pz + dz
-    if rotate is None:
-        return (px, py, pz)
-    angle, ax, ay, az = rotate
-    norm = math.sqrt(ax * ax + ay * ay + az * az)
-    if norm == 0.0:
-        return (px, py, pz)
-    kx, ky, kz = ax / norm, ay / norm, az / norm
-    c, s = math.cos(angle), math.sin(angle)
-    # v' = v c + (k × v) s + k (k·v)(1-c)
-    cross_x = ky * pz - kz * py
-    cross_y = kz * px - kx * pz
-    cross_z = kx * py - ky * px
-    dot = kx * px + ky * py + kz * pz
-    return (
-        px * c + cross_x * s + kx * dot * (1.0 - c),
-        py * c + cross_y * s + ky * dot * (1.0 - c),
-        pz * c + cross_z * s + kz * dot * (1.0 - c),
-    )
 
 
 def _nearest_tag(
