@@ -126,6 +126,23 @@ ELE_TAG_CorotTrussSection = 15
 ELE_TAG_Truss2 = 138
 ELE_TAG_CorotTruss2 = 139
 ELE_TAG_InertiaTruss = 218
+# Line elements — beam-columns (Phase 11b)
+# Force-/disp-based families with per-instance integration rules
+# (custom rule, line-stations topology). Tags from
+# ``OpenSees/SRC/classTags.h`` lines 651–810.
+ELE_TAG_ElasticBeam2d = 3
+ELE_TAG_ModElasticBeam2d = 4
+ELE_TAG_ElasticBeam3d = 5
+ELE_TAG_DispBeamColumn2d = 62
+ELE_TAG_DispBeamColumn3d = 64
+ELE_TAG_ForceBeamColumn2d = 73
+ELE_TAG_ForceBeamColumnWarping2d = 731
+ELE_TAG_ForceBeamColumn3d = 74
+ELE_TAG_ElasticForceBeamColumn2d = 75
+ELE_TAG_ElasticForceBeamColumn3d = 76
+ELE_TAG_ForceBeamColumnCBDI2d = 77
+ELE_TAG_ElasticTimoshenkoBeam2d = 145
+ELE_TAG_ElasticTimoshenkoBeam3d = 146
 
 
 # =====================================================================
@@ -190,6 +207,119 @@ class ResponseLayout:
             raise ValueError(
                 f"component_layout has {len(self.component_layout)} names "
                 f"but n_components_per_gp={self.n_components_per_gp}."
+            )
+
+
+# =====================================================================
+# CustomRuleLayout — beam-columns with per-instance integration
+# =====================================================================
+#
+# Force-/disp-based beam-column elements let the user attach any
+# beamIntegration scheme (Lobatto, Legendre, Radau, NewtonCotes,
+# Simpson, HingeMidpoint, HingeRadau, FixedLocation, UserDefined, …).
+# Both ``n_IP`` and IP locations are per-element metadata: they live
+# on the assigned ``beamIntegration`` object, not on the C++ class.
+# MPCO classifies all such rules as ``CustomIntegrationRule = 1000``
+# and stores per-element ``GP_X`` natural coordinates as an attribute
+# on the connectivity dataset.
+#
+# The catalog can therefore declare only the *structural* identity of
+# the response (class tag, parent domain), not its concrete shape. The
+# per-element shape — ``n_IP``, ``natural_coords``, and the
+# ``component_layout`` (which depends on the assigned section's
+# ``getType()`` codes) — is filled in by ``resolve_layout_from_gp_x``
+# at read/capture time, producing a concrete ``ResponseLayout`` that
+# the existing ``unflatten`` keystone can consume directly.
+
+@dataclass(frozen=True)
+class CustomRuleLayout:
+    """Structural layout for an element class with per-instance integration.
+
+    Used by ``CUSTOM_RULE_CATALOG`` entries for force- and
+    displacement-based beam-columns. Concrete per-element layout —
+    ``n_IP``, GP natural coordinates, and component names ordered to
+    match the section's response codes — is built at runtime via
+    :func:`resolve_layout_from_gp_x` from the per-element ``GP_X``
+    array (MPCO) or ``ops.eleResponse(eid, "integrationPoints")``
+    output (DomainCapture) plus the section's response code vector.
+
+    Parameters
+    ----------
+    class_tag
+        OpenSees ``ELE_TAG_*`` integer for this element class.
+    coord_system
+        Tag describing the parent domain so the resolver can stamp
+        the right value onto the produced ``ResponseLayout``. For
+        line beam-columns this is always ``"isoparametric_1d"``
+        (parent ξ ∈ [-1, +1]). MVLEM-family 2-D rules (out of scope
+        for v1) would use a 2-D variant.
+    """
+
+    class_tag: int
+    coord_system: str
+
+
+# =====================================================================
+# NodalForceLayout — closed-form elastic beams (no integration points)
+# =====================================================================
+#
+# ElasticBeam{2d,3d}, ElasticTimoshenkoBeam{2d,3d}, ModElasticBeam2d
+# and similar closed-form line elements have no per-IP state to
+# probe. ``ops.eleResponse(eid, "globalForce")`` returns a single
+# flat per-element-node force vector packed node-slowest /
+# component-fastest::
+#
+#     flat[t, e, n * K + k] = component k at element-node n
+#
+# matching the same packing convention as the GP/component layout
+# in ``ResponseLayout`` (substitute "node" for "GP"). The layout is
+# fixed by element class + frame ("global" or "local") and does not
+# depend on the assigned section, so we can fully declare it in the
+# catalog without a runtime resolver.
+
+@dataclass(frozen=True)
+class NodalForceLayout:
+    """Per-element-node force/moment layout for closed-form line elements.
+
+    Parameters
+    ----------
+    n_nodes_per_element
+        Number of element-end nodes carrying the force vector
+        (always 2 for elastic beams in v1).
+    n_components_per_node
+        Force/moment components emitted per element-node (3 in 2D
+        ndf=3, 6 in 3D ndf=6).
+    component_layout
+        Canonical apeGmsh names (in flat per-node order) for the
+        ``n_components_per_node`` columns at each element-node.
+        Ordered to match OpenSees's per-node DOF order.
+    class_tag
+        OpenSees ``ELE_TAG_*`` integer for this element class.
+    frame
+        ``"global"`` or ``"local"``. Distinguishes the two recorder
+        tokens (``globalForce`` / ``localForce``) which return the
+        same data in different reference frames.
+    """
+
+    n_nodes_per_element: int
+    n_components_per_node: int
+    component_layout: tuple[str, ...]
+    class_tag: int
+    frame: str
+
+    @property
+    def flat_size_per_element(self) -> int:
+        return self.n_nodes_per_element * self.n_components_per_node
+
+    def __post_init__(self) -> None:
+        if len(self.component_layout) != self.n_components_per_node:
+            raise ValueError(
+                f"component_layout has {len(self.component_layout)} names "
+                f"but n_components_per_node={self.n_components_per_node}."
+            )
+        if self.frame not in ("global", "local"):
+            raise ValueError(
+                f"frame must be 'global' or 'local'; got {self.frame!r}."
             )
 
 
@@ -772,6 +902,158 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
 
 
 # =====================================================================
+# CUSTOM_RULE_CATALOG — beam-columns with per-instance integration
+# =====================================================================
+#
+# Phase 11b. Keyed on ``(class_name, token)`` (no integration-rule
+# field — every entry implicitly carries ``IntRule.Custom``). The
+# concrete per-element ``ResponseLayout`` is built at read/capture
+# time by :func:`resolve_layout_from_gp_x` from the per-element
+# ``GP_X`` array and the assigned section's response codes.
+#
+# v1 covers ``token == "section_force"`` only. The conjugate
+# ``"section_deformation"`` token will be added when its canonical
+# vocabulary names land (curvature_y / curvature_z and the line-
+# axial strain are not in ``LINE_DIAGRAMS`` yet).
+#
+# Notes on disp-based beam-columns: ``DispBeamColumn{2d,3d}`` does not
+# expose ``ops.eleResponse(eid, "integrationPoints")`` — DomainCapture
+# v1 cannot drive these directly. MPCO writes their ``GP_X`` to disk,
+# so the read path works fine. See
+# :doc:`internal_docs/plan_phase_11b_line_stations` §"Custom-rule
+# complexity" for the Tier 1/2/3 discovery story.
+
+CUSTOM_RULE_CATALOG: dict[tuple[str, str], CustomRuleLayout] = {
+    # ── Force-based beam-columns ──────────────────────────────────────
+    ("ForceBeamColumn2d", "section_force"): CustomRuleLayout(
+        class_tag=ELE_TAG_ForceBeamColumn2d,
+        coord_system="isoparametric_1d",
+    ),
+    ("ForceBeamColumn3d", "section_force"): CustomRuleLayout(
+        class_tag=ELE_TAG_ForceBeamColumn3d,
+        coord_system="isoparametric_1d",
+    ),
+    ("ForceBeamColumnCBDI2d", "section_force"): CustomRuleLayout(
+        class_tag=ELE_TAG_ForceBeamColumnCBDI2d,
+        coord_system="isoparametric_1d",
+    ),
+    ("ForceBeamColumnWarping2d", "section_force"): CustomRuleLayout(
+        class_tag=ELE_TAG_ForceBeamColumnWarping2d,
+        coord_system="isoparametric_1d",
+    ),
+    ("ElasticForceBeamColumn2d", "section_force"): CustomRuleLayout(
+        class_tag=ELE_TAG_ElasticForceBeamColumn2d,
+        coord_system="isoparametric_1d",
+    ),
+    ("ElasticForceBeamColumn3d", "section_force"): CustomRuleLayout(
+        class_tag=ELE_TAG_ElasticForceBeamColumn3d,
+        coord_system="isoparametric_1d",
+    ),
+    # ── Displacement-based beam-columns ───────────────────────────────
+    ("DispBeamColumn2d", "section_force"): CustomRuleLayout(
+        class_tag=ELE_TAG_DispBeamColumn2d,
+        coord_system="isoparametric_1d",
+    ),
+    ("DispBeamColumn3d", "section_force"): CustomRuleLayout(
+        class_tag=ELE_TAG_DispBeamColumn3d,
+        coord_system="isoparametric_1d",
+    ),
+}
+
+
+# =====================================================================
+# NODAL_FORCE_CATALOG — closed-form elastic beams
+# =====================================================================
+#
+# Phase 11b. Keyed on ``(class_name, token)`` where ``token`` is the
+# OpenSees recorder token in apeGmsh-canonical form
+# (``"global_force"`` / ``"local_force"``). Component layouts use
+# the ``nodal_resisting_*`` canonical names from
+# :data:`apeGmsh.results._vocabulary.PER_ELEMENT_NODAL_FORCES` —
+# distinct from the global-frame ``force_*`` / ``moment_*`` names
+# (which are applied nodal forces, a different topology level).
+#
+# Per-node component order matches OpenSees's per-node DOF order:
+# 2D ndf=3 → (Fx, Fy, Mz); 3D ndf=6 → (Fx, Fy, Fz, Mx, My, Mz).
+
+_BEAM_NODAL_2D_GLOBAL: tuple[str, ...] = (
+    "nodal_resisting_force_x",
+    "nodal_resisting_force_y",
+    "nodal_resisting_moment_z",
+)
+_BEAM_NODAL_2D_LOCAL: tuple[str, ...] = (
+    "nodal_resisting_force_local_x",
+    "nodal_resisting_force_local_y",
+    "nodal_resisting_moment_local_z",
+)
+_BEAM_NODAL_3D_GLOBAL: tuple[str, ...] = (
+    "nodal_resisting_force_x",
+    "nodal_resisting_force_y",
+    "nodal_resisting_force_z",
+    "nodal_resisting_moment_x",
+    "nodal_resisting_moment_y",
+    "nodal_resisting_moment_z",
+)
+_BEAM_NODAL_3D_LOCAL: tuple[str, ...] = (
+    "nodal_resisting_force_local_x",
+    "nodal_resisting_force_local_y",
+    "nodal_resisting_force_local_z",
+    "nodal_resisting_moment_local_x",
+    "nodal_resisting_moment_local_y",
+    "nodal_resisting_moment_local_z",
+)
+
+
+def _nodal_force_2d(class_tag: int, frame: str) -> NodalForceLayout:
+    layout = _BEAM_NODAL_2D_GLOBAL if frame == "global" else _BEAM_NODAL_2D_LOCAL
+    return NodalForceLayout(
+        n_nodes_per_element=2,
+        n_components_per_node=3,
+        component_layout=layout,
+        class_tag=class_tag,
+        frame=frame,
+    )
+
+
+def _nodal_force_3d(class_tag: int, frame: str) -> NodalForceLayout:
+    layout = _BEAM_NODAL_3D_GLOBAL if frame == "global" else _BEAM_NODAL_3D_LOCAL
+    return NodalForceLayout(
+        n_nodes_per_element=2,
+        n_components_per_node=6,
+        component_layout=layout,
+        class_tag=class_tag,
+        frame=frame,
+    )
+
+
+NODAL_FORCE_CATALOG: dict[tuple[str, str], NodalForceLayout] = {
+    # ── ElasticBeam ──────────────────────────────────────────────────
+    ("ElasticBeam2d", "global_force"):
+        _nodal_force_2d(ELE_TAG_ElasticBeam2d, "global"),
+    ("ElasticBeam2d", "local_force"):
+        _nodal_force_2d(ELE_TAG_ElasticBeam2d, "local"),
+    ("ElasticBeam3d", "global_force"):
+        _nodal_force_3d(ELE_TAG_ElasticBeam3d, "global"),
+    ("ElasticBeam3d", "local_force"):
+        _nodal_force_3d(ELE_TAG_ElasticBeam3d, "local"),
+    # ── ModElasticBeam (2D only in v1) ───────────────────────────────
+    ("ModElasticBeam2d", "global_force"):
+        _nodal_force_2d(ELE_TAG_ModElasticBeam2d, "global"),
+    ("ModElasticBeam2d", "local_force"):
+        _nodal_force_2d(ELE_TAG_ModElasticBeam2d, "local"),
+    # ── ElasticTimoshenkoBeam ────────────────────────────────────────
+    ("ElasticTimoshenkoBeam2d", "global_force"):
+        _nodal_force_2d(ELE_TAG_ElasticTimoshenkoBeam2d, "global"),
+    ("ElasticTimoshenkoBeam2d", "local_force"):
+        _nodal_force_2d(ELE_TAG_ElasticTimoshenkoBeam2d, "local"),
+    ("ElasticTimoshenkoBeam3d", "global_force"):
+        _nodal_force_3d(ELE_TAG_ElasticTimoshenkoBeam3d, "global"),
+    ("ElasticTimoshenkoBeam3d", "local_force"):
+        _nodal_force_3d(ELE_TAG_ElasticTimoshenkoBeam3d, "local"),
+}
+
+
+# =====================================================================
 # Public API
 # =====================================================================
 
@@ -812,6 +1094,139 @@ def lookup(class_name: str, int_rule: int, token: str) -> ResponseLayout:
 def is_catalogued(class_name: str, int_rule: int, token: str) -> bool:
     """True if ``(class_name, int_rule, token)`` has a layout entry."""
     return (class_name, int_rule, token) in RESPONSE_CATALOG
+
+
+# ---------------------------------------------------------------------
+# Custom-rule (line-stations) catalog access + resolver
+# ---------------------------------------------------------------------
+#
+# OpenSees section response codes (``SECTION_RESPONSE_*`` in
+# ``SRC/material/section/SectionForceDeformation.h`` lines 52–57)
+# identify each entry of a section's force / deformation vector. The
+# mapping is fixed across all sections — what varies is the *order*
+# in which a particular section's ``getType()`` returns these codes.
+# A bare ``FiberSection3d`` returns ``[P, Mz, My, T]`` (codes
+# 2, 1, 4, 6); a ``SectionAggregator`` adding shears returns
+# ``[P, Mz, My, T, Vy, Vz]`` (codes 2, 1, 4, 6, 3, 5). Per-element
+# section codes therefore drive the concrete ``ResponseLayout``.
+
+SECTION_RESPONSE_TO_CANONICAL: dict[int, str] = {
+    1: "bending_moment_z",   # SECTION_RESPONSE_MZ
+    2: "axial_force",        # SECTION_RESPONSE_P
+    3: "shear_y",            # SECTION_RESPONSE_VY
+    4: "bending_moment_y",   # SECTION_RESPONSE_MY
+    5: "shear_z",            # SECTION_RESPONSE_VZ
+    6: "torsion",            # SECTION_RESPONSE_T
+}
+
+
+def lookup_custom_rule(class_name: str, token: str) -> CustomRuleLayout:
+    """Look up the structural layout for a custom-rule (line-stations) entry.
+
+    See :data:`CUSTOM_RULE_CATALOG`. Raises
+    :class:`CatalogLookupError` on miss with a helpful message.
+    """
+    key = (class_name, token)
+    try:
+        return CUSTOM_RULE_CATALOG[key]
+    except KeyError:
+        raise CatalogLookupError(
+            f"No CustomRuleLayout for (class={class_name!r}, "
+            f"token={token!r}). Add an entry to CUSTOM_RULE_CATALOG "
+            f"in src/apeGmsh/solvers/_element_response.py if this "
+            f"line-station element should be supported."
+        ) from None
+
+
+def is_custom_rule_catalogued(class_name: str, token: str) -> bool:
+    """True if ``(class_name, token)`` has a custom-rule layout entry."""
+    return (class_name, token) in CUSTOM_RULE_CATALOG
+
+
+def resolve_layout_from_gp_x(
+    custom: CustomRuleLayout,
+    gp_x: ndarray,
+    section_codes: tuple[int, ...],
+) -> ResponseLayout:
+    """Build a concrete :class:`ResponseLayout` for one custom-rule bucket.
+
+    The structural :class:`CustomRuleLayout` declares only what is
+    fixed by the element class (class tag, parent domain). Concrete
+    shape — how many integration points there are, where they sit in
+    the parent domain, and what each component column means — comes
+    from the per-element data this function takes as input.
+
+    Parameters
+    ----------
+    custom
+        Catalog entry for ``(class_name, token)``.
+    gp_x
+        Per-element natural coordinates in ``[-1, +1]``. Shape
+        ``(n_IP,)``. From MPCO ``MODEL/ELEMENTS/<bucket>/@GP_X`` or
+        from ``ops.eleResponse(eid, "integrationPoints")`` after
+        normalising the physical-length values OpenSees returns
+        (``ξ_natural = 2 * ξ_physical/L - 1``).
+    section_codes
+        OpenSees ``SECTION_RESPONSE_*`` codes giving the per-IP
+        section's response order (``[P, Mz, My, T]`` =
+        ``(2, 1, 4, 6)`` for a bare 3D fiber section). Drives both
+        ``n_components_per_gp`` (= ``len(section_codes)``) and the
+        canonical ``component_layout`` order. Code values come from
+        the MPCO ``META/COMPONENTS`` string (Step 2a) or from a
+        section-introspection probe at capture time (Step 2b).
+
+    Returns
+    -------
+    ResponseLayout
+        A concrete fixed-rule layout that the existing
+        :func:`unflatten` / :func:`flatten` keystone consumes.
+
+    Raises
+    ------
+    KeyError
+        If ``section_codes`` contains an unrecognised value (e.g. a
+        warping or asymmetric-section code outside
+        :data:`SECTION_RESPONSE_TO_CANONICAL`).
+    """
+    gp_x = np.asarray(gp_x, dtype=np.float64).reshape(-1)
+    component_layout = tuple(
+        SECTION_RESPONSE_TO_CANONICAL[int(c)] for c in section_codes
+    )
+    return ResponseLayout(
+        n_gauss_points=gp_x.size,
+        natural_coords=gp_x.reshape(-1, 1),
+        coord_system=custom.coord_system,
+        n_components_per_gp=len(component_layout),
+        component_layout=component_layout,
+        class_tag=custom.class_tag,
+    )
+
+
+# ---------------------------------------------------------------------
+# Nodal-force catalog access
+# ---------------------------------------------------------------------
+
+def lookup_nodal_force(class_name: str, token: str) -> NodalForceLayout:
+    """Look up the per-element-node force layout for a closed-form line element.
+
+    See :data:`NODAL_FORCE_CATALOG`. Raises
+    :class:`CatalogLookupError` on miss with a helpful message.
+    """
+    key = (class_name, token)
+    try:
+        return NODAL_FORCE_CATALOG[key]
+    except KeyError:
+        raise CatalogLookupError(
+            f"No NodalForceLayout for (class={class_name!r}, "
+            f"token={token!r}). Add an entry to NODAL_FORCE_CATALOG "
+            f"in src/apeGmsh/solvers/_element_response.py if this "
+            f"closed-form line element should be supported."
+        ) from None
+
+
+def is_nodal_force_catalogued(class_name: str, token: str) -> bool:
+    """True if ``(class_name, token)`` has a nodal-force layout entry."""
+    return (class_name, token) in NODAL_FORCE_CATALOG
 
 
 # ---------------------------------------------------------------------
@@ -868,6 +1283,19 @@ def split_canonical_component(name: str) -> tuple[str, str] | None:
 # Canonical prefix (or full scalar name) → OpenSees ``setResponse``
 # keyword. The keyword is *also* the on-disk MPCO group name
 # (``ON_ELEMENTS/<keyword>/``).
+#
+# Routing depends on the *topology level* the component belongs to —
+# the same canonical name can hit different recorder keywords:
+# ``axial_force`` is the Truss scalar (``axialForce``) at the
+# gauss-points topology, but the first column of ``section.force``
+# at the line-stations topology. Likewise ``bending_moment_y`` is a
+# shell resultant (``stresses``) at gauss-points but a beam section
+# moment (``section.force``) at line-stations.
+#
+# Each topology has its own table; the routing helpers take a
+# ``topology`` keyword. The default ``topology=None`` preserves the
+# Phase 11a behaviour (continuum stress/strain, shell resultants,
+# truss axial — everything that lives at the gauss-points topology).
 _GAUSS_PREFIX_TO_KEYWORD: dict[str, str] = {
     # Continuum stress / strain.
     "stress": "stresses",
@@ -888,8 +1316,41 @@ _GAUSS_PREFIX_TO_KEYWORD: dict[str, str] = {
 }
 
 
+# Line-stations topology — force-/disp-based beam-columns expose
+# section-level forces under a single recorder keyword
+# (``section.force``). All apeGmsh ``LINE_DIAGRAMS`` canonicals
+# route there. The MPCO bucket name on disk is identical
+# (``ON_ELEMENTS/section.force/<bracket>``).
+_LINE_STATION_PREFIX_TO_KEYWORD: dict[str, str] = {
+    # Scalars (full canonical names, no axis suffix).
+    "axial_force": "section.force",
+    "torsion": "section.force",
+    # Vector-suffixed (``shear_y``, ``shear_z``, ``bending_moment_y``,
+    # ``bending_moment_z``) — the splitter strips ``_y`` / ``_z`` and
+    # we route on the prefix.
+    "shear": "section.force",
+    "bending_moment": "section.force",
+}
+
+
+# Nodal-forces topology — closed-form elastic beams expose per-
+# element-node force vectors under ``globalForce`` / ``localForce``.
+# The canonical names are the ``nodal_resisting_*`` family from
+# :data:`apeGmsh.results._vocabulary.PER_ELEMENT_NODAL_FORCES`.
+_NODAL_FORCE_PREFIX_TO_KEYWORD: dict[str, str] = {
+    # Global frame.
+    "nodal_resisting_force": "globalForce",
+    "nodal_resisting_moment": "globalForce",
+    # Local frame — distinct prefixes (the splitter strips only the
+    # final ``_x`` / ``_y`` / ``_z`` axis suffix, leaving
+    # ``nodal_resisting_force_local`` intact).
+    "nodal_resisting_force_local": "localForce",
+    "nodal_resisting_moment_local": "localForce",
+}
+
+
 # OpenSees keyword → catalog token (the third element of
-# ``RESPONSE_CATALOG`` keys).
+# ``RESPONSE_CATALOG`` keys for the gauss-points topology).
 _KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
     "stresses": "stress",
     "strains": "strain",
@@ -897,8 +1358,40 @@ _KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
 }
 
 
-def gauss_keyword_for_canonical(name: str) -> str | None:
-    """Return the ``ops.eleResponse`` keyword for a Gauss-level component.
+# Line-stations topology — keyword → catalog token (second element
+# of ``CUSTOM_RULE_CATALOG`` keys).
+_LINE_STATION_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
+    "section.force": "section_force",
+}
+
+
+# Nodal-forces topology — keyword → catalog token (second element
+# of ``NODAL_FORCE_CATALOG`` keys).
+_NODAL_FORCE_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
+    "globalForce": "global_force",
+    "localForce": "local_force",
+}
+
+
+# Per-topology dispatch — keeps the routing helpers small and lets
+# us add new topologies without growing more conditional branches.
+_TOPOLOGY_PREFIX_TABLES: dict[str | None, dict[str, str]] = {
+    None: _GAUSS_PREFIX_TO_KEYWORD,
+    "line_stations": _LINE_STATION_PREFIX_TO_KEYWORD,
+    "nodal_forces": _NODAL_FORCE_PREFIX_TO_KEYWORD,
+}
+
+_TOPOLOGY_KEYWORD_TABLES: dict[str | None, dict[str, str]] = {
+    None: _KEYWORD_TO_CATALOG_TOKEN,
+    "line_stations": _LINE_STATION_KEYWORD_TO_CATALOG_TOKEN,
+    "nodal_forces": _NODAL_FORCE_KEYWORD_TO_CATALOG_TOKEN,
+}
+
+
+def gauss_keyword_for_canonical(
+    name: str, *, topology: str | None = None,
+) -> str | None:
+    """Return the ``ops.eleResponse`` keyword for a component.
 
     Vectors / tensors decompose via :func:`split_canonical_component`
     and route through their prefix (``"stress_xx"`` →
@@ -906,33 +1399,71 @@ def gauss_keyword_for_canonical(name: str) -> str | None:
     Scalar canonical names (``"axial_force"``, no axis suffix) fall
     through to a full-name lookup in the same table.
 
-    Returns ``None`` for components without a Gauss routing (nodal
-    kinematics, derived scalars without a registered keyword, etc.).
+    The ``topology`` keyword selects which routing table to use:
+
+    - ``None`` (default) — gauss-points topology: continuum
+      stress/strain, shell resultants, truss axial.
+    - ``"line_stations"`` — beam-column section forces. The same
+      canonical name (``axial_force``) maps to ``section.force``
+      here rather than ``axialForce``.
+    - ``"nodal_forces"`` — closed-form elastic beam per-node forces
+      (``nodal_resisting_*`` canonicals → ``globalForce`` /
+      ``localForce``).
+
+    Returns ``None`` for components without a routing in the
+    requested topology.
     """
+    table = _TOPOLOGY_PREFIX_TABLES.get(topology)
+    if table is None:
+        raise ValueError(
+            f"Unknown topology {topology!r}. Expected one of "
+            f"{sorted(k for k in _TOPOLOGY_PREFIX_TABLES if k is not None)} "
+            f"or None."
+        )
     parts = split_canonical_component(name)
     if parts is not None:
         prefix, _ = parts
-        return _GAUSS_PREFIX_TO_KEYWORD.get(prefix)
+        keyword = table.get(prefix)
+        if keyword is not None:
+            return keyword
     # Scalar fallback: the full canonical name *is* the prefix.
-    return _GAUSS_PREFIX_TO_KEYWORD.get(name)
+    return table.get(name)
 
 
-def catalog_token_for_keyword(keyword: str) -> str | None:
-    """Map an OpenSees keyword (``stresses`` / ``strains``) to a catalog token."""
-    return _KEYWORD_TO_CATALOG_TOKEN.get(keyword)
+def catalog_token_for_keyword(
+    keyword: str, *, topology: str | None = None,
+) -> str | None:
+    """Map an OpenSees keyword to its catalog token in the given topology.
 
-
-def gauss_routing_for_canonical(name: str) -> tuple[str, str] | None:
-    """Return ``(ops_keyword, catalog_token)`` for a Gauss-level component.
-
-    Convenience wrapper combining the two lookups above. Used by the
-    MPCO reader where both pieces are needed at the same time.
-    Returns ``None`` for components that don't have a Gauss routing.
+    Default topology preserves Phase 11a behaviour
+    (``stresses`` → ``"stress"``, ``axialForce`` → ``"axial_force"``).
+    Other topologies use their own keyword→token tables.
     """
-    keyword = gauss_keyword_for_canonical(name)
+    table = _TOPOLOGY_KEYWORD_TABLES.get(topology)
+    if table is None:
+        raise ValueError(
+            f"Unknown topology {topology!r}. Expected one of "
+            f"{sorted(k for k in _TOPOLOGY_KEYWORD_TABLES if k is not None)} "
+            f"or None."
+        )
+    return table.get(keyword)
+
+
+def gauss_routing_for_canonical(
+    name: str, *, topology: str | None = None,
+) -> tuple[str, str] | None:
+    """Return ``(ops_keyword, catalog_token)`` for a component.
+
+    Convenience wrapper combining
+    :func:`gauss_keyword_for_canonical` and
+    :func:`catalog_token_for_keyword`. Used by reader/transcoder
+    sites that need both pieces at once. Returns ``None`` if the
+    component has no routing in ``topology``.
+    """
+    keyword = gauss_keyword_for_canonical(name, topology=topology)
     if keyword is None:
         return None
-    catalog_token = _KEYWORD_TO_CATALOG_TOKEN.get(keyword)
+    catalog_token = catalog_token_for_keyword(keyword, topology=topology)
     if catalog_token is None:
         return None
     return (keyword, catalog_token)
