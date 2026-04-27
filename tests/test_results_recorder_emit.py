@@ -206,15 +206,43 @@ def test_elements_emits_globalForce() -> None:
     assert "globalForce" in line
 
 
-def test_line_stations_emits_section_force() -> None:
+def test_line_stations_emits_section_force_and_gpx_pair() -> None:
+    """Phase 11b Step 2c.1: line_stations emits a paired integrationPoints
+    recorder so the .out transcoder can reconstruct per-element IP layout."""
     spec = _make_spec(ResolvedRecorderRecord(
         category="line_stations", name="r",
         components=("axial_force",),
         dt=None, n_steps=None,
         element_ids=np.array([1]),
     ))
-    [line] = spec.to_tcl_commands()
-    assert "section force" in line
+    lines = spec.to_tcl_commands()
+    # Two recorders: section.force + paired integrationPoints.
+    assert len(lines) == 2
+    section_lines = [ln for ln in lines if "section force" in ln]
+    gpx_lines = [ln for ln in lines if "integrationPoints" in ln]
+    assert len(section_lines) == 1
+    assert len(gpx_lines) == 1
+    # gpx file path follows the convention: <base>_gpx.out.
+    assert "r_line_stations.out" in section_lines[0]
+    assert "r_line_stations_gpx.out" in gpx_lines[0]
+    # Both target the same element IDs and (here) same cadence.
+    assert "-ele 1" in section_lines[0] and "-ele 1" in gpx_lines[0]
+
+
+def test_line_stations_gpx_path_helper() -> None:
+    from apeGmsh.solvers._recorder_emit import line_station_gpx_path
+    assert (
+        line_station_gpx_path("r_line_stations.out")
+        == "r_line_stations_gpx.out"
+    )
+    assert (
+        line_station_gpx_path("out/foo_line_stations.out")
+        == "out/foo_line_stations_gpx.out"
+    )
+    assert (
+        line_station_gpx_path("foo.xml")
+        == "foo_gpx.xml"
+    )
 
 
 # =====================================================================
