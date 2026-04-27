@@ -400,3 +400,110 @@ class TestInstanceAlign:
                     )
         finally:
             beam.cleanup()
+
+    def test_align_to_accepts_qualified_source(self):
+        """source= accepts the fully-qualified string returned by
+        ``inst.labels.suffix`` for IDE-autocomplete ergonomics."""
+        beam = W_solid(bf=120, tf=10, h=150, tw=6, length=1000)
+        try:
+            with apeGmsh(model_name="t", verbose=False) as g:
+                a = g.parts.add(beam, label="a")
+                b = g.parts.add(beam, label="b", translate=(0, 0, 7000))
+                a.edit.align_to(
+                    b,
+                    source=a.labels.top_flange,
+                    target="bottom_flange",
+                    on="z",
+                )
+                assert a.bbox[5] > 7000
+        finally:
+            beam.cleanup()
+
+    def test_align_to_accepts_qualified_target(self):
+        beam = W_solid(bf=120, tf=10, h=150, tw=6, length=1000)
+        try:
+            with apeGmsh(model_name="t", verbose=False) as g:
+                a = g.parts.add(beam, label="a")
+                b = g.parts.add(beam, label="b", translate=(0, 0, 7000))
+                a.edit.align_to(
+                    b,
+                    source="top_flange",
+                    target=b.labels.bottom_flange,
+                    on="z",
+                )
+                assert a.bbox[5] > 7000
+        finally:
+            beam.cleanup()
+
+    def test_align_to_qualified_matches_bare_result(self):
+        """Bare and qualified forms must produce identical translation."""
+        beam = W_solid(bf=120, tf=10, h=150, tw=6, length=1000)
+        try:
+            with apeGmsh(model_name="t1", verbose=False) as g:
+                a = g.parts.add(beam, label="a")
+                b = g.parts.add(beam, label="b", translate=(5000, 0, 7000))
+                a.edit.align_to(
+                    b, source="top_flange", target="bottom_flange", on="z",
+                )
+                bare_bbox = a.bbox
+
+            with apeGmsh(model_name="t2", verbose=False) as g:
+                a = g.parts.add(beam, label="a")
+                b = g.parts.add(beam, label="b", translate=(5000, 0, 7000))
+                a.edit.align_to(
+                    b,
+                    source=a.labels.top_flange,
+                    target=b.labels.bottom_flange,
+                    on="z",
+                )
+                qualified_bbox = a.bbox
+
+            assert bare_bbox == pytest.approx(qualified_bbox, abs=1e-6)
+        finally:
+            beam.cleanup()
+
+    def test_align_to_rejects_wrong_prefix(self):
+        """Passing a label belonging to a different instance raises
+        ValueError so wrong-instance bugs surface immediately."""
+        beam = W_solid(bf=120, tf=10, h=150, tw=6, length=1000)
+        try:
+            with apeGmsh(model_name="t", verbose=False) as g:
+                a = g.parts.add(beam, label="a")
+                b = g.parts.add(beam, label="b")
+                with pytest.raises(ValueError, match="belongs to instance"):
+                    a.edit.align_to(
+                        b, source="b.top_flange", target="bottom_flange", on="z",
+                    )
+                with pytest.raises(ValueError, match="belongs to instance"):
+                    a.edit.align_to(
+                        b, source="top_flange", target="a.bottom_flange", on="z",
+                    )
+        finally:
+            beam.cleanup()
+
+    def test_align_to_point_accepts_qualified_source(self):
+        beam = W_solid(bf=120, tf=10, h=150, tw=6, length=1000)
+        try:
+            with apeGmsh(model_name="t", verbose=False) as g:
+                a = g.parts.add(beam, label="a")
+                a.edit.align_to_point(
+                    (0, 0, 1000),
+                    source=a.labels.bottom_flange,
+                    on="z",
+                )
+                assert a.bbox[2] < 1000
+                assert a.bbox[5] > 1000
+        finally:
+            beam.cleanup()
+
+    def test_align_to_point_rejects_wrong_prefix(self):
+        beam = W_solid(bf=120, tf=10, h=150, tw=6, length=1000)
+        try:
+            with apeGmsh(model_name="t", verbose=False) as g:
+                a = g.parts.add(beam, label="a")
+                with pytest.raises(ValueError, match="belongs to instance"):
+                    a.edit.align_to_point(
+                        (0, 0, 0), source="z.top_flange", on="all",
+                    )
+        finally:
+            beam.cleanup()
