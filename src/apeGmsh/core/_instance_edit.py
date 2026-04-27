@@ -507,8 +507,10 @@ class InstanceEdit:
                 "align_to() requires a different Instance as `other`."
             )
 
-        source_full = f"{self._inst.label}.{source}"
-        target_full = f"{other.label}.{target}"
+        source_suffix = _normalize_label_arg(source, self._inst.label)
+        target_suffix = _normalize_label_arg(target, other.label)
+        source_full = f"{self._inst.label}.{source_suffix}"
+        target_full = f"{other.label}.{target_suffix}"
 
         source_com = label_centroid_live(source_full)
         target_com = label_centroid_live(target_full)
@@ -535,7 +537,8 @@ class InstanceEdit:
         )
 
         self._require_alive("align_to_point")
-        source_full = f"{self._inst.label}.{source}"
+        source_suffix = _normalize_label_arg(source, self._inst.label)
+        source_full = f"{self._inst.label}.{source_suffix}"
         source_com = label_centroid_live(source_full)
         target = (float(point[0]), float(point[1]), float(point[2]))
         dx, dy, dz = compute_align_translation(
@@ -547,6 +550,33 @@ class InstanceEdit:
 # ----------------------------------------------------------------------
 # Internal helpers
 # ----------------------------------------------------------------------
+
+def _normalize_label_arg(arg: str, expected_prefix: str) -> str:
+    """Accept a label as either a bare suffix (``"top_flange"``) or a
+    fully-qualified name (``"beam_1.top_flange"``) and return the bare
+    suffix in either case.
+
+    Supports the IDE-autocomplete ergonomics of
+    ``inst.edit.align_to(other, source=inst.labels.top_flange, ...)``
+    where ``inst.labels.top_flange`` returns the fully-qualified
+    string.
+
+    If the qualified prefix does not match ``expected_prefix``, raises
+    :class:`ValueError` — this catches mistakes where a user passes a
+    label that belongs to a different instance.
+    """
+    if '.' not in arg:
+        return arg
+    head, _, tail = arg.partition('.')
+    if head != expected_prefix:
+        raise ValueError(
+            f"Label {arg!r} belongs to instance {head!r}, but this "
+            f"call expects a label on instance {expected_prefix!r}.  "
+            f"Pass the bare suffix or the matching instance's qualified "
+            f"label."
+        )
+    return tail
+
 
 def _resolve_unique_instance_label(
     requested: str,
