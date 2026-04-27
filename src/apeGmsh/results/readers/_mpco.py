@@ -26,6 +26,7 @@ from .._slabs import (
 from .._time import resolve_time_slice
 from . import _mpco_element_io as _melem
 from . import _mpco_line_io as _mline
+from . import _mpco_nodal_io as _mnodal
 from . import _mpco_translation as _mtr
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
@@ -188,8 +189,10 @@ class MPCOReader:
         if level.value == "line_stations":
             return self._line_stations_available_components(mpco_name)
 
-        # Other element levels (fibers / layers / elements) remain
-        # stubbed until their catalog entries land.
+        if level.value == "elements":
+            return self._elements_available_components(mpco_name)
+
+        # Fibers / layers remain stubbed until their catalog entries land.
         return []
 
     def _gauss_available_components(self, mpco_name: str) -> list[str]:
@@ -202,6 +205,27 @@ class MPCOReader:
         for prefix in ("stress", "strain"):
             _, buckets = _melem.discover_gauss_buckets(
                 on_elements, canonical_component=f"{prefix}_xx",
+            )
+            for b in buckets:
+                out.update(b.layout.component_layout)
+        return sorted(out)
+
+    def _elements_available_components(
+        self, mpco_name: str,
+    ) -> list[str]:
+        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        if on_elements is None:
+            return []
+        out: set[str] = set()
+        # Probe each frame via a representative canonical name; the
+        # discover helper handles the canonical→MPCO group-name
+        # routing and bucket filtering against NODAL_FORCE_CATALOG.
+        for probe in (
+            "nodal_resisting_force_x",       # globalForce
+            "nodal_resisting_force_local_x", # localForce
+        ):
+            _, buckets = _mnodal.discover_nodal_force_buckets(
+                on_elements, canonical_component=probe,
             )
             for b in buckets:
                 out.update(b.layout.component_layout)
@@ -311,10 +335,57 @@ class MPCOReader:
     # Element-level reads — Phase 3 stubs
     # ------------------------------------------------------------------
 
-    def read_elements(self, stage_id, component, *, element_ids=None,
-                       time_slice=None) -> ElementSlab:
-        return _empty_element_slab(component, self.time_vector(stage_id),
-                                    time_slice)
+    def read_elements(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> ElementSlab:
+        self._ensure_stages()
+        time = self.time_vector(stage_id)
+        t_idx = resolve_time_slice(time_slice, time)
+
+        mpco_name = self._stage_to_mpco.get(stage_id)
+        if mpco_name is None:
+            return _empty_element_slab(component, time, time_slice)
+        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        if on_elements is None:
+            return _empty_element_slab(component, time, time_slice)
+
+        token, buckets = _mnodal.discover_nodal_force_buckets(
+            on_elements, canonical_component=component,
+        )
+        if not buckets:
+            return _empty_element_slab(component, time, time_slice)
+        token_grp = on_elements[token]
+
+        # Read per-bucket slabs and stitch on the element axis.
+        values_parts: list[ndarray] = []
+        element_id_parts: list[ndarray] = []
+
+        for bucket in buckets:
+            bucket_grp = token_grp[bucket.bracket_key]
+            result = _mnodal.read_nodal_bucket_slab(
+                bucket_grp, bucket, component,
+                t_idx=t_idx, element_ids=element_ids,
+            )
+            if result is None:
+                continue
+            values, eids = result
+            values_parts.append(values)
+            element_id_parts.append(eids)
+
+        if not values_parts:
+            return _empty_element_slab(component, time, time_slice)
+
+        return ElementSlab(
+            component=component,
+            values=np.concatenate(values_parts, axis=1),
+            element_ids=np.concatenate(element_id_parts),
+            time=time[t_idx],
+        )
 
     def read_line_stations(
         self,

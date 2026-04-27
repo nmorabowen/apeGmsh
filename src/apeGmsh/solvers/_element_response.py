@@ -1735,3 +1735,49 @@ def flatten(
         # GP-slowest packing: stride n_components_per_gp through flat axis.
         out[:, :, k::layout.n_components_per_gp] = arr
     return out
+
+
+def unflatten_nodal(
+    flat: ndarray,
+    layout: NodalForceLayout,
+) -> dict[str, ndarray]:
+    """Convert ``(T, E, n_nodes * K)`` → per-component ``(T, E, n_nodes)``.
+
+    Closed-form line elements (``ElasticBeam*``,
+    ``ElasticTimoshenkoBeam*``, ``ModElasticBeam*``) emit per-element-
+    node force vectors with the same node-slowest / component-fastest
+    packing convention used elsewhere in this catalog::
+
+        flat[t, e, n * K + k] = component k at element-node n
+
+    where ``n_nodes = layout.n_nodes_per_element`` and
+    ``K = layout.n_components_per_node``. The output dict keys are
+    canonical apeGmsh names (e.g. ``"nodal_resisting_force_x"``) and
+    each value is a ``(T, E, n_nodes)`` array suitable for one
+    :class:`apeGmsh.results._slabs.ElementSlab` per component.
+    """
+    flat = np.asarray(flat)
+    if flat.ndim != 3:
+        raise ValueError(
+            f"unflatten_nodal expects a 3-D flat array (T, E, "
+            f"flat_size); got shape {flat.shape}."
+        )
+    T, E, flat_size = flat.shape
+    expected = layout.flat_size_per_element
+    if flat_size != expected:
+        raise ValueError(
+            f"flat_size {flat_size} does not match layout's "
+            f"n_nodes_per_element * n_components_per_node = "
+            f"{layout.n_nodes_per_element} * "
+            f"{layout.n_components_per_node} = {expected}."
+        )
+
+    reshaped = flat.reshape(
+        T, E,
+        layout.n_nodes_per_element,
+        layout.n_components_per_node,
+    )
+    return {
+        name: np.ascontiguousarray(reshaped[:, :, :, k])
+        for k, name in enumerate(layout.component_layout)
+    }
