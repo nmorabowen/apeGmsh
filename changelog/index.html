@@ -2403,6 +2403,67 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#v110-results-backend-agnostic-fem-post-processing-system-rebuild" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.1.0 — Results: backend-agnostic FEM post-processing system rebuild
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.1.0 — Results: backend-agnostic FEM post-processing system rebuild">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added-apegmshresults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — apeGmsh.results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-results-module-api-breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — Results module API (BREAKING)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deferred-element-level-transcoding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DEFERRED — element-level transcoding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#new-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NEW FIXTURE
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#v109-viewer-higher-order-rendering-filter-overhaul-wip" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2897,6 +2958,67 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#v110-results-backend-agnostic-fem-post-processing-system-rebuild" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v1.1.0 — Results: backend-agnostic FEM post-processing system rebuild
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="v1.1.0 — Results: backend-agnostic FEM post-processing system rebuild">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added-apegmshresults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — apeGmsh.results
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-results-module-api-breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — Results module API (BREAKING)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deferred-element-level-transcoding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DEFERRED — element-level transcoding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#new-fixture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NEW FIXTURE
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#v109-viewer-higher-order-rendering-filter-overhaul-wip" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3377,6 +3499,105 @@
 
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
+<h2 id="v110-results-backend-agnostic-fem-post-processing-system-rebuild">v1.1.0 — Results: backend-agnostic FEM post-processing system rebuild<a class="headerlink" href="#v110-results-backend-agnostic-fem-post-processing-system-rebuild" title="Permanent link">&para;</a></h2>
+<p>Wholesale rebuild of the <code>apeGmsh.results</code> module. The legacy
+in-memory <code>Results</code> carrier (a thin VTK-feeder bound to live numpy
+arrays) is replaced by a lazy disk-backed reader plus a unified
+composite API that mirrors <code>FEMData</code>. Recording flows through three
+execution strategies — Tcl/Py recorders, in-process domain capture,
+and an MPCO bridge — all driven by one declarative
+<code>g.opensees.recorders</code> spec. <strong>987 tests pass</strong> end-to-end including
+the El Ladruno OpenSees Tcl subprocess integration. See PR #12 and
+<code>internal_docs/Results_architecture.md</code> for full design.</p>
+<h3 id="added-apegmshresults">ADDED — <code>apeGmsh.results</code><a class="headerlink" href="#added-apegmshresults" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Native HDF5 schema + I/O.</strong> <code>NativeWriter</code> / <code>NativeReader</code>
+  round-trip nodes, Gauss points, fibers, layers, line stations, and
+  per-element forces. Stages are first-class (<code>kind="transient"</code> /
+  <code>"static"</code> / <code>"mode"</code>). Multi-partition stitching transparent to
+  the reader. Embedded FEMData snapshot in <code>/model/</code> — including
+  <code>MeshSelectionStore</code> — so result files are self-contained.</li>
+<li><strong><code>Results</code> composite class</strong> mirroring <code>FEMData</code>. Selection
+  vocabulary <code>pg=</code> / <code>label=</code> / <code>selection=</code> / <code>ids=</code>. Stage scoping
+  via <code>results.stage(name)</code>; mode access via <code>results.modes</code>.
+  Soft FEM coupling with hash-validated <code>bind()</code>.</li>
+<li><strong><code>compute_snapshot_id(fem)</code></strong> deterministic content hash —
+  ties recorder specs ↔ result files ↔ FEMData snapshots.</li>
+<li><strong>MPCO reader.</strong> <code>Results.from_mpco(path)</code> reads existing STKO
+  <code>.mpco</code> files through the same composite API. Partial FEMData
+  synthesis from MPCO <code>MODEL/</code> group (nodes + elements +
+  region-derived PGs).</li>
+<li><strong><code>g.opensees.recorders</code></strong> declarative spec composite.
+  Standalone class, no parent ref, no gmsh dependency. <code>.nodes</code>,
+  <code>.elements</code>, <code>.line_stations</code>, <code>.gauss</code>, <code>.fibers</code>, <code>.layers</code>,
+  <code>.modal</code> declaration methods. <code>spec.resolve(fem, ndm, ndf)</code>
+  expands shorthand components, validates per category, locks
+  <code>fem_snapshot_id</code>.</li>
+<li><strong>Three execution strategies driven by the spec:</strong></li>
+<li><strong>Strategy A</strong> — <code>g.opensees.export.tcl/py(..., recorders=spec)</code>
+    emits <code>recorder Node/Element ...</code> commands + HDF5 manifest
+    sidecar. <code>Results.from_recorders(spec, output_dir, fem=fem)</code>
+    parses output <code>.out</code> files into native HDF5 with a cache layer
+    at <code>&lt;project_root&gt;/results/</code>.</li>
+<li><strong>Strategy B</strong> — <code>with spec.capture(path, fem) as cap:</code> wraps
+    an openseespy analyze loop, querying <code>ops.nodeDisp</code> etc. per
+    record. Multi-record merge with NaN-fill when records target
+    disjoint node sets. <code>cap.capture_modes()</code> writes one mode-kind
+    stage per <code>ops.eigen</code> mode.</li>
+<li><strong>Strategy C</strong> — <code>recorders_file_format="mpco"</code> dispatches to
+    a single <code>recorder mpco</code> line aggregating all records.
+    Validated via subprocess against the El Ladruno OpenSees Tcl
+    build.</li>
+<li><strong>Element capability flags</strong> on <code>_ElemSpec</code>: <code>has_gauss</code>,
+  <code>has_fibers</code>, <code>has_layers</code>, <code>has_line_stations</code> plus a
+  <code>supports(category)</code> helper. All 16 entries in <code>_ELEM_REGISTRY</code>
+  annotated.</li>
+<li><strong><code>MeshSelectionStore</code></strong> name-based lookups: <code>names()</code>,
+  <code>node_ids(name)</code>, <code>element_ids(name)</code> — mirrors
+  <code>PhysicalGroupSet</code>'s API.</li>
+<li><strong>Architecture doc</strong> <code>internal_docs/Results_architecture.md</code>
+  (single canonical reference).</li>
+</ul>
+<h3 id="changed-results-module-api-breaking">CHANGED — Results module API (BREAKING)<a class="headerlink" href="#changed-results-module-api-breaking" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>Results.from_fem(fem, point_data=..., cell_data=...)</code> removed.</strong>
+  Use <code>Results.from_native(...)</code>, <code>from_mpco(...)</code>,
+  <code>from_recorders(...)</code>, or hand-construct via <code>NativeWriter</code> for
+  the in-memory case.</li>
+<li><strong><code>fem.viewer()</code></strong> raises <code>NotImplementedError</code> until the viewer
+  rebuild project. The new flow will go through the rebuilt
+  composite API.</li>
+<li><strong><code>g.mesh.viewer(point_data=..., cell_data=...)</code></strong> raises
+  <code>NotImplementedError</code>. The mesh-only paths (<code>g.mesh.viewer()</code> and
+  <code>g.mesh.viewer(results=path)</code> for a <code>.vtu</code>/<code>.pvd</code> file) still
+  work unchanged.</li>
+<li><strong>Public exports</strong> under <code>apeGmsh.results</code>: <code>Results</code>,
+  <code>ResultsReader</code>, <code>NativeReader</code>, <code>MPCOReader</code>, <code>ResultLevel</code>,
+  <code>StageInfo</code>, <code>BindError</code>, and the slab dataclasses
+  (<code>NodeSlab</code>, <code>ElementSlab</code>, <code>LineStationSlab</code>, <code>GaussSlab</code>,
+  <code>FiberSlab</code>, <code>LayerSlab</code>).</li>
+</ul>
+<h3 id="deferred-element-level-transcoding">DEFERRED — element-level transcoding<a class="headerlink" href="#deferred-element-level-transcoding" title="Permanent link">&para;</a></h3>
+<p>Element-level records (<code>gauss</code> / <code>fibers</code> / <code>layers</code> /
+<code>line_stations</code> / <code>elements</code>) work end-to-end on the <strong>declaration
+and emission</strong> side. The <strong>read/decode</strong> side is stubbed:</p>
+<ul>
+<li><code>MPCOReader.read_gauss/fibers/layers/...</code> returns empty slabs.</li>
+<li><code>RecorderTranscoder</code> skips element records silently.</li>
+<li><code>DomainCapture.step()</code> raises <code>NotImplementedError</code> for element
+  categories.</li>
+</ul>
+<p>All three need the same missing piece: a per-element-class
+response-metadata catalog. Plan in
+<code>internal_docs/plan_element_transcoding.md</code> (Phase 11a).
+<strong>Nodal results work everywhere today.</strong></p>
+<h3 id="new-fixture">NEW FIXTURE<a class="headerlink" href="#new-fixture" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>tests/fixtures/results/elasticFrame.mpco</code> — 400 KB binary,
+  12 nodes / 11 elastic frame elements / 10 transient steps /
+  2 model stages. Used by the MPCO reader + integration tests.</li>
+</ul>
+<hr />
 <h2 id="v109-viewer-higher-order-rendering-filter-overhaul-wip">v1.0.9 — Viewer: higher-order rendering + filter overhaul (WIP)<a class="headerlink" href="#v109-viewer-higher-order-rendering-filter-overhaul-wip" title="Permanent link">&para;</a></h2>
 <p>Lands the viewer fixes and refactor scaffolding from PR #11.  Higher-
 order elements (Q8/Q9, Tri6, Tet10, etc.) no longer render as VTK's
