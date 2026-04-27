@@ -32,6 +32,7 @@ from apeGmsh.solvers.Loads import (
     LoadRecord,
     LoadResolver,
     PointLoadDef,
+    PointClosestLoadDef,
     LineLoadDef,
     SurfaceLoadDef,
     GravityLoadDef,
@@ -46,6 +47,10 @@ _DISPATCH: dict[type, dict[tuple[str, str], str]] = {
     PointLoadDef: {
         ("tributary",  "nodal"):   "_resolve_point",
         ("consistent", "nodal"):   "_resolve_point",
+    },
+    PointClosestLoadDef: {
+        ("tributary",  "nodal"):   "_resolve_point_closest",
+        ("consistent", "nodal"):   "_resolve_point_closest",
     },
     LineLoadDef: {
         ("tributary",  "nodal"):   "_resolve_line_tributary",
@@ -178,6 +183,41 @@ class LoadsComposite:
             target=t, target_source=src,
             pattern=self._active_pattern, name=name,
             force_xyz=force_xyz, moment_xyz=moment_xyz,
+        ))
+
+    def point_closest(self, xyz, *, within=None,
+                      pg=None, label=None, tag=None,
+                      force_xyz=None, moment_xyz=None,
+                      tol=None, name=None) -> PointClosestLoadDef:
+        """Concentrated load at the mesh node closest to ``xyz``.
+
+        Coordinate-driven targeting — useful when the load point doesn't
+        live on a named PG/label. The snap happens at :meth:`resolve`,
+        and the snap distance is recorded back on the def.
+
+        Parameters
+        ----------
+        xyz : (x, y, z)
+            World-coordinate target.
+        within : str | list, optional
+            Restrict the snap pool to nodes inside this PG/label/part/
+            DimTag list. ``pg=``/``label=``/``tag=`` force the source.
+            Default = global (search every mesh node).
+        tol : float, optional
+            If given, every node within ``tol`` of ``xyz`` receives the
+            load. Default ``None`` = single nearest node.
+        """
+        if force_xyz is None and moment_xyz is None:
+            raise ValueError("point_closest() requires force_xyz or moment_xyz.")
+        w_t, w_src = (None, "auto")
+        if any(v is not None for v in (within, pg, label, tag)):
+            w_t, w_src = self._coalesce_target(within, pg=pg, label=label, tag=tag)
+        xyz_t = tuple(float(c) for c in xyz)
+        return self._add_def(PointClosestLoadDef(
+            target=xyz_t, target_source="closest_xyz",
+            pattern=self._active_pattern, name=name,
+            force_xyz=force_xyz, moment_xyz=moment_xyz,
+            xyz_request=xyz_t, within=w_t, within_source=w_src, tol=tol,
         ))
 
     def line(self, target=None, *, pg=None, label=None, tag=None,
@@ -646,6 +686,64 @@ class LoadsComposite:
         src = getattr(defn, 'target_source', 'auto')
         nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
         return resolver.resolve_point(defn, nodes)
+
+    def _snap_node_xyz(self, xyz, within, within_source, tol,
+                       resolver, node_map):
+        """Return ``(node_ids, min_snap_distance)`` for one xyz target.
+
+        Restricts the candidate pool to ``within`` (resolved via the
+        usual target machinery) when given. ``tol=None`` returns the
+        single nearest node; ``tol > 0`` returns every node inside the
+        radius.
+        """
+        node_tags = resolver.node_tags
+        node_coords = resolver.node_coords
+        if within is not None:
+            all_n = set(int(t) for t in node_tags)
+            wnodes = self._target_nodes(within, node_map, all_n,
+                                        source=within_source)
+            if not wnodes:
+                raise ValueError(
+                    "point_closest: 'within' resolved to 0 nodes")
+            idx = np.fromiter(
+                (resolver._node_to_idx[n] for n in wnodes
+                 if n in resolver._node_to_idx),
+                dtype=np.int64,
+            )
+            if idx.size == 0:
+                raise ValueError(
+                    "point_closest: 'within' nodes not present in resolver")
+        else:
+            idx = np.arange(len(node_tags), dtype=np.int64)
+
+        target = np.asarray(xyz, dtype=np.float64)
+        d2 = np.sum((node_coords[idx] - target) ** 2, axis=1)
+        if tol is None:
+            i = int(np.argmin(d2))
+            return [int(node_tags[idx[i]])], float(np.sqrt(d2[i]))
+        mask = d2 <= float(tol) * float(tol)
+        if not mask.any():
+            raise ValueError(
+                f"point_closest: no nodes within tol={tol} of {tuple(target)}")
+        sel_idx = idx[mask]
+        return ([int(n) for n in node_tags[sel_idx]],
+                float(np.sqrt(d2[mask].min())))
+
+    def _resolve_point_closest(self, resolver, defn, node_map, all_nodes):
+        nids, snap = self._snap_node_xyz(
+            defn.xyz_request, defn.within, defn.within_source, defn.tol,
+            resolver, node_map,
+        )
+        defn.snap_distance = snap
+        if defn.tol is None and snap > 0.0:
+            import warnings
+            warnings.warn(
+                f"point_closest({defn.xyz_request}) snapped to node "
+                f"{nids[0]} at distance {snap:.6g} (no exact mesh node "
+                f"at requested xyz).",
+                stacklevel=4,
+            )
+        return resolver.resolve_point(defn, set(nids))
 
     def _resolve_line_tributary(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')

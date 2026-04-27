@@ -56,6 +56,26 @@ class PointLoadDef(LoadDef):
 
 
 @dataclass
+class PointClosestLoadDef(PointLoadDef):
+    """Concentrated load at the mesh node(s) closest to a coordinate.
+
+    Coordinate-driven targeting (no PG/label required). At resolve time,
+    the composite snaps ``xyz_request`` to the nearest mesh node — or, if
+    ``tol`` is given, to every node within that radius. Pass ``within``
+    (PG/label/part/DimTag list) to restrict the candidate node pool.
+
+    The actual snap distance is written back to ``snap_distance`` after
+    :meth:`LoadsComposite.resolve`, so it surfaces in ``summary()``.
+    """
+    kind: str = field(init=False, default="point_closest")
+    xyz_request: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    within: object | None = None
+    within_source: str = "auto"
+    tol: float | None = None
+    snap_distance: float | None = None
+
+
+@dataclass
 class LineLoadDef(LoadDef):
     """Distributed load along a 1-D entity (curve / beam element).
 
