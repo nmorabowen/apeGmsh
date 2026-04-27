@@ -95,6 +95,7 @@ from ._part_anchors import collect_anchors, write_sidecar
 if TYPE_CHECKING:
     from .Labels import Labels
     from .Model import Model
+    from ._part_edit import PartEdit
     from ..mesh.PhysicalGroups import PhysicalGroups
     from ..viz.Inspect import Inspect
     from ..viz.Plot import Plot
@@ -132,6 +133,7 @@ class Part(_SessionBase):
         ("physical", ".mesh.PhysicalGroups", "PhysicalGroups", False),
         ("inspect",  ".viz.Inspect",         "Inspect",        False),
         ("plot",     ".viz.Plot",            "Plot",            True),
+        ("edit",     ".core._part_edit",     "PartEdit",       False),
     )
 
     # -- Static type declarations for composites --
@@ -140,9 +142,14 @@ class Part(_SessionBase):
     physical: "PhysicalGroups"
     inspect: Inspect
     plot: Plot
+    edit: "PartEdit"
 
     def __init__(self, name: str, *, auto_persist: bool = True) -> None:
         super().__init__(name=name, verbose=False)
+        # Register this Part's name in the process-wide clash table
+        # so Part.edit.copy / pattern_* can detect duplicates.
+        from ._part_edit import _register_part_name
+        _register_part_name(name, self)
         self.file_path: Path | None = None       # set by save() or auto-persist
         self.properties: dict[str, Any] = {}     # user metadata
         # When a geometry method is called with ``label="name"``,

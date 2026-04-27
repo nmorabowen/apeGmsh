@@ -172,7 +172,7 @@ class SectionsBuilder(_HasLogging):
         )
 
         if parts is not None:
-            parts._instances[label] = inst
+            parts._register_instance(inst)
 
         self._log(
             f"built {label!r}: {sum(len(v) for v in entities.values())} "

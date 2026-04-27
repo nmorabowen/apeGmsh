@@ -41,6 +41,7 @@ from ._parts_fragmentation import _PartsFragmentationMixin
 if TYPE_CHECKING:
     from apeGmsh._session import _SessionBase
     from apeGmsh.core.Part import Part
+    from apeGmsh.core._instance_edit import InstanceEdit
 
 from apeGmsh._types import DimTag
 
@@ -83,9 +84,13 @@ class Instance:
     bbox: tuple[float, float, float, float, float, float] | None = None
     label_names: list[str] = field(default_factory=list)
     labels: "_InstanceLabels" = field(init=False, repr=False)
+    edit: "InstanceEdit | None" = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, 'labels', _InstanceLabels(self))
+        # ``edit`` is attached by the registry at registration time —
+        # see ``PartsRegistry._register_instance``.  Defaults to None
+        # for unregistered Instances (e.g. during construction).
 
 
 class _InstanceLabels:
@@ -158,6 +163,23 @@ class PartsRegistry(_PartsFragmentationMixin):
         return dict(self._instances)
 
     # ------------------------------------------------------------------
+    # Internal: instance registration with edit-composite wiring
+    # ------------------------------------------------------------------
+
+    def _register_instance(self, inst: Instance) -> Instance:
+        """Add ``inst`` to the registry and attach an ``InstanceEdit``.
+
+        All entry points (context manager, register, add, import_step,
+        SectionsBuilder) funnel through here so every Instance has
+        ``inst.edit`` wired up at registration time.
+        """
+        from ._instance_edit import InstanceEdit
+
+        self._instances[inst.label] = inst
+        object.__setattr__(inst, 'edit', InstanceEdit(inst, self))
+        return inst
+
+    # ------------------------------------------------------------------
     # Entry point 1: Context manager (inline geometry)
     # ------------------------------------------------------------------
 
@@ -193,7 +215,7 @@ class PartsRegistry(_PartsFragmentationMixin):
             entities=entities,
             bbox=self._compute_bbox(dimtags) if dimtags else None,
         )
-        self._instances[label] = inst
+        self._register_instance(inst)
 
     # ------------------------------------------------------------------
     # Entry point 2: Manual registration
@@ -284,7 +306,7 @@ class PartsRegistry(_PartsFragmentationMixin):
             entities=entities,
             bbox=self._compute_bbox(resolved) if resolved else None,
         )
-        self._instances[name] = inst
+        self._register_instance(inst)
         return inst
 
     # ------------------------------------------------------------------
@@ -368,7 +390,7 @@ class PartsRegistry(_PartsFragmentationMixin):
             entities=entities,
             bbox=self._compute_bbox(dimtags) if dimtags else None,
         )
-        self._instances[label] = inst
+        self._register_instance(inst)
         return inst
 
     # ------------------------------------------------------------------
@@ -516,7 +538,27 @@ class PartsRegistry(_PartsFragmentationMixin):
     # ------------------------------------------------------------------
 
     def get(self, label: str) -> Instance:
-        """Return an Instance by label."""
+        """Return the Instance registered under ``label``.
+
+        Useful when you didn't store the return value of
+        :meth:`add` / :meth:`import_step` and want to access an
+        Instance later — e.g. to apply ``inst.edit.*`` transforms::
+
+            g.parts.add(beam, label="b1")
+            g.parts.get("b1").edit.translate(0, 0, 50)
+
+        Raises
+        ------
+        KeyError
+            If no instance is registered under ``label``.  The error
+            message lists the available labels so you can spot a typo.
+        """
+        if label not in self._instances:
+            available = sorted(self._instances)
+            raise KeyError(
+                f"No instance labeled {label!r}.  "
+                f"Available: {available}"
+            )
         return self._instances[label]
 
     def labels(self) -> list[str]:
@@ -688,7 +730,7 @@ class PartsRegistry(_PartsFragmentationMixin):
             bbox=self._compute_bbox(dimtags_all),
             label_names=label_names,
         )
-        self._instances[label] = inst
+        self._register_instance(inst)
         return inst
 
     # ------------------------------------------------------------------
