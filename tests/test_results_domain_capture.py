@@ -410,11 +410,12 @@ def test_snapshot_mismatch_raises(tmp_path: Path) -> None:
 # still raise from step() until their catalog entries land.
 
 def test_unwired_element_level_records_raise_in_step(tmp_path: Path) -> None:
+    """Phase 11b wired ``line_stations``; ``fibers``/``layers`` still raise."""
     fem = _MockFem([1])
     spec = _make_spec(
         ResolvedRecorderRecord(
-            category="line_stations", name="r",
-            components=("axial_force",),
+            category="fibers", name="r",
+            components=("fiber_stress",),
             dt=None, n_steps=None,
             element_ids=np.array([10, 20]),
         ),
@@ -425,7 +426,7 @@ def test_unwired_element_level_records_raise_in_step(tmp_path: Path) -> None:
     path = tmp_path / "run.h5"
     with DomainCapture(spec, path, fem, ops=fake) as cap:
         cap.begin_stage("g")
-        with pytest.raises(NotImplementedError, match="line_stations"):
+        with pytest.raises(NotImplementedError, match="fibers"):
             cap.step(t=0.0)
 
 

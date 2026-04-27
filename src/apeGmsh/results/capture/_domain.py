@@ -61,12 +61,18 @@ import numpy as np
 from numpy import ndarray
 
 from ...solvers._element_response import (
+    CUSTOM_RULE_CATALOG,
     RESPONSE_CATALOG,
+    CustomRuleLayout,
+    IntRule,
     ResponseLayout,
     catalog_token_for_keyword,
     gauss_keyword_for_canonical,
     is_catalogued,
+    is_custom_rule_catalogued,
     lookup,
+    lookup_custom_rule,
+    resolve_layout_from_gp_x,
     unflatten,
 )
 
@@ -217,9 +223,11 @@ class DomainCapture:
         self._current_stage: Optional[str] = None
         self._stage_kind: Optional[str] = None
         self._buffers: list[_NodesCapturer] = []
-        # Element-level capturers (gauss in v1; line_stations / fibers /
-        # layers / elements still raise NotImplementedError).
+        # Element-level capturers — gauss (Phase 11a) + line_stations
+        # (Phase 11b Step 2b). fibers / layers / per-element-node forces
+        # still raise NotImplementedError below.
         self._gauss_capturers: list[_GaussCapturer] = []
+        self._line_station_capturers: list[_LineStationCapturer] = []
         # Records that fall through every supported capturer — surface
         # in step() for visibility.
         self._element_level_records: list = []
@@ -259,6 +267,10 @@ class DomainCapture:
                 pass    # captured separately via capture_modes()
             elif rec.category == "gauss":
                 self._gauss_capturers.append(_GaussCapturer(rec))
+            elif rec.category == "line_stations":
+                self._line_station_capturers.append(
+                    _LineStationCapturer(rec),
+                )
             else:
                 self._element_level_records.append(rec)
         return self
@@ -298,6 +310,8 @@ class DomainCapture:
             cap.reset()
         for gc in self._gauss_capturers:
             gc.reset()
+        for lc in self._line_station_capturers:
+            lc.reset()
         # Stage gets a placeholder time vector that we'll fill at end_stage.
         # We can't pre-create the time dataset here because we don't yet
         # know how many steps. We start the stage with an empty time
@@ -315,9 +329,10 @@ class DomainCapture:
             raise NotImplementedError(
                 f"DomainCapture does not yet support element-level "
                 f"records of category {cats}. Gauss-level continuum "
-                f"stress/strain capture is supported as of Phase 11a; "
-                f"line_stations / fibers / layers / per-element-node "
-                f"forces still need their catalog entries."
+                f"stress/strain (Phase 11a) and line-stations beam "
+                f"section forces (Phase 11b) are supported; fibers / "
+                f"layers / per-element-node forces still need their "
+                f"catalog entries."
             )
         ops = self._lazy_ops()
         if self._needs_reactions:
@@ -327,6 +342,8 @@ class DomainCapture:
             cap.step(t, ops)
         for gc in self._gauss_capturers:
             gc.step(t, ops)
+        for lc in self._line_station_capturers:
+            lc.step(t, ops)
 
     def end_stage(self) -> None:
         """Flush buffered data for the current stage to disk.
@@ -352,6 +369,11 @@ class DomainCapture:
                 if gc._times:
                     time_vec = np.array(gc._times, dtype=np.float64)
                     break
+        if time_vec.size == 0:
+            for lc in self._line_station_capturers:
+                if lc._times:
+                    time_vec = np.array(lc._times, dtype=np.float64)
+                    break
 
         sid = self._writer.begin_stage(
             name=self._current_stage,
@@ -362,6 +384,7 @@ class DomainCapture:
         try:
             self._flush_nodes_merged(sid, time_vec)
             self._flush_gauss(sid)
+            self._flush_line_stations(sid)
         finally:
             # Always close the stage — even if the merge raised, we
             # want the stage closed so subsequent ``begin_stage`` works.
@@ -373,6 +396,11 @@ class DomainCapture:
         """Write each gauss capturer's per-class buffers to disk."""
         for gc in self._gauss_capturers:
             gc.write_to(self._writer, stage_id, "partition_0")
+
+    def _flush_line_stations(self, stage_id: str) -> None:
+        """Write each line-stations capturer's per-class buffers to disk."""
+        for lc in self._line_station_capturers:
+            lc.write_to(self._writer, stage_id, "partition_0")
 
     def _flush_nodes_merged(
         self, stage_id: str, time_vec: ndarray,
@@ -674,5 +702,287 @@ class _GaussCapturer:
                 int_rule=_int_rule,
                 element_index=np.array(grp.element_ids, dtype=np.int64),
                 natural_coords=grp.layout.natural_coords,
+                components=decoded,
+            )
+
+
+# =====================================================================
+# Per-record line-stations capturer (Phase 11b Step 2b)
+# =====================================================================
+#
+# Force-/disp-based beam-columns expose section forces along the
+# element length via ``ops.eleResponse(eid, "section", str(i),
+# "force")`` for each integration point ``i``. The integration
+# scheme is per-element metadata (the assigned ``beamIntegration``);
+# we discover IP locations via Tier 1 ``ops.eleResponse(eid,
+# "integrationPoints")`` which returns physical positions ``xi*L``
+# along the beam (see ``ForceBeamColumn3d.cpp:3338–3346``).
+#
+# Section response codes are not exposed by openseespy. We infer them
+# from the per-IP force vector's length under the assumption that
+# the assigned section uses canonical aggregation order:
+#
+#   2D: (P, Mz)  or  (P, Mz, Vy)
+#   3D: (P, Mz, My, T) [+ optional Vy, Vz]
+#
+# Non-canonical aggregations land mis-named columns; users with
+# such sections should use MPCO recording (where META/COMPONENTS
+# carries the actual code names verbatim).
+#
+# Disp-based beam-columns (``DispBeamColumn{2d,3d}`` and family) do
+# not expose ``"integrationPoints"`` in OpenSees v3.7.x — those
+# elements are silently skipped by DomainCapture v1 and recorded
+# via MPCO instead.
+
+# Inferred section codes by (dimension, n_components) under canonical
+# aggregation order. Codes match ``SECTION_RESPONSE_*`` from
+# :data:`apeGmsh.solvers._element_response.SECTION_RESPONSE_TO_CANONICAL`.
+_INFERRED_SECTION_CODES: dict[tuple[int, int], tuple[int, ...]] = {
+    # 2D
+    (2, 2): (2, 1),                # P, Mz
+    (2, 3): (2, 1, 3),             # P, Mz, Vy
+    # 3D
+    (3, 3): (2, 1, 4),             # P, Mz, My
+    (3, 4): (2, 1, 4, 6),          # P, Mz, My, T
+    (3, 5): (2, 1, 4, 6, 3),       # P, Mz, My, T, Vy
+    (3, 6): (2, 1, 4, 6, 3, 5),    # P, Mz, My, T, Vy, Vz
+}
+
+
+def _class_dimension(class_name: str) -> int:
+    """Infer 2D vs 3D from the class name suffix (``2d`` / ``3d``)."""
+    lower = class_name.lower()
+    if lower.endswith("2d"):
+        return 2
+    if lower.endswith("3d"):
+        return 3
+    raise ValueError(
+        f"Cannot infer dimension from class name {class_name!r}; "
+        f"expected a suffix of '2d' or '3d'."
+    )
+
+
+def _infer_section_codes(
+    class_name: str, n_components: int,
+) -> tuple[int, ...]:
+    """Map ``(dim, n_components)`` to canonical section codes.
+
+    Raises ``ValueError`` for shapes outside the canonical
+    aggregation table — non-canonical aggregations (Vy before T, or
+    user-defined section orders) cannot be reliably decoded without
+    introspecting the section's ``getType()``, which openseespy does
+    not expose.
+    """
+    dim = _class_dimension(class_name)
+    key = (dim, int(n_components))
+    if key in _INFERRED_SECTION_CODES:
+        return _INFERRED_SECTION_CODES[key]
+    raise ValueError(
+        f"Cannot infer section codes for {class_name} with "
+        f"{n_components} section.force components. Canonical "
+        f"layouts: 2D ∈ {{2 (P,Mz), 3 (P,Mz,Vy)}}; "
+        f"3D ∈ {{3 (P,Mz,My), 4 (+T), 5 (+Vy), 6 (+Vy,Vz)}}. "
+        f"Non-canonical SectionAggregator orderings are not "
+        f"supported by DomainCapture; use MPCO recording instead."
+    )
+
+
+def _normalise_integration_points(
+    xi_phys: ndarray, L: float,
+) -> ndarray:
+    """Map physical IP positions ``[0, L]`` to natural ``[-1, +1]``.
+
+    OpenSees ``getResponse(10)`` returns ``pts[i] * L`` per
+    ``ForceBeamColumn3d.cpp:3338–3346`` — physical position along
+    the beam in [0, L]. Natural coordinate is ``2*xi/L - 1``.
+    """
+    if L <= 0:
+        raise ValueError(f"Element length {L} must be positive.")
+    return 2.0 * xi_phys / L - 1.0
+
+
+@dataclass
+class _LineStationGroup:
+    """Per-(class_name, gp_x signature, section_codes) buffer."""
+    layout: ResponseLayout
+    gp_x: ndarray
+    element_ids: list[int] = field(default_factory=list)
+    steps: list[ndarray] = field(default_factory=list)
+
+
+class _LineStationCapturer:
+    """Buffers ``ops.eleResponse(eid, "section", i, "force")`` per IP per step.
+
+    Mirrors :class:`_GaussCapturer` but for force-/disp-based beam-
+    columns whose IP layout is per-element (custom integration rule).
+    Elements are grouped on first ``step()`` by
+    ``(class_name, rounded gp_x signature, section_codes)``; each
+    group ends up as one ``write_line_stations_group`` call.
+    """
+
+    _GP_X_SIGNATURE_DECIMALS = 10
+
+    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+        self._rec = record
+        self._times: list[float] = []
+        # Built on first step; key is (class_name, gp_x_sig, section_codes).
+        self._groups: Optional[
+            dict[tuple[str, tuple[float, ...], tuple[int, ...]],
+                 _LineStationGroup]
+        ] = None
+        # (eid, reason) for any element skipped during group-building.
+        self.skipped_elements: list[tuple[int, str]] = []
+
+    def reset(self) -> None:
+        """Clear per-stage step buffers (preserves group structure)."""
+        self._times.clear()
+        if self._groups is not None:
+            for grp in self._groups.values():
+                grp.steps.clear()
+
+    def _probe_element(
+        self, eid: int, ops: Any,
+    ) -> Optional[tuple[ResponseLayout, ndarray, tuple[int, ...]]]:
+        """Discover layout + gp_x for one element. ``None`` ⇒ skip."""
+        try:
+            class_name = ops.eleType(eid)
+        except Exception as exc:
+            self.skipped_elements.append(
+                (eid, f"ops.eleType failed: {exc}"),
+            )
+            return None
+        if not is_custom_rule_catalogued(class_name, "section_force"):
+            self.skipped_elements.append((
+                eid,
+                f"class {class_name!r} not in CUSTOM_RULE_CATALOG",
+            ))
+            return None
+
+        # Tier 1: integrationPoints. Disp-based beams raise / return
+        # empty here — we silently skip them.
+        try:
+            xi_phys_raw = ops.eleResponse(eid, "integrationPoints")
+        except Exception as exc:
+            self.skipped_elements.append((
+                eid,
+                f"ops.eleResponse(integrationPoints) unavailable: {exc}",
+            ))
+            return None
+        xi_phys = np.asarray(xi_phys_raw, dtype=np.float64).flatten()
+        if xi_phys.size == 0:
+            self.skipped_elements.append((
+                eid,
+                f"ops.eleResponse(integrationPoints) returned empty",
+            ))
+            return None
+
+        # Element length from the end-node coordinates.
+        try:
+            nodes = list(ops.eleNodes(eid))
+        except Exception as exc:
+            self.skipped_elements.append(
+                (eid, f"ops.eleNodes failed: {exc}"),
+            )
+            return None
+        if len(nodes) < 2:
+            self.skipped_elements.append((
+                eid,
+                f"element has {len(nodes)} nodes; expected at least 2",
+            ))
+            return None
+        c1 = np.asarray(ops.nodeCoord(int(nodes[0])), dtype=np.float64)
+        c2 = np.asarray(ops.nodeCoord(int(nodes[-1])), dtype=np.float64)
+        L = float(np.linalg.norm(c2 - c1))
+        try:
+            xi_natural = _normalise_integration_points(xi_phys, L)
+        except ValueError as exc:
+            self.skipped_elements.append((eid, str(exc)))
+            return None
+
+        # Probe IP 1's section.force for component count.
+        try:
+            first_force = ops.eleResponse(eid, "section", "1", "force")
+        except Exception as exc:
+            self.skipped_elements.append(
+                (eid, f"ops.eleResponse(section,1,force) failed: {exc}"),
+            )
+            return None
+        n_comp = int(np.asarray(first_force).size)
+        try:
+            section_codes = _infer_section_codes(class_name, n_comp)
+        except ValueError as exc:
+            self.skipped_elements.append((eid, str(exc)))
+            return None
+
+        custom = lookup_custom_rule(class_name, "section_force")
+        layout = resolve_layout_from_gp_x(custom, xi_natural, section_codes)
+        return layout, xi_natural, section_codes
+
+    def _build_groups(self, ops: Any) -> None:
+        groups: dict[
+            tuple[str, tuple[float, ...], tuple[int, ...]],
+            _LineStationGroup,
+        ] = {}
+        if self._rec.element_ids is None:
+            self._groups = groups
+            return
+        for eid in (int(e) for e in self._rec.element_ids):
+            probed = self._probe_element(eid, ops)
+            if probed is None:
+                continue
+            layout, gp_x, section_codes = probed
+            class_name = ops.eleType(eid)
+            sig = tuple(np.round(gp_x, self._GP_X_SIGNATURE_DECIMALS).tolist())
+            key = (class_name, sig, section_codes)
+            grp = groups.get(key)
+            if grp is None:
+                grp = _LineStationGroup(layout=layout, gp_x=gp_x)
+                groups[key] = grp
+            grp.element_ids.append(eid)
+        self._groups = groups
+
+    def step(self, t: float, ops: Any) -> None:
+        if self._groups is None:
+            self._build_groups(ops)
+        self._times.append(float(t))
+        assert self._groups is not None
+        for grp in self._groups.values():
+            n_ip = grp.layout.n_gauss_points
+            n_comp = grp.layout.n_components_per_gp
+            buf: list[ndarray] = []
+            for eid in grp.element_ids:
+                flat = np.empty(n_ip * n_comp, dtype=np.float64)
+                for i in range(1, n_ip + 1):
+                    vec = ops.eleResponse(eid, "section", str(i), "force")
+                    arr = np.asarray(vec, dtype=np.float64).flatten()
+                    if arr.size != n_comp:
+                        raise ValueError(
+                            f"ops.eleResponse({eid}, 'section', {i}, "
+                            f"'force') returned {arr.size} values; "
+                            f"layout for class_tag={grp.layout.class_tag} "
+                            f"expects {n_comp} per IP."
+                        )
+                    flat[(i - 1) * n_comp:i * n_comp] = arr
+                buf.append(flat)
+            grp.steps.append(np.stack(buf, axis=0))    # (E_g, flat_size)
+
+    def write_to(
+        self, writer: Any, stage_id: str, partition_id: str,
+    ) -> None:
+        if not self._times or self._groups is None:
+            return
+        for i, (key, grp) in enumerate(self._groups.items()):
+            if not grp.steps:
+                continue
+            class_name = key[0]
+            flat = np.stack(grp.steps, axis=0)        # (T, E_g, flat_size)
+            decoded = unflatten(flat, grp.layout)
+            writer.write_line_stations_group(
+                stage_id, partition_id,
+                group_id=f"{self._rec.name}_{class_name}_{i}",
+                class_tag=grp.layout.class_tag,
+                int_rule=IntRule.Custom,
+                element_index=np.array(grp.element_ids, dtype=np.int64),
+                station_natural_coord=grp.gp_x,
                 components=decoded,
             )
