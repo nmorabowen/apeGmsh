@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 
 from apeGmsh._logging import _HasLogging
+from apeGmsh.core._section_placement import apply_placement
 
 
 class SectionsBuilder(_HasLogging):
@@ -48,6 +49,10 @@ class SectionsBuilder(_HasLogging):
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
         lc: float = 1e22,
+        *,
+        anchor=None,
+        align=None,
+        length: float | None = None,
     ) -> "Instance":
         """Shared helper: snapshot entities before/after the build
         function, register the delta as an Instance, apply transforms.
@@ -96,26 +101,34 @@ class SectionsBuilder(_HasLogging):
         if new_pts:
             gmsh.model.mesh.setSize([(0, t) for t in new_pts], lc)
 
-        # Apply transforms to the new entities (top-dim only)
-        if entities:
+        # Compose anchor/align (local-frame placement) AND the user's
+        # translate/rotate into one affine matrix and apply via a
+        # single OCC call.  Each separate sync would renumber boundary
+        # sub-topology and force its own snap/restore cycle — composing
+        # avoids that entirely.  ``affected`` is the build_fn's entity
+        # delta so PG handling stays scoped to this section in a
+        # shared session.
+        needs_placement = (
+            anchor is not None or align is not None
+            or translate != (0.0, 0.0, 0.0) or rotate is not None
+        )
+        if entities and needs_placement:
             top_dim = max(entities)
-            transform_dimtags = [(top_dim, t) for t in entities[top_dim]]
-            dx, dy, dz = translate
-            if rotate is not None:
-                if len(rotate) == 4:
-                    angle, ax, ay, az = rotate
-                    gmsh.model.occ.rotate(
-                        transform_dimtags, 0, 0, 0, ax, ay, az, angle,
-                    )
-                elif len(rotate) == 7:
-                    angle, ax, ay, az, cx, cy, cz = rotate
-                    gmsh.model.occ.rotate(
-                        transform_dimtags, cx, cy, cz, ax, ay, az, angle,
-                    )
-                gmsh.model.occ.synchronize()
-            if dx != 0.0 or dy != 0.0 or dz != 0.0:
-                gmsh.model.occ.translate(transform_dimtags, dx, dy, dz)
-                gmsh.model.occ.synchronize()
+            placement_dimtags = [(top_dim, t) for t in entities[top_dim]]
+            affected: list[tuple[int, int]] = [
+                (int(d), int(t))
+                for d, tags in entities.items()
+                for t in tags
+            ]
+            apply_placement(
+                anchor if anchor is not None else "start",
+                align if align is not None else "z",
+                length=length,
+                user_translate=translate,
+                user_rotate=rotate,
+                dimtags=placement_dimtags,
+                affected=affected,
+            )
 
         # Harvest labels created during the build
         labels_comp = getattr(self._parent, 'labels', None)
@@ -192,6 +205,8 @@ class SectionsBuilder(_HasLogging):
         tw: float,
         length: float,
         *,
+        anchor="start",
+        align="z",
         label: str = "W_solid",
         lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -205,6 +220,13 @@ class SectionsBuilder(_HasLogging):
 
         Parameters
         ----------
+        anchor : str or (x, y, z), default ``"start"``
+            Re-origin the section in its local frame before optional
+            ``align`` and before the user's ``translate``/``rotate``.
+            See :func:`apeGmsh.core._section_placement.compute_anchor_offset`.
+        align : str or (ax, ay, az), default ``"z"``
+            Reorient the local +Z axis to a world direction.
+            See :func:`apeGmsh.core._section_placement.compute_alignment_rotation`.
         lc : float
             Target element size for this section's BRep points.
             Default ``1e22`` imposes no constraint — element size
@@ -277,7 +299,10 @@ class SectionsBuilder(_HasLogging):
             if end_tags:
                 labels.add(2, end_tags, name=f"{label}.end_face")
 
-        return self._build_section(_build, label, translate, rotate, lc=lc)
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
 
     # ------------------------------------------------------------------
     # Rectangular solid
@@ -289,6 +314,8 @@ class SectionsBuilder(_HasLogging):
         h: float,
         length: float,
         *,
+        anchor="start",
+        align="z",
         label: str = "rect",
         lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -307,7 +334,10 @@ class SectionsBuilder(_HasLogging):
                 -b/2, -h/2, 0, b, h, length,
             )
             self._parent.labels.add(3, [tag], name=f"{label}.body")
-        return self._build_section(_build, label, translate, rotate, lc=lc)
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
 
     # ------------------------------------------------------------------
     # W-shape shell (mid-surfaces)
@@ -321,6 +351,8 @@ class SectionsBuilder(_HasLogging):
         tw: float,
         length: float,
         *,
+        anchor="start",
+        align="z",
         label: str = "W_shell",
         lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -360,4 +392,7 @@ class SectionsBuilder(_HasLogging):
             )
             self._parent.model.sync()
 
-        return self._build_section(_build, label, translate, rotate, lc=lc)
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )

@@ -11,7 +11,14 @@ from __future__ import annotations
 import gmsh
 
 from apeGmsh.core.Part import Part
-from ._classify import classify_end_faces
+from apeGmsh.core._section_placement import apply_placement
+from ._classify import (
+    classify_angle_outer_faces,
+    classify_end_faces,
+    classify_tee_outer_faces,
+    classify_w_outer_faces,
+    classify_w_web_side_faces,
+)
 
 
 # =====================================================================
@@ -25,6 +32,8 @@ def W_solid(
     tw: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "W_solid",
 ) -> Part:
     """Create a W-shape (wide flange) as a 3D solid Part.
@@ -44,6 +53,12 @@ def W_solid(
         Web thickness.
     length : float
         Extrusion length along Z.
+    anchor : str or (x, y, z), default ``"start"``
+        Re-origin the section in its local frame before optional align.
+        See :func:`apeGmsh.core._section_placement.compute_anchor_offset`.
+    align : str or (ax, ay, az), default ``"z"``
+        Reorient the local +Z axis to a world direction.
+        See :func:`apeGmsh.core._section_placement.compute_alignment_rotation`.
     name : str, default "W_solid"
         Part name.
 
@@ -55,6 +70,15 @@ def W_solid(
         3 volumes forming the bottom flange (y < −h/2).
     ``web``
         1 volume for the web (|y| ≤ h/2).
+    ``top_flange_face``
+        Outer +y skin surfaces of the top flange (face-to-face
+        stacking target for ``align_to``).
+    ``bottom_flange_face``
+        Outer −y skin surfaces of the bottom flange.
+    ``web_left_face``, ``web_right_face``
+        Exposed −x / +x outer faces of the web (within |y| ≤ h/2).
+    ``start_face``, ``end_face``
+        Cross-section profile faces at z=0 and z=length.
 
     Returns
     -------
@@ -102,6 +126,14 @@ def W_solid(
         # Label end-cap surfaces for BC / load application
         classify_end_faces(length, part.labels)
 
+        # Label outer +y / -y skin surfaces for face-to-face stacking
+        classify_w_outer_faces(h, tf, part.labels)
+        classify_w_web_side_faces(h, tw, part.labels)
+
+        # Apply anchor + align AFTER classification so the z=0/length
+        # end-face heuristic still matches the as-extruded geometry.
+        apply_placement(anchor, align, length=length)
+
     return part
 
 
@@ -114,6 +146,8 @@ def rect_solid(
     h: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "rect_solid",
 ) -> Part:
     """Create a solid rectangular bar as a 3D Part.
@@ -141,6 +175,7 @@ def rect_solid(
     with part:
         part.model.geometry.add_box(-b / 2, -h / 2, 0, b, h, length, label="body")
         classify_end_faces(length, part.labels)
+        apply_placement(anchor, align, length=length)
     return part
 
 
@@ -154,6 +189,8 @@ def rect_hollow(
     t: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "rect_hollow",
 ) -> Part:
     """Create a hollow rectangular tube (HSS) as a 3D solid Part.
@@ -194,6 +231,7 @@ def rect_hollow(
             part.labels.add(3, [tag], name="body")
             break
         classify_end_faces(length, part.labels)
+        apply_placement(anchor, align, length=length)
 
     return part
 
@@ -206,6 +244,8 @@ def pipe_solid(
     r: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "pipe_solid",
 ) -> Part:
     """Create a solid circular bar as a 3D Part.
@@ -231,6 +271,7 @@ def pipe_solid(
     with part:
         part.model.geometry.add_cylinder(0, 0, 0, 0, 0, length, r, label="body")
         classify_end_faces(length, part.labels)
+        apply_placement(anchor, align, length=length)
     return part
 
 
@@ -243,6 +284,8 @@ def pipe_hollow(
     t: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "pipe_hollow",
 ) -> Part:
     """Create a hollow circular pipe as a 3D solid Part.
@@ -279,6 +322,7 @@ def pipe_hollow(
             part.labels.add(3, [tag], name="body")
             break
         classify_end_faces(length, part.labels)
+        apply_placement(anchor, align, length=length)
 
     return part
 
@@ -293,6 +337,8 @@ def angle_solid(
     t: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "angle_solid",
 ) -> Part:
     """Create an L-shape (angle) as a 3D solid Part.
@@ -318,6 +364,9 @@ def angle_solid(
     --------------
     ``horizontal_leg`` — volumes in the horizontal leg (y < t).
     ``vertical_leg`` — volumes in the vertical leg (x < t).
+    ``horizontal_leg_face`` — underside of h-leg at y=0.
+    ``vertical_leg_face`` — back of v-leg at x=0.
+    ``start_face``, ``end_face`` — profile faces at z=0 and z=length.
 
     Returns
     -------
@@ -357,6 +406,8 @@ def angle_solid(
         if v_tags:
             part.labels.add(3, v_tags, name="vertical_leg")
         classify_end_faces(length, part.labels)
+        classify_angle_outer_faces(part.labels)
+        apply_placement(anchor, align, length=length)
 
     return part
 
@@ -372,6 +423,8 @@ def channel_solid(
     tw: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "channel_solid",
 ) -> Part:
     """Create a C-shape (channel) as a 3D solid Part.
@@ -399,6 +452,9 @@ def channel_solid(
     ``top_flange`` — volumes in the top flange (y > h/2).
     ``bottom_flange`` — volumes in the bottom flange (y < −h/2).
     ``web`` — volumes in the web.
+    ``top_flange_face`` — outer +y skin of top flange.
+    ``bottom_flange_face`` — outer −y skin of bottom flange.
+    ``start_face``, ``end_face`` — profile faces at z=0 and z=length.
 
     Returns
     -------
@@ -431,6 +487,8 @@ def channel_solid(
         from ._classify import classify_w_volumes
         classify_w_volumes(h, tw, tf, bf, part.labels)
         classify_end_faces(length, part.labels)
+        classify_w_outer_faces(h, tf, part.labels)
+        apply_placement(anchor, align, length=length)
 
     return part
 
@@ -446,6 +504,8 @@ def tee_solid(
     tw: float,
     length: float,
     *,
+    anchor="start",
+    align="z",
     name: str = "tee_solid",
 ) -> Part:
     """Create a T-shape (tee / WT) as a 3D solid Part.
@@ -472,6 +532,9 @@ def tee_solid(
     --------------
     ``flange`` — volumes in the flange.
     ``stem`` — volumes in the stem.
+    ``flange_face`` — outer +y skin of the flange (top).
+    ``stem_face`` — outer −y skin of the stem (bottom).
+    ``start_face``, ``end_face`` — profile faces at z=0 and z=length.
 
     Returns
     -------
@@ -511,5 +574,7 @@ def tee_solid(
         if stem_tags:
             part.labels.add(3, stem_tags, name="stem")
         classify_end_faces(length, part.labels)
+        classify_tee_outer_faces(h, tf, part.labels)
+        apply_placement(anchor, align, length=length)
 
     return part
