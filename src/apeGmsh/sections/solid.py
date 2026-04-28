@@ -12,7 +12,13 @@ import gmsh
 
 from apeGmsh.core.Part import Part
 from apeGmsh.core._section_placement import apply_placement
-from ._classify import classify_end_faces
+from ._classify import (
+    classify_angle_outer_faces,
+    classify_end_faces,
+    classify_tee_outer_faces,
+    classify_w_outer_faces,
+    classify_w_web_side_faces,
+)
 
 
 # =====================================================================
@@ -64,6 +70,15 @@ def W_solid(
         3 volumes forming the bottom flange (y < −h/2).
     ``web``
         1 volume for the web (|y| ≤ h/2).
+    ``top_flange_face``
+        Outer +y skin surfaces of the top flange (face-to-face
+        stacking target for ``align_to``).
+    ``bottom_flange_face``
+        Outer −y skin surfaces of the bottom flange.
+    ``web_left_face``, ``web_right_face``
+        Exposed −x / +x outer faces of the web (within |y| ≤ h/2).
+    ``start_face``, ``end_face``
+        Cross-section profile faces at z=0 and z=length.
 
     Returns
     -------
@@ -110,6 +125,10 @@ def W_solid(
 
         # Label end-cap surfaces for BC / load application
         classify_end_faces(length, part.labels)
+
+        # Label outer +y / -y skin surfaces for face-to-face stacking
+        classify_w_outer_faces(h, tf, part.labels)
+        classify_w_web_side_faces(h, tw, part.labels)
 
         # Apply anchor + align AFTER classification so the z=0/length
         # end-face heuristic still matches the as-extruded geometry.
@@ -345,6 +364,9 @@ def angle_solid(
     --------------
     ``horizontal_leg`` — volumes in the horizontal leg (y < t).
     ``vertical_leg`` — volumes in the vertical leg (x < t).
+    ``horizontal_leg_face`` — underside of h-leg at y=0.
+    ``vertical_leg_face`` — back of v-leg at x=0.
+    ``start_face``, ``end_face`` — profile faces at z=0 and z=length.
 
     Returns
     -------
@@ -384,6 +406,7 @@ def angle_solid(
         if v_tags:
             part.labels.add(3, v_tags, name="vertical_leg")
         classify_end_faces(length, part.labels)
+        classify_angle_outer_faces(part.labels)
         apply_placement(anchor, align, length=length)
 
     return part
@@ -429,6 +452,9 @@ def channel_solid(
     ``top_flange`` — volumes in the top flange (y > h/2).
     ``bottom_flange`` — volumes in the bottom flange (y < −h/2).
     ``web`` — volumes in the web.
+    ``top_flange_face`` — outer +y skin of top flange.
+    ``bottom_flange_face`` — outer −y skin of bottom flange.
+    ``start_face``, ``end_face`` — profile faces at z=0 and z=length.
 
     Returns
     -------
@@ -461,6 +487,7 @@ def channel_solid(
         from ._classify import classify_w_volumes
         classify_w_volumes(h, tw, tf, bf, part.labels)
         classify_end_faces(length, part.labels)
+        classify_w_outer_faces(h, tf, part.labels)
         apply_placement(anchor, align, length=length)
 
     return part
@@ -505,6 +532,9 @@ def tee_solid(
     --------------
     ``flange`` — volumes in the flange.
     ``stem`` — volumes in the stem.
+    ``flange_face`` — outer +y skin of the flange (top).
+    ``stem_face`` — outer −y skin of the stem (bottom).
+    ``start_face``, ``end_face`` — profile faces at z=0 and z=length.
 
     Returns
     -------
@@ -544,6 +574,7 @@ def tee_solid(
         if stem_tags:
             part.labels.add(3, stem_tags, name="stem")
         classify_end_faces(length, part.labels)
+        classify_tee_outer_faces(h, tf, part.labels)
         apply_placement(anchor, align, length=length)
 
     return part

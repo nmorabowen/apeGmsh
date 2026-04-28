@@ -429,7 +429,14 @@
       "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_results_domain_capture_real.py::test_single_tet_static_capture -v --tb=long)",
       "Bash(APEGMSH_DEBUG_CAPTURE=1 /c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_results_domain_capture_real.py::test_single_tet_static_capture -v -s --tb=short)",
       "Bash(\"/c/Program Files/El Ladruno OpenSees/OpenSees.exe\" -version)",
-      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_results_mpco_emit_real.py -v --tb=short)"
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_results_mpco_emit_real.py -v --tb=short)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_sections.py -x -q)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_part_edit.py tests/test_instance_edit.py -x -q)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pyright src/apeGmsh/sections/_classify.py src/apeGmsh/sections/solid.py)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pyright src/apeGmsh/sections/solid.py)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m ruff check src/apeGmsh/sections/_classify.py src/apeGmsh/sections/solid.py tests/test_sections.py)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m ruff check src/apeGmsh/sections/ tests/test_sections.py)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m mypy src/apeGmsh/sections/_classify.py src/apeGmsh/sections/solid.py)"
     ]
   }
 }

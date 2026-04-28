@@ -50,6 +50,47 @@ class TestWSolid:
         finally:
             col.cleanup()
 
+    def test_outer_flange_face_labels_present_and_planar(self):
+        bf, tf, h, tw, length = 150.0, 20.0, 300.0, 10.0, 3000.0
+        col = W_solid(bf=bf, tf=tf, h=h, tw=tw, length=length)
+        try:
+            with apeGmsh(model_name="t") as g:
+                g.parts.add(col, label="c")
+                labels = g.labels.get_all()
+                assert "c.top_flange_face" in labels
+                assert "c.bottom_flange_face" in labels
+
+                from apeGmsh.core._align import label_centroid_live
+                top_com = label_centroid_live("c.top_flange_face")
+                bot_com = label_centroid_live("c.bottom_flange_face")
+                assert top_com[1] == pytest.approx(h / 2 + tf, abs=1e-6)
+                assert bot_com[1] == pytest.approx(-(h / 2 + tf), abs=1e-6)
+        finally:
+            col.cleanup()
+
+    def test_web_side_face_labels_planar_and_filtered(self):
+        bf, tf, h, tw, length = 150.0, 20.0, 300.0, 10.0, 3000.0
+        col = W_solid(bf=bf, tf=tf, h=h, tw=tw, length=length)
+        try:
+            with apeGmsh(model_name="t") as g:
+                g.parts.add(col, label="c")
+                labels = g.labels.get_all()
+                assert "c.web_left_face" in labels
+                assert "c.web_right_face" in labels
+
+                from apeGmsh.core._align import label_centroid_live
+                left_com = label_centroid_live("c.web_left_face")
+                right_com = label_centroid_live("c.web_right_face")
+                # x lies on ±tw/2; y on web midline (filter excludes
+                # flange-wing inner strips, so the union centroid is
+                # the web's geometric center y=0).
+                assert left_com[0] == pytest.approx(-tw / 2, abs=1e-6)
+                assert right_com[0] == pytest.approx(+tw / 2, abs=1e-6)
+                assert left_com[1] == pytest.approx(0.0, abs=1e-6)
+                assert right_com[1] == pytest.approx(0.0, abs=1e-6)
+        finally:
+            col.cleanup()
+
 
 class TestWShell:
     def test_produces_3_surfaces(self):
@@ -169,6 +210,23 @@ class TestAngleSolid:
         finally:
             ang.cleanup()
 
+    def test_outer_face_labels_planar(self):
+        ang = angle_solid(b=100, h=100, t=10, length=2000)
+        try:
+            with apeGmsh(model_name="t") as g:
+                g.parts.add(ang, label="a")
+                labels = g.labels.get_all()
+                assert "a.horizontal_leg_face" in labels
+                assert "a.vertical_leg_face" in labels
+
+                from apeGmsh.core._align import label_centroid_live
+                # h-leg underside on y=0
+                assert label_centroid_live("a.horizontal_leg_face")[1] == pytest.approx(0.0, abs=1e-6)
+                # v-leg back on x=0
+                assert label_centroid_live("a.vertical_leg_face")[0] == pytest.approx(0.0, abs=1e-6)
+        finally:
+            ang.cleanup()
+
 
 class TestChannelSolid:
     def test_produces_5_volumes(self):
@@ -189,6 +247,22 @@ class TestChannelSolid:
                 assert "c.top_flange" in labels
                 assert "c.bottom_flange" in labels
                 assert "c.web" in labels
+        finally:
+            ch.cleanup()
+
+    def test_outer_flange_face_labels_planar(self):
+        bf, tf, h, tw, length = 80.0, 12.0, 200.0, 8.0, 3000.0
+        ch = channel_solid(bf=bf, tf=tf, h=h, tw=tw, length=length)
+        try:
+            with apeGmsh(model_name="t") as g:
+                g.parts.add(ch, label="c")
+                labels = g.labels.get_all()
+                assert "c.top_flange_face" in labels
+                assert "c.bottom_flange_face" in labels
+
+                from apeGmsh.core._align import label_centroid_live
+                assert label_centroid_live("c.top_flange_face")[1] == pytest.approx(h / 2 + tf, abs=1e-6)
+                assert label_centroid_live("c.bottom_flange_face")[1] == pytest.approx(-(h / 2 + tf), abs=1e-6)
         finally:
             ch.cleanup()
 
@@ -213,6 +287,22 @@ class TestTeeSolid:
                 assert "t.stem" in labels
         finally:
             t.cleanup()
+
+    def test_outer_face_labels_planar(self):
+        bf, tf, h, tw, length = 150.0, 15.0, 200.0, 10.0, 2500.0
+        tp = tee_solid(bf=bf, tf=tf, h=h, tw=tw, length=length)
+        try:
+            with apeGmsh(model_name="t") as g:
+                g.parts.add(tp, label="t")
+                labels = g.labels.get_all()
+                assert "t.flange_face" in labels
+                assert "t.stem_face" in labels
+
+                from apeGmsh.core._align import label_centroid_live
+                assert label_centroid_live("t.flange_face")[1] == pytest.approx(tf, abs=1e-6)
+                assert label_centroid_live("t.stem_face")[1] == pytest.approx(-h, abs=1e-6)
+        finally:
+            tp.cleanup()
 
 
 if __name__ == "__main__":
