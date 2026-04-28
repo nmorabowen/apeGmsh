@@ -126,6 +126,14 @@ DERIVED_SCALARS: tuple[str, ...] = (
 
 FIBER: tuple[str, ...] = ("fiber_stress", "fiber_strain")
 
+# Spring (ZeroLength) force / deformation — one scalar per spring direction.
+# ``spring_force_<n>`` is the force in the n-th configured direction;
+# ``spring_deformation_<n>`` is the corresponding deformation.  The bare
+# ``spring_force`` / ``spring_deformation`` names are the roots (like
+# ``fiber_stress``); indexed variants (``spring_force_0`` etc.) are
+# handled via regex in :func:`is_canonical`.
+SPRING: tuple[str, ...] = ("spring_force", "spring_deformation")
+
 # Material-state scalar outputs. Damage-plasticity models with
 # split tension/compression behaviour (ASDConcrete, IMPLEX-stabilised
 # concrete, etc.) emit two values per token rather than one — under
@@ -165,6 +173,7 @@ ALL_CANONICAL: frozenset[str] = frozenset(
     + STRAIN
     + DERIVED_SCALARS
     + FIBER
+    + SPRING
     + MATERIAL_STATE
 )
 
@@ -259,6 +268,14 @@ def is_canonical(name: str) -> bool:
     # plane-stress + transverse-shear), not a scalar; the canonical
     # split is index-based when META labels are generic.
     for stem in ("fiber_stress_", "fiber_strain_"):
+        if name.startswith(stem):
+            suffix = name[len(stem):]
+            if suffix.isdigit():
+                return True
+    # Patterns: spring_force_<integer> / spring_deformation_<integer>.
+    # ZeroLength elements can have N springs; each gets an indexed
+    # canonical tied to its position in the configured direction list.
+    for stem in ("spring_force_", "spring_deformation_"):
         if name.startswith(stem):
             suffix = name[len(stem):]
             if suffix.isdigit():

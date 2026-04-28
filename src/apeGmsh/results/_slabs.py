@@ -103,3 +103,25 @@ class LayerSlab:
     thickness: ndarray           # (sum_L,)
     local_axes_quaternion: ndarray  # (sum_L, 4)
     time: ndarray                # (T,)
+
+
+@dataclass(frozen=True)
+class SpringSlab:
+    """Zero-length spring values (one column per element, one spring index).
+
+    ``component`` encodes which spring is represented (e.g.
+    ``"spring_force_0"`` for the force in the first configured spring
+    direction). Each column in ``values`` corresponds to one element;
+    ``element_index`` carries the raw OpenSees element tag so the
+    caller can correlate columns with elements without needing a
+    separate ID array.
+
+    ================  ========================
+    ``values``        ``(T, E)``
+    ``element_index`` ``(E,)``
+    ================  ========================
+    """
+    component: str
+    values: ndarray              # (T, E)
+    element_index: ndarray       # (E,)
+    time: ndarray                # (T,)

@@ -19,6 +19,7 @@ from ._slabs import (
     LayerSlab,
     LineStationSlab,
     NodeSlab,
+    SpringSlab,
 )
 from .readers._protocol import ResultLevel, TimeSlice
 
@@ -201,6 +202,7 @@ class ElementResultsComposite(_SelectionMixin):
         self.fibers = FibersResultsComposite(results)
         self.layers = LayersResultsComposite(results)
         self.line_stations = LineStationsResultsComposite(results)
+        self.springs = SpringsResultsComposite(results)
 
     def get(
         self,
@@ -381,3 +383,48 @@ class LineStationsResultsComposite(_SelectionMixin):
         return self._r._reader.available_components(
             sid, ResultLevel.LINE_STATIONS,
         )
+
+
+# =====================================================================
+# Springs (ZeroLength)
+# =====================================================================
+
+class SpringsResultsComposite(_SelectionMixin):
+    """``results.elements.springs`` — ZeroLength spring force / deformation."""
+
+    def __init__(self, results: "Results") -> None:
+        self._r = results
+
+    def get(
+        self,
+        *,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        component: str,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ) -> SpringSlab:
+        """Return spring force or deformation for one spring direction.
+
+        Parameters
+        ----------
+        component
+            Canonical name such as ``"spring_force_0"`` (force in the
+            first configured spring direction) or
+            ``"spring_deformation_2"`` (deformation in the third).
+            Use ``available_components()`` to discover what the file
+            contains.
+        """
+        sid = self._r._resolve_stage(stage)
+        eids = self._resolve_element_ids(
+            pg=pg, label=label, selection=selection, ids=ids,
+        )
+        return self._r._reader.read_springs(
+            sid, component, element_ids=eids, time_slice=time,
+        )
+
+    def available_components(self, *, stage: str | None = None) -> list[str]:
+        sid = self._r._resolve_stage(stage)
+        return self._r._reader.available_components(sid, ResultLevel.SPRINGS)

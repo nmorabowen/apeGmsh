@@ -45,6 +45,7 @@ from .._slabs import (
     LayerSlab,
     LineStationSlab,
     NodeSlab,
+    SpringSlab,
 )
 from ._mpco import MPCOReader
 from ._protocol import ResultLevel, StageInfo, TimeSlice
@@ -329,6 +330,24 @@ class MPCOMultiPartitionReader:
         ]
         return _concat_layer_slabs(slabs, component)
 
+    def read_springs(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> SpringSlab:
+        slabs = [
+            r.read_springs(
+                stage_id, component,
+                element_ids=element_ids,
+                time_slice=time_slice,
+            )
+            for r in self._readers
+        ]
+        return _concat_spring_slabs(slabs, component)
+
 
 # =====================================================================
 # Stitching helpers — node merge, element concat
@@ -524,6 +543,26 @@ def _concat_layer_slabs(
         local_axes_quaternion=np.concatenate(
             [s.local_axes_quaternion for s in nonempty], axis=0,
         ),
+        time=time,
+    )
+
+
+def _concat_spring_slabs(
+    slabs: list[SpringSlab], component: str,
+) -> SpringSlab:
+    time = _first_nonempty_time(slabs)
+    nonempty = [s for s in slabs if s.element_index.size]
+    if not nonempty:
+        return SpringSlab(
+            component=component,
+            values=np.zeros((time.size, 0), dtype=np.float64),
+            element_index=np.array([], dtype=np.int64),
+            time=time,
+        )
+    return SpringSlab(
+        component=component,
+        values=np.concatenate([s.values for s in nonempty], axis=1),
+        element_index=np.concatenate([s.element_index for s in nonempty]),
         time=time,
     )
 

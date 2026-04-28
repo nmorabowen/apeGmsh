@@ -23,6 +23,7 @@ from .._slabs import (
     LayerSlab,
     LineStationSlab,
     NodeSlab,
+    SpringSlab,
 )
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ class ResultLevel(Enum):
     GAUSS = "gauss"                     # continuum integration points
     FIBERS = "fibers"                   # within fiber-section GPs
     LAYERS = "layers"                   # layered shells
+    SPRINGS = "springs"                 # zero-length spring force / deformation
 
 
 @dataclass(frozen=True)
@@ -183,4 +185,14 @@ class ResultsReader(Protocol):
         layer_indices: Optional[ndarray] = None,
         time_slice: TimeSlice = None,
     ) -> LayerSlab:
+        ...
+
+    def read_springs(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> SpringSlab:
         ...

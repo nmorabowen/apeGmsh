@@ -143,6 +143,13 @@ ELE_TAG_ElasticForceBeamColumn3d = 76
 ELE_TAG_ForceBeamColumnCBDI2d = 77
 ELE_TAG_ElasticTimoshenkoBeam2d = 145
 ELE_TAG_ElasticTimoshenkoBeam3d = 146
+# Zero-length elements (Phase 11d). Tags from
+# ``OpenSees/SRC/classTags.h``.
+ELE_TAG_ZeroLength = 19
+ELE_TAG_ZeroLengthSection = 20
+ELE_TAG_ZeroLengthND = 21
+ELE_TAG_ZeroLengthContact = 22
+ELE_TAG_ZeroLengthInterface2D = 23
 
 
 # =====================================================================
@@ -410,6 +417,48 @@ class LayeredShellLayout:
     class_tag: int
     coord_system: str
     surface_int_rule: int
+
+
+# =====================================================================
+# ZeroLengthLayout — spring elements (Phase 11d)
+# =====================================================================
+#
+# ZeroLength / ZeroLengthSection / ZeroLengthND elements expose
+# per-spring force and deformation under MPCO ``force`` and
+# ``deformation`` tokens. The number of springs (and therefore the
+# number of components per element) is **per-element metadata** —
+# it equals the number of ``-mat`` / ``-dir`` arguments given at
+# construction time. MPCO records all springs in a single flat row
+# per element per step, treating the element as if it had one
+# Gauss point (``Line_GL_1``) with ``n_springs`` components.
+#
+# apeGmsh canonicals:
+#   ``spring_force_<n>``       — force in spring direction n (0-based)
+#   ``spring_deformation_<n>`` — deformation in spring direction n
+#
+# The catalog carries only the class identity. The concrete
+# per-bucket shape (n_springs) is resolved from ``META/NUM_COMPONENTS``
+# at read time, the same way material-state does for n_components_per_gp.
+
+@dataclass(frozen=True)
+class ZeroLengthLayout:
+    """Structural layout for a zero-length element class.
+
+    Used by :data:`ZEROLENGTH_CATALOG` entries.  Concrete per-element
+    shape (n_springs) is built at read time from ``META/NUM_COMPONENTS``
+    in the MPCO bucket.
+
+    Parameters
+    ----------
+    class_tag
+        OpenSees ``ELE_TAG_*`` integer for this element class.
+    int_rule
+        Integration-rule code used by MPCO for this class.
+        Always ``IntRule.Line_GL_1`` (= 1) for ZeroLength family.
+    """
+
+    class_tag: int
+    int_rule: int
 
 
 # =====================================================================
@@ -1220,6 +1269,41 @@ LAYER_CATALOG: dict[tuple[str, str], LayeredShellLayout] = {
 
 
 # =====================================================================
+# ZEROLENGTH_CATALOG — zero-length spring elements (Phase 11d)
+# =====================================================================
+#
+# Key: (class_name, catalog_token)  where catalog_token is
+# ``"spring_force"`` or ``"spring_deformation"``.
+#
+# MPCO classifies all ZeroLength variants with ``Line_GL_1`` (= 1);
+# the bracket key on disk is ``<tag>-<Class>[1:0:0]``.
+
+_ZEROLENGTH_CLASSES: list[tuple[str, int]] = [
+    # (class_name, class_tag)
+    ("ZeroLength",            ELE_TAG_ZeroLength),
+    ("ZeroLengthSection",     ELE_TAG_ZeroLengthSection),
+    ("ZeroLengthND",          ELE_TAG_ZeroLengthND),
+    ("ZeroLengthContact",     ELE_TAG_ZeroLengthContact),
+    ("ZeroLengthInterface2D", ELE_TAG_ZeroLengthInterface2D),
+]
+
+ZEROLENGTH_CATALOG: dict[tuple[str, str], ZeroLengthLayout] = {
+    **{
+        (cname, "spring_force"): ZeroLengthLayout(
+            class_tag=ctag, int_rule=IntRule.Line_GL_1,
+        )
+        for cname, ctag in _ZEROLENGTH_CLASSES
+    },
+    **{
+        (cname, "spring_deformation"): ZeroLengthLayout(
+            class_tag=ctag, int_rule=IntRule.Line_GL_1,
+        )
+        for cname, ctag in _ZEROLENGTH_CLASSES
+    },
+}
+
+
+# =====================================================================
 # Public API
 # =====================================================================
 
@@ -1476,6 +1560,33 @@ def lookup_layer(class_name: str, token: str) -> LayeredShellLayout:
 def is_layer_catalogued(class_name: str, token: str) -> bool:
     """True if ``(class_name, token)`` has a layered-shell layout entry."""
     return (class_name, token) in LAYER_CATALOG
+
+
+# ---------------------------------------------------------------------
+# ZeroLength catalog access
+# ---------------------------------------------------------------------
+
+def lookup_zerolength(class_name: str, token: str) -> ZeroLengthLayout:
+    """Return the :class:`ZeroLengthLayout` for ``(class_name, token)``.
+
+    See :data:`ZEROLENGTH_CATALOG`. Raises :class:`CatalogLookupError`
+    on miss.
+    """
+    key = (class_name, token)
+    try:
+        return ZEROLENGTH_CATALOG[key]
+    except KeyError:
+        raise CatalogLookupError(
+            f"No ZeroLengthLayout for (class={class_name!r}, "
+            f"token={token!r}). Add an entry to ZEROLENGTH_CATALOG "
+            f"in src/apeGmsh/solvers/_element_response.py if this "
+            f"element class should be supported for springs reads."
+        ) from None
+
+
+def is_zerolength_catalogued(class_name: str, token: str) -> bool:
+    """True if ``(class_name, token)`` has a zero-length layout entry."""
+    return (class_name, token) in ZEROLENGTH_CATALOG
 
 
 # ---------------------------------------------------------------------
@@ -1758,6 +1869,25 @@ _LAYER_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
 }
 
 
+# Springs topology — ZeroLength / ZeroLengthSection / ZeroLengthND
+# expose per-spring force / deformation under MPCO ``force`` and
+# ``deformation`` group names (the same names STKO uses for the default
+# beam-column force recorder). The class tag in each bucket key
+# distinguishes spring buckets from beam buckets so there is no
+# collision. Canonicals ``spring_force`` and ``spring_deformation`` are
+# the *roots*; indexed variants (``spring_force_0`` etc.) strip the
+# suffix and route via the root in :func:`gauss_keyword_for_canonical`.
+_SPRING_PREFIX_TO_KEYWORD: dict[str, str] = {
+    "spring_force": "force",
+    "spring_deformation": "deformation",
+}
+
+_SPRING_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
+    "force": "spring_force",
+    "deformation": "spring_deformation",
+}
+
+
 # Per-topology dispatch — keeps the routing helpers small and lets
 # us add new topologies without growing more conditional branches.
 _TOPOLOGY_PREFIX_TABLES: dict[str | None, dict[str, str]] = {
@@ -1766,6 +1896,7 @@ _TOPOLOGY_PREFIX_TABLES: dict[str | None, dict[str, str]] = {
     "nodal_forces": _NODAL_FORCE_PREFIX_TO_KEYWORD,
     "fibers": _FIBER_PREFIX_TO_KEYWORD,
     "layers": _LAYER_PREFIX_TO_KEYWORD,
+    "springs": _SPRING_PREFIX_TO_KEYWORD,
 }
 
 _TOPOLOGY_KEYWORD_TABLES: dict[str | None, dict[str, str]] = {
@@ -1774,6 +1905,7 @@ _TOPOLOGY_KEYWORD_TABLES: dict[str | None, dict[str, str]] = {
     "nodal_forces": _NODAL_FORCE_KEYWORD_TO_CATALOG_TOKEN,
     "fibers": _FIBER_KEYWORD_TO_CATALOG_TOKEN,
     "layers": _LAYER_KEYWORD_TO_CATALOG_TOKEN,
+    "springs": _SPRING_KEYWORD_TO_CATALOG_TOKEN,
 }
 
 

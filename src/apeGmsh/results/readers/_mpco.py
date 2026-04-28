@@ -22,6 +22,7 @@ from .._slabs import (
     LayerSlab,
     LineStationSlab,
     NodeSlab,
+    SpringSlab,
 )
 from .._time import resolve_time_slice
 from . import _mpco_element_io as _melem
@@ -30,6 +31,7 @@ from . import _mpco_layer_io as _mlayer
 from . import _mpco_line_io as _mline
 from . import _mpco_material_io as _mmat
 from . import _mpco_nodal_io as _mnodal
+from . import _mpco_spring_io as _mspring
 from . import _mpco_translation as _mtr
 from ._protocol import ResultLevel, StageInfo, TimeSlice
 
@@ -201,6 +203,9 @@ class MPCOReader:
         if level.value == "layers":
             return self._layers_available_components(mpco_name)
 
+        if level.value == "springs":
+            return self._springs_available_components(mpco_name)
+
         return []
 
     def _gauss_available_components(self, mpco_name: str) -> list[str]:
@@ -322,6 +327,26 @@ class MPCOReader:
                 # at availability discovery (still raises on .get()).
                 continue
             out.update(layout.component_layout)
+        return sorted(out)
+
+    def _springs_available_components(self, mpco_name: str) -> list[str]:
+        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        if on_elements is None:
+            return []
+        out: set[str] = set()
+        for root in ("spring_force", "spring_deformation"):
+            _, buckets = _mspring.discover_spring_buckets(
+                on_elements, canonical_component=root,
+            )
+            for b in buckets:
+                bucket_grp = on_elements[b.mpco_group_name][b.bracket_key]
+                try:
+                    canonicals = _mspring.spring_canonicals_in_bucket(
+                        bucket_grp, b,
+                    )
+                except ValueError:
+                    continue
+                out.update(canonicals)
         return sorted(out)
 
     # ------------------------------------------------------------------
@@ -784,6 +809,60 @@ class MPCOReader:
             time=time[t_idx],
         )
 
+    def read_springs(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> SpringSlab:
+        self._ensure_stages()
+        time = self.time_vector(stage_id)
+        t_idx = resolve_time_slice(time_slice, time)
+
+        mpco_name = self._stage_to_mpco.get(stage_id)
+        if mpco_name is None:
+            return _empty_spring_slab(component, time, t_idx)
+        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        if on_elements is None:
+            return _empty_spring_slab(component, time, t_idx)
+
+        _, buckets = _mspring.discover_spring_buckets(
+            on_elements, canonical_component=component,
+        )
+        if not buckets:
+            return _empty_spring_slab(component, time, t_idx)
+
+        values_parts: list[ndarray] = []
+        element_index_parts: list[ndarray] = []
+
+        for bucket in buckets:
+            bucket_grp = on_elements[bucket.mpco_group_name][bucket.bracket_key]
+            try:
+                result = _mspring.read_spring_bucket_slab(
+                    bucket_grp, bucket, component,
+                    t_idx=t_idx,
+                    element_ids=element_ids,
+                )
+            except ValueError:
+                continue
+            if result is None:
+                continue
+            values, ei = result
+            values_parts.append(values)
+            element_index_parts.append(ei)
+
+        if not values_parts:
+            return _empty_spring_slab(component, time, t_idx)
+
+        return SpringSlab(
+            component=component,
+            values=np.concatenate(values_parts, axis=1),
+            element_index=np.concatenate(element_index_parts),
+            time=time[t_idx],
+        )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -926,5 +1005,14 @@ def _empty_layer_slab(component: str, time: ndarray, t_idx) -> LayerSlab:
         sub_gp_index=np.array([], dtype=np.int64),
         thickness=np.array([], dtype=np.float64),
         local_axes_quaternion=np.zeros((0, 4), dtype=np.float64),
+        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
+    )
+
+
+def _empty_spring_slab(component: str, time: ndarray, t_idx) -> SpringSlab:
+    return SpringSlab(
+        component=component,
+        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
+        element_index=np.array([], dtype=np.int64),
         time=time[t_idx] if time.size else np.array([], dtype=np.float64),
     )
