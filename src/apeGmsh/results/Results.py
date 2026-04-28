@@ -191,22 +191,58 @@ class Results:
     @classmethod
     def from_mpco(
         cls,
-        path: str | Path,
+        path: "str | Path | list[str | Path]",
         *,
         fem: "Optional[FEMData]" = None,
+        merge_partitions: bool = True,
     ) -> "Results":
         """Open a STKO ``.mpco`` HDF5 results file.
 
-        Synthesizes a partial FEMData from the MPCO ``MODEL/`` group
-        if ``fem`` is omitted. Phase 3 supports nodal results
-        (DISPLACEMENT, ROTATION, VELOCITY, ACCELERATION, REACTIONS,
-        PRESSURE) — element-level reads return empty slabs (full
-        support lands in a later phase).
+        Single-file mode (default for non-partitioned analyses): pass
+        the path of one ``.mpco`` file. Synthesizes a partial FEMData
+        from the MPCO ``MODEL/`` group if ``fem`` is omitted.
+
+        Multi-partition mode (parallel OpenSees runs): pass either
+
+        - a single ``<stem>.part-<N>.mpco`` path — siblings are
+          discovered automatically by globbing ``<stem>.part-*.mpco``
+          in the same directory and merged into one virtual reader;
+        - an explicit list of partition paths.
+
+        Boundary nodes deduplicate by ID (first-occurrence wins);
+        elements concatenate (disjoint by partition); slabs stitch
+        across partitions transparently. Stage and time vectors must
+        match across partitions or construction raises.
+
+        Pass ``merge_partitions=False`` to opt out of auto-discovery
+        and read only the file at ``path`` even if it follows the
+        ``.part-N`` naming convention.
         """
         from .readers._mpco import MPCOReader
-        reader = MPCOReader(path)
+        from .readers._mpco_multi import (
+            MPCOMultiPartitionReader, discover_partition_files,
+        )
+
+        if isinstance(path, (list, tuple)):
+            paths = [Path(p) for p in path]
+            reader = (
+                MPCOMultiPartitionReader(paths)
+                if len(paths) > 1
+                else MPCOReader(paths[0])
+            )
+            anchor = paths[0]
+        else:
+            anchor = Path(path)
+            if merge_partitions:
+                discovered = discover_partition_files(anchor)
+            else:
+                discovered = [anchor]
+            if len(discovered) > 1:
+                reader = MPCOMultiPartitionReader(discovered)
+            else:
+                reader = MPCOReader(discovered[0])
         bound_fem = resolve_bound_fem(reader, fem)
-        return cls(reader, fem=bound_fem, path=Path(path))
+        return cls(reader, fem=bound_fem, path=anchor)
 
     # ------------------------------------------------------------------
     # FEM access & binding

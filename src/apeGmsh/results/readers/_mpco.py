@@ -25,7 +25,10 @@ from .._slabs import (
 )
 from .._time import resolve_time_slice
 from . import _mpco_element_io as _melem
+from . import _mpco_fiber_io as _mfiber
+from . import _mpco_layer_io as _mlayer
 from . import _mpco_line_io as _mline
+from . import _mpco_material_io as _mmat
 from . import _mpco_nodal_io as _mnodal
 from . import _mpco_translation as _mtr
 from ._protocol import ResultLevel, StageInfo, TimeSlice
@@ -192,7 +195,12 @@ class MPCOReader:
         if level.value == "elements":
             return self._elements_available_components(mpco_name)
 
-        # Fibers / layers remain stubbed until their catalog entries land.
+        if level.value == "fibers":
+            return self._fibers_available_components(mpco_name)
+
+        if level.value == "layers":
+            return self._layers_available_components(mpco_name)
+
         return []
 
     def _gauss_available_components(self, mpco_name: str) -> list[str]:
@@ -200,14 +208,32 @@ class MPCOReader:
         if on_elements is None:
             return []
         out: set[str] = set()
-        # Probe each gauss-eligible canonical prefix; the discover
-        # helper handles the canonical→MPCO group-name translation.
+        # Tensor canonicals (catalog-driven, fixed shape): any axis
+        # suffix discovers the same buckets, so probe with ``_xx``.
         for prefix in ("stress", "strain"):
             _, buckets = _melem.discover_gauss_buckets(
                 on_elements, canonical_component=f"{prefix}_xx",
             )
             for b in buckets:
                 out.update(b.layout.component_layout)
+        # Material-state canonicals (META-driven, variable shape).
+        # Probe each parent token; surface every per-segment canonical
+        # the bucket's META declares.
+        for parent in ("damage", "equivalent_plastic_strain"):
+            _, mat_buckets = _mmat.discover_material_state_buckets(
+                on_elements, canonical_component=parent,
+            )
+            for mb in mat_buckets:
+                bucket_grp = on_elements[mb.mpco_group_name][mb.bracket_key]
+                try:
+                    canonicals = _mmat.material_state_canonicals_in_bucket(
+                        bucket_grp, mb,
+                    )
+                except ValueError:
+                    # Malformed META — skip this bucket for discovery
+                    # rather than crash the whole listing.
+                    continue
+                out.update(canonicals)
         return sorted(out)
 
     def _elements_available_components(
@@ -229,6 +255,45 @@ class MPCOReader:
             )
             for b in buckets:
                 out.update(b.layout.component_layout)
+        return sorted(out)
+
+    def _fibers_available_components(self, mpco_name: str) -> list[str]:
+        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        if on_elements is None:
+            return []
+        out: set[str] = set()
+        for canonical in ("fiber_stress", "fiber_strain"):
+            _, buckets = _mfiber.discover_fiber_buckets(
+                on_elements, canonical_component=canonical,
+            )
+            if buckets:
+                out.add(canonical)
+        return sorted(out)
+
+    def _layers_available_components(self, mpco_name: str) -> list[str]:
+        stage_grp = self._h5[mpco_name]
+        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
+        section_assignments = stage_grp.get("MODEL/SECTION_ASSIGNMENTS")
+        if on_elements is None or section_assignments is None:
+            return []
+        out: set[str] = set()
+        # For each parent token, walk every catalogued bucket and
+        # surface its META-resolved per-cell canonicals (single-
+        # component buckets keep the bare name; multi-component
+        # buckets expose ``fiber_stress_<i>`` per index).
+        for parent in ("fiber_stress", "fiber_strain"):
+            _, buckets = _mlayer.discover_layer_buckets(
+                on_elements, canonical_component=parent,
+            )
+            for b in buckets:
+                bucket_grp = on_elements[b.mpco_group_name][b.bracket_key]
+                try:
+                    layout = _mlayer.resolve_layer_bucket_layout(
+                        section_assignments, bucket_grp, b,
+                    )
+                except ValueError:
+                    continue
+                out.update(layout.component_layout)
         return sorted(out)
 
     def _line_stations_available_components(
@@ -463,12 +528,20 @@ class MPCOReader:
         if on_elements is None:
             return _empty_gauss_slab(component, time, t_idx)
 
+        # Dispatch on canonical type: material-state tokens
+        # (``damage`` / ``equivalent_plastic_strain`` and their
+        # ``_tension``/``_compression`` variants) take the META-driven
+        # path; everything else uses the catalog-driven path.
+        if _mmat.parent_token_for_canonical(component) is not None:
+            return self._read_gauss_material_state(
+                on_elements, component, time, t_idx, element_ids,
+            )
+
         token, buckets = _melem.discover_gauss_buckets(
             on_elements, canonical_component=component,
         )
         if not buckets:
             return _empty_gauss_slab(component, time, t_idx)
-        token_grp = on_elements[token]
 
         # Read per-bucket slabs and stitch on the GP/element axis.
         values_parts: list[ndarray] = []
@@ -476,7 +549,10 @@ class MPCOReader:
         natural_coords_parts: list[ndarray] = []
 
         for bucket in buckets:
-            bucket_grp = token_grp[bucket.bracket_key]
+            # Buckets may live under different alias group names
+            # (e.g. legacy ``stresses`` vs. modern ``material.stress``)
+            # — use each bucket's own source group.
+            bucket_grp = on_elements[bucket.mpco_group_name][bucket.bracket_key]
             result = _melem.read_bucket_slab(
                 bucket_grp, bucket, component,
                 t_idx=t_idx, element_ids=element_ids,
@@ -500,36 +576,211 @@ class MPCOReader:
             time=time[t_idx],
         )
 
-    def read_fibers(self, stage_id, component, *, element_ids=None,
-                     gp_indices=None, time_slice=None) -> FiberSlab:
-        time = self.time_vector(stage_id)
-        t_idx = resolve_time_slice(time_slice, time)
-        return FiberSlab(
+    def _read_gauss_material_state(
+        self,
+        on_elements: "h5py.Group",
+        component: str,
+        time: ndarray,
+        t_idx: ndarray,
+        element_ids: Optional[ndarray],
+    ) -> GaussSlab:
+        """META-driven material-state read — separate from the catalog
+        path because ``n_components_per_gp`` depends on the assigned
+        constitutive model, not just the element class."""
+        token, buckets = _mmat.discover_material_state_buckets(
+            on_elements, canonical_component=component,
+        )
+        if not buckets:
+            return _empty_gauss_slab(component, time, t_idx)
+
+        values_parts: list[ndarray] = []
+        element_index_parts: list[ndarray] = []
+        natural_coords_parts: list[ndarray] = []
+
+        for bucket in buckets:
+            bucket_grp = on_elements[bucket.mpco_group_name][bucket.bracket_key]
+            try:
+                result = _mmat.read_material_state_bucket_slab(
+                    bucket_grp, bucket, component,
+                    t_idx=t_idx, element_ids=element_ids,
+                )
+            except ValueError:
+                # Malformed META — skip rather than crash the read.
+                continue
+            if result is None:
+                continue
+            values, element_index, natural_coords = result
+            values_parts.append(values)
+            element_index_parts.append(element_index)
+            natural_coords_parts.append(natural_coords)
+
+        if not values_parts:
+            return _empty_gauss_slab(component, time, t_idx)
+
+        return GaussSlab(
             component=component,
-            values=np.zeros((t_idx.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            gp_index=np.array([], dtype=np.int64),
-            y=np.array([], dtype=np.float64),
-            z=np.array([], dtype=np.float64),
-            area=np.array([], dtype=np.float64),
-            material_tag=np.array([], dtype=np.int64),
+            values=np.concatenate(values_parts, axis=1),
+            element_index=np.concatenate(element_index_parts),
+            natural_coords=np.concatenate(natural_coords_parts, axis=0),
+            local_axes_quaternion=None,
             time=time[t_idx],
         )
 
-    def read_layers(self, stage_id, component, *, element_ids=None,
-                     gp_indices=None, layer_indices=None,
-                     time_slice=None) -> LayerSlab:
+    def read_fibers(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        gp_indices: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> FiberSlab:
+        self._ensure_stages()
         time = self.time_vector(stage_id)
         t_idx = resolve_time_slice(time_slice, time)
+
+        mpco_name = self._stage_to_mpco.get(stage_id)
+        if mpco_name is None:
+            return _empty_fiber_slab(component, time, t_idx)
+        stage_grp = self._h5[mpco_name]
+        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
+        model_elements = stage_grp.get("MODEL/ELEMENTS")
+        section_assignments = stage_grp.get("MODEL/SECTION_ASSIGNMENTS")
+        if (
+            on_elements is None
+            or model_elements is None
+            or section_assignments is None
+        ):
+            return _empty_fiber_slab(component, time, t_idx)
+
+        token, buckets = _mfiber.discover_fiber_buckets(
+            on_elements, canonical_component=component,
+        )
+        if not buckets:
+            return _empty_fiber_slab(component, time, t_idx)
+        token_grp = on_elements[token]
+
+        values_parts: list[ndarray] = []
+        element_index_parts: list[ndarray] = []
+        gp_index_parts: list[ndarray] = []
+        y_parts: list[ndarray] = []
+        z_parts: list[ndarray] = []
+        area_parts: list[ndarray] = []
+        material_tag_parts: list[ndarray] = []
+
+        for bucket in buckets:
+            bucket_grp = token_grp[bucket.bracket_key]
+            result = _mfiber.read_fiber_bucket_slab(
+                bucket_grp, model_elements, section_assignments, bucket,
+                t_idx=t_idx,
+                element_ids=element_ids,
+                gp_indices=gp_indices,
+            )
+            if result is None:
+                continue
+            values, ei, gpi, y, z, area, mtag = result
+            values_parts.append(values)
+            element_index_parts.append(ei)
+            gp_index_parts.append(gpi)
+            y_parts.append(y)
+            z_parts.append(z)
+            area_parts.append(area)
+            material_tag_parts.append(mtag)
+
+        if not values_parts:
+            return _empty_fiber_slab(component, time, t_idx)
+
+        return FiberSlab(
+            component=component,
+            values=np.concatenate(values_parts, axis=1),
+            element_index=np.concatenate(element_index_parts),
+            gp_index=np.concatenate(gp_index_parts),
+            y=np.concatenate(y_parts),
+            z=np.concatenate(z_parts),
+            area=np.concatenate(area_parts),
+            material_tag=np.concatenate(material_tag_parts),
+            time=time[t_idx],
+        )
+
+    def read_layers(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        gp_indices: Optional[ndarray] = None,
+        layer_indices: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> LayerSlab:
+        self._ensure_stages()
+        time = self.time_vector(stage_id)
+        t_idx = resolve_time_slice(time_slice, time)
+
+        mpco_name = self._stage_to_mpco.get(stage_id)
+        if mpco_name is None:
+            return _empty_layer_slab(component, time, t_idx)
+        stage_grp = self._h5[mpco_name]
+        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
+        section_assignments = stage_grp.get("MODEL/SECTION_ASSIGNMENTS")
+        if on_elements is None or section_assignments is None:
+            return _empty_layer_slab(component, time, t_idx)
+        local_axes = stage_grp.get("MODEL/LOCAL_AXES")  # may be None
+
+        token, buckets = _mlayer.discover_layer_buckets(
+            on_elements, canonical_component=component,
+        )
+        if not buckets:
+            return _empty_layer_slab(component, time, t_idx)
+
+        values_parts: list[ndarray] = []
+        element_index_parts: list[ndarray] = []
+        gp_index_parts: list[ndarray] = []
+        layer_index_parts: list[ndarray] = []
+        sub_gp_index_parts: list[ndarray] = []
+        thickness_parts: list[ndarray] = []
+        quaternion_parts: list[ndarray] = []
+
+        for bucket in buckets:
+            # Buckets may live under either ``material.fiber.<X>``
+            # (swapped) or ``section.fiber.<X>`` (unswapped). Use
+            # each bucket's own source group.
+            bucket_grp = on_elements[bucket.mpco_group_name][bucket.bracket_key]
+            try:
+                result = _mlayer.read_layer_bucket_slab(
+                    bucket_grp, section_assignments, local_axes, bucket,
+                    component,
+                    t_idx=t_idx,
+                    element_ids=element_ids,
+                    gp_indices=gp_indices,
+                    layer_indices=layer_indices,
+                )
+            except ValueError:
+                # Malformed META — skip rather than crash.
+                continue
+            if result is None:
+                continue
+            (values, ei, gpi, lyri, subi,
+             thick, quat) = result
+            values_parts.append(values)
+            element_index_parts.append(ei)
+            gp_index_parts.append(gpi)
+            layer_index_parts.append(lyri)
+            sub_gp_index_parts.append(subi)
+            thickness_parts.append(thick)
+            quaternion_parts.append(quat)
+
+        if not values_parts:
+            return _empty_layer_slab(component, time, t_idx)
+
         return LayerSlab(
             component=component,
-            values=np.zeros((t_idx.size, 0), dtype=np.float64),
-            element_index=np.array([], dtype=np.int64),
-            gp_index=np.array([], dtype=np.int64),
-            layer_index=np.array([], dtype=np.int64),
-            sub_gp_index=np.array([], dtype=np.int64),
-            thickness=np.array([], dtype=np.float64),
-            local_axes_quaternion=np.zeros((0, 4), dtype=np.float64),
+            values=np.concatenate(values_parts, axis=1),
+            element_index=np.concatenate(element_index_parts),
+            gp_index=np.concatenate(gp_index_parts),
+            layer_index=np.concatenate(layer_index_parts),
+            sub_gp_index=np.concatenate(sub_gp_index_parts),
+            thickness=np.concatenate(thickness_parts),
+            local_axes_quaternion=np.concatenate(quaternion_parts, axis=0),
             time=time[t_idx],
         )
 
@@ -647,5 +898,33 @@ def _empty_line_station_slab(
         values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
         element_index=np.array([], dtype=np.int64),
         station_natural_coord=np.array([], dtype=np.float64),
+        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
+    )
+
+
+def _empty_fiber_slab(component: str, time: ndarray, t_idx) -> FiberSlab:
+    return FiberSlab(
+        component=component,
+        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
+        element_index=np.array([], dtype=np.int64),
+        gp_index=np.array([], dtype=np.int64),
+        y=np.array([], dtype=np.float64),
+        z=np.array([], dtype=np.float64),
+        area=np.array([], dtype=np.float64),
+        material_tag=np.array([], dtype=np.int64),
+        time=time[t_idx] if time.size else np.array([], dtype=np.float64),
+    )
+
+
+def _empty_layer_slab(component: str, time: ndarray, t_idx) -> LayerSlab:
+    return LayerSlab(
+        component=component,
+        values=np.zeros((np.size(t_idx), 0), dtype=np.float64),
+        element_index=np.array([], dtype=np.int64),
+        gp_index=np.array([], dtype=np.int64),
+        layer_index=np.array([], dtype=np.int64),
+        sub_gp_index=np.array([], dtype=np.int64),
+        thickness=np.array([], dtype=np.float64),
+        local_axes_quaternion=np.zeros((0, 4), dtype=np.float64),
         time=time[t_idx] if time.size else np.array([], dtype=np.float64),
     )

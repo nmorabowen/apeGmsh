@@ -57,6 +57,16 @@ EXPECTED_CUSTOM_RULE_KEYS: tuple[tuple[str, str], ...] = (
     ("ElasticForceBeamColumn3d", "section_force"),
     ("DispBeamColumn2d", "section_force"),
     ("DispBeamColumn3d", "section_force"),
+    # Phase 11c added the conjugate ``section_deformation`` token
+    # for the same eight beam-column classes.
+    ("ForceBeamColumn2d", "section_deformation"),
+    ("ForceBeamColumn3d", "section_deformation"),
+    ("ForceBeamColumnCBDI2d", "section_deformation"),
+    ("ForceBeamColumnWarping2d", "section_deformation"),
+    ("ElasticForceBeamColumn2d", "section_deformation"),
+    ("ElasticForceBeamColumn3d", "section_deformation"),
+    ("DispBeamColumn2d", "section_deformation"),
+    ("DispBeamColumn3d", "section_deformation"),
 )
 
 
@@ -106,9 +116,9 @@ class TestLookupCustomRule:
             lookup_custom_rule("NotARealClass", "section_force")
 
     def test_miss_token_raises(self) -> None:
-        # ``section_deformation`` is out of scope for v1.
+        # ``section_curvature`` is not a real token (typo guard).
         with pytest.raises(CatalogLookupError):
-            lookup_custom_rule("ForceBeamColumn3d", "section_deformation")
+            lookup_custom_rule("ForceBeamColumn3d", "section_curvature")
 
     def test_catalog_lookup_error_is_keyerror_subclass(self) -> None:
         try:

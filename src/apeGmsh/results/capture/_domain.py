@@ -22,10 +22,23 @@ Scope
   ``ResponseLayout``; per-step flat arrays from
   ``ops.eleResponse`` are unflattened and persisted via
   ``NativeWriter.write_gauss_group``.
-- **Other element-level records** (``elements`` /
-  ``line_stations`` / ``fibers`` / ``layers``): still raise
-  ``NotImplementedError`` at ``step()`` time — their catalog
-  entries land in later phases.
+- **Line-stations records** (Phase 11b): force-/disp-based beam-
+  column section forces, probed via
+  ``ops.eleResponse(eid, "section", str(ip), "force")``.
+- **Per-element-node forces** (Phase 11b, ``category="elements"``):
+  closed-form elastic-beam globalForce / localForce vectors.
+- **Fibers / layers records — MPCO-only in Phase 11c.** Live
+  domain probing for fiber-section beam-columns and layered shells
+  is intentionally deferred: per-fiber probing is performance-
+  expensive on large models, and the layered-shell ``eleResponse``
+  keyword is not consistent across shell classes. Fiber and layer
+  results are fully supported via MPCO recording — record with
+  ``-E section.fiber.stress`` (beams) or ``-E material.fiber.stress``
+  (shells) and read back through ``Results.from_mpco(...)``. If a
+  ``ResolvedRecorderSpec`` includes a ``fibers`` or ``layers``
+  record at ``DomainCapture`` open time, a ``UserWarning`` is
+  emitted and the record is silently skipped during the analysis
+  loop (no slabs written for it).
 
 Usage
 -----
@@ -52,6 +65,7 @@ Usage
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
@@ -276,6 +290,7 @@ class DomainCapture:
             source_path="<openseespy>",
         )
         # Categorise records up-front
+        mpco_only_records: list = []
         for rec in self._spec.records:
             if rec.category == "nodes":
                 if any(
@@ -295,8 +310,28 @@ class DomainCapture:
                 self._nodal_force_capturers.append(
                     _NodalForcesCapturer(rec),
                 )
+            elif rec.category in ("fibers", "layers"):
+                # Phase 11c: fibers / layers are MPCO-only. Warn the
+                # user and silently skip in the analysis loop rather
+                # than crash at step() time.
+                mpco_only_records.append(rec)
             else:
                 self._element_level_records.append(rec)
+        if mpco_only_records:
+            names = ", ".join(
+                f"{r.category}:{r.name!r}" for r in mpco_only_records
+            )
+            warnings.warn(
+                f"DomainCapture cannot probe fiber/layer results live "
+                f"({names}). These records are MPCO-only in Phase 11c "
+                f"— record an MPCO file with ``-E section.fiber.stress`` "
+                f"(beams) or ``-E material.fiber.stress`` (shells) and "
+                f"read back via ``Results.from_mpco(...)``. The "
+                f"affected records will be silently skipped during this "
+                f"analysis.",
+                UserWarning,
+                stacklevel=2,
+            )
         return self
 
     def __exit__(
@@ -353,12 +388,13 @@ class DomainCapture:
         if self._element_level_records:
             cats = sorted({r.category for r in self._element_level_records})
             raise NotImplementedError(
-                f"DomainCapture does not yet support element-level "
-                f"records of category {cats}. Gauss-level continuum "
-                f"stress/strain (Phase 11a), line-stations beam "
-                f"section forces (Phase 11b Step 2b), and per-element-"
-                f"node forces (Phase 11b Step 3b) are supported; "
-                f"fibers / layers still need their catalog entries."
+                f"DomainCapture does not support element-level "
+                f"records of category {cats}. Supported categories: "
+                f"``nodes`` (Phase 3), ``modal`` (Phase 3), ``gauss`` "
+                f"(Phase 11a), ``line_stations`` (Phase 11b), "
+                f"``elements`` per-element-node forces (Phase 11b). "
+                f"Fibers and layers are MPCO-only (Phase 11c) — see "
+                f"the module docstring."
             )
         ops = self._lazy_ops()
         if self._needs_reactions:

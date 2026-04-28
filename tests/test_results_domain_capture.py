@@ -409,8 +409,11 @@ def test_snapshot_mismatch_raises(tmp_path: Path) -> None:
 # categories (line_stations, fibers, layers, per-element-node forces)
 # still raise from step() until their catalog entries land.
 
-def test_unwired_element_level_records_raise_in_step(tmp_path: Path) -> None:
-    """Phase 11b wired ``line_stations``; ``fibers``/``layers`` still raise."""
+def test_fiber_records_warn_and_skip_in_domain_capture(tmp_path: Path) -> None:
+    """Phase 11c: fiber/layer records emit a UserWarning at __enter__ and are
+    silently skipped by ``step()`` — they're MPCO-only."""
+    import warnings
+
     fem = _MockFem([1])
     spec = _make_spec(
         ResolvedRecorderRecord(
@@ -424,10 +427,18 @@ def test_unwired_element_level_records_raise_in_step(tmp_path: Path) -> None:
     fake = _FakeOps()
 
     path = tmp_path / "run.h5"
-    with DomainCapture(spec, path, fem, ops=fake) as cap:
-        cap.begin_stage("g")
-        with pytest.raises(NotImplementedError, match="fibers"):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with DomainCapture(spec, path, fem, ops=fake) as cap:
+            cap.begin_stage("g")
+            # Should NOT raise — the fiber record is silently skipped.
             cap.step(t=0.0)
+            cap.end_stage()
+
+    assert any(
+        "MPCO-only" in str(w.message) and "fibers" in str(w.message)
+        for w in caught
+    ), [str(w.message) for w in caught]
 
 
 # =====================================================================

@@ -215,10 +215,11 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
     """Element-level records the transcoder doesn't yet handle don't crash.
 
     Phase 11a wired ``gauss``. Phase 11b wired ``line_stations``
-    (Step 2c) and ``elements`` (Step 3c). Only ``fibers`` / ``layers``
-    still skip silently — surface in ``transcoder.unsupported`` for
-    inspection.
+    (Step 2c) and ``elements`` (Step 3c). Phase 11c documented
+    ``fibers`` / ``layers`` as MPCO-only — they emit a UserWarning and
+    surface in ``transcoder.unsupported``.
     """
+    import warnings as _w
     fem = _MockFem([1])
     output_dir = tmp_path / "out"
     output_dir.mkdir()
@@ -253,8 +254,11 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
 
     target = tmp_path / "out.h5"
     transcoder = RecorderTranscoder(spec, output_dir, target, fem)
-    transcoder.run()
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        transcoder.run()
     assert "fibers:b" in transcoder.unsupported
+    assert any("MPCO-only" in str(w.message) for w in caught)
 
     with Results.from_native(target, fem=fem) as r:
         # Node data parsed

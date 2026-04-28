@@ -324,6 +324,95 @@ class NodalForceLayout:
 
 
 # =====================================================================
+# FiberSectionLayout — beam-columns with fiber sections (Phase 11c)
+# =====================================================================
+#
+# Beam-column elements with fiber sections expose per-fiber stress /
+# strain at every section integration point. The flat per-element
+# response packs::
+#
+#     flat[t, e, ip * (n_fibers * K) + f * K + k]
+#
+# = component k of fiber f at IP ip — i.e. IP slowest, fiber middle,
+# component fastest. Both ``n_IP`` (per-element, like line-stations)
+# and ``n_fibers`` (per-section, varies by section assignment) are
+# runtime properties; the catalog declares only the structural
+# identity of the response. Concrete shape comes from
+# :func:`resolve_fiber_layout`, which combines the per-element
+# ``GP_X`` array with the assigned section's fiber data
+# (``MODEL/SECTION_ASSIGNMENTS/SECTION_<tag>``).
+
+@dataclass(frozen=True)
+class FiberSectionLayout:
+    """Structural layout for a beam-column class with fiber sections.
+
+    Used by :data:`FIBER_CATALOG` entries. Concrete per-element layout
+    — ``n_IP``, GP natural coordinates, ``n_fibers``, and the fiber
+    geometry / material vectors — is built at read/capture time from
+    MPCO ``SECTION_ASSIGNMENTS`` (or a section-introspection probe at
+    capture time).
+
+    Parameters
+    ----------
+    class_tag
+        OpenSees ``ELE_TAG_*`` integer for this element class.
+    coord_system
+        Tag describing the parent domain. Always
+        ``"isoparametric_1d"`` for beam-columns.
+    """
+
+    class_tag: int
+    coord_system: str
+
+
+# =====================================================================
+# LayeredShellLayout — shells with LayeredShellFiberSection (Phase 11c)
+# =====================================================================
+#
+# Layered shell elements expose per-layer stress / strain at every
+# surface integration point. The flat per-element response packs::
+#
+#     flat[t, e, sgp * (n_layers * n_sub_gp * K)
+#                + lyr * (n_sub_gp * K) + sub * K + k]
+#
+# = component k of sub-IP sub of layer lyr at surface GP sgp.
+# ``n_sub_gp`` is the through-thickness IP count per layer (always 1
+# in v1 — the standard ``LayeredShellFiberSection`` integration);
+# ``n_layers`` and per-layer thickness / material come from the
+# section. Surface GP rule is fixed by the shell class
+# (``surface_int_rule``), so the catalog can declare it; layer
+# count is per-bucket and resolved at read time.
+
+@dataclass(frozen=True)
+class LayeredShellLayout:
+    """Structural layout for a shell class with LayeredShellFiberSection.
+
+    Used by :data:`LAYER_CATALOG` entries. Concrete per-element layout
+    — ``n_layers``, per-layer thickness, material tags, and per-element
+    local-axes quaternions — is built at read time from MPCO
+    ``SECTION_ASSIGNMENTS`` and ``MODEL/LOCAL_AXES``.
+
+    Parameters
+    ----------
+    class_tag
+        OpenSees ``ELE_TAG_*`` integer for this element class.
+    coord_system
+        Tag describing the surface parent domain
+        (``"isoparametric"`` for quad shells,
+        ``"barycentric_tri"`` for triangle shells).
+    surface_int_rule
+        Integration-rule enum for the shell's surface GP rule
+        (e.g. ``IntRule.Quad_GL_2`` for ASDShellQ4). The on-disk
+        bracket key carries this value as ``<rule>``; layered-shell
+        buckets share the rule with their non-layered sibling.
+    """
+
+    class_tag: int
+    coord_system: str
+    surface_int_rule: int
+
+
+# =====================================================================
 # Gauss-point coordinate tables
 # =====================================================================
 
@@ -911,10 +1000,12 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
 # time by :func:`resolve_layout_from_gp_x` from the per-element
 # ``GP_X`` array and the assigned section's response codes.
 #
-# v1 covers ``token == "section_force"`` only. The conjugate
-# ``"section_deformation"`` token will be added when its canonical
-# vocabulary names land (curvature_y / curvature_z and the line-
-# axial strain are not in ``LINE_DIAGRAMS`` yet).
+# Phase 11c adds the conjugate ``"section_deformation"`` token —
+# section deformations returned by ``section->getSectionDeformation()``,
+# under MPCO bucket ``ON_ELEMENTS/section.deformation/<bracket>``.
+# Same eight element classes; the per-bucket resolver picks
+# :data:`SECTION_RESPONSE_DEFORMATION_TO_CANONICAL` instead of the
+# force table.
 #
 # Notes on disp-based beam-columns: ``DispBeamColumn{2d,3d}`` does not
 # expose ``ops.eleResponse(eid, "integrationPoints")`` — DomainCapture
@@ -923,41 +1014,38 @@ RESPONSE_CATALOG: dict[tuple[str, int, str], ResponseLayout] = {
 # :doc:`internal_docs/plan_phase_11b_line_stations` §"Custom-rule
 # complexity" for the Tier 1/2/3 discovery story.
 
+
+def _custom_rule(class_tag: int) -> CustomRuleLayout:
+    return CustomRuleLayout(
+        class_tag=class_tag, coord_system="isoparametric_1d",
+    )
+
+
+# Element class names that carry the line-stations topology — both
+# section.force (Phase 11b) and section.deformation (Phase 11c)
+# entries are generated for each. Listed once to keep the two halves
+# of CUSTOM_RULE_CATALOG aligned by construction.
+_LINE_STATION_CLASSES: tuple[tuple[str, int], ...] = (
+    ("ForceBeamColumn2d",        ELE_TAG_ForceBeamColumn2d),
+    ("ForceBeamColumn3d",        ELE_TAG_ForceBeamColumn3d),
+    ("ForceBeamColumnCBDI2d",    ELE_TAG_ForceBeamColumnCBDI2d),
+    ("ForceBeamColumnWarping2d", ELE_TAG_ForceBeamColumnWarping2d),
+    ("ElasticForceBeamColumn2d", ELE_TAG_ElasticForceBeamColumn2d),
+    ("ElasticForceBeamColumn3d", ELE_TAG_ElasticForceBeamColumn3d),
+    ("DispBeamColumn2d",         ELE_TAG_DispBeamColumn2d),
+    ("DispBeamColumn3d",         ELE_TAG_DispBeamColumn3d),
+)
+
+
 CUSTOM_RULE_CATALOG: dict[tuple[str, str], CustomRuleLayout] = {
-    # ── Force-based beam-columns ──────────────────────────────────────
-    ("ForceBeamColumn2d", "section_force"): CustomRuleLayout(
-        class_tag=ELE_TAG_ForceBeamColumn2d,
-        coord_system="isoparametric_1d",
-    ),
-    ("ForceBeamColumn3d", "section_force"): CustomRuleLayout(
-        class_tag=ELE_TAG_ForceBeamColumn3d,
-        coord_system="isoparametric_1d",
-    ),
-    ("ForceBeamColumnCBDI2d", "section_force"): CustomRuleLayout(
-        class_tag=ELE_TAG_ForceBeamColumnCBDI2d,
-        coord_system="isoparametric_1d",
-    ),
-    ("ForceBeamColumnWarping2d", "section_force"): CustomRuleLayout(
-        class_tag=ELE_TAG_ForceBeamColumnWarping2d,
-        coord_system="isoparametric_1d",
-    ),
-    ("ElasticForceBeamColumn2d", "section_force"): CustomRuleLayout(
-        class_tag=ELE_TAG_ElasticForceBeamColumn2d,
-        coord_system="isoparametric_1d",
-    ),
-    ("ElasticForceBeamColumn3d", "section_force"): CustomRuleLayout(
-        class_tag=ELE_TAG_ElasticForceBeamColumn3d,
-        coord_system="isoparametric_1d",
-    ),
-    # ── Displacement-based beam-columns ───────────────────────────────
-    ("DispBeamColumn2d", "section_force"): CustomRuleLayout(
-        class_tag=ELE_TAG_DispBeamColumn2d,
-        coord_system="isoparametric_1d",
-    ),
-    ("DispBeamColumn3d", "section_force"): CustomRuleLayout(
-        class_tag=ELE_TAG_DispBeamColumn3d,
-        coord_system="isoparametric_1d",
-    ),
+    **{
+        (cname, "section_force"): _custom_rule(ctag)
+        for cname, ctag in _LINE_STATION_CLASSES
+    },
+    **{
+        (cname, "section_deformation"): _custom_rule(ctag)
+        for cname, ctag in _LINE_STATION_CLASSES
+    },
 }
 
 
@@ -1054,6 +1142,84 @@ NODAL_FORCE_CATALOG: dict[tuple[str, str], NodalForceLayout] = {
 
 
 # =====================================================================
+# FIBER_CATALOG — beam-columns with fiber sections (Phase 11c)
+# =====================================================================
+#
+# Keyed on ``(class_name, token)`` where ``token`` is one of
+# ``"fiber_stress"`` / ``"fiber_strain"``. Element classes are the
+# same eight beam-columns as ``CUSTOM_RULE_CATALOG`` — fiber sections
+# can be assigned to any of them. Concrete shape (``n_IP``,
+# ``n_fibers``, fiber geometry / materials) is resolved per-bucket
+# at read time.
+
+def _fiber_section(class_tag: int) -> FiberSectionLayout:
+    return FiberSectionLayout(
+        class_tag=class_tag, coord_system="isoparametric_1d",
+    )
+
+
+FIBER_CATALOG: dict[tuple[str, str], FiberSectionLayout] = {
+    **{
+        (cname, "fiber_stress"): _fiber_section(ctag)
+        for cname, ctag in _LINE_STATION_CLASSES
+    },
+    **{
+        (cname, "fiber_strain"): _fiber_section(ctag)
+        for cname, ctag in _LINE_STATION_CLASSES
+    },
+}
+
+
+# =====================================================================
+# LAYER_CATALOG — shells with LayeredShellFiberSection (Phase 11c)
+# =====================================================================
+#
+# Keyed on ``(class_name, token)``. Surface integration rule is
+# carried on the layout entry (constant per shell class — ASDShellQ4
+# always Quad_GL_2, ShellMITC9 always Quad_GL_3, etc.). Per-bucket
+# layer count, thickness, material tags, and per-element
+# local-axes quaternions resolved at read time from
+# MPCO ``SECTION_ASSIGNMENTS`` and ``MODEL/LOCAL_AXES``.
+#
+# Coverage matches the gauss-level shell entries in
+# :data:`RESPONSE_CATALOG` — every shell class apeGmsh supports for
+# stress/strain at the surface-GP topology can also expose its
+# through-thickness layers when the assigned section is a
+# ``LayeredShellFiberSection``.
+
+# Shell classes that can carry a layered section, with their fixed
+# surface integration rule. Shared by both fiber_stress and
+# fiber_strain entries below.
+_LAYER_SHELL_CLASSES: tuple[tuple[str, int, str, int], ...] = (
+    # (class_name, class_tag, coord_system, surface_int_rule)
+    ("ShellMITC4",   ELE_TAG_ShellMITC4,   "isoparametric",    IntRule.Quad_GL_2),
+    ("ShellDKGQ",    ELE_TAG_ShellDKGQ,    "isoparametric",    IntRule.Quad_GL_2),
+    ("ShellNLDKGQ",  ELE_TAG_ShellNLDKGQ,  "isoparametric",    IntRule.Quad_GL_2),
+    ("ASDShellQ4",   ELE_TAG_ASDShellQ4,   "isoparametric",    IntRule.Quad_GL_2),
+    ("ShellMITC9",   ELE_TAG_ShellMITC9,   "isoparametric",    IntRule.Quad_GL_3),
+    ("ShellDKGT",    ELE_TAG_ShellDKGT,    "barycentric_tri",  IntRule.Triangle_GL_2C),
+    ("ShellNLDKGT",  ELE_TAG_ShellNLDKGT,  "barycentric_tri",  IntRule.Triangle_GL_2C),
+    ("ASDShellT3",   ELE_TAG_ASDShellT3,   "barycentric_tri",  IntRule.Triangle_GL_2B),
+)
+
+
+LAYER_CATALOG: dict[tuple[str, str], LayeredShellLayout] = {
+    **{
+        (cname, "fiber_stress"): LayeredShellLayout(
+            class_tag=ctag, coord_system=cs, surface_int_rule=ir,
+        )
+        for cname, ctag, cs, ir in _LAYER_SHELL_CLASSES
+    },
+    **{
+        (cname, "fiber_strain"): LayeredShellLayout(
+            class_tag=ctag, coord_system=cs, surface_int_rule=ir,
+        )
+        for cname, ctag, cs, ir in _LAYER_SHELL_CLASSES
+    },
+}
+
+
+# =====================================================================
 # Public API
 # =====================================================================
 
@@ -1119,6 +1285,22 @@ SECTION_RESPONSE_TO_CANONICAL: dict[int, str] = {
     6: "torsion",            # SECTION_RESPONSE_T
 }
 
+# Deformation conjugates for the same SECTION_RESPONSE_* codes, used
+# when the element-response token is ``section.deformation`` instead
+# of ``section.force``. Codes are identical (a section's
+# ``getType()`` returns the same vector regardless of whether the
+# downstream token is force or deformation); only the canonical names
+# differ. Used by :func:`resolve_layout_from_gp_x` with
+# ``kind="deformation"``.
+SECTION_RESPONSE_DEFORMATION_TO_CANONICAL: dict[int, str] = {
+    1: "curvature_z",        # conjugate to bending_moment_z
+    2: "axial_strain",       # conjugate to axial_force
+    3: "shear_strain_y",     # conjugate to shear_y
+    4: "curvature_y",        # conjugate to bending_moment_y
+    5: "shear_strain_z",     # conjugate to shear_z
+    6: "torsional_strain",   # conjugate to torsion
+}
+
 
 def lookup_custom_rule(class_name: str, token: str) -> CustomRuleLayout:
     """Look up the structural layout for a custom-rule (line-stations) entry.
@@ -1147,6 +1329,8 @@ def resolve_layout_from_gp_x(
     custom: CustomRuleLayout,
     gp_x: ndarray,
     section_codes: tuple[int, ...],
+    *,
+    kind: str = "force",
 ) -> ResponseLayout:
     """Build a concrete :class:`ResponseLayout` for one custom-rule bucket.
 
@@ -1174,6 +1358,12 @@ def resolve_layout_from_gp_x(
         canonical ``component_layout`` order. Code values come from
         the MPCO ``META/COMPONENTS`` string (Step 2a) or from a
         section-introspection probe at capture time (Step 2b).
+    kind
+        ``"force"`` (default) selects :data:`SECTION_RESPONSE_TO_CANONICAL`
+        for the section.force token; ``"deformation"`` selects
+        :data:`SECTION_RESPONSE_DEFORMATION_TO_CANONICAL` for the
+        section.deformation token. Both share the same code vector
+        from ``getType()`` — only the canonical names differ.
 
     Returns
     -------
@@ -1185,12 +1375,21 @@ def resolve_layout_from_gp_x(
     ------
     KeyError
         If ``section_codes`` contains an unrecognised value (e.g. a
-        warping or asymmetric-section code outside
-        :data:`SECTION_RESPONSE_TO_CANONICAL`).
+        warping or asymmetric-section code outside the active mapping).
+    ValueError
+        If ``kind`` is not ``"force"`` or ``"deformation"``.
     """
+    if kind == "force":
+        table = SECTION_RESPONSE_TO_CANONICAL
+    elif kind == "deformation":
+        table = SECTION_RESPONSE_DEFORMATION_TO_CANONICAL
+    else:
+        raise ValueError(
+            f"kind must be 'force' or 'deformation'; got {kind!r}."
+        )
     gp_x = np.asarray(gp_x, dtype=np.float64).reshape(-1)
     component_layout = tuple(
-        SECTION_RESPONSE_TO_CANONICAL[int(c)] for c in section_codes
+        table[int(c)] for c in section_codes
     )
     return ResponseLayout(
         n_gauss_points=gp_x.size,
@@ -1227,6 +1426,56 @@ def lookup_nodal_force(class_name: str, token: str) -> NodalForceLayout:
 def is_nodal_force_catalogued(class_name: str, token: str) -> bool:
     """True if ``(class_name, token)`` has a nodal-force layout entry."""
     return (class_name, token) in NODAL_FORCE_CATALOG
+
+
+# ---------------------------------------------------------------------
+# Fiber / layer catalog access (Phase 11c)
+# ---------------------------------------------------------------------
+
+def lookup_fiber(class_name: str, token: str) -> FiberSectionLayout:
+    """Look up the structural layout for a beam-column fiber-section entry.
+
+    See :data:`FIBER_CATALOG`. Raises :class:`CatalogLookupError` on
+    miss with a helpful message.
+    """
+    key = (class_name, token)
+    try:
+        return FIBER_CATALOG[key]
+    except KeyError:
+        raise CatalogLookupError(
+            f"No FiberSectionLayout for (class={class_name!r}, "
+            f"token={token!r}). Add an entry to FIBER_CATALOG "
+            f"in src/apeGmsh/solvers/_element_response.py if this "
+            f"beam-column should be supported for fiber-level reads."
+        ) from None
+
+
+def is_fiber_catalogued(class_name: str, token: str) -> bool:
+    """True if ``(class_name, token)`` has a fiber-section layout entry."""
+    return (class_name, token) in FIBER_CATALOG
+
+
+def lookup_layer(class_name: str, token: str) -> LayeredShellLayout:
+    """Look up the structural layout for a layered-shell entry.
+
+    See :data:`LAYER_CATALOG`. Raises :class:`CatalogLookupError` on
+    miss with a helpful message.
+    """
+    key = (class_name, token)
+    try:
+        return LAYER_CATALOG[key]
+    except KeyError:
+        raise CatalogLookupError(
+            f"No LayeredShellLayout for (class={class_name!r}, "
+            f"token={token!r}). Add an entry to LAYER_CATALOG "
+            f"in src/apeGmsh/solvers/_element_response.py if this "
+            f"shell should be supported for layered reads."
+        ) from None
+
+
+def is_layer_catalogued(class_name: str, token: str) -> bool:
+    """True if ``(class_name, token)`` has a layered-shell layout entry."""
+    return (class_name, token) in LAYER_CATALOG
 
 
 # ---------------------------------------------------------------------
@@ -1396,15 +1645,24 @@ _GAUSS_PREFIX_TO_KEYWORD: dict[str, str] = {
     # ``"basicForce"``, and ``"basicForces"`` as aliases for the same
     # scalar response (Truss.cpp:1194–1196).
     "axial_force": "axialForce",
+    # Material state scalars — full canonical names. Recorded by
+    # damage-tracking constitutive models (Concrete02, etc.). MPCO
+    # writes these under their own group names, with ``material.X``
+    # aliases on modern builds (handled in
+    # :data:`_MPCO_GAUSS_GROUP_ALIASES` below).
+    "damage": "damage",
+    "equivalent_plastic_strain": "equivalentPlasticStrain",
 }
 
 
 # Line-stations topology — force-/disp-based beam-columns expose
 # section-level forces under a single recorder keyword
-# (``section.force``). All apeGmsh ``LINE_DIAGRAMS`` canonicals
-# route there. The MPCO bucket name on disk is identical
-# (``ON_ELEMENTS/section.force/<bracket>``).
+# (``section.force``) and section deformations under another
+# (``section.deformation``). All apeGmsh ``LINE_DIAGRAMS`` canonicals
+# route to the first; ``LINE_STATION_DEFORMATIONS`` to the second.
+# The MPCO bucket name on disk is identical to the keyword.
 _LINE_STATION_PREFIX_TO_KEYWORD: dict[str, str] = {
+    # ── section.force ────────────────────────────────────────────────
     # Scalars (full canonical names, no axis suffix).
     "axial_force": "section.force",
     "torsion": "section.force",
@@ -1413,6 +1671,13 @@ _LINE_STATION_PREFIX_TO_KEYWORD: dict[str, str] = {
     # we route on the prefix.
     "shear": "section.force",
     "bending_moment": "section.force",
+    # ── section.deformation ──────────────────────────────────────────
+    # Scalars.
+    "axial_strain": "section.deformation",
+    "torsional_strain": "section.deformation",
+    # Vector-suffixed (``shear_strain_y/z``, ``curvature_y/z``).
+    "shear_strain": "section.deformation",
+    "curvature": "section.deformation",
 }
 
 
@@ -1438,6 +1703,8 @@ _KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
     "stresses": "stress",
     "strains": "strain",
     "axialForce": "axial_force",
+    "damage": "damage",
+    "equivalentPlasticStrain": "equivalent_plastic_strain",
 }
 
 
@@ -1445,6 +1712,7 @@ _KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
 # of ``CUSTOM_RULE_CATALOG`` keys).
 _LINE_STATION_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
     "section.force": "section_force",
+    "section.deformation": "section_deformation",
 }
 
 
@@ -1456,19 +1724,144 @@ _NODAL_FORCE_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
 }
 
 
+# Fibers topology — beam-column elements with fiber sections expose
+# per-fiber stress / strain under ``section.fiber.stress`` /
+# ``section.fiber.strain``. The MPCO bucket name on disk equals the
+# recorder keyword. Both canonicals are scalar full names (no axis
+# suffix); routed via the full-name fallback in
+# :func:`gauss_keyword_for_canonical`.
+_FIBER_PREFIX_TO_KEYWORD: dict[str, str] = {
+    "fiber_stress": "section.fiber.stress",
+    "fiber_strain": "section.fiber.strain",
+}
+
+_FIBER_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
+    "section.fiber.stress": "fiber_stress",
+    "section.fiber.strain": "fiber_strain",
+}
+
+
+# Layers topology — shells with LayeredShellFiberSection expose
+# per-layer stress / strain under ``material.fiber.stress`` /
+# ``material.fiber.strain`` (MPCO's shell keyword swap — the user
+# may write ``-E section.fiber.stress`` but the on-disk bucket is
+# ``material.fiber.*`` for shells). Same scalar canonicals as
+# fibers; the topology disambiguates the routing.
+_LAYER_PREFIX_TO_KEYWORD: dict[str, str] = {
+    "fiber_stress": "material.fiber.stress",
+    "fiber_strain": "material.fiber.strain",
+}
+
+_LAYER_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
+    "material.fiber.stress": "fiber_stress",
+    "material.fiber.strain": "fiber_strain",
+}
+
+
 # Per-topology dispatch — keeps the routing helpers small and lets
 # us add new topologies without growing more conditional branches.
 _TOPOLOGY_PREFIX_TABLES: dict[str | None, dict[str, str]] = {
     None: _GAUSS_PREFIX_TO_KEYWORD,
     "line_stations": _LINE_STATION_PREFIX_TO_KEYWORD,
     "nodal_forces": _NODAL_FORCE_PREFIX_TO_KEYWORD,
+    "fibers": _FIBER_PREFIX_TO_KEYWORD,
+    "layers": _LAYER_PREFIX_TO_KEYWORD,
 }
 
 _TOPOLOGY_KEYWORD_TABLES: dict[str | None, dict[str, str]] = {
     None: _KEYWORD_TO_CATALOG_TOKEN,
     "line_stations": _LINE_STATION_KEYWORD_TO_CATALOG_TOKEN,
     "nodal_forces": _NODAL_FORCE_KEYWORD_TO_CATALOG_TOKEN,
+    "fibers": _FIBER_KEYWORD_TO_CATALOG_TOKEN,
+    "layers": _LAYER_KEYWORD_TO_CATALOG_TOKEN,
 }
+
+
+# MPCO file-level keyword aliases. The recorder may write the same
+# logical result under different group names depending on the build
+# and the original recorder token: continuum stress/strain has lived
+# under ``stresses`` / ``strains`` for legacy builds and under
+# ``material.stress`` / ``material.strain`` for newer ones (the modern
+# convention also used when the user writes
+# ``-E material.stress`` explicitly). The catalog routing returns the
+# *primary* keyword, but MPCO read-site discovery walks the alias
+# list to find buckets that exist under either name.
+#
+# Out of scope: shell stress resultants are computed by the *element*
+# (``getStressResultant()``) and live under ``stresses``; they do
+# not have a ``material.stress`` alias because that path probes the
+# section's *material* instead. Bucket-shape validation downstream
+# protects against accidental match (an alias bucket with the wrong
+# shape simply fails catalog lookup and is skipped).
+_MPCO_GAUSS_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
+    "stresses": ("material.stress",),
+    "strains": ("material.strain",),
+    # Material-state scalars: legacy MPCO writes plain names; modern
+    # builds also expose them under ``material.<name>`` for parity
+    # with stress/strain. Same alias mechanism as continuum tensors.
+    "damage": ("material.damage",),
+    "equivalentPlasticStrain": ("material.equivalentPlasticStrain",),
+}
+
+
+# MPCO file-level aliases for fibers / layers. The shell keyword
+# swap (``$WO:SHELL_SEC_KEYWORD``) doesn't always fire — some shell
+# class tags are excluded from ``utils::shell::isShellElementTag``,
+# and users can also bypass the swap by writing the recorder with
+# an explicit token. As a result a layered shell may end up under
+# ``section.fiber.<X>`` (the unswapped name) instead of
+# ``material.fiber.<X>``. Discovery walks both group names and uses
+# the catalog (FIBER_CATALOG / LAYER_CATALOG) to assign each
+# bucket to the right topology by class tag.
+_MPCO_FIBER_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
+    "section.fiber.stress": ("material.fiber.stress",),
+    "section.fiber.strain": ("material.fiber.strain",),
+}
+
+_MPCO_LAYER_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
+    "material.fiber.stress": ("section.fiber.stress",),
+    "material.fiber.strain": ("section.fiber.strain",),
+}
+
+
+def mpco_fiber_group_aliases(primary_keyword: str) -> tuple[str, ...]:
+    """Return ``(primary,) + alias_keywords`` for a fibers MPCO read.
+
+    Mirrors :func:`mpco_gauss_group_aliases`. The catalog routing
+    declares ``section.fiber.<X>`` as the canonical fibers group
+    name; in practice some files also put beam fiber buckets under
+    ``material.fiber.<X>`` when MPCO's shell keyword swap mis-fires.
+    """
+    return (primary_keyword,) + _MPCO_FIBER_GROUP_ALIASES.get(
+        primary_keyword, (),
+    )
+
+
+def mpco_layer_group_aliases(primary_keyword: str) -> tuple[str, ...]:
+    """Return ``(primary,) + alias_keywords`` for a layers MPCO read.
+
+    Mirrors :func:`mpco_gauss_group_aliases`. ``material.fiber.<X>``
+    is the keyword-swapped target for layered shells, but some
+    shell class tags / recorder token spellings end up under
+    ``section.fiber.<X>``; discovery walks both.
+    """
+    return (primary_keyword,) + _MPCO_LAYER_GROUP_ALIASES.get(
+        primary_keyword, (),
+    )
+
+
+def mpco_gauss_group_aliases(primary_keyword: str) -> tuple[str, ...]:
+    """Return ``(primary,) + alias_keywords`` for an MPCO read site.
+
+    Used by :func:`apeGmsh.results.readers._mpco_element_io.discover_gauss_buckets`
+    to walk every group name under which a logical result may live.
+    Order matters: the primary keyword is tried first so callers that
+    only care about the "first hit" group name see the canonical
+    spelling.
+    """
+    return (primary_keyword,) + _MPCO_GAUSS_GROUP_ALIASES.get(
+        primary_keyword, (),
+    )
 
 
 def gauss_keyword_for_canonical(

@@ -262,7 +262,13 @@ def test_deferred_category_emits_todo(category: str) -> None:
     )
     spec = _make_spec(rec)
     [line] = spec.to_tcl_commands()
-    assert "TODO Phase 5+" in line
+    if category in ("fibers", "layers"):
+        # Phase 11c: fiber/layer recorders are MPCO-only — comment
+        # points the user at MPCO instead of generic TODO.
+        assert "MPCO-only" in line
+        assert "Results.from_mpco" in line
+    else:
+        assert "TODO Phase 5+" in line
     assert category in line
 
 

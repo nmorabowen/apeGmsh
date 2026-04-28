@@ -14,9 +14,16 @@ Scope
   for catalogued element classes. Class identity is sniffed from the
   file's column count via the response catalog; v1 requires
   homogeneous-class records (one element class per record).
-- ``elements`` (per-element-node forces), ``line_stations``,
-  ``fibers``, ``layers`` — still skipped; their catalog entries land
-  in later phases.
+- ``line_stations`` records (Phase 11b) — beam section forces.
+- ``elements`` records (Phase 11b) — per-element-node forces.
+- ``fibers`` / ``layers`` — **MPCO-only in Phase 11c.** The ``.out``
+  format is impractical for fiber-section results (a 5-IP × 100-fiber
+  section explodes to 500 columns per element per timestep) and
+  shell layered-section probing through ``.out`` requires a
+  per-fiber recorder per element. Use MPCO recording instead and
+  read via ``Results.from_mpco(...)``. If a spec includes fiber or
+  layer records, they are skipped here with a ``UserWarning`` and
+  surfaced in ``self.unsupported`` for inspection.
 - ``modal`` — emission deferred, so the transcoder skips too.
 
 Single-stage transcode: one transcoder call produces one stage. For
@@ -25,6 +32,7 @@ domain capture).
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -109,9 +117,13 @@ class RecorderTranscoder:
         nodal_records: list[_NodalForceRecordPayload] = []
         unsupported: list[str] = []
 
+        mpco_only_skipped: list[str] = []
         for rec in self._spec.records:
             if rec.category in _DEFERRED_CATEGORIES:
-                unsupported.append(f"{rec.category}:{rec.name}")
+                tag = f"{rec.category}:{rec.name}"
+                unsupported.append(tag)
+                if rec.category in ("fibers", "layers"):
+                    mpco_only_skipped.append(tag)
                 continue
             if rec.category == "nodes":
                 node_records.append(self._parse_node_record(rec))
@@ -128,8 +140,18 @@ class RecorderTranscoder:
                 if payload is not None:
                     nodal_records.append(payload)
             else:
-                # fibers / layers — not yet wired.
                 unsupported.append(f"{rec.category}:{rec.name}")
+
+        if mpco_only_skipped:
+            warnings.warn(
+                f"RecorderTranscoder cannot transcode fiber/layer "
+                f"records from ``.out`` files ({', '.join(mpco_only_skipped)}). "
+                f"These are MPCO-only in Phase 11c — record an MPCO "
+                f"file and read via ``Results.from_mpco(...)``. The "
+                f"records are listed in ``self.unsupported``.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         if unsupported:
             # Caller can detect skipped records via ``self.unsupported``

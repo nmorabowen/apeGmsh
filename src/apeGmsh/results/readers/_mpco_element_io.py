@@ -39,6 +39,7 @@ from ...solvers._element_response import (
     gauss_routing_for_canonical,
     is_catalogued,
     lookup,
+    mpco_gauss_group_aliases,
     parse_mpco_element_key,
     unflatten,
 )
@@ -76,10 +77,17 @@ def canonical_to_gauss_token(canonical: str) -> tuple[str, str] | None:
 
 @dataclass(frozen=True)
 class _Bucket:
-    """One ``ON_ELEMENTS/<token>/<bracket_key>`` group + its catalog layout."""
+    """One ``ON_ELEMENTS/<token>/<bracket_key>`` group + its catalog layout.
+
+    ``mpco_group_name`` records which alias group this bucket was
+    found under (``stresses`` vs. ``material.stress`` etc.). The read
+    site needs it to fetch the bucket dataset because alias groups
+    can hold disjoint bucket sets.
+    """
     bracket_key: str
     elem_key: MPCOElementKey
     layout: ResponseLayout
+    mpco_group_name: str = ""
 
 
 # =====================================================================
@@ -93,42 +101,66 @@ def discover_gauss_buckets(
 ) -> tuple[str | None, list[_Bucket]]:
     """Walk ``ON_ELEMENTS/<mpco_group>`` and return catalogued GP buckets.
 
+    The MPCO recorder may write continuum stress / strain / damage /
+    plastic-strain under more than one group name across builds —
+    modern builds use the ``material.X`` keyword family while legacy
+    builds used the bare keyword. Some builds emit BOTH groups but
+    only populate one; the other is left as an empty placeholder.
+    We walk the full alias list from
+    :func:`apeGmsh.solvers._element_response.mpco_gauss_group_aliases`
+    and accumulate buckets across every group that exists, skipping
+    duplicates so the same bucket key is never returned twice.
+    Buckets that don't shape-match the catalog are filtered per-bucket.
+
     Returns
     -------
     (mpco_group_name, buckets)
-        ``mpco_group_name`` is the ON_ELEMENTS child name we looked
-        under (``"stresses"`` / ``"strains"``), or ``None`` if the
-        canonical component has no gauss-token mapping. ``buckets``
-        is the list of buckets whose ``(class_name, int_rule,
-        catalog_token)`` is in the catalog and whose
-        ``custom_rule_idx``/``header_idx`` are both 0.
+        ``mpco_group_name`` is the ON_ELEMENTS child name we found
+        the first non-empty bucket under (the primary keyword if it
+        had data, otherwise the first alias that did). Returns the
+        primary keyword + empty list when no group has any buckets,
+        or ``(None, [])`` if the canonical component has no
+        gauss-token mapping at all.
     """
     mapping = canonical_to_gauss_token(canonical_component)
     if mapping is None:
         return (None, [])
     mpco_group_name, catalog_token = mapping
-    if mpco_group_name not in on_elements_grp:
-        return (mpco_group_name, [])
+    candidate_names = mpco_gauss_group_aliases(mpco_group_name)
 
-    token_grp = on_elements_grp[mpco_group_name]
     out: list[_Bucket] = []
-    for bracket_key in token_grp:
-        try:
-            elem_key = parse_mpco_element_key(bracket_key)
-        except ValueError:
+    seen_keys: set[str] = set()
+    found_name: str | None = None
+    for name in candidate_names:
+        if name not in on_elements_grp:
             continue
-        if elem_key.custom_rule_idx != 0 or elem_key.header_idx != 0:
-            # v1 scope — skip custom-rule / heterogeneous-response buckets.
-            continue
-        if not is_catalogued(elem_key.class_name, elem_key.int_rule, catalog_token):
-            continue
-        layout = lookup(elem_key.class_name, elem_key.int_rule, catalog_token)
-        out.append(_Bucket(
-            bracket_key=bracket_key,
-            elem_key=elem_key,
-            layout=layout,
-        ))
-    return (mpco_group_name, out)
+        token_grp = on_elements_grp[name]
+        for bracket_key in token_grp:
+            if bracket_key in seen_keys:
+                continue
+            try:
+                elem_key = parse_mpco_element_key(bracket_key)
+            except ValueError:
+                continue
+            if elem_key.custom_rule_idx != 0 or elem_key.header_idx != 0:
+                continue
+            if not is_catalogued(
+                elem_key.class_name, elem_key.int_rule, catalog_token,
+            ):
+                continue
+            layout = lookup(
+                elem_key.class_name, elem_key.int_rule, catalog_token,
+            )
+            out.append(_Bucket(
+                bracket_key=bracket_key,
+                elem_key=elem_key,
+                layout=layout,
+                mpco_group_name=name,
+            ))
+            seen_keys.add(bracket_key)
+            if found_name is None:
+                found_name = name
+    return (found_name or mpco_group_name, out)
 
 
 # =====================================================================

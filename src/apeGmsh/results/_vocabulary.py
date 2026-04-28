@@ -65,6 +65,23 @@ LINE_DIAGRAMS: tuple[str, ...] = (
 # in global frame) — same physical dimension but different reference
 # frame and topology level, so they get different canonical names.
 
+# Conjugate work-pair to ``LINE_DIAGRAMS`` — beam section deformations
+# returned by ``section->getSectionDeformation()`` (OpenSees recorder
+# token ``section.deformation``, MPCO bucket
+# ``ON_ELEMENTS/section.deformation/<bucket>``). Component order
+# parallels ``LINE_DIAGRAMS`` so canonical pairing is positional:
+# ``axial_force ↔ axial_strain``, ``shear_y ↔ shear_strain_y``,
+# ``torsion ↔ torsional_strain``, ``bending_moment_y ↔ curvature_y``,
+# etc. Like the diagrams, these live in the section's local frame and
+# are distinct from continuum strains (which carry tensor-index
+# suffixes like ``strain_xx``).
+LINE_STATION_DEFORMATIONS: tuple[str, ...] = (
+    "axial_strain",
+    "shear_strain_y", "shear_strain_z",
+    "torsional_strain",
+    "curvature_y", "curvature_z",
+)
+
 STRESS: tuple[str, ...] = tuple(f"stress_{idx}" for idx in _TENSOR_INDICES)
 STRAIN: tuple[str, ...] = tuple(f"strain_{idx}" for idx in _TENSOR_INDICES)
 
@@ -109,9 +126,33 @@ DERIVED_SCALARS: tuple[str, ...] = (
 
 FIBER: tuple[str, ...] = ("fiber_stress", "fiber_strain")
 
-MATERIAL_STATE: tuple[str, ...] = ("damage",)
+# Material-state scalar outputs. Damage-plasticity models with
+# split tension/compression behaviour (ASDConcrete, IMPLEX-stabilised
+# concrete, etc.) emit two values per token rather than one — under
+# the MPCO META segment names ``d+`` / ``d-`` (damage) and ``PLE+`` /
+# ``PLE-`` (plastic strain). apeGmsh exposes these via the conjugate-
+# pair canonicals below; the bare ``damage`` and
+# ``equivalent_plastic_strain`` names remain the canonicals for
+# single-component materials.
+MATERIAL_STATE: tuple[str, ...] = (
+    "damage",
+    "damage_tension",
+    "damage_compression",
+    "equivalent_plastic_strain_tension",
+    "equivalent_plastic_strain_compression",
+)
 # ``state_variable_<n>`` is also valid — handled via a regex match in
 # ``is_canonical()``, not enumerated here.
+
+# Map MPCO META component symbols → canonical suffix. Used when
+# resolving multi-component material-state buckets at read time.
+# Unknown symbols fall back to a ``_<i>`` indexed suffix.
+MPCO_MATERIAL_SYMBOL_TO_CANONICAL_SUFFIX: dict[str, str] = {
+    "d+": "tension",
+    "d-": "compression",
+    "PLE+": "tension",
+    "PLE-": "compression",
+}
 
 
 ALL_CANONICAL: frozenset[str] = frozenset(
@@ -119,6 +160,7 @@ ALL_CANONICAL: frozenset[str] = frozenset(
     + NODAL_FORCES
     + PER_ELEMENT_NODAL_FORCES
     + LINE_DIAGRAMS
+    + LINE_STATION_DEFORMATIONS
     + STRESS
     + STRAIN
     + DERIVED_SCALARS
@@ -172,6 +214,18 @@ _SHORTHAND_TENSOR: dict[str, tuple[str, ...]] = {
     "strain": STRAIN,
 }
 
+# Section-level beam shorthands — keyed to the LINE_DIAGRAMS /
+# LINE_STATION_DEFORMATIONS topology, not the global-frame nodal
+# vocabulary. These are returned verbatim (no clipping) regardless
+# of ``ndm``/``ndf``: a 2-D beam-column never asks for ``shear_z`` /
+# ``curvature_y`` (its layout simply does not include them), and
+# section deformation tokens are emitted only for elements whose
+# section's response codes select them.
+_SHORTHAND_LINE_STATION: dict[str, tuple[str, ...]] = {
+    "section_force": LINE_DIAGRAMS,
+    "section_deformation": LINE_STATION_DEFORMATIONS,
+}
+
 # Reaction is a single OpenSees recorder token covering both forces
 # and moments; we expose it as one shorthand.
 _SHORTHAND_REACTION: tuple[str, ...] = (
@@ -183,6 +237,7 @@ ALL_SHORTHANDS: frozenset[str] = frozenset(
     list(_SHORTHAND_TRANSLATIONAL.keys())
     + list(_SHORTHAND_ROTATIONAL.keys())
     + list(_SHORTHAND_TENSOR.keys())
+    + list(_SHORTHAND_LINE_STATION.keys())
     + ["reaction"]
 )
 
@@ -195,10 +250,19 @@ def is_canonical(name: str) -> bool:
     """True if ``name`` is a known canonical component name."""
     if name in ALL_CANONICAL:
         return True
-    # Pattern: state_variable_<integer>
+    # Pattern: state_variable_<integer>.
     if name.startswith("state_variable_"):
         suffix = name[len("state_variable_"):]
         return suffix.isdigit()
+    # Patterns: fiber_stress_<integer> / fiber_strain_<integer>.
+    # Layered shells write a vector per layer (e.g. 5-component
+    # plane-stress + transverse-shear), not a scalar; the canonical
+    # split is index-based when META labels are generic.
+    for stem in ("fiber_stress_", "fiber_strain_"):
+        if name.startswith(stem):
+            suffix = name[len(stem):]
+            if suffix.isdigit():
+                return True
     return False
 
 
@@ -235,6 +299,15 @@ def expand_shorthand(
     if name in _SHORTHAND_TENSOR:
         full = _SHORTHAND_TENSOR[name]
         return _clip_tensor(full, ndm)
+
+    if name in _SHORTHAND_LINE_STATION:
+        # Line-station shorthands are not clipped by ``ndm``/``ndf``:
+        # the catalog declares per-element which subset is emitted,
+        # and ``Results`` returns empty slabs for components a given
+        # element doesn't expose. Clipping here would hide tokens
+        # users genuinely want (e.g. asking for ``section_force`` on
+        # a 3D model and missing ``torsion``).
+        return _SHORTHAND_LINE_STATION[name]
 
     if name == "reaction":
         forces = _clip_translational(_SHORTHAND_REACTION[:3], ndm)

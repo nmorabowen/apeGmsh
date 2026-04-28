@@ -511,6 +511,14 @@ def emit_spec_python(
 
 
 def _tcl_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
+    if rec.category in ("fibers", "layers"):
+        return (
+            f";# recorder category {rec.category!r} "
+            f"(record {rec.name!r}) is MPCO-only in apeGmsh Phase 11c. "
+            f"Add an MPCO recorder (e.g. ``recorder mpco {rec.name}.mpco "
+            f"-E section.fiber.stress``) instead of relying on .out "
+            f"emission, then read with ``Results.from_mpco(...)``."
+        )
     return (
         f";# TODO Phase 5+: recorder category {rec.category!r} "
         f"(record {rec.name!r}) — emission deferred. "
@@ -519,6 +527,15 @@ def _tcl_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
 
 
 def _py_unsupported_comment(rec: ResolvedRecorderRecord) -> str:
+    if rec.category in ("fibers", "layers"):
+        return (
+            f"# recorder category {rec.category!r} "
+            f"(record {rec.name!r}) is MPCO-only in apeGmsh Phase 11c. "
+            f"Add an MPCO recorder (e.g. ``ops.recorder('mpco', "
+            f"'{rec.name}.mpco', '-E', 'section.fiber.stress')``) "
+            f"instead of relying on .out emission, then read with "
+            f"``Results.from_mpco(...)``."
+        )
     return (
         f"# TODO Phase 5+: recorder category {rec.category!r} "
         f"(record {rec.name!r}) — emission deferred. "
