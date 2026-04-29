@@ -1277,6 +1277,22 @@ LAYER_CATALOG: dict[tuple[str, str], LayeredShellLayout] = {
 #
 # MPCO classifies all ZeroLength variants with ``Line_GL_1`` (= 1);
 # the bracket key on disk is ``<tag>-<Class>[1:0:0]``.
+#
+# Variant validation against real MPCO output (post-11d):
+#
+# - ``ZeroLength`` — fully validated. ``basicForce`` / ``deformation``
+#   are per-spring scalars; bucket header_idx splits by spring count.
+# - ``ZeroLengthSection`` — class name preserved by STKO. ``basicForce``
+#   carries the section's response components (e.g. P, Vy, Mz for an
+#   Aggregator) — the per-spring layout still works at the IO level,
+#   but spring indices map to section codes, not free-direction
+#   springs. Treat ``spring_force_<n>`` as "n-th section response".
+# - ``ZeroLengthND``, ``ZeroLengthContact``, ``ZeroLengthInterface2D``
+#   — STKO's MPCO recorder writes their class as
+#   ``UnknownMovableObject`` (no name mapping in the recorder), so
+#   discovery silently skips these buckets. Catalog entries are kept
+#   so that future MPCO releases (or a custom recorder fix) will
+#   surface the data without further code changes.
 
 _ZEROLENGTH_CLASSES: list[tuple[str, int]] = [
     # (class_name, class_tag)
@@ -1870,20 +1886,24 @@ _LAYER_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
 
 
 # Springs topology — ZeroLength / ZeroLengthSection / ZeroLengthND
-# expose per-spring force / deformation under MPCO ``force`` and
-# ``deformation`` group names (the same names STKO uses for the default
-# beam-column force recorder). The class tag in each bucket key
-# distinguishes spring buckets from beam buckets so there is no
-# collision. Canonicals ``spring_force`` and ``spring_deformation`` are
-# the *roots*; indexed variants (``spring_force_0`` etc.) strip the
-# suffix and route via the root in :func:`gauss_keyword_for_canonical`.
+# expose per-spring force under MPCO ``basicForce`` and per-spring
+# deformation under ``deformation``. STKO's plain ``force`` group for
+# zeroLength stores the global element resisting force vector
+# (``2*ndf`` columns: P1_x, P1_y, P1_z, P2_x, P2_y, P2_z), not
+# per-spring scalars — so it is *not* the right token for
+# ``spring_force``. ``basicForce`` is the matching companion to
+# ``deformation``: both write one column per spring with a header_idx
+# split when the spring count differs across elements. Canonicals
+# ``spring_force`` and ``spring_deformation`` are the *roots*; indexed
+# variants (``spring_force_0`` etc.) strip the suffix and route via
+# the root in :func:`gauss_keyword_for_canonical`.
 _SPRING_PREFIX_TO_KEYWORD: dict[str, str] = {
-    "spring_force": "force",
+    "spring_force": "basicForce",
     "spring_deformation": "deformation",
 }
 
 _SPRING_KEYWORD_TO_CATALOG_TOKEN: dict[str, str] = {
-    "force": "spring_force",
+    "basicForce": "spring_force",
     "deformation": "spring_deformation",
 }
 

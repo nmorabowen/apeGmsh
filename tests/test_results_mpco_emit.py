@@ -140,6 +140,49 @@ def test_local_force_token() -> None:
     assert "localForce" in line
 
 
+def test_spring_force_emits_basicForce_token() -> None:
+    # Per-spring force lives under MPCO ``basicForce`` (the plain
+    # ``force`` token would emit the global element resisting force
+    # vector instead — see _mpco_spring_io for the full rationale).
+    spec = _make_spec(ResolvedRecorderRecord(
+        category="elements", name="zl",
+        components=("spring_force",),
+        dt=None, n_steps=None,
+        element_ids=np.array([100]),
+    ))
+    line = spec.to_mpco_tcl_command()
+    assert "basicForce" in line
+    # Make sure ``force`` (the wrong token) didn't sneak in as a
+    # standalone -E entry.  Allowed contexts: ``basicForce`` itself
+    # and ``-N reactionForce`` etc., which all keep the suffix.
+    assert " force " not in line
+    assert not line.rstrip().endswith(" force")
+
+
+def test_indexed_spring_force_emits_basicForce() -> None:
+    spec = _make_spec(ResolvedRecorderRecord(
+        category="elements", name="zl",
+        components=("spring_force_0", "spring_force_2"),
+        dt=None, n_steps=None,
+        element_ids=np.array([200]),
+    ))
+    line = spec.to_mpco_tcl_command()
+    # Both indexed canonicals collapse to a single ``basicForce`` token.
+    assert "basicForce" in line
+    assert line.count("basicForce") == 1
+
+
+def test_spring_deformation_emits_deformation_token() -> None:
+    spec = _make_spec(ResolvedRecorderRecord(
+        category="elements", name="zl",
+        components=("spring_deformation_1",),
+        dt=None, n_steps=None,
+        element_ids=np.array([200]),
+    ))
+    line = spec.to_mpco_tcl_command()
+    assert "deformation" in line
+
+
 # =====================================================================
 # Modal
 # =====================================================================

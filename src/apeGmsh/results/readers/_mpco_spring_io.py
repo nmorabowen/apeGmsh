@@ -1,7 +1,7 @@
 """Zero-length spring result decoding for MPCOReader (Phase 11d).
 
-MPCO stores ZeroLength / ZeroLengthSection / ZeroLengthND element
-results under ``MODEL_STAGE[…]/RESULTS/ON_ELEMENTS/force/`` and
+MPCO stores ZeroLength / ZeroLengthSection / ZeroLengthND per-spring
+results under ``MODEL_STAGE[…]/RESULTS/ON_ELEMENTS/basicForce/`` and
 ``…/deformation/`` bucket groups.  Each bucket key is::
 
     <classTag>-<ClassName>[<intRule>:<cust>:<hdr>]
@@ -10,6 +10,13 @@ where ``<intRule>`` is ``1`` (``Line_GL_1``) for all ZeroLength
 family members.  The bucket holds the standard
 ``META`` / ``ID`` / ``DATA/STEP_<k>`` triplet.
 
+Note that ``basicForce`` (not the plain ``force`` token) carries
+per-spring forces.  The ``force`` group instead writes the element's
+global resisting force vector — ``2*ndf`` columns
+(``P1_x, P1_y, P1_z, P2_x, P2_y, P2_z`` in 3D), one row per element,
+with all spring counts merged into a single bucket — which is not
+the per-spring layout this reader expects.
+
 Spring-specific conventions
 ---------------------------
 - **Variable component count**: a ZeroLength element configured with
@@ -17,8 +24,11 @@ Spring-specific conventions
   elements by the number of springs into separate ``header_idx``
   buckets; within one bucket all elements have the *same* N.
 - **META layout**: single block (no per-GP segmentation),
-  ``GAUSS_IDS = [[0]]`` (MPCO treats the element as having one GP at
-  ξ = 0), ``NUM_COMPONENTS = [[N]]``.
+  ``NUM_COMPONENTS = [[N]]``.  ``GAUSS_IDS`` is written as ``[[-1]]``
+  for ``basicForce`` / ``deformation`` (the recorder treats these
+  responses as "no Gauss point" — the element itself is a point).
+  The reader does not validate ``GAUSS_IDS`` since it carries no
+  per-spring information.
 - **Canonical naming**: ``spring_force_<n>`` for the n-th spring
   force (0-based), ``spring_deformation_<n>`` for the deformation.
   For a 1-spring element both ``spring_force_0`` and the bare root
@@ -58,6 +68,15 @@ if TYPE_CHECKING:
 
 def _spring_root_and_index(canonical: str) -> tuple[str, int] | None:
     """Split a spring canonical into ``(root, spring_index)``.
+
+    The bare root ``"spring_force"`` (no ``_<n>`` suffix) maps to
+    spring index 0 — i.e. it pulls column 0 of *every* matched bucket,
+    not just buckets where ``n_springs == 1``.  In a model that mixes
+    1-spring and N-spring ZeroLength elements, ``spring_force`` will
+    therefore return rows for both groups: the (only) spring of the
+    1-spring elements, plus spring 0 of the N-spring elements.  Use
+    ``spring_force_<n>`` (or ``ids=`` filtering) when you need to
+    target a specific subset.
 
     Examples
     --------
@@ -134,9 +153,9 @@ def discover_spring_buckets(
     Returns
     -------
     (mpco_group_name, buckets)
-        ``mpco_group_name`` is ``"force"`` or ``"deformation"`` (the
-        ON_ELEMENTS child that holds the data), or ``None`` if the
-        canonical has no spring routing. ``buckets`` contains one
+        ``mpco_group_name`` is ``"basicForce"`` or ``"deformation"``
+        (the ON_ELEMENTS child that holds the data), or ``None`` if
+        the canonical has no spring routing. ``buckets`` contains one
         entry per catalogued ZeroLength bucket in that group.
     """
     mapping = canonical_to_spring_token(canonical_component)

@@ -595,6 +595,13 @@ _MPCO_ELEMENT_PREFIX_TOKENS: dict[str, str] = {
     "nodal_resisting_force_local": "localForce",
     "nodal_resisting_moment": "globalForce",
     "nodal_resisting_moment_local": "localForce",
+    # ZeroLength springs (Phase 11d). Per-spring forces live under
+    # ``basicForce`` (not ``force`` — that token writes the global
+    # element resisting force vector); per-spring deformations live
+    # under ``deformation``. Read-side parity in
+    # :data:`apeGmsh.solvers._element_response._SPRING_PREFIX_TO_KEYWORD`.
+    "spring_force": "basicForce",
+    "spring_deformation": "deformation",
 }
 
 

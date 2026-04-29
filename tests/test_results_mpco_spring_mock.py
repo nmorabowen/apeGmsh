@@ -4,12 +4,13 @@ All tests use synthetic HDF5 files written to ``tmp_path``.
 No external fixture files are required.  The mock MPCO structure mirrors what
 STKO writes for ZeroLength elements:
 
-- ``ON_ELEMENTS/force/<19-ZeroLength[1:0:0]>/`` — spring force bucket
-- ``ON_ELEMENTS/deformation/<19-ZeroLength[1:0:0]>/`` — spring deformation bucket
+- ``ON_ELEMENTS/basicForce/<19-ZeroLength[1:0:0]>/`` — per-spring force bucket
+- ``ON_ELEMENTS/deformation/<19-ZeroLength[1:0:0]>/`` — per-spring deformation bucket
 
 Each bucket's META has a single block with ``NUM_COMPONENTS = N`` (N springs),
-``GAUSS_IDS = [0]``, ``MULTIPLICITY = [1]``.  DATA rows have shape
-``(n_elements, N)`` per step.
+``GAUSS_IDS = [-1]`` (the recorder uses ``-1`` for "no Gauss point" since
+the element itself is a point), ``MULTIPLICITY = [1]``.  DATA rows have
+shape ``(n_elements, N)`` per step.
 """
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ def _make_meta(grp: "h5py.Group", n_springs: int) -> None:
     """Write a ZeroLength-style META block for ``n_springs`` springs."""
     meta = grp.create_group("META")
     meta.create_dataset("MULTIPLICITY", data=np.array([[1]], dtype=np.int32))
-    meta.create_dataset("GAUSS_IDS",    data=np.array([[0]], dtype=np.int32))
+    meta.create_dataset("GAUSS_IDS",    data=np.array([[-1]], dtype=np.int32))
     meta.create_dataset("NUM_COMPONENTS", data=np.array([[n_springs]], dtype=np.int32))
     # COMPONENTS: "0.F_0,F_1,...,F_{N-1}"
     comp_str = "0." + ",".join(f"F_{i}" for i in range(n_springs))
@@ -100,7 +101,7 @@ def _make_spring_mpco(
         for i in range(n_steps):
             data_grp.create_dataset(f"STEP_{i}", data=data[i].astype(np.float64))
 
-    _write_bucket("force", force_values)
+    _write_bucket("basicForce", force_values)
     if deform_values is not None:
         _write_bucket("deformation", deform_values)
 
@@ -113,14 +114,14 @@ def _make_spring_mpco(
 # =====================================================================
 
 class TestRouting:
-    def test_spring_force_root_routes_to_force(self) -> None:
-        assert canonical_to_spring_token("spring_force") == ("force", "spring_force")
+    def test_spring_force_root_routes_to_basicForce(self) -> None:
+        assert canonical_to_spring_token("spring_force") == ("basicForce", "spring_force")
 
-    def test_spring_force_indexed_routes_to_force(self) -> None:
-        assert canonical_to_spring_token("spring_force_0") == ("force", "spring_force")
+    def test_spring_force_indexed_routes_to_basicForce(self) -> None:
+        assert canonical_to_spring_token("spring_force_0") == ("basicForce", "spring_force")
 
-    def test_spring_force_index_3_routes_to_force(self) -> None:
-        assert canonical_to_spring_token("spring_force_3") == ("force", "spring_force")
+    def test_spring_force_index_3_routes_to_basicForce(self) -> None:
+        assert canonical_to_spring_token("spring_force_3") == ("basicForce", "spring_force")
 
     def test_spring_deformation_root_routes(self) -> None:
         assert canonical_to_spring_token("spring_deformation") == (
@@ -155,7 +156,7 @@ class TestDiscovery:
             grp_name, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force_0",
             )
-        assert grp_name == "force"
+        assert grp_name == "basicForce"
         assert len(buckets) == 1
         assert buckets[0].elem_key.class_name == "ZeroLength"
 
@@ -225,7 +226,7 @@ class TestMetaResolution:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             n = resolve_n_springs(bkt_grp, buckets[0])
         assert n == 1
 
@@ -241,7 +242,7 @@ class TestMetaResolution:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             n = resolve_n_springs(bkt_grp, buckets[0])
         assert n == 5
 
@@ -257,7 +258,7 @@ class TestMetaResolution:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             canonicals = spring_canonicals_in_bucket(bkt_grp, buckets[0])
         # 1-spring → bare root name only
         assert canonicals == ("spring_force",)
@@ -274,7 +275,7 @@ class TestMetaResolution:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             canonicals = spring_canonicals_in_bucket(bkt_grp, buckets[0])
         assert canonicals == ("spring_force_0", "spring_force_1", "spring_force_2")
 
@@ -297,7 +298,7 @@ class TestSlabRead:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             result = read_spring_bucket_slab(
                 bkt_grp, buckets[0], "spring_force",
                 t_idx=np.arange(n_steps, dtype=np.int64),
@@ -324,7 +325,7 @@ class TestSlabRead:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force_2",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             result = read_spring_bucket_slab(
                 bkt_grp, buckets[0], "spring_force_2",
                 t_idx=np.arange(n_steps, dtype=np.int64),
@@ -348,7 +349,7 @@ class TestSlabRead:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force_5",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             result = read_spring_bucket_slab(
                 bkt_grp, buckets[0], "spring_force_5",
                 t_idx=np.arange(n_steps, dtype=np.int64),
@@ -369,7 +370,7 @@ class TestSlabRead:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force_1",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             result = read_spring_bucket_slab(
                 bkt_grp, buckets[0], "spring_force_1",
                 t_idx=np.arange(n_steps, dtype=np.int64),
@@ -394,7 +395,7 @@ class TestSlabRead:
             _, buckets = discover_spring_buckets(
                 on_elem, canonical_component="spring_force_0",
             )
-            bkt_grp = on_elem["force"][buckets[0].bracket_key]
+            bkt_grp = on_elem["basicForce"][buckets[0].bracket_key]
             t_idx = np.array([2], dtype=np.int64)  # step 2 only
             result = read_spring_bucket_slab(
                 bkt_grp, buckets[0], "spring_force_0",
