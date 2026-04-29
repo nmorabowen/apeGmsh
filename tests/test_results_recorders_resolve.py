@@ -277,3 +277,98 @@ def test_recorders_via_opensees_path(g) -> None:
     spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=6)
     assert len(spec.records) == 1
     assert spec.records[0].category == "nodes"
+
+
+# =====================================================================
+# Layer section metadata — Phase 11f
+# =====================================================================
+#
+# Layered-shell records pick up per-section thickness / material data
+# from ``g.opensees._sections`` at resolve time so DomainCapture's
+# layer capturer can populate the LayerSlab schema fully. Other
+# categories must not be affected.
+
+class TestLayerSectionMetadata:
+    def test_non_layer_records_have_no_metadata(self, g) -> None:
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
+        g.physical.add_volume("box", name="Body")
+        g.mesh.sizing.set_global_size(2.0)
+        g.mesh.generation.generate(dim=3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
+
+        g.opensees.recorders.nodes(pg="Body", components=["displacement"])
+        g.opensees.recorders.gauss(pg="Body", components=["stress"])
+        spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=6)
+        for r in spec.records:
+            assert r.layer_section_metadata is None
+
+    def test_layered_record_picks_up_section_metadata(self, g) -> None:
+        # Build a minimal shell PG and assign a layered section.
+        g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="slab")
+        g.physical.add_surface("slab", name="Slab")
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(dim=2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+
+        # Register two materials and a layered section on the
+        # OpenSees composite.
+        g.opensees.materials.add_nd_material(
+            "Concrete", "ElasticIsotropic", E=30e9, nu=0.2, rho=2400.0,
+        )
+        g.opensees.materials.add_nd_material(
+            "Steel", "ElasticIsotropic", E=200e9, nu=0.3, rho=7850.0,
+        )
+        g.opensees.materials.add_section(
+            "Slab3Layer", "LayeredShell",
+            layers=[("Concrete", 0.10), ("Steel", 0.005), ("Concrete", 0.10)],
+        )
+        g.opensees.elements.assign(
+            "Slab", "ASDShellQ4", material="Slab3Layer",
+        )
+
+        g.opensees.recorders.layers(
+            pg="Slab", components=["fiber_stress"],
+        )
+        spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=6)
+        assert len(spec.records) == 1
+        rec = spec.records[0]
+        assert rec.category == "layers"
+        meta = rec.layer_section_metadata
+        assert meta is not None
+        # One layered section in this model.
+        assert len(meta.sections) == 1
+        sec = next(iter(meta.sections.values()))
+        assert sec.section_name == "Slab3Layer"
+        assert sec.n_layers == 3
+        # Layer thicknesses came through as registered.
+        np.testing.assert_allclose(sec.thickness, [0.10, 0.005, 0.10])
+        # Every element in the record maps to that section.
+        assert rec.element_ids is not None
+        for eid in rec.element_ids.tolist():
+            assert int(eid) in meta.element_to_section
+            assert (
+                meta.element_to_section[int(eid)] == sec.section_tag
+            )
+
+    def test_layered_record_without_layered_assignment_is_none(self, g) -> None:
+        # An "ElasticMembranePlateSection" assignment on the only PG —
+        # nothing layered to pick up.
+        g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label="slab")
+        g.physical.add_surface("slab", name="Slab")
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(dim=2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+
+        g.opensees.materials.add_section(
+            "Plain", "ElasticMembranePlateSection",
+            E=30e9, nu=0.2, h=0.2, rho=2400.0,
+        )
+        g.opensees.elements.assign(
+            "Slab", "ASDShellQ4", material="Plain",
+        )
+
+        g.opensees.recorders.layers(
+            pg="Slab", components=["fiber_stress"],
+        )
+        spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=6)
+        assert spec.records[0].layer_section_metadata is None

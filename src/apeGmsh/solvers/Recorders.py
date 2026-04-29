@@ -61,6 +61,8 @@ from ..results._vocabulary import (
 )
 from ._recorder_specs import (
     ALL_CATEGORIES,
+    LayerSectionDef,
+    LayerSectionMetadata,
     RecorderRecord,
     ResolvedRecorderRecord,
     ResolvedRecorderSpec,
@@ -68,6 +70,7 @@ from ._recorder_specs import (
 
 if TYPE_CHECKING:
     from ..mesh.FEMData import FEMData
+    from .OpenSees import OpenSees
 
 
 # Per-category sets of allowed canonical components. ``state_variable_*``
@@ -78,7 +81,10 @@ _CATEGORY_COMPONENTS: dict[str, frozenset[str]] = {
     "line_stations": frozenset(LINE_DIAGRAMS),
     "gauss": frozenset(STRESS + STRAIN + DERIVED_SCALARS + MATERIAL_STATE),
     "fibers": frozenset(FIBER + MATERIAL_STATE),
-    "layers": frozenset(STRESS + STRAIN),
+    # Layered-shell records use the same fiber canonicals as beam
+    # fibers (one stress/strain value per fiber/layer), aliased
+    # under the LAYER_CATALOG keys ``fiber_stress`` / ``fiber_strain``.
+    "layers": frozenset(FIBER + MATERIAL_STATE),
 }
 
 _ELEMENT_LEVEL_CATEGORIES = frozenset({
@@ -95,13 +101,20 @@ class Recorders:
 
     Instances are constructable standalone (``Recorders()``) or
     surfaced on an OpenSees bridge (``g.opensees.recorders``). The
-    class has no required parent reference — records and ``resolve()``
-    operate on plain data plus a :class:`FEMData` argument.
+    OpenSees back-reference is optional: most categories
+    (``nodes`` / ``gauss`` / ``line_stations`` / ``elements`` /
+    ``fibers`` / ``modal``) resolve from the FEMData alone. The one
+    exception is ``layers`` — :class:`LayerSectionMetadata` is
+    populated at resolve time from ``opensees._sections`` and the
+    per-PG element assignments. Without an OpenSees handle, layer
+    records resolve without metadata, and DomainCapture's
+    ``_LayerCapturer`` will surface a clear error.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, opensees: "OpenSees | None" = None) -> None:
         self._records: list[RecorderRecord] = []
         self._auto_id: int = 0
+        self._opensees = opensees
 
     # ------------------------------------------------------------------
     # Declaration methods (one per category)
@@ -340,13 +353,93 @@ class Recorders:
             )
         # All other (non-modal) categories are element-level.
         ids_array = _resolve_element_selectors(fem, rec)
+        layer_metadata = None
+        if rec.category == "layers":
+            layer_metadata = self._resolve_layer_section_metadata(
+                fem, ids_array,
+            )
         return ResolvedRecorderRecord(
             category=rec.category,
             name=rec.name,
             components=expanded,
             dt=rec.dt, n_steps=rec.n_steps,
             element_ids=ids_array,
+            layer_section_metadata=layer_metadata,
             source=rec,
+        )
+
+    def _resolve_layer_section_metadata(
+        self,
+        fem: "FEMData",
+        element_ids: ndarray,
+    ) -> Optional[LayerSectionMetadata]:
+        """Build LayerSectionMetadata from the OpenSees back-reference.
+
+        Walks ``opensees._elem_assignments`` to learn which physical
+        group each element belongs to and which named section is
+        attached, then pulls layered-shell composition from
+        ``opensees._sections``. Elements assigned to a non-layered
+        section are silently absent from the map; if no element in
+        the record uses a layered section, returns ``None``.
+        """
+        if self._opensees is None:
+            return None
+
+        sections_registry = self._opensees._sections
+        elem_assignments = self._opensees._elem_assignments
+
+        # Reverse-build: pg_name → layered-section_name (skip if section
+        # isn't LayeredShell, or if assignment lacks a section).
+        pg_to_layered_section: dict[str, str] = {}
+        for pg_name, assign in elem_assignments.items():
+            sec_name = assign.get("material")
+            if sec_name is None or sec_name not in sections_registry:
+                continue
+            sec_def = sections_registry[sec_name]
+            if not _is_layered_shell_section(sec_def):
+                continue
+            pg_to_layered_section[pg_name] = sec_name
+
+        if not pg_to_layered_section:
+            return None
+
+        # Map element_id → section_name by intersecting the record's
+        # element_ids with each PG's element_ids.
+        record_id_set = set(int(e) for e in element_ids.tolist())
+        eid_to_sec_name: dict[int, str] = {}
+        for pg_name, sec_name in pg_to_layered_section.items():
+            try:
+                pg_eids = fem.elements.physical.element_ids(pg_name)
+            except Exception:
+                continue
+            for eid in np.asarray(pg_eids, dtype=np.int64).tolist():
+                if int(eid) in record_id_set:
+                    eid_to_sec_name[int(eid)] = sec_name
+
+        if not eid_to_sec_name:
+            return None
+
+        # Tag → def cache (use enumerated sec_tag from build, or
+        # fall back to a stable hash-of-name when build hasn't run).
+        sec_tags = getattr(self._opensees, "_sec_tags", {}) or {}
+        sections: dict[int, LayerSectionDef] = {}
+        eid_to_sec_tag: dict[int, int] = {}
+        for eid, sec_name in eid_to_sec_name.items():
+            sec_tag = int(
+                sec_tags.get(sec_name, _stable_section_tag(sec_name)),
+            )
+            eid_to_sec_tag[eid] = sec_tag
+            if sec_tag in sections:
+                continue
+            sec_def = sections_registry[sec_name]
+            sections[sec_tag] = _layered_shell_section_def(
+                sec_tag=sec_tag, name=sec_name, raw=sec_def,
+                opensees=self._opensees,
+            )
+
+        return LayerSectionMetadata(
+            sections=sections,
+            element_to_section=eid_to_sec_tag,
         )
 
     # ------------------------------------------------------------------
@@ -580,3 +673,97 @@ def _resolve_element_selectors(
     if not chunks:
         return np.array([], dtype=np.int64)
     return np.unique(np.concatenate(chunks))
+
+
+# =====================================================================
+# Layered-shell section helpers
+# =====================================================================
+#
+# ``g.opensees.materials.add_section(name, "LayeredShell", ...)`` shape:
+# the params dict carries ``layers`` as a list of ``(matTag, thickness)``
+# pairs (or, for legacy callers, separate ``thicknesses`` and
+# ``materials`` lists). We support both shapes.
+
+_LAYERED_SHELL_TYPES = frozenset({
+    "LayeredShell",
+    "LayeredShellFiberSection",
+})
+
+
+def _is_layered_shell_section(sec_def: dict) -> bool:
+    return sec_def.get("section_type", "") in _LAYERED_SHELL_TYPES
+
+
+def _layered_shell_section_def(
+    *, sec_tag: int, name: str, raw: dict,
+    opensees: "OpenSees | None" = None,
+) -> "LayerSectionDef":
+    """Normalise a registered LayeredShell section's params.
+
+    Accepts either:
+    - ``params={"layers": [(mat, thickness), ...]}``
+    - ``params={"thicknesses": [...], "materials": [...]}``
+
+    Materials may be int tags or string names from the parent
+    ``OpenSees`` material registries. Names are resolved against
+    ``_nd_mat_tags`` / ``_uni_mat_tags`` (populated at build time);
+    if those tables are empty (build hasn't run), we fall back to
+    a stable hash so the LayerSlab still has a usable column.
+    """
+    params = raw.get("params") or {}
+    layers = params.get("layers")
+    if layers is not None:
+        thicknesses = [float(t) for _, t in layers]
+        material_refs = [m for m, _ in layers]
+    else:
+        thicknesses = [float(t) for t in (params.get("thicknesses") or ())]
+        material_refs = list(params.get("materials") or ())
+    material_tags = [
+        _resolve_material_tag(m, opensees) for m in material_refs
+    ]
+    if len(thicknesses) != len(material_tags):
+        raise ValueError(
+            f"LayeredShell section {name!r}: thickness count "
+            f"({len(thicknesses)}) does not match material-tag count "
+            f"({len(material_tags)})."
+        )
+    if not thicknesses:
+        raise ValueError(
+            f"LayeredShell section {name!r} has zero layers — check "
+            f"params={params!r}."
+        )
+    return LayerSectionDef(
+        section_tag=sec_tag,
+        section_name=name,
+        n_layers=len(thicknesses),
+        thickness=np.asarray(thicknesses, dtype=np.float64),
+        material_tags=np.asarray(material_tags, dtype=np.int64),
+    )
+
+
+def _resolve_material_tag(
+    mat_ref, opensees: "OpenSees | None",
+) -> int:
+    """Convert an int (already-a-tag) or a name to an integer tag."""
+    if isinstance(mat_ref, (int, np.integer)):
+        return int(mat_ref)
+    name = str(mat_ref)
+    if opensees is not None:
+        nd_tags = getattr(opensees, "_nd_mat_tags", {}) or {}
+        uni_tags = getattr(opensees, "_uni_mat_tags", {}) or {}
+        if name in nd_tags:
+            return int(nd_tags[name])
+        if name in uni_tags:
+            return int(uni_tags[name])
+    return _stable_section_tag(name)
+
+
+def _stable_section_tag(name: str) -> int:
+    """Deterministic positive int tag derived from a section name.
+
+    Used as a fallback when build() hasn't run yet (so
+    ``opensees._sec_tags`` is empty). Stable across processes.
+    """
+    h = abs(hash(name))
+    # Keep it within int32 to avoid surprises in HDF5 attrs.
+    return (h % (2 ** 31 - 1)) or 1
