@@ -408,8 +408,14 @@ class _Export:
         for pat_idx, (pat_name, loads) in enumerate(
             ops._load_patterns.items(), start=1
         ):
+            # openseespy needs an explicit time series tag (Tcl accepts
+            # 'Linear' inline, the Python API does not — passing a string
+            # there raises "failed to get load pattern tag").
             lines.append(
-                f"ops.pattern('Plain', {pat_idx}, 'Linear')  # {pat_name!r}"
+                f"ops.timeSeries('Linear', {pat_idx})"
+            )
+            lines.append(
+                f"ops.pattern('Plain', {pat_idx}, {pat_idx})  # {pat_name!r}"
             )
             for ld in loads:
                 if ld["type"] == "nodal":

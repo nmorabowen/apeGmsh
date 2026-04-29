@@ -293,6 +293,121 @@ class _Editing:
         self._mesh._log(f"remove_duplicate_elements() removed={removed}")
         return self
 
+    def crack(
+        self,
+        physical_group: str,
+        *,
+        dim          : int                              = 1,
+        open_boundary: str | None                       = None,
+        normal       : tuple[float, float, float] | None = None,
+    ) -> "_Editing":
+        """
+        Duplicate mesh nodes along a physical group to create a crack.
+
+        Wraps Gmsh's built-in ``Crack`` plugin
+        (``gmsh.plugin.run("Crack")``).  After meshing, the plugin
+        walks the elements on one side of ``physical_group`` and
+        reconnects them to a freshly duplicated set of nodes — the
+        crack is therefore a discontinuity in the mesh, not in the
+        geometry.
+
+        By default the plugin keeps the **boundary vertices of the
+        crack curve shared** (e.g. the crack tip in fracture
+        mechanics).  Naming a sub-region of those boundary vertices
+        in ``open_boundary`` overrides the default and **duplicates
+        them too** — that is how you model a crack mouth that opens
+        onto a free surface.
+
+        Must be called **after** ``g.mesh.generation.generate(...)``
+        — the plugin operates on the mesh, not the geometry.
+
+        Parameters
+        ----------
+        physical_group : str
+            Name of the physical group containing the crack
+            curves (``dim=1``) or surfaces (``dim=2``).  Create it
+            ahead of time via ``g.physical.add_curve(..., name=...)``
+            or ``g.physical.add_surface(..., name=...)``.
+        dim : int
+            Dimension of the crack itself.  ``1`` for a 1-D crack
+            in a 2-D mesh; ``2`` for a 2-D crack in a 3-D mesh.
+        open_boundary : str, optional
+            Name of a physical group, **one dimension lower than**
+            ``dim``, naming the crack-curve boundary vertices that
+            should *also* be duplicated.  Use this for the crack
+            mouth (where the crack reaches a free surface).  Leave
+            ``None`` for an interior crack so every boundary vertex
+            (including the tip) stays shared.
+        normal : (nx, ny, nz), optional
+            Hint vector forwarded to the plugin to disambiguate the
+            two sides of the crack when topology alone is not enough.
+            Almost never needed for clean transfinite or unstructured
+            meshes.
+
+        Returns
+        -------
+        _Editing  (self, for chaining)
+
+        Example
+        -------
+        Edge crack reaching the bottom edge — duplicate the mouth,
+        keep the tip shared::
+
+            g.physical.add_curve([crack_curve], name="Crack")
+            g.physical.add_point([base_point],   name="CrackBase")
+            g.mesh.generation.generate(dim=2)
+            g.mesh.editing.crack(
+                "Crack", dim=1, open_boundary="CrackBase",
+            )
+        """
+        physical = getattr(self._mesh._parent, 'physical', None)
+        if physical is None:
+            raise RuntimeError(
+                "crack: session has no 'physical' composite — "
+                "physical groups are required to invoke the Crack plugin."
+            )
+
+        crack_pg_tag = physical.get_tag(dim, physical_group)
+        if crack_pg_tag is None:
+            raise KeyError(
+                f"crack: no physical group named {physical_group!r} at "
+                f"dim={dim}.  Create it first via "
+                f"g.physical.add_curve(..., name={physical_group!r}) "
+                f"(or add_surface for dim=2)."
+            )
+
+        open_pg_tag = 0  # plugin default — no open boundary
+        if open_boundary is not None:
+            open_dim = dim - 1
+            open_pg_tag = physical.get_tag(open_dim, open_boundary)
+            if open_pg_tag is None:
+                raise KeyError(
+                    f"crack: no physical group named {open_boundary!r} "
+                    f"at dim={open_dim}.  The open boundary lives one "
+                    f"dimension lower than the crack itself."
+                )
+
+        gmsh.plugin.setNumber("Crack", "Dimension", float(dim))
+        gmsh.plugin.setNumber("Crack", "PhysicalGroup", float(crack_pg_tag))
+        gmsh.plugin.setNumber(
+            "Crack", "OpenBoundaryPhysicalGroup", float(open_pg_tag),
+        )
+        if normal is not None:
+            nx, ny, nz = normal
+            gmsh.plugin.setNumber("Crack", "NormalX", float(nx))
+            gmsh.plugin.setNumber("Crack", "NormalY", float(ny))
+            gmsh.plugin.setNumber("Crack", "NormalZ", float(nz))
+
+        gmsh.plugin.run("Crack")
+
+        self._mesh._log(
+            f"crack(physical_group={physical_group!r}, dim={dim}, "
+            f"open_boundary={open_boundary!r}) "
+            f"-> crack_pg_tag={crack_pg_tag}, "
+            f"open_pg_tag={open_pg_tag}"
+        )
+        return self
+
     def affine_transform(
         self,
         matrix  : list[float],
