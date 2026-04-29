@@ -27,18 +27,36 @@ Scope
   ``ops.eleResponse(eid, "section", str(ip), "force")``.
 - **Per-element-node forces** (Phase 11b, ``category="elements"``):
   closed-form elastic-beam globalForce / localForce vectors.
-- **Fibers / layers records — MPCO-only in Phase 11c.** Live
-  domain probing for fiber-section beam-columns and layered shells
-  is intentionally deferred: per-fiber probing is performance-
-  expensive on large models, and the layered-shell ``eleResponse``
-  keyword is not consistent across shell classes. Fiber and layer
-  results are fully supported via MPCO recording — record with
-  ``-E section.fiber.stress`` (beams) or ``-E material.fiber.stress``
-  (shells) and read back through ``Results.from_mpco(...)``. If a
-  ``ResolvedRecorderSpec`` includes a ``fibers`` or ``layers``
-  record at ``DomainCapture`` open time, a ``UserWarning`` is
-  emitted and the record is silently skipped during the analysis
-  loop (no slabs written for it).
+- **Fibers records (Phase 11e)**: beam-column fiber sections
+  (``FiberSection2d`` / ``FiberSection3d``) are fully supported.
+  Per ``(element, section)``, ``ops.eleResponse(eid, "section",
+  str(sec), "fiberData2")`` returns a single flat vector of
+  ``[y, z, area, material_tag, stress, strain] × n_fibers`` —
+  geometry is captured on the first step, stress/strain on every
+  step, filtered to the record's components. Indexed variants
+  (``fiber_stress_<n>``) are not handled at the capture layer;
+  request the bulk ``fiber_stress`` / ``fiber_strain`` and post-
+  filter via the read-side composite API.
+- **Layers records (Phase 11f)**: layered-shell sections
+  (``LayeredShellFiberSection`` on ``ASDShellQ4`` /
+  ``ShellMITC4`` / ``ShellDKGQ`` / etc.) are fully supported.
+  Per ``(element, surface_gp, layer)``, ``ops.eleResponse(eid,
+  "material", str(gp), "fiber", str(layer), "stress"|"strain")``
+  returns a flat per-layer-cell vector. Per-layer **component
+  count is auto-discovered** on the first probe; output is
+  surfaced as bare ``fiber_stress`` / ``fiber_strain`` (when
+  N==1) or indexed ``fiber_stress_<k>`` / ``fiber_strain_<k>``
+  (when N>1).
+
+  Per-layer thickness + material tags come from
+  ``record.layer_section_metadata``, populated at recorder-resolve
+  time by reading the OpenSees back-reference's section registry
+  (see :class:`apeGmsh.solvers._recorder_specs.LayerSectionMetadata`).
+  Per-element local-axes quaternions are computed from element
+  node coordinates via :mod:`apeGmsh.results._shell_geometry`.
+  Layer records resolved without an OpenSees back-reference (i.e.
+  ``Recorders()`` standalone) raise at ``DomainCapture`` open
+  time with a clear error.
 
 Usage
 -----
@@ -76,11 +94,15 @@ from numpy import ndarray
 
 from ...solvers._element_response import (
     CUSTOM_RULE_CATALOG,
+    FIBER_CATALOG,
     INFERRED_SECTION_CODES_TABLE,
+    LAYER_CATALOG,
     NODAL_FORCE_CATALOG,
     RESPONSE_CATALOG,
     CustomRuleLayout,
+    FiberSectionLayout,
     IntRule,
+    LayeredShellLayout,
     NodalForceLayout,
     ResponseLayout,
     catalog_token_for_keyword,
@@ -90,15 +112,20 @@ from ...solvers._element_response import (
     infer_section_codes,
     is_catalogued,
     is_custom_rule_catalogued,
+    is_fiber_catalogued,
+    is_layer_catalogued,
     is_nodal_force_catalogued,
     lookup,
     lookup_custom_rule,
+    lookup_fiber,
+    lookup_layer,
     lookup_nodal_force,
     normalise_integration_points,
     resolve_layout_from_gp_x,
     unflatten,
     unflatten_nodal,
 )
+from .._shell_geometry import shell_quaternion
 
 # Re-exports under their original underscore-prefixed names so the
 # Step 2b tests (which import the private names) keep working
@@ -256,12 +283,14 @@ class DomainCapture:
         self._current_stage: Optional[str] = None
         self._stage_kind: Optional[str] = None
         self._buffers: list[_NodesCapturer] = []
-        # Element-level capturers — gauss (Phase 11a) + line_stations
-        # (Phase 11b Step 2b). fibers / layers / per-element-node forces
-        # still raise NotImplementedError below.
+        # Element-level capturers — gauss (Phase 11a), line_stations +
+        # nodal_forces (Phase 11b), fibers (Phase 11e). Layered shells
+        # remain deferred (see __enter__).
         self._gauss_capturers: list[_GaussCapturer] = []
         self._line_station_capturers: list[_LineStationCapturer] = []
         self._nodal_force_capturers: list[_NodalForcesCapturer] = []
+        self._fiber_capturers: list[_FiberCapturer] = []
+        self._layer_capturers: list[_LayerCapturer] = []
         # Records that fall through every supported capturer — surface
         # in step() for visibility.
         self._element_level_records: list = []
@@ -290,7 +319,6 @@ class DomainCapture:
             source_path="<openseespy>",
         )
         # Categorise records up-front
-        mpco_only_records: list = []
         for rec in self._spec.records:
             if rec.category == "nodes":
                 if any(
@@ -310,28 +338,12 @@ class DomainCapture:
                 self._nodal_force_capturers.append(
                     _NodalForcesCapturer(rec),
                 )
-            elif rec.category in ("fibers", "layers"):
-                # Phase 11c: fibers / layers are MPCO-only. Warn the
-                # user and silently skip in the analysis loop rather
-                # than crash at step() time.
-                mpco_only_records.append(rec)
+            elif rec.category == "fibers":
+                self._fiber_capturers.append(_FiberCapturer(rec))
+            elif rec.category == "layers":
+                self._layer_capturers.append(_LayerCapturer(rec, self._fem))
             else:
                 self._element_level_records.append(rec)
-        if mpco_only_records:
-            names = ", ".join(
-                f"{r.category}:{r.name!r}" for r in mpco_only_records
-            )
-            warnings.warn(
-                f"DomainCapture cannot probe fiber/layer results live "
-                f"({names}). These records are MPCO-only in Phase 11c "
-                f"— record an MPCO file with ``-E section.fiber.stress`` "
-                f"(beams) or ``-E material.fiber.stress`` (shells) and "
-                f"read back via ``Results.from_mpco(...)``. The "
-                f"affected records will be silently skipped during this "
-                f"analysis.",
-                UserWarning,
-                stacklevel=2,
-            )
         return self
 
     def __exit__(
@@ -373,6 +385,10 @@ class DomainCapture:
             lc.reset()
         for nfc in self._nodal_force_capturers:
             nfc.reset()
+        for fc in self._fiber_capturers:
+            fc.reset()
+        for lc in self._layer_capturers:
+            lc.reset()
         # Stage gets a placeholder time vector that we'll fill at end_stage.
         # We can't pre-create the time dataset here because we don't yet
         # know how many steps. We start the stage with an empty time
@@ -408,6 +424,10 @@ class DomainCapture:
             lc.step(t, ops)
         for nfc in self._nodal_force_capturers:
             nfc.step(t, ops)
+        for fc in self._fiber_capturers:
+            fc.step(t, ops)
+        for lc in self._layer_capturers:
+            lc.step(t, ops)
 
     def end_stage(self) -> None:
         """Flush buffered data for the current stage to disk.
@@ -443,6 +463,16 @@ class DomainCapture:
                 if nfc._times:
                     time_vec = np.array(nfc._times, dtype=np.float64)
                     break
+        if time_vec.size == 0:
+            for fc in self._fiber_capturers:
+                if fc._times:
+                    time_vec = np.array(fc._times, dtype=np.float64)
+                    break
+        if time_vec.size == 0:
+            for lc in self._layer_capturers:
+                if lc._times:
+                    time_vec = np.array(lc._times, dtype=np.float64)
+                    break
 
         sid = self._writer.begin_stage(
             name=self._current_stage,
@@ -455,6 +485,8 @@ class DomainCapture:
             self._flush_gauss(sid)
             self._flush_line_stations(sid)
             self._flush_nodal_forces(sid)
+            self._flush_fibers(sid)
+            self._flush_layers(sid)
         finally:
             # Always close the stage — even if the merge raised, we
             # want the stage closed so subsequent ``begin_stage`` works.
@@ -476,6 +508,16 @@ class DomainCapture:
         """Write each nodal-forces capturer's per-class buffers to disk."""
         for nfc in self._nodal_force_capturers:
             nfc.write_to(self._writer, stage_id, "partition_0")
+
+    def _flush_fibers(self, stage_id: str) -> None:
+        """Write each fiber capturer's per-class buffers to disk."""
+        for fc in self._fiber_capturers:
+            fc.write_to(self._writer, stage_id, "partition_0")
+
+    def _flush_layers(self, stage_id: str) -> None:
+        """Write each layer capturer's per-class buffers to disk."""
+        for lc in self._layer_capturers:
+            lc.write_to(self._writer, stage_id, "partition_0")
 
     def _flush_nodes_merged(
         self, stage_id: str, time_vec: ndarray,
@@ -1153,4 +1195,573 @@ class _NodalForcesCapturer:
                 frame=grp.layout.frame,
                 element_index=np.array(grp.element_ids, dtype=np.int64),
                 components=decoded,
+            )
+
+
+# =====================================================================
+# Per-record fiber capturer (Phase 11e)
+# =====================================================================
+#
+# Beam-column fiber sections (FiberSection2d / FiberSection3d) expose
+# per-fiber geometry + state in one shot through
+# ``ops.eleResponse(eid, "section", str(sec), "fiberData2")``, which
+# returns a flat vector of ``[y, z, area, material_tag, stress, strain]
+# × n_fibers``. We make one call per (element, section) per step:
+# geometry is captured on the first step (it's constant); stress and
+# strain come along for free on every step.
+#
+# Records request ``fiber_stress`` and/or ``fiber_strain``; both
+# canonical names are read from the same call and filtered by what
+# the record asked for. Indexed variants (``fiber_stress_<n>``) are
+# not handled here — request the bulk canonicals and post-filter via
+# the read-side composite API.
+#
+# Per-element classes are discovered on the first step via
+# ``ops.eleType(eid)`` and grouped — uncatalogued classes (those not
+# in :data:`FIBER_CATALOG`) are tracked in ``skipped_elements``.
+
+@dataclass
+class _FiberClassGroup:
+    """Per-class buffer for one fiber record."""
+    layout: FiberSectionLayout
+    element_ids: list[int] = field(default_factory=list)
+    # Filled on the first step: number of sections (IPs) per element,
+    # and number of fibers per section (per element).
+    n_sections_per_element: list[int] = field(default_factory=list)
+    n_fibers_per_section: list[list[int]] = field(default_factory=list)
+    # Flat geometry arrays — final length = sum_F (across all elements
+    # × sections × fibers). Filled on the first step.
+    element_index: list[int] = field(default_factory=list)
+    gp_index: list[int] = field(default_factory=list)
+    y: list[float] = field(default_factory=list)
+    z: list[float] = field(default_factory=list)
+    area: list[float] = field(default_factory=list)
+    material_tag: list[int] = field(default_factory=list)
+    # Per-step component buffers. Each entry is ``{component: ndarray
+    # of shape (sum_F,)}`` covering the components requested by the
+    # record. Stacked along time at write_to.
+    steps: list[dict[str, ndarray]] = field(default_factory=list)
+
+
+class _FiberCapturer:
+    """Buffers ``ops.eleResponse(eid, "section", k, "fiberData2")`` per step.
+
+    One ``fiberData2`` call per ``(element, section)`` per step
+    returns ``[y, z, area, material_tag, stress, strain] × n_fibers``;
+    geometry is captured on the first step, stress/strain every step,
+    filtered to ``record.components``. Element classes are discovered
+    on first ``step()`` via ``ops.eleType`` and grouped — uncatalogued
+    classes are tracked in ``skipped_elements``.
+    """
+
+    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+        self._rec = record
+        self._times: list[float] = []
+        comps = set(record.components)
+        self._want_stress = "fiber_stress" in comps
+        self._want_strain = "fiber_strain" in comps
+        if not (self._want_stress or self._want_strain):
+            raise ValueError(
+                f"Record {record.name!r} (category=fibers) has no "
+                f"recognised components — expected ``fiber_stress`` "
+                f"and/or ``fiber_strain``; got "
+                f"{list(record.components)}."
+            )
+        # Built lazily on the first step (needs the live ops domain).
+        self._groups: Optional[dict[str, _FiberClassGroup]] = None
+        self.skipped_elements: list[tuple[int, str]] = []
+
+    def reset(self) -> None:
+        """Clear per-stage step buffers (preserves group structure)."""
+        self._times.clear()
+        if self._groups is not None:
+            for grp in self._groups.values():
+                grp.steps.clear()
+
+    def _build_groups(self, ops: Any) -> None:
+        """Group element_ids by class name (first step only)."""
+        groups: dict[str, _FiberClassGroup] = {}
+        skipped: list[tuple[int, str]] = []
+        if self._rec.element_ids is None:
+            self._groups = groups
+            self.skipped_elements = skipped
+            return
+        for eid in (int(e) for e in self._rec.element_ids):
+            try:
+                class_name = ops.eleType(eid)
+            except Exception as exc:
+                skipped.append((eid, f"ops.eleType failed: {exc}"))
+                continue
+            if not is_fiber_catalogued(class_name, "fiber_stress"):
+                skipped.append((
+                    eid,
+                    f"class {class_name!r} not in FIBER_CATALOG",
+                ))
+                continue
+            layout = lookup_fiber(class_name, "fiber_stress")
+            grp = groups.setdefault(class_name, _FiberClassGroup(layout=layout))
+            grp.element_ids.append(eid)
+        self._groups = groups
+        self.skipped_elements = skipped
+
+    def step(self, t: float, ops: Any) -> None:
+        if self._groups is None:
+            self._build_groups(ops)
+        first = (len(self._times) == 0)
+        self._times.append(float(t))
+        assert self._groups is not None
+        for grp in self._groups.values():
+            if first:
+                # Discover number of sections per element via
+                # ``integrationPoints``. Same primitive line-stations uses.
+                for eid in grp.element_ids:
+                    try:
+                        ip_phys = ops.eleResponse(
+                            eid, "integrationPoints",
+                        )
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"ops.eleResponse({eid}, 'integrationPoints') "
+                            f"failed: {exc}"
+                        ) from exc
+                    n_sec = int(np.asarray(ip_phys).flatten().size)
+                    if n_sec == 0:
+                        raise RuntimeError(
+                            f"Element {eid} has zero sections "
+                            f"(integrationPoints empty)."
+                        )
+                    grp.n_sections_per_element.append(n_sec)
+                    grp.n_fibers_per_section.append([])
+
+            stress_buf: list[float] = []
+            strain_buf: list[float] = []
+            for eid_idx, eid in enumerate(grp.element_ids):
+                n_sec = grp.n_sections_per_element[eid_idx]
+                for sec in range(1, n_sec + 1):
+                    vec = np.asarray(
+                        ops.eleResponse(
+                            eid, "section", str(sec), "fiberData2",
+                        ),
+                        dtype=np.float64,
+                    ).flatten()
+                    if vec.size == 0 or vec.size % 6 != 0:
+                        raise RuntimeError(
+                            f"ops.eleResponse({eid}, 'section', {sec}, "
+                            f"'fiberData2') returned size {vec.size} at "
+                            f"t={t}; expected non-zero multiple of 6 "
+                            f"([y, z, area, mat, stress, strain] per fiber)."
+                        )
+                    n_fibers = vec.size // 6
+                    if first:
+                        grp.n_fibers_per_section[eid_idx].append(n_fibers)
+                    else:
+                        expected = grp.n_fibers_per_section[eid_idx][sec - 1]
+                        if n_fibers != expected:
+                            raise RuntimeError(
+                                f"ops.eleResponse({eid}, 'section', "
+                                f"{sec}, 'fiberData2') returned "
+                                f"{n_fibers} fibers at t={t}; expected "
+                                f"{expected} (changed mid-analysis)."
+                            )
+                    arr = vec.reshape(n_fibers, 6)
+                    if first:
+                        for f in range(n_fibers):
+                            grp.element_index.append(eid)
+                            grp.gp_index.append(sec - 1)
+                            grp.y.append(float(arr[f, 0]))
+                            grp.z.append(float(arr[f, 1]))
+                            grp.area.append(float(arr[f, 2]))
+                            grp.material_tag.append(
+                                int(round(float(arr[f, 3]))),
+                            )
+                    if self._want_stress:
+                        stress_buf.extend(arr[:, 4].tolist())
+                    if self._want_strain:
+                        strain_buf.extend(arr[:, 5].tolist())
+
+            step_dict: dict[str, ndarray] = {}
+            if self._want_stress:
+                step_dict["fiber_stress"] = np.asarray(
+                    stress_buf, dtype=np.float64,
+                )
+            if self._want_strain:
+                step_dict["fiber_strain"] = np.asarray(
+                    strain_buf, dtype=np.float64,
+                )
+            grp.steps.append(step_dict)
+
+    def write_to(
+        self, writer: Any, stage_id: str, partition_id: str,
+    ) -> None:
+        if not self._times or self._groups is None:
+            return
+        for i, (class_name, grp) in enumerate(self._groups.items()):
+            if not grp.steps or not grp.element_index:
+                continue
+            comps: dict[str, ndarray] = {}
+            if self._want_stress:
+                comps["fiber_stress"] = np.stack(
+                    [s["fiber_stress"] for s in grp.steps], axis=0,
+                )
+            if self._want_strain:
+                comps["fiber_strain"] = np.stack(
+                    [s["fiber_strain"] for s in grp.steps], axis=0,
+                )
+            # section_tag / section_class are not surfaced by
+            # openseespy on a per-element basis; record sentinels.
+            # Readers do not depend on these for slab values.
+            writer.write_fibers_group(
+                stage_id, partition_id,
+                group_id=f"{self._rec.name}_{class_name}_{i}",
+                section_tag=-1,
+                section_class="(domain_capture)",
+                element_index=np.asarray(
+                    grp.element_index, dtype=np.int64,
+                ),
+                gp_index=np.asarray(grp.gp_index, dtype=np.int64),
+                y=np.asarray(grp.y, dtype=np.float64),
+                z=np.asarray(grp.z, dtype=np.float64),
+                area=np.asarray(grp.area, dtype=np.float64),
+                material_tag=np.asarray(
+                    grp.material_tag, dtype=np.int64,
+                ),
+                components=comps,
+            )
+
+
+# =====================================================================
+# Per-record layer capturer (Phase 11f)
+# =====================================================================
+#
+# Layered-shell elements (LayeredShellFiberSection on ASDShellQ4 etc.)
+# expose per-layer stress/strain via per-fiber probing:
+#
+#     ops.eleResponse(eid, "material", str(gp), "fiber",
+#                     str(layer), "stress" | "strain")
+#
+# Per-call cost: one Python ↔ C round trip. Per element per step:
+# n_surface_gp × n_layers calls. Matches what MPCO does internally.
+#
+# Metadata that openseespy doesn't expose:
+#   - per-layer thickness        ← record.layer_section_metadata
+#   - per-layer material tag     ← record.layer_section_metadata
+#   - per-element local axes     ← computed from FEM node coords +
+#                                  the element's class-specific
+#                                  shell_local_axes / shell_quaternion
+#                                  (apeGmsh.results._shell_geometry).
+#
+# Surface GP count per shell class:
+
+_SHELL_GP_COUNT: dict[int, int] = {
+    IntRule.Quad_GL_2: 4,        # ASDShellQ4, ShellMITC4, ShellDKGQ, ShellNLDKGQ
+    IntRule.Quad_GL_3: 9,        # ShellMITC9
+    IntRule.Triangle_GL_2B: 3,   # ASDShellT3
+    IntRule.Triangle_GL_2C: 4,   # ShellDKGT, ShellNLDKGT
+}
+
+
+@dataclass
+class _LayerClassGroup:
+    """Per-class buffer for one layer record."""
+    class_name: str
+    layout: LayeredShellLayout
+    n_surface_gp: int
+    element_ids: list[int] = field(default_factory=list)
+    section_tags_per_element: list[int] = field(default_factory=list)
+    n_layers_per_element: list[int] = field(default_factory=list)
+    quaternions: list[ndarray] = field(default_factory=list)    # each (4,)
+    # Discovered on the very first probe. v1 enforces homogeneous N
+    # across element / surface_gp / layer within one class group.
+    n_components_per_layer: int = 0
+    # Component canonicals to write (derived once we know N).
+    stress_canonicals: tuple[str, ...] = ()
+    strain_canonicals: tuple[str, ...] = ()
+    # Per-step buffers: one dict per step, keyed by canonical name.
+    steps: list[dict[str, ndarray]] = field(default_factory=list)
+
+
+class _LayerCapturer:
+    """Buffers per-layer ``ops.eleResponse`` for one ``layers`` record.
+
+    Per (eid, surface_gp, layer): probe stress and/or strain via
+    ``ops.eleResponse(eid, "material", str(gp), "fiber", str(layer),
+    "stress")``. Per-layer component count N is discovered on the
+    first probe; components are surfaced as ``fiber_stress`` (when
+    N==1) or ``fiber_stress_0`` … ``fiber_stress_<N-1>`` (when N>1).
+    Same for strain.
+
+    Per-element local-axes quaternions are computed from element
+    node coordinates via :mod:`apeGmsh.results._shell_geometry`
+    on the first step. Per-layer thickness comes from the resolved
+    record's :class:`LayerSectionMetadata`.
+    """
+
+    def __init__(
+        self,
+        record: "ResolvedRecorderRecord",
+        fem: "FEMData",
+    ) -> None:
+        meta = record.layer_section_metadata
+        if meta is None:
+            raise ValueError(
+                f"Record {record.name!r} (category=layers) has no "
+                f"layer_section_metadata. Resolve the spec via "
+                f"``g.opensees.recorders.resolve(fem)`` so the "
+                f"OpenSees back-reference can populate it."
+            )
+        self._rec = record
+        self._fem = fem
+        self._meta = meta
+        self._times: list[float] = []
+        comps = set(record.components)
+        self._want_stress = "fiber_stress" in comps
+        self._want_strain = "fiber_strain" in comps
+        if not (self._want_stress or self._want_strain):
+            raise ValueError(
+                f"Record {record.name!r} (category=layers) has no "
+                f"recognised components — expected ``fiber_stress`` "
+                f"and/or ``fiber_strain``; got "
+                f"{list(record.components)}."
+            )
+        self._groups: Optional[dict[str, _LayerClassGroup]] = None
+        self.skipped_elements: list[tuple[int, str]] = []
+
+    def reset(self) -> None:
+        self._times.clear()
+        if self._groups is not None:
+            for grp in self._groups.values():
+                grp.steps.clear()
+
+    def _build_groups(self, ops: Any) -> None:
+        groups: dict[str, _LayerClassGroup] = {}
+        skipped: list[tuple[int, str]] = []
+        if self._rec.element_ids is None:
+            self._groups = groups
+            self.skipped_elements = skipped
+            return
+        for eid in (int(e) for e in self._rec.element_ids):
+            try:
+                class_name = ops.eleType(eid)
+            except Exception as exc:
+                skipped.append((eid, f"ops.eleType failed: {exc}"))
+                continue
+            if not is_layer_catalogued(class_name, "fiber_stress"):
+                skipped.append((
+                    eid, f"class {class_name!r} not in LAYER_CATALOG",
+                ))
+                continue
+            if int(eid) not in self._meta.element_to_section:
+                skipped.append((
+                    eid,
+                    "no LayeredShell section assigned in metadata",
+                ))
+                continue
+            layout = lookup_layer(class_name, "fiber_stress")
+            n_gp = _SHELL_GP_COUNT.get(layout.surface_int_rule)
+            if n_gp is None:
+                skipped.append((
+                    eid,
+                    f"surface_int_rule={layout.surface_int_rule} not "
+                    f"in known shell GP table",
+                ))
+                continue
+            grp = groups.get(class_name)
+            if grp is None:
+                grp = _LayerClassGroup(
+                    class_name=class_name, layout=layout, n_surface_gp=n_gp,
+                )
+                groups[class_name] = grp
+            grp.element_ids.append(eid)
+            sec_tag = self._meta.element_to_section[int(eid)]
+            grp.section_tags_per_element.append(sec_tag)
+            grp.n_layers_per_element.append(
+                self._meta.sections[sec_tag].n_layers,
+            )
+        self._groups = groups
+        self.skipped_elements = skipped
+
+    def _compute_quaternions_first_step(
+        self, grp: _LayerClassGroup, ops: Any,
+    ) -> None:
+        for eid in grp.element_ids:
+            node_tags = list(ops.eleNodes(int(eid)))
+            coords = np.array(
+                [list(ops.nodeCoord(int(n))) for n in node_tags],
+                dtype=np.float64,
+            )
+            grp.quaternions.append(
+                shell_quaternion(coords, grp.class_name),
+            )
+
+    def _discover_component_count(
+        self, grp: _LayerClassGroup, ops: Any,
+    ) -> None:
+        """Probe the first (eid, gp=1, layer=1) cell to learn N."""
+        if not grp.element_ids:
+            grp.n_components_per_layer = 0
+            return
+        eid = grp.element_ids[0]
+        # Try stress first; fall back to strain if stress isn't
+        # requested. Result length = components per layer cell.
+        token = "stress" if self._want_stress else "strain"
+        vec = np.asarray(
+            ops.eleResponse(eid, "material", "1", "fiber", "1", token),
+            dtype=np.float64,
+        ).flatten()
+        n = int(vec.size)
+        if n == 0:
+            raise RuntimeError(
+                f"ops.eleResponse({eid}, 'material', 1, 'fiber', 1, "
+                f"{token!r}) returned empty — check that the section "
+                f"assigned to element {eid} is actually a "
+                f"LayeredShellFiberSection."
+            )
+        grp.n_components_per_layer = n
+        if n == 1:
+            grp.stress_canonicals = (
+                ("fiber_stress",) if self._want_stress else ()
+            )
+            grp.strain_canonicals = (
+                ("fiber_strain",) if self._want_strain else ()
+            )
+        else:
+            grp.stress_canonicals = (
+                tuple(f"fiber_stress_{k}" for k in range(n))
+                if self._want_stress else ()
+            )
+            grp.strain_canonicals = (
+                tuple(f"fiber_strain_{k}" for k in range(n))
+                if self._want_strain else ()
+            )
+
+    def step(self, t: float, ops: Any) -> None:
+        if self._groups is None:
+            self._build_groups(ops)
+        first = (len(self._times) == 0)
+        self._times.append(float(t))
+        assert self._groups is not None
+        for grp in self._groups.values():
+            if first:
+                self._compute_quaternions_first_step(grp, ops)
+                self._discover_component_count(grp, ops)
+
+            n_gp = grp.n_surface_gp
+            n_comp = grp.n_components_per_layer
+            # Pre-allocate per-component flat arrays sized for the
+            # full slab (E_g × n_gp × n_layers per element). With
+            # heterogeneous n_layers within one group (rare but
+            # supported), we accumulate per element.
+            stress_buffers: list[list[float]] = [
+                [] for _ in grp.stress_canonicals
+            ]
+            strain_buffers: list[list[float]] = [
+                [] for _ in grp.strain_canonicals
+            ]
+            for eid_idx, eid in enumerate(grp.element_ids):
+                n_layers = grp.n_layers_per_element[eid_idx]
+                for gp in range(1, n_gp + 1):
+                    for layer in range(1, n_layers + 1):
+                        if self._want_stress:
+                            vec = np.asarray(
+                                ops.eleResponse(
+                                    eid, "material", str(gp),
+                                    "fiber", str(layer), "stress",
+                                ),
+                                dtype=np.float64,
+                            ).flatten()
+                            if vec.size != n_comp:
+                                raise RuntimeError(
+                                    f"ops.eleResponse({eid}, "
+                                    f"'material', {gp}, 'fiber', "
+                                    f"{layer}, 'stress') returned "
+                                    f"{vec.size} components at t={t}; "
+                                    f"first-step probe expected "
+                                    f"{n_comp}."
+                                )
+                            for k in range(n_comp):
+                                stress_buffers[k].append(float(vec[k]))
+                        if self._want_strain:
+                            vec = np.asarray(
+                                ops.eleResponse(
+                                    eid, "material", str(gp),
+                                    "fiber", str(layer), "strain",
+                                ),
+                                dtype=np.float64,
+                            ).flatten()
+                            if vec.size != n_comp:
+                                raise RuntimeError(
+                                    f"ops.eleResponse({eid}, "
+                                    f"'material', {gp}, 'fiber', "
+                                    f"{layer}, 'strain') returned "
+                                    f"{vec.size} components at t={t}; "
+                                    f"first-step probe expected "
+                                    f"{n_comp}."
+                                )
+                            for k in range(n_comp):
+                                strain_buffers[k].append(float(vec[k]))
+
+            step_dict: dict[str, ndarray] = {}
+            for canonical, buf in zip(grp.stress_canonicals, stress_buffers):
+                step_dict[canonical] = np.asarray(buf, dtype=np.float64)
+            for canonical, buf in zip(grp.strain_canonicals, strain_buffers):
+                step_dict[canonical] = np.asarray(buf, dtype=np.float64)
+            grp.steps.append(step_dict)
+
+    def write_to(
+        self, writer: Any, stage_id: str, partition_id: str,
+    ) -> None:
+        if not self._times or self._groups is None:
+            return
+        for i, (class_name, grp) in enumerate(self._groups.items()):
+            if not grp.steps or not grp.element_ids:
+                continue
+            n_gp = grp.n_surface_gp
+            # Build flat per-row index arrays (length sum_L).
+            element_index: list[int] = []
+            gp_index: list[int] = []
+            layer_index: list[int] = []
+            sub_gp_index: list[int] = []
+            thickness: list[float] = []
+            quaternion_per_row: list[ndarray] = []
+            for eid_idx, eid in enumerate(grp.element_ids):
+                sec_tag = grp.section_tags_per_element[eid_idx]
+                sec = self._meta.sections[sec_tag]
+                quat = grp.quaternions[eid_idx]
+                for gp in range(n_gp):
+                    for layer in range(sec.n_layers):
+                        element_index.append(eid)
+                        gp_index.append(gp)
+                        layer_index.append(layer)
+                        sub_gp_index.append(0)    # v1: 1 sub-IP per layer
+                        thickness.append(float(sec.thickness[layer]))
+                        quaternion_per_row.append(quat)
+
+            sum_L = len(element_index)
+            # Stack per-component arrays across time → (T, sum_L)
+            comps: dict[str, ndarray] = {}
+            all_canonicals = grp.stress_canonicals + grp.strain_canonicals
+            for canonical in all_canonicals:
+                stacked = np.stack(
+                    [s[canonical] for s in grp.steps], axis=0,
+                )
+                if stacked.shape[1] != sum_L:
+                    raise RuntimeError(
+                        f"Layer capturer mismatch on group "
+                        f"{class_name}: expected {sum_L} flat rows but "
+                        f"step buffer has {stacked.shape[1]}."
+                    )
+                comps[canonical] = stacked
+
+            writer.write_layers_group(
+                stage_id, partition_id,
+                group_id=f"{self._rec.name}_{class_name}_{i}",
+                element_index=np.asarray(element_index, dtype=np.int64),
+                gp_index=np.asarray(gp_index, dtype=np.int64),
+                layer_index=np.asarray(layer_index, dtype=np.int64),
+                sub_gp_index=np.asarray(sub_gp_index, dtype=np.int64),
+                thickness=np.asarray(thickness, dtype=np.float64),
+                local_axes_quaternion=np.asarray(
+                    quaternion_per_row, dtype=np.float64,
+                ),
+                components=comps,
             )

@@ -405,40 +405,34 @@ def test_snapshot_mismatch_raises(tmp_path: Path) -> None:
 # =====================================================================
 #
 # Phase 11a wired ``gauss`` records (continuum stress/strain) — see
-# ``test_results_domain_capture_gauss.py``. The remaining element-level
-# categories (line_stations, fibers, layers, per-element-node forces)
-# still raise from step() until their catalog entries land.
+# ``test_results_domain_capture_gauss.py``. Phase 11b wired
+# ``line_stations`` and per-element-node ``elements``. Phase 11e wired
+# beam ``fibers`` — see ``test_results_domain_capture_fibers.py``.
+# Phase 11f wired layered shells (``layers``) — see
+# ``test_results_domain_capture_layers.py``. The capturer requires
+# ``layer_section_metadata`` on the resolved record; absence raises.
 
-def test_fiber_records_warn_and_skip_in_domain_capture(tmp_path: Path) -> None:
-    """Phase 11c: fiber/layer records emit a UserWarning at __enter__ and are
-    silently skipped by ``step()`` — they're MPCO-only."""
-    import warnings
-
+def test_layer_records_without_metadata_raise(tmp_path: Path) -> None:
+    """A ``layers`` record resolved without an OpenSees back-reference
+    has no ``layer_section_metadata`` and raises a clear error at
+    DomainCapture open time."""
     fem = _MockFem([1])
     spec = _make_spec(
         ResolvedRecorderRecord(
-            category="fibers", name="r",
+            category="layers", name="r",
             components=("fiber_stress",),
             dt=None, n_steps=None,
             element_ids=np.array([10, 20]),
+            # layer_section_metadata=None (default) — the failure mode.
         ),
         snapshot_id=fem.snapshot_id,
     )
     fake = _FakeOps()
 
     path = tmp_path / "run.h5"
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        with DomainCapture(spec, path, fem, ops=fake) as cap:
-            cap.begin_stage("g")
-            # Should NOT raise — the fiber record is silently skipped.
-            cap.step(t=0.0)
-            cap.end_stage()
-
-    assert any(
-        "MPCO-only" in str(w.message) and "fibers" in str(w.message)
-        for w in caught
-    ), [str(w.message) for w in caught]
+    with pytest.raises(ValueError, match="layer_section_metadata"):
+        with DomainCapture(spec, path, fem, ops=fake):
+            pass
 
 
 # =====================================================================

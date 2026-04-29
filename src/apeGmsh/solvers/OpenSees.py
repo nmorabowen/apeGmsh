@@ -139,11 +139,14 @@ class OpenSees(_HasLogging):
         self.inspect   = _Inspect(self)
         self.export    = _Export(self)
         # Recorders is fully standalone; surfaced here for ergonomic
-        # ``g.opensees.recorders.*`` access. Designed so the future
-        # ``apeSees`` split can move it without API churn (see
-        # internal_docs/Results_architecture.md).
+        # ``g.opensees.recorders.*`` access. The back-reference is
+        # consumed at ``resolve()`` time only, to populate
+        # :class:`LayerSectionMetadata` on layered-shell records from
+        # ``self._sections`` + ``self._elem_assignments`` (data the
+        # live openseespy domain doesn't surface). Other categories
+        # ignore the back-reference.
         from .Recorders import Recorders as _Recorders
-        self.recorders = _Recorders()
+        self.recorders = _Recorders(opensees=self)
 
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._opensees._*)

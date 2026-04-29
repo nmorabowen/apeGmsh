@@ -76,6 +76,43 @@ class RecorderRecord:
 # =====================================================================
 
 @dataclass(frozen=True)
+class LayerSectionDef:
+    """One LayeredShellFiberSection's per-layer composition.
+
+    Populated from ``g.opensees._sections`` at recorder-resolve time
+    for ``category="layers"`` records. Carries the data DomainCapture
+    cannot probe from the live openseespy domain — per-layer
+    thickness and material tag — so the capture-side
+    ``write_layers_group`` can populate the LayerSlab schema fully.
+
+    See :class:`LayerSectionMetadata` for the per-record bundle.
+    """
+    section_tag: int
+    section_name: str
+    n_layers: int
+    thickness: ndarray              # (n_layers,) float64, mid-plane local-z
+    material_tags: ndarray          # (n_layers,) int64
+
+
+@dataclass(frozen=True)
+class LayerSectionMetadata:
+    """Session-side info for one ``category="layers"`` resolved record.
+
+    Bundles the LayeredShell section definitions referenced by the
+    record's elements plus an ``element_to_section`` lookup map.
+    DomainCapture's ``_LayerCapturer`` consumes this to populate
+    ``LayerSlab.thickness`` (and to validate the layer count when
+    probing the live domain).
+
+    Per-element local-axes quaternions are NOT stored here — those
+    are computed at capture time from element node coordinates
+    (pure geometry, no session info needed).
+    """
+    sections: dict[int, LayerSectionDef]      # section_tag → def
+    element_to_section: dict[int, int]        # eid → section_tag
+
+
+@dataclass(frozen=True)
 class ResolvedRecorderRecord:
     """A :class:`RecorderRecord` after resolution against a FEMData.
 
@@ -105,6 +142,11 @@ class ResolvedRecorderRecord:
 
     # Modal-only
     n_modes: Optional[int] = None
+
+    # ``category="layers"``-only — populated when the resolver has
+    # an OpenSees back-reference and the record's elements are
+    # assigned a LayeredShellFiberSection. ``None`` otherwise.
+    layer_section_metadata: Optional[LayerSectionMetadata] = None
 
     # The original declarative record (back-reference for inspection)
     source: Optional[RecorderRecord] = None
