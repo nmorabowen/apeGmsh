@@ -29,6 +29,7 @@ from . import _mpco_element_io as _melem
 from . import _mpco_fiber_io as _mfiber
 from . import _mpco_layer_io as _mlayer
 from . import _mpco_line_io as _mline
+from . import _mpco_local_force_io as _mlocal
 from . import _mpco_material_io as _mmat
 from . import _mpco_nodal_io as _mnodal
 from . import _mpco_spring_io as _mspring
@@ -309,24 +310,31 @@ class MPCOReader:
         model_elements = stage_grp.get("MODEL/ELEMENTS")
         if on_elements is None or model_elements is None:
             return []
+        out: set[str] = set()
+
+        # ── section.force / Custom-rule path (force-based beams) ─────
         # Discover line-stations buckets via any line-station canonical
         # (the routing only depends on the topology, not the specific
         # component name); ``axial_force`` is always present in v1.
-        _, buckets = _mline.discover_line_station_buckets(
-            on_elements, canonical_component="axial_force",
-        )
-        out: set[str] = set()
-        for bucket in buckets:
-            try:
-                token_grp = on_elements["section.force"][bucket.bracket_key]
-                layout, _ = _mline.resolve_bucket_layout(
-                    model_elements, token_grp, bucket,
-                )
-            except (ValueError, KeyError):
-                # Unsupported section codes / missing GP_X — silent skip
-                # at availability discovery (still raises on .get()).
-                continue
-            out.update(layout.component_layout)
+        if model_elements is not None:
+            _, buckets = _mline.discover_line_station_buckets(
+                on_elements, canonical_component="axial_force",
+            )
+            for bucket in buckets:
+                try:
+                    token_grp = on_elements["section.force"][bucket.bracket_key]
+                    layout, _ = _mline.resolve_bucket_layout(
+                        model_elements, token_grp, bucket,
+                    )
+                except (ValueError, KeyError):
+                    # Unsupported section codes / missing GP_X — silent skip
+                    # at availability discovery (still raises on .get()).
+                    continue
+                out.update(layout.component_layout)
+
+        # ── localForce path (stiffness beams: ElasticBeam2d/3d) ──────
+        out.update(_mlocal.available_components_in_local_force(on_elements))
+
         return sorted(out)
 
     def _springs_available_components(self, mpco_name: str) -> list[str]:
@@ -498,30 +506,67 @@ class MPCOReader:
         if on_elements is None or model_elements is None:
             return _empty_line_station_slab(component, time, t_idx)
 
-        token, buckets = _mline.discover_line_station_buckets(
-            on_elements, canonical_component=component,
-        )
-        if not buckets:
-            return _empty_line_station_slab(component, time, t_idx)
-        token_grp = on_elements[token]
+        # Read per-bucket slabs and stitch on the station axis. The
+        # ``section.force`` path takes precedence: when both buckets
+        # exist for the same element (DispBeamColumn3d writes both —
+        # ``section.force`` is the IP-level detail, ``localForce`` is
+        # just an end-force summary), only the section.force stations
+        # are kept. ``localForce`` then fills in elements that have no
+        # section.force coverage (ElasticBeam2d/3d).
 
-        # Read per-bucket slabs and stitch on the station axis.
         values_parts: list[ndarray] = []
         element_index_parts: list[ndarray] = []
         station_coord_parts: list[ndarray] = []
+        section_force_eids: set[int] = set()
 
-        for bucket in buckets:
-            bucket_grp = token_grp[bucket.bracket_key]
-            result = _mline.read_line_bucket_slab(
-                bucket_grp, model_elements, bucket, component,
-                t_idx=t_idx, element_ids=element_ids,
-            )
-            if result is None:
-                continue
-            values, element_index, station_coord = result
-            values_parts.append(values)
-            element_index_parts.append(element_index)
-            station_coord_parts.append(station_coord)
+        # ── section.force / Custom-rule path ────────────────────────
+        token, buckets = _mline.discover_line_station_buckets(
+            on_elements, canonical_component=component,
+        )
+        if buckets and token is not None and token in on_elements:
+            token_grp = on_elements[token]
+            for bucket in buckets:
+                bucket_grp = token_grp[bucket.bracket_key]
+                result = _mline.read_line_bucket_slab(
+                    bucket_grp, model_elements, bucket, component,
+                    t_idx=t_idx, element_ids=element_ids,
+                )
+                if result is None:
+                    continue
+                values, element_index, station_coord = result
+                values_parts.append(values)
+                element_index_parts.append(element_index)
+                station_coord_parts.append(station_coord)
+                section_force_eids.update(int(e) for e in element_index)
+
+        # ── localForce path (stiffness beams), skipping any element
+        # already covered by section.force. ─────────────────────────
+        local_buckets = _mlocal.discover_local_force_buckets(on_elements)
+        if local_buckets:
+            lf_grp = on_elements["localForce"]
+            for lf in local_buckets:
+                bucket_grp = lf_grp[lf.bracket_key]
+                result = _mlocal.read_local_force_bucket_slab(
+                    bucket_grp, lf, component,
+                    t_idx=t_idx, element_ids=element_ids,
+                )
+                if result is None:
+                    continue
+                values, element_index, station_coord = result
+                if section_force_eids:
+                    keep_mask = np.array(
+                        [int(e) not in section_force_eids
+                         for e in element_index],
+                        dtype=bool,
+                    )
+                    if not keep_mask.any():
+                        continue
+                    values = values[:, keep_mask]
+                    element_index = element_index[keep_mask]
+                    station_coord = station_coord[keep_mask]
+                values_parts.append(values)
+                element_index_parts.append(element_index)
+                station_coord_parts.append(station_coord)
 
         if not values_parts:
             return _empty_line_station_slab(component, time, t_idx)
