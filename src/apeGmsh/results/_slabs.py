@@ -65,9 +65,10 @@ class GaussSlab:
     """Continuum Gauss-point values.
 
     ``natural_coords`` are in parent space ``[-1, +1]``. To get
-    global coordinates, call ``Results.elements.gauss.get(...)
-    .global_coords()`` which interpolates through the bound
-    FEMData's element shape functions.
+    global coordinates, call ``slab.global_coords(fem)`` — interpolates
+    through the bound ``FEMData``'s element shape functions for hex8 /
+    quad4, falling back to a centroid + bbox-scaled approximation for
+    element types that don't yet have explicit shape-fn support.
     """
     component: str
     values: ndarray              # (T, sum_GP)
@@ -75,6 +76,16 @@ class GaussSlab:
     natural_coords: ndarray      # (sum_GP, dim)
     local_axes_quaternion: Optional[ndarray]  # (E, 4) for shells, else None
     time: ndarray                # (T,)
+
+    def global_coords(self, fem) -> ndarray:
+        """Map per-GP natural coords to ``(sum_GP, 3)`` world coords.
+
+        Uses element shape functions for supported types (hex8, quad4);
+        falls back to ``centroid + 0.5 * bbox_span * natural`` for
+        others — visualization-faithful for axis-aligned elements.
+        """
+        from ._gauss_world_coords import compute_global_coords
+        return compute_global_coords(self, fem)
 
 
 @dataclass(frozen=True)

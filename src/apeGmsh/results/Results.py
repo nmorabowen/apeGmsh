@@ -349,6 +349,46 @@ class Results:
         self.close()
 
     # ------------------------------------------------------------------
+    # Viewer
+    # ------------------------------------------------------------------
+
+    def viewer(
+        self,
+        *,
+        blocking: bool = True,
+        title: Optional[str] = None,
+    ):
+        """Open the post-solve results viewer.
+
+        Parameters
+        ----------
+        blocking
+            ``True`` (default) — open the viewer in-process and block
+            the calling thread until the window closes. Matches the
+            signature of :meth:`g.mesh.viewer` and :meth:`g.model.viewer`.
+            ``False`` — spawn a subprocess (Phase 6+); raises
+            :class:`NotImplementedError` until that lands.
+        title
+            Optional window title; defaults to ``"Results — <filename>"``.
+
+        Returns
+        -------
+        ResultsViewer
+            The viewer instance after the window closes (introspectable
+            for tests).
+        """
+        if not blocking:
+            raise NotImplementedError(
+                "blocking=False (subprocess) lands in Phase 6 of the "
+                "viewer rebuild. For now, call results.viewer() with "
+                "the default blocking=True, or run "
+                "'python -m apeGmsh.viewers.results <path>' once Phase "
+                "6 ships."
+            )
+        from ..viewers.results_viewer import ResultsViewer
+        return ResultsViewer(self, title=title).show()
+
+    # ------------------------------------------------------------------
     # Display
     # ------------------------------------------------------------------
 

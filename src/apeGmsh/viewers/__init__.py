@@ -1,6 +1,7 @@
 from .model_viewer import ModelViewer
 from .mesh_viewer import MeshViewer
 from .geom_transf_viewer import GeomTransfViewer
+from .results_viewer import ResultsViewer
 
 
 def settings() -> int:
@@ -33,6 +34,7 @@ __all__ = [
     "ModelViewer",
     "MeshViewer",
     "GeomTransfViewer",
+    "ResultsViewer",
     "settings",
     "theme_editor",
 ]
