@@ -194,3 +194,57 @@ def test_line_force_default_does_not_flip_for_axial_shear_torsion():
         assert style.flip_sign is False, (
             f"{component} should not default to flipped sign"
         )
+
+
+# =====================================================================
+# Stale-text bug: switching to a kind with no available components
+# must clear the field, not preserve the previous kind's default.
+# =====================================================================
+
+def test_combo_clears_when_switching_to_kind_with_no_components(
+    qapp, director,
+):
+    """Regression: switching from contour (has displacement_z) to
+    gauss_marker (empty for elasticFrame.mpco) used to leave
+    'displacement_z' in the edit field — wrong since the gauss diagram
+    would then try to read a nodal component.
+    """
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+
+    _set_kind(dlg, "contour")
+    assert dlg._component_combo.currentText() == "displacement_z"
+
+    _set_kind(dlg, "gauss_marker")
+    assert dlg._component_combo.count() == 0
+    assert dlg._component_combo.currentText() == "", (
+        "edit text must clear when the new kind has no components"
+    )
+
+
+def test_combo_clears_for_spring_force_when_no_spring_data(qapp, director):
+    """Same regression for spring_force on a fixture without springs."""
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+
+    _set_kind(dlg, "line_force")
+    assert dlg._component_combo.count() > 0
+    assert dlg._component_combo.currentText()  # non-empty default
+
+    _set_kind(dlg, "spring_force")
+    assert dlg._component_combo.count() == 0
+    assert dlg._component_combo.currentText() == ""
+
+
+def test_combo_repopulates_when_switching_back(qapp, director):
+    """After clearing, switching back to a kind with components must
+    refill the dropdown and select the appropriate default again."""
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+
+    _set_kind(dlg, "gauss_marker")
+    assert dlg._component_combo.currentText() == ""
+
+    _set_kind(dlg, "contour")
+    assert dlg._component_combo.count() > 0
+    assert dlg._component_combo.currentText() == "displacement_z"

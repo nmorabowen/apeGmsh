@@ -301,17 +301,18 @@ class AddDiagramDialog:
             if scoped is not None:
                 components = _components_for(scoped, topology)
 
-        # Preserve whatever the user has typed if it's not in the new list.
+        # Preserve the user's prior text only when the new list contains
+        # it — otherwise it was a default from a different kind and we
+        # must not carry it over (e.g. ``displacement_z`` showing up in
+        # the field after the user picked Gauss point markers).
         prior = self._component_combo.currentText().strip()
 
         self._component_combo.blockSignals(True)
         try:
             self._component_combo.clear()
             self._component_combo.addItems(components)
-            # Prefer a sensible default for nodal diagrams.
             preferred_default = (
-                "displacement_z"
-                if topology == "nodes" else
+                "displacement_z" if topology == "nodes" else
                 (components[0] if components else "")
             )
             if prior and prior in components:
@@ -320,9 +321,11 @@ class AddDiagramDialog:
                 self._component_combo.setCurrentText(preferred_default)
             elif components:
                 self._component_combo.setCurrentIndex(0)
-            elif prior:
-                # No options for this kind+stage but user typed something.
-                self._component_combo.setEditText(prior)
+            else:
+                # Empty list for this (kind, stage) — clear the field
+                # rather than leaving stale text from the previous kind.
+                # The placeholder still hints at typing a custom name.
+                self._component_combo.setEditText("")
         finally:
             self._component_combo.blockSignals(False)
 
