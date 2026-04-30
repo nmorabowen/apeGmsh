@@ -13,6 +13,10 @@
         <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_results_viewer/">
       
       
+        <link rel="prev" href="../apeGmsh_visualization/">
+      
+      
+        <link rel="next" href="../apeGmsh_aesthetic/">
       
       
         
@@ -885,8 +889,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -928,6 +934,8 @@
       
         
       
+        
+      
     
     
     
@@ -937,11 +945,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
@@ -962,7 +970,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1192,6 +1200,541 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Scope
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-what-the-results-viewer-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 What the results viewer is
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-what-it-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 What it is not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-phase-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 Phase boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-data-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The data shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-diagram-abstraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The Diagram abstraction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. The Diagram abstraction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-why-a-diagram-is-the-right-unit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Why a Diagram is the right unit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-diagram-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Diagram protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-diagram-catalogue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Diagram catalogue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33a-contourdiagram-three-rendering-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3a ContourDiagram — three rendering paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-what-a-diagram-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 What a Diagram is not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-stack-neutrality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 Stack-neutrality
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-resultsdirector-single-source-of-truth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. ResultsDirector — single source of truth
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. ResultsDirector — single source of truth">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-what-the-director-owns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 What the Director owns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-time-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Time modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-stage-navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Stage navigation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-selection-what-gets-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Selection — what gets data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Selection — what gets data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-pick-driven-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Pick-driven selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-ui-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. UI surface
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. UI surface">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-window-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Window layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-tabs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Tabs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-diagram-specific-side-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Diagram-specific side panels
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-renderer-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Renderer integration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Renderer integration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-what-we-reuse-from-viewers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1 What we reuse from viewers/
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#72-color-manager-and-diagrams-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.2 Color manager and diagrams — boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#73-origin-shift-scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.3 Origin shift, scale
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Probes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-subprocess-opt-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Subprocess opt-in
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-the-frozen-apegmshviewer-sibling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. The frozen apeGmshViewer/ sibling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-mining-ledger-what-comes-from-apegmshviewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Mining ledger — what comes from apeGmshViewer/
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11. Mining ledger — what comes from apeGmshViewer/">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#111-lift-refactored-against-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1 Lift (refactored against Results)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#112-pattern-lift-rebuilt-against-slabs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2 Pattern lift (rebuilt against slabs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#113-discard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3 Discard
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-file-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. File structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-class-flavor-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Class-flavor inventory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-contributor-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Contributor rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-open-items-deferred-to-the-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. Open items deferred to the plan
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2524,6 +3067,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#33a-contourdiagram-three-rendering-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3a ContourDiagram — three rendering paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#34-what-a-diagram-is-not" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3108,8 +3662,8 @@ The implementation phasing is in the plan; this is the target catalogue.</p>
 <tbody>
 <tr>
 <td><code>ContourDiagram</code></td>
-<td><code>NodeSlab</code> or interpolated <code>GaussSlab</code></td>
-<td>Per-cell or per-node colored mesh, scalar bar, optional deformed warp</td>
+<td><code>NodeSlab</code> (point data) or <code>GaussSlab</code> (cell data when <code>n_gp == 1</code>, point data via shape-fn extrapolation when <code>n_gp &gt; 1</code>)</td>
+<td>Colored substrate slice, scalar bar, optional deformed warp</td>
 </tr>
 <tr>
 <td><code>DeformedShapeDiagram</code></td>
@@ -3158,6 +3712,86 @@ The implementation phasing is in the plan; this is the target catalogue.</p>
   <code>DeformedShapeDiagram</code> opened on a stage with <code>kind="mode"</code>. The
   Stage panel detects mode stages and offers an animation toggle.</li>
 </ul>
+<h3 id="33a-contourdiagram-three-rendering-paths">3.3a ContourDiagram — three rendering paths<a class="headerlink" href="#33a-contourdiagram-three-rendering-paths" title="Permanent link">&para;</a></h3>
+<p><code>ContourDiagram</code> is the most-used diagram in the catalogue and the only
+one that fans into more than one substrate path. It supports both nodal
+data (the bread-and-butter case for displacements and reactions) and
+element-level Gauss data (stresses, strains, plastic work). The path is
+chosen at attach time after a single step-0 read used both for the
+n_gp probe and the initial scatter.</p>
+<p>The user-facing knob is <code>ContourStyle.topology</code> with three values:</p>
+<ul>
+<li><code>"auto"</code> (default) — prefer nodal data when both composites have the
+  requested component; fall through to Gauss otherwise.</li>
+<li><code>"nodes"</code> — force the nodal-scalar path.</li>
+<li><code>"gauss"</code> — force the Gauss path; cell-vs-node sub-decision is made
+  internally based on <code>n_gp</code>.</li>
+</ul>
+<p>The three internal paths:</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Trigger</th>
+<th>Substrate slice</th>
+<th>Per-step write</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nodes</code></td>
+<td><code>topology="nodes"</code> (or <code>"auto"</code> when component is in nodes only)</td>
+<td><code>extract_points(node_indices)</code></td>
+<td>Scatter into <code>point_data["_contour"]</code></td>
+</tr>
+<tr>
+<td><code>gauss_cell</code></td>
+<td><code>topology="gauss"</code> and every selected element has <code>n_gp == 1</code> (CST / tri31, hex8 with one-point integration)</td>
+<td><code>extract_cells(cell_indices)</code></td>
+<td>Scatter into <code>cell_data["_contour"]</code></td>
+</tr>
+<tr>
+<td><code>gauss_node</code></td>
+<td><code>topology="gauss"</code> and at least one selected element has <code>n_gp &gt; 1</code> (tet10, hex20/27, etc.)</td>
+<td><code>extract_points</code> over the union of corner nodes touched by the slab</td>
+<td>Per-step extrapolation → scatter into <code>point_data["_contour"]</code></td>
+</tr>
+</tbody>
+</table>
+<p>The <code>gauss_node</code> path is the only one that does non-trivial work
+between the slab read and the scatter — the others are direct
+mappings. The extrapolation pipeline lives in
+[<code>apeGmsh.results._gauss_extrapolation</code>] and works as follows:</p>
+<ol>
+<li><strong>Per-element extrapolation matrix.</strong> Evaluate the element's shape
+   functions at the slab's GP natural coords to get
+   <code>A</code> shape <code>(n_gp, n_corner)</code>; compute <code>M = pinv(A)</code> shape
+   <code>(n_corner, n_gp)</code>. For square systems (e.g. hex8 + 2×2×2 GPs)
+   this is the exact inverse and constant + linear fields are
+   reproduced bit-for-bit.</li>
+<li><strong>Linear-counterpart projection.</strong> For higher-order types
+   (tri6 / quad8/9 / tet10 / hex20/27) the matrix uses the <strong>linear</strong>
+   counterpart's shape functions (tri3 / quad4 / tet4 / hex8) rather
+   than the full higher-order N matrix. Two reasons:</li>
+<li>The substrate is built from linear cells. <code>build_fem_scene</code>
+     drops mid-side / face / center nodes, so non-corner
+     extrapolations are never painted.</li>
+<li><code>pinv</code> on the full higher-order N matrix yields a non-constant
+     nodal field for a constant GP input (minimum-norm regularization
+     of the under-determined system), which is the wrong behaviour
+     for visualization.</li>
+<li><strong>Per-element apply.</strong> <code>nodal[t, c] = M @ gp_values[t, :]</code> for
+   each selected element.</li>
+<li><strong>Cross-element averaging.</strong> Per-element nodal contributions
+   accumulate into a global per-node sum + count; the final value is
+   the mean across neighbouring elements.</li>
+</ol>
+<p>Smoothing across element boundaries is the price of a single-mesh
+nodal contour. Standard post-processor behaviour (STKO, ParaView,
+most academic viewers). A future per-element subdivision path can
+preserve discontinuities at material interfaces — out of scope today;
+the <code>gauss_cell</code> cell-data scaffolding stays in place to keep that
+door open.</p>
 <h3 id="34-what-a-diagram-is-not">3.4 What a Diagram is <em>not</em><a class="headerlink" href="#34-what-a-diagram-is-not" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Not a renderer. It does not own a <code>Plotter</code>. It receives one in
