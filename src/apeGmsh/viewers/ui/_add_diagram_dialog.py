@@ -16,7 +16,7 @@ from ..diagrams._fiber_section import FiberSectionDiagram
 from ..diagrams._gauss_marker import GaussPointDiagram
 from ..diagrams._layer_stack import LayerStackDiagram
 from ..diagrams._line_force import LineForceDiagram
-from ..diagrams._selectors import normalize_selector
+from ..diagrams._selectors import normalize as normalize_selector
 from ..diagrams._spring_force import SpringForceDiagram
 from ..diagrams._styles import (
     ContourStyle, DeformedShapeStyle, FiberSectionStyle,
