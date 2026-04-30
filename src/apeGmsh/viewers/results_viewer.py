@@ -135,7 +135,7 @@ class ResultsViewer:
         # built after ``bind_plotter`` and wired into a Probes tab.
         self._probe_overlay: Any = None
 
-        # ── Tabs (Stages, Diagrams, Settings, Inspector, Probes) ────
+        # ── Right-dock tabs (Settings, Inspector, Probes) ───────────
         # Probes tab is appended after ProbeOverlay is constructed.
         tabs = build_results_tabs(
             director,
@@ -144,6 +144,13 @@ class ResultsViewer:
         self._tabs = tabs
         for name, widget in tabs.to_pairs():
             win.add_tab(name, widget)
+
+        # ── Outline tree (left rail) ────────────────────────────────
+        from .ui._outline_tree import OutlineTree
+        outline = OutlineTree(director)
+        outline.on_diagram_selected(tabs.settings.set_selected)
+        win.set_left_widget(outline.widget)
+        self._outline = outline
 
         # ── Plotter — substrate mesh ────────────────────────────────
         plotter = win.plotter
