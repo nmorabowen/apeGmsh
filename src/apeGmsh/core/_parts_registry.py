@@ -84,7 +84,7 @@ class Instance:
     bbox: tuple[float, float, float, float, float, float] | None = None
     label_names: list[str] = field(default_factory=list)
     labels: "_InstanceLabels" = field(init=False, repr=False)
-    edit: "InstanceEdit | None" = field(init=False, repr=False, default=None)
+    edit: "InstanceEdit" = field(init=False, repr=False, default=None)  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, 'labels', _InstanceLabels(self))

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from apeGmsh.core.Labels import Labels
+    from apeGmsh.core.Model import Model
 
 Tag = int
 DimTag = tuple[int, int]
@@ -11,7 +16,7 @@ TagsLike = Tag | list[Tag] | DimTag | list[DimTag]
 # Flexible entity reference — accepted wherever the library
 # expects entity tags.  Resolves through :func:`resolve_to_tags`.
 EntityRef = int | str | tuple[int, int]
-EntityRefs = EntityRef | list[EntityRef] | None
+EntityRefs = EntityRef | Sequence[EntityRef] | None
 
 
 @runtime_checkable
@@ -26,6 +31,8 @@ class SessionProtocol(Protocol):
     name: str
     _verbose: bool
     _auto_pg_from_label: bool
+    model: "Model"
+    labels: "Labels"
 
     @property
     def is_active(self) -> bool: ...
