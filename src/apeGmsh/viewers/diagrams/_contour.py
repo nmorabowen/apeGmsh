@@ -1,19 +1,24 @@
 """ContourDiagram — paint scalar values on the substrate.
 
-Two topology paths share one diagram:
+Three rendering paths share one diagram, dispatched at attach time:
 
 * **nodes** — values come from ``results.nodes.get(...)`` and are
   painted as point data on a submesh extracted by node IDs.
-* **gauss** — values come from ``results.elements.gauss.get(...)``
-  and are painted as cell data on a submesh extracted by element IDs.
-  Element-constant only (``n_gp == 1`` per element); higher-order
-  integration would need shape-function interpolation, which is a
-  future extension.
+* **gauss_cell** — values come from ``results.elements.gauss.get(...)``
+  with exactly one Gauss point per element (CST / tri31, hex8 with
+  one-point integration). Painted as cell data on a submesh extracted
+  by element IDs.
+* **gauss_node** — values come from
+  ``results.elements.gauss.get(...)`` with multiple Gauss points per
+  element. The slab is extrapolated to corner nodes via the inverse
+  of the element shape-function matrix, then averaged across all
+  elements that share a node. Painted as point data, same scaffolding
+  as the nodes path.
 
-The active path is chosen by ``ContourStyle.topology`` (``"auto"``,
-``"nodes"``, ``"gauss"``). Auto inspects the available components on
-each composite at attach time and prefers nodal data when both have
-the component.
+The user-facing ``ContourStyle.topology`` field has three values:
+``"auto"``, ``"nodes"``, ``"gauss"``. When ``"gauss"`` (or auto with a
+gauss-only component), the diagram peeks at step 0 to count GPs per
+element and picks ``gauss_cell`` vs. ``gauss_node`` automatically.
 
 Performance contract (locked in Phase 0, validated here):
 
@@ -44,9 +49,16 @@ if TYPE_CHECKING:
 
 _SCALAR_NAME = "_contour"
 
+# Style.topology values (user-facing)
 _TOPO_NODES = "nodes"
 _TOPO_GAUSS = "gauss"
 _TOPO_AUTO = "auto"
+
+# Internal effective-topology values — gauss splits into a cell-data
+# (n_gp==1) and a point-data (n_gp>1, extrapolated) sub-path.
+_EFFECTIVE_NODES = "nodes"
+_EFFECTIVE_GAUSS_CELL = "gauss_cell"
+_EFFECTIVE_GAUSS_NODE = "gauss_node"
 
 
 class ContourDiagram(Diagram):
@@ -117,16 +129,18 @@ class ContourDiagram(Diagram):
         super().attach(plotter, fem, scene)
 
         topology = self._resolve_topology()
-        self._effective_topology = topology
         if topology == _TOPO_GAUSS:
+            # Peek at step 0 to choose cell-vs-node sub-path.
             self._attach_gauss(plotter, scene)
         else:
+            self._effective_topology = _EFFECTIVE_NODES
             self._attach_nodes(plotter, scene)
 
     def update_to_step(self, step_index: int) -> None:
         if self._submesh is None:
             return
-        if self._effective_topology == _TOPO_GAUSS:
+        topo = self._effective_topology
+        if topo == _EFFECTIVE_GAUSS_CELL:
             if self._cell_scalar_array is None:
                 return
             fetched = self._fetch_step_values_gauss(step_index)
@@ -134,7 +148,15 @@ class ContourDiagram(Diagram):
                 return
             slab_eids, slab_values = fetched
             self._scatter_into_cell_scalar(slab_eids, slab_values)
-        else:
+        elif topo == _EFFECTIVE_GAUSS_NODE:
+            if self._scalar_array is None:
+                return
+            fetched = self._fetch_step_values_gauss_node(step_index)
+            if fetched is None:
+                return
+            node_ids, nodal_values = fetched
+            self._scatter_into_scalar(node_ids, nodal_values)
+        else:    # _EFFECTIVE_NODES
             if self._scalar_array is None:
                 return
             fetched = self._fetch_step_values(step_index)
@@ -171,7 +193,7 @@ class ContourDiagram(Diagram):
         """Re-fit clim to the current step's value range."""
         active = (
             self._cell_scalar_array
-            if self._effective_topology == _TOPO_GAUSS
+            if self._effective_topology == _EFFECTIVE_GAUSS_CELL
             else self._scalar_array
         )
         if active is None:
@@ -330,6 +352,43 @@ class ContourDiagram(Diagram):
     def _attach_gauss(
         self, plotter: Any, scene: "FEMSceneData",
     ) -> None:
+        """Read step 0, decide cell-vs-node sub-path, dispatch."""
+        from ._base import NoDataError
+        from apeGmsh.results._gauss_extrapolation import (
+            per_element_max_gp_count,
+        )
+
+        eids = self._resolved_element_ids
+        results = self._scoped_results()
+        if results is None:
+            raise NoDataError(
+                "ContourDiagram (gauss): could not scope Results to a "
+                "stage — diagram needs a stage_id on the spec."
+            )
+        # Single read at step 0 — used for n_gp probe and initial scatter.
+        slab_step0 = results.elements.gauss.get(
+            ids=eids,
+            component=self.spec.selector.component,
+            time=[0],
+        )
+        if slab_step0.values.size == 0:
+            raise NoDataError(
+                f"ContourDiagram (gauss): no element data for component "
+                f"{self.spec.selector.component!r} at step 0."
+            )
+        max_n_gp = per_element_max_gp_count(slab_step0)
+        if max_n_gp <= 1:
+            self._attach_gauss_cell(plotter, scene, slab_step0)
+        else:
+            self._attach_gauss_node(plotter, scene, slab_step0)
+
+    # ------------------------------------------------------------------
+    # Attach — gauss cell-data path (n_gp == 1)
+    # ------------------------------------------------------------------
+
+    def _attach_gauss_cell(
+        self, plotter: Any, scene: "FEMSceneData", slab_step0: Any,
+    ) -> None:
         from ._base import NoDataError
 
         # ── Resolve selector to substrate cell indices ──────────────
@@ -360,7 +419,6 @@ class ContourDiagram(Diagram):
                 "for this selector — nothing to color."
             )
 
-        # vtkOriginalCellIds maps submesh cell index -> substrate cell
         try:
             orig_cells = np.asarray(
                 submesh.cell_data["vtkOriginalCellIds"], dtype=np.int64,
@@ -373,13 +431,13 @@ class ContourDiagram(Diagram):
             ) from exc
         fem_eids_in_submesh = scene.cell_to_element_id[orig_cells]
 
-        # FEM element ID -> submesh cell row
         max_eid = int(fem_eids_in_submesh.max()) + 1
         submesh_cell_pos = np.full(max_eid + 1, -1, dtype=np.int64)
         submesh_cell_pos[fem_eids_in_submesh] = np.arange(
             fem_eids_in_submesh.size, dtype=np.int64,
         )
 
+        self._effective_topology = _EFFECTIVE_GAUSS_CELL
         self._submesh = submesh
         self._submesh_cell_pos_of_eid = submesh_cell_pos
         self._fem_eids_to_read = fem_eids_in_submesh
@@ -388,19 +446,83 @@ class ContourDiagram(Diagram):
         submesh.cell_data[_SCALAR_NAME] = cell_scalars
         self._cell_scalar_array = submesh.cell_data[_SCALAR_NAME]
 
-        values_at_step_0 = self._fetch_step_values_gauss(0)
-        if values_at_step_0 is None:
-            raise NoDataError(
-                f"ContourDiagram (gauss): no element data for component "
-                f"{self.spec.selector.component!r} at step 0."
-            )
-        self._scatter_into_cell_scalar(
-            values_at_step_0[0], values_at_step_0[1],
-        )
+        # Step 0 values are already in slab_step0 — flatten and scatter
+        # directly rather than re-reading.
+        slab_eids = np.asarray(slab_step0.element_index, dtype=np.int64)
+        slab_vals = np.asarray(slab_step0.values[0], dtype=np.float64)
+        self._scatter_into_cell_scalar(slab_eids, slab_vals)
         self._initial_clim = self._compute_initial_clim(
             np.asarray(self._cell_scalar_array),
         )
         self._add_actor(submesh, _SCALAR_NAME, preference="cell")
+
+    # ------------------------------------------------------------------
+    # Attach — gauss extrapolated point-data path (n_gp > 1)
+    # ------------------------------------------------------------------
+
+    def _attach_gauss_node(
+        self, plotter: Any, scene: "FEMSceneData", slab_step0: Any,
+    ) -> None:
+        from ._base import NoDataError
+        from apeGmsh.results._gauss_extrapolation import (
+            extrapolate_gauss_slab_to_nodes,
+        )
+
+        node_ids, nodal_values = extrapolate_gauss_slab_to_nodes(
+            slab_step0, self._fem,
+        )
+        if node_ids.size == 0:
+            raise NoDataError(
+                f"ContourDiagram (gauss-extrapolated): no nodal "
+                f"contributions for component "
+                f"{self.spec.selector.component!r} at step 0 (no "
+                f"selected element matches the bound FEM)."
+            )
+
+        # Map FEM node IDs → substrate point indices, drop misses.
+        point_indices = self._fem_ids_to_substrate_indices(scene, node_ids)
+        if point_indices.size == 0:
+            raise NoDataError(
+                f"ContourDiagram (gauss-extrapolated): "
+                f"{node_ids.size} node(s) received contributions but "
+                f"none are in the substrate mesh."
+            )
+
+        submesh = scene.grid.extract_points(
+            point_indices, adjacent_cells=False,
+        )
+        if submesh.n_points == 0:
+            raise NoDataError(
+                "ContourDiagram (gauss-extrapolated): substrate submesh "
+                "is empty — nothing to color."
+            )
+
+        orig_indices = np.asarray(
+            submesh.point_data["vtkOriginalPointIds"], dtype=np.int64,
+        )
+        fem_ids_in_submesh = scene.node_ids[orig_indices]
+
+        max_id = int(fem_ids_in_submesh.max()) + 1
+        submesh_pos = np.full(max_id + 1, -1, dtype=np.int64)
+        submesh_pos[fem_ids_in_submesh] = np.arange(
+            fem_ids_in_submesh.size, dtype=np.int64,
+        )
+
+        self._effective_topology = _EFFECTIVE_GAUSS_NODE
+        self._submesh = submesh
+        self._submesh_pos_of_id = submesh_pos
+        self._fem_ids_to_read = fem_ids_in_submesh
+
+        scalars = np.zeros(submesh.n_points, dtype=np.float64)
+        submesh.point_data[_SCALAR_NAME] = scalars
+        self._scalar_array = submesh.point_data[_SCALAR_NAME]
+
+        # Scatter the step-0 extrapolation result.
+        self._scatter_into_scalar(node_ids, nodal_values[0])
+        self._initial_clim = self._compute_initial_clim(
+            np.asarray(self._scalar_array),
+        )
+        self._add_actor(submesh, _SCALAR_NAME, preference="point")
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -494,20 +616,60 @@ class ContourDiagram(Diagram):
     def _fetch_step_values_gauss(
         self, step_index: int,
     ) -> Optional[tuple[ndarray, ndarray]]:
-        """Read one step's element-constant Gauss slab.
+        """Read one step's cell-constant Gauss slab (n_gp == 1).
 
-        Returns ``(element_ids, values)`` or ``None``. Raises
-        ``NoDataError`` if the slab carries more than one Gauss point
-        per element — Gauss-contour with higher-order integration
-        needs shape-function interpolation, which this diagram does
-        not yet implement.
+        Returns ``(element_ids, values)`` or ``None``. The dispatch in
+        ``_attach_gauss`` should never route a multi-GP slab here; if
+        n_gp > 1 we silently take the per-element mean as a defensive
+        fallback rather than crash mid-animation.
         """
         if self._fem_eids_to_read is None:
             return None
         results = self._scoped_results()
         if results is None:
             return None
-        eids = self._fem_eids_to_read
+        slab = results.elements.gauss.get(
+            ids=self._fem_eids_to_read,
+            component=self.spec.selector.component,
+            time=[int(step_index)],
+        )
+        if slab.values.size == 0:
+            return None
+        slab_eids = np.asarray(slab.element_index, dtype=np.int64)
+        slab_vals = np.asarray(slab.values[0], dtype=np.float64)
+        # Defensive: collapse to per-element mean if multi-GP slipped
+        # through (shouldn't happen — gauss_cell is a 1-GP path).
+        if slab_eids.size != np.unique(slab_eids).size:
+            uniq, inv = np.unique(slab_eids, return_inverse=True)
+            sums = np.zeros(uniq.size, dtype=np.float64)
+            counts = np.zeros(uniq.size, dtype=np.int64)
+            np.add.at(sums, inv, slab_vals)
+            np.add.at(counts, inv, 1)
+            return (uniq, sums / counts)
+        return (slab_eids, slab_vals)
+
+    def _fetch_step_values_gauss_node(
+        self, step_index: int,
+    ) -> Optional[tuple[ndarray, ndarray]]:
+        """Read one step's GP slab and extrapolate to nodal values.
+
+        Returns ``(node_ids, values_for_step)`` — values is a 1-D
+        array of length ``node_ids.size``. The submesh's point order
+        is preserved by ``_scatter_into_scalar`` via
+        ``_submesh_pos_of_id``.
+        """
+        if self._fem_eids_to_read is None:
+            return None
+        results = self._scoped_results()
+        if results is None:
+            return None
+        from apeGmsh.results._gauss_extrapolation import (
+            extrapolate_gauss_slab_to_nodes,
+        )
+        # The slab fetch is keyed by element IDs (via the selector),
+        # not the node IDs we cached for the submesh. Re-derive from
+        # the original element-id resolution.
+        eids = self._resolved_element_ids
         slab = results.elements.gauss.get(
             ids=eids,
             component=self.spec.selector.component,
@@ -515,23 +677,10 @@ class ContourDiagram(Diagram):
         )
         if slab.values.size == 0:
             return None
-        slab_eids = np.asarray(slab.element_index, dtype=np.int64)
-        # Reject n_gp > 1 with a clear hint.
-        if slab_eids.size != np.unique(slab_eids).size:
-            from ._base import NoDataError
-            counts = np.bincount(slab_eids - int(slab_eids.min()))
-            n_gp = int(counts[counts > 0].max())
-            raise NoDataError(
-                f"ContourDiagram (gauss): component "
-                f"{self.spec.selector.component!r} has {n_gp} Gauss "
-                f"points per element. Element-constant rendering "
-                f"requires n_gp == 1 (e.g. CST / tri31). For higher-"
-                f"order integration, use a diagram that interpolates "
-                f"through the shape functions."
-            )
-        # values shape (1, E)
-        return (slab_eids,
-                np.asarray(slab.values[0], dtype=np.float64))
+        node_ids, nodal = extrapolate_gauss_slab_to_nodes(slab, self._fem)
+        if node_ids.size == 0:
+            return None
+        return (node_ids, nodal[0])
 
     def _scatter_into_cell_scalar(
         self, slab_eids: ndarray, slab_values: ndarray,

@@ -178,7 +178,8 @@ def test_auto_falls_through_to_gauss_for_element_only_component(
     r = results_with_nodes_and_element_constant_gauss
     diagram = ContourDiagram(_spec("stress_xx"), r)
     diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
-    assert diagram._effective_topology == "gauss"
+    # n_gp == 1 routes to the cell-data sub-path.
+    assert diagram._effective_topology == "gauss_cell"
     assert diagram._cell_scalar_array is not None
     assert diagram._scalar_array is None
 
@@ -190,7 +191,7 @@ def test_explicit_gauss_topology_uses_cell_data(
     diagram = ContourDiagram(_spec("stress_xx", topology="gauss"), r)
     scene = build_fem_scene(r.fem)
     diagram.attach(headless_plotter, r.fem, scene)
-    assert diagram._effective_topology == "gauss"
+    assert diagram._effective_topology == "gauss_cell"
     assert diagram._submesh.n_cells == scene.grid.n_cells
     # cell_data array exists and is sized like the submesh
     assert diagram._cell_scalar_array.shape[0] == diagram._submesh.n_cells
@@ -292,13 +293,41 @@ def test_autofit_at_current_step_works_for_gauss(
 # =====================================================================
 
 
-def test_two_gp_per_element_raises_no_data_error(
+def test_two_gp_per_element_routes_to_extrapolation(
     results_with_two_gp_gauss, headless_plotter,
 ):
+    """Higher-order integration now goes through GP→nodal extrapolation.
+
+    Previously this raised ``NoDataError`` to advertise the missing
+    feature; with the extrapolation path landed, multi-GP slabs paint
+    a smoothed nodal contour via point data.
+    """
     r = results_with_two_gp_gauss
     diagram = ContourDiagram(_spec("stress_xx", topology="gauss"), r)
-    with pytest.raises(NoDataError, match="2 Gauss points per element"):
-        diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+    diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+    assert diagram._effective_topology == "gauss_node"
+    # The extrapolated path uses point data, not cell data.
+    assert diagram._scalar_array is not None
+    assert diagram._cell_scalar_array is None
+
+
+def test_gauss_node_path_in_place_mutation_across_steps(
+    results_with_two_gp_gauss, headless_plotter,
+):
+    """The extrapolated path must obey the same in-place contract as
+    the nodes path: same point_data array, same mapper id across step
+    changes."""
+    r = results_with_two_gp_gauss
+    diagram = ContourDiagram(_spec("stress_xx", topology="gauss"), r)
+    diagram.attach(headless_plotter, r.fem, build_fem_scene(r.fem))
+    array_id_before = id(diagram._scalar_array)
+    mapper_id_before = id(diagram._actor.GetMapper())
+
+    diagram.update_to_step(1)
+    diagram.update_to_step(0)
+
+    assert id(diagram._scalar_array) == array_id_before
+    assert id(diagram._actor.GetMapper()) == mapper_id_before
 
 
 # =====================================================================
