@@ -133,11 +133,11 @@ class ResultsViewer:
         # ProbeOverlay needs the plotter, which doesn't exist until
         # ``win`` is constructed below. We initialise to None here so
         # any early access path resolves cleanly; the real overlay is
-        # built after ``bind_plotter`` and wired into a Probes tab.
+        # built after ``bind_plotter`` and feeds the viewport HUD.
         self._probe_overlay: Any = None
 
-        # ── Right-dock tabs (Settings, Inspector, Probes) ───────────
-        # Probes tab is appended after ProbeOverlay is constructed.
+        # ── Right-dock tabs (Inspector — Settings re-hosted in
+        # DetailsPanel, Probes migrated to viewport HUD) ────────────
         tabs = build_results_tabs(
             director,
             on_open_history=self._open_time_history,
@@ -199,13 +199,15 @@ class ResultsViewer:
         # ── Subscribe to diagram changes for side-panel docking ─────
         director.subscribe_diagrams(self._sync_side_panels)
 
-        # ── Probe overlay + Probes tab ──────────────────────────────
+        # ── Probe overlay + viewport HUD palette ────────────────────
         from .overlays.probe_overlay import ProbeOverlay
-        from .ui._probes_tab import ProbesTab
+        from .ui._viewport_hud import ProbePaletteHUD
         self._probe_overlay = ProbeOverlay(plotter, scene, director)
-        probes_tab = ProbesTab(self._probe_overlay)
-        self._tabs.probes = probes_tab
-        win.add_tab("Probes", probes_tab.widget)
+        self._probe_hud = ProbePaletteHUD(
+            plotter.interactor,
+            self._probe_overlay,
+            on_status=win.set_status,
+        )
 
         # ── Camera / view ──────────────────────────────────────────
         try:
