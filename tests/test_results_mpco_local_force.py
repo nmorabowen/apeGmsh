@@ -188,7 +188,13 @@ def test_read_unknown_canonical_returns_none(fixture_h5):
 
 
 def test_read_value_matches_raw_h5(fixture_h5):
-    """Verify we pull the right column from the right row."""
+    """Verify we pull the right column from the right row.
+
+    Station 1 is the raw ``localForce`` value (force from joint on
+    element). Station 2 is **negated** so the slab represents internal
+    section forces in textbook convention (continuous across element
+    boundaries). See the docstring on ``read_local_force_bucket_slab``.
+    """
     on_elements = fixture_h5["MODEL_STAGE[1]/RESULTS/ON_ELEMENTS"]
     bucket = discover_local_force_buckets(on_elements)[0]
     bucket_grp = on_elements[f"localForce/{_BRACKET}"]
@@ -199,8 +205,8 @@ def test_read_value_matches_raw_h5(fixture_h5):
     # COMPONENTS = N_1,Vy_1,Vz_1,T_1,My_1,Mz_1,N_2,Vy_2,Vz_2,T_2,My_2,Mz_2
     #              0   1    2    3   4    5    6   7    8    9   10   11
     # bending_moment_z: cols [5, 11]
-    expected_e1_s1 = raw_step0[0, 5]   # row 0 = element id 1, col 5
-    expected_e1_s2 = raw_step0[0, 11]
+    expected_e1_s1 = raw_step0[0, 5]    # station 1: as-is
+    expected_e1_s2 = -raw_step0[0, 11]  # station 2: sign flipped
 
     t_idx = np.array([0], dtype=np.int64)
     values, element_index, _ = read_local_force_bucket_slab(
@@ -247,16 +253,66 @@ def test_results_read_line_stations_returns_two_station_slab():
     )
 
 
-def test_results_axial_equilibrium_on_elastic_beam():
-    """Statics check: each element's two end axials sum to zero."""
+def test_results_axial_force_constant_along_element():
+    """After the station-2 sign flip the slab is in internal-force
+    convention: axial force is constant along an element with no axial
+    distributed load — i.e., values at xi=-1 equal values at xi=+1.
+    """
     if not _FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_FIXTURE}")
     r = Results.from_mpco(_FIXTURE)
     s = r.stage(r.stages[0].name)
     slab = s.elements.line_stations.get(component="axial_force")
-    # Reshape (T, E*2) -> (T, E, 2) and check N_1 + N_2 == 0
+    # Reshape (T, E*2) -> (T, E, 2). Internal axial is constant per
+    # element so the two stations must agree.
     values = np.asarray(slab.values).reshape(slab.values.shape[0], -1, 2)
-    np.testing.assert_allclose(values.sum(axis=2), 0.0, atol=1e-6)
+    np.testing.assert_allclose(values[:, :, 0], values[:, :, 1], atol=1e-6)
+
+
+def test_results_bending_moment_slope_matches_shear():
+    """``dMy/dx == +Vz`` with the sign-flip convention: per element,
+    the slope of the linearly-varying bending moment over the element
+    length equals the (constant) shear value at station 1.
+
+    This is the cleanest verification that the sign convention is
+    consistent across components — moments and shears agree on the
+    same internal-force convention.
+    """
+    if not _FIXTURE.exists():
+        pytest.skip(f"Missing fixture: {_FIXTURE}")
+    r = Results.from_mpco(_FIXTURE)
+    s = r.stage(r.stages[0].name)
+
+    my = s.elements.line_stations.get(component="bending_moment_y")
+    vz = s.elements.line_stations.get(component="shear_z")
+
+    # Element length per element from the fem connectivity.
+    fem = r.fem
+    coords = np.asarray(fem.nodes.coords)
+    id_to_idx = {int(n): i for i, n in enumerate(fem.nodes.ids)}
+    eid_to_length: dict[int, float] = {}
+    for group in fem.elements:
+        for eid, conn in zip(group.ids, group.connectivity):
+            i, j = id_to_idx[int(conn[0])], id_to_idx[int(conn[1])]
+            eid_to_length[int(eid)] = float(np.linalg.norm(
+                coords[j] - coords[i]
+            ))
+
+    # Reshape (T, E*2) -> (T, E, 2) and pair element_ids with the slabs.
+    n_steps = my.values.shape[0]
+    my_v = np.asarray(my.values).reshape(n_steps, -1, 2)
+    vz_v = np.asarray(vz.values).reshape(n_steps, -1, 2)
+    eids = np.asarray(my.element_index, dtype=np.int64).reshape(-1, 2)[:, 0]
+
+    # Test on the last step where amplitudes are largest.
+    step = n_steps - 1
+    for i, eid in enumerate(eids):
+        L = eid_to_length[int(eid)]
+        slope = (my_v[step, i, 1] - my_v[step, i, 0]) / L
+        # Shear is constant for a beam under end loads only — both
+        # stations agree (after the sign flip). Pick station 1.
+        expected_slope = vz_v[step, i, 0]
+        np.testing.assert_allclose(slope, expected_slope, atol=1e-3)
 
 
 # Dedup precedence (section.force trumps localForce for the same
