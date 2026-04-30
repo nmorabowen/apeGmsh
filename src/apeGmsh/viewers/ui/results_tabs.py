@@ -3,14 +3,15 @@
 Constructs the right-side tab widgets the ``ResultsViewer`` shows in
 its ``ResultsWindow`` dock:
 
-* **Settings** — per-diagram styling controls
 * **Inspector** — picked-entity details + time-history launcher
 * **Probes** — point / line / plane probes (appended after the probe
   overlay is constructed)
 
-Stages and Diagrams used to live as tabs here; they migrated into the
-left-rail outline tree (B1). Settings / Inspector / Probes follow into
-the right-rail details panel (B2+).
+Stages / Diagrams migrated to the left-rail outline tree (B1).
+The Settings tab content moved into the right-rail DetailsPanel (B2),
+but the :class:`DiagramSettingsTab` instance is still constructed
+here — DetailsPanel re-hosts its widget. Inspector / Probes follow
+into the details panel + viewport HUD in B3.
 """
 from __future__ import annotations
 
@@ -33,9 +34,12 @@ class ResultsTabs:
     probes: ProbesTab | None = None
 
     def to_pairs(self) -> list[tuple[str, object]]:
-        """Return the list of ``(name, widget)`` pairs for the tab dock."""
+        """Return the list of ``(name, widget)`` pairs for the tab dock.
+
+        The Settings tab is intentionally absent — its content is
+        re-hosted by the right-rail :class:`DetailsPanel` (B2).
+        """
         pairs: list[tuple[str, object]] = [
-            ("Settings", self.settings.widget),
             ("Inspector", self.inspector.widget),
         ]
         if self.probes is not None:
