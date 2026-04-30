@@ -1,0 +1,3884 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_results_viewer/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>apeGmsh Results Viewer - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#apegmsh-results-viewer" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              apeGmsh Results Viewer
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/first_steps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First steps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_meshing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_groundTruth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_instance_computed_view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_light_theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Scope
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-what-the-results-viewer-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 What the results viewer is
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-what-it-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 What it is not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-phase-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 Phase boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-data-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The data shape
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-the-diagram-abstraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. The Diagram abstraction
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. The Diagram abstraction">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-why-a-diagram-is-the-right-unit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Why a Diagram is the right unit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-diagram-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Diagram protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-diagram-catalogue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Diagram catalogue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-what-a-diagram-is-not" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 What a Diagram is not
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-stack-neutrality" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 Stack-neutrality
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-resultsdirector-single-source-of-truth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. ResultsDirector — single source of truth
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. ResultsDirector — single source of truth">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-what-the-director-owns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 What the Director owns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-time-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Time modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-stage-navigation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Stage navigation
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-selection-what-gets-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Selection — what gets data
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Selection — what gets data">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-pick-driven-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Pick-driven selection
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-ui-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. UI surface
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. UI surface">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-window-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Window layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-tabs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Tabs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-diagram-specific-side-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Diagram-specific side panels
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-renderer-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Renderer integration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. Renderer integration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#71-what-we-reuse-from-viewers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.1 What we reuse from viewers/
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#72-color-manager-and-diagrams-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.2 Color manager and diagrams — boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#73-origin-shift-scale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.3 Origin shift, scale
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-probes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Probes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-subprocess-opt-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Subprocess opt-in
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-the-frozen-apegmshviewer-sibling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. The frozen apeGmshViewer/ sibling
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-mining-ledger-what-comes-from-apegmshviewer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Mining ledger — what comes from apeGmshViewer/
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="11. Mining ledger — what comes from apeGmshViewer/">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#111-lift-refactored-against-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.1 Lift (refactored against Results)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#112-pattern-lift-rebuilt-against-slabs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.2 Pattern lift (rebuilt against slabs)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#113-discard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11.3 Discard
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#12-file-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        12. File structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#13-class-flavor-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        13. Class-flavor inventory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#14-contributor-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        14. Contributor rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#15-open-items-deferred-to-the-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        15. Open items deferred to the plan
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="apegmsh-results-viewer">apeGmsh Results Viewer<a class="headerlink" href="#apegmsh-results-viewer" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>[!note] Companion document
+This file is the design charter for the <strong>post-solve</strong> viewer — what
+<code>results.viewer()</code> opens, how it consumes the [[Results_architecture|Results]]
+module, and how it renders the seven topology levels (nodes, elements,
+line stations, gauss points, fibers, layers, springs).</p>
+<p>Pre-solve review (geometry, mesh, constraints, loads, masses) is
+covered by <code>MeshViewer</code> / <code>ModelViewer</code> and is documented in
+[[apeGmsh_visualization]]. <strong>Pre- and post-solve are deliberately
+two viewers</strong> — same Qt+PyVista stack, same shared infrastructure
+under <code>viewers/{scene,core,ui,overlays}</code>, but different jobs and
+separately evolved.</p>
+<p>This document is the <strong>directives</strong> layer. The implementation
+phasing lives in <code>internal_docs/plan_results_viewer.md</code> (to follow).</p>
+</blockquote>
+<hr />
+<h2 id="1-scope">1. Scope<a class="headerlink" href="#1-scope" title="Permanent link">&para;</a></h2>
+<h3 id="11-what-the-results-viewer-is">1.1 What the results viewer is<a class="headerlink" href="#11-what-the-results-viewer-is" title="Permanent link">&para;</a></h3>
+<p>A Qt + PyVista desktop viewer that opens against a [[Results_architecture|Results]]
+file (native <code>.h5</code> or STKO <code>.mpco</code>) and renders post-solve quantities
+on top of the bound <code>FEMData</code> mesh. Opened by:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">()</span>                               <span class="c1"># blocks until closed</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>                 <span class="c1"># spawns subprocess</span>
+</span></code></pre></div>
+<p><code>results.viewer()</code> is the <strong>only</strong> results viewer entry point. The
+matching <code>fem.viewer()</code> (pre-solve) opens <code>MeshViewer</code>; the two are
+parallel, not unified.</p>
+<h3 id="12-what-it-is-not">1.2 What it is not<a class="headerlink" href="#12-what-it-is-not" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Not a notebook-inline tool.</strong> Use <code>g.model.preview()</code> /
+  <code>g.mesh.preview()</code> (Plotly) or matplotlib via <code>g.plot</code> for inline
+  figures. The results viewer needs Qt; for Colab / headless runs,
+  produce static figures or VTU exports.</li>
+<li><strong>Not a solver-agnostic file viewer.</strong> It consumes <code>Results</code> objects.
+  Reading raw <code>.vtu</code> / <code>.pvd</code> is dropped from the viewer surface (those
+  remain export targets — <code>results.export.vtu(...)</code>).</li>
+<li><strong>Not the future scale-out path.</strong> The frozen sibling package
+  <code>apeGmshViewer/</code> is reserved for a future WebGL / Rust rewrite. See
+  §10.</li>
+</ul>
+<h3 id="13-phase-boundary">1.3 Phase boundary<a class="headerlink" href="#13-phase-boundary" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Pre-solve (<code>MeshViewer</code>)</th>
+<th>Post-solve (<code>ResultsViewer</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Substrate</td>
+<td>live <code>FEMData</code></td>
+<td>bound <code>FEMData</code> from <code>Results.fem</code></td>
+</tr>
+<tr>
+<td>Visual subjects</td>
+<td>mesh, constraints, loads, masses</td>
+<td>result slabs (7 topology levels) + diagrams</td>
+</tr>
+<tr>
+<td>Time</td>
+<td>static</td>
+<td>scrubber, play/pause, animation</td>
+</tr>
+<tr>
+<td>Stages / modes</td>
+<td>n/a</td>
+<td>first-class — stage selector, modal browser</td>
+</tr>
+<tr>
+<td>State mutation</td>
+<td>edits PGs, picks selections</td>
+<td>read-only on data; mutates view state</td>
+</tr>
+<tr>
+<td>Entry</td>
+<td><code>g.mesh.viewer(fem=...)</code></td>
+<td><code>results.viewer()</code></td>
+</tr>
+</tbody>
+</table>
+<p>Mesh-resolved overlays from the pre-solve viewer (constraint markers,
+load arrows, mass spheres) <strong>do not appear</strong> in the results viewer.
+A user who needs both reviews their model first with <code>g.mesh.viewer</code>,
+runs the analysis, opens <code>results.viewer</code>. They are sequential tools.</p>
+<hr />
+<h2 id="2-the-data-shape">2. The data shape<a class="headerlink" href="#2-the-data-shape" title="Permanent link">&para;</a></h2>
+<p>The viewer renders seven topology levels from
+[[Results_architecture|Results]] §Layer 5. Each level has a slab type,
+a natural rendering, and a selector grammar identical to <code>FEMData</code>'s
+(<code>pg=</code> / <code>label=</code> / <code>selection=</code> / <code>ids=</code>). The seventh, springs, was
+added in Phase 11d / 11e.</p>
+<table>
+<thead>
+<tr>
+<th>Topology</th>
+<th>Slab type</th>
+<th><code>values</code> shape</th>
+<th>Natural rendering(s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nodes</td>
+<td><code>NodeSlab</code></td>
+<td><code>(T, N)</code></td>
+<td>volume / surface contour, deformed shape, vector glyphs</td>
+</tr>
+<tr>
+<td>Elements</td>
+<td><code>ElementSlab</code></td>
+<td><code>(T, E, npe)</code></td>
+<td>per-element-node force arrows, color-per-cell</td>
+</tr>
+<tr>
+<td>Line stations</td>
+<td><code>LineStationSlab</code></td>
+<td><code>(T, sum_S)</code></td>
+<td>classic beam moment / shear / axial diagrams (hatched fill)</td>
+</tr>
+<tr>
+<td>Gauss points</td>
+<td><code>GaussSlab</code></td>
+<td><code>(T, sum_GP)</code></td>
+<td>sphere markers at GPs <strong>and</strong> interpolated continuum contour</td>
+</tr>
+<tr>
+<td>Fibers</td>
+<td><code>FiberSlab</code></td>
+<td><code>(T, sum_F)</code></td>
+<td>2-D side-panel section plot <strong>and</strong> 3-D dot cloud</td>
+</tr>
+<tr>
+<td>Layers</td>
+<td><code>LayerSlab</code></td>
+<td><code>(T, sum_L)</code></td>
+<td>shell mid-surface contour <strong>and</strong> through-thickness sub-panel</td>
+</tr>
+<tr>
+<td>Springs</td>
+<td><code>SpringSlab</code></td>
+<td><code>(T, E)</code></td>
+<td>force arrow along spring direction</td>
+</tr>
+</tbody>
+</table>
+<p>The viewer's renderer never sees raw <code>Results</code> reads — every slab is
+fetched through the composite API (<code>results.nodes.get(...)</code>,
+<code>results.elements.line_stations.get(...)</code>, etc.) so that lazy h5py
+reads, partition stitching, and <code>(class_tag, int_rule)</code> grouping all
+stay in the Results layer.</p>
+<hr />
+<h2 id="3-the-diagram-abstraction">3. The Diagram abstraction<a class="headerlink" href="#3-the-diagram-abstraction" title="Permanent link">&para;</a></h2>
+<h3 id="31-why-a-diagram-is-the-right-unit">3.1 Why a Diagram is the right unit<a class="headerlink" href="#31-why-a-diagram-is-the-right-unit" title="Permanent link">&para;</a></h3>
+<p>Each result topology has a different rendering — beam diagrams are not
+"color the mesh," fiber sections need a side panel, springs are
+zero-length. A monolithic <code>set_scalar_field()</code> does not generalize.
+What does: a <strong>Diagram</strong> — a stateful object that takes a slab spec and
+the bound <code>FEMData</code>, produces VTK actors, and updates them on time
+change.</p>
+<p>Diagrams are first-class. They compose: showing <strong>stress contour on
+solids + bending moment on beams + fiber section on a picked column</strong>
+is three diagrams, not three special cases. Each has its own
+selector, its own colormap, its own scale, its own visibility toggle.</p>
+<h3 id="32-diagram-protocol">3.2 Diagram protocol<a class="headerlink" href="#32-diagram-protocol" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Diagram</span><span class="p">:</span>                        <span class="c1"># composite-like (stateful)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;A renderable layer driven by one or more Results slabs.</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="sd">    Subclasses implement attach/update/detach. Constructed against a</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="sd">    Results scoped to one stage; reads slabs through the composite API</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="sd">    and keeps lazy h5py handles open via the bound reader.</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="nb">id</span><span class="p">:</span> <span class="nb">str</span>                            <span class="c1"># unique within DiagramRegistry</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">kind</span><span class="p">:</span> <span class="nb">str</span>                          <span class="c1"># see catalogue below</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">style</span><span class="p">:</span> <span class="n">DiagramStyle</span>                <span class="c1"># frozen dataclass — render params</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">selector</span><span class="p">:</span> <span class="n">SlabSelector</span>             <span class="c1"># frozen dataclass — pg/label/ids/...</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">attach</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">plotter</span><span class="p">,</span> <span class="n">fem</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Build initial actors at step 0, register with plotter.&quot;&quot;&quot;</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">update_to_step</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">step_index</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Refresh actors for a new step. Bounded mutation; no re-attach.&quot;&quot;&quot;</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">detach</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Remove actors and release any cached arrays.&quot;&quot;&quot;</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">settings_widget</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Return a Qt widget for the per-diagram settings tab.&quot;&quot;&quot;</span>
+</span></code></pre></div>
+<p><code>DiagramStyle</code> is <strong>per-diagram-type</strong> (frozen dataclass record) — a
+<code>ContourStyle</code> is not the same as a <code>LineForceStyle</code>. <code>SlabSelector</code> is
+shared:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="k">class</span><span class="w"> </span><span class="nc">SlabSelector</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">pg</span><span class="p">:</span>        <span class="nb">str</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">label</span><span class="p">:</span>     <span class="nb">str</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">selection</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">ids</span><span class="p">:</span>       <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">component</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>                <span class="c1"># canonical name, never shorthand</span>
+</span></code></pre></div>
+<p>The viewer never holds a slab in RAM longer than one step's render. On
+time change, each diagram reads its slab for the new step (lazy h5py)
+and mutates its actors in place. This keeps memory bounded for million-
+DOF, multi-thousand-step files.</p>
+<h3 id="33-diagram-catalogue">3.3 Diagram catalogue<a class="headerlink" href="#33-diagram-catalogue" title="Permanent link">&para;</a></h3>
+<p>Eight diagrams, one per natural rendering of the data shapes in §2.
+The implementation phasing is in the plan; this is the target catalogue.</p>
+<table>
+<thead>
+<tr>
+<th>Diagram</th>
+<th>Slab(s) consumed</th>
+<th>Renders</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ContourDiagram</code></td>
+<td><code>NodeSlab</code> or interpolated <code>GaussSlab</code></td>
+<td>Per-cell or per-node colored mesh, scalar bar, optional deformed warp</td>
+</tr>
+<tr>
+<td><code>DeformedShapeDiagram</code></td>
+<td><code>NodeSlab</code> (translational + rotational components)</td>
+<td>Warped mesh + undeformed reference + scale slider; optional contour overlay</td>
+</tr>
+<tr>
+<td><code>VectorGlyphDiagram</code></td>
+<td><code>NodeSlab</code> (3 components)</td>
+<td>Arrows at nodes, colored / scaled by magnitude</td>
+</tr>
+<tr>
+<td><code>LineForceDiagram</code></td>
+<td><code>LineStationSlab</code></td>
+<td>Hatched fill perpendicular to beam axis (axial / shear / moment / torsion); textbook engineering style</td>
+</tr>
+<tr>
+<td><code>FiberSectionDiagram</code></td>
+<td><code>FiberSlab</code></td>
+<td>3-D dot cloud at section locations + side panel: 2-D section plot, dots colored by fiber stress / strain</td>
+</tr>
+<tr>
+<td><code>LayerStackDiagram</code></td>
+<td><code>LayerSlab</code></td>
+<td>Shell mid-surface contour + side panel: through-thickness profile at picked GP</td>
+</tr>
+<tr>
+<td><code>SpringForceDiagram</code></td>
+<td><code>SpringSlab</code></td>
+<td>Force arrow along the configured spring direction at zero-length elements</td>
+</tr>
+<tr>
+<td><code>GaussPointDiagram</code></td>
+<td><code>GaussSlab</code></td>
+<td>Sphere markers at natural→global GP locations, colored by component value</td>
+</tr>
+</tbody>
+</table>
+<p>Two intentional non-diagrams:</p>
+<ul>
+<li><strong>Per-element nodal force arrows</strong> (<code>ElementSlab</code> with
+  <code>nodal_resisting_force_*</code> components) collapse into
+  <code>VectorGlyphDiagram</code> driven off the per-element-node slab. Same
+  visual; different data wiring.</li>
+<li><strong>Mode shapes</strong> are not a separate diagram — they are
+  <code>DeformedShapeDiagram</code> opened on a stage with <code>kind="mode"</code>. The
+  Stage panel detects mode stages and offers an animation toggle.</li>
+</ul>
+<h3 id="34-what-a-diagram-is-not">3.4 What a Diagram is <em>not</em><a class="headerlink" href="#34-what-a-diagram-is-not" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Not a renderer. It does not own a <code>Plotter</code>. It receives one in
+  <code>attach()</code>.</li>
+<li>Not session-aware. It takes a scoped <code>Results</code> (a stage) plus a
+  selector. It never imports <code>gmsh.*</code>.</li>
+<li>Not pickle-serializable. State is the actor handles + cached arrays
+  for the current step. Persistence is via <code>DiagramSpec</code> (record —
+  frozen dataclass capturing <code>(kind, style, selector)</code>), saved /
+  loaded by the Director.</li>
+</ul>
+<h3 id="35-stack-neutrality">3.5 Stack-neutrality<a class="headerlink" href="#35-stack-neutrality" title="Permanent link">&para;</a></h3>
+<p>Diagrams take <strong>slabs and a selector</strong>, not a pre-rendered VTK mesh.
+The transformation <code>slab + fem -&gt; actors</code> lives entirely inside the
+diagram. A future <code>WebGLRenderer</code> swap rewrites the renderer adapter,
+not the diagram catalogue. This is the cheapest forward-compatibility
+guarantee we can buy without paying for a full IR layer today.</p>
+<hr />
+<h2 id="4-resultsdirector-single-source-of-truth">4. ResultsDirector — single source of truth<a class="headerlink" href="#4-resultsdirector-single-source-of-truth" title="Permanent link">&para;</a></h2>
+<h3 id="41-what-the-director-owns">4.1 What the Director owns<a class="headerlink" href="#41-what-the-director-owns" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ResultsDirector  (composite)
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>├── results        — bound Results (stage-scoped)
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>├── stage_id       — active stage id
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>├── step_index     — active time index
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>├── time_mode      — single | range | envelope | animation
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>├── registry       — DiagramRegistry (ordered list of Diagrams)
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>├── on_step_changed       — observer
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>├── on_stage_changed      — observer
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>└── on_diagrams_changed   — observer
+</span></code></pre></div>
+<p>The Director is the <strong>only</strong> thing that knows what step / stage is
+active. Diagrams are passive — they receive <code>update_to_step(i)</code> calls
+when the Director's step changes. UI tabs subscribe to Director
+observers and fire user actions back through Director methods.</p>
+<h3 id="42-time-modes">4.2 Time modes<a class="headerlink" href="#42-time-modes" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Step semantics</th>
+<th>Use case</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>single</code></td>
+<td>One step rendered</td>
+<td>Scrub the timeline, pick a moment</td>
+</tr>
+<tr>
+<td><code>range</code></td>
+<td>A step range — diagrams render envelope</td>
+<td>"Max stress over the dynamic stage"</td>
+</tr>
+<tr>
+<td><code>envelope</code></td>
+<td>Full stage — same as range over <code>[0, n_steps)</code></td>
+<td>Capacity / demand checks</td>
+</tr>
+<tr>
+<td><code>animation</code></td>
+<td>Auto-advance step at fixed FPS</td>
+<td>Visual review of a transient or mode</td>
+</tr>
+</tbody>
+</table>
+<p><code>range</code> / <code>envelope</code> modes change the slab read: each diagram's slab
+becomes <code>(T, ...)</code> instead of <code>(1, ...)</code>, the diagram reduces over
+time (max / abs-max / signed-extreme), and the actor renders the
+reduction. Implementation detail of each diagram.</p>
+<h3 id="43-stage-navigation">4.3 Stage navigation<a class="headerlink" href="#43-stage-navigation" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">director</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>               <span class="c1"># switch to a stage by name/id</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">director</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="mi">40</span><span class="p">)</span>                       <span class="c1"># jump to step 40</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">director</span><span class="o">.</span><span class="n">set_time_mode</span><span class="p">(</span><span class="s2">&quot;animation&quot;</span><span class="p">)</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">director</span><span class="o">.</span><span class="n">next_mode</span><span class="p">()</span>                    <span class="c1"># for kind=&quot;mode&quot; stages</span>
+</span></code></pre></div>
+<p>Stage change calls <code>detach()</code> on every diagram, re-binds them to the
+new stage's scoped Results, and <code>attach()</code> again. This is more
+expensive than step change; it happens rarely.</p>
+<p>For modal browsing (<code>kind="mode"</code> stages), the Director exposes
+<code>results.modes</code> as the source set. The Mode panel (UI) iterates over
+them; each mode is its own scoped Results so step semantics collapse to
+<code>step_index=0</code>, <code>T=1</code>.</p>
+<hr />
+<h2 id="5-selection-what-gets-data">5. Selection — what gets data<a class="headerlink" href="#5-selection-what-gets-data" title="Permanent link">&para;</a></h2>
+<p>The viewer reuses the <strong>exact</strong> selection vocabulary from
+[[Results_architecture|Results]] §Layer 5. Every diagram is constructed
+<em>with</em> a <code>SlabSelector</code>. Two independent dials:</p>
+<ul>
+<li><strong>What carries data</strong> — the diagram's selector. PGs, labels,
+  selection sets, raw IDs. Resolved through the bound <code>FEMData</code>.</li>
+<li><strong>What is shown</strong> — the viewer's <code>VisibilityManager</code> (reused from
+  <code>viewers/core/visibility.py</code>). Per-cell extraction; hidden geometry
+  leaves no silhouette.</li>
+</ul>
+<p>Concretely: a <code>ContourDiagram</code> selecting <code>pg="Body"</code> paints data on
+Body's elements only, regardless of what's hidden. Hiding the slab via
+the visibility manager makes those cells invisible; the data is still
+there if revealed.</p>
+<p>This separation matters for "show stress on the structure, hide the
+ground but keep the foundation contoured" — two diagrams (structure +
+foundation), one visibility filter (hide ground).</p>
+<h3 id="51-pick-driven-selection">5.1 Pick-driven selection<a class="headerlink" href="#51-pick-driven-selection" title="Permanent link">&para;</a></h3>
+<p>The reused <code>PickEngine</code> + <code>SelectionState</code> (from <code>viewers/core/</code>) drive
+two pick targets:</p>
+<ul>
+<li><strong>Element / node pick</strong> — feeds the <strong>Inspector</strong> panel. Shows the
+  element / node id, coordinates, all components currently bound by
+  any diagram, and a one-click "create probe at this node" action.</li>
+<li><strong>Pick-to-Diagram</strong> — pick an element, right-click → "Show line
+  diagram for this beam" / "Open fiber section here." Constructs a
+  Diagram pre-selecting the picked entity.</li>
+</ul>
+<p>Box selection works the same way it does in <code>MeshViewer</code> — produces a
+list of dim-tags or element IDs, stages them as a <code>SlabSelector</code> for a
+new diagram.</p>
+<hr />
+<h2 id="6-ui-surface">6. UI surface<a class="headerlink" href="#6-ui-surface" title="Permanent link">&para;</a></h2>
+<h3 id="61-window-layout">6.1 Window layout<a class="headerlink" href="#61-window-layout" title="Permanent link">&para;</a></h3>
+<p>Reuses <code>viewers/ui/viewer_window.ViewerWindow</code> — same QMainWindow
+shell as <code>MeshViewer</code> / <code>ModelViewer</code>. Tabs differ.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>┌───────────────────────────────────────────────────────────┐
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>│ Menu Bar                                                  │
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>├──────┬──────────────────────────────────────┬────────────-┤
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>│ Tool │                                       │  Tabs dock │
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>│ bar  │   VTK Viewport                        │  (right)   │
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>│      │                                       │            │
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>├──────┴──────────────────────────────────────┴────────────-┤
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>│ Time scrubber  ── play ── stage selector ── mode picker   │
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>├───────────────────────────────────────────────────────────┤
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>│ Status Bar                                                │
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>└───────────────────────────────────────────────────────────┘
+</span></code></pre></div>
+<p>The <strong>time scrubber bar</strong> is a dedicated dock at the bottom of the
+viewport — not a tab. It carries the step slider, time-value readout,
+play / pause / step / loop controls, stage dropdown, and (for modal
+files) the mode browser. Always visible because time is the primary
+axis.</p>
+<h3 id="62-tabs">6.2 Tabs<a class="headerlink" href="#62-tabs" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Owns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Diagrams</strong></td>
+<td>Diagram list — add / remove / reorder / toggle visibility</td>
+</tr>
+<tr>
+<td><strong>Diagram settings</strong></td>
+<td>Per-diagram styling — colormap, clim, scale, opacity, …</td>
+</tr>
+<tr>
+<td><strong>Selection</strong></td>
+<td>Active picked entity / box-selection results, "make diagram"</td>
+</tr>
+<tr>
+<td><strong>Inspector</strong></td>
+<td>Picked element / node — id, coords, current values, history</td>
+</tr>
+<tr>
+<td><strong>Probes</strong></td>
+<td>Point / line / plane probes (mined from <code>apeGmshViewer/</code>)</td>
+</tr>
+<tr>
+<td><strong>Stages</strong></td>
+<td>Stage list with kind / n_steps / time range; mode browser</td>
+</tr>
+<tr>
+<td><strong>Visibility</strong></td>
+<td><code>VisibilityManager</code> controls — hide / isolate / reveal</td>
+</tr>
+<tr>
+<td><strong>Session</strong></td>
+<td>Theme + per-session preferences (reused from MeshViewer)</td>
+</tr>
+</tbody>
+</table>
+<p>The <strong>Diagrams</strong> tab is the spine of the workflow — adding a diagram
+opens a small dialog (kind, slab selector, component, stage, initial
+style) and the new diagram appears in the list. Toggling its visibility
+mutes its actors without detaching. Removing it detaches and disposes.</p>
+<h3 id="63-diagram-specific-side-panels">6.3 Diagram-specific side panels<a class="headerlink" href="#63-diagram-specific-side-panels" title="Permanent link">&para;</a></h3>
+<p>Two diagram kinds need extra real estate:</p>
+<ul>
+<li><strong><code>FiberSectionDiagram</code></strong> — a docked side panel showing the 2-D
+  section plot for the currently picked beam station. Re-renders on
+  pick / time change. Backed by matplotlib-in-Qt (FigureCanvasQTAgg).</li>
+<li><strong><code>LayerStackDiagram</code></strong> — a docked side panel showing the through-
+  thickness profile (component vs <code>_thickness</code>) at the currently
+  picked GP. Same matplotlib-in-Qt pattern.</li>
+</ul>
+<p>Both panels live as dockable widgets so the user can detach them or
+arrange them alongside the 3-D viewport. Closing the diagram closes
+its panel.</p>
+<hr />
+<h2 id="7-renderer-integration">7. Renderer integration<a class="headerlink" href="#7-renderer-integration" title="Permanent link">&para;</a></h2>
+<h3 id="71-what-we-reuse-from-viewers">7.1 What we reuse from <code>viewers/</code><a class="headerlink" href="#71-what-we-reuse-from-viewers" title="Permanent link">&para;</a></h3>
+<p>The integrated viewer infrastructure already covers the lion's share
+of what a results viewer needs. Reuse, don't fork:</p>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/scene/mesh_scene.py</code></td>
+<td>Substrate mesh — same Gmsh→VTK linearization, same dim batching</td>
+</tr>
+<tr>
+<td><code>viewers/scene/glyph_points.py</code></td>
+<td>Node cloud, gauss-point sphere glyphs</td>
+</tr>
+<tr>
+<td><code>viewers/core/entity_registry.py</code></td>
+<td>DimTag ↔ cell-index maps; pick resolution</td>
+</tr>
+<tr>
+<td><code>viewers/core/pick_engine.py</code></td>
+<td>Cell + box picking with modifier keys</td>
+</tr>
+<tr>
+<td><code>viewers/core/selection.py</code></td>
+<td><code>SelectionState</code> for picked entities</td>
+</tr>
+<tr>
+<td><code>viewers/core/color_manager.py</code></td>
+<td>Hidden / picked / hovered / idle priority on the substrate mesh</td>
+</tr>
+<tr>
+<td><code>viewers/core/visibility.py</code></td>
+<td>Hide / isolate / reveal via <code>extract_cells</code></td>
+</tr>
+<tr>
+<td><code>viewers/core/navigation.py</code></td>
+<td>Quaternion orbit, pan, zoom (camera bindings)</td>
+</tr>
+<tr>
+<td><code>viewers/ui/viewer_window.py</code></td>
+<td>QMainWindow shell, tab dock, toolbar</td>
+</tr>
+<tr>
+<td><code>viewers/ui/theme.py</code></td>
+<td>10 palettes + theme editor + custom-theme loader</td>
+</tr>
+<tr>
+<td><code>viewers/ui/preferences_manager.py</code></td>
+<td>26-field persistent preferences</td>
+</tr>
+<tr>
+<td><code>viewers/ui/preferences.py</code></td>
+<td>Session tab (theme, point size, line width, edges, AA)</td>
+</tr>
+<tr>
+<td><code>viewers/overlays/origin_markers_overlay.py</code></td>
+<td>World-origin marker overlay</td>
+</tr>
+</tbody>
+</table>
+<p>What <code>ResultsViewer</code> adds on top:</p>
+<ul>
+<li><code>viewers/results_viewer.py</code> — the top-level class</li>
+<li><code>viewers/diagrams/</code> — the Diagram catalogue</li>
+<li><code>viewers/ui/results_tabs.py</code> — Diagrams / Stages / Inspector tabs</li>
+<li><code>viewers/ui/_time_scrubber.py</code> — bottom dock</li>
+<li><code>viewers/overlays/probe_overlay.py</code> — mined from <code>apeGmshViewer/</code></li>
+</ul>
+<h3 id="72-color-manager-and-diagrams-boundary">7.2 Color manager and diagrams — boundary<a class="headerlink" href="#72-color-manager-and-diagrams-boundary" title="Permanent link">&para;</a></h3>
+<p>The reused <code>ColorManager</code> owns per-cell RGB on the <strong>substrate</strong> mesh
+(idle / hidden / picked / hovered). Diagrams render to <strong>separate
+actors</strong>; they do not fight the substrate ColorManager.</p>
+<p>A <code>ContourDiagram</code> builds its own colored actor on a slice of the
+substrate mesh (extracted by selector). Idle substrate stays flat. This
+is the same pattern overlays use today — additive, not overlapping.</p>
+<h3 id="73-origin-shift-scale">7.3 Origin shift, scale<a class="headerlink" href="#73-origin-shift-scale" title="Permanent link">&para;</a></h3>
+<p><code>viewers/scene/mesh_scene.py</code> applies a numerical-stability origin
+shift to large-coordinate models. Diagrams must respect
+<code>registry.origin_shift</code> when placing glyphs at coordinates derived from
+slabs (e.g., GP world coords from natural coords + shape functions).
+Same convention as the existing origin markers overlay.</p>
+<hr />
+<h2 id="8-probes">8. Probes<a class="headerlink" href="#8-probes" title="Permanent link">&para;</a></h2>
+<p>The probe system from <code>apeGmshViewer/visualization/probes.py</code> is mined
+into <code>viewers/overlays/probe_overlay.py</code> with one structural change:
+probes consume <code>Results</code> slabs through the Director, not VTU
+<code>point_data</code> dicts.</p>
+<table>
+<thead>
+<tr>
+<th>Probe</th>
+<th>Action</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Point</strong></td>
+<td>Click on the mesh; samples all bound diagrams at the closest mesh node</td>
+<td><code>PointProbeResult</code> — node id, distance, value-per-diagram</td>
+</tr>
+<tr>
+<td><strong>Line</strong></td>
+<td>Pick A and B endpoints; samples N points along the line</td>
+<td><code>LineProbeResult</code> — chainage, value-per-diagram</td>
+</tr>
+<tr>
+<td><strong>Plane</strong></td>
+<td>Drag an interactive plane widget to slice the mesh</td>
+<td><code>PlaneProbeResult</code> — slice mesh + scalars</td>
+</tr>
+<tr>
+<td><strong>Time series</strong></td>
+<td>Right-click → "plot history" on a picked node or element / GP</td>
+<td><code>TimeHistoryResult</code> — time-vs-value matplotlib chart</td>
+</tr>
+</tbody>
+</table>
+<p>The fourth (time series) is a new probe — <code>apeGmshViewer/</code> had no
+notion of time. It piggybacks on the lazy slab read: pulling a single
+node's full <code>(T,)</code> displacement is one h5py call.</p>
+<p>Probe results display in the <strong>Probes</strong> tab and stay alive across
+step / stage changes. A line probe seen during the gravity stage
+remains visible after switching to dynamic, with values updated.</p>
+<hr />
+<h2 id="9-subprocess-opt-in">9. Subprocess opt-in<a class="headerlink" href="#9-subprocess-opt-in" title="Permanent link">&para;</a></h2>
+<p><code>results.viewer()</code> defaults to <strong>blocking</strong> — same as <code>MeshViewer</code> and
+<code>ModelViewer</code>. The notebook user adds <code>%gui qt</code> once, or accepts that
+the viewer blocks until closed.</p>
+<p><code>results.viewer(blocking=False)</code> is the documented escape hatch:</p>
+<ol>
+<li>The Results file path is already known (the <code>Results</code> was opened
+   from disk).</li>
+<li>The viewer launches as <code>python -m apeGmsh.viewers.results &lt;path&gt;</code> in
+   a subprocess.</li>
+<li>The subprocess opens a fresh <code>Results.from_native(path)</code> (or
+   <code>from_mpco</code>), constructs a <code>ResultsViewer</code>, and runs its own Qt
+   event loop.</li>
+<li>The notebook returns immediately. The viewer survives notebook /
+   kernel crashes.</li>
+</ol>
+<p>Implementation footprint: ~30 LOC. The subprocess machinery is the
+<em>only</em> concession to the notebook workflow — everything else is
+in-process.</p>
+<p>If the Results was constructed in-memory (no file path — e.g., from a
+domain-capture session that hasn't flushed), <code>blocking=False</code> raises
+with a clear message: <em>"In-memory Results cannot launch in a subprocess.
+Either pass blocking=True or call results.flush(path) first."</em></p>
+<hr />
+<h2 id="10-the-frozen-apegmshviewer-sibling">10. The frozen <code>apeGmshViewer/</code> sibling<a class="headerlink" href="#10-the-frozen-apegmshviewer-sibling" title="Permanent link">&para;</a></h2>
+<p>The top-level <code>apeGmshViewer/</code> package stays in the repository. It is:</p>
+<ul>
+<li><strong>Frozen.</strong> No active development. Bug fixes only if it actively
+  breaks under a dependency upgrade.</li>
+<li><strong>Detached from the dispatch path.</strong> <code>results.viewer()</code> no longer
+  spawns it. Nothing in <code>src/apeGmsh/</code> imports it.</li>
+<li><strong>A placeholder.</strong> When the time comes for a genuine WebGL / Rust
+  rewrite (better large-dataset handling, browser-deployable, no Qt
+  dependency), the work happens here. The Diagram catalogue from
+  §3.3 is the spec; the renderer adapter is what changes.</li>
+</ul>
+<p>The 4,444 LOC currently in <code>apeGmshViewer/</code> is largely duplicated by
+<code>src/apeGmsh/viewers/</code>. The mining ledger in §11 details what gets
+salvaged for the integrated viewer; the rest stays where it is, for
+the future rewrite to either keep or discard.</p>
+<hr />
+<h2 id="11-mining-ledger-what-comes-from-apegmshviewer">11. Mining ledger — what comes from <code>apeGmshViewer/</code><a class="headerlink" href="#11-mining-ledger-what-comes-from-apegmshviewer" title="Permanent link">&para;</a></h2>
+<p>Concrete file-by-file disposition. Quantified against the integrated
+viewer to make the duplication explicit.</p>
+<h3 id="111-lift-refactored-against-results">11.1 Lift (refactored against Results)<a class="headerlink" href="#111-lift-refactored-against-results" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th style="text-align: right;">LOC</th>
+<th>Destination</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>apeGmshViewer/visualization/probes.py</code></td>
+<td style="text-align: right;">605</td>
+<td><code>viewers/overlays/probe_overlay.py</code></td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/panels/probe_panel.py</code></td>
+<td style="text-align: right;">260</td>
+<td><code>viewers/ui/_probes_tab.py</code></td>
+</tr>
+</tbody>
+</table>
+<p>Both files import <code>apeGmsh.viewers.ui.theme</code> already; the refactor
+swaps <code>MeshData.point_data["disp"]</code> reads for <code>Director.read_at_pick</code>
+calls into the bound <code>Results</code>.</p>
+<h3 id="112-pattern-lift-rebuilt-against-slabs">11.2 Pattern lift (rebuilt against slabs)<a class="headerlink" href="#112-pattern-lift-rebuilt-against-slabs" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Source / pattern</th>
+<th>What's kept</th>
+<th>Rebuilt as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>renderer.show_deformed</code> / <code>create_deformed_mesh</code></td>
+<td>Idea: warp mesh by displacement, optional undeformed ref</td>
+<td><code>diagrams/_deformed_shape.py</code></td>
+</tr>
+<tr>
+<td><code>renderer.show_vectors</code></td>
+<td>Idea: glyph orient/scale from a vector field</td>
+<td><code>diagrams/_vector_glyph.py</code></td>
+</tr>
+<tr>
+<td><code>renderer.set_active_time_step</code></td>
+<td>Idea: replace mesh data on step change without re-build</td>
+<td><code>Diagram.update_to_step</code> contract</td>
+</tr>
+<tr>
+<td><code>controls.py</code> (time slider region)</td>
+<td>Idea: scrubber + play/pause + step / loop</td>
+<td><code>ui/_time_scrubber.py</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="113-discard">11.3 Discard<a class="headerlink" href="#113-discard" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th style="text-align: right;">LOC</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>apeGmshViewer/loaders/vtu_loader.py</code></td>
+<td style="text-align: right;">290</td>
+<td>Obsolete — Results is the canonical input</td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/ui/theme.py</code></td>
+<td style="text-align: right;">895</td>
+<td>Older duplicate of <code>viewers/ui/theme.py</code> (1054 LOC)</td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/ui/preferences.py</code></td>
+<td style="text-align: right;">212</td>
+<td>Older duplicate of <code>viewers/ui/preferences_manager.py</code></td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/main_window.py</code></td>
+<td style="text-align: right;">725</td>
+<td>Older duplicate Qt shell — <code>viewers/ui/viewer_window.py</code> is newer</td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/panels/model_tree.py</code></td>
+<td style="text-align: right;">141</td>
+<td>Integrated <code>_browser_tab.py</code> + <code>_parts_tree.py</code> are richer</td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/panels/controls.py</code> (most)</td>
+<td style="text-align: right;">~150</td>
+<td>Colormap / opacity scaffolding — re-emit on integrated chrome</td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/panels/properties.py</code></td>
+<td style="text-align: right;">131</td>
+<td>Replaced by Diagram-aware Inspector tab</td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/visualization/renderer.py</code></td>
+<td style="text-align: right;">~400</td>
+<td>Most duplicates <code>mesh_scene</code> + <code>color_manager</code> + <code>visibility</code></td>
+</tr>
+<tr>
+<td><code>apeGmshViewer/visualization/navigation.py</code></td>
+<td style="text-align: right;">9</td>
+<td>Trivially wraps the integrated install_navigation</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Total mined: ~865 LOC lifted, ~330 LOC of patterns rebuilt.</strong>
+<strong>Total discarded: ~3,000 LOC of duplicate infrastructure.</strong></p>
+<p>The discarded code stays inside <code>apeGmshViewer/</code> (frozen package, §10).
+It is not deleted; it is simply no longer on the integrated viewer's
+import path.</p>
+<hr />
+<h2 id="12-file-structure">12. File structure<a class="headerlink" href="#12-file-structure" title="Permanent link">&para;</a></h2>
+<p>Target layout under <code>src/apeGmsh/viewers/</code> after the rebuild:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>src/apeGmsh/viewers/
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>├── __init__.py
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>├── model_viewer.py                  (existing — pre-solve geometry)
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>├── mesh_viewer.py                   (existing — pre-solve mesh + overlays)
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>├── geom_transf_viewer.py            (existing — Three.js beam-axis tool)
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>├── results_viewer.py                NEW — top-level ResultsViewer
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>│
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>├── diagrams/                        NEW package
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>│   ├── __init__.py
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>│   ├── _director.py                 ResultsDirector (composite)
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>│   ├── _registry.py                 DiagramRegistry (composite)
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>│   ├── _base.py                     Diagram base class + DiagramSpec record
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>│   ├── _selectors.py                SlabSelector record + helpers
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>│   ├── _styles.py                   per-diagram DiagramStyle records (frozen dataclasses)
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>│   ├── _contour.py                  ContourDiagram
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>│   ├── _deformed_shape.py           DeformedShapeDiagram
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>│   ├── _vector_glyph.py             VectorGlyphDiagram
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>│   ├── _line_force.py               LineForceDiagram
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>│   ├── _fiber_section.py            FiberSectionDiagram
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>│   ├── _layer_stack.py              LayerStackDiagram
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>│   ├── _spring_force.py             SpringForceDiagram
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>│   └── _gauss_marker.py             GaussPointDiagram
+</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>│
+</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>├── ui/
+</span><span id="__span-6-25"><a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a>│   ├── results_tabs.py              NEW — Diagrams / Stages / Inspector tabs
+</span><span id="__span-6-26"><a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a>│   ├── _time_scrubber.py            NEW — bottom dock
+</span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>│   ├── _diagrams_tab.py             NEW — list + add / remove / reorder
+</span><span id="__span-6-28"><a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a>│   ├── _diagram_settings_tab.py     NEW — per-diagram style editor
+</span><span id="__span-6-29"><a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a>│   ├── _stages_tab.py               NEW — stage list, mode browser
+</span><span id="__span-6-30"><a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a>│   ├── _inspector_tab.py            NEW — picked entity + values
+</span><span id="__span-6-31"><a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a>│   ├── _probes_tab.py               NEW — mined from apeGmshViewer
+</span><span id="__span-6-32"><a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a>│   └── ... (existing — reused unchanged)
+</span><span id="__span-6-33"><a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a>│
+</span><span id="__span-6-34"><a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a>├── overlays/
+</span><span id="__span-6-35"><a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a>│   ├── probe_overlay.py             NEW — mined from apeGmshViewer
+</span><span id="__span-6-36"><a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a>│   └── ... (existing — reused unchanged)
+</span><span id="__span-6-37"><a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a>│
+</span><span id="__span-6-38"><a id="__codelineno-6-38" name="__codelineno-6-38" href="#__codelineno-6-38"></a>├── scene/  ── existing, reused unchanged
+</span><span id="__span-6-39"><a id="__codelineno-6-39" name="__codelineno-6-39" href="#__codelineno-6-39"></a>└── core/   ── existing, reused unchanged
+</span></code></pre></div>
+<p>Outside the viewers package:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>src/apeGmsh/results/Results.py
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>└── viewer()                         REPLACED — was subprocess to apeGmshViewer;
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>                                                now constructs ResultsViewer in-process
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>apeGmshViewer/                       FROZEN — placeholder for future stack swap
+</span></code></pre></div>
+<hr />
+<h2 id="13-class-flavor-inventory">13. Class-flavor inventory<a class="headerlink" href="#13-class-flavor-inventory" title="Permanent link">&para;</a></h2>
+<p>Following [[apeGmsh_principles]] §5 tenet (ix):</p>
+<table>
+<thead>
+<tr>
+<th>Class / module</th>
+<th>File</th>
+<th>Flavor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ResultsViewer</code></td>
+<td><code>viewers/results_viewer.py</code></td>
+<td>composite</td>
+</tr>
+<tr>
+<td><code>ResultsDirector</code></td>
+<td><code>viewers/diagrams/_director.py</code></td>
+<td>composite</td>
+</tr>
+<tr>
+<td><code>DiagramRegistry</code></td>
+<td><code>viewers/diagrams/_registry.py</code></td>
+<td>composite</td>
+</tr>
+<tr>
+<td><code>Diagram</code> (base)</td>
+<td><code>viewers/diagrams/_base.py</code></td>
+<td>composite</td>
+</tr>
+<tr>
+<td><code>ContourDiagram</code>, …</td>
+<td><code>viewers/diagrams/_*.py</code></td>
+<td>composite</td>
+</tr>
+<tr>
+<td><code>DiagramSpec</code></td>
+<td><code>viewers/diagrams/_base.py</code></td>
+<td>record</td>
+</tr>
+<tr>
+<td><code>SlabSelector</code></td>
+<td><code>viewers/diagrams/_selectors.py</code></td>
+<td>record</td>
+</tr>
+<tr>
+<td><code>ContourStyle</code>, …</td>
+<td><code>viewers/diagrams/_styles.py</code></td>
+<td>record (one per kind)</td>
+</tr>
+<tr>
+<td><code>PointProbeResult</code>, …</td>
+<td><code>viewers/overlays/probe_overlay.py</code></td>
+<td>record</td>
+</tr>
+<tr>
+<td>Tab widgets</td>
+<td><code>viewers/ui/_*_tab.py</code></td>
+<td>def</td>
+</tr>
+<tr>
+<td><code>_time_scrubber</code></td>
+<td><code>viewers/ui/_time_scrubber.py</code></td>
+<td>def</td>
+</tr>
+</tbody>
+</table>
+<p>This matches the existing visualization surface — composites for
+state-bearing classes, frozen records for the typed data they pass
+around, defs for stateless UI factories.</p>
+<hr />
+<h2 id="14-contributor-rules">14. Contributor rules<a class="headerlink" href="#14-contributor-rules" title="Permanent link">&para;</a></h2>
+<p>Six rules for adding to the results viewer surface, parallel to
+[[apeGmsh_visualization]] §6:</p>
+<ol>
+<li>
+<p><strong>Diagrams take slabs and selectors, not pre-rendered VTK.</strong> The
+   transformation <code>slab + fem -&gt; actors</code> lives inside the Diagram. A
+   future renderer swap rewrites the actor side; the catalogue stays.</p>
+</li>
+<li>
+<p><strong>Mutate state through the Director.</strong> <code>step_index</code>, <code>stage_id</code>,
+   <code>time_mode</code>, <code>registry</code> are the Director's. UI widgets call
+   Director methods; they do not poke diagram internals.</p>
+</li>
+<li>
+<p><strong>One slab per diagram per step.</strong> Lazy h5py reads are the budget
+   constraint. A diagram that needs 5 components at once reads 5
+   slabs, releases them after <code>update_to_step</code> completes. No global
+   slab cache.</p>
+</li>
+<li>
+<p><strong>Diagrams subscribe to step changes; Director subscribes to UI.</strong>
+   Observer chain is <code>UI → Director → Diagrams</code>. Reverse calls are
+   forbidden — a diagram does not call <code>director.set_step(...)</code>.</p>
+</li>
+<li>
+<p><strong>Reuse from <code>viewers/scene,core,ui,overlays</code> always.</strong> The results
+   viewer adds Diagrams and stage/time UI; it does not reimplement
+   theme, preferences, navigation, picking, visibility, or color
+   management. New shared infrastructure goes under those existing
+   directories.</p>
+</li>
+<li>
+<p><strong>Lazy-import Qt.</strong> Same rule as the rest of the viewer surface —
+   <code>apeGmsh.results.Results</code> must remain importable on a headless
+   kernel. <code>Results.viewer()</code> imports <code>viewers.results_viewer</code> inside
+   the function body, never at module load.</p>
+</li>
+</ol>
+<hr />
+<h2 id="15-open-items-deferred-to-the-plan">15. Open items deferred to the plan<a class="headerlink" href="#15-open-items-deferred-to-the-plan" title="Permanent link">&para;</a></h2>
+<p>These are decisions that affect the implementation phases but do not
+need to be settled at the directives level. They land in
+<code>internal_docs/plan_results_viewer.md</code>:</p>
+<ul>
+<li><strong>Diagram auto-suggestion.</strong> When a results file is opened, should
+  the Director propose a default diagram set (e.g., contour on
+  <code>displacement_z</code>, line forces on beams)? Or always start blank?</li>
+<li><strong>Style presets.</strong> A <code>DiagramStyle</code> library (saved JSON, like custom
+  themes) — let users save and re-apply favorite colormaps / clims.
+  Useful but not v1.</li>
+<li><strong>Multi-pane synchronized views.</strong> Two viewports of the same model
+  with different selectors / different stages. Defer.</li>
+<li><strong>Animation export.</strong> Render a stage to a <code>.mp4</code> / <code>.gif</code>. Useful
+  but not v1.</li>
+<li><strong>Comparison mode.</strong> Open two <code>Results</code> files side by side (e.g.,
+  before / after a parameter change). Touches Director internals;
+  defer.</li>
+</ul>
+<hr />
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[[apeGmsh_visualization]] — the full visualization surface map
+  (pre-solve viewers + viz/ inline tools)</li>
+<li>[[Results_architecture]] — Phase 9 explicitly defers this work to a
+  separate plan; this document is the directives layer of that plan</li>
+<li>[[apeGmsh_principles]] — tenets (viii) "the viewer is core and
+  environment-aware" and (ix) "three object flavors, three class styles"</li>
+<li><code>src/apeGmsh/results/Results.py</code> — the API the viewer consumes</li>
+<li><code>src/apeGmsh/viewers/mesh_viewer.py</code> — the parallel pre-solve viewer
+  to crib structure from</li>
+</ul>
+
+
+
+
+
+
+
+  
+  
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

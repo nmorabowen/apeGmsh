@@ -1,0 +1,4000 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/plan_results_viewer/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Results Viewer — Implementation Plan - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#results-viewer-implementation-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Results Viewer — Implementation Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first_steps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First steps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_meshing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_groundTruth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_instance_computed_view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_light_theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#build-order-rationale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build order rationale
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#top-level-layout-target-from-directives-12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top-level layout (target, from directives §12)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-0-scaffolding-director-scrubber" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0 — Scaffolding + Director + scrubber
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 0 — Scaffolding + Director + scrubber">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modified-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modified files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance-contracts-locked-in-this-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance contracts locked in this phase
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-1-contourdiagram-deformedshapediagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1 — ContourDiagram + DeformedShapeDiagram
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 1 — ContourDiagram + DeformedShapeDiagram">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modified-files_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modified files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-2-lineforcediagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2 — LineForceDiagram
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 2 — LineForceDiagram">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modified-files_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modified files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance-note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance note
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-3-fibersectiondiagram-layerstackdiagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — FiberSectionDiagram + LayerStackDiagram
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 3 — FiberSectionDiagram + LayerStackDiagram">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modified-files_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modified files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-4-vectorglyphdiagram-gausspointdiagram-springforcediagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — VectorGlyphDiagram + GaussPointDiagram + SpringForceDiagram
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 4 — VectorGlyphDiagram + GaussPointDiagram + SpringForceDiagram">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modified-files_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modified files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-5-probes-inspector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 — Probes + Inspector
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 5 — Probes + Inspector">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modified-files_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modified files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-6-polish-subprocess-opt-in-animation-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6 — Polish — subprocess opt-in, animation, presets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 6 — Polish — subprocess opt-in, animation, presets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#new-files_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        New files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#modified-files_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Modified files
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tests_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cross-phase-concerns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-phase concerns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cross-phase concerns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test fixtures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance-gates-per-phase" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance gates per phase
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#theming-and-preferences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Theming and preferences
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lazy-imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lazy imports
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#phase-ordering-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase ordering check
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#estimated-phase-footprint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Estimated phase footprint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision-log-re-affirmed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision log (re-affirmed)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-lands-first" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What lands first
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="results-viewer-implementation-plan">Results Viewer — Implementation Plan<a class="headerlink" href="#results-viewer-implementation-plan" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>[!note] Status
+Phasing for the post-solve viewer rebuild. Companion to
+[[apeGmsh_results_viewer|the directives document]] — read that first.
+The directives are the architectural charter (what we build); this
+file is the order of operations (when each piece lands).</p>
+<p>Phase 9 of [[Results_architecture]] explicitly defers viewer planning
+here. Critical path for <em>that</em> plan ends at Phase 3 (MPCO reading
+through the composite API), which is now done — viewer rebuild can
+proceed.</p>
+</blockquote>
+<hr />
+<h2 id="build-order-rationale">Build order rationale<a class="headerlink" href="#build-order-rationale" title="Permanent link">&para;</a></h2>
+<p>Two ordering constraints drive the phasing:</p>
+<ol>
+<li><strong>Lock the Diagram protocol early.</strong> Every subsequent phase adds
+   subclasses; if the protocol is wrong, every later phase pays.
+   Phase 0 ships only the scaffolding — no data rendering — to keep
+   the protocol-change cost cheap.</li>
+<li><strong>First diagrams must validate the in-place mutation contract.</strong>
+   The single biggest performance win over <code>apeGmshViewer/</code> is mutating
+   actor scalars in place instead of re-adding actors per step.
+   Phase 1 ships <code>ContourDiagram</code> + <code>DeformedShapeDiagram</code> (both on
+   <code>NodeSlab</code>) because they exercise this contract on the simplest
+   data shape, with the most-used quantities (displacement / stress).</li>
+</ol>
+<p>Subsequent phases climb the data-shape ladder: line stations →
+fiber/layer side-panel diagrams → simpler glyphs → probes → polish.</p>
+<hr />
+<h2 id="top-level-layout-target-from-directives-12">Top-level layout (target, from directives §12)<a class="headerlink" href="#top-level-layout-target-from-directives-12" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>src/apeGmsh/viewers/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── results_viewer.py                NEW
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── diagrams/                         NEW package
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   ├── _director.py
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│   ├── _registry.py
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│   ├── _base.py
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│   ├── _selectors.py
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│   ├── _styles.py
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│   ├── _contour.py
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│   ├── _deformed_shape.py
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│   ├── _line_force.py
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│   ├── _fiber_section.py
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│   ├── _layer_stack.py
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│   ├── _vector_glyph.py
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│   ├── _gauss_marker.py
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│   └── _spring_force.py
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>├── ui/
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>│   ├── results_tabs.py              NEW
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>│   ├── _time_scrubber.py            NEW
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>│   ├── _diagrams_tab.py             NEW
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>│   ├── _diagram_settings_tab.py     NEW
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>│   ├── _stages_tab.py               NEW
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>│   ├── _inspector_tab.py            NEW
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>│   ├── _probes_tab.py               NEW (mined)
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>│   └── _add_diagram_dialog.py       NEW
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>└── overlays/
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    └── probe_overlay.py             NEW (mined)
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>src/apeGmsh/results/Results.py
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>└── viewer()                         REPLACED
+</span></code></pre></div>
+<hr />
+<h2 id="phase-0-scaffolding-director-scrubber">Phase 0 — Scaffolding + Director + scrubber<a class="headerlink" href="#phase-0-scaffolding-director-scrubber" title="Permanent link">&para;</a></h2>
+<p><strong>Goal:</strong> <code>results.viewer()</code> opens, renders the substrate mesh, time
+scrubber wired, no diagrams. End-to-end skeleton with the protocol
+locked. This is the biggest single-phase footprint (everything later
+phases bolt onto).</p>
+<h3 id="new-files">New files<a class="headerlink" href="#new-files" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/results_viewer.py</code></td>
+<td><code>ResultsViewer</code> class — composes window + director + plotter; reuses <code>viewers/scene/mesh_scene.build_mesh_scene</code> and <code>viewers/ui/viewer_window.ViewerWindow</code></td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/__init__.py</code></td>
+<td>Re-exports <code>Diagram</code>, <code>DiagramSpec</code>, <code>SlabSelector</code>, the catalogue (initially empty)</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_director.py</code></td>
+<td><code>ResultsDirector</code> — owns stage_id, step_index, time_mode, registry; observers for step / stage / diagrams changes</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_registry.py</code></td>
+<td><code>DiagramRegistry</code> — ordered list, add / remove / reorder / toggle visibility</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_base.py</code></td>
+<td><code>Diagram</code> base class with <code>attach</code>/<code>update_to_step</code>/<code>detach</code>/<code>settings_widget</code>; <code>DiagramSpec</code> frozen record</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_selectors.py</code></td>
+<td><code>SlabSelector</code> frozen record + helpers (resolve through fem)</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_styles.py</code></td>
+<td><code>DiagramStyle</code> base + per-kind subclasses (placeholder; populated as diagrams land)</td>
+</tr>
+<tr>
+<td><code>viewers/ui/results_tabs.py</code></td>
+<td>Top-level tab assembly for the results window</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_time_scrubber.py</code></td>
+<td>Bottom dock — step slider, time-value readout, play / pause / step / loop controls; <code>QTimer</code>-throttled to 33ms during drag</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_stages_tab.py</code></td>
+<td>Stage list with kind / n_steps / time range; "Set active stage" action</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_diagrams_tab.py</code></td>
+<td>Diagram list panel — empty button bar (Add / Remove / Up / Down) and tree; remains disabled until Phase 1 ships a diagram class</td>
+</tr>
+</tbody>
+</table>
+<h3 id="modified-files">Modified files<a class="headerlink" href="#modified-files" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>results/Results.py</code></td>
+<td>Replace <code>viewer()</code> body. Lazy-import <code>viewers.results_viewer.ResultsViewer</code>; construct in-process; <code>blocking=True</code> default. The <code>blocking=False</code> path is stubbed (raises <code>NotImplementedError("subprocess opt-in lands in Phase 6")</code>) so the signature is final from day one.</td>
+</tr>
+<tr>
+<td><code>viewers/__init__.py</code></td>
+<td>Re-export <code>ResultsViewer</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/viewers/test_results_viewer_smoke.py</code></td>
+<td><code>ResultsViewer(results=...)</code> constructs without raising; <code>.show(blocking=False)</code> exits cleanly when the test harness closes the window via <code>QTimer.singleShot</code></td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_results_director.py</code></td>
+<td>step_index transitions, stage switch detaches and re-attaches diagrams (against a stubbed Diagram), observers fire in correct order</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_results_registry.py</code></td>
+<td>add / remove / reorder / toggle on a registry of stub diagrams; <code>DiagramSpec</code> round-trips</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_results_selector.py</code></td>
+<td><code>SlabSelector.resolve(fem)</code> returns expected node / element ID arrays for <code>pg=</code>, <code>label=</code>, <code>selection=</code>, <code>ids=</code> cases</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification">Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Open <code>tests/fixtures/results/cantilever_small.h5</code> (the fixture from
+  Results Phase 1) via <code>Results.from_native(...).viewer()</code>. Mesh
+  appears, scrubber is functional but does nothing visible (no
+  diagrams). Window closes cleanly.</li>
+<li>Director observers proven via the registry test — adding /
+  removing / step-changing fires the right callbacks.</li>
+<li>Performance baseline: viewer open → first frame visible in &lt;500 ms
+  on the cantilever fixture. Scrubber drag at 60 fps with no
+  diagrams active.</li>
+</ul>
+<h3 id="performance-contracts-locked-in-this-phase">Performance contracts locked in this phase<a class="headerlink" href="#performance-contracts-locked-in-this-phase" title="Permanent link">&para;</a></h3>
+<p>These are the rules every later phase has to honor:</p>
+<ol>
+<li><code>Diagram.update_to_step(i)</code> must mutate existing actor scalars
+   in place. Re-creating actors per step is forbidden — <code>Diagram</code>
+   base class has no <code>add_actor</code> helper, only <code>mutate_array</code>.</li>
+<li><code>Diagram.attach(plotter, fem)</code> resolves selectors <strong>once</strong> to
+   concrete IDs; selectors are not re-resolved on step change.</li>
+<li>The Director coalesces N diagram updates into one
+   <code>plotter.render()</code> call per step.</li>
+<li>Scrubber drag uses <code>QTimer</code> 33ms coalescing; final render on
+   release.</li>
+</ol>
+<hr />
+<h2 id="phase-1-contourdiagram-deformedshapediagram">Phase 1 — <code>ContourDiagram</code> + <code>DeformedShapeDiagram</code><a class="headerlink" href="#phase-1-contourdiagram-deformedshapediagram" title="Permanent link">&para;</a></h2>
+<p><strong>Goal:</strong> the two highest-value diagrams ship together. Both ride on
+<code>NodeSlab</code>; share most of the slab-read + actor-mutation code path.
+This phase validates that the protocol from Phase 0 actually performs.</p>
+<h3 id="new-files_1">New files<a class="headerlink" href="#new-files_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/diagrams/_contour.py</code></td>
+<td><code>ContourDiagram</code> — paints per-node or per-cell scalars onto the substrate mesh slice selected by <code>SlabSelector</code>. Supports nodal kinematics and (deferred to Phase 4) gauss-interpolated stress.</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_deformed_shape.py</code></td>
+<td><code>DeformedShapeDiagram</code> — warps a mesh copy by <code>displacement_xyz</code>; optional undeformed reference; scale slider.</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_diagram_settings_tab.py</code></td>
+<td>Per-diagram styling — colormap, clim, opacity, show-edges, scale-slider for deformed</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_add_diagram_dialog.py</code></td>
+<td>Modal dialog: pick kind, pick component, pick selector, pick stage. Opens on Diagrams tab "Add" button.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="modified-files_1">Modified files<a class="headerlink" href="#modified-files_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/diagrams/__init__.py</code></td>
+<td>Re-export <code>ContourDiagram</code>, <code>DeformedShapeDiagram</code>, their style records</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_styles.py</code></td>
+<td>Add <code>ContourStyle</code>, <code>DeformedShapeStyle</code> frozen records</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_diagrams_tab.py</code></td>
+<td>Wire "Add" button to <code>_add_diagram_dialog</code>; enable now that two kinds exist</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tests_1">Tests<a class="headerlink" href="#tests_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/viewers/test_contour_diagram.py</code></td>
+<td>Attach to fixture, set step, scalar array on the mesh matches <code>slab.values[i]</code> for the selected node IDs; clim auto-fits when not explicit</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_deformed_diagram.py</code></td>
+<td>Warped mesh point coords equal <code>undeformed_coords + scale * displacement</code> for current step; scale-slider observer updates without re-attach</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_inplace_mutation.py</code></td>
+<td>After 100 step transitions, the actor's mapper is the same VTK object as after step 0 — no re-creation</td>
+</tr>
+<tr>
+<td><code>tests/viewers/bench_step_change.py</code></td>
+<td>(skipped in normal CI) Step-change time on 100k-node displacement fixture under 5 ms; on 1M-node under 50 ms</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification_1">Verification<a class="headerlink" href="#verification_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Open cantilever fixture, add <code>ContourDiagram</code> on <code>displacement_z</code>,
+  scrub the timeline — contour updates smoothly.</li>
+<li>Add <code>DeformedShapeDiagram</code>, drag the scale slider — undeformed
+  reference stays in place, deformed mesh warps live.</li>
+<li>Both diagrams visible simultaneously, each with its own selector
+  (e.g., contour on <code>pg="Top"</code>, deformed on <code>pg="Body"</code>).</li>
+<li>The benchmark proves the in-place mutation contract isn't violated.</li>
+</ul>
+<hr />
+<h2 id="phase-2-lineforcediagram">Phase 2 — <code>LineForceDiagram</code><a class="headerlink" href="#phase-2-lineforcediagram" title="Permanent link">&para;</a></h2>
+<p><strong>Goal:</strong> classic textbook beam diagrams (axial / shear / moment /
+torsion) — no equivalent in <code>apeGmshViewer/</code>. This is the most novel
+rendering and the most visible value-add for structural users.</p>
+<h3 id="new-files_2">New files<a class="headerlink" href="#new-files_2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/diagrams/_line_force.py</code></td>
+<td><code>LineForceDiagram</code> — consumes <code>LineStationSlab</code>, generates per-beam perpendicular fill geometry in the section local frame, hatched style</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_beam_geometry.py</code></td>
+<td>Per-beam local-frame construction (mining the OpenSees <code>vecxz</code> convention from <code>geom_transf_viewer.py</code>); pure functions returning local axes per element</td>
+</tr>
+<tr>
+<td><code>viewers/overlays/glyph_helpers.py</code> (modify)</td>
+<td>Add <code>make_hatched_fill_strip(start, end, axis, magnitudes, hatch_spacing)</code> factory — reusable beyond beam diagrams</td>
+</tr>
+</tbody>
+</table>
+<h3 id="modified-files_2">Modified files<a class="headerlink" href="#modified-files_2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/diagrams/_styles.py</code></td>
+<td>Add <code>LineForceStyle</code> (component, fill_color, hatch, scale, sign_convention)</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/__init__.py</code></td>
+<td>Re-export <code>LineForceDiagram</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="tests_2">Tests<a class="headerlink" href="#tests_2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/viewers/test_line_force_geometry.py</code></td>
+<td>Per-beam local frame matches the OpenSees convention for canonical orientations (X-axis beam, Z-axis beam, skew); identical to <code>geom_transf_viewer</code> math</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_line_force_diagram.py</code></td>
+<td>For a known cantilever under tip load, the moment diagram is linear from peak-at-base to zero-at-tip; sign convention matches structural convention (sagging positive)</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_line_force_perf.py</code></td>
+<td>1000-beam frame, step change &lt;10 ms (hatch geometry built once at attach; only magnitudes mutate per step)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification_2">Verification<a class="headerlink" href="#verification_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Open cantilever fixture, add <code>LineForceDiagram</code> on <code>bending_moment_y</code>
+  for the beam selection — hatched fill perpendicular to beam axis,
+  amplitude proportional to moment, sign convention readable.</li>
+<li>Sign-flip toggle in the settings tab works.</li>
+<li>Multi-beam frame fixture: scrubbing the timeline animates all beam
+  diagrams simultaneously without lag.</li>
+</ul>
+<h3 id="performance-note">Performance note<a class="headerlink" href="#performance-note" title="Permanent link">&para;</a></h3>
+<p>Hatch geometry is <strong>built once at attach</strong>; per-step updates only
+mutate the magnitudes (which scale a precomputed unit-fill mesh). The
+attach cost is <code>O(n_beams * hatch_density)</code> once; per step is
+<code>O(n_beams * n_stations_per_beam)</code> numpy work plus one render.</p>
+<hr />
+<h2 id="phase-3-fibersectiondiagram-layerstackdiagram">Phase 3 — <code>FiberSectionDiagram</code> + <code>LayerStackDiagram</code><a class="headerlink" href="#phase-3-fibersectiondiagram-layerstackdiagram" title="Permanent link">&para;</a></h2>
+<p><strong>Goal:</strong> the two diagrams with side panels. Group them because they
+share the matplotlib-in-Qt pattern and the "picked GP" state model.</p>
+<h3 id="new-files_3">New files<a class="headerlink" href="#new-files_3" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/diagrams/_fiber_section.py</code></td>
+<td><code>FiberSectionDiagram</code> — 3-D dot cloud at section locations; side panel renders 2-D section plot at the picked beam station</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_layer_stack.py</code></td>
+<td><code>LayerStackDiagram</code> — shell mid-surface contour; side panel shows through-thickness profile at picked GP</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_section_panel.py</code></td>
+<td>Dockable Qt widget hosting <code>FigureCanvasQTAgg</code> for fiber section plot</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_thickness_panel.py</code></td>
+<td>Dockable Qt widget hosting <code>FigureCanvasQTAgg</code> for through-thickness profile</td>
+</tr>
+</tbody>
+</table>
+<h3 id="modified-files_3">Modified files<a class="headerlink" href="#modified-files_3" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/diagrams/_styles.py</code></td>
+<td>Add <code>FiberSectionStyle</code>, <code>LayerStackStyle</code></td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_director.py</code></td>
+<td>Add <code>picked_gp: tuple[int, int] | None</code> state field (element_id, gp_index); observers for fiber/layer panels to subscribe</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/__init__.py</code></td>
+<td>Re-export both</td>
+</tr>
+<tr>
+<td><code>viewers/results_viewer.py</code></td>
+<td>Wire dockable panels — they appear when the corresponding diagram is added</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tests_3">Tests<a class="headerlink" href="#tests_3" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/viewers/test_fiber_diagram.py</code></td>
+<td>Dot cloud has one point per <code>(element, gp, fiber_index)</code> tuple; section plot scatter coords match <code>slab.y, slab.z</code>; coloring by <code>fiber_stress</code> clipped to clim</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_layer_diagram.py</code></td>
+<td>Through-thickness profile <code>(stress, thickness)</code> for picked GP matches direct slab read; layer ordering matches MPCO sub_gp_index</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_section_panel_perf.py</code></td>
+<td>Picked-GP change → section panel re-renders in &lt;50 ms on a 200-fiber section</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification_3">Verification<a class="headerlink" href="#verification_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Open MPCO fixture with fiber-section beam-columns, add
+  <code>FiberSectionDiagram</code>, click on a beam — side panel opens showing
+  the 2-D section, fibers colored by current stress, scrubbing the
+  timeline animates both 3-D dots and 2-D section.</li>
+<li>Open layered-shell fixture, add <code>LayerStackDiagram</code>, click on a
+  shell GP — side panel shows the through-thickness profile.</li>
+<li>Closing a diagram closes its side panel; reopening restores it.</li>
+</ul>
+<hr />
+<h2 id="phase-4-vectorglyphdiagram-gausspointdiagram-springforcediagram">Phase 4 — <code>VectorGlyphDiagram</code> + <code>GaussPointDiagram</code> + <code>SpringForceDiagram</code><a class="headerlink" href="#phase-4-vectorglyphdiagram-gausspointdiagram-springforcediagram" title="Permanent link">&para;</a></h2>
+<p><strong>Goal:</strong> three simpler diagrams that share glyph-generation patterns.
+Round out the catalogue to all eight kinds.</p>
+<h3 id="new-files_4">New files<a class="headerlink" href="#new-files_4" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/diagrams/_vector_glyph.py</code></td>
+<td><code>VectorGlyphDiagram</code> — arrows at nodes from a 3-component slab; doubles as the per-element-node force renderer</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_gauss_marker.py</code></td>
+<td><code>GaussPointDiagram</code> — sphere markers at GP world coords (computed via shape functions from natural coords); colored by component</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_spring_force.py</code></td>
+<td><code>SpringForceDiagram</code> — force arrow along the configured spring direction at zero-length elements</td>
+</tr>
+</tbody>
+</table>
+<h3 id="modified-files_4">Modified files<a class="headerlink" href="#modified-files_4" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/diagrams/_styles.py</code></td>
+<td>Add <code>VectorGlyphStyle</code>, <code>GaussMarkerStyle</code>, <code>SpringForceStyle</code></td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/__init__.py</code></td>
+<td>Re-export all three</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_contour.py</code></td>
+<td>Extend to consume <code>GaussSlab</code> via shape-function interpolation (deferred from Phase 1)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tests_4">Tests<a class="headerlink" href="#tests_4" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/viewers/test_vector_glyph.py</code></td>
+<td>Arrow length / orientation match <code>(values, scale)</code> for known synthetic vector field</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_gauss_marker.py</code></td>
+<td>GP world coords match <code>fem.element_shape_fn(natural_coords)</code> for tet / hex / quad on a unit-cube fixture; color matches slab values</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_spring_force.py</code></td>
+<td>Arrow on a zero-length spring element points in the configured direction; magnitude scales with <code>spring_force_&lt;n&gt;</code></td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_gauss_interp_contour.py</code></td>
+<td>Continuum stress contour interpolated from GPs to nodes matches MPCO STKO output to 1e-6</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification_4">Verification<a class="headerlink" href="#verification_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A fixture with both solid elements and zero-length springs renders
+  GP markers, vector glyphs, and spring arrows simultaneously.</li>
+<li>Gauss-interpolated contour produces visually equivalent output to
+  STKO for the same MPCO file.</li>
+</ul>
+<hr />
+<h2 id="phase-5-probes-inspector">Phase 5 — Probes + Inspector<a class="headerlink" href="#phase-5-probes-inspector" title="Permanent link">&para;</a></h2>
+<p><strong>Goal:</strong> mine probes from <code>apeGmshViewer/</code>; add Inspector tab; add
+the new time-history probe (no equivalent today).</p>
+<h3 id="new-files_5">New files<a class="headerlink" href="#new-files_5" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/overlays/probe_overlay.py</code></td>
+<td>Mined from <code>apeGmshViewer/visualization/probes.py</code> (605 LOC). Refactored: probes consume Director slab reads instead of <code>MeshData.point_data</code> dicts. Result records (<code>PointProbeResult</code>, <code>LineProbeResult</code>, <code>PlaneProbeResult</code>) carry per-diagram values, not raw VTU fields.</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_probes_tab.py</code></td>
+<td>Mined from <code>apeGmshViewer/panels/probe_panel.py</code> (260 LOC). Retheme against integrated theme system.</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_inspector_tab.py</code></td>
+<td>NEW — picked element/node id, coords, current values from all bound diagrams, "create probe here" button</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_time_history.py</code></td>
+<td>NEW — <code>TimeHistoryProbe</code> (not a Diagram; a probe overlay). Pulls a <code>(T,)</code> slab for the picked entity, displays in a matplotlib panel. Cached for the probe's lifetime.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="modified-files_5">Modified files<a class="headerlink" href="#modified-files_5" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/results_viewer.py</code></td>
+<td>Wire Probes tab and Inspector tab into the right-side tab dock</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_director.py</code></td>
+<td>Add <code>read_at_pick(node_id, component)</code> and <code>read_history(node_id, component)</code> helper methods — single-row slab reads</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tests_5">Tests<a class="headerlink" href="#tests_5" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/viewers/test_probe_point.py</code></td>
+<td>Click→sample returns expected nodal value at closest mesh node; per-diagram values keyed correctly</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_probe_line.py</code></td>
+<td>N samples along line return interpolated values matching VTK probe baseline</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_probe_plane.py</code></td>
+<td>Slice mesh has expected n_points; scalars match interpolation</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_time_history.py</code></td>
+<td>Time-history for picked node matches direct <code>results.nodes.get(ids=[node_id], component=...).values</code></td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_inspector_tab.py</code></td>
+<td>Picked entity update fires Inspector refresh; values reflect current step</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification_5">Verification<a class="headerlink" href="#verification_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Pick a node, open time-history probe — matplotlib chart appears,
+  shows component vs time, persistent across step / stage changes.</li>
+<li>Line probe across a fixture beam shows axial-force decay matching
+  the analytical solution.</li>
+</ul>
+<hr />
+<h2 id="phase-6-polish-subprocess-opt-in-animation-presets">Phase 6 — Polish — subprocess opt-in, animation, presets<a class="headerlink" href="#phase-6-polish-subprocess-opt-in-animation-presets" title="Permanent link">&para;</a></h2>
+<p><strong>Goal:</strong> the v1 finishing touches.</p>
+<h3 id="new-files_6">New files<a class="headerlink" href="#new-files_6" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>viewers/__main__.py</code></td>
+<td><code>python -m apeGmsh.viewers.results &lt;path&gt;</code> — argparse, opens <code>Results.from_native</code> or <code>from_mpco</code> based on extension, launches <code>ResultsViewer</code> blocking</td>
+</tr>
+</tbody>
+</table>
+<h3 id="modified-files_6">Modified files<a class="headerlink" href="#modified-files_6" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>results/Results.py</code></td>
+<td>Implement <code>blocking=False</code>: spawn subprocess. Raises clean error if Results was constructed in-memory (no <code>path</code>).</td>
+</tr>
+<tr>
+<td><code>viewers/ui/_time_scrubber.py</code></td>
+<td>Wire animation button — <code>QTimer</code> advancing step at user-set FPS (default 30); loop / bounce modes</td>
+</tr>
+<tr>
+<td><code>viewers/diagrams/_styles.py</code></td>
+<td>Add <code>StylePreset</code> save/load — JSON files in <code>&lt;config&gt;/apeGmsh/style_presets/</code>, loaded by Add Diagram dialog</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tests_6">Tests<a class="headerlink" href="#tests_6" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Asserts</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tests/viewers/test_subprocess_launch.py</code></td>
+<td><code>results.viewer(blocking=False)</code> returns immediately; subprocess exit code 0 when window closed via test fixture</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_animation.py</code></td>
+<td>At 30 fps, 60 step animation completes in ≈ 2 s ± 200 ms</td>
+</tr>
+<tr>
+<td><code>tests/viewers/test_style_presets.py</code></td>
+<td>Save / load round-trip; named preset applies on diagram creation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="verification_6">Verification<a class="headerlink" href="#verification_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Notebook user opens <code>results.viewer(blocking=False)</code>, the kernel
+  stays alive, the window appears, killing the kernel doesn't kill
+  the viewer.</li>
+<li>Animation runs smoothly on the dynamic fixture (1000 steps).</li>
+<li>Save a "Stress contour, viridis, [-100, 100] MPa" preset; apply it
+  in a fresh session.</li>
+</ul>
+<hr />
+<h2 id="cross-phase-concerns">Cross-phase concerns<a class="headerlink" href="#cross-phase-concerns" title="Permanent link">&para;</a></h2>
+<h3 id="test-fixtures">Test fixtures<a class="headerlink" href="#test-fixtures" title="Permanent link">&para;</a></h3>
+<p>Build one per phase, accumulating into <code>tests/fixtures/viewers/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Fixture</th>
+<th>Phase</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>cantilever_small.h5</code> (reuse from Results Phase 1)</td>
+<td>0</td>
+<td>4-element beam, gravity stage, 10 steps</td>
+</tr>
+<tr>
+<td><code>frame_with_beams.h5</code></td>
+<td>2</td>
+<td>3-D portal frame, beams with line stations + fiber sections</td>
+</tr>
+<tr>
+<td><code>layered_shell.h5</code></td>
+<td>3</td>
+<td>Plate with <code>LayeredShellSection</code>, transient with 50 steps</td>
+</tr>
+<tr>
+<td><code>mixed_solid_spring.h5</code></td>
+<td>4</td>
+<td>Solid block on zero-length springs</td>
+</tr>
+<tr>
+<td><code>modal_frame.h5</code></td>
+<td>6</td>
+<td>Modal stage fixture (10 modes) for animation testing</td>
+</tr>
+</tbody>
+</table>
+<p>A single <code>tests/fixtures/viewers/_generate.py</code> script generates all of
+them via openseespy + apeGmsh. Committed to repo; rerun only when
+schema or model definitions change.</p>
+<h3 id="performance-gates-per-phase">Performance gates per phase<a class="headerlink" href="#performance-gates-per-phase" title="Permanent link">&para;</a></h3>
+<p>Each phase ships with one benchmark test (skipped in normal CI, runs
+under <code>pytest -m bench</code>). Numbers are gates, not goals — phases
+violating them block:</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Gate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Viewer open → first frame &lt;500 ms on cantilever; scrubber 60 fps with no diagrams</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Step-change &lt;5 ms on 100k-node displacement; &lt;50 ms on 1M-node</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Step-change &lt;10 ms on 1000-beam line-force diagram</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Side-panel re-render &lt;50 ms on 200-fiber section</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Gauss-interp contour &lt;30 ms on 100k-GP fixture</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Time-history probe load &lt;100 ms for 1000-step / 1-node read</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Subprocess launch &lt;2 s wall time end-to-end</td>
+</tr>
+</tbody>
+</table>
+<h3 id="theming-and-preferences">Theming and preferences<a class="headerlink" href="#theming-and-preferences" title="Permanent link">&para;</a></h3>
+<p>Phases 0+ reuse the existing theme + preferences systems from
+<code>viewers/ui/</code>. No new persistent state is added until Phase 6 (style
+presets — separate JSON dir, not in the <code>Preferences</code> schema).</p>
+<h3 id="lazy-imports">Lazy imports<a class="headerlink" href="#lazy-imports" title="Permanent link">&para;</a></h3>
+<p>Every viewer file imports Qt / pyvistaqt <strong>inside function bodies</strong>,
+matching the pattern in <code>viewers/ui/viewer_window.py:_lazy_qt</code>. The
+public API (<code>Results.viewer</code>) lazy-imports <code>viewers.results_viewer</code>
+inside its function body. <code>import apeGmsh.results</code> must remain
+Qt-free.</p>
+<hr />
+<h2 id="phase-ordering-check">Phase ordering check<a class="headerlink" href="#phase-ordering-check" title="Permanent link">&para;</a></h2>
+<p>Dependencies:</p>
+<ul>
+<li>1 needs 0</li>
+<li>2 needs 0 (independent of 1)</li>
+<li>3 needs 0 (independent of 1, 2)</li>
+<li>4 needs 1 (extends <code>_contour.py</code> with gauss interpolation)</li>
+<li>5 needs 0 + at least 1 (Inspector / probes useful only with diagrams)</li>
+<li>6 needs everything (subprocess wraps the whole stack)</li>
+</ul>
+<p><strong>Critical path: 0 → 1 → 4 → 5 → 6.</strong> That delivers the v1 with the
+most-used diagrams (contour / deformed / vector / gauss / spring) +
+probes + subprocess. <strong>Phases 2 and 3 are parallelizable with 1 once
+0 lands.</strong> They can be picked up by a different contributor or
+deferred without blocking v1 release.</p>
+<p>If we slip, the ordering of risk vs. value says drop Phase 3 (fiber +
+layer side panels — most novel UI, biggest implementation surface)
+before Phase 2 (line force — smaller, higher-visibility feature for
+structural users).</p>
+<hr />
+<h2 id="estimated-phase-footprint">Estimated phase footprint<a class="headerlink" href="#estimated-phase-footprint" title="Permanent link">&para;</a></h2>
+<p>Rough estimates to give a sense of scale, not commitments:</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th style="text-align: right;">LOC (src)</th>
+<th style="text-align: right;">LOC (tests)</th>
+<th style="text-align: right;">New files</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0 — scaffolding + Director + scrubber</td>
+<td style="text-align: right;">~1500</td>
+<td style="text-align: right;">~500</td>
+<td style="text-align: right;">11</td>
+</tr>
+<tr>
+<td>1 — Contour + Deformed</td>
+<td style="text-align: right;">~800</td>
+<td style="text-align: right;">~600</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>2 — Line force</td>
+<td style="text-align: right;">~600</td>
+<td style="text-align: right;">~400</td>
+<td style="text-align: right;">2</td>
+</tr>
+<tr>
+<td>3 — Fiber + Layer (side panels)</td>
+<td style="text-align: right;">~1200</td>
+<td style="text-align: right;">~600</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>4 — Vector + Gauss + Spring</td>
+<td style="text-align: right;">~700</td>
+<td style="text-align: right;">~500</td>
+<td style="text-align: right;">3</td>
+</tr>
+<tr>
+<td>5 — Probes + Inspector</td>
+<td style="text-align: right;">~1100</td>
+<td style="text-align: right;">~400</td>
+<td style="text-align: right;">4</td>
+</tr>
+<tr>
+<td>6 — Polish (subprocess, animation, presets)</td>
+<td style="text-align: right;">~300</td>
+<td style="text-align: right;">~200</td>
+<td style="text-align: right;">1</td>
+</tr>
+<tr>
+<td><strong>Total</strong></td>
+<td style="text-align: right;"><strong>~6200</strong></td>
+<td style="text-align: right;"><strong>~3200</strong></td>
+<td style="text-align: right;"><strong>29</strong></td>
+</tr>
+</tbody>
+</table>
+<p>For comparison: existing <code>apeGmshViewer/</code> is 4,444 LOC (frozen);
+existing <code>src/apeGmsh/viewers/</code> is 14,205 LOC (reused as-is). Net
+new code in this plan: ~6,200 LOC of viewer + ~3,200 LOC of tests.</p>
+<hr />
+<h2 id="decision-log-re-affirmed">Decision log (re-affirmed)<a class="headerlink" href="#decision-log-re-affirmed" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Greenfield rebuild.</strong> No bridge from <code>apeGmshViewer/</code>. Mining
+  ledger in directives §11 specifies what gets lifted (probes +
+  patterns) vs. discarded.</li>
+<li><strong>Diagram protocol locked in Phase 0.</strong> Every later phase is a
+  subclass; protocol changes after Phase 0 are breaking.</li>
+<li><strong>In-place mutation contract enforced from Phase 1.</strong> Re-creating
+  actors per step is a bug, not an alternative implementation.</li>
+<li><strong><code>blocking=True</code> default</strong> matches <code>MeshViewer</code>/<code>ModelViewer</code>.
+  Subprocess opt-in lands in Phase 6.</li>
+<li><strong>Side-panel diagrams (fiber / layer) are dockable Qt widgets</strong>,
+  not separate windows. Closing the diagram closes the panel.</li>
+<li><strong><code>apeGmshViewer/</code> stays frozen.</strong> No fixes, no features. The
+  future WebGL/Rust rewrite owns it; nothing in this plan touches it.</li>
+<li><strong>Reuse over rewrite</strong> for <code>viewers/scene</code>, <code>core</code>, <code>ui</code>,
+  <code>overlays</code>. New code goes in <code>viewers/diagrams/</code> and
+  <code>viewers/results_viewer.py</code>; everything else is shared.</li>
+</ul>
+<hr />
+<h2 id="what-lands-first">What lands first<a class="headerlink" href="#what-lands-first" title="Permanent link">&para;</a></h2>
+<p>The first PR off this plan delivers Phase 0:</p>
+<ol>
+<li><code>viewers/results_viewer.py</code> — class shell, opens window, builds
+   substrate mesh via <code>build_mesh_scene</code>, attaches Director</li>
+<li><code>viewers/diagrams/_director.py</code>, <code>_registry.py</code>, <code>_base.py</code>,
+   <code>_selectors.py</code>, <code>_styles.py</code> (skeleton)</li>
+<li><code>viewers/ui/results_tabs.py</code>, <code>_time_scrubber.py</code>, <code>_stages_tab.py</code>,
+   <code>_diagrams_tab.py</code> (empty)</li>
+<li><code>results/Results.py</code> — <code>viewer()</code> replacement; <code>blocking=False</code>
+   stub raises</li>
+<li>The four Phase 0 test files</li>
+</ol>
+<p>End state of the first PR: <code>Results.from_native(...).viewer()</code> opens
+a window showing the mesh, with a working time scrubber that does
+nothing visible (no diagrams), and a stage selector that switches
+the active stage but still has no diagrams to update. The Diagrams
+tab has an "Add" button that's disabled.</p>
+<p>This is the smallest end-to-end slice that proves the architecture.
+Phase 1 makes it useful.</p>
+<hr />
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[[apeGmsh_results_viewer]] — directives (the <em>what</em>; this file is
+  the <em>when</em>)</li>
+<li>[[Results_architecture]] — Phase 9 explicitly defers viewer planning
+  here</li>
+<li><code>src/apeGmsh/viewers/mesh_viewer.py</code> — closest existing analogue;
+  crib structure for <code>ResultsViewer</code></li>
+<li><code>src/apeGmsh/viewers/scene/mesh_scene.py</code> — substrate mesh builder
+  (reused unchanged)</li>
+<li><code>apeGmshViewer/visualization/probes.py</code> — Phase 5 mining target</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
