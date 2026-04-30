@@ -82,10 +82,21 @@ class DiagramRegistry:
     # ------------------------------------------------------------------
 
     def add(self, diagram: Diagram) -> Diagram:
-        """Append ``diagram`` and attach it if the registry is bound."""
+        """Append ``diagram`` and attach it if the registry is bound.
+
+        If ``attach()`` raises (e.g. ``NoDataError``), the diagram is
+        rolled out of the list before the exception propagates so the
+        registry never holds an un-attached diagram in an active list.
+        """
         self._diagrams.append(diagram)
         if self.is_bound and not diagram.is_attached:
-            diagram.attach(self._plotter, self._fem, self._scene)  # type: ignore[arg-type]
+            try:
+                diagram.attach(self._plotter, self._fem, self._scene)  # type: ignore[arg-type]
+            except Exception:
+                # Roll back the append; the caller (dialog) surfaces the
+                # error to the user.
+                self._diagrams.pop()
+                raise
         self._notify()
         return diagram
 

@@ -4,7 +4,7 @@ Phase 0 shipped the scaffolding. Phase 1 adds ``ContourDiagram`` and
 ``DeformedShapeDiagram``. Subsequent phases add line force, fiber,
 layer, vector glyph, gauss marker, and spring force diagrams.
 """
-from ._base import Diagram, DiagramSpec
+from ._base import Diagram, DiagramSpec, NoDataError
 from ._contour import ContourDiagram
 from ._deformed_shape import DeformedShapeDiagram
 from ._director import ResultsDirector, TimeMode
@@ -45,6 +45,7 @@ __all__ = [
     "LayerStackStyle",
     "LineForceDiagram",
     "LineForceStyle",
+    "NoDataError",
     "ResultsDirector",
     "SlabSelector",
     "SpringForceDiagram",

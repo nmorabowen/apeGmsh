@@ -97,18 +97,29 @@ class SpringForceDiagram(Diagram):
         if element_ids is None:
             element_ids = self._collect_zero_length_ids(fem)
         if element_ids.size == 0:
-            return
+            from ._base import NoDataError
+            raise NoDataError(
+                f"SpringForceDiagram: no zero-length spring elements "
+                f"found in the selection (selector={self.spec.selector!r})."
+            )
         self._element_ids_to_read = tuple(int(e) for e in element_ids)
 
         # ── Spring world positions (use node i — i and j coincide) ──
         positions = self._collect_spring_positions(fem, element_ids)
         if positions.shape[0] == 0:
-            return
+            from ._base import NoDataError
+            raise NoDataError(
+                "SpringForceDiagram: could not resolve world positions "
+                "for the spring elements."
+            )
 
         # ── Step-0 read ─────────────────────────────────────────────
         results = self._scoped_results()
         if results is None:
-            return
+            from ._base import NoDataError
+            raise NoDataError(
+                "SpringForceDiagram: results scope unresolved (no stage)."
+            )
         try:
             slab = results.elements.springs.get(
                 ids=self._element_ids_to_read,
@@ -120,7 +131,13 @@ class SpringForceDiagram(Diagram):
                 f"SpringForceDiagram could not read springs slab: {exc}"
             )
         if slab.values.size == 0:
-            return
+            from ._base import NoDataError
+            raise NoDataError(
+                f"SpringForceDiagram: no spring data for component "
+                f"{self.spec.selector.component!r}. Use "
+                f"`results.inspect.diagnose("
+                f"{self.spec.selector.component!r})`."
+            )
 
         slab_eids = np.asarray(slab.element_index, dtype=np.int64)
         slab_values = np.asarray(slab.values[0], dtype=np.float64)

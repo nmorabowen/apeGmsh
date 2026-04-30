@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
 
-from ..diagrams._base import DiagramSpec
+from ..diagrams._base import DiagramSpec, NoDataError
 from ..diagrams._contour import ContourDiagram
 from ..diagrams._deformed_shape import DeformedShapeDiagram
 from ..diagrams._fiber_section import FiberSectionDiagram
@@ -396,7 +396,17 @@ class AddDiagramDialog:
             except Exception:
                 pass
 
-        self._director.registry.add(diagram)
+        try:
+            self._director.registry.add(diagram)
+        except NoDataError as exc:
+            # The diagram's attach() raised because there's no slab
+            # data for this (component, stage, selector). Surface the
+            # specific message so the user knows what to change.
+            self._show_error(f"No data to render: {exc}")
+            return False
+        except Exception as exc:
+            self._show_error(f"Could not attach diagram: {exc}")
+            return False
         return True
 
     def _show_error(self, msg: str) -> None:

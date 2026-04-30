@@ -94,13 +94,20 @@ class LineForceDiagram(Diagram):
         if element_ids is None:
             element_ids = self._collect_line_element_ids(fem)
         if element_ids.size == 0:
-            return
+            from ._base import NoDataError
+            raise NoDataError(
+                f"LineForceDiagram: selector resolved to no line "
+                f"elements (selector={self.spec.selector!r})."
+            )
         self._element_ids_to_read = tuple(int(e) for e in element_ids)
 
         # ── Step-0 line-stations read to discover topology ──────────
         results = self._scoped_results()
         if results is None:
-            return
+            from ._base import NoDataError
+            raise NoDataError(
+                "LineForceDiagram: results scope unresolved (no stage)."
+            )
         try:
             slab = results.elements.line_stations.get(
                 ids=self._element_ids_to_read,
@@ -113,7 +120,14 @@ class LineForceDiagram(Diagram):
                 f"component {self.spec.selector.component!r}: {exc}"
             )
         if slab.values.size == 0 or slab.element_index.size == 0:
-            return
+            from ._base import NoDataError
+            raise NoDataError(
+                f"LineForceDiagram: no line-station data for component "
+                f"{self.spec.selector.component!r} on the selected "
+                f"elements (slab is empty). Use "
+                f"`results.inspect.diagnose({self.spec.selector.component!r})` "
+                f"to see which buckets were checked."
+            )
 
         slab_eids = np.asarray(slab.element_index, dtype=np.int64)
         slab_xi = np.asarray(slab.station_natural_coord, dtype=np.float64)

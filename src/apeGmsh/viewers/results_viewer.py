@@ -206,11 +206,31 @@ class ResultsViewer:
             bits.append(f"Skipped types: {scene.skipped_types}")
         win.set_status(" | ".join(bits))
 
+        # ── Slot-failure handler: route catches to the status bar ───
+        # Registered before restore so any failures during the restore
+        # path also land as toast messages.
+        from ._failures import register_error_handler, unregister_error_handler
+
+        def _slot_failure_to_status(name: str, exc: BaseException) -> None:
+            try:
+                win.set_status(
+                    f"Error in {name}: {type(exc).__name__}: {exc}",
+                    timeout=8000,
+                )
+            except Exception:
+                pass
+
+        register_error_handler(_slot_failure_to_status)
+        self._slot_failure_handler = _slot_failure_to_status
+
         # ── Restore previous session if requested ───────────────────
         self._maybe_restore_session(win)
 
         # ── Run ─────────────────────────────────────────────────────
-        win.exec()
+        try:
+            win.exec()
+        finally:
+            unregister_error_handler(_slot_failure_to_status)
         return self
 
     # ------------------------------------------------------------------

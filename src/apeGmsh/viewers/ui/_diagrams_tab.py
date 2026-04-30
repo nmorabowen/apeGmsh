@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Optional
 
+from .._failures import safe_slot
 from ..diagrams._base import Diagram
 
 if TYPE_CHECKING:
@@ -119,18 +120,21 @@ class DiagramsTab:
     # Slots
     # ------------------------------------------------------------------
 
+    @safe_slot
     def _on_add(self) -> None:
         from ._add_diagram_dialog import AddDiagramDialog
         dlg = AddDiagramDialog(self._director, parent=self._widget)
         dlg.run()
         # The registry's on_changed observer will refresh the list.
 
+    @safe_slot
     def _on_remove(self) -> None:
         idx = self._list.currentRow()
         if idx < 0:
             return
         self._director.registry.remove_at(idx)
 
+    @safe_slot
     def _move_selected(self, delta: int) -> None:
         idx = self._list.currentRow()
         if idx < 0:

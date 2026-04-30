@@ -91,17 +91,23 @@ class ContourDiagram(Diagram):
         else:
             point_indices = self._fem_ids_to_substrate_indices(scene, node_ids)
             if point_indices.size == 0:
-                # Selector resolved to nodes outside the substrate — no-op.
-                self._submesh = None
-                return
+                from ._base import NoDataError
+                raise NoDataError(
+                    f"ContourDiagram: selector resolved to {node_ids.size} "
+                    f"node(s) but none of them are in the substrate mesh "
+                    f"(selector={self.spec.selector!r})."
+                )
 
         # ── Extract a submesh containing those points + their cells ─
         submesh = scene.grid.extract_points(
             point_indices, adjacent_cells=False,
         )
         if submesh.n_points == 0:
-            self._submesh = None
-            return
+            from ._base import NoDataError
+            raise NoDataError(
+                "ContourDiagram: substrate submesh is empty for this "
+                "selector — nothing to color."
+            )
 
         # vtkOriginalPointIds maps submesh point index -> substrate index
         orig_indices = np.asarray(
@@ -127,8 +133,16 @@ class ContourDiagram(Diagram):
         self._scalar_array = submesh.point_data[_SCALAR_NAME]
 
         values_at_step_0 = self._fetch_step_values(0)
-        if values_at_step_0 is not None:
-            self._scatter_into_scalar(values_at_step_0[0], values_at_step_0[1])
+        if values_at_step_0 is None:
+            from ._base import NoDataError
+            raise NoDataError(
+                f"ContourDiagram: no nodal data for component "
+                f"{self.spec.selector.component!r} at step 0. Use "
+                f"`results.inspect.diagnose("
+                f"{self.spec.selector.component!r})` to see which "
+                f"buckets were checked."
+            )
+        self._scatter_into_scalar(values_at_step_0[0], values_at_step_0[1])
 
         # ── Resolve initial clim (style or auto-fit at step 0) ──────
         style: ContourStyle = self.spec.style    # type: ignore[assignment]

@@ -34,6 +34,23 @@ if TYPE_CHECKING:
 
 
 # =====================================================================
+# Errors
+# =====================================================================
+
+
+class NoDataError(RuntimeError):
+    """A diagram's ``attach()`` couldn't find any data to render.
+
+    Raised when the slab read for the requested ``(component, stage,
+    selector)`` returns empty — typically because the component name
+    isn't recorded in this stage, or the selector resolved to elements
+    that have no slab coverage. Caught by the Diagrams tab and surfaced
+    as a status-bar message; without it the diagram would silently
+    add a blank actor and look like a successful operation.
+    """
+
+
+# =====================================================================
 # DiagramSpec — persistable form
 # =====================================================================
 
