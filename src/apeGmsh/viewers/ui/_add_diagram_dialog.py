@@ -57,8 +57,17 @@ def _deformed_default_style(_component: str) -> DeformedShapeStyle:
     return DeformedShapeStyle()
 
 
-def _line_force_default_style(_component: str) -> LineForceStyle:
-    return LineForceStyle()
+def _line_force_default_style(component: str) -> LineForceStyle:
+    """Default style for a line-force diagram.
+
+    Bending moments default to ``flip_sign=True`` so the diagram
+    renders on the tension side of the beam (sagging-positive
+    convention universally used by structural engineers). Axial
+    force, shear, and torsion keep the natural sign — those have no
+    "tension side" tradition to follow.
+    """
+    is_bending_moment = component.startswith("bending_moment")
+    return LineForceStyle(flip_sign=is_bending_moment)
 
 
 def _fiber_default_style(_component: str) -> FiberSectionStyle:

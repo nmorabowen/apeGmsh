@@ -165,3 +165,32 @@ def test_component_combo_remains_editable_for_custom_names(qapp, director):
     assert dlg._component_combo.isEditable()
     dlg._component_combo.setEditText("totally_custom_thing")
     assert dlg._component_combo.currentText() == "totally_custom_thing"
+
+
+# =====================================================================
+# Default style — flip_sign for bending moments by structural convention
+# =====================================================================
+
+def test_line_force_default_flips_sign_for_bending_moment():
+    """Bending-moment line-force diagrams default to flip_sign=True
+    (engineering convention: draw moment on the tension side)."""
+    from apeGmsh.viewers.ui._add_diagram_dialog import (
+        _line_force_default_style,
+    )
+    style = _line_force_default_style("bending_moment_z")
+    assert style.flip_sign is True
+    style = _line_force_default_style("bending_moment_y")
+    assert style.flip_sign is True
+
+
+def test_line_force_default_does_not_flip_for_axial_shear_torsion():
+    from apeGmsh.viewers.ui._add_diagram_dialog import (
+        _line_force_default_style,
+    )
+    for component in (
+        "axial_force", "shear_y", "shear_z", "torsion",
+    ):
+        style = _line_force_default_style(component)
+        assert style.flip_sign is False, (
+            f"{component} should not default to flipped sign"
+        )
