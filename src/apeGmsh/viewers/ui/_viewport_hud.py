@@ -95,33 +95,7 @@ class ProbePaletteHUD:
         lay.addWidget(self._btn_stop)
         lay.addWidget(self._btn_clear)
 
-        widget.setStyleSheet(
-            "#ProbeHUD { "
-            "background: rgba(34, 38, 44, 0.92); "
-            "border: 1px solid rgba(255, 255, 255, 0.10); "
-            "border-radius: 6px; "
-            "} "
-            "#ProbeHUD QToolButton { "
-            "background: transparent; "
-            "border: 1px solid transparent; "
-            "border-radius: 3px; "
-            "color: rgba(255, 255, 255, 0.75); "
-            "padding: 3px; "
-            "font-size: 14px; "
-            "} "
-            "#ProbeHUD QToolButton:hover { "
-            "background: rgba(255, 255, 255, 0.06); "
-            "border-color: rgba(255, 255, 255, 0.10); "
-            "} "
-            "#ProbeHUD QToolButton[active=\"true\"] { "
-            "background: rgba(232, 156, 74, 0.18); "
-            "border-color: rgba(232, 156, 74, 0.6); "
-            "color: rgba(255, 255, 255, 0.95); "
-            "} "
-            "#ProbeHUDSep { "
-            "color: rgba(255, 255, 255, 0.10); "
-            "}"
-        )
+        # Theme-driven styling lives in viewers/ui/theme.py.
 
         # Wire overlay callbacks. We capture and forward results to
         # the status bar; we don't suppress callbacks already wired

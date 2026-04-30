@@ -194,19 +194,10 @@ class ResultsWindow:
         lay.addWidget(label)
         lay.addStretch(1)
 
-        # Lightweight inline style — not yet plumbed through the theme
-        # system. B4 ports RV_TOKENS and replaces this with palette-
-        # driven styling.
-        bar.setStyleSheet(
-            "#ResultsTitleBar { "
-            "background: rgba(255, 255, 255, 0.04); "
-            "border-bottom: 1px solid rgba(255, 255, 255, 0.08); "
-            "} "
-            "#ResultsTitleLabel { "
-            "color: rgba(255, 255, 255, 0.9); "
-            "font-size: 12px; "
-            "}"
-        )
+        # Theme-driven styling lives in viewers/ui/theme.py
+        # (build_stylesheet); the QMainWindow's stylesheet cascades
+        # to this widget via its #ResultsTitleBar / #ResultsTitleLabel
+        # object names.
         self._title_label = label
         return bar
 

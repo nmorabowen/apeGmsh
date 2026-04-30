@@ -110,20 +110,7 @@ class PlotPane:
         self._body.addWidget(empty)
         self._empty_widget = empty
 
-        # Lightweight inline style — replaced by the theme system in B4.
-        widget.setStyleSheet(
-            "#PlotPaneHeader, #PlotPaneNewPlot { "
-            "background: rgba(255, 255, 255, 0.04); "
-            "border-bottom: 1px solid rgba(255, 255, 255, 0.08); "
-            "} "
-            "#PlotPaneHeaderLabel { "
-            "color: rgba(255, 255, 255, 0.6); "
-            "font-size: 10px; letter-spacing: 1px; "
-            "} "
-            "#PlotPaneEmpty { color: rgba(255, 255, 255, 0.5); "
-            "font-size: 11px; }"
-        )
-
+        # Theme-driven styling lives in viewers/ui/theme.py.
         self._widget = widget
         self._tabs: list[_TabEntry] = []
         self._on_active_changed: Optional[Callable[[Optional[Hashable]], None]] = None
@@ -301,26 +288,7 @@ class _TabRow:
             _cb()
         frame.mousePressEvent = _press   # type: ignore[assignment]
 
-        # Inline style — promoted to theme-driven colors in B4.
-        frame.setStyleSheet(
-            "QFrame#PlotPaneTabRow { "
-            "border-left: 2px solid transparent; "
-            "background: transparent; "
-            "} "
-            "QFrame#PlotPaneTabRow[active=\"true\"] { "
-            "border-left: 2px solid #e89c4a; "
-            "background: rgba(255, 255, 255, 0.06); "
-            "} "
-            "#PlotPaneTabDot { color: #5a5e66; font-size: 10px; } "
-            "QFrame#PlotPaneTabRow[active=\"true\"] #PlotPaneTabDot { "
-            "color: #e89c4a; "
-            "} "
-            "#PlotPaneTabLabel { color: rgba(255,255,255,0.85); "
-            "font-size: 11px; } "
-            "#PlotPaneTabClose { color: rgba(255,255,255,0.4); "
-            "border: none; }"
-        )
-
+        # Theme-driven styling lives in viewers/ui/theme.py.
         self._frame = frame
 
     @property

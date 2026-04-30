@@ -77,26 +77,7 @@ class DetailsPanel:
         body_lay.addWidget(settings_tab.widget)
         outer.addWidget(body_holder, stretch=1)
 
-        widget.setStyleSheet(
-            "#DetailsPanel { "
-            "background: rgba(255, 255, 255, 0.03); "
-            "border-top: 1px solid rgba(255, 255, 255, 0.08); "
-            "} "
-            "#DetailsHeader { "
-            "background: rgba(255, 255, 255, 0.04); "
-            "border-bottom: 1px solid rgba(255, 255, 255, 0.06); "
-            "} "
-            "#DetailsHeaderLabel { "
-            "color: rgba(255, 255, 255, 0.6); "
-            "font-size: 10px; letter-spacing: 1px; "
-            "} "
-            "#DetailsHeaderMeta { "
-            "color: rgba(255, 255, 255, 0.5); "
-            "font-family: 'JetBrains Mono', ui-monospace, monospace; "
-            "font-size: 10px; "
-            "}"
-        )
-
+        # Theme-driven styling lives in viewers/ui/theme.py.
         self._widget = widget
         self.clear()
 

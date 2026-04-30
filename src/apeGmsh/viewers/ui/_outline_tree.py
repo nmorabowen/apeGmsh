@@ -116,24 +116,7 @@ class OutlineTree:
             tree.addTopLevelItem(g)
             g.setExpanded(True)
 
-        # Lightweight inline style — replaced by the theme system in B4.
-        widget.setStyleSheet(
-            "#OutlineHeader { "
-            "background: rgba(255, 255, 255, 0.04); "
-            "border-bottom: 1px solid rgba(255, 255, 255, 0.08); "
-            "} "
-            "#OutlineHeaderLabel { "
-            "color: rgba(255, 255, 255, 0.6); "
-            "font-size: 10px; "
-            "letter-spacing: 1px; "
-            "} "
-            "#OutlineInsertButton { "
-            "color: rgba(255, 255, 255, 0.8); "
-            "padding: 2px 6px; "
-            "font-size: 11px; "
-            "}"
-        )
-
+        # Theme-driven styling lives in viewers/ui/theme.py.
         self._widget = widget
 
         # ── Initial population + observer wiring ───────────────────
@@ -143,6 +126,16 @@ class OutlineTree:
 
         director.subscribe_stage(lambda _id: self._refresh_stages())
         director.subscribe_diagrams(self._refresh_diagrams)
+
+        # Refresh on theme change so placeholder-row colours follow
+        # the active palette.
+        from .theme import THEME
+        self._unsub_theme = THEME.subscribe(lambda _p: self._on_theme_changed())
+
+    def _on_theme_changed(self) -> None:
+        self._refresh_stages()
+        self._refresh_diagrams()
+        self._refresh_placeholders()
 
     # ------------------------------------------------------------------
     # Public API
@@ -290,8 +283,16 @@ class OutlineTree:
         return QtCore.Qt.ItemIsSelectable
 
     def _dim_brush(self):
+        """Muted foreground brush for placeholder rows.
+
+        Reads ``THEME.current.overlay`` so placeholder rows respect
+        the active palette. The brush is computed at refresh time —
+        callers re-call this on each :meth:`_refresh_*` so theme
+        changes that fire a refresh pick up the new color.
+        """
         from qtpy import QtGui
-        return QtGui.QBrush(QtGui.QColor(255, 255, 255, 100))
+        from .theme import THEME
+        return QtGui.QBrush(QtGui.QColor(THEME.current.overlay))
 
     # ------------------------------------------------------------------
     # Slots
