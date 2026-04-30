@@ -357,6 +357,8 @@ class Results:
         *,
         blocking: bool = True,
         title: Optional[str] = None,
+        restore_session: "bool | str" = "prompt",
+        save_session: bool = True,
     ):
         """Open the post-solve results viewer.
 
@@ -373,6 +375,15 @@ class Results:
             :class:`RuntimeError` for in-memory Results.
         title
             Optional window title; defaults to ``"Results — <filename>"``.
+        restore_session
+            How to handle a previously-saved session JSON next to the
+            results file. ``True`` restores silently, ``False`` ignores,
+            ``"prompt"`` (default) opens a yes/no dialog if a matching
+            session exists. No effect for in-memory Results.
+        save_session
+            If ``True`` (default), the active set of diagrams + scrubber
+            position is saved to ``<results>.viewer-session.json`` when
+            the window closes. ``False`` disables auto-save.
 
         Returns
         -------
@@ -384,7 +395,12 @@ class Results:
         if not blocking:
             return self._spawn_viewer_subprocess(title=title)
         from ..viewers.results_viewer import ResultsViewer
-        return ResultsViewer(self, title=title).show()
+        return ResultsViewer(
+            self,
+            title=title,
+            restore_session=restore_session,
+            save_session=save_session,
+        ).show()
 
     def _spawn_viewer_subprocess(self, *, title: Optional[str]):
         """Launch ``python -m apeGmsh.viewers <path>`` and return the Popen."""
