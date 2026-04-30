@@ -358,7 +358,7 @@ the new time-history probe (no equivalent today).
 
 | File | Purpose |
 |---|---|
-| `viewers/__main__.py` | `python -m apeGmsh.viewers.results <path>` — argparse, opens `Results.from_native` or `from_mpco` based on extension, launches `ResultsViewer` blocking |
+| `viewers/__main__.py` | `python -m apeGmsh.viewers <path>` — argparse, opens `Results.from_native` or `from_mpco` based on extension, launches `ResultsViewer` blocking |
 
 ### Modified files
 

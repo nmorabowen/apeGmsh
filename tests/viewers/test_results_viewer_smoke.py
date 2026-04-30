@@ -122,12 +122,48 @@ def test_results_viewer_explicit_title(small_results):
 
 
 # =====================================================================
-# Results.viewer() entry point
+# Results.viewer() entry point — subprocess opt-in (Phase 6)
 # =====================================================================
 
-def test_results_viewer_blocking_false_raises(small_results):
-    """Phase 0 contract: blocking=False raises NotImplementedError."""
-    with pytest.raises(NotImplementedError, match="Phase 6"):
+def test_subprocess_launches_with_correct_args(small_results, monkeypatch):
+    """``blocking=False`` invokes ``python -m apeGmsh.viewers <path>``."""
+    import subprocess
+    import sys
+
+    captured: dict = {}
+
+    class _FakePopen:
+        def __init__(self, args, *_, **__):
+            captured["args"] = args
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
+
+    handle = small_results.viewer(blocking=False)
+    assert isinstance(handle, _FakePopen)
+    assert captured["args"][:3] == [sys.executable, "-m", "apeGmsh.viewers"]
+    assert captured["args"][3] == str(small_results._path)
+
+
+def test_subprocess_passes_title(small_results, monkeypatch):
+    import subprocess
+    captured: dict = {}
+
+    class _FakePopen:
+        def __init__(self, args, *_, **__):
+            captured["args"] = args
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
+
+    small_results.viewer(blocking=False, title="My Run")
+    assert "--title" in captured["args"]
+    idx = captured["args"].index("--title")
+    assert captured["args"][idx + 1] == "My Run"
+
+
+def test_subprocess_in_memory_raises_clearly(small_results):
+    """No path → cannot subprocess; raises with a self-explanatory message."""
+    small_results._path = None
+    with pytest.raises(RuntimeError, match="In-memory Results"):
         small_results.viewer(blocking=False)
 
 
@@ -144,12 +180,12 @@ def test_results_viewer_blocking_false_raises(small_results):
 # ``QTimer.singleShot`` to keep CI-time bounded. We do not assert
 # anything visual — just that the full lifecycle exits cleanly.
 
-pytest_qt = pytest.importorskip("pytestqt", reason="needs pytest-qt")
-
-
 @pytest.mark.qt
-def test_results_viewer_show_close_lifecycle(small_results, qapp):
-    pyvistaqt = pytest.importorskip("pyvistaqt")    # noqa: F841
+def test_results_viewer_show_close_lifecycle(small_results):
+    pytest.importorskip("pytestqt", reason="needs pytest-qt")
+    pytest.importorskip("pyvistaqt")
+    qapp = pytest.importorskip("qtpy.QtWidgets").QApplication.instance() \
+        or pytest.importorskip("qtpy.QtWidgets").QApplication([])
     from qtpy import QtCore
 
     viewer = ResultsViewer(small_results, title="smoke")
