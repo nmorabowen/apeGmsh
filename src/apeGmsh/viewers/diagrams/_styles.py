@@ -46,12 +46,20 @@ class ContourStyle(DiagramStyle):
         Whether to draw element edges over the contour fill.
     show_scalar_bar
         Whether to render the colorbar overlay.
+    topology
+        ``"auto"`` (default) inspects which composite has the requested
+        component and prefers nodal data when both are available.
+        ``"nodes"`` forces the nodal-scalar path (point data); ``"gauss"``
+        forces the element-constant Gauss path (cell data, requires
+        ``n_gp == 1`` per element — e.g. CST / tri31, hex8 with one-
+        point integration).
     """
     cmap: str = "viridis"
     clim: Optional[tuple[float, float]] = None
     opacity: float = 1.0
     show_edges: bool = False
     show_scalar_bar: bool = True
+    topology: str = "auto"
 
 
 @dataclass(frozen=True)
