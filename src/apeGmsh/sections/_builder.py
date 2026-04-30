@@ -32,6 +32,30 @@ if TYPE_CHECKING:
 
 from apeGmsh._logging import _HasLogging
 from apeGmsh.core._section_placement import apply_placement
+from ._classify import (
+    classify_end_faces,
+    classify_w_volumes,
+    classify_w_outer_faces,
+    classify_tee_outer_faces,
+    classify_angle_outer_faces,
+)
+
+
+class _PrefixedLabels:
+    """Proxy that prepends ``prefix.`` to every :meth:`add` call.
+
+    Lets the standalone classify helpers (which use bare names like
+    ``"body"``, ``"start_face"``) work inside a shared session where
+    labels must be namespaced per instance.
+    """
+    __slots__ = ("_labels", "_prefix")
+
+    def __init__(self, labels, prefix: str) -> None:
+        self._labels = labels
+        self._prefix = prefix
+
+    def add(self, dim, tags, name: str) -> None:
+        self._labels.add(dim, tags, name=f"{self._prefix}.{name}")
 
 
 class SectionsBuilder(_HasLogging):
@@ -334,6 +358,345 @@ class SectionsBuilder(_HasLogging):
                 -b/2, -h/2, 0, b, h, length,
             )
             self._parent.labels.add(3, [tag], name=f"{label}.body")
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
+
+    # ------------------------------------------------------------------
+    # Hollow rectangular (HSS)
+    # ------------------------------------------------------------------
+
+    def rect_hollow(
+        self,
+        b: float,
+        h: float,
+        t: float,
+        length: float,
+        *,
+        anchor="start",
+        align="z",
+        label: str = "rect_hollow",
+        lc: float = 1e22,
+        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotate: tuple[float, ...] | None = None,
+    ) -> "Instance":
+        """Build a hollow rectangular tube (HSS) directly in the session.
+
+        Parameters
+        ----------
+        b : float
+            Outer width (X-direction).
+        h : float
+            Outer height (Y-direction).
+        t : float
+            Wall thickness.
+        length : float
+            Extrusion length (Z-direction).
+        lc : float
+            Target element size. Default ``1e22`` imposes no constraint.
+        """
+        def _build():
+            geo = self._parent.model.geometry
+            outer = geo.add_box(-b/2, -h/2, 0, b, h, length)
+            inner = geo.add_box(-b/2 + t, -h/2 + t, 0, b - 2*t, h - 2*t, length)
+            self._parent.model.boolean.cut(outer, [inner])
+            lbl = _PrefixedLabels(self._parent.labels, label)
+            for _, tag in gmsh.model.getEntities(3):
+                lbl.add(3, [tag], name="body")
+                break
+            classify_end_faces(length, lbl)
+
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
+
+    # ------------------------------------------------------------------
+    # Circular pipe (solid)
+    # ------------------------------------------------------------------
+
+    def pipe_solid(
+        self,
+        r: float,
+        length: float,
+        *,
+        anchor="start",
+        align="z",
+        label: str = "pipe_solid",
+        lc: float = 1e22,
+        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotate: tuple[float, ...] | None = None,
+    ) -> "Instance":
+        """Build a solid circular bar directly in the session.
+
+        Parameters
+        ----------
+        r : float
+            Radius.
+        length : float
+            Extrusion length (Z-direction).
+        lc : float
+            Target element size. Default ``1e22`` imposes no constraint.
+        """
+        def _build():
+            tag = self._parent.model.geometry.add_cylinder(0, 0, 0, 0, 0, length, r)
+            lbl = _PrefixedLabels(self._parent.labels, label)
+            lbl.add(3, [tag], name="body")
+            classify_end_faces(length, lbl)
+
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
+
+    # ------------------------------------------------------------------
+    # Hollow circular pipe
+    # ------------------------------------------------------------------
+
+    def pipe_hollow(
+        self,
+        r_outer: float,
+        t: float,
+        length: float,
+        *,
+        anchor="start",
+        align="z",
+        label: str = "pipe_hollow",
+        lc: float = 1e22,
+        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotate: tuple[float, ...] | None = None,
+    ) -> "Instance":
+        """Build a hollow circular pipe directly in the session.
+
+        Parameters
+        ----------
+        r_outer : float
+            Outer radius.
+        t : float
+            Wall thickness.
+        length : float
+            Extrusion length (Z-direction).
+        lc : float
+            Target element size. Default ``1e22`` imposes no constraint.
+        """
+        def _build():
+            geo = self._parent.model.geometry
+            outer = geo.add_cylinder(0, 0, 0, 0, 0, length, r_outer)
+            inner = geo.add_cylinder(0, 0, 0, 0, 0, length, r_outer - t)
+            self._parent.model.boolean.cut(outer, [inner])
+            lbl = _PrefixedLabels(self._parent.labels, label)
+            for _, tag in gmsh.model.getEntities(3):
+                lbl.add(3, [tag], name="body")
+                break
+            classify_end_faces(length, lbl)
+
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
+
+    # ------------------------------------------------------------------
+    # L-shape (angle)
+    # ------------------------------------------------------------------
+
+    def angle_solid(
+        self,
+        b: float,
+        h: float,
+        t: float,
+        length: float,
+        *,
+        anchor="start",
+        align="z",
+        label: str = "angle_solid",
+        lc: float = 1e22,
+        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotate: tuple[float, ...] | None = None,
+    ) -> "Instance":
+        """Build an L-shape (angle) directly in the session.
+
+        Parameters
+        ----------
+        b : float
+            Horizontal leg width (X-direction).
+        h : float
+            Vertical leg height (Y-direction).
+        t : float
+            Thickness of both legs.
+        length : float
+            Extrusion length (Z-direction).
+        lc : float
+            Target element size. Default ``1e22`` imposes no constraint.
+        """
+        def _build():
+            geo = self._parent.model.geometry
+            boo = self._parent.model.boolean
+            tr  = self._parent.model.transforms
+
+            h_leg = geo.add_rectangle(x=0, y=0, z=0, dx=b, dy=t)
+            v_leg = geo.add_rectangle(x=0, y=0, z=0, dx=t, dy=h)
+            boo.fuse([h_leg], [v_leg], dim=2)
+
+            surfs = gmsh.model.getEntities(2)
+            if surfs:
+                tr.extrude(surfs[0], 0, 0, length)
+
+            geo.slice(axis='x', offset=t)
+            geo.slice(axis='y', offset=t)
+
+            lbl = _PrefixedLabels(self._parent.labels, label)
+            h_tags, v_tags = [], []
+            for _, tag in gmsh.model.getEntities(3):
+                com = gmsh.model.occ.getCenterOfMass(3, tag)
+                if com[1] < t:
+                    h_tags.append(tag)
+                else:
+                    v_tags.append(tag)
+            if h_tags:
+                lbl.add(3, h_tags, name="horizontal_leg")
+            if v_tags:
+                lbl.add(3, v_tags, name="vertical_leg")
+            classify_end_faces(length, lbl)
+            classify_angle_outer_faces(lbl)
+
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
+
+    # ------------------------------------------------------------------
+    # C-shape (channel)
+    # ------------------------------------------------------------------
+
+    def channel_solid(
+        self,
+        bf: float,
+        tf: float,
+        h: float,
+        tw: float,
+        length: float,
+        *,
+        anchor="start",
+        align="z",
+        label: str = "channel_solid",
+        lc: float = 1e22,
+        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotate: tuple[float, ...] | None = None,
+    ) -> "Instance":
+        """Build a C-shape (channel) directly in the session.
+
+        Parameters
+        ----------
+        bf : float
+            Flange width.
+        tf : float
+            Flange thickness.
+        h : float
+            Clear web height (between flanges).
+        tw : float
+            Web thickness.
+        length : float
+            Extrusion length (Z-direction).
+        lc : float
+            Target element size. Default ``1e22`` imposes no constraint.
+        """
+        def _build():
+            geo = self._parent.model.geometry
+            boo = self._parent.model.boolean
+            tr  = self._parent.model.transforms
+
+            total_h = h + 2 * tf
+            outer = geo.add_rectangle(x=0, y=-total_h/2, z=0, dx=bf, dy=total_h)
+            void  = geo.add_rectangle(x=tw, y=-h/2, z=0, dx=bf - tw, dy=h)
+            boo.cut(outer, [void], dim=2)
+
+            surfs = gmsh.model.getEntities(2)
+            if surfs:
+                tr.extrude(surfs[0], 0, 0, length)
+
+            geo.slice(axis='x', offset=tw)
+            geo.slice(axis='y', offset=h/2)
+            geo.slice(axis='y', offset=-h/2)
+
+            lbl = _PrefixedLabels(self._parent.labels, label)
+            classify_w_volumes(h, tw, tf, bf, lbl)
+            classify_end_faces(length, lbl)
+            classify_w_outer_faces(h, tf, lbl)
+
+        return self._build_section(
+            _build, label, translate, rotate, lc=lc,
+            anchor=anchor, align=align, length=length,
+        )
+
+    # ------------------------------------------------------------------
+    # T-shape (tee)
+    # ------------------------------------------------------------------
+
+    def tee_solid(
+        self,
+        bf: float,
+        tf: float,
+        h: float,
+        tw: float,
+        length: float,
+        *,
+        anchor="start",
+        align="z",
+        label: str = "tee_solid",
+        lc: float = 1e22,
+        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotate: tuple[float, ...] | None = None,
+    ) -> "Instance":
+        """Build a T-shape (tee) directly in the session.
+
+        Parameters
+        ----------
+        bf : float
+            Flange width.
+        tf : float
+            Flange thickness.
+        h : float
+            Stem height.
+        tw : float
+            Stem thickness.
+        length : float
+            Extrusion length (Z-direction).
+        lc : float
+            Target element size. Default ``1e22`` imposes no constraint.
+        """
+        def _build():
+            geo = self._parent.model.geometry
+            boo = self._parent.model.boolean
+            tr  = self._parent.model.transforms
+
+            flange = geo.add_rectangle(x=-bf/2, y=0, z=0, dx=bf, dy=tf)
+            stem   = geo.add_rectangle(x=-tw/2, y=-h, z=0, dx=tw, dy=h)
+            boo.fuse([flange], [stem], dim=2)
+
+            surfs = gmsh.model.getEntities(2)
+            if surfs:
+                tr.extrude(surfs[0], 0, 0, length)
+
+            geo.slice(axis='x', offset=-tw/2)
+            geo.slice(axis='x', offset=tw/2)
+            geo.slice(axis='y', offset=0)
+
+            lbl = _PrefixedLabels(self._parent.labels, label)
+            flange_tags, stem_tags = [], []
+            for _, tag in gmsh.model.getEntities(3):
+                com = gmsh.model.occ.getCenterOfMass(3, tag)
+                if com[1] >= 0:
+                    flange_tags.append(tag)
+                else:
+                    stem_tags.append(tag)
+            if flange_tags:
+                lbl.add(3, flange_tags, name="flange")
+            if stem_tags:
+                lbl.add(3, stem_tags, name="stem")
+            classify_end_faces(length, lbl)
+            classify_tee_outer_faces(h, tf, lbl)
+
         return self._build_section(
             _build, label, translate, rotate, lc=lc,
             anchor=anchor, align=align, length=length,

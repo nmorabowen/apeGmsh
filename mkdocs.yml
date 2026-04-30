@@ -147,6 +147,7 @@ nav:
       - Constraints: api/constraints.md
       - Loads: api/loads.md
       - Masses: api/masses.md
+      - Sections: api/sections.md
       - FEM Broker: api/fem.md
       - OpenSees: api/opensees.md
       - Results: api/results.md
