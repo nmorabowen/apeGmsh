@@ -1,25 +1,25 @@
 """Results-viewer tab assembly.
 
-Constructs the right-side tab widgets the ``ResultsViewer`` shows in
-its ``ViewerWindow`` dock:
+Constructs the residual right-side tab widgets the ``ResultsViewer``
+shows in its ``ResultsWindow`` dock:
 
-* **Stages** — analysis stage list with active-stage selection
-* **Diagrams** — diagram list + add / remove / reorder
-* **Settings** — per-diagram styling controls (Phase 1+)
+* **Inspector** — picked-entity details + time-history launcher.
 
-Future tabs (Inspector, Probes, Visibility, Session) attach in their
-own phases.
+Stages / Diagrams migrated to the left-rail outline tree (B1).
+The Settings tab content moved into the right-rail DetailsPanel (B2),
+but the :class:`DiagramSettingsTab` instance is still constructed
+here — DetailsPanel re-hosts its widget.
+Probes moved to the viewport HUD palette (B3); the right dock now
+hosts only the Inspector. The Inspector itself migrates into the
+details panel + a node-pick HUD readout in B5.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ._stages_tab import StagesTab
-from ._diagrams_tab import DiagramsTab
 from ._diagram_settings_tab import DiagramSettingsTab
 from ._inspector_tab import InspectorTab
-from ._probes_tab import ProbesTab
 
 if TYPE_CHECKING:
     from ..diagrams._director import ResultsDirector
@@ -28,50 +28,30 @@ if TYPE_CHECKING:
 @dataclass
 class ResultsTabs:
     """Container holding constructed tab widgets for the results window."""
-    stages: StagesTab
-    diagrams: DiagramsTab
     settings: DiagramSettingsTab
     inspector: InspectorTab
-    probes: ProbesTab | None = None
 
     def to_pairs(self) -> list[tuple[str, object]]:
-        """Return the list of ``(name, widget)`` pairs for ``ViewerWindow``."""
-        pairs: list[tuple[str, object]] = [
-            ("Stages", self.stages.widget),
-            ("Diagrams", self.diagrams.widget),
-            ("Settings", self.settings.widget),
+        """Return the list of ``(name, widget)`` pairs for the tab dock.
+
+        The Settings tab is intentionally absent — its content is
+        re-hosted by the right-rail :class:`DetailsPanel` (B2).
+        """
+        return [
             ("Inspector", self.inspector.widget),
         ]
-        if self.probes is not None:
-            pairs.append(("Probes", self.probes.widget))
-        return pairs
 
 
 def build_results_tabs(
     director: "ResultsDirector",
     on_open_history=None,
-    probe_overlay=None,
 ) -> ResultsTabs:
-    """Construct the tab set and wire diagrams<->settings selection.
+    """Construct the residual right-dock tab set.
 
     ``on_open_history(node_id, component)`` is invoked when the user
     clicks the Inspector's "Open time history…" button; the viewer
-    shell uses it to dock a ``TimeHistoryPanel``.
+    shell uses it to add a tab in the plot pane.
     """
-    stages = StagesTab(director)
-    diagrams = DiagramsTab(director)
     settings = DiagramSettingsTab(director)
     inspector = InspectorTab(director, on_open_history=on_open_history)
-    probes = ProbesTab(probe_overlay) if probe_overlay is not None else None
-
-    # When the user selects a diagram in the Diagrams tab, route it
-    # to the Settings panel so it can render the right controls.
-    diagrams.on_diagram_selected(settings.set_selected)
-
-    return ResultsTabs(
-        stages=stages,
-        diagrams=diagrams,
-        settings=settings,
-        inspector=inspector,
-        probes=probes,
-    )
+    return ResultsTabs(settings=settings, inspector=inspector)

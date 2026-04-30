@@ -69,11 +69,12 @@ class ResultsViewer:
         self._tabs: "ResultsTabs | None" = None
         self._time_scrubber: Any = None
         self._substrate_actor: Any = None
-        # diagram instance -> (QDockWidget, panel) pair; manage lifecycle
-        # against registry add/remove events.
-        self._diagram_docks: dict = {}
-        # (node_id, component) -> (QDockWidget, TimeHistoryPanel)
-        self._history_docks: dict = {}
+        self._plot_pane: Any = None
+        self._details_panel: Any = None
+        # diagram instance -> side panel; lifecycle tied to registry.
+        self._diagram_side_panels: dict = {}
+        # (node_id, component) -> TimeHistoryPanel; user-closable.
+        self._history_panels: dict = {}
 
     # ------------------------------------------------------------------
     # Properties
@@ -110,7 +111,7 @@ class ResultsViewer:
         # an actual viewer.
         from .scene.fem_scene import build_fem_scene
         from .diagrams._director import ResultsDirector
-        from .ui.viewer_window import ViewerWindow
+        from .ui._results_window import ResultsWindow
         from .ui.results_tabs import build_results_tabs
         from .ui.preferences_manager import PREFERENCES as _PREF
 
@@ -126,17 +127,17 @@ class ResultsViewer:
 
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
-        win = ViewerWindow(title=title, on_close=self._on_close)
+        win = ResultsWindow(title=title, on_close=self._on_close)
         self._win = win
 
         # ProbeOverlay needs the plotter, which doesn't exist until
         # ``win`` is constructed below. We initialise to None here so
         # any early access path resolves cleanly; the real overlay is
-        # built after ``bind_plotter`` and wired into a Probes tab.
+        # built after ``bind_plotter`` and feeds the viewport HUD.
         self._probe_overlay: Any = None
 
-        # ── Tabs (Stages, Diagrams, Settings, Inspector, Probes) ────
-        # Probes tab is appended after ProbeOverlay is constructed.
+        # ── Right-dock tabs (Inspector — Settings re-hosted in
+        # DetailsPanel, Probes migrated to viewport HUD) ────────────
         tabs = build_results_tabs(
             director,
             on_open_history=self._open_time_history,
@@ -144,6 +145,24 @@ class ResultsViewer:
         self._tabs = tabs
         for name, widget in tabs.to_pairs():
             win.add_tab(name, widget)
+
+        # ── Outline tree (left rail) ────────────────────────────────
+        from .ui._outline_tree import OutlineTree
+        outline = OutlineTree(director)
+        win.set_left_widget(outline.widget)
+        self._outline = outline
+
+        # ── Right rail (plot pane + details) ────────────────────────
+        from .ui._plot_pane import PlotPane
+        from .ui._details_panel import DetailsPanel
+        plot_pane = PlotPane()
+        plot_pane.on_user_close(self._on_plot_user_close)
+        details = DetailsPanel(tabs.settings)
+        outline.on_diagram_selected(self._on_outline_diagram_selected)
+        right_rail = self._build_right_rail(plot_pane.widget, details.widget)
+        win.set_right_widget(right_rail)
+        self._plot_pane = plot_pane
+        self._details_panel = details
 
         # ── Plotter — substrate mesh ────────────────────────────────
         plotter = win.plotter
@@ -164,11 +183,11 @@ class ResultsViewer:
         )
         self._substrate_actor = actor
 
-        # ── Time scrubber dock (bottom) ─────────────────────────────
+        # ── Time scrubber row (bottom of grid) ──────────────────────
         from .ui._time_scrubber import TimeScrubberDock
         scrubber = TimeScrubberDock(director)
         self._time_scrubber = scrubber
-        self._install_bottom_dock(scrubber.widget)
+        win.set_bottom_widget(scrubber.widget)
 
         # ── Bind director to plotter ────────────────────────────────
         director.bind_plotter(
@@ -180,13 +199,15 @@ class ResultsViewer:
         # ── Subscribe to diagram changes for side-panel docking ─────
         director.subscribe_diagrams(self._sync_side_panels)
 
-        # ── Probe overlay + Probes tab ──────────────────────────────
+        # ── Probe overlay + viewport HUD palette ────────────────────
         from .overlays.probe_overlay import ProbeOverlay
-        from .ui._probes_tab import ProbesTab
+        from .ui._viewport_hud import ProbePaletteHUD
         self._probe_overlay = ProbeOverlay(plotter, scene, director)
-        probes_tab = ProbesTab(self._probe_overlay)
-        self._tabs.probes = probes_tab
-        win.add_tab("Probes", probes_tab.widget)
+        self._probe_hud = ProbePaletteHUD(
+            plotter.interactor,
+            self._probe_overlay,
+            on_status=win.set_status,
+        )
 
         # ── Camera / view ──────────────────────────────────────────
         try:
@@ -406,131 +427,119 @@ class ResultsViewer:
         return f"Results — {Path(path).name}"
 
     def _open_time_history(self, node_id: int, component: str) -> None:
-        """Inspector callback: dock a TimeHistoryPanel for (node, component).
+        """Inspector callback: open a TimeHistoryPanel as a plot-pane tab.
 
-        Reuses an existing dock if one is open for the same pair; the
-        user's repeated "Open time history" clicks don't multiply
-        windows.
+        Reuses an existing tab if one is open for the same
+        ``(node_id, component)`` pair so repeated clicks don't
+        multiply tabs.
         """
-        if self._director is None or self._win is None:
+        if self._director is None or self._plot_pane is None:
             return
-        from qtpy import QtWidgets, QtCore
-        key = (int(node_id), str(component))
-        if key in self._history_docks:
-            dock, _panel = self._history_docks[key]
-            try:
-                dock.show()
-                dock.raise_()
-            except Exception:
-                pass
+        key = ("history", int(node_id), str(component))
+        if self._plot_pane.has_tab(key):
+            self._plot_pane.set_active(key)
             return
         try:
             from .ui._time_history import TimeHistoryPanel
             panel = TimeHistoryPanel(self._director, node_id, component)
         except Exception as exc:
-            import sys
-            print(
-                f"[ResultsViewer] could not build time-history panel: {exc}",
-                file=sys.stderr,
-            )
+            from ._failures import report
+            report("ResultsViewer._open_time_history", exc)
             return
 
-        try:
-            dock = QtWidgets.QDockWidget(
-                f"History — node {node_id} · {component}"
-            )
-            dock.setFeatures(
-                QtWidgets.QDockWidget.DockWidgetMovable
-                | QtWidgets.QDockWidget.DockWidgetFloatable
-                | QtWidgets.QDockWidget.DockWidgetClosable
-            )
-            dock.setWidget(panel.widget)
-            self._win.window.addDockWidget(
-                QtCore.Qt.RightDockWidgetArea, dock,
-            )
-            self._history_docks[key] = (dock, panel)
-        except Exception as exc:
-            import sys
-            print(
-                f"[ResultsViewer] history dock failed: {exc}",
-                file=sys.stderr,
-            )
+        label = f"u(t) · node {node_id} · {component}"
+        self._plot_pane.add_tab(key, label, panel.widget, closable=True)
+        self._history_panels[(int(node_id), str(component))] = panel
 
     def _sync_side_panels(self) -> None:
-        """Add / remove dockable side panels to match the registry.
+        """Add / remove plot-pane side-panel tabs to match the registry.
 
         Each diagram's ``make_side_panel(director)`` returns a panel
-        whose ``.widget`` attribute we wrap in a ``QDockWidget``. When
-        a diagram is removed from the registry, we drop its dock.
+        whose ``.widget`` attribute is hosted as a non-closable tab in
+        the plot pane. When a diagram is removed from the registry,
+        the tab + panel are torn down. Side-panel tabs are not user-
+        closable — their lifecycle is the diagram's.
         """
-        if self._director is None or self._win is None:
+        if self._director is None or self._plot_pane is None:
             return
-        from qtpy import QtWidgets, QtCore
 
         active = set(self._director.registry.diagrams())
 
-        # Remove docks for diagrams no longer present.
-        for d in list(self._diagram_docks.keys()):
+        # Remove tabs for diagrams no longer present.
+        for d in list(self._diagram_side_panels.keys()):
             if d not in active:
-                dock, panel = self._diagram_docks.pop(d)
-                try:
-                    if hasattr(panel, "close"):
-                        panel.close()
-                except Exception:
-                    pass
-                try:
-                    self._win.window.removeDockWidget(dock)
-                    dock.deleteLater()
-                except Exception:
-                    pass
+                panel = self._diagram_side_panels.pop(d)
+                self._close_diagram_side_panel(d, panel)
 
-        # Add docks for new panel-bearing diagrams.
+        # Add tabs for new panel-bearing diagrams.
         for d in active:
-            if d in self._diagram_docks:
+            if d in self._diagram_side_panels:
                 continue
             try:
                 panel = d.make_side_panel(self._director)
             except Exception as exc:
-                import sys
-                print(
-                    f"[ResultsViewer] make_side_panel failed for "
-                    f"{type(d).__name__}: {exc}",
-                    file=sys.stderr,
+                from ._failures import report
+                report(
+                    f"ResultsViewer._sync_side_panels({type(d).__name__})",
+                    exc,
                 )
                 continue
             if panel is None:
                 continue
-            try:
-                dock = QtWidgets.QDockWidget(d.display_label())
-                dock.setFeatures(
-                    QtWidgets.QDockWidget.DockWidgetMovable
-                    | QtWidgets.QDockWidget.DockWidgetFloatable
-                    | QtWidgets.QDockWidget.DockWidgetClosable
-                )
-                dock.setWidget(panel.widget)
-                self._win.window.addDockWidget(
-                    QtCore.Qt.RightDockWidgetArea, dock,
-                )
-                self._diagram_docks[d] = (dock, panel)
-            except Exception as exc:
-                import sys
-                print(
-                    f"[ResultsViewer] could not dock side panel: {exc}",
-                    file=sys.stderr,
-                )
+            key = ("diagram", id(d))
+            self._plot_pane.add_tab(
+                key, d.display_label(), panel.widget, closable=False,
+            )
+            self._diagram_side_panels[d] = panel
 
-    def _install_bottom_dock(self, widget) -> None:
-        """Mount the time scrubber widget in a bottom dock.
+    # ------------------------------------------------------------------
+    # Plot pane / details routing
+    # ------------------------------------------------------------------
 
-        Phase 0: do this inline rather than extending ``ViewerWindow``
-        with a dedicated ``add_bottom_dock`` helper. If a second viewer
-        wants the same pattern, promote it then.
-        """
-        from qtpy import QtWidgets, QtCore
-        dock = QtWidgets.QDockWidget()
-        dock.setTitleBarWidget(QtWidgets.QWidget())   # hide title bar
-        dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
-        dock.setWidget(widget)
-        self._win.window.addDockWidget(
-            QtCore.Qt.BottomDockWidgetArea, dock,
-        )
+    def _on_plot_user_close(self, key) -> None:
+        """User clicked × on a plot-pane tab — only fires for closables."""
+        if self._plot_pane is None or not isinstance(key, tuple):
+            return
+        kind = key[0]
+        if kind == "history":
+            _, node_id, component = key
+            panel = self._history_panels.pop((node_id, component), None)
+            if panel is not None:
+                try:
+                    panel.close()
+                except Exception:
+                    pass
+            self._plot_pane.remove_tab(key)
+        # Side-panel tabs use closable=False; no other kinds today.
+
+    def _close_diagram_side_panel(self, diagram, panel) -> None:
+        """Tear down a side panel + its plot-pane tab."""
+        if self._plot_pane is None:
+            return
+        try:
+            if hasattr(panel, "close"):
+                panel.close()
+        except Exception:
+            pass
+        self._plot_pane.remove_tab(("diagram", id(diagram)))
+
+    def _on_outline_diagram_selected(self, diagram) -> None:
+        """Outline tree's selection moved to/off a Diagram row."""
+        if self._details_panel is None:
+            return
+        if diagram is None:
+            self._details_panel.clear()
+        else:
+            self._details_panel.show_diagram(diagram)
+
+    def _build_right_rail(self, plot_pane_widget, details_widget):
+        """Vertical stack: plot pane (top) + details (bottom)."""
+        from qtpy import QtWidgets
+        rail = QtWidgets.QWidget()
+        rail.setObjectName("ResultsRightRail")
+        lay = QtWidgets.QVBoxLayout(rail)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(plot_pane_widget, stretch=1)
+        lay.addWidget(details_widget, stretch=0)
+        return rail

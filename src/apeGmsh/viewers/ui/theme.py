@@ -575,6 +575,19 @@ PALETTE_LIGHT = PALETTE_PAPER
 # Stylesheet factory
 # ======================================================================
 
+
+def _hex_to_rgb(hex_str: str) -> "tuple[int, int, int]":
+    """Parse ``#rrggbb`` (or ``rrggbb``) into an ``(r, g, b)`` triple."""
+    h = hex_str.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _rgba(hex_str: str, alpha: float) -> str:
+    """Format a CSS ``rgba(r, g, b, a)`` from ``#rrggbb`` + alpha."""
+    r, g, b = _hex_to_rgb(hex_str)
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
 def build_stylesheet(p: Palette) -> str:
     """Render the viewer QSS for a given palette."""
     return f"""
@@ -822,6 +835,129 @@ def build_stylesheet(p: Palette) -> str:
     QMessageBox {{
         background-color: {p.base};
         color: {p.text};
+    }}
+
+    /* ── Results viewer chrome (B0–B3 widgets) ─────────────── */
+    QFrame#ResultsTitleBar {{
+        background-color: {p.mantle};
+        border-bottom: 1px solid {p.surface0};
+    }}
+    QLabel#ResultsTitleLabel {{
+        color: {p.text};
+        font-size: 12px;
+    }}
+
+    /* Outline tree (left rail) */
+    QFrame#OutlineHeader {{
+        background-color: {p.mantle};
+        border-bottom: 1px solid {p.surface0};
+    }}
+    QLabel#OutlineHeaderLabel {{
+        color: {p.overlay};
+        font-size: 10px;
+        letter-spacing: 1px;
+    }}
+    QPushButton#OutlineInsertButton {{
+        background-color: transparent;
+        border: 1px solid transparent;
+        color: {p.text};
+        padding: 2px 6px;
+        font-size: 11px;
+    }}
+    QPushButton#OutlineInsertButton:hover {{
+        background-color: {p.surface0};
+        border-color: {p.surface1};
+    }}
+    QTreeWidget#OutlineTreeWidget {{
+        border: none;
+    }}
+
+    /* Plot pane (right rail, top) */
+    QFrame#PlotPaneHeader, QFrame#PlotPaneNewPlot {{
+        background-color: {p.mantle};
+        border-bottom: 1px solid {p.surface0};
+    }}
+    QLabel#PlotPaneHeaderLabel {{
+        color: {p.overlay};
+        font-size: 10px;
+        letter-spacing: 1px;
+    }}
+    QLabel#PlotPaneEmpty {{
+        color: {p.overlay};
+        font-size: 11px;
+    }}
+    QFrame#PlotPaneTabRow {{
+        border-left: 2px solid transparent;
+        background: transparent;
+    }}
+    QFrame#PlotPaneTabRow[active="true"] {{
+        border-left: 2px solid {p.accent};
+        background-color: {p.surface0};
+    }}
+    QLabel#PlotPaneTabDot {{
+        color: {p.overlay};
+        font-size: 10px;
+    }}
+    QFrame#PlotPaneTabRow[active="true"] QLabel#PlotPaneTabDot {{
+        color: {p.accent};
+    }}
+    QLabel#PlotPaneTabLabel {{
+        color: {p.text};
+        font-size: 11px;
+    }}
+    QToolButton#PlotPaneTabClose {{
+        color: {p.overlay};
+        border: none;
+    }}
+    QToolButton#PlotPaneTabClose:hover {{
+        color: {p.text};
+    }}
+
+    /* Details panel (right rail, bottom) */
+    QWidget#DetailsPanel {{
+        background-color: {p.mantle};
+        border-top: 1px solid {p.surface0};
+    }}
+    QFrame#DetailsHeader {{
+        background-color: {p.base};
+        border-bottom: 1px solid {p.surface0};
+    }}
+    QLabel#DetailsHeaderLabel {{
+        color: {p.overlay};
+        font-size: 10px;
+        letter-spacing: 1px;
+    }}
+    QLabel#DetailsHeaderMeta {{
+        color: {p.overlay};
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 10px;
+    }}
+
+    /* Probe palette HUD (viewport overlay) */
+    QFrame#ProbeHUD {{
+        background-color: {_rgba(p.mantle, 0.92)};
+        border: 1px solid {p.surface0};
+        border-radius: 6px;
+    }}
+    QFrame#ProbeHUD QToolButton {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 3px;
+        color: {p.text};
+        padding: 3px;
+        font-size: 14px;
+    }}
+    QFrame#ProbeHUD QToolButton:hover {{
+        background-color: {p.surface0};
+        border-color: {p.surface1};
+    }}
+    QFrame#ProbeHUD QToolButton[active="true"] {{
+        background-color: {_rgba(p.accent, 0.18)};
+        border: 1px solid {p.accent};
+        color: {p.text};
+    }}
+    QFrame#ProbeHUDSep {{
+        color: {p.surface0};
     }}
     """
 
