@@ -47,6 +47,8 @@ class ResultsViewer:
         results: "Results",
         *,
         title: Optional[str] = None,
+        restore_session: "bool | str" = "prompt",
+        save_session: bool = True,
     ) -> None:
         if results.fem is None:
             raise RuntimeError(
@@ -56,6 +58,8 @@ class ResultsViewer:
             )
         self._results = results
         self._title = title
+        self._restore_session = restore_session
+        self._save_session = save_session
 
         # Populated in show()
         self._director: "ResultsDirector | None" = None
@@ -202,6 +206,9 @@ class ResultsViewer:
             bits.append(f"Skipped types: {scene.skipped_types}")
         win.set_status(" | ".join(bits))
 
+        # ── Restore previous session if requested ───────────────────
+        self._maybe_restore_session(win)
+
         # ── Run ─────────────────────────────────────────────────────
         win.exec()
         return self
@@ -212,11 +219,160 @@ class ResultsViewer:
 
     def _on_close(self) -> None:
         """Detach diagrams and release plotter binding before window dies."""
+        # Auto-save the session before tearing down — the diagrams
+        # still hold their specs at this point.
+        if self._save_session:
+            self._save_session_to_disk()
         if self._director is not None:
             try:
                 self._director.unbind_plotter()
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    # Session persistence
+    # ------------------------------------------------------------------
+
+    def _save_session_to_disk(self) -> None:
+        """Write ``<results>.viewer-session.json`` if the file is on disk.
+
+        Quietly skips for in-memory Results (no ``_path``), and never
+        raises — saving is best-effort. Errors land on stderr via the
+        slot-failure infrastructure so a corrupt session save doesn't
+        prevent the window from closing.
+        """
+        path = getattr(self._results, "_path", None)
+        if path is None or self._director is None:
+            return
+        try:
+            from .diagrams._session import save_session
+            specs = [
+                d.spec for d in self._director.registry.diagrams()
+            ]
+            fem = self._results.fem
+            save_session(
+                specs=specs,
+                results_path=path,
+                fem_snapshot_id=getattr(fem, "snapshot_id", None),
+                active_stage_id=self._director.stage_id,
+                active_step=int(self._director.step_index),
+            )
+        except Exception as exc:
+            from ._failures import report
+            report("ResultsViewer._save_session_to_disk", exc)
+
+    def _maybe_restore_session(self, win: Any) -> None:
+        """Apply a saved session if requested by ``restore_session``."""
+        if self._restore_session is False or self._director is None:
+            return
+        path = getattr(self._results, "_path", None)
+        if path is None:
+            return
+        try:
+            from .diagrams._session import default_session_path, load_session
+            session_path = default_session_path(path)
+            if not session_path.exists():
+                return
+            session = load_session(session_path)
+        except Exception as exc:
+            from ._failures import report
+            report("ResultsViewer._maybe_restore_session", exc)
+            return
+
+        # Snapshot-id mismatch warning.
+        current_id = getattr(self._results.fem, "snapshot_id", None)
+        if (
+            session.fem_snapshot_id is not None
+            and current_id is not None
+            and session.fem_snapshot_id != current_id
+        ):
+            try:
+                win.set_status(
+                    "Saved session was for a different mesh "
+                    "(snapshot mismatch); skipping restore.",
+                    timeout=8000,
+                )
+            except Exception:
+                pass
+            return
+
+        if not session.diagrams:
+            return
+
+        if self._restore_session == "prompt":
+            if not self._prompt_restore(win, session):
+                return
+
+        self._apply_session(session, win)
+
+    def _prompt_restore(self, win: Any, session: Any) -> bool:
+        """Yes/No dialog: restore N diagrams from the saved session?"""
+        try:
+            from qtpy.QtWidgets import QMessageBox
+        except Exception:
+            # Headless: don't prompt; conservative default is no.
+            return False
+        n = len(session.diagrams)
+        labels = ", ".join(
+            f"{s.kind}:{s.selector.component}" for s in session.diagrams[:5]
+        )
+        more = "" if n <= 5 else f" (+{n - 5} more)"
+        reply = QMessageBox.question(
+            win.window if hasattr(win, "window") else None,
+            "Restore previous session?",
+            f"A saved viewer session is available with {n} diagram(s):\n"
+            f"  {labels}{more}\n\n"
+            f"Restore them?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        return reply == QMessageBox.Yes
+
+    def _apply_session(self, session: Any, win: Any) -> None:
+        """Reconstruct each spec into a Diagram and add to the registry."""
+        from .diagrams._base import NoDataError
+        from .ui._add_diagram_dialog import _KINDS
+
+        kind_to_class = {entry.kind_id: entry.diagram_class for entry in _KINDS}
+        n_added = 0
+        n_skipped = 0
+        for spec in session.diagrams:
+            cls = kind_to_class.get(spec.kind)
+            if cls is None:
+                n_skipped += 1
+                continue
+            try:
+                diagram = cls(spec, self._results)
+                self._director.registry.add(diagram)
+                n_added += 1
+            except NoDataError:
+                # Stale spec (component renamed, fixture changed) — skip.
+                n_skipped += 1
+            except Exception as exc:
+                from ._failures import report
+                report(
+                    f"ResultsViewer._apply_session({spec.kind})", exc,
+                )
+                n_skipped += 1
+
+        # Restore active stage / step where possible.
+        try:
+            if session.active_stage_id and (
+                self._director.stage_id != session.active_stage_id
+            ):
+                self._director.set_stage(session.active_stage_id)
+            if session.active_step:
+                self._director.set_step(int(session.active_step))
+        except Exception:
+            pass
+
+        try:
+            msg = f"Restored {n_added} diagram(s)"
+            if n_skipped:
+                msg += f"; {n_skipped} skipped"
+            win.set_status(msg, timeout=5000)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Helpers
