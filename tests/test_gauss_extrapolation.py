@@ -139,6 +139,64 @@ def test_unsupported_type_returns_none():
     assert _build_extrapolation_matrix(_HEX8_GPS, gmsh_code=99) is None
 
 
+def test_tet10_falls_back_to_tet4_for_extrapolation():
+    """Higher-order types extrapolate via the linear counterpart.
+
+    The viewer's substrate paints corner nodes only (mid-side nodes
+    are dropped in build_fem_scene), and a full higher-order pinv
+    can produce non-constant nodal fields for a constant GP input.
+    Projecting onto the linear corner shape functions sidesteps both.
+    """
+    # Standard 4-point Gauss rule for tet (Keast / Strang).
+    a = (5.0 - np.sqrt(5.0)) / 20.0
+    b = (5.0 + 3.0 * np.sqrt(5.0)) / 20.0
+    nat_4gp = np.array([
+        [a, a, a],
+        [b, a, a],
+        [a, b, a],
+        [a, a, b],
+    ], dtype=np.float64)
+
+    M = _build_extrapolation_matrix(nat_4gp, gmsh_code=11)
+    assert M is not None
+    # Shape is (n_corner_tet4=4, n_gp=4) — using the linear counterpart.
+    assert M.shape == (4, 4)
+
+    # Constant field — every GP value = 7.5; every corner = 7.5.
+    nodal = M @ np.full(4, 7.5)
+    np.testing.assert_allclose(nodal, np.full(4, 7.5), atol=1e-12)
+
+
+def test_quad8_falls_back_to_quad4_for_extrapolation():
+    inv_sqrt3 = 1.0 / np.sqrt(3.0)
+    nat_4gp = np.array([
+        [-inv_sqrt3, -inv_sqrt3],
+        [+inv_sqrt3, -inv_sqrt3],
+        [-inv_sqrt3, +inv_sqrt3],
+        [+inv_sqrt3, +inv_sqrt3],
+    ], dtype=np.float64)
+
+    M = _build_extrapolation_matrix(nat_4gp, gmsh_code=16)
+    assert M is not None
+    # 4 corners (Quad4's count), 4 GPs — square invertible.
+    assert M.shape == (4, 4)
+
+    # Quad4 + 2x2 GPs is the round-trip-exact case from the linear
+    # extrapolation tests; should reproduce a bilinear field exactly.
+    from apeGmsh.results._shape_functions import quad4_N
+    coeffs = np.array([1.5, -0.7, 2.0, 0.4])
+    corners = np.array([[-1, -1], [+1, -1], [+1, +1], [-1, +1]],
+                       dtype=np.float64)
+    nodal_corner = (
+        coeffs[0] + coeffs[1] * corners[:, 0]
+        + coeffs[2] * corners[:, 1]
+        + coeffs[3] * corners[:, 0] * corners[:, 1]
+    )
+    A = quad4_N(nat_4gp)
+    gp_values = A @ nodal_corner
+    np.testing.assert_allclose(M @ gp_values, nodal_corner, atol=1e-12)
+
+
 # =====================================================================
 # Slab-level: end-to-end extrapolation + averaging
 # =====================================================================
