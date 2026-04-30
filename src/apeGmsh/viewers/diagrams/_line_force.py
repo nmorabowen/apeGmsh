@@ -46,6 +46,7 @@ class LineForceDiagram(Diagram):
     """Per-beam fill diagram driven by a ``LineStationSlab``."""
 
     kind = "line_force"
+    topology = "line_stations"
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, LineForceStyle):

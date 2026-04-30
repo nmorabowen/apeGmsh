@@ -43,6 +43,7 @@ class ContourDiagram(Diagram):
     """
 
     kind = "contour"
+    topology = "nodes"
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, ContourStyle):

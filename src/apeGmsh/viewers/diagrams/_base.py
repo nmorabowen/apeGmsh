@@ -104,7 +104,13 @@ class Diagram:
       diagram does not cache ``(T, …)`` arrays.
     """
 
-    kind: str = ""    # subclasses must set
+    kind: str = ""        # subclasses must set
+    topology: str = ""    # subclasses must set — names the Results
+                          # composite that owns this diagram's data
+                          # ("nodes", "line_stations", "fibers", "layers",
+                          # "gauss", "springs"). Read by AddDiagramDialog
+                          # to populate the Component combo from
+                          # ``available_components()`` on that composite.
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not self.kind:

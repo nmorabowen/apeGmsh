@@ -29,6 +29,7 @@ class GaussPointDiagram(Diagram):
     """Sphere markers at Gauss-point world positions, colored by value."""
 
     kind = "gauss_marker"
+    topology = "gauss"
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, GaussMarkerStyle):

@@ -54,6 +54,7 @@ class SpringForceDiagram(Diagram):
     """Force / deformation arrow on each zero-length spring."""
 
     kind = "spring_force"
+    topology = "springs"
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, SpringForceStyle):

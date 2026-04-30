@@ -149,15 +149,10 @@ def kinds_available() -> list[_KindEntry]:
 
 # Maps each diagram kind to the Results-composite path whose
 # ``available_components()`` should populate the Component combo.
+# Derived from the subclass-level ``topology`` attribute so the dialog
+# and the diagram cannot drift apart.
 _KIND_TO_TOPOLOGY: dict[str, str] = {
-    "contour":        "nodes",
-    "deformed_shape": "nodes",
-    "vector_glyph":   "nodes",
-    "line_force":     "line_stations",
-    "fiber_section":  "fibers",
-    "layer_stack":    "layers",
-    "gauss_marker":   "gauss",
-    "spring_force":   "springs",
+    entry.kind_id: entry.diagram_class.topology for entry in _KINDS
 }
 
 

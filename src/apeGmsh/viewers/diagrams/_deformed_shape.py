@@ -40,6 +40,7 @@ class DeformedShapeDiagram(Diagram):
     """Warp the substrate by a displacement vector."""
 
     kind = "deformed_shape"
+    topology = "nodes"
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, DeformedShapeStyle):

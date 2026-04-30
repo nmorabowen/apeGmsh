@@ -42,6 +42,7 @@ class LayerStackDiagram(Diagram):
     """Shell mid-surface contour + through-thickness side panel."""
 
     kind = "layer_stack"
+    topology = "layers"
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, LayerStackStyle):

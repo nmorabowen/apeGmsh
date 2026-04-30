@@ -29,6 +29,7 @@ class VectorGlyphDiagram(Diagram):
     """Arrows at nodes, oriented and scaled by an N-component vector field."""
 
     kind = "vector_glyph"
+    topology = "nodes"
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, VectorGlyphStyle):

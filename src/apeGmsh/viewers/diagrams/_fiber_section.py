@@ -42,6 +42,7 @@ class FiberSectionDiagram(Diagram):
     """Per-fiber dot cloud + 2-D section panel for fiber-section beams."""
 
     kind = "fiber_section"
+    topology = "fibers"
 
     def __init__(self, spec: DiagramSpec, results: "Results") -> None:
         if not isinstance(spec.style, FiberSectionStyle):
