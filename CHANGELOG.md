@@ -1,5 +1,152 @@
 # Changelog
 
+## v1.2.0 — Results viewer: Gauss contour, scrubber animation, shape-function catalog
+
+Six PRs landing on top of v1.1.0's Results rebuild. `ContourDiagram`
+gains two new rendering paths so element-level Gauss data flows
+straight through the dialog → diagram → substrate pipeline; the time
+scrubber gets real Play / FPS / loop controls; the shape-function
+catalog grows from 5 to 12 element types so quadratic and prism
+meshes are first-class. **All 6 PRs merged green** — 377 viewer
+tests + 1876 non-viewer tests pass on main.
+
+PRs in this release: [#35], [#36], [#37], [#38], [#39], [#42].
+
+### ADDED — `ContourDiagram` Gauss paths
+
+- **Element-constant Gauss contour** ([#37]). New `gauss_cell` rendering
+  path activated when `n_gp == 1` per element (CST / tri31, hex8 with
+  one-point integration, etc.). Reads via
+  `results.elements.gauss.get(component=...)`, paints `cell_data` on
+  a substrate submesh extracted by element IDs. Removes the manual
+  nodal-averaging step the plate notebook was using.
+- **GP→nodal extrapolation for higher-order integration** ([#39]).
+  New `gauss_node` path activated when `n_gp > 1`. The slab is
+  projected onto the linear-corner shape functions via the
+  Moore–Penrose pseudo-inverse (`pinv(N)`), then accumulated into a
+  per-node sum + count for cross-element averaging. New module
+  [`apeGmsh.results._gauss_extrapolation`] with two public entry
+  points: `extrapolate_gauss_slab_to_nodes(slab, fem)` and
+  `per_element_max_gp_count(slab)`.
+- **`ContourStyle.topology` field** ([#37]). User-facing knob with
+  three values:
+    * `"auto"` (default) — prefer nodal data when both composites have
+      the requested component; fall through to Gauss otherwise.
+    * `"nodes"` — force the nodal-scalar path (point data).
+    * `"gauss"` — force the Gauss path; cell-vs-node sub-decision is
+      made internally based on `n_gp`.
+- **Topology dropdown in the Add Diagram dialog** ([#38]). Visible
+  only when the selected kind is Contour. The Component combo
+  populates from the union of nodes + gauss components under
+  `"auto"`, and from the picked composite under `"nodes"` / `"gauss"`.
+
+### ADDED — Time scrubber animation ([#36])
+
+- **Play button** drives a `QTimer` at `1000 / fps` ms; each tick
+  advances one step via `director.set_step(...)`. The scrubber stays
+  slider-passive — it only updates the slider via the Director's
+  `on_step_changed` callback, never directly.
+- **FPS spinner** (1–60, default 30). Live — changing it while
+  playing updates the timer interval without disturbing the run.
+- **Loop modes** combo: `"once"` (stop at last step), `"loop"`
+  (wrap to step 0), `"bounce"` (reverse direction at boundaries,
+  never wraps).
+- **Stops on stage change** automatically; a fresh stage may have
+  a different step count, so the scrubber refreshes and waits for
+  the user to press Play again.
+
+### ADDED — Shape-function catalog expansion ([#42])
+
+`SHAPE_FUNCTIONS_BY_GMSH_CODE` grows from 5 entries to 12. New types
+covering everything you'd hit by setting
+`gmsh.model.mesh.setOrder(2)` plus `wedge6` for extruded / layered
+meshes:
+
+| Code | Type   | Notes                                          |
+|------|--------|------------------------------------------------|
+| 6    | wedge6 | Linear prism (tri × line tensor product)       |
+| 9    | tri6   | Quadratic triangle                             |
+| 10   | quad9  | Lagrangian biquadratic quad                    |
+| 11   | tet10  | Quadratic tet                                  |
+| 12   | hex27  | Lagrangian triquadratic hex                    |
+| 16   | quad8  | Serendipity quadratic quad                     |
+| 17   | hex20  | Serendipity quadratic hex                      |
+
+Node orderings match Gmsh's published convention (cross-checked
+against the ASCII diagrams in `gmsh-4.15.1/src/geo/M{Triangle,
+Quadrangle,Tetrahedron,Hexahedron,Prism}.h`), so a connectivity row
+read straight from a Gmsh-generated mesh works without any
+reordering. Pyramids (`pyr5` / `pyr14`) and `line3` are deliberately
+out of scope — pyramids have a known apex singularity worth avoiding
+for a first pass, and `line3` is rare in OpenSees output.
+
+For GP→nodal extrapolation the higher-order types fall back to
+their **linear counterpart** (tri6 → tri3, quad8/9 → quad4,
+tet10 → tet4, hex20/27 → hex8). Reasons: the substrate is built
+from linear cells (mid-side / face / center nodes are dropped in
+`build_fem_scene`), so non-corner extrapolations are never painted;
+and `pinv` on the full higher-order N matrix produces a
+non-constant nodal field for a constant GP input
+(minimum-norm regularization of the under-determined system),
+which is wrong for visualization.
+
+### REFACTORED — single-source diagram topology routing ([#35])
+
+- New `Diagram.topology: str` class attribute; each subclass declares
+  it next to `kind`. The Add Diagram dialog's `_KIND_TO_TOPOLOGY`
+  table is now derived from those attributes:
+  ```python
+  _KIND_TO_TOPOLOGY = {
+      entry.kind_id: entry.diagram_class.topology for entry in _KINDS
+  }
+  ```
+  Previously the dict was hand-maintained alongside the per-class
+  composite-reader calls and could drift.
+
+### CHANGED — `ContourDiagram` internals
+
+- Three internal effective-topology values replace the previous two:
+  `"nodes"` / `"gauss_cell"` / `"gauss_node"`. Dispatch is decided
+  at attach time after a single step-0 read used both for the n_gp
+  probe and the initial scatter.
+- Cross-element discontinuities are smoothed by the nodal averaging
+  in the `gauss_node` path. Standard post-processor behaviour
+  (STKO, ParaView). A future per-element subdivision path can
+  preserve discontinuities — out of scope here, the `gauss_cell`
+  scaffolding stays in place to keep that door open.
+
+### Test coverage
+
+| PR | New tests | Notes |
+|----|----------:|-------|
+| [#35] | 2  | Pinning test for the eight kind→topology mappings |
+| [#36] | 10 | State-machine + timer + stage-change-stop coverage |
+| [#37] | 10 | Auto resolution, attach, in-place mutation, multi-GP rejection (later refactored to extrapolation in [#39]) |
+| [#38] | 11 | Visibility per kind, component listing per topology, end-to-end run() spec construction |
+| [#39] | 11 | Linear-field round-trip on hex8 + 2×2×2 GPs (`atol=1e-12`), shared-face averaging, time-axis preservation, in-place mutation on the new path |
+| [#42] | 37 | 5 invariants × 7 types: Kronecker delta, partition of unity, linear precision, dN-sum, FD cross-check |
+| **Total** | **81** |  |
+
+### Known follow-ups (not scheduled)
+
+- **Discontinuity-preserving Gauss contour** — subdivides each
+  multi-GP element into linear sub-cells, samples at sub-vertices,
+  renders cell-data per sub-cell. Preserves jumps at material
+  interfaces. ~500–800 LOC, design-discussion-first decision.
+- **Hex27 face/center node ordering** — verified self-consistent in
+  the shape-function math, but the assumed Gmsh ordering for nodes
+  20–26 isn't independently validated against a real Gmsh hex27
+  mesh. One-row fix in `_HEX27_LAGRANGE_INDEX` if a real mesh
+  surfaces a mismatch.
+- **Pyramid shape functions** — `pyr5` and `pyr14`. Add when needed.
+
+[#35]: https://github.com/nmorabowen/apeGmsh/pull/35
+[#36]: https://github.com/nmorabowen/apeGmsh/pull/36
+[#37]: https://github.com/nmorabowen/apeGmsh/pull/37
+[#38]: https://github.com/nmorabowen/apeGmsh/pull/38
+[#39]: https://github.com/nmorabowen/apeGmsh/pull/39
+[#42]: https://github.com/nmorabowen/apeGmsh/pull/42
+
 ## v1.1.0 — Results: backend-agnostic FEM post-processing system rebuild
 
 Wholesale rebuild of the `apeGmsh.results` module. The legacy

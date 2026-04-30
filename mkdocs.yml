@@ -127,6 +127,7 @@ nav:
       - Constraints: architecture/apeGmsh_constraints.md
       - Loads: architecture/apeGmsh_loads.md
       - Visualization: architecture/apeGmsh_visualization.md
+      - Results viewer: architecture/apeGmsh_results_viewer.md
       - Aesthetic: architecture/apeGmsh_aesthetic.md
       - Ground truth: architecture/apeGmsh_groundTruth.md
       - Type hinting: architecture/apeGmsh_hinting.md
