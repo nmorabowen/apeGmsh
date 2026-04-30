@@ -110,7 +110,7 @@ class ResultsViewer:
         # an actual viewer.
         from .scene.fem_scene import build_fem_scene
         from .diagrams._director import ResultsDirector
-        from .ui.viewer_window import ViewerWindow
+        from .ui._results_window import ResultsWindow
         from .ui.results_tabs import build_results_tabs
         from .ui.preferences_manager import PREFERENCES as _PREF
 
@@ -126,7 +126,7 @@ class ResultsViewer:
 
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
-        win = ViewerWindow(title=title, on_close=self._on_close)
+        win = ResultsWindow(title=title, on_close=self._on_close)
         self._win = win
 
         # ProbeOverlay needs the plotter, which doesn't exist until
@@ -164,11 +164,11 @@ class ResultsViewer:
         )
         self._substrate_actor = actor
 
-        # ── Time scrubber dock (bottom) ─────────────────────────────
+        # ── Time scrubber row (bottom of grid) ──────────────────────
         from .ui._time_scrubber import TimeScrubberDock
         scrubber = TimeScrubberDock(director)
         self._time_scrubber = scrubber
-        self._install_bottom_dock(scrubber.widget)
+        win.set_bottom_widget(scrubber.widget)
 
         # ── Bind director to plotter ────────────────────────────────
         director.bind_plotter(
@@ -518,19 +518,3 @@ class ResultsViewer:
                     f"[ResultsViewer] could not dock side panel: {exc}",
                     file=sys.stderr,
                 )
-
-    def _install_bottom_dock(self, widget) -> None:
-        """Mount the time scrubber widget in a bottom dock.
-
-        Phase 0: do this inline rather than extending ``ViewerWindow``
-        with a dedicated ``add_bottom_dock`` helper. If a second viewer
-        wants the same pattern, promote it then.
-        """
-        from qtpy import QtWidgets, QtCore
-        dock = QtWidgets.QDockWidget()
-        dock.setTitleBarWidget(QtWidgets.QWidget())   # hide title bar
-        dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
-        dock.setWidget(widget)
-        self._win.window.addDockWidget(
-            QtCore.Qt.BottomDockWidgetArea, dock,
-        )
