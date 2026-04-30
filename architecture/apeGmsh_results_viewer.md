@@ -181,7 +181,7 @@ The implementation phasing is in the plan; this is the target catalogue.
 
 | Diagram                   | Slab(s) consumed                | Renders                                                                                                  |
 | ------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `ContourDiagram`          | `NodeSlab` or interpolated `GaussSlab` | Per-cell or per-node colored mesh, scalar bar, optional deformed warp                                |
+| `ContourDiagram`          | `NodeSlab` (point data) or `GaussSlab` (cell data when `n_gp == 1`, point data via shape-fn extrapolation when `n_gp > 1`) | Colored substrate slice, scalar bar, optional deformed warp                                |
 | `DeformedShapeDiagram`    | `NodeSlab` (translational + rotational components) | Warped mesh + undeformed reference + scale slider; optional contour overlay     |
 | `VectorGlyphDiagram`      | `NodeSlab` (3 components)       | Arrows at nodes, colored / scaled by magnitude                                                           |
 | `LineForceDiagram`        | `LineStationSlab`               | Hatched fill perpendicular to beam axis (axial / shear / moment / torsion); textbook engineering style   |
@@ -199,6 +199,66 @@ Two intentional non-diagrams:
 - **Mode shapes** are not a separate diagram — they are
   `DeformedShapeDiagram` opened on a stage with `kind="mode"`. The
   Stage panel detects mode stages and offers an animation toggle.
+
+### 3.3a ContourDiagram — three rendering paths
+
+`ContourDiagram` is the most-used diagram in the catalogue and the only
+one that fans into more than one substrate path. It supports both nodal
+data (the bread-and-butter case for displacements and reactions) and
+element-level Gauss data (stresses, strains, plastic work). The path is
+chosen at attach time after a single step-0 read used both for the
+n_gp probe and the initial scatter.
+
+The user-facing knob is `ContourStyle.topology` with three values:
+
+- `"auto"` (default) — prefer nodal data when both composites have the
+  requested component; fall through to Gauss otherwise.
+- `"nodes"` — force the nodal-scalar path.
+- `"gauss"` — force the Gauss path; cell-vs-node sub-decision is made
+  internally based on `n_gp`.
+
+The three internal paths:
+
+| Path | Trigger | Substrate slice | Per-step write |
+|------|---------|-----------------|----------------|
+| `nodes`       | `topology="nodes"` (or `"auto"` when component is in nodes only) | `extract_points(node_indices)` | Scatter into `point_data["_contour"]` |
+| `gauss_cell`  | `topology="gauss"` and every selected element has `n_gp == 1` (CST / tri31, hex8 with one-point integration) | `extract_cells(cell_indices)` | Scatter into `cell_data["_contour"]` |
+| `gauss_node`  | `topology="gauss"` and at least one selected element has `n_gp > 1` (tet10, hex20/27, etc.) | `extract_points` over the union of corner nodes touched by the slab | Per-step extrapolation → scatter into `point_data["_contour"]` |
+
+The `gauss_node` path is the only one that does non-trivial work
+between the slab read and the scatter — the others are direct
+mappings. The extrapolation pipeline lives in
+[`apeGmsh.results._gauss_extrapolation`] and works as follows:
+
+1. **Per-element extrapolation matrix.** Evaluate the element's shape
+   functions at the slab's GP natural coords to get
+   `A` shape `(n_gp, n_corner)`; compute `M = pinv(A)` shape
+   `(n_corner, n_gp)`. For square systems (e.g. hex8 + 2×2×2 GPs)
+   this is the exact inverse and constant + linear fields are
+   reproduced bit-for-bit.
+2. **Linear-counterpart projection.** For higher-order types
+   (tri6 / quad8/9 / tet10 / hex20/27) the matrix uses the **linear**
+   counterpart's shape functions (tri3 / quad4 / tet4 / hex8) rather
+   than the full higher-order N matrix. Two reasons:
+   - The substrate is built from linear cells. `build_fem_scene`
+     drops mid-side / face / center nodes, so non-corner
+     extrapolations are never painted.
+   - `pinv` on the full higher-order N matrix yields a non-constant
+     nodal field for a constant GP input (minimum-norm regularization
+     of the under-determined system), which is the wrong behaviour
+     for visualization.
+3. **Per-element apply.** `nodal[t, c] = M @ gp_values[t, :]` for
+   each selected element.
+4. **Cross-element averaging.** Per-element nodal contributions
+   accumulate into a global per-node sum + count; the final value is
+   the mean across neighbouring elements.
+
+Smoothing across element boundaries is the price of a single-mesh
+nodal contour. Standard post-processor behaviour (STKO, ParaView,
+most academic viewers). A future per-element subdivision path can
+preserve discontinuities at material interfaces — out of scope today;
+the `gauss_cell` cell-data scaffolding stays in place to keep that
+door open.
 
 ### 3.4 What a Diagram is *not*
 
