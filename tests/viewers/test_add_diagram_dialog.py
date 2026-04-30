@@ -92,3 +92,76 @@ def test_selector_change_to_pg_enables_name_field(qapp, director):
     )
     dlg._selector_kind.setCurrentIndex(pg_idx)
     assert dlg._selector_name.isEnabled()
+
+
+# =====================================================================
+# Component combo — populated from kind + stage
+# =====================================================================
+
+def _set_kind(dlg, kind_id):
+    for i in range(dlg._kind_combo.count()):
+        entry = dlg._kind_combo.itemData(i)
+        if entry.kind_id == kind_id:
+            dlg._kind_combo.setCurrentIndex(i)
+            return
+    raise AssertionError(f"kind {kind_id} not found in combo")
+
+
+def test_component_combo_lists_nodal_components_for_contour(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "contour")
+    items = [dlg._component_combo.itemText(i)
+             for i in range(dlg._component_combo.count())]
+    # elasticFrame.mpco has nodal displacements
+    assert "displacement_x" in items
+    assert "displacement_z" in items
+
+
+def test_component_combo_default_prefers_displacement_z(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "contour")
+    assert dlg._component_combo.currentText() == "displacement_z"
+
+
+def test_component_combo_updates_when_kind_changes(qapp, director):
+    """Switching kind from contour (nodes) to spring_force (springs)
+    should swap the component list; the elasticFrame fixture has no
+    springs so the list becomes empty.
+    """
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "contour")
+    assert dlg._component_combo.count() > 0
+
+    _set_kind(dlg, "spring_force")
+    items = [dlg._component_combo.itemText(i)
+             for i in range(dlg._component_combo.count())]
+    # No springs in elasticFrame → empty list
+    assert items == [] or all("spring" in c for c in items)
+
+
+def test_component_combo_lists_spring_components_on_springs_fixture(qapp):
+    """zl_springs.mpco carries spring force/deformation."""
+    spring_fixture = Path("tests/fixtures/results/zl_springs.mpco")
+    if not spring_fixture.exists():
+        pytest.skip(f"Missing fixture: {spring_fixture}")
+    from apeGmsh.results import Results
+    from apeGmsh.viewers.diagrams._director import ResultsDirector
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+
+    d = ResultsDirector(Results.from_mpco(spring_fixture))
+    dlg = AddDiagramDialog(d, parent=None)
+    _set_kind(dlg, "spring_force")
+    items = [dlg._component_combo.itemText(i)
+             for i in range(dlg._component_combo.count())]
+    assert "spring_force_0" in items
+
+
+def test_component_combo_remains_editable_for_custom_names(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    assert dlg._component_combo.isEditable()
+    dlg._component_combo.setEditText("totally_custom_thing")
+    assert dlg._component_combo.currentText() == "totally_custom_thing"

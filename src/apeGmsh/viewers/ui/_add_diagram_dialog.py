@@ -138,6 +138,40 @@ def kinds_available() -> list[_KindEntry]:
     return list(_KINDS)
 
 
+# Maps each diagram kind to the Results-composite path whose
+# ``available_components()`` should populate the Component combo.
+_KIND_TO_TOPOLOGY: dict[str, str] = {
+    "contour":        "nodes",
+    "deformed_shape": "nodes",
+    "vector_glyph":   "nodes",
+    "line_force":     "line_stations",
+    "fiber_section":  "fibers",
+    "layer_stack":    "layers",
+    "gauss_marker":   "gauss",
+    "spring_force":   "springs",
+}
+
+
+def _components_for(results: Any, topology: str) -> list[str]:
+    """Resolve ``available_components()`` against a stage-scoped Results."""
+    try:
+        if topology == "nodes":
+            return sorted(results.nodes.available_components())
+        if topology == "line_stations":
+            return sorted(results.elements.line_stations.available_components())
+        if topology == "fibers":
+            return sorted(results.elements.fibers.available_components())
+        if topology == "layers":
+            return sorted(results.elements.layers.available_components())
+        if topology == "gauss":
+            return sorted(results.elements.gauss.available_components())
+        if topology == "springs":
+            return sorted(results.elements.springs.available_components())
+    except Exception:
+        return []
+    return []
+
+
 # =====================================================================
 # Dialog
 # =====================================================================
@@ -184,14 +218,28 @@ class AddDiagramDialog:
                     break
         form.addRow("Stage:", self._stage_combo)
 
-        # Component
-        self._component_edit = QtWidgets.QLineEdit("displacement_x")
-        self._component_edit.setToolTip(
-            "Canonical component name, e.g. 'displacement_x', 'velocity_z'. "
-            "For deformed shape, this is the diagram label; the warp uses "
-            "displacement_x/y/z by default."
+        # Component — editable combo populated from the chosen
+        # (kind, stage) pair. Editable so the user can also type a
+        # component name not yet present in the file.
+        self._component_combo = QtWidgets.QComboBox()
+        self._component_combo.setEditable(True)
+        self._component_combo.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
+        self._component_combo.lineEdit().setPlaceholderText(
+            "displacement_z, bending_moment_y, fiber_stress, …"
         )
-        form.addRow("Component:", self._component_edit)
+        self._component_combo.setToolTip(
+            "Component name. The list shows what's available for the\n"
+            "selected kind + stage; you can also type a custom name."
+        )
+        form.addRow("Component:", self._component_combo)
+
+        # Repopulate the combo whenever kind or stage changes.
+        self._kind_combo.currentIndexChanged.connect(
+            self._populate_components,
+        )
+        self._stage_combo.currentIndexChanged.connect(
+            self._populate_components,
+        )
 
         # Selector
         self._selector_kind = QtWidgets.QComboBox()
@@ -220,9 +268,54 @@ class AddDiagramDialog:
         bb.rejected.connect(dlg.reject)
         form.addRow(bb)
 
+        # Initial component list for the default (kind, stage).
+        self._populate_components()
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    def _populate_components(self, *_args: Any) -> None:
+        """Refresh the Component combo from the current (kind, stage)."""
+        kind_entry: _KindEntry = self._kind_combo.currentData()
+        stage_id = self._stage_combo.currentData()
+        if kind_entry is None or stage_id is None:
+            return
+
+        topology = _KIND_TO_TOPOLOGY.get(kind_entry.kind_id)
+        components: list[str] = []
+        if topology is not None:
+            try:
+                scoped = self._director.results.stage(stage_id)
+            except Exception:
+                scoped = None
+            if scoped is not None:
+                components = _components_for(scoped, topology)
+
+        # Preserve whatever the user has typed if it's not in the new list.
+        prior = self._component_combo.currentText().strip()
+
+        self._component_combo.blockSignals(True)
+        try:
+            self._component_combo.clear()
+            self._component_combo.addItems(components)
+            # Prefer a sensible default for nodal diagrams.
+            preferred_default = (
+                "displacement_z"
+                if topology == "nodes" else
+                (components[0] if components else "")
+            )
+            if prior and prior in components:
+                self._component_combo.setCurrentText(prior)
+            elif preferred_default in components:
+                self._component_combo.setCurrentText(preferred_default)
+            elif components:
+                self._component_combo.setCurrentIndex(0)
+            elif prior:
+                # No options for this kind+stage but user typed something.
+                self._component_combo.setEditText(prior)
+        finally:
+            self._component_combo.blockSignals(False)
 
     def _on_selector_change(self, _index: int) -> None:
         kind = self._selector_kind.currentData()
@@ -248,7 +341,7 @@ class AddDiagramDialog:
             return False
 
         kind_entry: _KindEntry = self._kind_combo.currentData()
-        component = self._component_edit.text().strip()
+        component = self._component_combo.currentText().strip()
         if not component:
             return False
 
