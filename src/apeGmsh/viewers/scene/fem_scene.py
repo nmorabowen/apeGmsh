@@ -86,6 +86,22 @@ GMSH_LINEAR: dict[int, tuple[int, int]] = {
 }
 
 
+# Fallback for non-Gmsh element codes — MPCO synthesizes ``code =
+# -class_tag`` (negative to avoid colliding with positive Gmsh codes;
+# see ``mesh/_femdata_mpco_io.py``). Keyed on ``(dim, npe)``; only the
+# linear corner subset is rendered.
+GMSH_LINEAR_FALLBACK: dict[tuple[int, int], tuple[int, int]] = {
+    (0, 1): (1,  1),    # vertex                         -> VTK_VERTEX
+    (1, 2): (3,  2),    # 2-node line                    -> VTK_LINE
+    (2, 3): (5,  3),    # 3-node tri                     -> VTK_TRIANGLE
+    (2, 4): (9,  4),    # 4-node quad                    -> VTK_QUAD
+    (3, 4): (10, 4),    # 4-node tet                     -> VTK_TETRA
+    (3, 5): (14, 5),    # 5-node pyramid                 -> VTK_PYRAMID
+    (3, 6): (13, 6),    # 6-node prism                   -> VTK_WEDGE
+    (3, 8): (12, 8),    # 8-node hex                     -> VTK_HEXAHEDRON
+}
+
+
 # ======================================================================
 # FEMSceneData
 # ======================================================================
@@ -191,6 +207,8 @@ def build_fem_scene(
         etype = group.element_type
         code = int(etype.code)
         mapping = GMSH_LINEAR.get(code)
+        if mapping is None:
+            mapping = GMSH_LINEAR_FALLBACK.get((int(etype.dim), int(etype.npe)))
         if mapping is None:
             skipped[code] = skipped.get(code, 0) + len(group)
             continue
