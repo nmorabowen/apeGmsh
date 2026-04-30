@@ -352,3 +352,53 @@ def test_detach_clears_state(beam_results, headless_plotter):
     assert diagram._fill_actor is None
     assert diagram._n_stations == 0
     assert not diagram.is_attached
+
+
+# =====================================================================
+# Real MPCO fixture — ElasticBeam3d localForce path
+# =====================================================================
+#
+# elasticFrame.mpco contains 11 ElasticBeam3d elements writing
+# localForce (12 components / 2 stations per element). Before the
+# localForce reader landed, attaching LineForceDiagram on this fixture
+# silently produced no actor — the slab was empty.
+
+_FRAME_FIXTURE = Path("tests/fixtures/results/elasticFrame.mpco")
+
+
+@pytest.fixture
+def frame_results():
+    if not _FRAME_FIXTURE.exists():
+        pytest.skip(f"Missing fixture: {_FRAME_FIXTURE}")
+    return Results.from_mpco(_FRAME_FIXTURE)
+
+
+def test_elastic_frame_attach_builds_polydata(
+    frame_results, headless_plotter,
+):
+    scoped = frame_results.stage(frame_results.stages[0].name)
+    scene = build_fem_scene(scoped.fem)
+    diagram = LineForceDiagram(_make_spec("bending_moment_z"), scoped)
+    diagram.attach(headless_plotter, scoped.fem, scene)
+    assert diagram._fill_polydata is not None
+    # 11 elements × 2 stations × 2 (base + top points) = 44 vertices
+    assert diagram._fill_polydata.n_points == 44
+    # 11 elements × 1 quad per element (2 stations → 1 quad fill)
+    assert diagram._fill_polydata.n_cells == 11
+
+
+def test_elastic_frame_axial_force_diagram(
+    frame_results, headless_plotter,
+):
+    """Axial diagram on a moment-loaded frame is symmetric per beam:
+    N_1 + N_2 == 0 (verified in the reader test); make sure the diagram
+    actually attaches without raising and step updates land cleanly.
+    """
+    scoped = frame_results.stage(frame_results.stages[0].name)
+    scene = build_fem_scene(scoped.fem)
+    diagram = LineForceDiagram(_make_spec("axial_force"), scoped)
+    diagram.attach(headless_plotter, scoped.fem, scene)
+    # Mutate to last step — must not raise and must keep actor identity.
+    initial_poly = diagram._fill_polydata
+    diagram.update_to_step(scoped.stages[0].n_steps - 1)
+    assert diagram._fill_polydata is initial_poly
