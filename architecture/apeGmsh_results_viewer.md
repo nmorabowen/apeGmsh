@@ -462,7 +462,7 @@ the viewer blocks until closed.
 
 1. The Results file path is already known (the `Results` was opened
    from disk).
-2. The viewer launches as `python -m apeGmsh.viewers.results <path>` in
+2. The viewer launches as `python -m apeGmsh.viewers <path>` in
    a subprocess.
 3. The subprocess opens a fresh `Results.from_native(path)` (or
    `from_mpco`), constructs a `ResultsViewer`, and runs its own Qt

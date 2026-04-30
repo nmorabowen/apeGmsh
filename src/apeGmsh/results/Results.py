@@ -366,27 +366,41 @@ class Results:
             ``True`` (default) — open the viewer in-process and block
             the calling thread until the window closes. Matches the
             signature of :meth:`g.mesh.viewer` and :meth:`g.model.viewer`.
-            ``False`` — spawn a subprocess (Phase 6+); raises
-            :class:`NotImplementedError` until that lands.
+            ``False`` — spawn a subprocess via
+            ``python -m apeGmsh.viewers <path>`` so the notebook /
+            kernel can keep running. Requires that the Results was
+            opened from disk (``self._path`` is set); raises
+            :class:`RuntimeError` for in-memory Results.
         title
             Optional window title; defaults to ``"Results — <filename>"``.
 
         Returns
         -------
         ResultsViewer
-            The viewer instance after the window closes (introspectable
-            for tests).
+            The viewer instance after the window closes (blocking).
+        subprocess.Popen
+            The spawned process handle (non-blocking).
         """
         if not blocking:
-            raise NotImplementedError(
-                "blocking=False (subprocess) lands in Phase 6 of the "
-                "viewer rebuild. For now, call results.viewer() with "
-                "the default blocking=True, or run "
-                "'python -m apeGmsh.viewers.results <path>' once Phase "
-                "6 ships."
-            )
+            return self._spawn_viewer_subprocess(title=title)
         from ..viewers.results_viewer import ResultsViewer
         return ResultsViewer(self, title=title).show()
+
+    def _spawn_viewer_subprocess(self, *, title: Optional[str]):
+        """Launch ``python -m apeGmsh.viewers <path>`` and return the Popen."""
+        import subprocess
+        import sys
+        if self._path is None:
+            raise RuntimeError(
+                "In-memory Results cannot launch in a subprocess. Open "
+                "the Results from disk via Results.from_native(path) or "
+                "Results.from_mpco(path), or call results.viewer() with "
+                "the default blocking=True."
+            )
+        args = [sys.executable, "-m", "apeGmsh.viewers", str(self._path)]
+        if title is not None:
+            args.extend(["--title", title])
+        return subprocess.Popen(args)
 
     # ------------------------------------------------------------------
     # Display

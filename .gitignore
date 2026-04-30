@@ -27,6 +27,7 @@ opensees_venv/
 
 # Smoke-test output (regenerated on every run)
 tests_out/
+tests/viewers/_screenshots/
 
 # MkDocs build output
 site/
