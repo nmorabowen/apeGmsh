@@ -222,6 +222,28 @@ class AddDiagramDialog:
                     break
         form.addRow("Stage:", self._stage_combo)
 
+        # Topology — only relevant for Contour, where a
+        # ContourStyle.topology field selects between nodal-scalar
+        # rendering (point data) and element-constant Gauss
+        # rendering (cell data, n_gp == 1). Shown for Contour, hidden
+        # for every other kind so the form stays uncluttered.
+        self._topology_label = QtWidgets.QLabel("Topology:")
+        self._topology_combo = QtWidgets.QComboBox()
+        self._topology_combo.addItem("Auto",  "auto")
+        self._topology_combo.addItem("Nodes", "nodes")
+        self._topology_combo.addItem("Gauss", "gauss")
+        self._topology_combo.setToolTip(
+            "Auto: prefer nodal data when both composites have the\n"
+            "component; fall through to Gauss otherwise.\n"
+            "Nodes: force the nodal-scalar path (point data).\n"
+            "Gauss: force the element-constant path (cell data;\n"
+            "requires n_gp == 1 per element)."
+        )
+        self._topology_combo.currentIndexChanged.connect(
+            self._populate_components,
+        )
+        form.addRow(self._topology_label, self._topology_combo)
+
         # Component — editable combo populated from the chosen
         # (kind, stage) pair. Editable so the user can also type a
         # component name not yet present in the file.
@@ -239,7 +261,7 @@ class AddDiagramDialog:
 
         # Repopulate the combo whenever kind or stage changes.
         self._kind_combo.currentIndexChanged.connect(
-            self._populate_components,
+            self._on_kind_changed,
         )
         self._stage_combo.currentIndexChanged.connect(
             self._populate_components,
@@ -272,12 +294,24 @@ class AddDiagramDialog:
         bb.rejected.connect(dlg.reject)
         form.addRow(bb)
 
-        # Initial component list for the default (kind, stage).
+        # Initial visibility + component list for the default kind.
+        self._update_topology_row_visibility()
         self._populate_components()
 
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    def _on_kind_changed(self, *_args: Any) -> None:
+        self._update_topology_row_visibility()
+        self._populate_components()
+
+    def _update_topology_row_visibility(self) -> None:
+        """Show the Topology row only when Contour is the kind."""
+        kind_entry: _KindEntry = self._kind_combo.currentData()
+        is_contour = kind_entry is not None and kind_entry.kind_id == "contour"
+        self._topology_label.setVisible(is_contour)
+        self._topology_combo.setVisible(is_contour)
 
     def _populate_components(self, *_args: Any) -> None:
         """Refresh the Component combo from the current (kind, stage)."""
@@ -286,14 +320,30 @@ class AddDiagramDialog:
         if kind_entry is None or stage_id is None:
             return
 
+        # Resolve which composite(s) to enumerate. Contour is special:
+        # the user can override the class-default ("nodes") via the
+        # Topology sub-combo. ``"auto"`` lists the union of nodes and
+        # gauss components so the user sees everything reachable.
         topology = _KIND_TO_TOPOLOGY.get(kind_entry.kind_id)
+        contour_topology: str | None = None
+        if kind_entry.kind_id == "contour":
+            contour_topology = self._topology_combo.currentData() or "auto"
+
         components: list[str] = []
-        if topology is not None:
-            try:
-                scoped = self._director.results.stage(stage_id)
-            except Exception:
-                scoped = None
-            if scoped is not None:
+        try:
+            scoped = self._director.results.stage(stage_id)
+        except Exception:
+            scoped = None
+
+        if scoped is not None:
+            if contour_topology == "auto":
+                # Union of nodes + gauss, sorted, deduplicated.
+                union = set(_components_for(scoped, "nodes"))
+                union.update(_components_for(scoped, "gauss"))
+                components = sorted(union)
+            elif contour_topology in ("nodes", "gauss"):
+                components = _components_for(scoped, contour_topology)
+            elif topology is not None:
                 components = _components_for(scoped, topology)
 
         # Preserve the user's prior text only when the new list contains
@@ -302,12 +352,20 @@ class AddDiagramDialog:
         # the field after the user picked Gauss point markers).
         prior = self._component_combo.currentText().strip()
 
+        # Default heuristic: nodes-leaning kinds prefer displacement_z;
+        # everything else takes the first available. Contour with
+        # explicit gauss topology falls into the "first available"
+        # bucket since displacement_z isn't a gauss quantity.
+        prefers_disp_z = (
+            topology == "nodes" and contour_topology in (None, "nodes", "auto")
+        )
+
         self._component_combo.blockSignals(True)
         try:
             self._component_combo.clear()
             self._component_combo.addItems(components)
             preferred_default = (
-                "displacement_z" if topology == "nodes" else
+                "displacement_z" if prefers_disp_z else
                 (components[0] if components else "")
             )
             if prior and prior in components:
@@ -369,6 +427,19 @@ class AddDiagramDialog:
             return False
 
         style = kind_entry.make_default_style(component)
+        # Contour exposes a per-instance ``topology`` field; thread the
+        # dialog's sub-combo selection into the constructed style.
+        # Other kinds have no equivalent control to thread.
+        if kind_entry.kind_id == "contour":
+            chosen = self._topology_combo.currentData() or "auto"
+            style = ContourStyle(
+                cmap=style.cmap,
+                clim=style.clim,
+                opacity=style.opacity,
+                show_edges=style.show_edges,
+                show_scalar_bar=style.show_scalar_bar,
+                topology=chosen,
+            )
         label = self._label_edit.text().strip() or None
         spec = DiagramSpec(
             kind=kind_entry.kind_id,
