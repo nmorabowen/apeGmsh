@@ -2,18 +2,30 @@
 
 Single-row layout::
 
-    [<<] [<] [|>] [>] [>>]   step ▮━━━━━━○━━━━━━ [ 42 / 100 ]   t=1.234e+00 s
+    [<<] [<] [|>] [>] [>>]   step ▮━━━━━━━━○━━━━━━ [ 42 / 100 ]   t=1.234e+00 s   FPS [30] Loop [Once▾]
 
 * ``<<`` / ``>>`` jump to first / last step
 * ``<`` / ``>`` step -1 / +1
-* ``|>`` toggles animation (Phase 6 — disabled in Phase 0)
+* ``|>`` toggles a QTimer-driven animation. The timer ticks at
+  ``1000 / fps`` ms; on each tick the scrubber asks the Director to
+  advance one step. The Director fires ``on_step_changed`` and the
+  scrubber updates the slider — the timer never touches the slider
+  directly.
 * The slider is QTimer-throttled to ~33 ms during drag so step changes
   don't fire faster than the renderer can keep up. The final position
   on release fires a non-throttled update so the rendered step matches
   the slider exactly.
 
-Phase 0 wires the step slider; the play / animation buttons are
-present but disabled until Phase 6 lands the animation mode.
+Loop modes:
+
+* ``once`` — play to the last step, then stop.
+* ``loop`` — wrap to step 0 after the last step.
+* ``bounce`` — reverse direction at end-of-stage; play forward again
+  after reaching step 0. Never wraps.
+
+Animation stops automatically on stage change (the new stage may have
+a different step count, and the user almost certainly wants to look at
+it before resuming).
 """
 from __future__ import annotations
 
@@ -36,6 +48,11 @@ class TimeScrubberDock:
     """
 
     DRAG_COALESCE_MS = 33    # ~30 fps during drag
+    DEFAULT_FPS = 30
+    FPS_MIN = 1
+    FPS_MAX = 60
+
+    LOOP_MODES = ("once", "loop", "bounce")
 
     def __init__(self, director: "ResultsDirector") -> None:
         QtWidgets, QtCore = _qt()
@@ -50,6 +67,15 @@ class TimeScrubberDock:
         self._drag_timer.setInterval(self.DRAG_COALESCE_MS)
         self._drag_timer.timeout.connect(self._on_drag_timeout)
         self._pending_value: Optional[int] = None
+
+        # Animation timer — drives the Play button. Fires every
+        # 1000/fps ms; each tick advances one step honouring the
+        # current loop mode. Direction state is only meaningful in
+        # ``bounce`` mode; the other modes always step +1.
+        self._anim_timer = QtCore.QTimer()
+        self._anim_timer.setSingleShot(False)
+        self._anim_timer.timeout.connect(self._on_animation_tick)
+        self._anim_direction: int = +1
 
         # ── Layout ─────────────────────────────────────────────
         widget = QtWidgets.QWidget()
@@ -70,8 +96,7 @@ class TimeScrubberDock:
         self._btn_play = QtWidgets.QToolButton()
         self._btn_play.setText("▶")     # ▶
         self._btn_play.setCheckable(True)
-        self._btn_play.setToolTip("Play / pause animation (Phase 6)")
-        self._btn_play.setEnabled(False)
+        self._btn_play.setToolTip("Play / pause animation")
         self._btn_play.toggled.connect(self._toggle_play)
 
         self._btn_fwd = QtWidgets.QToolButton()
@@ -111,11 +136,40 @@ class TimeScrubberDock:
         )
         layout.addWidget(self._time_label)
 
+        # ── Animation controls ─────────────────────────────────
+        fps_label = QtWidgets.QLabel("FPS")
+        layout.addWidget(fps_label)
+
+        self._fps_spin = QtWidgets.QSpinBox()
+        self._fps_spin.setRange(self.FPS_MIN, self.FPS_MAX)
+        self._fps_spin.setValue(self.DEFAULT_FPS)
+        self._fps_spin.setToolTip(
+            "Animation rate (frames per second).\n"
+            "The timer ticks at 1000/fps ms; the renderer may not\n"
+            "keep up at high fps for large meshes."
+        )
+        self._fps_spin.valueChanged.connect(self._on_fps_changed)
+        layout.addWidget(self._fps_spin)
+
+        loop_label = QtWidgets.QLabel("Loop")
+        layout.addWidget(loop_label)
+
+        self._loop_combo = QtWidgets.QComboBox()
+        self._loop_combo.addItem("Once",   "once")
+        self._loop_combo.addItem("Loop",   "loop")
+        self._loop_combo.addItem("Bounce", "bounce")
+        self._loop_combo.setToolTip(
+            "Once: stop at end of stage\n"
+            "Loop: wrap to step 0\n"
+            "Bounce: reverse direction at boundaries"
+        )
+        layout.addWidget(self._loop_combo)
+
         self._widget = widget
 
         # Subscribe to director events
         director.subscribe_step(self._on_director_step)
-        director.subscribe_stage(lambda _id: self.refresh())
+        director.subscribe_stage(self._on_director_stage)
 
         # Initial state
         self.refresh()
@@ -148,7 +202,7 @@ class TimeScrubberDock:
 
         self._update_labels(cur, n)
         enabled = n > 1
-        for b in (self._btn_first, self._btn_back,
+        for b in (self._btn_first, self._btn_back, self._btn_play,
                   self._btn_fwd, self._btn_last):
             b.setEnabled(enabled)
         self._slider.setEnabled(enabled)
@@ -206,15 +260,95 @@ class TimeScrubberDock:
         n = max(0, int(self._director.n_steps))
         self._commit_step(max(0, n - 1))
 
+    # ------------------------------------------------------------------
+    # Animation transport
+    # ------------------------------------------------------------------
+
     def _toggle_play(self, on: bool) -> None:
-        # Phase 6 wires this; Phase 0 keeps the button disabled but
-        # provides the slot for forward compatibility.
         if on:
-            self._btn_play.setChecked(False)
+            n = max(0, int(self._director.n_steps))
+            if n <= 1:
+                # Nothing to animate — release the button.
+                self._btn_play.setChecked(False)
+                return
+            # If we're already at the boundary the user would expect to
+            # see, reset to step 0 (forward direction) so Play actually
+            # plays. Without this, hitting Play at the last step in
+            # ``once`` mode would immediately stop.
+            mode = self._loop_mode()
+            if mode == "once" and self._director.step_index >= n - 1:
+                self._director.set_step(0)
+            self._anim_direction = +1
+            self._anim_timer.setInterval(self._interval_ms())
+            self._anim_timer.start()
+        else:
+            self._anim_timer.stop()
+
+    def _on_animation_tick(self) -> None:
+        n = max(0, int(self._director.n_steps))
+        if n <= 1:
+            self._stop_animation()
+            return
+        last = n - 1
+        cur = int(self._director.step_index)
+        mode = self._loop_mode()
+
+        if mode == "bounce":
+            nxt = cur + self._anim_direction
+            if nxt > last:
+                self._anim_direction = -1
+                nxt = last - 1 if last >= 1 else 0
+            elif nxt < 0:
+                self._anim_direction = +1
+                nxt = 1 if last >= 1 else 0
+        else:
+            nxt = cur + 1
+            if nxt > last:
+                if mode == "loop":
+                    nxt = 0
+                else:    # once
+                    self._director.set_step(last)
+                    self._stop_animation()
+                    return
+
+        self._director.set_step(nxt)
+
+    def _stop_animation(self) -> None:
+        if self._anim_timer.isActive():
+            self._anim_timer.stop()
+        # Releasing the button retriggers ``_toggle_play(False)``,
+        # which calls ``stop()`` again — harmless.
+        if self._btn_play.isChecked():
+            self._btn_play.blockSignals(True)
+            try:
+                self._btn_play.setChecked(False)
+            finally:
+                self._btn_play.blockSignals(False)
+
+    def _loop_mode(self) -> str:
+        mode = self._loop_combo.currentData()
+        return mode if mode in self.LOOP_MODES else "once"
+
+    def _interval_ms(self) -> int:
+        fps = max(self.FPS_MIN, min(self.FPS_MAX, int(self._fps_spin.value())))
+        return max(1, int(round(1000.0 / fps)))
+
+    def _on_fps_changed(self, _value: int) -> None:
+        # Live update — if the timer is running, switch interval
+        # without disturbing the running state.
+        if self._anim_timer.isActive():
+            self._anim_timer.setInterval(self._interval_ms())
 
     # ------------------------------------------------------------------
     # Director callback
     # ------------------------------------------------------------------
+
+    def _on_director_stage(self, _stage_id: str) -> None:
+        # Stop any running animation — the new stage may have a
+        # different step count and the user almost certainly wants
+        # to look at it before resuming.
+        self._stop_animation()
+        self.refresh()
 
     def _on_director_step(self, step: int) -> None:
         # Programmatic step changes (jump buttons, etc.) — keep slider
