@@ -174,11 +174,11 @@ def compute_global_coords(slab: "GaussSlab", fem: "FEMData") -> ndarray:
         # Practically: line2 needs 1-D, tri3/quad4 need 2-D, tet4/hex8
         # need 3-D. Use type_code to map.
         nat_row = nat[k]
-        if type_code == 1:                # Line2
+        if type_code == 1:                          # Line2
             nat_in = nat_row[:1].reshape(1, 1)
-        elif type_code in (2, 3):         # Tri3 / Quad4
+        elif type_code in (2, 3, 9, 10, 16):        # Tri3, Quad4, Tri6, Quad9, Quad8
             nat_in = nat_row[:2].reshape(1, 2)
-        else:                              # Tet4 / Hex8
+        else:                                       # Tet4, Hex8, Wedge6, Tet10, Hex27, Hex20
             nat_in = nat_row[:3].reshape(1, 3)
 
         N = N_fn(nat_in)                  # (1, n_nodes)

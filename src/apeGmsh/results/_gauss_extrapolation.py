@@ -61,11 +61,40 @@ if TYPE_CHECKING:
 
 # Parent dim per Gmsh type code — see catalog in _shape_functions.py
 _PARENT_DIM: dict[int, int] = {
-    1: 1,    # Line2
-    2: 2,    # Tri3
-    3: 2,    # Quad4
-    4: 3,    # Tet4
-    5: 3,    # Hex8
+    1: 1,     # Line2
+    2: 2,     # Tri3
+    3: 2,     # Quad4
+    4: 3,     # Tet4
+    5: 3,     # Hex8
+    6: 3,     # Wedge6
+    9: 2,     # Tri6
+    10: 2,    # Quad9
+    11: 3,    # Tet10
+    12: 3,    # Hex27
+    16: 2,    # Quad8
+    17: 3,    # Hex20
+}
+
+
+# For extrapolation we project GP values onto the **linear** corner
+# shape functions only, even when the underlying element is quadratic.
+# Reasons:
+#   * The viewer's substrate is built with linear cells (mid-side / face
+#     / center nodes are dropped in build_fem_scene), so values at
+#     non-corner nodes are never painted.
+#   * Using the full higher-order N matrix yields a pseudo-inverse that
+#     produces non-constant nodal fields for a truly constant GP input
+#     (minimum-norm regularization of the under-determined system),
+#     which is the wrong behaviour for visualization.
+#
+# Mapping each higher-order code to its linear counterpart:
+_LINEAR_COUNTERPART: dict[int, int] = {
+    9: 2,     # Tri6   -> Tri3
+    10: 3,    # Quad9  -> Quad4
+    11: 4,    # Tet10  -> Tet4
+    12: 5,    # Hex27  -> Hex8
+    16: 3,    # Quad8  -> Quad4
+    17: 5,    # Hex20  -> Hex8
 }
 
 
@@ -85,33 +114,45 @@ def per_element_max_gp_count(slab: "GaussSlab") -> int:
 def _build_extrapolation_matrix(
     natural_gps: ndarray, gmsh_code: int,
 ) -> Optional[ndarray]:
-    """Return M shape ``(n_corner, n_gp)`` or ``None`` if unsupported.
+    """Return M shape ``(n_real_corners, n_gp)`` or ``None`` if unsupported.
 
-    Built by evaluating shape functions at the GP natural coords
-    (matrix ``A`` shape ``(n_gp, n_corner)``) and computing
-    ``pinv(A)``.
+    For higher-order types (Tri6, Tet10, Quad8/9, Hex20/27) the GP
+    values are projected onto the **linear** counterpart's corner
+    shape functions — see ``_LINEAR_COUNTERPART`` for the mapping and
+    rationale. This guarantees a constant GP field is reproduced as
+    a constant nodal field at the corners (the only nodes the viewer
+    actually paints).
     """
-    catalog = get_shape_functions(int(gmsh_code))
+    code = int(gmsh_code)
+    effective_code = _LINEAR_COUNTERPART.get(code, code)
+    catalog = get_shape_functions(effective_code)
     if catalog is None:
         return None
     N_fn, _, _, _n_corner = catalog
-    pdim = _PARENT_DIM.get(int(gmsh_code))
+    pdim = _PARENT_DIM.get(code)
     if pdim is None:
         return None
     nat = np.asarray(natural_gps, dtype=np.float64)
     if nat.ndim == 1:
         nat = nat[:, None]
     nat_in = nat[:, :pdim]
-    A = N_fn(nat_in)                # (n_gp, n_corner)
-    return np.linalg.pinv(A)        # (n_corner, n_gp)
+    A = N_fn(nat_in)                # (n_gp, n_real_corners)
+    return np.linalg.pinv(A)        # (n_real_corners, n_gp)
 
 
 def _build_element_index(fem: "FEMData") -> dict[int, tuple[int, ndarray]]:
-    """Map element ID → ``(gmsh_code, corner_node_ids)`` for the bound FEM."""
+    """Map element ID → ``(gmsh_code, real_corner_node_ids)``.
+
+    Higher-order types are truncated to their linear-counterpart
+    corner count (e.g. tri6 → first 3 nodes, hex27 → first 8 nodes)
+    because that's what ``_build_extrapolation_matrix`` projects onto
+    and what the substrate paints.
+    """
     out: dict[int, tuple[int, ndarray]] = {}
     for group in fem.elements:
         type_code = int(group.element_type.code)
-        catalog = get_shape_functions(type_code)
+        effective_code = _LINEAR_COUNTERPART.get(type_code, type_code)
+        catalog = get_shape_functions(effective_code)
         n_corner = catalog[3] if catalog is not None else None
         ids = np.asarray(group.ids, dtype=np.int64)
         conn = np.asarray(group.connectivity, dtype=np.int64)

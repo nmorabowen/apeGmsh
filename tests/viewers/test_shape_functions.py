@@ -1,9 +1,9 @@
 """Shape-function library tests — partition of unity, corner identity,
 and Jacobian-determinant correctness on canonical elements.
 
-Covers all five element types currently in the catalog: Line2, Tri3,
-Quad4, Tet4, Hex8. Mined from STKO_to_python's shape_functions tests
-and adapted to the Gmsh-code keyed catalog.
+Covers every element type in the catalog. Linear types (Line2, Tri3,
+Quad4, Tet4, Hex8) plus higher-order additions: Wedge6, Tri6, Quad9,
+Tet10, Hex27, Quad8, Hex20.
 """
 from __future__ import annotations
 
@@ -15,16 +15,18 @@ from apeGmsh.results._shape_functions import (
     compute_jacobian_dets,
     compute_physical_coords,
     get_shape_functions,
-    hex8_N,
-    hex8_dN,
-    line2_N,
-    line2_dN,
-    quad4_N,
-    quad4_dN,
-    tet4_N,
-    tet4_dN,
-    tri3_N,
-    tri3_dN,
+    hex8_N, hex8_dN,
+    line2_N, line2_dN,
+    quad4_N, quad4_dN,
+    tet4_N, tet4_dN,
+    tri3_N, tri3_dN,
+    wedge6_N, wedge6_dN,
+    tri6_N, tri6_dN,
+    quad9_N, quad9_dN,
+    tet10_N, tet10_dN,
+    hex27_N, hex27_dN,
+    quad8_N, quad8_dN,
+    hex20_N, hex20_dN,
 )
 
 
@@ -32,9 +34,11 @@ from apeGmsh.results._shape_functions import (
 # Catalog
 # =====================================================================
 
-def test_catalog_has_five_canonical_types():
-    """Codes 1..5 (Line2, Tri3, Quad4, Tet4, Hex8) should all be present."""
-    for code in (1, 2, 3, 4, 5):
+_ALL_CODES = (1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 16, 17)
+
+
+def test_catalog_has_every_supported_type():
+    for code in _ALL_CODES:
         entry = get_shape_functions(code)
         assert entry is not None, f"Gmsh code {code} missing from catalog"
         N_fn, dN_fn, geom, n_corner = entry
@@ -45,8 +49,8 @@ def test_catalog_has_five_canonical_types():
 
 
 def test_catalog_unsupported_returns_none():
-    assert get_shape_functions(7) is None     # pyramid5
-    assert get_shape_functions(11) is None    # tet10
+    assert get_shape_functions(7) is None     # pyramid5 — out of scope
+    assert get_shape_functions(8) is None     # line3 — out of scope
     assert get_shape_functions(99) is None
 
 
@@ -294,3 +298,213 @@ def test_compute_physical_coords_batch_hex8():
     np.testing.assert_allclose(world[1, 0], [5.5, 0.5, 0.5])
     # Element 0, IP 1 (xi=0.5): centre in y, z + 0.75 in x
     np.testing.assert_allclose(world[0, 1], [0.75, 0.5, 0.5])
+
+
+# =====================================================================
+# Higher-order types — Kronecker delta + partition of unity +
+# linear-precision round-trip
+# =====================================================================
+#
+# The linear-precision test is the strongest: it picks a known linear
+# field f(p), evaluates it at each node's natural coord to get nodal
+# values f_i, then asserts that sum(N_i(query) · f_i) reproduces
+# f(query) at random query points. This catches both wrong shape
+# functions AND wrong assumed natural coords (which a pure Kronecker
+# delta test would not, since it'd be self-consistent against
+# whatever natural coords the test used).
+
+
+# (gmsh_code, N_fn, dN_fn, node_natural_coords, parent_dim, name)
+_HIGHER_ORDER = [
+    (
+        6, wedge6_N, wedge6_dN,
+        np.array([
+            [0.0, 0.0, -1.0], [1.0, 0.0, -1.0], [0.0, 1.0, -1.0],
+            [0.0, 0.0, +1.0], [1.0, 0.0, +1.0], [0.0, 1.0, +1.0],
+        ]),
+        3, "wedge6",
+    ),
+    (
+        9, tri6_N, tri6_dN,
+        np.array([
+            [0.0, 0.0], [1.0, 0.0], [0.0, 1.0],
+            [0.5, 0.0], [0.5, 0.5], [0.0, 0.5],
+        ]),
+        2, "tri6",
+    ),
+    (
+        10, quad9_N, quad9_dN,
+        np.array([
+            [-1.0, -1.0], [+1.0, -1.0], [+1.0, +1.0], [-1.0, +1.0],
+            [ 0.0, -1.0], [+1.0,  0.0], [ 0.0, +1.0], [-1.0,  0.0],
+            [ 0.0,  0.0],
+        ]),
+        2, "quad9",
+    ),
+    (
+        11, tet10_N, tet10_dN,
+        np.array([
+            [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.5, 0.0, 0.0], [0.5, 0.5, 0.0], [0.0, 0.5, 0.0],
+            [0.0, 0.0, 0.5], [0.0, 0.5, 0.5], [0.5, 0.0, 0.5],
+        ]),
+        3, "tet10",
+    ),
+    (
+        12, hex27_N, hex27_dN,
+        np.array([
+            [-1, -1, -1], [+1, -1, -1], [+1, +1, -1], [-1, +1, -1],
+            [-1, -1, +1], [+1, -1, +1], [+1, +1, +1], [-1, +1, +1],
+            [ 0, -1, -1], [-1,  0, -1], [-1, -1,  0],
+            [+1,  0, -1], [+1, -1,  0], [ 0, +1, -1],
+            [+1, +1,  0], [-1, +1,  0], [ 0, -1, +1],
+            [-1,  0, +1], [+1,  0, +1], [ 0, +1, +1],
+            [ 0,  0, -1], [ 0, -1,  0], [-1,  0,  0],
+            [+1,  0,  0], [ 0, +1,  0], [ 0,  0, +1],
+            [ 0,  0,  0],
+        ], dtype=np.float64),
+        3, "hex27",
+    ),
+    (
+        16, quad8_N, quad8_dN,
+        np.array([
+            [-1.0, -1.0], [+1.0, -1.0], [+1.0, +1.0], [-1.0, +1.0],
+            [ 0.0, -1.0], [+1.0,  0.0], [ 0.0, +1.0], [-1.0,  0.0],
+        ]),
+        2, "quad8",
+    ),
+    (
+        17, hex20_N, hex20_dN,
+        np.array([
+            [-1, -1, -1], [+1, -1, -1], [+1, +1, -1], [-1, +1, -1],
+            [-1, -1, +1], [+1, -1, +1], [+1, +1, +1], [-1, +1, +1],
+            [ 0, -1, -1], [-1,  0, -1], [-1, -1,  0],
+            [+1,  0, -1], [+1, -1,  0], [ 0, +1, -1],
+            [+1, +1,  0], [-1, +1,  0], [ 0, -1, +1],
+            [-1,  0, +1], [+1,  0, +1], [ 0, +1, +1],
+        ], dtype=np.float64),
+        3, "hex20",
+    ),
+]
+
+
+def _interior_points(parent_dim: int, gmsh_code: int, n: int = 20):
+    """Random ``(n, parent_dim)`` points strictly inside the parent."""
+    rng = np.random.default_rng(int(gmsh_code) * 17 + 3)
+    if gmsh_code in (9, 11):
+        # Barycentric tri / tet — sample, then constrain
+        nat = rng.uniform(0.05, 0.95, size=(n * 4, parent_dim))
+        mask = nat.sum(axis=1) <= 0.95
+        return nat[mask][:n]
+    if gmsh_code == 6:
+        # Wedge6: tri × line. ξ + η <= 1, ζ in [-1, +1].
+        out = []
+        while len(out) < n:
+            p = rng.uniform(low=[0, 0, -1], high=[1, 1, 1])
+            if p[0] + p[1] <= 0.95:
+                out.append(p)
+        return np.array(out, dtype=np.float64)
+    # [-1, +1]^d types
+    return rng.uniform(-0.95, 0.95, size=(n, parent_dim))
+
+
+@pytest.mark.parametrize(
+    "gmsh_code,N_fn,dN_fn,node_nat,pdim,name",
+    _HIGHER_ORDER,
+    ids=[spec[5] for spec in _HIGHER_ORDER],
+)
+def test_higher_order_kronecker_delta(
+    gmsh_code, N_fn, dN_fn, node_nat, pdim, name,
+):
+    """N evaluated at node i's natural coord = e_i."""
+    N = N_fn(node_nat)
+    np.testing.assert_allclose(
+        N, np.eye(node_nat.shape[0]), atol=1e-12,
+        err_msg=f"{name}: Kronecker delta failed",
+    )
+
+
+@pytest.mark.parametrize(
+    "gmsh_code,N_fn,dN_fn,node_nat,pdim,name",
+    _HIGHER_ORDER,
+    ids=[spec[5] for spec in _HIGHER_ORDER],
+)
+def test_higher_order_partition_of_unity(
+    gmsh_code, N_fn, dN_fn, node_nat, pdim, name,
+):
+    """Sum of shape functions = 1 at every interior point."""
+    pts = _interior_points(pdim, gmsh_code)
+    N = N_fn(pts)
+    np.testing.assert_allclose(
+        N.sum(axis=1), 1.0, atol=1e-12,
+        err_msg=f"{name}: partition of unity failed",
+    )
+
+
+@pytest.mark.parametrize(
+    "gmsh_code,N_fn,dN_fn,node_nat,pdim,name",
+    _HIGHER_ORDER,
+    ids=[spec[5] for spec in _HIGHER_ORDER],
+)
+def test_higher_order_linear_precision(
+    gmsh_code, N_fn, dN_fn, node_nat, pdim, name,
+):
+    """For a linear field f(p), sum(N_i(q) · f(node_i)) = f(q).
+
+    This catches both wrong shape functions AND wrong assumed natural
+    coords — together they must agree with the field's nodal samples.
+    """
+    rng = np.random.default_rng(int(gmsh_code) * 7 + 11)
+    coeffs = rng.uniform(-3, 3, size=pdim + 1)
+    # f(p) = c0 + c1·p[0] + c2·p[1] (+ c3·p[2])
+    nodal_vals = coeffs[0] + node_nat @ coeffs[1:]    # (n_nodes,)
+
+    pts = _interior_points(pdim, gmsh_code)
+    expected = coeffs[0] + pts @ coeffs[1:]
+    N = N_fn(pts)
+    actual = N @ nodal_vals
+    np.testing.assert_allclose(
+        actual, expected, atol=1e-12,
+        err_msg=f"{name}: linear precision failed",
+    )
+
+
+@pytest.mark.parametrize(
+    "gmsh_code,N_fn,dN_fn,node_nat,pdim,name",
+    _HIGHER_ORDER,
+    ids=[spec[5] for spec in _HIGHER_ORDER],
+)
+def test_higher_order_dN_sums_to_zero(
+    gmsh_code, N_fn, dN_fn, node_nat, pdim, name,
+):
+    """Sum of dN over nodes = 0 (consequence of partition of unity)."""
+    pts = _interior_points(pdim, gmsh_code)
+    dN = dN_fn(pts)
+    sums = dN.sum(axis=1)    # (n_ip, parent_dim)
+    np.testing.assert_allclose(
+        sums, 0.0, atol=1e-12,
+        err_msg=f"{name}: dN sum failed",
+    )
+
+
+@pytest.mark.parametrize(
+    "gmsh_code,N_fn,dN_fn,node_nat,pdim,name",
+    _HIGHER_ORDER,
+    ids=[spec[5] for spec in _HIGHER_ORDER],
+)
+def test_higher_order_dN_matches_finite_diff(
+    gmsh_code, N_fn, dN_fn, node_nat, pdim, name,
+):
+    """Analytic dN matches finite-difference of N at random interior points."""
+    pts = _interior_points(pdim, gmsh_code, n=5)
+    dN_ana = dN_fn(pts)
+    h = 1e-6
+    for axis in range(pdim):
+        plus = pts.copy();  plus[:,  axis] += h
+        minus = pts.copy(); minus[:, axis] -= h
+        dN_fd = (N_fn(plus) - N_fn(minus)) / (2 * h)
+        np.testing.assert_allclose(
+            dN_ana[:, :, axis], dN_fd, atol=1e-7, rtol=1e-6,
+            err_msg=f"{name}: dN axis {axis} doesn't match FD",
+        )
