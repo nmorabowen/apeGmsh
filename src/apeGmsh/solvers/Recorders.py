@@ -132,7 +132,57 @@ class Recorders:
         n_steps: int | None = None,
         name: str | None = None,
     ) -> "Recorders":
-        """Declare a nodal recorder. See module docstring for selectors."""
+        """Declare a nodal recorder.
+
+        Records per-node values across the analysis. Reads back as a
+        :class:`NodeSlab` with shape ``(T, N)``.
+
+        **Components** (canonical names):
+
+        - Kinematics — ``displacement_x``, ``displacement_y``,
+          ``displacement_z``, ``rotation_x``, ``rotation_y``,
+          ``rotation_z``, ``velocity_x``, ``velocity_y``,
+          ``velocity_z``, ``angular_velocity_x``, ``angular_velocity_y``,
+          ``angular_velocity_z``, ``acceleration_x``,
+          ``acceleration_y``, ``acceleration_z``,
+          ``angular_acceleration_x``, ``angular_acceleration_y``,
+          ``angular_acceleration_z``, ``displacement_increment_x/y/z``.
+        - Forces / reactions — ``force_x/y/z``, ``moment_x/y/z``,
+          ``reaction_force_x/y/z``, ``reaction_moment_x/y/z``,
+          ``pore_pressure``, ``pore_pressure_rate``.
+
+        **Shorthands** (clipped to the active ``ndm``/``ndf``):
+
+        - ``"displacement"`` → ``displacement_x/y/z``.
+        - ``"rotation"`` → ``rotation_x/y/z``.
+        - ``"velocity"`` / ``"acceleration"`` / ``"angular_velocity"`` /
+          ``"angular_acceleration"`` / ``"displacement_increment"`` —
+          analogous.
+        - ``"force"`` / ``"moment"`` — analogous (point loads).
+        - ``"reaction_force"`` / ``"reaction_moment"`` — granular.
+        - ``"reaction"`` — both forces and moments in one pass.
+
+        **Selectors** (provide one — they're mutually exclusive):
+
+        - ``pg=`` — physical group name(s) (Tier 2).
+        - ``label=`` — apeGmsh label name(s) (Tier 1).
+        - ``selection=`` — post-mesh ``g.mesh_selection`` set name(s).
+        - ``ids=`` — raw node IDs.
+
+        **Cadence** (at most one):
+
+        - ``dt=`` — wall-clock cadence.
+        - ``n_steps=`` — step-count cadence.
+        - both ``None`` (default) — every analysis step.
+
+        Example::
+
+            g.opensees.recorders.nodes(
+                components=["displacement", "reaction_force"],
+                pg="Top",
+                dt=0.01,
+            )
+        """
         self._declare(
             "nodes", components,
             pg=pg, label=label, selection=selection, ids=ids,
@@ -152,7 +202,37 @@ class Recorders:
         n_steps: int | None = None,
         name: str | None = None,
     ) -> "Recorders":
-        """Declare a per-element-node recorder (globalForce / localForce)."""
+        """Declare a per-element-node force recorder.
+
+        Records the resisting force vector at each element node, in
+        either the global or local frame. Reads back as an
+        :class:`ElementSlab` with shape ``(T, E, npe)``.
+
+        **Components** (canonical names):
+
+        - Global frame — ``nodal_resisting_force_x/y/z``,
+          ``nodal_resisting_moment_x/y/z``.
+        - Local frame — ``nodal_resisting_force_local_x/y/z``,
+          ``nodal_resisting_moment_local_x/y/z``.
+
+        Components from different frames cannot mix in one record —
+        split into separate records (one ``globalForce`` + one
+        ``localForce``).
+
+        **Selectors** — same vocabulary as :meth:`nodes`
+        (``pg=`` / ``label=`` / ``selection=`` / ``ids=``); resolve to
+        element IDs.
+
+        **Cadence** — same as :meth:`nodes` (``dt=`` / ``n_steps=`` /
+        every step).
+
+        Example::
+
+            g.opensees.recorders.elements(
+                components=["nodal_resisting_force_x"],
+                pg="Frame",
+            )
+        """
         self._declare(
             "elements", components,
             pg=pg, label=label, selection=selection, ids=ids,
@@ -172,7 +252,40 @@ class Recorders:
         n_steps: int | None = None,
         name: str | None = None,
     ) -> "Recorders":
-        """Declare a line-stations recorder (beam section forces)."""
+        """Declare a beam line-station recorder.
+
+        Records section forces / strains at each integration point
+        along beam-column elements. Reads back as a
+        :class:`LineStationSlab` with shape ``(T, sum_S)``.
+
+        **Components — section forces** (in section-local frame):
+
+        - ``axial_force``, ``shear_y``, ``shear_z``, ``torsion``,
+          ``bending_moment_y``, ``bending_moment_z``.
+
+        Note: ``bending_moment_y/z`` (in section-local frame) are
+        intentionally distinct from ``moment_x/y/z`` on :meth:`nodes`
+        (applied nodal moments, in global frame).
+
+        Section deformations (``axial_strain`` / ``curvature_*`` /
+        etc.) live in the vocabulary but are not currently accepted
+        by this declaration path — they're work-conjugate to the
+        forces and emerge on the read side via the
+        ``section_deformation`` MPCO bucket.
+
+        **Shorthand**:
+
+        - ``"section_force"`` → all six forces.
+
+        **Selectors / cadence** — same as :meth:`nodes`.
+
+        Example::
+
+            g.opensees.recorders.line_stations(
+                components=["axial_force", "bending_moment_y"],
+                label="frame",
+            )
+        """
         self._declare(
             "line_stations", components,
             pg=pg, label=label, selection=selection, ids=ids,
@@ -192,7 +305,63 @@ class Recorders:
         n_steps: int | None = None,
         name: str | None = None,
     ) -> "Recorders":
-        """Declare a continuum Gauss-point recorder (stress / strain / …)."""
+        """Declare a continuum Gauss-point recorder.
+
+        Records stress / strain / derived scalars at integration
+        points of continuum elements. Reads back as a
+        :class:`GaussSlab` with shape ``(T, sum_GP)`` plus
+        ``natural_coords (sum_GP, dim)`` for visualisation.
+
+        **Components — stress** (Cauchy, tensor indices):
+
+        - 3D — ``stress_xx``, ``stress_yy``, ``stress_zz``,
+          ``stress_xy``, ``stress_yz``, ``stress_xz``.
+        - 2D plane elements — ``stress_xx``, ``stress_yy``,
+          ``stress_xy`` (three independent components).
+
+        **Components — strain** (small-strain, conjugate to stress):
+
+        - 3D — ``strain_xx``, ``strain_yy``, ``strain_zz``,
+          ``strain_xy``, ``strain_yz``, ``strain_xz``.
+        - 2D plane elements — ``strain_xx``, ``strain_yy``,
+          ``strain_xy``.
+
+        **Components — derived scalars**:
+
+        - ``von_mises_stress``, ``pressure_hydrostatic``,
+          ``principal_stress_1/2/3``, ``equivalent_plastic_strain``.
+
+        **Components — material state**:
+
+        - ``damage`` (single-component models),
+          ``damage_tension`` / ``damage_compression`` (split models).
+        - ``equivalent_plastic_strain_tension`` /
+          ``equivalent_plastic_strain_compression``.
+        - ``state_variable_<n>`` — generic material-state outputs
+          (any non-negative integer ``<n>``).
+
+        Stress and strain components cannot mix in one record (they
+        come from different OpenSees recorder tokens). Split into
+        separate records.
+
+        **Shell stress resultants / generalised strains** — recorded
+        via this method on layered shells (one set per surface GP);
+        see also :meth:`layers` for through-thickness layer values.
+
+        **Shorthands** (clipped to the element's tensor dimension):
+
+        - ``"stress"`` → all six stress components in 3D, three in 2D.
+        - ``"strain"`` → analogous.
+
+        **Selectors / cadence** — same as :meth:`nodes`.
+
+        Example::
+
+            g.opensees.recorders.gauss(
+                components=["stress", "von_mises_stress"],
+                pg="Body",
+            )
+        """
         self._declare(
             "gauss", components,
             pg=pg, label=label, selection=selection, ids=ids,
@@ -212,7 +381,48 @@ class Recorders:
         n_steps: int | None = None,
         name: str | None = None,
     ) -> "Recorders":
-        """Declare a fiber-section recorder (uniaxial along fiber axis)."""
+        """Declare a fiber-section recorder (uniaxial along fiber axis).
+
+        Records per-fiber stress / strain in fiber sections
+        (``FiberSection2d`` / ``FiberSection3d``). Reads back as a
+        :class:`FiberSlab` with shape ``(T, sum_F)`` plus per-fiber
+        ``y / z / area / material_tag`` location metadata.
+
+        **Components** (canonical):
+
+        - ``fiber_stress``, ``fiber_strain`` — uniaxial along the
+          fiber axis (1D constitutive law).
+
+        **Indexed variants** (handled at read-time, not enumerated):
+
+        - ``fiber_stress_<n>`` / ``fiber_strain_<n>`` for shell layered
+          sections that emit a vector per layer (see :meth:`layers`).
+
+        **Material state**:
+
+        - ``damage``, ``equivalent_plastic_strain``, etc. — same
+          vocabulary as :meth:`gauss`. Fiber sections expose these
+          when the fiber's uniaxial material does.
+
+        **Coverage caveat**:
+
+        - Fiber records cannot be emitted via the classic recorder
+          path (``spec.emit_recorders`` / ``export.tcl/py`` text
+          files) — the per-fiber row count would explode the file
+          format. They are supported by :meth:`spec.capture` (in-
+          process) and :meth:`spec.emit_mpco` / MPCO export (which
+          uses ``section.fiber.stress`` natively).
+
+        **Selectors / cadence** — same as :meth:`nodes`; resolve to
+        beam-column element IDs.
+
+        Example::
+
+            g.opensees.recorders.fibers(
+                components=["fiber_stress", "fiber_strain"],
+                pg="RC_Columns",
+            )
+        """
         self._declare(
             "fibers", components,
             pg=pg, label=label, selection=selection, ids=ids,
@@ -232,7 +442,46 @@ class Recorders:
         n_steps: int | None = None,
         name: str | None = None,
     ) -> "Recorders":
-        """Declare a layered-shell layer recorder."""
+        """Declare a layered-shell layer recorder.
+
+        Records per-layer stress / strain through the thickness of
+        layered-shell sections (``LayeredShellFiberSection`` on
+        ``ASDShellQ4`` / ``ShellMITC4`` / ``ShellDKGQ`` / etc.). Reads
+        back as a :class:`LayerSlab` with shape ``(T, sum_L)`` plus
+        per-layer ``thickness`` / ``layer_index`` / ``sub_gp_index``
+        / ``local_axes_quaternion`` metadata.
+
+        **Components** (canonical):
+
+        - ``fiber_stress``, ``fiber_strain`` — when each layer emits
+          one scalar (uniaxial-equivalent layer behaviour).
+        - ``fiber_stress_<n>`` / ``fiber_strain_<n>`` — when each
+          layer emits a vector (e.g. plane-stress + transverse-shear,
+          5 components per layer). Component count is auto-discovered
+          on first probe.
+
+        **Material state** — same vocabulary as :meth:`gauss` /
+        :meth:`fibers` (``damage_tension``, ``damage_compression``,
+        ``state_variable_<n>``, etc.).
+
+        **Coverage caveat**:
+
+        - Same as :meth:`fibers` — not emittable via classic recorder
+          ``.out`` files. Use :meth:`spec.capture` (in-process; needs
+          an OpenSees back-reference for the per-layer thickness +
+          material-tag metadata) or :meth:`spec.emit_mpco` / MPCO
+          export.
+
+        **Selectors / cadence** — same as :meth:`nodes`; resolve to
+        shell element IDs.
+
+        Example::
+
+            g.opensees.recorders.layers(
+                components=["fiber_stress", "fiber_strain"],
+                pg="Slab",
+            )
+        """
         self._declare(
             "layers", components,
             pg=pg, label=label, selection=selection, ids=ids,
@@ -250,8 +499,39 @@ class Recorders:
     ) -> "Recorders":
         """Declare a modal-shape recorder.
 
-        Each requested mode lands as a stage with ``kind="mode"`` in
-        the resulting native HDF5 (per Phase 1 design).
+        Triggers an eigenvalue analysis at execution time. Each
+        requested mode lands as its own stage with ``kind="mode"`` in
+        the resulting file, exposing the eigenvalue, frequency, and
+        period as stage attributes. Read back via ``results.modes``.
+
+        Modal records have **no components or selectors** — they
+        capture all node displacement DOFs of every mode shape.
+
+        Parameters
+        ----------
+        n_modes
+            Number of modes to extract (positive integer).
+        dt, n_steps
+            Cadence — same semantics as the other declaration
+            methods.
+        name
+            Optional record name (auto-generated otherwise).
+
+        **Coverage caveat**:
+
+        - Modal records can only be executed via :meth:`spec.capture`
+          (which calls ``ops.eigen()`` itself) or :meth:`spec.emit_mpco`
+          (which records the ``modesOfVibration`` token natively).
+          The classic recorder path (:meth:`spec.emit_recorders` /
+          ``export.tcl``) **cannot** drive eigenvalue analysis and
+          will raise / skip modal records.
+
+        Example::
+
+            g.opensees.recorders.modal(n_modes=10)
+
+            # ... then with spec.capture(...) as cap: cap.capture_modes(10)
+            # ... or with spec.emit_mpco(...): writes modesOfVibration
         """
         if not isinstance(n_modes, int) or n_modes <= 0:
             raise ValueError(f"n_modes must be a positive int (got {n_modes!r}).")
@@ -266,6 +546,106 @@ class Recorders:
             n_modes=n_modes,
         ))
         return self
+
+    # ------------------------------------------------------------------
+    # Introspection — what's available to declare
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def categories() -> tuple[str, ...]:
+        """Return the recorder categories you can declare.
+
+        These are the seven declaration methods on this class
+        (``nodes``, ``elements``, ``line_stations``, ``gauss``,
+        ``fibers``, ``layers``, ``modal``) and the ``category``
+        values stored on :class:`RecorderRecord`.
+
+        Example::
+
+            >>> Recorders.categories()
+            ('nodes', 'elements', 'line_stations', 'gauss',
+             'fibers', 'layers', 'modal')
+        """
+        return ALL_CATEGORIES
+
+    @staticmethod
+    def components_for(category: str) -> tuple[str, ...]:
+        """Return the canonical component names allowed in ``category``.
+
+        Returns an empty tuple for ``category="modal"`` (modal records
+        have no components — they capture mode shapes wholesale).
+        Indexed variants (``state_variable_<n>``,
+        ``fiber_stress_<n>``, ``spring_force_<n>``) are not enumerated
+        here; pass them directly and :meth:`resolve` will validate.
+
+        Example::
+
+            >>> Recorders.components_for("nodes")[:3]
+            ('displacement_x', 'displacement_y', 'displacement_z')
+            >>> Recorders.components_for("gauss")[:3]
+            ('stress_xx', 'stress_yy', 'stress_zz')
+
+        Raises
+        ------
+        KeyError
+            If ``category`` is not one of :meth:`categories`.
+        """
+        if category == "modal":
+            return ()
+        if category not in _CATEGORY_COMPONENTS:
+            raise KeyError(
+                f"Unknown category {category!r}. Valid categories: "
+                f"{Recorders.categories()}."
+            )
+        return tuple(sorted(_CATEGORY_COMPONENTS[category]))
+
+    @staticmethod
+    def shorthands_for(category: str) -> dict[str, tuple[str, ...]]:
+        """Return shorthand → expansion mapping valid in ``category``.
+
+        Shorthands always expand to the *full* (3D, ndf=6) component
+        set; :meth:`resolve` clips to the active ``ndm``/``ndf``.
+        Returns an empty dict for ``"modal"`` (no shorthands) and for
+        unknown categories.
+
+        Example::
+
+            >>> sh = Recorders.shorthands_for("nodes")
+            >>> sh["displacement"]
+            ('displacement_x', 'displacement_y', 'displacement_z')
+            >>> Recorders.shorthands_for("gauss")["stress"][:3]
+            ('stress_xx', 'stress_yy', 'stress_zz')
+        """
+        from ..results import _vocabulary as _voc
+
+        if category in ("modal",):
+            return {}
+
+        # Build a per-category subset of the vocabulary's shorthand
+        # tables. Shorthands are valid when their expansion is a
+        # subset of the category's allowed canonicals.
+        allowed = _CATEGORY_COMPONENTS.get(category, frozenset())
+        if not allowed:
+            return {}
+
+        out: dict[str, tuple[str, ...]] = {}
+        all_tables = (
+            _voc._SHORTHAND_TRANSLATIONAL,
+            _voc._SHORTHAND_ROTATIONAL,
+            _voc._SHORTHAND_TENSOR,
+            _voc._SHORTHAND_LINE_STATION,
+        )
+        for table in all_tables:
+            for shorthand, expansion in table.items():
+                if all(c in allowed for c in expansion):
+                    out[shorthand] = expansion
+
+        # The "reaction" mega-shorthand expands to forces + moments
+        # together; only valid on nodes.
+        if category == "nodes":
+            out["reaction"] = _voc._SHORTHAND_REACTION
+
+        return out
 
     # ------------------------------------------------------------------
     # Resolution
