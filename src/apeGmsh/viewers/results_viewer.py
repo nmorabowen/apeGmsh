@@ -73,6 +73,9 @@ class ResultsViewer:
         self._details_panel: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
+        # (node_id, component) -> TimeHistoryPanel; user-closable from
+        # the plot-pane tab × button.
+        self._history_panels: dict = {}
 
     # ------------------------------------------------------------------
     # Properties
@@ -213,6 +216,16 @@ class ResultsViewer:
             plotter.interactor,
             self._probe_overlay,
             director,
+        )
+
+        # ── Shift-click → add time-history series (B++ §8) ─────────
+        # Shift+left-click anywhere on the substrate snaps to the
+        # nearest FEM node and opens (or focuses) a time-history tab
+        # in the plot pane. Plain clicks fall through to the existing
+        # picker / navigation handlers.
+        from .overlays.shift_click_picker import ShiftClickPicker
+        self._shift_click_picker = ShiftClickPicker(
+            plotter, self._on_shift_click_world,
         )
 
         # ── Camera / view ──────────────────────────────────────────
@@ -432,6 +445,87 @@ class ResultsViewer:
         from pathlib import Path
         return f"Results — {Path(path).name}"
 
+    # ------------------------------------------------------------------
+    # Shift-click → time-history series
+    # ------------------------------------------------------------------
+
+    def _on_shift_click_world(self, world_pos) -> None:
+        """ShiftClickPicker callback — open a time-history for the picked node.
+
+        Snaps the shift-click world position to the nearest FEM node
+        via the probe overlay, picks a default component (the first
+        active diagram's component, falling back to the first
+        available nodal component), and opens a plot-pane history
+        tab.
+        """
+        if (
+            self._director is None
+            or self._probe_overlay is None
+            or self._plot_pane is None
+        ):
+            return
+        try:
+            node_id, _, _ = self._probe_overlay._snap_to_nearest_node(
+                world_pos,
+            )
+        except Exception:
+            return
+        component = self._default_component_for_history()
+        if component is None:
+            if self._win is not None:
+                self._win.set_status(
+                    "Shift-click: no nodal component available — "
+                    "add a diagram first.",
+                    timeout=4000,
+                )
+            return
+        self._open_time_history(int(node_id), component)
+
+    def _default_component_for_history(self) -> "Optional[str]":
+        """Pick a component for shift-click time-history plots.
+
+        Prefers a component already used by an attached diagram so the
+        plot matches what the user is looking at; otherwise falls back
+        to the first available nodal component for the active stage.
+        """
+        if self._director is None:
+            return None
+        for d in self._director.registry.diagrams():
+            if not d.is_attached:
+                continue
+            return d.spec.selector.component
+        try:
+            scoped = self._director.results.stage(self._director.stage_id)
+            available = sorted(scoped.nodes.available_components())
+        except Exception:
+            return None
+        return available[0] if available else None
+
+    def _open_time_history(self, node_id: int, component: str) -> None:
+        """Open (or focus) a TimeHistoryPanel as a plot-pane tab.
+
+        Reuses an existing tab if one is already open for the same
+        ``(node_id, component)`` so repeated shift-clicks on the same
+        node don't multiply tabs.
+        """
+        if self._director is None or self._plot_pane is None:
+            return
+        key = ("history", int(node_id), str(component))
+        if self._plot_pane.has_tab(key):
+            self._plot_pane.set_active(key)
+            return
+        try:
+            from .ui._time_history import TimeHistoryPanel
+            panel = TimeHistoryPanel(self._director, node_id, component)
+        except Exception as exc:
+            from ._failures import report
+            report("ResultsViewer._open_time_history", exc)
+            return
+        label = f"u(t) · node {node_id} · {component}"
+        self._plot_pane.add_tab(key, label, panel.widget, closable=True)
+        self._history_panels[(int(node_id), str(component))] = panel
+        self._plot_pane.set_active(key)
+
     def _sync_side_panels(self) -> None:
         """Add / remove plot-pane side-panel tabs to match the registry.
 
@@ -478,14 +572,21 @@ class ResultsViewer:
     # ------------------------------------------------------------------
 
     def _on_plot_user_close(self, key) -> None:
-        """User clicked × on a plot-pane tab — only fires for closables.
-
-        Currently only diagram side-panel tabs land here, and those
-        are constructed with ``closable=False`` so this handler is a
-        no-op for now. Kept as a hook for future user-closable tab
-        kinds (e.g. shift-click → time-history plot).
-        """
-        return
+        """User clicked × on a plot-pane tab — only fires for closables."""
+        if self._plot_pane is None or not isinstance(key, tuple):
+            return
+        kind = key[0]
+        if kind == "history":
+            _, node_id, component = key
+            panel = self._history_panels.pop((node_id, component), None)
+            if panel is not None:
+                try:
+                    panel.close()
+                except Exception:
+                    pass
+            self._plot_pane.remove_tab(key)
+        # Diagram side-panel tabs use closable=False; no other kinds
+        # land here today.
 
     def _close_diagram_side_panel(self, diagram, panel) -> None:
         """Tear down a side panel + its plot-pane tab."""
