@@ -114,6 +114,7 @@ from ...solvers._element_response import (
     is_custom_rule_catalogued,
     is_fiber_catalogued,
     is_layer_catalogued,
+    is_line_station_synthesis_catalogued,
     is_nodal_force_catalogued,
     lookup,
     lookup_custom_rule,
@@ -122,6 +123,7 @@ from ...solvers._element_response import (
     lookup_nodal_force,
     normalise_integration_points,
     resolve_layout_from_gp_x,
+    synthesize_line_station_layout_for_elastic_beam,
     unflatten,
     unflatten_nodal,
 )
@@ -494,6 +496,55 @@ class DomainCapture:
             self._current_stage = None
             self._stage_kind = None
 
+        # ── Skip-summary warnings ─────────────────────────────────
+        # Surface any elements the line-stations capturers had to
+        # drop (typically disp-based beams whose IP coords aren't
+        # introspectable from openseespy in OpenSees v3.7.x). Until
+        # this warning lands the user had no signal that their
+        # recorder spec was partially honoured.
+        self._warn_about_skipped_line_station_elements()
+
+    def _warn_about_skipped_line_station_elements(self) -> None:
+        """Emit a single consolidated warning if any line-station
+        captures dropped elements during this stage.
+
+        ``skipped_elements`` is populated once when ``_build_groups``
+        runs on the first ``step()``; group structure persists across
+        stages, so the list is the cumulative skip set for the
+        capturer's lifetime. We do not clear it here — tests inspect
+        it post-``end_stage()`` to verify which elements were dropped,
+        and clearing would also be wrong for multi-stage captures
+        where the same skips apply every stage.
+        """
+        rows: list[tuple[int, str]] = []
+        for lc in self._line_station_capturers:
+            rows.extend(lc.skipped_elements)
+        if not rows:
+            return
+        # Group by the dominant reason text so the message is short.
+        by_reason: dict[str, list[int]] = {}
+        for eid, reason in rows:
+            by_reason.setdefault(reason, []).append(eid)
+        n_total = len(rows)
+        lines = [
+            f"DomainCapture dropped {n_total} element(s) from line-"
+            f"stations recording in this stage.",
+            "If you expected line-force diagrams for these elements:",
+            "  • disp-based beams: ops.eleResponse(integrationPoints) "
+            "is unavailable in OpenSees v3.7.x — record via MPCO "
+            "instead, or rebuild as ForceBeamColumn.",
+            "  • elastic beams: should be auto-synthesised from "
+            "localForce; if you see them here it's a regression.",
+            "Skipped breakdown:",
+        ]
+        for reason, ids in by_reason.items():
+            sample = ", ".join(str(e) for e in ids[:5])
+            more = (
+                f", ... ({len(ids) - 5} more)" if len(ids) > 5 else ""
+            )
+            lines.append(f"  [{len(ids)}] {reason} — eids: {sample}{more}")
+        warnings.warn("\n".join(lines), stacklevel=3)
+
     def _flush_gauss(self, stage_id: str) -> None:
         """Write each gauss capturer's per-class buffers to disk."""
         for gc in self._gauss_capturers:
@@ -859,11 +910,27 @@ class _GaussCapturer:
 
 @dataclass
 class _LineStationGroup:
-    """Per-(class_name, gp_x signature, section_codes) buffer."""
+    """Per-(class_name, gp_x signature, section_codes) buffer.
+
+    ``mode`` selects the per-step recording strategy:
+
+    * ``"section_force"`` (default) — call
+      ``ops.eleResponse(eid, "section", str(i), "force")`` for each
+      integration point ``i = 1..n_IP``. Used for force-based and
+      disp-based fiber-section beam-columns.
+    * ``"local_force_synthesis"`` — call
+      ``ops.eleResponse(eid, "localForce")`` once per step and
+      synthesise a 2-station slab at ξ ∈ {-1, +1} from the end-node
+      force vector. Used for closed-form elastic beams that have no
+      integration points but still expose a meaningful internal
+      force diagram (constant axial / shear, linear moment between
+      end values).
+    """
     layout: ResponseLayout
     gp_x: ndarray
     element_ids: list[int] = field(default_factory=list)
     steps: list[ndarray] = field(default_factory=list)
+    mode: str = "section_force"
 
 
 class _LineStationCapturer:
@@ -898,8 +965,14 @@ class _LineStationCapturer:
 
     def _probe_element(
         self, eid: int, ops: Any,
-    ) -> Optional[tuple[ResponseLayout, ndarray, tuple[int, ...]]]:
-        """Discover layout + gp_x for one element. ``None`` ⇒ skip."""
+    ) -> Optional[tuple[ResponseLayout, ndarray, tuple[int, ...], str]]:
+        """Discover layout + gp_x for one element.
+
+        Returns ``(layout, gp_x, section_codes, mode)`` where ``mode``
+        is ``"section_force"`` for force-/disp-based beams and
+        ``"local_force_synthesis"`` for closed-form elastic beams.
+        Returns ``None`` for elements outside both catalogs.
+        """
         try:
             class_name = ops.eleType(eid)
         except Exception as exc:
@@ -907,15 +980,30 @@ class _LineStationCapturer:
                 (eid, f"ops.eleType failed: {exc}"),
             )
             return None
-        if not is_custom_rule_catalogued(class_name, "section_force"):
-            self.skipped_elements.append((
-                eid,
-                f"class {class_name!r} not in CUSTOM_RULE_CATALOG",
-            ))
-            return None
 
+        # ── Path A: catalogued section.force probe (force-/disp-based) ──
+        if is_custom_rule_catalogued(class_name, "section_force"):
+            return self._probe_section_force(eid, ops, class_name)
+
+        # ── Path B: elastic-beam localForce synthesis (no IPs) ──────
+        if is_line_station_synthesis_catalogued(class_name):
+            return self._probe_local_force_synthesis(eid, ops, class_name)
+
+        self.skipped_elements.append((
+            eid,
+            f"class {class_name!r} has no line-stations capture path "
+            f"(not in CUSTOM_RULE_CATALOG for section.force, and not "
+            f"an elastic beam in NODAL_FORCE_CATALOG)",
+        ))
+        return None
+
+    def _probe_section_force(
+        self, eid: int, ops: Any, class_name: str,
+    ) -> Optional[tuple[ResponseLayout, ndarray, tuple[int, ...], str]]:
+        """Force-/disp-based path: section.force per integration point."""
         # Tier 1: integrationPoints. Disp-based beams raise / return
-        # empty here — we silently skip them.
+        # empty here in OpenSees v3.7.x — those elements end up in
+        # skipped_elements.
         try:
             xi_phys_raw = ops.eleResponse(eid, "integrationPoints")
         except Exception as exc:
@@ -972,7 +1060,56 @@ class _LineStationCapturer:
 
         custom = lookup_custom_rule(class_name, "section_force")
         layout = resolve_layout_from_gp_x(custom, xi_natural, section_codes)
-        return layout, xi_natural, section_codes
+        return layout, xi_natural, section_codes, "section_force"
+
+    def _probe_local_force_synthesis(
+        self, eid: int, ops: Any, class_name: str,
+    ) -> Optional[tuple[ResponseLayout, ndarray, tuple[int, ...], str]]:
+        """Elastic-beam path: synthesise a 2-station slab from localForce.
+
+        Closed-form elastic beams have no integration points; we read
+        the full end-node resisting-force vector once per step and
+        produce a 2-station slab at ξ ∈ {-1, +1}. Sign convention is
+        applied at capture time (see :meth:`step`) so the resulting
+        slab matches the section-force convention used by force-based
+        beams — adjacent elements line up at shared nodes.
+        """
+        layout = synthesize_line_station_layout_for_elastic_beam(class_name)
+        if layout is None:
+            self.skipped_elements.append((
+                eid,
+                f"class {class_name!r} not eligible for line-stations "
+                f"synthesis from localForce",
+            ))
+            return None
+
+        # Verify localForce is actually responsive on this element.
+        try:
+            test = ops.eleResponse(eid, "localForce")
+        except Exception as exc:
+            self.skipped_elements.append((
+                eid,
+                f"ops.eleResponse(localForce) failed: {exc}",
+            ))
+            return None
+        arr = np.asarray(test, dtype=np.float64).flatten()
+        expected = 2 * layout.n_components_per_gp
+        if arr.size != expected:
+            self.skipped_elements.append((
+                eid,
+                f"ops.eleResponse(localForce) returned {arr.size} "
+                f"values; expected {expected} (2 nodes × "
+                f"{layout.n_components_per_gp} dofs).",
+            ))
+            return None
+
+        # Stations sit at ξ ∈ {-1, +1}; section_codes are not used by
+        # the synthesis path but we tag the group with a synthetic
+        # value so the group key stays distinct from any future
+        # section.force entry on the same class.
+        gp_x = np.array([-1.0, 1.0], dtype=np.float64)
+        section_codes: tuple[int, ...] = ()
+        return layout, gp_x, section_codes, "local_force_synthesis"
 
     def _build_groups(self, ops: Any) -> None:
         groups: dict[
@@ -986,13 +1123,15 @@ class _LineStationCapturer:
             probed = self._probe_element(eid, ops)
             if probed is None:
                 continue
-            layout, gp_x, section_codes = probed
+            layout, gp_x, section_codes, mode = probed
             class_name = ops.eleType(eid)
             sig = tuple(np.round(gp_x, self._GP_X_SIGNATURE_DECIMALS).tolist())
             key = (class_name, sig, section_codes)
             grp = groups.get(key)
             if grp is None:
-                grp = _LineStationGroup(layout=layout, gp_x=gp_x)
+                grp = _LineStationGroup(
+                    layout=layout, gp_x=gp_x, mode=mode,
+                )
                 groups[key] = grp
             grp.element_ids.append(eid)
         self._groups = groups
@@ -1003,24 +1142,66 @@ class _LineStationCapturer:
         self._times.append(float(t))
         assert self._groups is not None
         for grp in self._groups.values():
-            n_ip = grp.layout.n_gauss_points
-            n_comp = grp.layout.n_components_per_gp
-            buf: list[ndarray] = []
-            for eid in grp.element_ids:
-                flat = np.empty(n_ip * n_comp, dtype=np.float64)
-                for i in range(1, n_ip + 1):
-                    vec = ops.eleResponse(eid, "section", str(i), "force")
-                    arr = np.asarray(vec, dtype=np.float64).flatten()
-                    if arr.size != n_comp:
-                        raise ValueError(
-                            f"ops.eleResponse({eid}, 'section', {i}, "
-                            f"'force') returned {arr.size} values; "
-                            f"layout for class_tag={grp.layout.class_tag} "
-                            f"expects {n_comp} per IP."
-                        )
-                    flat[(i - 1) * n_comp:i * n_comp] = arr
-                buf.append(flat)
-            grp.steps.append(np.stack(buf, axis=0))    # (E_g, flat_size)
+            if grp.mode == "local_force_synthesis":
+                grp.steps.append(self._step_local_force(grp, ops))
+            else:
+                grp.steps.append(self._step_section_force(grp, ops))
+
+    def _step_section_force(
+        self, grp: _LineStationGroup, ops: Any,
+    ) -> ndarray:
+        """One step's flat array via per-IP ``section.force`` probes."""
+        n_ip = grp.layout.n_gauss_points
+        n_comp = grp.layout.n_components_per_gp
+        buf: list[ndarray] = []
+        for eid in grp.element_ids:
+            flat = np.empty(n_ip * n_comp, dtype=np.float64)
+            for i in range(1, n_ip + 1):
+                vec = ops.eleResponse(eid, "section", str(i), "force")
+                arr = np.asarray(vec, dtype=np.float64).flatten()
+                if arr.size != n_comp:
+                    raise ValueError(
+                        f"ops.eleResponse({eid}, 'section', {i}, "
+                        f"'force') returned {arr.size} values; "
+                        f"layout for class_tag={grp.layout.class_tag} "
+                        f"expects {n_comp} per IP."
+                    )
+                flat[(i - 1) * n_comp:i * n_comp] = arr
+            buf.append(flat)
+        return np.stack(buf, axis=0)    # (E_g, n_ip * n_comp)
+
+    def _step_local_force(
+        self, grp: _LineStationGroup, ops: Any,
+    ) -> ndarray:
+        """One step's flat array synthesised from ``localForce`` end vectors.
+
+        The OpenSees ``localForce`` response is the joint-on-element
+        resisting-force vector laid out per node ``[end_i, end_j]``.
+        Internal section-force convention treats ξ=-1 (end i) as the
+        section just inside node i and ξ=+1 (end j) as the section
+        just inside node j; by Newton's third law the station-2
+        signs flip relative to the joint-on-element value. Mirrors
+        the read-side flip in ``_mpco_local_force_io`` so a slab
+        captured here is component-by-component identical to one
+        synthesised from MPCO's ``localForce`` bucket.
+        """
+        n_per = grp.layout.n_components_per_gp
+        flat_size = 2 * n_per
+        buf: list[ndarray] = []
+        for eid in grp.element_ids:
+            vec = ops.eleResponse(eid, "localForce")
+            arr = np.asarray(vec, dtype=np.float64).flatten()
+            if arr.size != flat_size:
+                raise ValueError(
+                    f"ops.eleResponse({eid}, 'localForce') returned "
+                    f"{arr.size} values; synthesis layout expects "
+                    f"{flat_size} (2 nodes × {n_per})."
+                )
+            flat = np.empty(flat_size, dtype=np.float64)
+            flat[0:n_per] = arr[0:n_per]              # station 1 — keep
+            flat[n_per:flat_size] = -arr[n_per:flat_size]   # station 2 — flip
+            buf.append(flat)
+        return np.stack(buf, axis=0)    # (E_g, 2 * n_per)
 
     def write_to(
         self, writer: Any, stage_id: str, partition_id: str,

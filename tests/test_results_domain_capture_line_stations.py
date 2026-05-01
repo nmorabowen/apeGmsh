@@ -515,3 +515,191 @@ class TestMixedCategories:
             gs = s.elements.gauss.get(component="stress_xx")
             assert gs.values.shape == (1, 1)
             np.testing.assert_array_equal(gs.values[0], [0.0])
+
+
+# =====================================================================
+# Elastic-beam line_stations synthesis (ops.eleResponse(localForce))
+# =====================================================================
+#
+# Closed-form elastic beams have no integration points; the capturer
+# falls back to a 2-station synthesis driven by ``localForce`` end-
+# node force vectors. Exercises the same code path that lets
+# ``example_buckleUP_v2`` (elasticBeamColumn elements) produce a
+# usable line-stations slab.
+
+class TestElasticBeamSynthesis:
+    def _build_ops_3d(
+        self, eid: int, local_force: np.ndarray, L: float = 2.0,
+    ) -> _FakeOpsBeams:
+        """ElasticBeam3d at nodes 1, 2 with a fixed localForce vector."""
+        ops = _FakeOpsBeams()
+        ops.ele_class[eid] = "ElasticBeam3d"
+        ops.ele_nodes[eid] = [1, 2]
+        ops.node_coords[1] = np.array([0.0, 0.0, 0.0])
+        ops.node_coords[2] = np.array([L, 0.0, 0.0])
+        ops.ele_response[(eid, "localForce")] = local_force
+        return ops
+
+    def test_elastic_3d_round_trip(self, tmp_path: Path) -> None:
+        """A constant-force ElasticBeam3d round-trips through capture."""
+        eid = 7
+        # 12-DOF localForce: [Fx_i, Fy_i, Fz_i, Mx_i, My_i, Mz_i,
+        #                     Fx_j, Fy_j, Fz_j, Mx_j, My_j, Mz_j]
+        local_force = np.array([
+            10.0, 20.0, 30.0, 40.0, 50.0, 60.0,
+            70.0, 80.0, 90.0, 100.0, 110.0, 120.0,
+        ])
+        fem = _MockFem([1, 2])
+        ops = self._build_ops_3d(eid, local_force)
+
+        spec = _spec_with(
+            ResolvedRecorderRecord(
+                category="line_stations", name="r",
+                components=(
+                    "axial_force", "shear_y", "shear_z",
+                    "torsion", "bending_moment_y", "bending_moment_z",
+                ),
+                dt=None, n_steps=None,
+                element_ids=np.array([eid]),
+            ),
+            snapshot_id=fem.snapshot_id,
+        )
+
+        path = tmp_path / "elastic.h5"
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
+            cap.begin_stage("g", kind="static")
+            cap.step(t=0.0)
+            cap.end_stage()
+
+        # Slab at 2 stations × 1 element = 2 column rows per component.
+        # Station 1 keeps the localForce sign; station 2 flips.
+        with Results.from_native(path) as r:
+            s = r.stage(r.stages[0].id)
+            for comp, dof_idx in [
+                ("axial_force",       0),  # Fx
+                ("shear_y",           1),  # Fy
+                ("shear_z",           2),  # Fz
+                ("torsion",           3),  # Mx
+                ("bending_moment_y",  4),  # My
+                ("bending_moment_z",  5),  # Mz
+            ]:
+                slab = s.elements.line_stations.get(component=comp)
+                assert slab.values.shape == (1, 2)
+                expected_station_1 = local_force[dof_idx]
+                expected_station_2 = -local_force[6 + dof_idx]
+                np.testing.assert_allclose(
+                    slab.values[0],
+                    [expected_station_1, expected_station_2],
+                    err_msg=f"component {comp!r}",
+                )
+                # Stations sit at ξ ∈ {-1, +1}.
+                np.testing.assert_allclose(
+                    slab.station_natural_coord, [-1.0, 1.0],
+                )
+
+    def test_elastic_2d_round_trip(self, tmp_path: Path) -> None:
+        """ElasticBeam2d uses the 3-DOF-per-node layout."""
+        eid = 11
+        # 6-DOF localForce: [Fx_i, Fy_i, Mz_i, Fx_j, Fy_j, Mz_j]
+        local_force = np.array([10.0, 20.0, 30.0, 40.0, 50.0, 60.0])
+        fem = _MockFem([1, 2])
+        ops = _FakeOpsBeams()
+        ops.ele_class[eid] = "ElasticBeam2d"
+        ops.ele_nodes[eid] = [1, 2]
+        ops.node_coords[1] = np.array([0.0, 0.0, 0.0])
+        ops.node_coords[2] = np.array([2.0, 0.0, 0.0])
+        ops.ele_response[(eid, "localForce")] = local_force
+
+        spec = _spec_with(
+            ResolvedRecorderRecord(
+                category="line_stations", name="r",
+                components=("axial_force", "shear_y", "bending_moment_z"),
+                dt=None, n_steps=None,
+                element_ids=np.array([eid]),
+            ),
+            snapshot_id=fem.snapshot_id,
+        )
+
+        path = tmp_path / "elastic2d.h5"
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
+            cap.begin_stage("g", kind="static")
+            cap.step(t=0.0)
+            cap.end_stage()
+
+        with Results.from_native(path) as r:
+            s = r.stage(r.stages[0].id)
+            for comp, dof_idx in [
+                ("axial_force",       0),
+                ("shear_y",           1),
+                ("bending_moment_z",  2),
+            ]:
+                slab = s.elements.line_stations.get(component=comp)
+                np.testing.assert_allclose(
+                    slab.values[0],
+                    [local_force[dof_idx], -local_force[3 + dof_idx]],
+                    err_msg=f"component {comp!r}",
+                )
+
+    def test_skipped_element_warning_fires(self, tmp_path: Path) -> None:
+        """Disp-beam-style skip emits a UserWarning at end_stage()."""
+        fem = _MockFem([1, 2])
+        ops = _FakeOpsBeams()
+        ops.ele_class[5] = "DispBeamColumn3d"
+        ops.ele_nodes[5] = [1, 2]
+        ops.node_coords[1] = np.array([0.0, 0.0, 0.0])
+        ops.node_coords[2] = np.array([1.0, 0.0, 0.0])
+        ops.no_integration_points.add(5)
+
+        spec = _spec_with(
+            ResolvedRecorderRecord(
+                category="line_stations", name="r",
+                components=("axial_force",),
+                dt=None, n_steps=None,
+                element_ids=np.array([5]),
+            ),
+            snapshot_id=fem.snapshot_id,
+        )
+
+        path = tmp_path / "skip.h5"
+        with pytest.warns(UserWarning, match="DomainCapture dropped"):
+            with DomainCapture(spec, path, fem, ops=ops) as cap:
+                cap.begin_stage("g", kind="static")
+                cap.step(t=0.0)
+                cap.end_stage()
+
+    def test_no_warning_when_nothing_skipped(self, tmp_path: Path) -> None:
+        """Clean force-based recording must not emit the skip warning."""
+        eid = 7
+        fem = _MockFem([1, 2])
+        ops = _FakeOpsBeams()
+        ops.ele_class[eid] = "ForceBeamColumn3d"
+        ops.ele_nodes[eid] = [1, 2]
+        ops.node_coords[1] = np.array([0.0, 0.0, 0.0])
+        ops.node_coords[2] = np.array([2.0, 0.0, 0.0])
+        gp_x = np.array([-1.0, +1.0])
+        ops.ele_response[(eid, "integrationPoints")] = (
+            (gp_x + 1.0) * 0.5 * 2.0
+        )
+        for ip in (1, 2):
+            ops.ele_response[(eid, f"section.{ip}.force")] = np.array(
+                [10.0, 20.0, 30.0, 40.0],
+            )
+
+        spec = _spec_with(
+            ResolvedRecorderRecord(
+                category="line_stations", name="r",
+                components=("axial_force",),
+                dt=None, n_steps=None,
+                element_ids=np.array([eid]),
+            ),
+            snapshot_id=fem.snapshot_id,
+        )
+
+        import warnings
+        path = tmp_path / "clean.h5"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            with DomainCapture(spec, path, fem, ops=ops) as cap:
+                cap.begin_stage("g", kind="static")
+                cap.step(t=0.0)
+                cap.end_stage()

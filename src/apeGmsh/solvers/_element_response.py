@@ -1529,6 +1529,88 @@ def is_nodal_force_catalogued(class_name: str, token: str) -> bool:
 
 
 # ---------------------------------------------------------------------
+# Elastic-beam line-stations synthesis (Phase 11b polish)
+# ---------------------------------------------------------------------
+#
+# Closed-form elastic beams (``ElasticBeam{2d,3d}``,
+# ``ElasticTimoshenkoBeam{2d,3d}``, ``ModElasticBeam2d``) have no
+# integration points so the ``section.force`` probe path used for
+# force-based beams does not apply. They do expose the full end-node
+# resisting-force vector via ``ops.eleResponse(eid, "localForce")``
+# (6 dofs in 2D, 12 dofs in 3D), and a 2-station ``LineStationSlab``
+# at ξ ∈ {-1, +1} can be synthesised from those end forces — the
+# same trick the MPCO ``localForce``-bucket reader does in
+# ``_mpco_local_force_io.py``.
+#
+# The mapping from ``localForce`` per-node DOFs to canonical
+# line-station components is identical to MPCO's:
+#
+#     2D (3 DOFs/node): Fx → axial_force,
+#                       Fy → shear_y,
+#                       Mz → bending_moment_z
+#     3D (6 DOFs/node): Fx → axial_force,
+#                       Fy → shear_y, Fz → shear_z,
+#                       Mx → torsion,
+#                       My → bending_moment_y, Mz → bending_moment_z
+#
+# OpenSees's ``localForce`` returns *joint-on-element* resisting
+# forces. For internal section-force convention (matching what
+# ``section.force`` reports for force-based beams so adjacent
+# elements line up at shared nodes), the consumer multiplies the
+# station-2 (ξ=+1) values by -1 — see ``_LineStationCapturer.step``
+# in :mod:`apeGmsh.results.capture._domain` and the read-side flip
+# in :func:`_mpco_local_force_io.read_local_force_bucket_slab`.
+
+_LINE_STATIONS_2D: tuple[str, ...] = (
+    "axial_force", "shear_y", "bending_moment_z",
+)
+_LINE_STATIONS_3D: tuple[str, ...] = (
+    "axial_force", "shear_y", "shear_z",
+    "torsion", "bending_moment_y", "bending_moment_z",
+)
+
+
+def synthesize_line_station_layout_for_elastic_beam(
+    class_name: str,
+) -> "ResponseLayout | None":
+    """Build a 2-station line-station ``ResponseLayout`` for an elastic beam.
+
+    Looks up the class in :data:`NODAL_FORCE_CATALOG` (with the
+    ``"local_force"`` token) to inherit the correct ``class_tag`` and
+    DOF count, then synthesises a fixed-rule layout with stations at
+    ξ ∈ {-1, +1} and canonical line-station component names.
+
+    Returns ``None`` for classes outside the elastic-beam family —
+    callers fall through to whatever skip behaviour applies. Returning
+    ``None`` rather than raising keeps the helper composable with the
+    capturer's optional fallback path.
+    """
+    nf = NODAL_FORCE_CATALOG.get((class_name, "local_force"))
+    if nf is None:
+        return None
+    n_per = nf.n_components_per_node
+    if n_per == 3:
+        comps = _LINE_STATIONS_2D
+    elif n_per == 6:
+        comps = _LINE_STATIONS_3D
+    else:
+        return None
+    return ResponseLayout(
+        n_gauss_points=2,
+        natural_coords=np.array([[-1.0], [1.0]], dtype=np.float64),
+        coord_system="isoparametric_1d",
+        n_components_per_gp=n_per,
+        component_layout=comps,
+        class_tag=nf.class_tag,
+    )
+
+
+def is_line_station_synthesis_catalogued(class_name: str) -> bool:
+    """True if the class has a localForce → line-stations synthesis path."""
+    return (class_name, "local_force") in NODAL_FORCE_CATALOG
+
+
+# ---------------------------------------------------------------------
 # Fiber / layer catalog access (Phase 11c)
 # ---------------------------------------------------------------------
 
