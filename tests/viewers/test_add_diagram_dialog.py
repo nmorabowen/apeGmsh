@@ -301,3 +301,26 @@ def test_populated_combo_restores_generic_placeholder(qapp, director):
     _set_kind(dlg, "contour")
     placeholder = dlg._component_combo.lineEdit().placeholderText()
     assert "displacement_z" in placeholder
+
+
+# =====================================================================
+# initial_kind — used by the inline 2×4 picker in OutlineTree
+# =====================================================================
+
+def test_initial_kind_preselects_combo(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(
+        director, parent=None, initial_kind="deformed_shape",
+    )
+    entry = dlg._kind_combo.currentData()
+    assert entry.kind_id == "deformed_shape"
+
+
+def test_initial_kind_unknown_falls_back_to_default(qapp, director):
+    """Unknown kind id should leave the first kind selected, not crash."""
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(
+        director, parent=None, initial_kind="totally_made_up",
+    )
+    # First kind in the registered list (Contour).
+    assert dlg._kind_combo.currentIndex() == 0

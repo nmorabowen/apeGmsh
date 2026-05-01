@@ -1006,6 +1006,27 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         margin-top: 2px;
     }}
 
+    /* Inline kind picker (popover under outline header) */
+    QFrame#OutlineKindPicker {{
+        background-color: {p.surface0};
+        border-bottom: 1px solid {p.mantle};
+    }}
+    QToolButton#OutlineKindBtn {{
+        background-color: {p.mantle};
+        border: 1px solid {p.surface0};
+        border-radius: 4px;
+        color: {p.text};
+        font-size: 10px;
+        padding: 4px 6px;
+    }}
+    QToolButton#OutlineKindBtn:hover {{
+        background-color: {p.surface1};
+        border-color: {p.accent};
+    }}
+    QToolButton#OutlineKindBtn:pressed {{
+        background-color: {p.surface2};
+    }}
+
     /* Title-bar utility icons (top-row strip) */
     QToolButton#ResultsTitleIconBtn {{
         background: transparent;

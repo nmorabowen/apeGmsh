@@ -187,7 +187,13 @@ class AddDiagramDialog:
     was added to the registry.
     """
 
-    def __init__(self, director: "ResultsDirector", parent: Any = None) -> None:
+    def __init__(
+        self,
+        director: "ResultsDirector",
+        parent: Any = None,
+        *,
+        initial_kind: Optional[str] = None,
+    ) -> None:
         QtWidgets, QtCore = _qt()
         self._director = director
 
@@ -303,6 +309,16 @@ class AddDiagramDialog:
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
         form.addRow(bb)
+
+        # Pre-select the requested kind (used by the inline 2×4 picker
+        # in OutlineTree which jumps straight from "click kind" to the
+        # configuration dialog).
+        if initial_kind is not None:
+            for i in range(self._kind_combo.count()):
+                entry = self._kind_combo.itemData(i)
+                if entry is not None and entry.kind_id == initial_kind:
+                    self._kind_combo.setCurrentIndex(i)
+                    break
 
         # Initial visibility + component list for the default kind.
         self._update_topology_row_visibility()
