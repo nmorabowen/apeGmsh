@@ -287,6 +287,79 @@ class ResolvedRecorderSpec:
             self, path, fem, ndm=ndm, ndf=ndf, ops=ops,
         )
 
+    # ---------- Live recorder emission ----------
+
+    def emit_recorders(
+        self,
+        output_dir,
+        *,
+        file_format: str = "out",
+        ops=None,
+    ):
+        """Emit classic OpenSees recorders into the running ops domain.
+
+        Returns a :class:`LiveRecorders` context manager that opens
+        and closes recorders around stages you declare with
+        :meth:`LiveRecorders.begin_stage` / :meth:`end_stage`::
+
+            with spec.emit_recorders("out/") as live:
+                live.begin_stage("gravity", kind="static")
+                for _ in range(n_grav):
+                    ops.analyze(1, 1.0)
+                live.end_stage()
+
+                live.begin_stage("dynamic", kind="transient")
+                for _ in range(n_dyn):
+                    ops.analyze(1, dt)
+                live.end_stage()
+
+            grav = Results.from_recorders(
+                spec, "out/", fem=fem, stage_id="gravity",
+            )
+            dyn = Results.from_recorders(
+                spec, "out/", fem=fem, stage_id="dynamic",
+            )
+
+        Each stage's output filenames are prefixed with ``<stage>__``
+        so files don't collide. ``Results.from_recorders(stage_id=...)``
+        loads one stage at a time.
+
+        Categories: nodes / elements / gauss / line_stations are
+        emitted; fibers / layers warn-and-skip (use
+        :meth:`spec.capture` or :meth:`spec.emit_mpco` instead);
+        modal records raise on ``__enter__``.
+        """
+        from ..results.live._recorders import LiveRecorders
+        return LiveRecorders(
+            self, output_dir, file_format=file_format, ops=ops,
+        )
+
+    def emit_mpco(self, path, *, ops=None):
+        """Emit a single in-process MPCO recorder.
+
+        Returns a :class:`LiveMPCO` context manager that issues
+        ``ops.recorder('mpco', path, ...)`` on ``__enter__`` and
+        removes it on ``__exit__`` (which flushes the HDF5 file)::
+
+            with spec.emit_mpco("run.mpco"):
+                for _ in range(n_steps):
+                    ops.analyze(1, dt)
+
+            results = Results.from_mpco("run.mpco")
+
+        Unlike :meth:`emit_recorders`, MPCO writes one file across
+        the entire analysis — there is no per-stage ceremony. All
+        record categories (including fibers / layers / modal) are
+        supported by the MPCO recorder itself.
+
+        Requires an openseespy build with the MPCO recorder compiled
+        in (typically STKO's bundled Python). ``__enter__`` raises
+        :class:`RuntimeError` with a remediation pointer if the
+        recorder is unavailable.
+        """
+        from ..results.live._mpco import LiveMPCO
+        return LiveMPCO(self, path, ops=ops)
+
     # ---------- Tcl / Python emission (Phase 5) ----------
 
     def to_tcl_commands(

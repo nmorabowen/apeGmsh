@@ -117,6 +117,7 @@ nav:
       - FEM Broker: internal_docs/guide_fem_broker.md
       - OpenSees: internal_docs/guide_opensees.md
       - Results: internal_docs/guide_results.md
+      - Obtaining results: internal_docs/guide_obtaining_results.md
       - Architecture overview: internal_docs/architecture.md
   - Architecture:
       - Overview: architecture/apeGmsh_architecture.md
@@ -128,6 +129,7 @@ nav:
       - Loads: architecture/apeGmsh_loads.md
       - Visualization: architecture/apeGmsh_visualization.md
       - Results viewer: architecture/apeGmsh_results_viewer.md
+      - Results — Obtaining: architecture/apeGmsh_results_obtaining.md
       - Aesthetic: architecture/apeGmsh_aesthetic.md
       - Ground truth: architecture/apeGmsh_groundTruth.md
       - Type hinting: architecture/apeGmsh_hinting.md
