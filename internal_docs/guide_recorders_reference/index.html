@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/architecture/">
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/guide_recorders_reference/">
       
       
-        <link rel="prev" href="../guide_recorders_reference/">
+        <link rel="prev" href="../guide_obtaining_results/">
       
       
-        <link rel="next" href="../../examples/">
+        <link rel="next" href="../architecture/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Architecture overview - apeGmsh</title>
+        <title>Recorder reference - apeGmsh</title>
       
     
     
@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#apegmsh-architecture" class="md-skip">
+        <a href="#recorders-what-you-can-declare" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Architecture overview
+              Recorder reference
             
           </span>
         </div>
@@ -1072,8 +1072,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1089,11 +1091,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" checked>
         
           
           <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="0">
@@ -1114,7 +1116,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1185,97 +1187,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../guide_recorders_reference/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Recorder reference
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    
-    
-      
-        
-      
-    
-    
-    
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Reference
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_2_6">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Reference
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
     
   
   
@@ -1295,7 +1206,7 @@
   <span class="md-ellipsis">
     
   
-    Architecture overview
+    Recorder reference
   
 
     
@@ -1313,7 +1224,7 @@
   <span class="md-ellipsis">
     
   
-    Architecture overview
+    Recorder reference
   
 
     
@@ -1339,10 +1250,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-apegmsh-is" class="md-nav__link">
+  <a href="#categories-at-a-glance" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What apeGmsh is
+        Categories at a glance
       
     </span>
   </a>
@@ -1350,10 +1261,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#session-lifecycle" class="md-nav__link">
+  <a href="#selectors-the-same-on-every-method" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Session lifecycle
+        Selectors (the same on every method)
       
     </span>
   </a>
@@ -1361,10 +1272,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-composite-tree" class="md-nav__link">
+  <a href="#cadence-the-same-on-every-method" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The composite tree
+        Cadence (the same on every method)
       
     </span>
   </a>
@@ -1372,22 +1283,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-four-phases" class="md-nav__link">
+  <a href="#recordersnodes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The four phases
+        recorders.nodes(...)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The four phases">
+    <nav class="md-nav" aria-label="recorders.nodes(...)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#phase-1-geometry" class="md-nav__link">
+  <a href="#components" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 1: Geometry
+        Components
       
     </span>
   </a>
@@ -1395,32 +1306,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-2-assembly-naming" class="md-nav__link">
+  <a href="#shorthands" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 2: Assembly &amp; naming
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-pre-mesh-definitions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 3: Pre-mesh definitions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-mesh-fem-extraction" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 4: Mesh + FEM extraction
+        Shorthands
       
     </span>
   </a>
@@ -1433,10 +1322,277 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-fem-data-broker" class="md-nav__link">
+  <a href="#recorderselements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The FEM data broker
+        recorders.elements(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.elements(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shorthands_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shorthands
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recordersline_stations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.line_stations(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.line_stations(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components-section-forces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — section forces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shorthand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shorthand
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recordersgauss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.gauss(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.gauss(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components-stress-cauchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — stress (Cauchy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#components-strain-small-strain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — strain (small-strain)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#components-derived-scalars" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — derived scalars
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#components-material-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — material state
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shorthands_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shorthands
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recordersfibers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.fibers(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.fibers(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage-caveat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage caveat
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recorderslayers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.layers(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.layers(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage-caveat_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage caveat
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recordersmodaln_modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.modal(n_modes)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.modal(n_modes)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#signature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signature
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage-caveat_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage caveat
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation timing
       
     </span>
   </a>
@@ -1444,98 +1600,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-two-tier-naming-system" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The two-tier naming system
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-parts-system" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The Parts system
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-constraintloadmass-pipeline" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The constraint/load/mass pipeline
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-opensees-bridge" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The OpenSees bridge
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-viewer" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The viewer
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-results-system" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The Results system
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#dependency-graph" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dependency graph
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#file-organization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        File organization
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-principles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Design principles
+        See also
       
     </span>
   </a>
@@ -1546,6 +1614,95 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -3843,10 +4000,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-apegmsh-is" class="md-nav__link">
+  <a href="#categories-at-a-glance" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What apeGmsh is
+        Categories at a glance
       
     </span>
   </a>
@@ -3854,10 +4011,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#session-lifecycle" class="md-nav__link">
+  <a href="#selectors-the-same-on-every-method" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Session lifecycle
+        Selectors (the same on every method)
       
     </span>
   </a>
@@ -3865,10 +4022,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-composite-tree" class="md-nav__link">
+  <a href="#cadence-the-same-on-every-method" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The composite tree
+        Cadence (the same on every method)
       
     </span>
   </a>
@@ -3876,22 +4033,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-four-phases" class="md-nav__link">
+  <a href="#recordersnodes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The four phases
+        recorders.nodes(...)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The four phases">
+    <nav class="md-nav" aria-label="recorders.nodes(...)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#phase-1-geometry" class="md-nav__link">
+  <a href="#components" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 1: Geometry
+        Components
       
     </span>
   </a>
@@ -3899,32 +4056,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#phase-2-assembly-naming" class="md-nav__link">
+  <a href="#shorthands" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phase 2: Assembly &amp; naming
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-pre-mesh-definitions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 3: Pre-mesh definitions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-4-mesh-fem-extraction" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 4: Mesh + FEM extraction
+        Shorthands
       
     </span>
   </a>
@@ -3937,10 +4072,277 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-fem-data-broker" class="md-nav__link">
+  <a href="#recorderselements" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The FEM data broker
+        recorders.elements(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.elements(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shorthands_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shorthands
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recordersline_stations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.line_stations(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.line_stations(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components-section-forces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — section forces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shorthand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shorthand
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recordersgauss" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.gauss(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.gauss(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components-stress-cauchy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — stress (Cauchy)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#components-strain-small-strain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — strain (small-strain)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#components-derived-scalars" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — derived scalars
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#components-material-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components — material state
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#shorthands_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shorthands
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recordersfibers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.fibers(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.fibers(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage-caveat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage caveat
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recorderslayers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.layers(...)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.layers(...)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#components_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage-caveat_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage caveat
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recordersmodaln_modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recorders.modal(n_modes)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="recorders.modal(n_modes)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#signature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signature
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage-caveat_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage caveat
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation-timing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation timing
       
     </span>
   </a>
@@ -3948,98 +4350,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-two-tier-naming-system" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The two-tier naming system
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-parts-system" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The Parts system
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-constraintloadmass-pipeline" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The constraint/load/mass pipeline
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-opensees-bridge" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The OpenSees bridge
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-viewer" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The viewer
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-results-system" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The Results system
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#dependency-graph" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Dependency graph
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#file-organization" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        File organization
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-principles" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Design principles
+        See also
       
     </span>
   </a>
@@ -4066,315 +4380,544 @@
   
 
 
-<h1 id="apegmsh-architecture">apeGmsh Architecture<a class="headerlink" href="#apegmsh-architecture" title="Permanent link">&para;</a></h1>
-<h2 id="what-apegmsh-is">What apeGmsh is<a class="headerlink" href="#what-apegmsh-is" title="Permanent link">&para;</a></h2>
-<p>apeGmsh is a Python wrapper around <a href="https://gmsh.info/">Gmsh</a> designed
-for structural FEM workflows. It adds what Gmsh lacks: parts-based
-assembly, a two-tier naming system that survives boolean operations,
-pre-mesh constraint/load/mass definitions that resolve against any
-mesh, and a solver-agnostic FEM data broker.</p>
-<p>The library is organized as a composition of focused sub-modules,
-each owning a narrow responsibility. No inheritance hierarchies, no
-god-classes — just composites attached to a session object.</p>
-<h2 id="session-lifecycle">Session lifecycle<a class="headerlink" href="#session-lifecycle" title="Permanent link">&para;</a></h2>
-<p>Everything starts with a session:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+<h1 id="recorders-what-you-can-declare">Recorders — What You Can Declare<a class="headerlink" href="#recorders-what-you-can-declare" title="Permanent link">&para;</a></h1>
+<p>The recorder vocabulary at a glance: <strong>what categories exist, what
+components each accepts, what shorthands expand to what, and what
+selectors / cadence options apply.</strong></p>
+<blockquote>
+<p><strong>Programmatic discovery.</strong> Everything below is also available at
+runtime through three static methods — call them in a notebook or
+wire them into validation:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.solvers.Recorders</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;bridge&quot;</span><span class="p">)</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># ... geometry, mesh, FEM ...</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">Recorders</span><span class="o">.</span><span class="n">categories</span><span class="p">()</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># (&#39;nodes&#39;, &#39;elements&#39;, &#39;line_stations&#39;, &#39;gauss&#39;,</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="c1">#  &#39;fibers&#39;, &#39;layers&#39;, &#39;modal&#39;)</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">Recorders</span><span class="o">.</span><span class="n">components_for</span><span class="p">(</span><span class="s2">&quot;nodes&quot;</span><span class="p">)[:</span><span class="mi">3</span><span class="p">]</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="c1"># (&#39;acceleration_x&#39;, &#39;acceleration_y&#39;, &#39;acceleration_z&#39;)</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="n">Recorders</span><span class="o">.</span><span class="n">shorthands_for</span><span class="p">(</span><span class="s2">&quot;nodes&quot;</span><span class="p">)[</span><span class="s2">&quot;displacement&quot;</span><span class="p">]</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="c1"># (&#39;displacement_x&#39;, &#39;displacement_y&#39;, &#39;displacement_z&#39;)</span>
 </span></code></pre></div>
-<p>Or as a context manager:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;bridge&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="c1"># ...</span>
+</blockquote>
+<hr />
+<h2 id="categories-at-a-glance">Categories at a glance<a class="headerlink" href="#categories-at-a-glance" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Topology</th>
+<th>Slab returned</th>
+<th>Strategy coverage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>recorders.nodes(...)</code></td>
+<td>per node</td>
+<td><code>NodeSlab</code> <code>(T, N)</code></td>
+<td>All five strategies</td>
+</tr>
+<tr>
+<td><code>recorders.elements(...)</code></td>
+<td>per element-node</td>
+<td><code>ElementSlab</code> <code>(T, E, npe)</code></td>
+<td>All five</td>
+</tr>
+<tr>
+<td><code>recorders.line_stations(...)</code></td>
+<td>per beam IP</td>
+<td><code>LineStationSlab</code> <code>(T, sum_S)</code></td>
+<td>All five</td>
+</tr>
+<tr>
+<td><code>recorders.gauss(...)</code></td>
+<td>per continuum GP</td>
+<td><code>GaussSlab</code> <code>(T, sum_GP)</code></td>
+<td>All five</td>
+</tr>
+<tr>
+<td><code>recorders.fibers(...)</code></td>
+<td>per fiber</td>
+<td><code>FiberSlab</code> <code>(T, sum_F)</code></td>
+<td><code>capture</code> + <code>emit_mpco</code> only</td>
+</tr>
+<tr>
+<td><code>recorders.layers(...)</code></td>
+<td>per shell layer</td>
+<td><code>LayerSlab</code> <code>(T, sum_L)</code></td>
+<td><code>capture</code> + <code>emit_mpco</code> only</td>
+</tr>
+<tr>
+<td><code>recorders.modal(n_modes=N)</code></td>
+<td>per mode</td>
+<td>one stage per mode</td>
+<td><code>capture</code> + <code>emit_mpco</code> only</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>"Strategy coverage" refers to the five execution paths described in
+<a href="../guide_obtaining_results/">Obtaining results</a>. Fibers, layers,
+and modal records aren't expressible as classic OpenSees recorder
+commands cleanly, so the export.tcl/py and live-recorder paths
+can't carry them. Use <code>spec.capture(...)</code> or
+<code>spec.emit_mpco(...)</code> instead.</p>
+</blockquote>
+<hr />
+<h2 id="selectors-the-same-on-every-method">Selectors (the same on every method)<a class="headerlink" href="#selectors-the-same-on-every-method" title="Permanent link">&para;</a></h2>
+<p>Provide <strong>at most one</strong> of these per declaration — they're mutually
+exclusive:</p>
+<table>
+<thead>
+<tr>
+<th>Selector</th>
+<th>What it accepts</th>
+<th>When you'd use it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pg=</code></td>
+<td>physical-group name(s)</td>
+<td>Solver-facing groups (Tier 2) — the most common case</td>
+</tr>
+<tr>
+<td><code>label=</code></td>
+<td>apeGmsh label name(s)</td>
+<td>Geometry-time labels (Tier 1) — survive boolean ops, useful inside Parts</td>
+</tr>
+<tr>
+<td><code>selection=</code></td>
+<td>mesh-selection set name(s)</td>
+<td>Post-mesh sets defined via <code>g.mesh_selection</code></td>
+</tr>
+<tr>
+<td><code>ids=</code></td>
+<td>raw int IDs</td>
+<td>When you've computed IDs yourself; mutex with the named selectors</td>
+</tr>
+</tbody>
+</table>
+<p>Each named selector accepts a single string or an iterable of strings;
+multiple names form a union.</p>
+<h2 id="cadence-the-same-on-every-method">Cadence (the same on every method)<a class="headerlink" href="#cadence-the-same-on-every-method" title="Permanent link">&para;</a></h2>
+<p>Provide <strong>at most one</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dt=0.01</code></td>
+<td>Wall-clock cadence — record every 0.01 time-units</td>
+</tr>
+<tr>
+<td><code>n_steps=10</code></td>
+<td>Step-count cadence — record every 10 analyse-steps</td>
+</tr>
+<tr>
+<td>(neither)</td>
+<td>Every analysis step (default)</td>
+</tr>
+</tbody>
+</table>
+<p>Modal records honour <code>dt=</code> / <code>n_steps=</code> only at the file-format level
+(MPCO writes the modes once per cadence event).</p>
+<hr />
+<h2 id="recordersnodes"><code>recorders.nodes(...)</code><a class="headerlink" href="#recordersnodes" title="Permanent link">&para;</a></h2>
+<p>Per-node values across the analysis.</p>
+<h3 id="components">Components<a class="headerlink" href="#components" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Translational kinematics</td>
+<td><code>displacement_x/y/z</code>, <code>velocity_x/y/z</code>, <code>acceleration_x/y/z</code>, <code>displacement_increment_x/y/z</code></td>
+</tr>
+<tr>
+<td>Rotational kinematics</td>
+<td><code>rotation_x/y/z</code>, <code>angular_velocity_x/y/z</code>, <code>angular_acceleration_x/y/z</code></td>
+</tr>
+<tr>
+<td>Applied forces / moments</td>
+<td><code>force_x/y/z</code>, <code>moment_x/y/z</code></td>
+</tr>
+<tr>
+<td>Reactions</td>
+<td><code>reaction_force_x/y/z</code>, <code>reaction_moment_x/y/z</code></td>
+</tr>
+<tr>
+<td>Scalars</td>
+<td><code>pore_pressure</code>, <code>pore_pressure_rate</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="shorthands">Shorthands<a class="headerlink" href="#shorthands" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Shorthand</th>
+<th>Expands to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"displacement"</code></td>
+<td><code>displacement_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"velocity"</code></td>
+<td><code>velocity_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"acceleration"</code></td>
+<td><code>acceleration_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"displacement_increment"</code></td>
+<td><code>displacement_increment_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"rotation"</code></td>
+<td><code>rotation_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"angular_velocity"</code></td>
+<td><code>angular_velocity_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"angular_acceleration"</code></td>
+<td><code>angular_acceleration_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"force"</code></td>
+<td><code>force_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"moment"</code></td>
+<td><code>moment_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"reaction_force"</code></td>
+<td><code>reaction_force_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"reaction_moment"</code></td>
+<td><code>reaction_moment_x</code>, <code>_y</code>, <code>_z</code></td>
+</tr>
+<tr>
+<td><code>"reaction"</code></td>
+<td>both forces and moments above (six names)</td>
+</tr>
+</tbody>
+</table>
+<p>Shorthand expansions are clipped to the active <code>ndm</code> / <code>ndf</code> at
+<code>resolve()</code> time (a 2D model omits <code>_z</code>; an <code>ndf=3</code> model omits
+rotations).</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;displacement&quot;</span><span class="p">,</span> <span class="s2">&quot;reaction_force&quot;</span><span class="p">],</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">dt</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">)</span>
 </span></code></pre></div>
-<p><code>begin()</code> calls <code>gmsh.initialize()</code> + <code>gmsh.model.add()</code> and wires
-all composites. <code>end()</code> calls <code>gmsh.finalize()</code>. Gmsh has process-wide
-state — only one session can be active at a time.</p>
-<p><strong>Exception:</strong> <code>Part</code> objects manage their own isolated Gmsh session.
-They <code>begin()/end()</code> independently and persist geometry to a STEP
-tempfile. The assembly session imports the STEP file — the two
-sessions never overlap.</p>
-<h2 id="the-composite-tree">The composite tree<a class="headerlink" href="#the-composite-tree" title="Permanent link">&para;</a></h2>
-<p>After <code>g.begin()</code>, the session object <code>g</code> has 17 composites:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>g
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  |-- .model              Geometry creation, booleans, transforms, I/O, queries
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  |     |-- .geometry     Primitives (box, cylinder, sphere, curves, surfaces)
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  |     |-- .boolean      fuse, cut, intersect, fragment
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  |     |-- .transforms   translate, rotate, scale, mirror, extrude, revolve
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  |     |-- .io           STEP/IGES/DXF/MSH load and save, healing
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>  |     |-- .queries      bbox, COM, mass, boundary, adjacency, registry
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>  |     +-- .selection    Spatial queries (points in box, surfaces on plane)
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>  |
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>  |-- .labels             Internal naming (Tier 1) — survives boolean ops
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>  |-- .physical           Solver-facing physical groups (Tier 2)
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>  |-- .parts              Part registry — import, fragment, fuse, node/face maps
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>  |-- .sections           Parametric section builders (W-beams, rectangles, shells)
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>  |
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>  |-- .constraints        Pre-mesh constraint definitions (12 types)
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>  |-- .loads              Pre-mesh load definitions (7 types, pattern grouping)
-</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>  |-- .masses             Pre-mesh mass definitions (4 types)
-</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>  |
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>  |-- .mesh               Meshing pipeline
-</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>  |     |-- .generation   generate, set_order, refine, optimize, algorithms
-</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>  |     |-- .sizing       Global/per-entity size, callbacks, by-physical
-</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>  |     |-- .field        Distance, Threshold, Box, BoundaryLayer, MathEval
-</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>  |     |-- .structured   Transfinite curves/surfaces/volumes, recombine
-</span><span id="__span-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>  |     |-- .editing      Embed, periodic, STL import, node relocation
-</span><span id="__span-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>  |     |-- .queries      get_nodes, get_elements, get_fem_data, quality
-</span><span id="__span-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>  |     +-- .partitioning partition, renumber (RCM, Hilbert)
-</span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>  |
-</span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>  |-- .loader             MshLoader — standalone .msh file import
-</span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>  |-- .mesh_selection     Post-mesh named selections (nodes, elements, spatial)
-</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>  |-- .partition          Domain decomposition for parallel solvers
-</span><span id="__span-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>  |-- .view               Gmsh view data (post-processing fields)
-</span><span id="__span-2-32"><a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>  |
-</span><span id="__span-2-33"><a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>  |-- .opensees           OpenSees solver bridge
-</span><span id="__span-2-34"><a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a>  |     |-- .materials    Material registry (ND, UniAxial, Section)
-</span><span id="__span-2-35"><a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>  |     |-- .elements     Element assignment + geometric transforms
-</span><span id="__span-2-36"><a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a>  |     |-- .ingest       Load/mass/constraint injection from FEMData
-</span><span id="__span-2-37"><a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a>  |     |-- .inspect      Post-build tables and summaries
-</span><span id="__span-2-38"><a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a>  |     +-- .export       TCL/Python script emission
-</span><span id="__span-2-39"><a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a>  |
-</span><span id="__span-2-40"><a id="__codelineno-2-40" name="__codelineno-2-40" href="#__codelineno-2-40"></a>  |-- .inspect            Geometry/mesh summary (DataFrames)
-</span><span id="__span-2-41"><a id="__codelineno-2-41" name="__codelineno-2-41" href="#__codelineno-2-41"></a>  +-- .plot               Matplotlib plotting (optional)
+<hr />
+<h2 id="recorderselements"><code>recorders.elements(...)</code><a class="headerlink" href="#recorderselements" title="Permanent link">&para;</a></h2>
+<p>Per-element-node force vectors — the resisting force at each node of
+each element.</p>
+<h3 id="components_1">Components<a class="headerlink" href="#components_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Frame</th>
+<th>Names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Global</td>
+<td><code>nodal_resisting_force_x/y/z</code>, <code>nodal_resisting_moment_x/y/z</code></td>
+</tr>
+<tr>
+<td>Local</td>
+<td><code>nodal_resisting_force_local_x/y/z</code>, <code>nodal_resisting_moment_local_x/y/z</code></td>
+</tr>
+</tbody>
+</table>
+<p>Components from different frames cannot mix in one record — split
+into separate records (one for global, one for local).</p>
+<h3 id="shorthands_1">Shorthands<a class="headerlink" href="#shorthands_1" title="Permanent link">&para;</a></h3>
+<p>This category currently has no shorthands; pass canonical names.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">elements</span><span class="p">(</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;nodal_resisting_force_x&quot;</span><span class="p">],</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Frame&quot;</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">)</span>
 </span></code></pre></div>
-<h2 id="the-four-phases">The four phases<a class="headerlink" href="#the-four-phases" title="Permanent link">&para;</a></h2>
-<p>Every apeGmsh workflow follows four phases:</p>
-<h3 id="phase-1-geometry">Phase 1: Geometry<a class="headerlink" href="#phase-1-geometry" title="Permanent link">&para;</a></h3>
-<p>Build or import geometry. Use primitives (<code>add_box</code>, <code>add_cylinder</code>),
-CAD import (<code>load_step</code>), or parametric sections (<code>g.sections.W_solid</code>).
-Apply transforms (<code>translate</code>, <code>rotate</code>, <code>extrude</code>).</p>
-<p>Key concept: <strong>entities</strong> are identified by <code>(dim, tag)</code> pairs.
-<code>dim=0</code> is a point, <code>dim=1</code> a curve, <code>dim=2</code> a surface, <code>dim=3</code> a
-volume. Tags are integers assigned by Gmsh.</p>
-<h3 id="phase-2-assembly-naming">Phase 2: Assembly &amp; naming<a class="headerlink" href="#phase-2-assembly-naming" title="Permanent link">&para;</a></h3>
-<p>If you have multiple parts, use <code>g.parts</code> to register them and
-<code>g.parts.fragment_all()</code> to make the geometry conformal (shared
-faces at interfaces).</p>
-<p>Name things with two tiers:
-- <strong>Labels</strong> (Tier 1): <code>g.labels.add(dim, tags, "shaft")</code> — internal
-  bookkeeping. Survive boolean operations via snapshot/remap. Not
-  visible to solvers.
-- <strong>Physical groups</strong> (Tier 2): <code>g.physical.add_volume(tags, "Body")</code> —
-  solver-facing declarations. What the solver sees.</p>
-<p>Labels are the workhorse. Physical groups are for solver communication.</p>
-<h3 id="phase-3-pre-mesh-definitions">Phase 3: Pre-mesh definitions<a class="headerlink" href="#phase-3-pre-mesh-definitions" title="Permanent link">&para;</a></h3>
-<p>Define constraints, loads, and masses against names — not against
-mesh nodes (which don't exist yet):</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span><span class="s2">&quot;slab&quot;</span><span class="p">,</span> <span class="s2">&quot;column_top&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Gravity&quot;</span><span class="p">):</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">volume</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
+<hr />
+<h2 id="recordersline_stations"><code>recorders.line_stations(...)</code><a class="headerlink" href="#recordersline_stations" title="Permanent link">&para;</a></h2>
+<p>Section forces at integration points along beam-column elements.</p>
+<h3 id="components-section-forces">Components — section forces<a class="headerlink" href="#components-section-forces" title="Permanent link">&para;</a></h3>
+<p>In the section's local frame:</p>
+<p><code>axial_force</code>, <code>shear_y</code>, <code>shear_z</code>, <code>torsion</code>, <code>bending_moment_y</code>,
+<code>bending_moment_z</code>.</p>
+<p><code>bending_moment_y/z</code> (line-station, local frame) are intentionally
+distinct from <code>moment_x/y/z</code> on <code>nodes</code> (applied nodal moment, global
+frame) — same physical units, different topology + frame.</p>
+<h3 id="shorthand">Shorthand<a class="headerlink" href="#shorthand" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Shorthand</th>
+<th>Expands to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"section_force"</code></td>
+<td>all six force / moment components above</td>
+</tr>
+</tbody>
+</table>
+<p>Section deformations (<code>axial_strain</code>, <code>curvature_y/z</code>, etc.) live in
+the read-side vocabulary but are not currently accepted by this
+declaration path. They emerge through MPCO's <code>section.deformation</code>
+bucket on the read side.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">line_stations</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;axial_force&quot;</span><span class="p">,</span> <span class="s2">&quot;bending_moment_y&quot;</span><span class="p">],</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">label</span><span class="o">=</span><span class="s2">&quot;frame&quot;</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">)</span>
 </span></code></pre></div>
-<p>These are stored as lightweight definition objects. No mesh math yet.</p>
-<h3 id="phase-4-mesh-fem-extraction">Phase 4: Mesh + FEM extraction<a class="headerlink" href="#phase-4-mesh-fem-extraction" title="Permanent link">&para;</a></h3>
-<p>Generate the mesh, then extract the FEM data broker:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<hr />
+<h2 id="recordersgauss"><code>recorders.gauss(...)</code><a class="headerlink" href="#recordersgauss" title="Permanent link">&para;</a></h2>
+<p>Stress / strain / derived scalars at integration points of continuum
+elements.</p>
+<h3 id="components-stress-cauchy">Components — stress (Cauchy)<a class="headerlink" href="#components-stress-cauchy" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Element type</th>
+<th>Names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3D continuum</td>
+<td><code>stress_xx/yy/zz</code>, <code>stress_xy/yz/xz</code></td>
+</tr>
+<tr>
+<td>2D plane</td>
+<td><code>stress_xx</code>, <code>stress_yy</code>, <code>stress_xy</code> (three independent)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="components-strain-small-strain">Components — strain (small-strain)<a class="headerlink" href="#components-strain-small-strain" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Element type</th>
+<th>Names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>3D continuum</td>
+<td><code>strain_xx/yy/zz</code>, <code>strain_xy/yz/xz</code></td>
+</tr>
+<tr>
+<td>2D plane</td>
+<td><code>strain_xx</code>, <code>strain_yy</code>, <code>strain_xy</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="components-derived-scalars">Components — derived scalars<a class="headerlink" href="#components-derived-scalars" title="Permanent link">&para;</a></h3>
+<p><code>von_mises_stress</code>, <code>pressure_hydrostatic</code>, <code>principal_stress_1/2/3</code>,
+<code>equivalent_plastic_strain</code>.</p>
+<h3 id="components-material-state">Components — material state<a class="headerlink" href="#components-material-state" title="Permanent link">&para;</a></h3>
+<p><code>damage</code> (single-component), <code>damage_tension</code>, <code>damage_compression</code>
+(split-tension/compression damage models).
+<code>equivalent_plastic_strain_tension</code>,
+<code>equivalent_plastic_strain_compression</code>.
+<code>state_variable_&lt;n&gt;</code> for any non-negative integer <code>&lt;n&gt;</code> — generic
+material-state outputs.</p>
+<h3 id="shorthands_2">Shorthands<a class="headerlink" href="#shorthands_2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Shorthand</th>
+<th>Expands to</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"stress"</code></td>
+<td>six tensor components in 3D, three in 2D</td>
+</tr>
+<tr>
+<td><code>"strain"</code></td>
+<td>analogous</td>
+</tr>
+</tbody>
+</table>
+<p>Stress and strain components cannot mix in one record (they come
+from different OpenSees recorder tokens). Split into two records.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">gauss</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;stress&quot;</span><span class="p">,</span> <span class="s2">&quot;von_mises_stress&quot;</span><span class="p">],</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">)</span>
 </span></code></pre></div>
-<p><code>get_fem_data()</code> resolves all pre-mesh definitions against the
-actual mesh. Constraints become node-pair records. Loads become
-per-node force vectors. Masses become per-node mass tuples. Everything
-is frozen into <code>FEMData</code> — a self-contained broker that needs no live
-Gmsh session.</p>
-<h2 id="the-fem-data-broker">The FEM data broker<a class="headerlink" href="#the-fem-data-broker" title="Permanent link">&para;</a></h2>
-<p><code>FEMData</code> is the bridge between mesher and solver:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>fem
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  |-- .nodes              NodeComposite
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  |     |-- .ids          All node IDs (ndarray)
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  |     |-- .coords       All coordinates (ndarray)
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  |     |-- .get(pg=, label=)  Selection API → NodeResult (iter yields (id, xyz) pairs)
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  |     |-- .constraints  Node-pair constraints (equal_dof, rigid, etc.)
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>  |     |-- .loads        Nodal loads (point forces, face-concentrated)
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>  |     |-- .sp           SP records (face-prescribed displacements / fix)
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>  |     +-- .masses       Lumped nodal masses
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>  |
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>  |-- .elements           ElementComposite
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>  |     |-- .ids          All element IDs
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>  |     |-- .connectivity All connectivity
-</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>  |     |-- .get(pg=, label=)  Selection API → ElementResult(ids, conn)
-</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>  |     |-- .constraints  Surface constraints (tie, mortar, etc.)
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>  |     +-- .loads        Element loads (pressure, body force)
-</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>  |
-</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>  |-- .info               MeshInfo (n_nodes, n_elems, bandwidth)
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>  +-- .inspect            Summaries, tables, source tracing
+<hr />
+<h2 id="recordersfibers"><code>recorders.fibers(...)</code><a class="headerlink" href="#recordersfibers" title="Permanent link">&para;</a></h2>
+<p>Per-fiber stress / strain in fiber-section beam-columns
+(<code>FiberSection2d</code> / <code>FiberSection3d</code>).</p>
+<h3 id="components_2">Components<a class="headerlink" href="#components_2" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fiber</td>
+<td><code>fiber_stress</code>, <code>fiber_strain</code> (uniaxial along fiber axis)</td>
+</tr>
+<tr>
+<td>Material state</td>
+<td><code>damage</code>, <code>equivalent_plastic_strain</code>, <code>state_variable_&lt;n&gt;</code>, etc.</td>
+</tr>
+</tbody>
+</table>
+<p>Indexed variants (<code>fiber_stress_&lt;n&gt;</code> / <code>fiber_strain_&lt;n&gt;</code>) are
+handled at read-time for shell layered sections that emit a vector
+per layer. They aren't enumerated here; pass them directly.</p>
+<h3 id="coverage-caveat">Coverage caveat<a class="headerlink" href="#coverage-caveat" title="Permanent link">&para;</a></h3>
+<p><strong>Not emittable via the classic recorder path</strong> (<code>emit_recorders</code>,
+<code>export.tcl</code>, <code>export.py</code>) — the per-fiber row count would explode
+the <code>.out</code> file format. Use <code>spec.capture(...)</code> or
+<code>spec.emit_mpco(...)</code> instead.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">fibers</span><span class="p">(</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;fiber_stress&quot;</span><span class="p">,</span> <span class="s2">&quot;fiber_strain&quot;</span><span class="p">],</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;RC_Columns&quot;</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">)</span>
 </span></code></pre></div>
-<p>Construction: <code>FEMData.from_gmsh(dim=3, session=g)</code> or
-<code>FEMData.from_msh("file.msh", dim=2)</code>.</p>
-<h2 id="the-two-tier-naming-system">The two-tier naming system<a class="headerlink" href="#the-two-tier-naming-system" title="Permanent link">&para;</a></h2>
-<p>This is the hardest concept in apeGmsh and the one that makes
-multi-part assembly work.</p>
-<p><strong>Problem:</strong> Gmsh physical groups are fragile. When you run a boolean
-operation (fragment, fuse, cut), entity tags change. Physical groups
-that referenced old tags become stale.</p>
-<p><strong>Solution:</strong> Labels (Tier 1) are stored as internal physical groups
-with a <code>_label:</code> prefix. Before every boolean operation, apeGmsh
-snapshots all label PGs. After the operation, it remaps them to the
-new entity tags via the result map. This is invisible to the user.</p>
-<p>Physical groups (Tier 2) are the explicit, solver-facing names that
-the user creates. They are also preserved through boolean ops via the
-same snapshot/remap mechanism.</p>
-<p>The user sees:
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">entities</span><span class="p">(</span><span class="s2">&quot;shaft&quot;</span><span class="p">)</span>          <span class="c1"># Tier 1: always works</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_volume</span><span class="p">(</span><span class="n">tags</span><span class="p">,</span> <span class="s2">&quot;Body&quot;</span><span class="p">)</span> <span class="c1"># Tier 2: solver sees this</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">promote_to_physical</span><span class="p">(</span><span class="s2">&quot;shaft&quot;</span><span class="p">)</span>  <span class="c1"># promote Tier 1 → Tier 2</span>
-</span></code></pre></div></p>
-<h2 id="the-parts-system">The Parts system<a class="headerlink" href="#the-parts-system" title="Permanent link">&para;</a></h2>
-<p>Parts solve the reuse problem: define geometry once, instantiate many
-times with different transforms.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Define once</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">col</span> <span class="o">=</span> <span class="n">Part</span><span class="p">(</span><span class="s2">&quot;column&quot;</span><span class="p">)</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">with</span> <span class="n">col</span><span class="p">:</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">col</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;shaft&quot;</span><span class="p">)</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="c1"># Instantiate many times</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">col</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;col_A&quot;</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">col</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;col_B&quot;</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
-</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">col</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;col_C&quot;</span><span class="p">,</span> <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
-</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>
-</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="c1"># Fragment to make conformal</span>
-</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">fragment_all</span><span class="p">()</span>
+<hr />
+<h2 id="recorderslayers"><code>recorders.layers(...)</code><a class="headerlink" href="#recorderslayers" title="Permanent link">&para;</a></h2>
+<p>Per-layer stress / strain through the thickness of layered shells
+(<code>LayeredShellFiberSection</code> on <code>ASDShellQ4</code> / <code>ShellMITC4</code> /
+<code>ShellDKGQ</code> / etc.).</p>
+<h3 id="components_3">Components<a class="headerlink" href="#components_3" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Group</th>
+<th>Names</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Layer (scalar)</td>
+<td><code>fiber_stress</code>, <code>fiber_strain</code></td>
+</tr>
+<tr>
+<td>Layer (vector)</td>
+<td><code>fiber_stress_&lt;n&gt;</code>, <code>fiber_strain_&lt;n&gt;</code> (component count auto-discovered on first probe)</td>
+</tr>
+<tr>
+<td>Material state</td>
+<td><code>damage_tension</code>, <code>damage_compression</code>, <code>state_variable_&lt;n&gt;</code>, etc.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="coverage-caveat_1">Coverage caveat<a class="headerlink" href="#coverage-caveat_1" title="Permanent link">&para;</a></h3>
+<p>Same as <code>fibers</code> — not emittable via classic recorders. Use
+<code>spec.capture(...)</code> (needs an OpenSees back-reference for per-layer
+thickness + material-tag metadata) or <code>spec.emit_mpco(...)</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">layers</span><span class="p">(</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;fiber_stress&quot;</span><span class="p">,</span> <span class="s2">&quot;fiber_strain&quot;</span><span class="p">],</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Slab&quot;</span><span class="p">,</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">)</span>
 </span></code></pre></div>
-<p>Behind the scenes:
-1. <code>Part.end()</code> auto-persists to a STEP tempfile + sidecar JSON
-2. <code>g.parts.add()</code> imports the STEP into the assembly session
-3. Labels are rebound to the imported entities via COM matching
-4. Each instance gets prefixed labels: <code>col_A.shaft</code>, <code>col_B.shaft</code>
-5. <code>fragment_all()</code> preserves all labels through OCC fragmentation</p>
-<h2 id="the-constraintloadmass-pipeline">The constraint/load/mass pipeline<a class="headerlink" href="#the-constraintloadmass-pipeline" title="Permanent link">&para;</a></h2>
-<p>All three follow the same two-stage pattern:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>Stage 1 (pre-mesh):     g.constraints.equal_dof(&quot;slab&quot;, &quot;column&quot;, ...)
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>                         → stores a lightweight ConstraintDef
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>Stage 2 (post-mesh):     fem = g.mesh.queries.get_fem_data(dim=3)
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>                         → ConstraintResolver resolves defs against mesh
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>                         → NodePairRecord objects land in fem.nodes.constraints
+<hr />
+<h2 id="recordersmodaln_modes"><code>recorders.modal(n_modes)</code><a class="headerlink" href="#recordersmodaln_modes" title="Permanent link">&para;</a></h2>
+<p>Eigenvalue analysis. Each requested mode lands as its own stage with
+<code>kind="mode"</code> in the resulting file, exposing <code>eigenvalue</code>,
+<code>frequency_hz</code>, <code>period_s</code> as stage attributes.</p>
+<h3 id="signature">Signature<a class="headerlink" href="#signature" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">modal</span><span class="p">(</span><span class="n">n_modes</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </span></code></pre></div>
-<p>The resolver needs:
-- Node IDs and coordinates (from the mesh)
-- Element IDs and connectivity (for face-based constraints)
-- Node/face maps (from PartsRegistry, for part-label resolution)</p>
-<p>The resolved records are <strong>solver-agnostic</strong>. OpenSees, Abaqus,
-Code_Aster — any adapter can consume them. The adapter is a thin
-translation layer, not a computational layer.</p>
-<h2 id="the-opensees-bridge">The OpenSees bridge<a class="headerlink" href="#the-opensees-bridge" title="Permanent link">&para;</a></h2>
-<p>The OpenSees bridge is the reference solver adapter:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">set_model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">materials</span><span class="o">.</span><span class="n">add_nd_material</span><span class="p">(</span><span class="s2">&quot;Concrete&quot;</span><span class="p">,</span> <span class="s2">&quot;ElasticIsotropic&quot;</span><span class="p">,</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>                                      <span class="n">E</span><span class="o">=</span><span class="mf">30e9</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">rho</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="s2">&quot;FourNodeTetrahedron&quot;</span><span class="p">,</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>                            <span class="n">material</span><span class="o">=</span><span class="s2">&quot;Concrete&quot;</span><span class="p">)</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>
-</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>
-</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;model.py&quot;</span><span class="p">)</span>
+<p>Modal records have <strong>no <code>components=</code> and no selectors</strong> — they
+capture all node displacement DOFs of every mode shape.</p>
+<h3 id="coverage-caveat_2">Coverage caveat<a class="headerlink" href="#coverage-caveat_2" title="Permanent link">&para;</a></h3>
+<p>Modal records can only be executed via:</p>
+<ul>
+<li><code>spec.capture(...)</code> — apeGmsh calls <code>ops.eigen()</code> itself.</li>
+<li><code>spec.emit_mpco(...)</code> — MPCO records the <code>modesOfVibration</code> token
+  natively.</li>
+</ul>
+<p>The classic recorder path (<code>emit_recorders</code> / <code>export.tcl</code>) <strong>cannot</strong>
+drive eigenvalue analysis and will raise on <code>__enter__</code> if your spec
+contains modal records.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">modal</span><span class="p">(</span><span class="n">n_modes</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
 </span></code></pre></div>
-<p>The bridge reads from <code>FEMData</code> during <code>build()</code>. It does NOT call
-Gmsh directly — all mesh data comes through the broker.</p>
-<h2 id="the-viewer">The viewer<a class="headerlink" href="#the-viewer" title="Permanent link">&para;</a></h2>
-<p>Two viewers exist:</p>
-<p><strong>ModelViewer</strong> (<code>g.model.viewer()</code>) — BRep geometry viewer:
-- Entity picking, box select
-- Physical group creation/editing
-- Load/mass/constraint overlays (when <code>fem=</code> provided)
-- Parts tree</p>
-<p><strong>MeshViewer</strong> (<code>g.mesh.viewer()</code>) — Mesh topology viewer:
-- Element/node picking modes
-- Node labels, element labels
-- Wireframe toggle
-- Dimension filtering</p>
-<p>Both are Qt/PyVista applications. Optional dependency (<code>pip install
-"apeGmsh[viewer]"</code>).</p>
-<h2 id="the-results-system">The Results system<a class="headerlink" href="#the-results-system" title="Permanent link">&para;</a></h2>
-<p>Post-processing without a live Gmsh session:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">Results</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">r</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_fem</span><span class="p">(</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">fem</span><span class="p">,</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">point_fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;displacement&quot;</span><span class="p">:</span> <span class="n">disp_array</span><span class="p">},</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">cell_fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;stress&quot;</span><span class="p">:</span> <span class="n">stress_array</span><span class="p">},</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="p">)</span>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="n">r</span><span class="o">.</span><span class="n">to_vtu</span><span class="p">(</span><span class="s2">&quot;output.vtu&quot;</span><span class="p">)</span>
-</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="n">r</span><span class="o">.</span><span class="n">viewer</span><span class="p">()</span>
-</span></code></pre></div>
-<p>Results wraps VTK export + PyVista visualization. It takes <code>FEMData</code>
-+ field arrays and produces <code>.vtu</code> (single step) or <code>.pvd</code> (time
-series) files.</p>
-<h2 id="dependency-graph">Dependency graph<a class="headerlink" href="#dependency-graph" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>gmsh (C library)
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>  |
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>  apeGmsh (core: geometry, labels, parts, constraints, loads, masses)
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>  |
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>  +-- mesh module (Gmsh API calls for meshing)
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>  |     |
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>  |     +-- FEMData (solver-agnostic output)
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>  |
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>  +-- solvers/ (OpenSees bridge)
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>  |     |
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>  |     +-- openseespy (optional)
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>  |
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>  +-- viz/ (matplotlib, optional)
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>  |
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>  +-- viewers/ (PySide6 + PyVista, optional)
-</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>  |
-</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>  +-- results/ (VTK export)
-</span></code></pre></div>
-<p>Core dependencies: <code>gmsh</code>, <code>numpy</code>, <code>pandas</code>.
-Optional: <code>matplotlib</code>, <code>openseespy</code>, <code>PySide6</code>, <code>pyvista</code>, <code>vtk</code>.</p>
-<h2 id="file-organization">File organization<a class="headerlink" href="#file-organization" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>src/apeGmsh/
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>  core/          Geometry, labels, parts, constraints, loads, masses
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>  mesh/          Meshing pipeline, FEMData, extraction
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>  solvers/       OpenSees bridge, constraint/load/mass resolvers
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>  viz/           Lightweight plotting, selection, VTK export
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>  viewers/       Qt interactive viewers (30 files)
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>  sections/      Parametric section builders
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>  results/       Post-processing
-</span></code></pre></div>
-<p>Every composite is a thin class in one file. Sub-composites are
-prefixed with <code>_</code> (private modules). Public API is exported through
-<code>__init__.py</code>.</p>
-<h2 id="design-principles">Design principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h2>
-<ol>
-<li>
-<p><strong>Composition over inheritance</strong> — the session is a container,
-   not a base class. Composites don't inherit from each other.</p>
-</li>
-<li>
-<p><strong>Names survive operations</strong> — labels and physical groups are
-   preserved through every boolean operation, every remesh, every
-   part import. Names are the only stable identifier.</p>
-</li>
-<li>
-<p><strong>Define before mesh, resolve after</strong> — constraints, loads, and
-   masses are symbolic until the mesh exists. This decouples the
-   engineering intent from the mesh realization.</p>
-</li>
-<li>
-<p><strong>The broker is the boundary</strong> — <code>FEMData</code> is the single point
-   where live Gmsh state becomes frozen data. Everything downstream
-   (solvers, viewers, results) works from the broker, never from Gmsh.</p>
-</li>
-<li>
-<p><strong>Solver adapters are thin</strong> — the resolver does the heavy math
-   (tributary integration, surface projection, interpolation weights).
-   The solver adapter just translates records to commands.</p>
-</li>
-<li>
-<p><strong>Optional dependencies are lazy</strong> — matplotlib, openseespy,
-   PySide6, pyvista are imported at call time, not at module level.
-   <code>pip install apeGmsh</code> gives you the full core with no heavy deps.</p>
-</li>
-</ol>
+<hr />
+<h2 id="validation-timing">Validation timing<a class="headerlink" href="#validation-timing" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cadence (<code>dt</code> xor <code>n_steps</code>)</td>
+<td>At declaration</td>
+</tr>
+<tr>
+<td>Component name in vocabulary</td>
+<td>At <code>resolve(fem)</code></td>
+</tr>
+<tr>
+<td>Component is allowed in this category</td>
+<td>At <code>resolve(fem)</code></td>
+</tr>
+<tr>
+<td>Selector name resolves to IDs</td>
+<td>At <code>resolve(fem)</code></td>
+</tr>
+<tr>
+<td>Element class supports the component</td>
+<td>At execution (in <code>capture</code> / <code>emit_*</code>)</td>
+</tr>
+<tr>
+<td>MPCO build is available</td>
+<td>At <code>emit_mpco.__enter__</code></td>
+</tr>
+</tbody>
+</table>
+<p>If <code>resolve()</code> errors, the message lists the valid components for
+that category — same data this page documents. So when in doubt:
+declare, call resolve, read the error.</p>
+<hr />
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../guide_obtaining_results/">Obtaining results</a> — five execution
+  strategies.</li>
+<li><a href="../../architecture/apeGmsh_results_obtaining/">Architecture — Obtaining the database</a> —
+  the spec-as-seam pattern.</li>
+<li><a href="../../api/opensees/">API reference — OpenSees</a> — <code>Recorders</code> class
+  with auto-rendered method signatures.</li>
+</ul>
 
 
 
