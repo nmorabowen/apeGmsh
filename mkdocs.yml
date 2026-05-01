@@ -133,6 +133,7 @@ nav:
           - Results container: internal_docs/guide_results.md
           - Obtaining results: internal_docs/guide_obtaining_results.md
           - Recorder reference: internal_docs/guide_recorders_reference.md
+          - Reading & filtering: internal_docs/guide_results_filtering.md
       - Reference:
           - Architecture overview: internal_docs/architecture.md
   - Examples:
