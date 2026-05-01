@@ -13,6 +13,13 @@ differs.
 > [Architecture — Obtaining the database](../architecture/apeGmsh_results_obtaining.md)
 > for the spec-as-seam pattern and a strategy comparison table.
 
+> **What can I record?** For the full vocabulary — every category,
+> every component, every shorthand, with examples — see the
+> [Recorder reference](guide_recorders_reference.md). The same
+> information is available at runtime via
+> `Recorders.categories()`, `Recorders.components_for(category)`,
+> and `Recorders.shorthands_for(category)`.
+
 ## Shared setup — declaration and resolution
 
 Every strategy starts here:
