@@ -3653,6 +3653,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#common-shape-across-every-notebook" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common shape across every notebook
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#whats-not-in-the-gallery-yet" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3685,13 +3696,28 @@
 
 <h1 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h1>
 <p>A curated, in-progress gallery — a working tour through the apeGmsh
-API by example. Each notebook is rendered inline; you can also open
-the source on GitHub.</p>
+API by example. Every notebook follows the same modernised template:</p>
+<ul>
+<li>Build geometry / mesh / FEM with apeGmsh.</li>
+<li>Drive OpenSees with <strong>vanilla <code>openseespy</code></strong> calls.</li>
+<li>Declare <strong>apeGmsh recorders</strong> by physical-group / label name.</li>
+<li>Wrap the analysis in <strong><code>spec.capture(...)</code></strong> or
+  <strong><code>spec.emit_recorders(...)</code></strong> — the two strategies are split across
+  the gallery so you see both in action.</li>
+<li>Read results back via <strong><code>Results.from_native(...)</code> /
+  <code>Results.from_recorders(...)</code></strong>, verify against closed-form
+  references, and plot in-notebook from the slabs.</li>
+</ul>
 <blockquote>
-<p><strong>Looking for the full repo?</strong> All 60+ examples live at
+<p><strong>Looking for the full repo?</strong> 60+ examples live under
 <a href="https://github.com/nmorabowen/apeGmsh/tree/main/examples">apeGmsh/examples</a>
-on GitHub. The gallery below is the curated subset we surface in
+on GitHub. The 8 below are the curated subset rendered inline in
 the docs.</p>
+<p><strong>Strategy at a glance.</strong> Each card calls out which results-acquisition
+strategy that notebook uses — <code>spec.capture</code> for the apeGmsh-native
+HDF5 path with broadest coverage, <code>spec.emit_recorders</code> for live
+classic OpenSees recorders. Same <code>Results</code> API on the read side
+regardless.</p>
 </blockquote>
 <h2 id="getting-started">Getting started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h2>
 <div class="grid cards">
@@ -3699,16 +3725,22 @@ the docs.</p>
 <li>
 <p>:material-numeric-1-circle:{ .lg .middle } &nbsp; <strong><a href="notebooks/01_hello_plate/">Hello plate</a></strong></p>
 <hr />
-<p>The smallest viable apeGmsh model — a square plate, fixed on one
-edge, loaded on the opposite. Covers the session, geometry,
-physical groups, meshing, and the OpenSees bridge in ~40 lines.</p>
+<p><em>Strategy: <code>spec.capture</code></em></p>
+<p>The smallest viable apeGmsh ↔ openseespy ↔ Results loop. A unit
+plate in plane stress under uniaxial tension, verified against
+$u_x = \sigma L / E$ to machine precision. Covers the full
+pipeline in ~26 cells: geometry → mesh → vanilla <code>ops.*</code> model →
+recorder declaration → capture → read back → in-notebook plot.</p>
 </li>
 <li>
 <p>:material-numeric-2-circle:{ .lg .middle } &nbsp; <strong><a href="notebooks/02_cantilever_beam_2D/">Cantilever beam (2D)</a></strong></p>
 <hr />
-<p>The canonical FEM teaching example: a 2D cantilever under
-end-load. Walks through the linear-static analysis pipeline and
-pulls displacements, reactions, and stresses out of <code>Results</code>.</p>
+<p><em>Strategy: <code>spec.emit_recorders</code></em></p>
+<p>The other results-acquisition strategy. Same <code>begin_stage</code> /
+<code>end_stage</code> lifecycle as <code>capture</code>, but classic recorder <code>.out</code>
+files on disk that <code>Results.from_recorders(stage_id=...)</code> reads
+back. Verified against Euler-Bernoulli $\delta = -PL^3/(3EI)$
+plus the deflected-shape cubic.</p>
 </li>
 </ul>
 </div>
@@ -3718,29 +3750,41 @@ pulls displacements, reactions, and stresses out of <code>Results</code>.</p>
 <li>
 <p>:material-numeric-4-circle:{ .lg .middle } &nbsp; <strong><a href="notebooks/04_portal_frame_2D/">Portal frame (2D)</a></strong></p>
 <hr />
-<p>Multi-element frame with beam-column elements, shared nodes, and
-distributed loads. Introduces section assignment and load
-patterns.</p>
+<p><em>Strategy: <code>spec.capture</code></em></p>
+<p>Multi-element frame with <strong>two element groups of different
+cross-section</strong> (columns + rigid beam) driven from named
+physical groups. The first example where the FEM is <em>more</em>
+correct than the classical drift formula — the residual ~0.75%
+is inherent (axial deformation + joint kinematics).</p>
 </li>
 <li>
 <p>:material-tag-multiple:{ .lg .middle } &nbsp; <strong><a href="notebooks/05_labels_and_pgs/">Labels &amp; physical groups</a></strong></p>
 <hr />
-<p>The naming system in practice — Tier 1 labels (geometry-time,
-boolean-survivable) vs Tier 2 physical groups (solver-facing).
-The selection vocabulary used everywhere downstream.</p>
+<p><em>Strategy: <code>spec.capture</code> (small)</em></p>
+<p>The two naming namespaces and how both flow through to <code>Results</code>.
+Declare recorders in <strong>both</strong> namespaces (<code>pg=</code> and <code>label=</code>),
+cross-check that the read side gives identical answers either
+way. Demonstrates the <code>target=</code> precedence order
+(label → PG → part).</p>
 </li>
 <li>
 <p>:material-puzzle-outline:{ .lg .middle } &nbsp; <strong><a href="notebooks/10b_part_assembly/">Part assembly</a></strong></p>
 <hr />
-<p>Build a part once, instantiate it many times, fragment into a
-conformal assembly. Labels survive the STEP round-trip.</p>
+<p><em>Strategy: <code>spec.emit_recorders</code></em></p>
+<p>Build a column once as a <code>Part</code>, instantiate three times via
+<code>g.parts.add(part, label=..., translate=...)</code>. Declare <strong>one
+recorder per part label</strong>, read each part's slab independently —
+part labels survive end-to-end as first-class selectors.</p>
 </li>
 <li>
 <p>:material-vector-link:{ .lg .middle } &nbsp; <strong><a href="notebooks/12_interface_tie/">Interface tie</a></strong></p>
 <hr />
-<p>Non-matching meshes joined via <code>ASDEmbeddedNodeElement</code> —
-apeGmsh's tie constraint emitted as a penalty element. Useful
-when two meshed regions need to act as one.</p>
+<p><em>Strategy: <code>spec.capture</code></em></p>
+<p>Two beams meeting at a shared point with <strong>non-matching meshes</strong>,
+joined via <code>g.constraints.equal_dof</code>. The notebook verifies the
+constraint contract directly through <code>Results</code> —
+<code>u_master</code> and <code>u_slave</code> at the junction are equal to round-off.
+Tip deflection matches the single-cantilever closed form.</p>
 </li>
 </ul>
 </div>
@@ -3750,19 +3794,44 @@ when two meshed regions need to act as one.</p>
 <li>
 <p>:material-sine-wave:{ .lg .middle } &nbsp; <strong><a href="notebooks/17_modal_analysis/">Modal analysis</a></strong></p>
 <hr />
-<p>Eigenvalue analysis with <code>DomainCapture.capture_modes()</code> — one
-stage per mode in a single results file. Reads back as
-<code>results.modes[i]</code> with frequency, period, and mode shape.</p>
+<p><em>Strategy: <code>spec.capture</code> (<code>capture_modes</code>)</em></p>
+<p>Eigenvalue analysis — <code>cap.capture_modes(N)</code> writes one stage per
+mode with <code>kind="mode"</code>. Read back via <code>results.modes</code>, with
+<code>mode_index</code>, <code>eigenvalue</code>, <code>frequency_hz</code>, <code>period_s</code> exposed as
+scoped properties. First three bending modes verified against
+Euler-Bernoulli to &lt;0.3% error. <strong>Modal is capture-only</strong> — the
+classic recorder path can't drive <code>ops.eigen()</code>.</p>
 </li>
 <li>
 <p>:material-chart-bell-curve:{ .lg .middle } &nbsp; <strong><a href="notebooks/19_pushover_elastoplastic/">Pushover (elastoplastic)</a></strong></p>
 <hr />
-<p>Nonlinear pushover analysis using fiber sections. Demonstrates
-iterative load stepping, capacity tracking, and pulling section
-forces along the length via line-station results.</p>
+<p><em>Strategy: <code>spec.capture</code></em></p>
+<p>The first <strong>multi-step nonlinear</strong> notebook — a Steel01 bar
+pushed to 4× yield via <code>DisplacementControl</code>. The recorder fires
+at every converged step; the capacity curve drops out of two
+<code>Results.nodes.get(...)</code> calls without any manual <code>nodeDisp</code> /
+<code>nodeReaction</code> accumulation. Three closed-form checks (slope,
+plateau, yield onset) all match to round-off.</p>
 </li>
 </ul>
 </div>
+<h2 id="common-shape-across-every-notebook">Common shape across every notebook<a class="headerlink" href="#common-shape-across-every-notebook" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>1.  Imports + parameters
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>2.  Geometry              ← apeGmsh
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>3.  Physical groups + labels
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>4.  Mesh
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>5.  Build OpenSees model  ← VANILLA openseespy (ops.*)
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>6.  Declare recorders     ← apeGmsh
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>7.  Run analysis          ← spec.capture(...) or spec.emit_recorders(...)
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>8.  Read results back     ← Results
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>9.  Verify + plot         ← matplotlib from slabs
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>10. Optional viewer       ← results.viewer(blocking=False)
+</span></code></pre></div>
+<p>The "vanilla openseespy except for recorders" rule is visible in
+section 5 (raw <code>ops.*</code> calls — nodes, elements, materials, fix,
+load) vs section 6 onward (apeGmsh recorders, capture, Results,
+viewer). The model setup stays close to OpenSees idioms; the
+<strong>results pipeline is where apeGmsh adds value</strong>.</p>
 <h2 id="whats-not-in-the-gallery-yet">What's not in the gallery (yet)<a class="headerlink" href="#whats-not-in-the-gallery-yet" title="Permanent link">&para;</a></h2>
 <p>The repo's <code>examples/</code> directory has many more — buckling, contact
 springs, tunnel meshes, lateral-torsional buckling, embedded rebars,
