@@ -248,3 +248,56 @@ def test_combo_repopulates_when_switching_back(qapp, director):
     _set_kind(dlg, "contour")
     assert dlg._component_combo.count() > 0
     assert dlg._component_combo.currentText() == "displacement_z"
+
+
+# =====================================================================
+# Empty-state UX: kinds with no data anywhere are flagged in the label,
+# and the Component combo placeholder explains why it's empty.
+# =====================================================================
+
+def test_kind_label_marks_topologies_with_no_data_in_file(qapp, director):
+    """elasticFrame.mpco has nodal displacements but no springs / fibers /
+    layers / line-stations. Those kinds should carry a 'no data' suffix
+    in the visible label so the user isn't surprised by an empty combo."""
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    labels_by_kind = {
+        dlg._kind_combo.itemData(i).kind_id: dlg._kind_combo.itemText(i)
+        for i in range(dlg._kind_combo.count())
+    }
+    # Contour has nodal data → no suffix.
+    assert "no data" not in labels_by_kind["contour"]
+    # Spring force has no spring data in this fixture → suffix present.
+    assert "no data" in labels_by_kind["spring_force"]
+
+
+def test_kinds_without_data_set_excludes_kinds_that_have_data(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    # elasticFrame has nodal displacement_z → contour has data.
+    assert "contour" not in dlg._kinds_without_data
+    # ...but no springs.
+    assert "spring_force" in dlg._kinds_without_data
+
+
+def test_empty_combo_placeholder_says_no_data_in_file(qapp, director):
+    """When a kind has no data anywhere in the file, the placeholder
+    must say 'in file' (the user needs a different recorder), not
+    'in selected stage' (which would imply switching stages helps)."""
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "spring_force")
+    placeholder = dlg._component_combo.lineEdit().placeholderText()
+    assert "no springs data in file" in placeholder
+
+
+def test_populated_combo_restores_generic_placeholder(qapp, director):
+    """Switching from an empty kind back to a populated one must clear
+    the empty-state placeholder so the original example hint comes back."""
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "spring_force")
+    assert "no" in dlg._component_combo.lineEdit().placeholderText()
+    _set_kind(dlg, "contour")
+    placeholder = dlg._component_combo.lineEdit().placeholderText()
+    assert "displacement_z" in placeholder

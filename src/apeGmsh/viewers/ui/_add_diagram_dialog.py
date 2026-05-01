@@ -201,10 +201,20 @@ class AddDiagramDialog:
         form.setContentsMargins(12, 12, 12, 12)
         form.setSpacing(8)
 
-        # Kind
+        # Kind. Pre-flight every kind against every stage so we can mark
+        # kinds whose topology has no data anywhere in the file. The
+        # picker stays selectable (editable component combo lets users
+        # type custom names regardless), but the suffix tells them up
+        # front not to expect a populated dropdown.
+        self._kinds_without_data: set[str] = self._compute_kinds_without_data(
+            director,
+        )
         self._kind_combo = QtWidgets.QComboBox()
         for k in _KINDS:
-            self._kind_combo.addItem(k.label, k)
+            label = k.label
+            if k.kind_id in self._kinds_without_data:
+                label = f"{k.label} — no data"
+            self._kind_combo.addItem(label, k)
         form.addRow("Kind:", self._kind_combo)
 
         # Stage
@@ -299,6 +309,55 @@ class AddDiagramDialog:
         self._populate_components()
 
     # ------------------------------------------------------------------
+    # Pre-flight: which kinds have no recorded data anywhere?
+    # ------------------------------------------------------------------
+
+    def _compute_kinds_without_data(
+        self, director: "ResultsDirector",
+    ) -> set[str]:
+        """Return ``kind_id`` of every kind whose topology is empty in
+        every stage of this Results file.
+
+        Contour is treated specially: its dialog topology defaults to
+        ``"auto"`` (nodes ∪ gauss), so we mark it without-data only if
+        both composites are empty in every stage.
+        """
+        out: set[str] = set()
+        try:
+            stages = list(director.stages())
+        except Exception:
+            return out
+        if not stages:
+            return out
+
+        for entry in _KINDS:
+            topology = _KIND_TO_TOPOLOGY.get(entry.kind_id)
+            if topology is None:
+                continue
+            has_any = False
+            for s in stages:
+                sid = getattr(s, "id", None)
+                if sid is None:
+                    continue
+                try:
+                    scoped = director.results.stage(sid)
+                except Exception:
+                    continue
+                if entry.kind_id == "contour":
+                    found = (
+                        _components_for(scoped, "nodes")
+                        or _components_for(scoped, "gauss")
+                    )
+                else:
+                    found = _components_for(scoped, topology)
+                if found:
+                    has_any = True
+                    break
+            if not has_any:
+                out.add(entry.kind_id)
+        return out
+
+    # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
 
@@ -377,10 +436,37 @@ class AddDiagramDialog:
             else:
                 # Empty list for this (kind, stage) — clear the field
                 # rather than leaving stale text from the previous kind.
-                # The placeholder still hints at typing a custom name.
                 self._component_combo.setEditText("")
+                # Replace the generic example placeholder with a
+                # specific reason so the user knows whether the file
+                # has no such data anywhere or just not in this stage.
+                self._update_empty_placeholder(kind_entry, stage_id)
         finally:
             self._component_combo.blockSignals(False)
+        # Restore the generic example placeholder when we did populate
+        # something — otherwise the empty-state hint persists across
+        # subsequent populations.
+        if components:
+            self._component_combo.lineEdit().setPlaceholderText(
+                "displacement_z, bending_moment_y, fiber_stress, …"
+            )
+
+    def _update_empty_placeholder(
+        self, kind_entry: _KindEntry, stage_id: Any,
+    ) -> None:
+        """Set a placeholder explaining why the Component combo is empty.
+
+        Distinguishes "no data of this topology anywhere in the file"
+        from "no data in this particular stage" — same empty combo, very
+        different fix on the user's side (record a different recorder vs
+        switch stages).
+        """
+        topology = _KIND_TO_TOPOLOGY.get(kind_entry.kind_id, "")
+        if kind_entry.kind_id in self._kinds_without_data:
+            text = f"(no {topology} data in file)"
+        else:
+            text = f"(no {topology} data in selected stage)"
+        self._component_combo.lineEdit().setPlaceholderText(text)
 
     def _on_selector_change(self, _index: int) -> None:
         kind = self._selector_kind.currentData()
