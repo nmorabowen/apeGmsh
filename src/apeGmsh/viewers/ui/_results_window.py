@@ -299,10 +299,25 @@ class ResultsWindow:
         DENSITY.toggle()
 
     def _on_help(self) -> None:
-        """Show a small modal with the keyboard shortcuts."""
+        """Show a small modal with shortcuts + customisation entry points.
+
+        ResultsViewer has no Session tab (the right dock retired in B5),
+        so the Theme editor and Global preferences dialogs — which
+        MeshViewer / ModelViewer expose via tab buttons — would be
+        unreachable from here without a discovery hook. The help
+        dialog doubles as that hook: clear shortcut reference plus two
+        buttons launching the respective editors.
+        """
         from qtpy import QtWidgets
-        QtWidgets.QMessageBox.information(
-            self.window, "ResultsViewer — shortcuts",
+        dlg = QtWidgets.QDialog(self.window)
+        dlg.setWindowTitle("ResultsViewer — shortcuts")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(420)
+        layout = QtWidgets.QVBoxLayout(dlg)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        text = QtWidgets.QLabel(
             "<b>Pick + measure</b><br/>"
             "&nbsp;&nbsp;Click&nbsp;— select node / element<br/>"
             "&nbsp;&nbsp;Shift&nbsp;+&nbsp;click — open time-history "
@@ -314,8 +329,45 @@ class ResultsWindow:
             "rail<br/><br/>"
             "<b>Probe modes</b> (top-right HUD)<br/>"
             "&nbsp;&nbsp;Point / Line / Slice — single-click to "
-            "activate, click again to stop.",
+            "activate, click again to stop."
         )
+        text.setWordWrap(True)
+        # QLabel auto-detects rich text from the <b>/<br> tags; no
+        # explicit setTextFormat needed.
+        layout.addWidget(text)
+
+        # Customisation actions — same dialogs MeshViewer / ModelViewer
+        # surface in their Session tabs.
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+
+        btn_theme = QtWidgets.QPushButton("Theme editor…")
+        def _open_theme():
+            try:
+                from .theme_editor_dialog import open_theme_editor
+                open_theme_editor(self.window)
+            except Exception:
+                pass
+        btn_theme.clicked.connect(_open_theme)
+        btn_row.addWidget(btn_theme)
+
+        btn_prefs = QtWidgets.QPushButton("Global preferences…")
+        def _open_prefs():
+            try:
+                from .preferences_dialog import open_preferences_dialog
+                open_preferences_dialog(self.window)
+            except Exception:
+                pass
+        btn_prefs.clicked.connect(_open_prefs)
+        btn_row.addWidget(btn_prefs)
+
+        btn_close = QtWidgets.QPushButton("Close")
+        btn_close.clicked.connect(dlg.accept)
+        btn_close.setDefault(True)
+        btn_row.addWidget(btn_close)
+
+        layout.addLayout(btn_row)
+        dlg.exec_()
 
     def _make_holder(
         self,
