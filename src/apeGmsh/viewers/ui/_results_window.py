@@ -14,17 +14,18 @@ area with a grid that follows the B++ Implementation Guide:
     │ time scrubber dock                     row 2 · 84px · span 3 │
     └──────────────────────────────────────────────────────────────┘
 
-The class is built up across phases. **B0 lands here**: title bar +
-viewport + scrubber row. The left and right columns are empty until
-B1 (outline tree) and B2 (plot pane) ship. The existing right-side
-QTabWidget dock from :class:`ViewerWindow` continues to host the
-Stages / Diagrams / Settings / Inspector / Probes tabs through B0;
-B1 retires that dock when the outline tree replaces it.
+The class is built up across phases. B0 shipped the title bar +
+viewport + scrubber row. B1–B5 filled in the left rail (outline
+tree), the right rail (plot pane + details panel), the viewport
+HUDs (probe palette, pick readout), and the title-bar breadcrumb.
+The legacy right-side QTabWidget dock inherited from
+:class:`ViewerWindow` is hidden in B5 — the grid's third cell now
+owns the right column directly.
 
 ResultsWindow forwards the small API surface that
 :class:`ResultsViewer` consumes (``plotter``, ``window``,
-``add_tab``, ``set_status``, ``exec``) to the wrapped ViewerWindow,
-so the rest of the viewer is oblivious to the shell change.
+``set_status``, ``exec``) to the wrapped ViewerWindow, so the rest
+of the viewer is oblivious to the shell change.
 """
 from __future__ import annotations
 
@@ -85,15 +86,6 @@ class ResultsWindow:
         """The underlying QMainWindow."""
         return self._vw.window
 
-    def add_tab(self, name: str, widget) -> None:
-        """Add a tab to the right-side panel.
-
-        B0: forwards to ViewerWindow's tabs dock — preserves the
-        existing UX while the new shell takes shape. B1 will replace
-        this with placement into the outline tree's left column.
-        """
-        self._vw.add_tab(name, widget)
-
     def set_status(self, text: str, timeout: int = 0) -> None:
         self._vw.set_status(text, timeout)
 
@@ -127,6 +119,17 @@ class ResultsWindow:
         win = self._vw.window
         plotter = self._vw.plotter
         interactor_widget = plotter.interactor
+
+        # The wrapped ViewerWindow installs a right-side QDockWidget
+        # holding its own QTabWidget. The B++ shell owns the right
+        # column directly via the grid's third cell, so the dock is
+        # dead weight — hide it to keep the QMainWindow from reserving
+        # width for it. Removing the dock outright would also remove
+        # the tab widget which other viewers still depend on; hiding
+        # is sufficient.
+        legacy_dock = getattr(self._vw, "_tabs_dock", None)
+        if legacy_dock is not None:
+            legacy_dock.hide()
 
         central = QtWidgets.QWidget()
         central.setObjectName("ResultsWindowCentral")

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
     from .diagrams._director import ResultsDirector
     from .scene.fem_scene import FEMSceneData
-    from .ui.results_tabs import ResultsTabs
+    from .ui._diagram_settings_tab import DiagramSettingsTab
 
 
 class ResultsViewer:
@@ -66,15 +66,13 @@ class ResultsViewer:
         self._scene: "FEMSceneData | None" = None
         self._win: Any = None
         self._plotter: Any = None
-        self._tabs: "ResultsTabs | None" = None
+        self._settings_tab: "DiagramSettingsTab | None" = None
         self._time_scrubber: Any = None
         self._substrate_actor: Any = None
         self._plot_pane: Any = None
         self._details_panel: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
-        # (node_id, component) -> TimeHistoryPanel; user-closable.
-        self._history_panels: dict = {}
 
     # ------------------------------------------------------------------
     # Properties
@@ -112,7 +110,7 @@ class ResultsViewer:
         from .scene.fem_scene import build_fem_scene
         from .diagrams._director import ResultsDirector
         from .ui._results_window import ResultsWindow
-        from .ui.results_tabs import build_results_tabs
+        from .ui._diagram_settings_tab import DiagramSettingsTab
         from .ui.preferences_manager import PREFERENCES as _PREF
 
         # ── Director ────────────────────────────────────────────────
@@ -136,15 +134,12 @@ class ResultsViewer:
         # built after ``bind_plotter`` and feeds the viewport HUD.
         self._probe_overlay: Any = None
 
-        # ── Right-dock tabs (Inspector — Settings re-hosted in
-        # DetailsPanel, Probes migrated to viewport HUD) ────────────
-        tabs = build_results_tabs(
-            director,
-            on_open_history=self._open_time_history,
-        )
-        self._tabs = tabs
-        for name, widget in tabs.to_pairs():
-            win.add_tab(name, widget)
+        # ── Diagram-settings panel (re-hosted by DetailsPanel) ──────
+        # InspectorTab and the right-side QTabWidget dock retired in
+        # B5: the only surviving widget from the legacy tab set is
+        # DiagramSettingsTab, which DetailsPanel embeds.
+        settings_tab = DiagramSettingsTab(director)
+        self._settings_tab = settings_tab
 
         # ── Outline tree (left rail) ────────────────────────────────
         from .ui._outline_tree import OutlineTree
@@ -157,7 +152,7 @@ class ResultsViewer:
         from .ui._details_panel import DetailsPanel
         plot_pane = PlotPane()
         plot_pane.on_user_close(self._on_plot_user_close)
-        details = DetailsPanel(tabs.settings)
+        details = DetailsPanel(settings_tab)
         outline.on_diagram_selected(self._on_outline_diagram_selected)
         right_rail = self._build_right_rail(plot_pane.widget, details.widget)
         win.set_right_widget(right_rail)
@@ -199,14 +194,25 @@ class ResultsViewer:
         # ── Subscribe to diagram changes for side-panel docking ─────
         director.subscribe_diagrams(self._sync_side_panels)
 
-        # ── Probe overlay + viewport HUD palette ────────────────────
+        # ── Probe overlay + viewport HUDs ───────────────────────────
+        # ProbePaletteHUD: top-right mode strip (point/line/slice).
+        # PickReadoutHUD: top-left glass card showing the latest pick
+        # and live values. The pick HUD chains into the same
+        # on_point_result callback as the palette — both fire on every
+        # point pick and remain in sync.
         from .overlays.probe_overlay import ProbeOverlay
         from .ui._viewport_hud import ProbePaletteHUD
+        from .ui._pick_readout_hud import PickReadoutHUD
         self._probe_overlay = ProbeOverlay(plotter, scene, director)
         self._probe_hud = ProbePaletteHUD(
             plotter.interactor,
             self._probe_overlay,
             on_status=win.set_status,
+        )
+        self._pick_hud = PickReadoutHUD(
+            plotter.interactor,
+            self._probe_overlay,
+            director,
         )
 
         # ── Camera / view ──────────────────────────────────────────
@@ -426,31 +432,6 @@ class ResultsViewer:
         from pathlib import Path
         return f"Results — {Path(path).name}"
 
-    def _open_time_history(self, node_id: int, component: str) -> None:
-        """Inspector callback: open a TimeHistoryPanel as a plot-pane tab.
-
-        Reuses an existing tab if one is open for the same
-        ``(node_id, component)`` pair so repeated clicks don't
-        multiply tabs.
-        """
-        if self._director is None or self._plot_pane is None:
-            return
-        key = ("history", int(node_id), str(component))
-        if self._plot_pane.has_tab(key):
-            self._plot_pane.set_active(key)
-            return
-        try:
-            from .ui._time_history import TimeHistoryPanel
-            panel = TimeHistoryPanel(self._director, node_id, component)
-        except Exception as exc:
-            from ._failures import report
-            report("ResultsViewer._open_time_history", exc)
-            return
-
-        label = f"u(t) · node {node_id} · {component}"
-        self._plot_pane.add_tab(key, label, panel.widget, closable=True)
-        self._history_panels[(int(node_id), str(component))] = panel
-
     def _sync_side_panels(self) -> None:
         """Add / remove plot-pane side-panel tabs to match the registry.
 
@@ -497,20 +478,14 @@ class ResultsViewer:
     # ------------------------------------------------------------------
 
     def _on_plot_user_close(self, key) -> None:
-        """User clicked × on a plot-pane tab — only fires for closables."""
-        if self._plot_pane is None or not isinstance(key, tuple):
-            return
-        kind = key[0]
-        if kind == "history":
-            _, node_id, component = key
-            panel = self._history_panels.pop((node_id, component), None)
-            if panel is not None:
-                try:
-                    panel.close()
-                except Exception:
-                    pass
-            self._plot_pane.remove_tab(key)
-        # Side-panel tabs use closable=False; no other kinds today.
+        """User clicked × on a plot-pane tab — only fires for closables.
+
+        Currently only diagram side-panel tabs land here, and those
+        are constructed with ``closable=False`` so this handler is a
+        no-op for now. Kept as a hook for future user-closable tab
+        kinds (e.g. shift-click → time-history plot).
+        """
+        return
 
     def _close_diagram_side_panel(self, diagram, panel) -> None:
         """Tear down a side panel + its plot-pane tab."""

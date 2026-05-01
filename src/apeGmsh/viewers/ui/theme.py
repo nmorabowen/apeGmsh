@@ -959,6 +959,34 @@ def build_stylesheet(p: Palette) -> str:
     QFrame#ProbeHUDSep {{
         color: {p.surface0};
     }}
+
+    /* Pick readout HUD (top-left viewport overlay) */
+    QFrame#PickReadoutHUD {{
+        background-color: {_rgba(p.mantle, 0.92)};
+        border: 1px solid {p.surface0};
+        border-radius: 6px;
+    }}
+    QLabel#PickReadoutHeader {{
+        color: {p.text};
+        font-weight: 600;
+        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+        font-size: 11px;
+    }}
+    QLabel#PickReadoutCoords {{
+        color: {p.subtext};
+        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+        font-size: 10px;
+    }}
+    QLabel#PickReadoutValues {{
+        color: {p.text};
+        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+        font-size: 10px;
+    }}
+    QLabel#PickReadoutHint {{
+        color: {p.overlay};
+        font-size: 9px;
+        margin-top: 2px;
+    }}
     """
 
 
