@@ -65,6 +65,42 @@
          <lastmod>2026-05-01</lastmod>
     </url>
     <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/01_hello_plate/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/02_cantilever_beam_2D/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/04_portal_frame_2D/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/05_labels_and_pgs/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/10b_part_assembly/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/12_interface_tie/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/17_modal_analysis/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
+         <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/19_pushover_elastoplastic/</loc>
+         <lastmod>2026-05-01</lastmod>
+    </url>
+    <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/MIGRATION_v1/</loc>
          <lastmod>2026-05-01</lastmod>
     </url>
