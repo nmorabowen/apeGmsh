@@ -85,15 +85,21 @@ def list_source_files(
     output_dir: Path,
     *,
     file_format: str = "out",
+    stage_id: str | None = None,
 ) -> list[Path]:
-    """Enumerate the recorder output files emit_logical would target."""
+    """Enumerate the recorder output files emit_logical would target.
+
+    ``stage_id`` matches the prefix used by live recorder emission;
+    pass it when listing files for a specific stage.
+    """
     from ...solvers._recorder_emit import emit_logical, _DEFERRED_CATEGORIES
     files: list[Path] = []
     for rec in spec.records:
         if rec.category in _DEFERRED_CATEGORIES:
             continue
         for lr in emit_logical(
-            rec, output_dir=str(output_dir), file_format=file_format,
+            rec, output_dir=str(output_dir),
+            file_format=file_format, stage_id=stage_id,
         ):
             files.append(Path(lr.file_path))
     return files

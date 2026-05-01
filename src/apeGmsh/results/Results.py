@@ -136,19 +136,27 @@ class Results:
         stage_name: str = "analysis",
         stage_kind: str = "transient",
         file_format: str = "out",
+        stage_id: str | None = None,
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
         Parses the ``.out`` / ``.xml`` files emitted at
         ``output_dir`` (matching what ``g.opensees.export.tcl(...,
-        recorders=spec)`` produced) into an apeGmsh native HDF5,
-        caches the result at ``cache_root``, and opens it through
-        ``NativeReader``.
+        recorders=spec)`` or ``spec.emit_recorders(...)`` produced)
+        into an apeGmsh native HDF5, caches the result at
+        ``cache_root``, and opens it through ``NativeReader``.
 
         Caching: subsequent calls with unchanged input files return
         the cached HDF5 directly (file mtime + size + spec
         ``snapshot_id`` form the cache key). See
         ``writers/_cache.py``.
+
+        ``stage_id`` matches the per-stage filename prefix used by
+        :meth:`ResolvedRecorderSpec.emit_recorders` together with
+        ``begin_stage(stage_id, ...)``. When set, only files prefixed
+        with ``<stage_id>__`` are read; ``stage_name`` defaults to
+        ``stage_id`` if not overridden. ``None`` (default) keeps the
+        legacy flat-naming used by Tcl/Py exports.
 
         Phase 6 v1 supports nodal records only; element-level records
         in the spec are skipped with a note. The capture flow
@@ -164,11 +172,18 @@ class Results:
                 "(the spec's snapshot_id must match)."
             )
 
+        # When stage_id is provided and stage_name was left at its
+        # default, mirror stage_id so the resulting Results stage is
+        # named meaningfully (otherwise everything ends up as
+        # "analysis" regardless of which stage the user loaded).
+        if stage_id is not None and stage_name == "analysis":
+            stage_name = stage_id
+
         out_dir = Path(output_dir)
         cache_dir = _cache.resolve_cache_root(cache_root)
 
         source_files = _cache.list_source_files(
-            spec, out_dir, file_format=file_format,
+            spec, out_dir, file_format=file_format, stage_id=stage_id,
         )
         key = _cache.compute_cache_key(
             source_files,
@@ -183,6 +198,7 @@ class Results:
                 stage_name=stage_name,
                 stage_kind=stage_kind,
                 file_format=file_format,
+                stage_id=stage_id,
             )
             transcoder.run()
 

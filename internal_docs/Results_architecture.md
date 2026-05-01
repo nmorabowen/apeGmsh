@@ -179,9 +179,23 @@ output files.
 
 ### Layer 2 — Execution strategies
 
-Three strategies, one spec. The user picks based on workflow.
+Five strategies, one spec. The user picks based on workflow. For a
+focused walkthrough see
+[architecture/apeGmsh_results_obtaining.md](../architecture/apeGmsh_results_obtaining.md);
+this section is the schema-grounded reference.
 
-#### Strategy A — Tcl/Python file recorders
+The strategies group into three families that share a producer:
+
+- **A. Classic recorders** — `recorder Node …` / `recorder Element …`
+  text files. Three sub-strategies differ only in *where the recorder
+  command runs* (Tcl script, Python script, in-process). All three
+  produce `.out` / `.xml` and read back through `from_recorders`.
+- **B. Domain capture** — apeGmsh queries the live `ops` domain itself
+  and writes native HDF5. One strategy.
+- **C. MPCO** — STKO's `recorder mpco` writes one HDF5. Two
+  sub-strategies (Tcl-export, in-process).
+
+#### Strategy A₁ — Tcl/Python file recorders
 
 ```python
 g.opensees.export.tcl("model.tcl", recorders=spec)
@@ -200,6 +214,39 @@ spec is also serialized as a sidecar HDF5 manifest so
 3. Writes a single `run.h5` in native schema.
 4. Caches the result. Re-running with unchanged inputs is a no-op
    (mtime + size + fem `snapshot_id` check on each source).
+
+#### Strategy A₃ — Live recorders (in-process)
+
+```python
+with spec.emit_recorders("out/") as live:
+    live.begin_stage("gravity", kind="static")
+    for _ in range(n_grav):
+        ops.analyze(1, 1.0)
+    live.end_stage()
+
+    live.begin_stage("dynamic", kind="transient")
+    for _ in range(n_dyn):
+        ops.analyze(1, dt)
+    live.end_stage()
+
+grav = Results.from_recorders(spec, "out/", fem=fem, stage_id="gravity")
+dyn  = Results.from_recorders(spec, "out/", fem=fem, stage_id="dynamic")
+```
+
+Same recorder commands as A₁/A₂, but pushed into the live openseespy
+domain via `ops.recorder(*args)` — no script written, no subprocess.
+Per-stage filename prefix `<stage>__<record>_<token>.{out,xml}`
+keeps multi-stage output unambiguous; `Results.from_recorders` learns
+the prefix via the `stage_id=` parameter (which threads through the
+emitter, the cache key, and the transcoder's path discovery).
+
+Single-source-of-truth note: the `LogicalRecorder` dataclass returned
+by `emit_logical()` is shared between A₁ (`format_tcl`), A₂
+(`format_python`), and A₃ (`to_ops_args`). The same MPCO
+`mpco_ops_args` mirrors `emit_mpco_python` for C₁/C₂.
+
+Coverage: nodes, elements, gauss, line_stations. Fibers / layers
+warn-and-skip (use B or C). Modal raises at `__enter__`.
 
 #### Strategy B — In-process domain capture
 
@@ -234,7 +281,7 @@ mode shapes via `ops.nodeEigenvector(...)`, and writes one stage per
 mode with `kind="mode"` and the eigenvalue/frequency/period in the
 stage attrs. Bounded RAM, no per-step file I/O storms.
 
-#### Strategy C — STKO/MPCO bridge
+#### Strategy C₁ — STKO/MPCO bridge (Tcl export)
 
 ```python
 g.opensees.export.tcl("model.tcl", recorders=spec, mpco=True)
@@ -246,6 +293,28 @@ For users who want STKO compatibility or already have MPCO files
 from upstream. The spec maps to `recorder mpco -N <tokens> -E <tokens>`;
 the MPCO recorder produces its own HDF5, which `MPCOReader` reads
 directly without transcoding.
+
+#### Strategy C₂ — Live MPCO (in-process)
+
+```python
+with spec.emit_mpco("run.mpco"):
+    for _ in range(n_steps):
+        ops.analyze(1, dt)
+
+results = Results.from_mpco("run.mpco")
+```
+
+Same MPCO file as C₁, but emitted in-process via
+`ops.recorder("mpco", ...)`. No `begin_stage`/`end_stage` ceremony —
+MPCO writes one file containing all stages with `pseudoTime` encoding
+boundaries internally. `LiveMPCO.__enter__` runs a build-gate probe;
+if the active openseespy build doesn't include MPCO, it raises with
+a remediation pointer (use STKO's bundled Python, fall back to A₃,
+or use C₁).
+
+Coverage: all categories — including fibers, layers, and modal —
+because the MPCO recorder handles them natively
+(`section.fiber.stress`, layered-section tokens, `modesOfVibration`).
 
 ### Layer 3 — Native HDF5 schema
 

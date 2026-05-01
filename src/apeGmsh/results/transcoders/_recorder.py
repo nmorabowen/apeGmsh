@@ -87,6 +87,7 @@ class RecorderTranscoder:
         stage_name: str = "analysis",
         stage_kind: str = "transient",
         file_format: str = "out",
+        stage_id: str | None = None,
     ) -> None:
         self._spec = spec
         self._output_dir = Path(output_dir)
@@ -95,6 +96,8 @@ class RecorderTranscoder:
         self._stage_name = stage_name
         self._stage_kind = stage_kind
         self._file_format = file_format
+        # Filename prefix (live-emit multi-stage runs); None means no prefix.
+        self._stage_id = stage_id
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
 
@@ -250,6 +253,7 @@ class RecorderTranscoder:
             rec,
             output_dir=str(self._output_dir),
             file_format=self._file_format,
+            stage_id=self._stage_id,
         ))
 
         if not logicals:
@@ -312,7 +316,7 @@ class RecorderTranscoder:
         """
         logicals = list(emit_logical(
             rec, output_dir=str(self._output_dir),
-            file_format=self._file_format,
+            file_format=self._file_format, stage_id=self._stage_id,
         ))
         if not logicals:
             return None
@@ -427,7 +431,7 @@ class RecorderTranscoder:
 
         logicals = list(emit_logical(
             rec, output_dir=str(self._output_dir),
-            file_format=self._file_format,
+            file_format=self._file_format, stage_id=self._stage_id,
         ))
         if len(logicals) != 2:
             raise ValueError(
@@ -642,7 +646,7 @@ class RecorderTranscoder:
 
         logicals = list(emit_logical(
             rec, output_dir=str(self._output_dir),
-            file_format=self._file_format,
+            file_format=self._file_format, stage_id=self._stage_id,
         ))
         if len(logicals) != 1:
             raise ValueError(

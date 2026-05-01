@@ -185,17 +185,25 @@ def emit_logical(
     *,
     output_dir: str = "",
     file_format: str = "out",
+    stage_id: Optional[str] = None,
 ) -> list[LogicalRecorder]:
     """Translate one resolved record into 0+ logical recorder specs.
 
     Some records produce multiple logical recorders (e.g. a node
     record with both displacement and velocity components). Some
     produce zero (modal, fibers, layers — stubbed for Phase 5).
+
+    ``stage_id``: when set, output filenames are prefixed with
+    ``<stage_id>__`` so multi-stage live emission can keep separate
+    output files per stage. ``None`` (default) keeps the legacy
+    flat-naming used by Tcl/Py exports.
     """
     if record.category == "nodes":
-        return list(_emit_nodes(record, output_dir, file_format))
+        return list(_emit_nodes(record, output_dir, file_format, stage_id))
     if record.category in ("elements", "gauss", "line_stations"):
-        return list(_emit_element_simple(record, output_dir, file_format))
+        return list(_emit_element_simple(
+            record, output_dir, file_format, stage_id,
+        ))
     if record.category in ("fibers", "layers", "modal"):
         # Deferred — Phase 5 emits a TODO comment via the formatter
         # by returning an empty list. The formatter inserts a comment
@@ -242,6 +250,38 @@ def format_python(rec: LogicalRecorder) -> str:
     return line
 
 
+def to_ops_args(rec: LogicalRecorder) -> tuple:
+    """Argument tuple for a live ``ops.recorder(*args)`` call.
+
+    Mirrors :func:`format_python` exactly, except it returns Python
+    objects (strings, ints, floats) instead of the equivalent source
+    code. Used by the live recorder strategy
+    (``ResolvedRecorderSpec.emit_recorders``) to push the recorder
+    into the running openseespy domain without going through a script
+    file.
+
+    The returned tuple is ready to splat:
+
+    >>> import openseespy.opensees as ops
+    >>> ops.recorder(*to_ops_args(logical))   # doctest: +SKIP
+    """
+    args: list = [rec.kind]
+    if rec.file_format == "xml":
+        args.extend(["-xml", rec.file_path])
+    else:
+        args.extend(["-file", rec.file_path])
+    args.append("-time")
+    if rec.dt is not None:
+        args.extend(["-dT", float(rec.dt)])
+    args.append(f"-{rec.target_kind}")
+    args.extend(int(i) for i in rec.target_ids)
+    if rec.dofs is not None:
+        args.append("-dof")
+        args.extend(int(d) for d in rec.dofs)
+    args.extend(rec.response_tokens)
+    return tuple(args)
+
+
 # =====================================================================
 # Per-category emission
 # =====================================================================
@@ -250,6 +290,7 @@ def _emit_nodes(
     rec: ResolvedRecorderRecord,
     output_dir: str,
     file_format: str,
+    stage_id: Optional[str] = None,
 ) -> Iterable[LogicalRecorder]:
     """One logical recorder per ``(ops_type, dof_set)``."""
     if rec.node_ids is None or rec.node_ids.size == 0:
@@ -280,7 +321,7 @@ def _emit_nodes(
         # OpenSees Tcl when ``-dof`` is omitted (-pressure has its own
         # syntax). Keep the explicit -dof for now.
         file_path = _build_file_path(
-            output_dir, rec.name, ops_type, file_format,
+            output_dir, rec.name, ops_type, file_format, stage_id=stage_id,
         )
         yield LogicalRecorder(
             kind="Node",
@@ -300,6 +341,7 @@ def _emit_element_simple(
     rec: ResolvedRecorderRecord,
     output_dir: str,
     file_format: str,
+    stage_id: Optional[str] = None,
 ) -> Iterable[LogicalRecorder]:
     """One (or two) logical recorders per element-level record.
 
@@ -347,7 +389,7 @@ def _emit_element_simple(
     response_tokens = tuple(response_str.split())
     target_ids = tuple(int(e) for e in rec.element_ids)
     file_path = _build_file_path(
-        output_dir, rec.name, rec.category, file_format,
+        output_dir, rec.name, rec.category, file_format, stage_id=stage_id,
     )
     yield LogicalRecorder(
         kind="Element",
@@ -420,9 +462,18 @@ def _canonical_to_ops(canonical: str) -> Optional[tuple[str, int]]:
 
 def _build_file_path(
     output_dir: str, record_name: str, suffix: str, file_format: str,
+    *, stage_id: Optional[str] = None,
 ) -> str:
-    """Build the recorder output file path with the right extension."""
+    """Build the recorder output file path with the right extension.
+
+    When ``stage_id`` is given, the basename is prefixed with
+    ``<stage_id>__`` so multi-stage live emission produces distinct
+    files per stage. Double-underscore separates the prefix so a
+    single-underscore record name remains unambiguous to parse.
+    """
     base = f"{record_name}_{suffix}"
+    if stage_id is not None:
+        base = f"{stage_id}__{base}"
     ext = "xml" if file_format == "xml" else "out"
     fname = f"{base}.{ext}"
     if not output_dir:
@@ -733,6 +784,41 @@ def emit_mpco_python(
         else:
             args.extend(["'-T'", "'nsteps'", str(int(val))])
     return f"ops.recorder({', '.join(args)})"
+
+
+def mpco_ops_args(
+    records,
+    *,
+    output_dir: str = "",
+    filename: str = "run.mpco",
+) -> tuple:
+    """Argument tuple for a live ``ops.recorder('mpco', *args)`` call.
+
+    Mirrors :func:`emit_mpco_python` exactly, except it returns Python
+    objects (strings, ints, floats) instead of the equivalent source
+    code. The leading ``'mpco'`` argument is included so the caller
+    can splat directly:
+
+    >>> import openseespy.opensees as ops
+    >>> ops.recorder(*mpco_ops_args(spec.records))   # doctest: +SKIP
+    """
+    file_path = _build_mpco_path(output_dir, filename)
+    node_toks, elem_toks = collect_mpco_tokens(records)
+    args: list = ["mpco", file_path]
+    if node_toks:
+        args.append("-N")
+        args.extend(node_toks)
+    if elem_toks:
+        args.append("-E")
+        args.extend(elem_toks)
+    cad = _aggregate_cadence(records)
+    if cad is not None:
+        kind, val = cad
+        if kind == "dt":
+            args.extend(["-T", "dt", float(val)])
+        else:
+            args.extend(["-T", "nsteps", int(val)])
+    return tuple(args)
 
 
 def _build_mpco_path(output_dir: str, filename: str) -> str:
