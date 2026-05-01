@@ -112,7 +112,8 @@ def test_nodes_nearest_to_far_corner(tmp_path: Path) -> None:
 def test_nodes_in_box_returns_corners(tmp_path: Path) -> None:
     r, _fem = _make_results_with_fem(tmp_path)
     slab = r.nodes.in_box(
-        (-0.5, -0.5, -0.5), (1.5, 1.5, 1.5),
+        box_min=(-0.5, -0.5, -0.5),
+        box_max=(1.5, 1.5, 1.5),
         component="displacement_x",
     )
     # All four unit-square corners in box; node 5 outside
@@ -124,7 +125,8 @@ def test_nodes_in_box_half_open_excludes_upper_face(tmp_path: Path) -> None:
     # Tight box exactly on (0,0,0) and (1,1,1) — half-open [a, b) excludes
     # nodes with x=1 or y=1 from the upper face.
     slab = r.nodes.in_box(
-        (0.0, 0.0, 0.0), (1.0, 1.0, 1.0),
+        box_min=(0.0, 0.0, 0.0),
+        box_max=(1.0, 1.0, 1.0),
         component="displacement_x",
     )
     # Only node 1 at (0,0,0) is fully inside
@@ -135,8 +137,8 @@ def test_nodes_in_box_with_inf(tmp_path: Path) -> None:
     r, _fem = _make_results_with_fem(tmp_path)
     # Slab in z = 0 plane only — relax x, y
     slab = r.nodes.in_box(
-        (-np.inf, -np.inf, -0.1),
-        (np.inf, np.inf, 0.5),
+        box_min=(-np.inf, -np.inf, -0.1),
+        box_max=(np.inf, np.inf, 0.5),
         component="displacement_x",
     )
     # All four corners (z=0); node 5 at z=5 excluded
@@ -151,7 +153,8 @@ def test_nodes_in_box_additive_with_pg(tmp_path: Path) -> None:
     r, _fem = _make_results_with_fem(tmp_path)
     # PG TopRow → {3, 4}; box covers {1, 2, 3, 4}; intersection → {3, 4}
     slab = r.nodes.in_box(
-        (-0.5, -0.5, -0.5), (1.5, 1.5, 1.5),
+        box_min=(-0.5, -0.5, -0.5),
+        box_max=(1.5, 1.5, 1.5),
         component="displacement_x",
         pg="TopRow",
     )
@@ -162,7 +165,8 @@ def test_nodes_in_box_additive_empty_intersection(tmp_path: Path) -> None:
     r, _fem = _make_results_with_fem(tmp_path)
     # PG Single → {5}; tight box around origin → {1}; intersection empty
     slab = r.nodes.in_box(
-        (-0.5, -0.5, -0.5), (0.5, 0.5, 0.5),
+        box_min=(-0.5, -0.5, -0.5),
+        box_max=(0.5, 0.5, 0.5),
         component="displacement_x",
         pg="Single",
     )
@@ -186,6 +190,120 @@ def test_nodes_nearest_to_additive_with_ids(tmp_path: Path) -> None:
     )
     # Restricted to {2,3,4,5}: nearest to origin is node 2 at (1,0,0).
     assert slab.node_ids.tolist() == [2]
+
+
+# =====================================================================
+# in_sphere
+# =====================================================================
+
+def test_nodes_in_sphere_picks_corners_within_radius(tmp_path: Path) -> None:
+    r, _fem = _make_results_with_fem(tmp_path)
+    # Sphere at origin, radius 1.5 → nodes 1,2,4 (sqrt(0,1,1) all ≤ 1.5)
+    # Node 3 at (1,1,0) → distance = sqrt(2) ≈ 1.414 → INCLUDED.
+    # Node 5 at (5,5,5) → far away, EXCLUDED.
+    slab = r.nodes.in_sphere(
+        center=(0.0, 0.0, 0.0), radius=1.5,
+        component="displacement_x",
+    )
+    assert sorted(slab.node_ids.tolist()) == [1, 2, 3, 4]
+
+
+def test_nodes_in_sphere_radius_zero(tmp_path: Path) -> None:
+    r, _fem = _make_results_with_fem(tmp_path)
+    # Sphere at exactly node 5's position, radius 0 → just node 5
+    slab = r.nodes.in_sphere(
+        center=(5.0, 5.0, 5.0), radius=0.0,
+        component="displacement_x",
+    )
+    assert slab.node_ids.tolist() == [5]
+
+
+def test_nodes_in_sphere_negative_radius_raises(tmp_path: Path) -> None:
+    r, _fem = _make_results_with_fem(tmp_path)
+    with pytest.raises(ValueError, match="non-negative"):
+        r.nodes.in_sphere(
+            center=(0, 0, 0), radius=-1.0,
+            component="displacement_x",
+        )
+
+
+def test_nodes_in_sphere_additive_with_pg(tmp_path: Path) -> None:
+    r, _fem = _make_results_with_fem(tmp_path)
+    # Sphere covers {1, 2, 3, 4}; PG TopRow restricts to {3, 4}
+    slab = r.nodes.in_sphere(
+        center=(0.0, 0.0, 0.0), radius=2.0,
+        component="displacement_x",
+        pg="TopRow",
+    )
+    assert sorted(slab.node_ids.tolist()) == [3, 4]
+
+
+# =====================================================================
+# on_plane
+# =====================================================================
+
+def test_nodes_on_plane_z_zero(tmp_path: Path) -> None:
+    r, _fem = _make_results_with_fem(tmp_path)
+    # Plane z=0 → 4 corner nodes (z=0); node 5 at z=5 excluded
+    slab = r.nodes.on_plane(
+        point_on_plane=(0.0, 0.0, 0.0),
+        normal=(0.0, 0.0, 1.0),
+        tolerance=1e-6,
+        component="displacement_x",
+    )
+    assert sorted(slab.node_ids.tolist()) == [1, 2, 3, 4]
+
+
+def test_nodes_on_plane_normalises_normal(tmp_path: Path) -> None:
+    r, _fem = _make_results_with_fem(tmp_path)
+    # Same query but with a non-unit normal — must be normalised internally
+    slab = r.nodes.on_plane(
+        point_on_plane=(0.0, 0.0, 0.0),
+        normal=(0.0, 0.0, 100.0),    # not unit
+        tolerance=1e-6,
+        component="displacement_x",
+    )
+    assert sorted(slab.node_ids.tolist()) == [1, 2, 3, 4]
+
+
+def test_nodes_on_plane_zero_normal_raises(tmp_path: Path) -> None:
+    r, _fem = _make_results_with_fem(tmp_path)
+    with pytest.raises(ValueError, match="zero length"):
+        r.nodes.on_plane(
+            point_on_plane=(0, 0, 0),
+            normal=(0, 0, 0),
+            tolerance=0.1,
+            component="displacement_x",
+        )
+
+
+def test_nodes_on_plane_with_tolerance(tmp_path: Path) -> None:
+    r, _fem = _make_results_with_fem(tmp_path)
+    # Plane through z=2.5 with tolerance 3 → catches z=0 (dist 2.5) and z=5 (dist 2.5)
+    slab = r.nodes.on_plane(
+        point_on_plane=(0.0, 0.0, 2.5),
+        normal=(0.0, 0.0, 1.0),
+        tolerance=3.0,
+        component="displacement_x",
+    )
+    # All 5 nodes within tol
+    assert sorted(slab.node_ids.tolist()) == [1, 2, 3, 4, 5]
+
+
+# =====================================================================
+# element_type= additive filter (element-level composites)
+# =====================================================================
+
+def test_elements_in_box_with_element_type(tmp_path: Path) -> None:
+    """Pass element_type matching the only group — works as a no-op narrow."""
+    r, _fem = _make_results_with_fem(tmp_path)
+    from apeGmsh.results._composites import _element_ids_of_type
+    fem = r._fem
+    # Direct test of the underlying helper
+    matching = _element_ids_of_type(fem, "quad4")
+    assert matching.tolist() == [10]
+    # Unknown type → empty
+    assert _element_ids_of_type(fem, "Hex8").tolist() == []
 
 
 # =====================================================================
