@@ -157,6 +157,10 @@ class ResultsViewer:
         plot_pane.on_user_close(self._on_plot_user_close)
         details = DetailsPanel(settings_tab)
         outline.on_diagram_selected(self._on_outline_diagram_selected)
+        # Two-way binding (B++ §7): the Plots group in the outline
+        # tree mirrors the plot pane's tab list; clicking a plot row
+        # activates the corresponding tab and vice versa.
+        outline.bind_plot_pane(plot_pane)
         right_rail = self._build_right_rail(plot_pane.widget, details.widget)
         win.set_right_widget(right_rail)
         self._plot_pane = plot_pane

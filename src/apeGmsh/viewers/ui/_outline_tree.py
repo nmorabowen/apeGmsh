@@ -34,11 +34,12 @@ def _qt():
 
 
 # Roles for stashing data on tree items. Qt.UserRole == 0x100; we
-# use distinct subroles for the two leaf kinds so iteration code can
+# use distinct subroles for the leaf kinds so iteration code can
 # tell them apart without inspecting the parent.
 _ROLE_STAGE_ID = 0x100
 _ROLE_DIAGRAM_OBJ = 0x101
 _ROLE_GROUP_KEY = 0x102
+_ROLE_PLOT_KEY = 0x103
 
 
 class OutlineTree:
@@ -57,6 +58,8 @@ class OutlineTree:
         self._on_diagram_selected: Optional[
             Callable[[Optional[Diagram]], None]
         ] = None
+        self._plot_pane: Any = None
+        self._unsub_plot_tabs: Optional[Callable[[], None]] = None
 
         # ── Outer container ─────────────────────────────────────────
         widget = QtWidgets.QWidget()
@@ -82,10 +85,19 @@ class OutlineTree:
         self._btn_insert.setObjectName("OutlineInsertButton")
         self._btn_insert.setToolTip("Add a new diagram")
         self._btn_insert.setFlat(True)
-        self._btn_insert.clicked.connect(self._on_insert)
+        self._btn_insert.setCheckable(True)
+        self._btn_insert.toggled.connect(self._on_insert_toggled)
         header_lay.addWidget(self._btn_insert)
 
         layout.addWidget(header)
+
+        # ── Inline 2×4 kind picker (B++ §4.1, §8) ───────────────────
+        # Hidden until the user clicks "+ Insert". Clicking a kind
+        # button hides the picker and opens AddDiagramDialog
+        # pre-selected for that kind.
+        self._kind_picker = self._make_kind_picker()
+        self._kind_picker.setVisible(False)
+        layout.addWidget(self._kind_picker)
 
         # ── Tree ────────────────────────────────────────────────────
         tree = QtWidgets.QTreeWidget()
@@ -265,17 +277,25 @@ class OutlineTree:
     # ------------------------------------------------------------------
 
     def _refresh_placeholders(self) -> None:
+        """Render the static placeholder rows.
+
+        Probes is still a placeholder pending B5+ inline migration.
+        The Plots group is populated dynamically from the bound plot
+        pane (see :meth:`bind_plot_pane`); when nothing is bound yet
+        or no non-diagram plots exist, the placeholder is shown.
+        """
         QtWidgets, _ = _qt()
-        for group, msg in (
-            (self._group_probes, "(see Probes tab — coming inline)"),
-            (self._group_plots, "(time-history plots — coming inline)"),
-        ):
-            group.takeChildren()
-            empty = QtWidgets.QTreeWidgetItem([msg])
-            flags = empty.flags() & ~self._unselectable_mask()
-            empty.setFlags(flags)
-            empty.setForeground(0, self._dim_brush())
-            group.addChild(empty)
+        self._group_probes.takeChildren()
+        empty = QtWidgets.QTreeWidgetItem(
+            ["(see Probes tab — coming inline)"]
+        )
+        flags = empty.flags() & ~self._unselectable_mask()
+        empty.setFlags(flags)
+        empty.setForeground(0, self._dim_brush())
+        self._group_probes.addChild(empty)
+        # Plots group is owned by _refresh_plots; render its empty
+        # state here for the unbound case so the tree is never blank.
+        self._refresh_plots()
 
     @staticmethod
     def _unselectable_mask():
@@ -294,6 +314,108 @@ class OutlineTree:
         from .theme import THEME
         return QtGui.QBrush(QtGui.QColor(THEME.current.overlay))
 
+    def _accent_brush(self):
+        """Accent brush for the active-plot indicator."""
+        from qtpy import QtGui
+        from .theme import THEME
+        return QtGui.QBrush(QtGui.QColor(THEME.current.accent))
+
+    # ------------------------------------------------------------------
+    # Plot-pane binding (B++ §7 two-way tree ↔ tab binding)
+    # ------------------------------------------------------------------
+
+    def bind_plot_pane(self, plot_pane: Any) -> None:
+        """Wire the Plots group to a :class:`PlotPane` instance.
+
+        Subscribes to the pane's ``on_tabs_changed`` and
+        ``on_active_changed`` so the tree stays in sync, and routes
+        clicks on Plots-group leaves back to ``plot_pane.set_active``.
+        Idempotent — calling it twice rewires cleanly.
+        """
+        if self._unsub_plot_tabs is not None:
+            try:
+                self._unsub_plot_tabs()
+            except Exception:
+                pass
+            self._unsub_plot_tabs = None
+        self._plot_pane = plot_pane
+        if plot_pane is None:
+            self._refresh_plots()
+            return
+        self._unsub_plot_tabs = plot_pane.on_tabs_changed(self._refresh_plots)
+        plot_pane.on_active_changed(self._on_plot_active_changed)
+        self._refresh_plots()
+
+    def _refresh_plots(self) -> None:
+        """Repopulate the Plots group from the bound plot pane.
+
+        Diagram side-panel tabs (key tuple starting with ``"diagram"``)
+        are skipped — those already appear under the Diagrams group.
+        Other tabs (history plots from shift-click, future user-created
+        plots) become first-class navigation rows.
+        """
+        QtWidgets, _ = _qt()
+        self._group_plots.takeChildren()
+
+        keys = self._collect_plot_keys()
+        if not keys:
+            empty = QtWidgets.QTreeWidgetItem(
+                ["(shift-click a node to plot a time-history)"]
+            )
+            flags = empty.flags() & ~self._unselectable_mask()
+            empty.setFlags(flags)
+            empty.setForeground(0, self._dim_brush())
+            self._group_plots.addChild(empty)
+            return
+
+        active = (
+            self._plot_pane.active_key()
+            if self._plot_pane is not None else None
+        )
+        for key in keys:
+            label = self._plot_pane.tab_label(key) or str(key)
+            item = QtWidgets.QTreeWidgetItem([label])
+            item.setData(0, _ROLE_PLOT_KEY, key)
+            self._group_plots.addChild(item)
+            if key == active:
+                self._mark_plot_active(item, True)
+
+    def _on_plot_active_changed(self, key: Any) -> None:
+        """Update the active-row indicator when the plot pane switches tabs."""
+        for i in range(self._group_plots.childCount()):
+            item = self._group_plots.child(i)
+            row_key = item.data(0, _ROLE_PLOT_KEY)
+            self._mark_plot_active(item, row_key == key and key is not None)
+
+    def _mark_plot_active(self, item: Any, active: bool) -> None:
+        font = item.font(0)
+        font.setBold(active)
+        item.setFont(0, font)
+        item.setForeground(
+            0, self._accent_brush() if active else self._normal_brush(),
+        )
+
+    def _normal_brush(self):
+        from qtpy import QtGui
+        from .theme import THEME
+        return QtGui.QBrush(QtGui.QColor(THEME.current.text))
+
+    def _collect_plot_keys(self) -> list[Any]:
+        """Plot-pane keys that should appear under the Plots group.
+
+        Diagram side panels share their lifecycle with the diagrams
+        listed under the Diagrams group; surfacing them again here
+        would be redundant and double-list every fiber / layer panel.
+        """
+        if self._plot_pane is None:
+            return []
+        out: list[Any] = []
+        for key in self._plot_pane.keys():
+            if isinstance(key, tuple) and len(key) > 0 and key[0] == "diagram":
+                continue
+            out.append(key)
+        return out
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
@@ -309,6 +431,14 @@ class OutlineTree:
         if sid is not None:
             if sid != self._director.stage_id:
                 self._director.set_stage(sid)
+            return
+
+        # Plot row click → focus the matching plot-pane tab. The pane
+        # fires on_active_changed back to us, which re-renders the
+        # active-row indicator (idempotent).
+        plot_key = item.data(0, _ROLE_PLOT_KEY)
+        if plot_key is not None and self._plot_pane is not None:
+            self._plot_pane.set_active(plot_key)
             return
 
     def _on_item_changed(self, item, column: int) -> None:
@@ -331,9 +461,54 @@ class OutlineTree:
         self._on_diagram_selected(diagram)
 
     @safe_slot
-    def _on_insert(self) -> None:
+    def _on_insert_toggled(self, checked: bool) -> None:
+        """Show / hide the inline 2×4 kind picker."""
+        self._kind_picker.setVisible(checked)
+
+    def _make_kind_picker(self):
+        """Construct the 2×4 grid of diagram-kind shortcuts.
+
+        Buttons label themselves from ``kinds_available()``; clicking
+        a kind hides the picker and opens AddDiagramDialog pre-selected
+        for that kind. Sized to fit four columns × two rows on the
+        260-px-fixed left rail.
+        """
+        QtWidgets, _ = _qt()
+        from ._add_diagram_dialog import kinds_available
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("OutlineKindPicker")
+        grid = QtWidgets.QGridLayout(frame)
+        grid.setContentsMargins(8, 6, 8, 6)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(4)
+
+        kinds = kinds_available()
+        for idx, entry in enumerate(kinds):
+            r, c = divmod(idx, 4)
+            btn = QtWidgets.QToolButton()
+            btn.setObjectName("OutlineKindBtn")
+            btn.setText(entry.label)
+            btn.setToolTip(entry.label)
+            btn.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding,
+                QtWidgets.QSizePolicy.Fixed,
+            )
+            btn.setMinimumHeight(28)
+            btn.clicked.connect(
+                lambda _checked=False, kid=entry.kind_id: self._on_kind_chosen(kid)
+            )
+            grid.addWidget(btn, r, c)
+        return frame
+
+    @safe_slot
+    def _on_kind_chosen(self, kind_id: str) -> None:
+        """Inline picker → modal dialog with the chosen kind pre-selected."""
+        # Hide the picker so the user sees the dialog land cleanly.
+        self._btn_insert.setChecked(False)
         from ._add_diagram_dialog import AddDiagramDialog
-        dlg = AddDiagramDialog(self._director, parent=self._widget)
+        dlg = AddDiagramDialog(
+            self._director, parent=self._widget, initial_kind=kind_id,
+        )
         dlg.run()
         # Registry's on_changed observer will refresh the diagrams group.
 

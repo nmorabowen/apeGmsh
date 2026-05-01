@@ -114,6 +114,10 @@ class PlotPane:
         self._widget = widget
         self._tabs: list[_TabEntry] = []
         self._on_active_changed: Optional[Callable[[Optional[Hashable]], None]] = None
+        # ``on_tabs_changed`` fires after every add/remove so external
+        # navigators (the outline tree's Plots group) can stay in sync
+        # with the tab list. List of callbacks — one-to-many.
+        self._tabs_changed_observers: list[Callable[[], None]] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -162,6 +166,7 @@ class PlotPane:
             key=key, label=label, row=row, body=body, body_index=body_idx,
         ))
         self.set_active(key)
+        self._fire_tabs_changed()
 
     def remove_tab(self, key: Hashable) -> None:
         entry = self._find(key)
@@ -185,6 +190,7 @@ class PlotPane:
                 self._body.setCurrentWidget(self._empty_widget)
                 if self._on_active_changed is not None:
                     self._on_active_changed(None)
+        self._fire_tabs_changed()
 
     def set_active(self, key: Hashable) -> None:
         entry = self._find(key)
@@ -207,6 +213,38 @@ class PlotPane:
         self, callback: Callable[[Optional[Hashable]], None],
     ) -> None:
         self._on_active_changed = callback
+
+    def on_tabs_changed(
+        self, callback: Callable[[], None],
+    ) -> Callable[[], None]:
+        """Register observer fired after every add_tab / remove_tab.
+
+        Returns an unsubscribe callable. Multi-listener — pile on as
+        many navigators as you like.
+        """
+        self._tabs_changed_observers.append(callback)
+
+        def _unsub() -> None:
+            try:
+                self._tabs_changed_observers.remove(callback)
+            except ValueError:
+                pass
+        return _unsub
+
+    def _fire_tabs_changed(self) -> None:
+        for cb in list(self._tabs_changed_observers):
+            try:
+                cb()
+            except Exception:
+                import logging
+                logging.getLogger("apeGmsh.viewer.plot_pane").exception(
+                    "tabs_changed observer failed: %r", cb,
+                )
+
+    def tab_label(self, key: Hashable) -> Optional[str]:
+        """Return the visible label for a tab key, or ``None`` if absent."""
+        entry = self._find(key)
+        return entry.label if entry is not None else None
 
     def on_user_close(
         self, callback: Callable[[Hashable], None],
