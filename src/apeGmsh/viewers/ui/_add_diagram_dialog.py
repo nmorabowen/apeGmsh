@@ -283,6 +283,16 @@ class AddDiagramDialog:
             self._populate_components,
         )
 
+        # Preset — filters to the current kind. The "(default)" entry
+        # leaves the dialog's existing default-style behaviour intact.
+        self._preset_combo = QtWidgets.QComboBox()
+        self._preset_combo.setToolTip(
+            "Reuse a saved style preset for this kind. (default) keeps "
+            "the dialog's built-in defaults."
+        )
+        form.addRow("Preset:", self._preset_combo)
+        self._populate_presets()
+
         # Selector
         self._selector_kind = QtWidgets.QComboBox()
         self._selector_kind.addItem("All nodes", "all")
@@ -380,6 +390,31 @@ class AddDiagramDialog:
     def _on_kind_changed(self, *_args: Any) -> None:
         self._update_topology_row_visibility()
         self._populate_components()
+        self._populate_presets()
+
+    def _populate_presets(self) -> None:
+        """Refresh the Preset combo against the current kind.
+
+        Inserts a leading ``(default)`` entry so users can pick "no
+        preset" without an extra control. Preset names that fail to
+        load (corrupt JSON / removed kind) are skipped silently.
+        """
+        from ..diagrams._style_presets import default_store
+        kind_entry: _KindEntry = self._kind_combo.currentData()
+        kind_id = kind_entry.kind_id if kind_entry is not None else None
+        self._preset_combo.blockSignals(True)
+        try:
+            self._preset_combo.clear()
+            self._preset_combo.addItem("(default)", None)
+            if kind_id is not None:
+                try:
+                    names = default_store().list_for_kind(kind_id)
+                except Exception:
+                    names = []
+                for name in names:
+                    self._preset_combo.addItem(name, name)
+        finally:
+            self._preset_combo.blockSignals(False)
 
     def _update_topology_row_visibility(self) -> None:
         """Show the Topology row only when Contour is the kind."""
@@ -528,20 +563,31 @@ class AddDiagramDialog:
             self._show_error(f"Invalid selector: {exc}")
             return False
 
-        style = kind_entry.make_default_style(component)
-        # Contour exposes a per-instance ``topology`` field; thread the
-        # dialog's sub-combo selection into the constructed style.
-        # Other kinds have no equivalent control to thread.
-        if kind_entry.kind_id == "contour":
-            chosen = self._topology_combo.currentData() or "auto"
-            style = ContourStyle(
-                cmap=style.cmap,
-                clim=style.clim,
-                opacity=style.opacity,
-                show_edges=style.show_edges,
-                show_scalar_bar=style.show_scalar_bar,
-                topology=chosen,
-            )
+        # Style: prefer a chosen preset; otherwise fall back to the
+        # kind's per-component default. Preset takes priority over the
+        # Topology sub-combo for Contour — saving a preset captures
+        # the topology field too, so loading restores it intact.
+        preset_name = self._preset_combo.currentData()
+        style: Any = None
+        if preset_name is not None:
+            from ..diagrams._style_presets import default_store
+            try:
+                _kind_id, style = default_store().load(preset_name)
+            except Exception as exc:
+                self._show_error(f"Failed to load preset: {exc}")
+                return False
+        if style is None:
+            style = kind_entry.make_default_style(component)
+            if kind_entry.kind_id == "contour":
+                chosen = self._topology_combo.currentData() or "auto"
+                style = ContourStyle(
+                    cmap=style.cmap,
+                    clim=style.clim,
+                    opacity=style.opacity,
+                    show_edges=style.show_edges,
+                    show_scalar_bar=style.show_scalar_bar,
+                    topology=chosen,
+                )
         label = self._label_edit.text().strip() or None
         spec = DiagramSpec(
             kind=kind_entry.kind_id,

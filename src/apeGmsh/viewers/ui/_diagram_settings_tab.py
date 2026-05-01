@@ -134,6 +134,11 @@ class DiagramSettingsTab:
                 f"No settings UI for kind {kind!r} yet."
             ))
 
+        # ── Preset row (Save / Apply) ──────────────────────────────
+        # Always available below the kind-specific panel so users can
+        # snapshot the current style of any diagram.
+        self._build_preset_row(d)
+
     # ------------------------------------------------------------------
     # Contour panel
     # ------------------------------------------------------------------
@@ -465,6 +470,119 @@ class DiagramSettingsTab:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Preset row
+    # ------------------------------------------------------------------
+
+    def _build_preset_row(self, d: Diagram) -> None:
+        """Render Save / Apply preset controls for the selected diagram.
+
+        Save button captures the diagram's current ``spec.style`` to a
+        named JSON in the user's preset directory. Apply combo lists
+        every preset of the same kind and re-applies it to the live
+        diagram by replacing its style and re-attaching.
+        """
+        QtWidgets, _ = _qt()
+        from ..diagrams._style_presets import default_store
+
+        sep = QtWidgets.QFrame()
+        sep.setFrameShape(QtWidgets.QFrame.HLine)
+        self._content_layout.addWidget(sep)
+
+        title = QtWidgets.QLabel("PRESETS")
+        f = title.font()
+        f.setBold(True)
+        title.setFont(f)
+        self._content_layout.addWidget(title)
+
+        row = QtWidgets.QHBoxLayout()
+        self._content_layout.addLayout(row)
+
+        # Apply combo
+        combo = QtWidgets.QComboBox()
+        combo.addItem("(choose preset…)", None)
+        try:
+            names = default_store().list_for_kind(d.kind)
+        except Exception:
+            names = []
+        for name in names:
+            combo.addItem(name, name)
+        row.addWidget(combo, stretch=1)
+
+        apply_btn = QtWidgets.QPushButton("Apply")
+        apply_btn.setEnabled(False)
+        row.addWidget(apply_btn)
+
+        save_btn = QtWidgets.QPushButton("Save…")
+        row.addWidget(save_btn)
+
+        def _on_combo_change(_idx: int) -> None:
+            apply_btn.setEnabled(combo.currentData() is not None)
+        combo.currentIndexChanged.connect(_on_combo_change)
+
+        def _on_apply() -> None:
+            name = combo.currentData()
+            if name is None:
+                return
+            try:
+                _kind_id, style = default_store().load(name)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(
+                    self._widget, "Apply preset",
+                    f"Could not load preset {name!r}: {exc}",
+                )
+                return
+            self._apply_style_to_diagram(d, style)
+        apply_btn.clicked.connect(_on_apply)
+
+        def _on_save() -> None:
+            name, ok = QtWidgets.QInputDialog.getText(
+                self._widget, "Save preset",
+                "Preset name:",
+            )
+            if not ok or not name.strip():
+                return
+            try:
+                default_store().save(name.strip(), d.kind, d.spec.style)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(
+                    self._widget, "Save preset",
+                    f"Could not save preset: {exc}",
+                )
+                return
+            # Refresh the combo so the new entry is visible without
+            # reselecting the diagram.
+            combo.addItem(name.strip(), name.strip())
+        save_btn.clicked.connect(_on_save)
+
+    def _apply_style_to_diagram(self, d: Diagram, style: Any) -> None:
+        """Swap the diagram's spec.style and re-attach.
+
+        Mirrors the runtime style-mutation pattern other settings
+        panels use: rebuild ``DiagramSpec`` with the new style and
+        ask the registry to re-attach the diagram so the rendered
+        output reflects the change immediately.
+        """
+        from ..diagrams._base import DiagramSpec
+        new_spec = DiagramSpec(
+            kind=d.spec.kind,
+            selector=d.spec.selector,
+            style=style,
+            stage_id=d.spec.stage_id,
+            label=d.spec.label,
+        )
+        # Diagrams hold spec via a public attribute on Diagram; mutate
+        # the attached instance in place and ask the registry to re-
+        # attach everything so the new style is rendered. The registry
+        # has no per-diagram reattach today; reattach_all() is cheap
+        # enough for the panel-driven path.
+        d.spec = new_spec
+        try:
+            self._director.registry.reattach_all()
+        except Exception:
+            pass
+        self._rebuild()
 
     def _safe_call(self, fn: Callable, *args, **kwargs) -> Any:
         try:
