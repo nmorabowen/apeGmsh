@@ -325,6 +325,8 @@
       
         
       
+        
+      
     
     
     
@@ -853,6 +855,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../guide_obtaining_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Obtaining results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -889,6 +919,8 @@
   
     
     
+      
+        
       
         
       
@@ -1214,6 +1246,34 @@
     
   
     Results viewer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_results_obtaining/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Obtaining
   
 
     
@@ -2555,10 +2615,21 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#strategy-a-tclpython-file-recorders" class="md-nav__link">
+  <a href="#strategy-a1-tclpython-file-recorders" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Strategy A — Tcl/Python file recorders
+        Strategy A₁ — Tcl/Python file recorders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strategy-a3-live-recorders-in-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strategy A₃ — Live recorders (in-process)
       
     </span>
   </a>
@@ -2577,10 +2648,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#strategy-c-stkompco-bridge" class="md-nav__link">
+  <a href="#strategy-c1-stkompco-bridge-tcl-export" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Strategy C — STKO/MPCO bridge
+        Strategy C₁ — STKO/MPCO bridge (Tcl export)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strategy-c2-live-mpco-in-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strategy C₂ — Live MPCO (in-process)
       
     </span>
   </a>
@@ -3442,8 +3524,22 @@ declare against PGs/labels, resolve through <code>FEMData</code>.</p>
 recorded. It also serves as the manifest for parsing the recorder
 output files.</p>
 <h3 id="layer-2-execution-strategies">Layer 2 — Execution strategies<a class="headerlink" href="#layer-2-execution-strategies" title="Permanent link">&para;</a></h3>
-<p>Three strategies, one spec. The user picks based on workflow.</p>
-<h4 id="strategy-a-tclpython-file-recorders">Strategy A — Tcl/Python file recorders<a class="headerlink" href="#strategy-a-tclpython-file-recorders" title="Permanent link">&para;</a></h4>
+<p>Five strategies, one spec. The user picks based on workflow. For a
+focused walkthrough see
+<a href="../../architecture/apeGmsh_results_obtaining/">architecture/apeGmsh_results_obtaining.md</a>;
+this section is the schema-grounded reference.</p>
+<p>The strategies group into three families that share a producer:</p>
+<ul>
+<li><strong>A. Classic recorders</strong> — <code>recorder Node …</code> / <code>recorder Element …</code>
+  text files. Three sub-strategies differ only in <em>where the recorder
+  command runs</em> (Tcl script, Python script, in-process). All three
+  produce <code>.out</code> / <code>.xml</code> and read back through <code>from_recorders</code>.</li>
+<li><strong>B. Domain capture</strong> — apeGmsh queries the live <code>ops</code> domain itself
+  and writes native HDF5. One strategy.</li>
+<li><strong>C. MPCO</strong> — STKO's <code>recorder mpco</code> writes one HDF5. Two
+  sub-strategies (Tcl-export, in-process).</li>
+</ul>
+<h4 id="strategy-a1-tclpython-file-recorders">Strategy A₁ — Tcl/Python file recorders<a class="headerlink" href="#strategy-a1-tclpython-file-recorders" title="Permanent link">&para;</a></h4>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">)</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># OpenSees writes .out / .xml files when the user runs the script</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
@@ -3458,23 +3554,50 @@ spec is also serialized as a sidecar HDF5 manifest so
 3. Writes a single <code>run.h5</code> in native schema.
 4. Caches the result. Re-running with unchanged inputs is a no-op
    (mtime + size + fem <code>snapshot_id</code> check on each source).</p>
-<h4 id="strategy-b-in-process-domain-capture">Strategy B — In-process domain capture<a class="headerlink" href="#strategy-b-in-process-domain-capture" title="Permanent link">&para;</a></h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">capture</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_grav_steps</span><span class="p">):</span>
+<h4 id="strategy-a3-live-recorders-in-process">Strategy A₃ — Live recorders (in-process)<a class="headerlink" href="#strategy-a3-live-recorders-in-process" title="Permanent link">&para;</a></h4>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">emit_recorders</span><span class="p">(</span><span class="s2">&quot;out/&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">live</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">live</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;static&quot;</span><span class="p">)</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_grav</span><span class="p">):</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">getTime</span><span class="p">())</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">&quot;dynamic&quot;</span><span class="p">)</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_dyn_steps</span><span class="p">):</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">live</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">live</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">&quot;dynamic&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;transient&quot;</span><span class="p">)</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_dyn</span><span class="p">):</span>
 </span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>        <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">getTime</span><span class="p">())</span>
-</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
-</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
-</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    <span class="c1"># Modal stages — one per mode, kind=&quot;mode&quot;</span>
-</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">capture_modes</span><span class="p">(</span><span class="n">n_modes</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
-</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
-</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">live</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">grav</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="n">dyn</span>  <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">&quot;dynamic&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Same recorder commands as A₁/A₂, but pushed into the live openseespy
+domain via <code>ops.recorder(*args)</code> — no script written, no subprocess.
+Per-stage filename prefix <code>&lt;stage&gt;__&lt;record&gt;_&lt;token&gt;.{out,xml}</code>
+keeps multi-stage output unambiguous; <code>Results.from_recorders</code> learns
+the prefix via the <code>stage_id=</code> parameter (which threads through the
+emitter, the cache key, and the transcoder's path discovery).</p>
+<p>Single-source-of-truth note: the <code>LogicalRecorder</code> dataclass returned
+by <code>emit_logical()</code> is shared between A₁ (<code>format_tcl</code>), A₂
+(<code>format_python</code>), and A₃ (<code>to_ops_args</code>). The same MPCO
+<code>mpco_ops_args</code> mirrors <code>emit_mpco_python</code> for C₁/C₂.</p>
+<p>Coverage: nodes, elements, gauss, line_stations. Fibers / layers
+warn-and-skip (use B or C). Modal raises at <code>__enter__</code>.</p>
+<h4 id="strategy-b-in-process-domain-capture">Strategy B — In-process domain capture<a class="headerlink" href="#strategy-b-in-process-domain-capture" title="Permanent link">&para;</a></h4>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">capture</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_grav_steps</span><span class="p">):</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>        <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">getTime</span><span class="p">())</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">&quot;dynamic&quot;</span><span class="p">)</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_dyn_steps</span><span class="p">):</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>        <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">getTime</span><span class="p">())</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="c1"># Modal stages — one per mode, kind=&quot;mode&quot;</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="n">cap</span><span class="o">.</span><span class="n">capture_modes</span><span class="p">(</span><span class="n">n_modes</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>spec.capture()</code> returns a <code>DomainCapture</code> writer. On each <code>step()</code>:
 1. Calls <code>ops.nodeDisp()</code>, <code>ops.eleResponse()</code>, etc. for everything
@@ -3486,111 +3609,128 @@ spec is also serialized as a sidecar HDF5 manifest so
 mode shapes via <code>ops.nodeEigenvector(...)</code>, and writes one stage per
 mode with <code>kind="mode"</code> and the eigenvalue/frequency/period in the
 stage attrs. Bounded RAM, no per-step file I/O storms.</p>
-<h4 id="strategy-c-stkompco-bridge">Strategy C — STKO/MPCO bridge<a class="headerlink" href="#strategy-c-stkompco-bridge" title="Permanent link">&para;</a></h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">,</span> <span class="n">mpco</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="c1"># Writes `recorder mpco …` commands instead of (or alongside) text</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;out/run.mpco&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
+<h4 id="strategy-c1-stkompco-bridge-tcl-export">Strategy C₁ — STKO/MPCO bridge (Tcl export)<a class="headerlink" href="#strategy-c1-stkompco-bridge-tcl-export" title="Permanent link">&para;</a></h4>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">,</span> <span class="n">mpco</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1"># Writes `recorder mpco …` commands instead of (or alongside) text</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;out/run.mpco&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div>
 <p>For users who want STKO compatibility or already have MPCO files
 from upstream. The spec maps to <code>recorder mpco -N &lt;tokens&gt; -E &lt;tokens&gt;</code>;
 the MPCO recorder produces its own HDF5, which <code>MPCOReader</code> reads
 directly without transcoding.</p>
+<h4 id="strategy-c2-live-mpco-in-process">Strategy C₂ — Live MPCO (in-process)<a class="headerlink" href="#strategy-c2-live-mpco-in-process" title="Permanent link">&para;</a></h4>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">emit_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">):</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_steps</span><span class="p">):</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Same MPCO file as C₁, but emitted in-process via
+<code>ops.recorder("mpco", ...)</code>. No <code>begin_stage</code>/<code>end_stage</code> ceremony —
+MPCO writes one file containing all stages with <code>pseudoTime</code> encoding
+boundaries internally. <code>LiveMPCO.__enter__</code> runs a build-gate probe;
+if the active openseespy build doesn't include MPCO, it raises with
+a remediation pointer (use STKO's bundled Python, fall back to A₃,
+or use C₁).</p>
+<p>Coverage: all categories — including fibers, layers, and modal —
+because the MPCO recorder handles them natively
+(<code>section.fiber.stress</code>, layered-section tokens, <code>modesOfVibration</code>).</p>
 <h3 id="layer-3-native-hdf5-schema">Layer 3 — Native HDF5 schema<a class="headerlink" href="#layer-3-native-hdf5-schema" title="Permanent link">&para;</a></h3>
 <p>We control this format. Every non-MPCO path writes here; the reader
 above is source-agnostic.</p>
 <h4 id="top-level-layout">Top-level layout<a class="headerlink" href="#top-level-layout" title="Permanent link">&para;</a></h4>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>run.h5
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>├── attrs:
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>│   ├── schema_version        &quot;1.0&quot;
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>│   ├── source_type           &quot;tcl_recorders&quot; | &quot;domain_capture&quot;
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>│   ├── source_path           original file or &quot;&lt;domain&gt;&quot;
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>│   ├── created_at            ISO timestamp
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>│   ├── apegmsh_version
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>│   └── analysis_label        optional user tag
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>│
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>├── model/                    # embedded FEMData snapshot
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>│   ├── attrs:
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>│   │   ├── snapshot_id       deterministic content hash
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>│   │   ├── ndm, ndf
-</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>│   │   ├── model_name
-</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>│   │   └── units
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>│   ├── nodes/
-</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>│   │   ├── ids               (N,)
-</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>│   │   ├── coords            (N, 3)
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>│   │   ├── physical_groups/  # subgroups: name → ids
-</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>│   │   ├── labels/           # apeGmsh-specific
-</span><span id="__span-5-21"><a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>│   │   ├── loads/            # resolved nodal loads
-</span><span id="__span-5-22"><a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>│   │   └── masses/
-</span><span id="__span-5-23"><a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>│   ├── elements/
-</span><span id="__span-5-24"><a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>│   │   ├── per-type subgroups (ids, connectivity)
-</span><span id="__span-5-25"><a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>│   │   ├── physical_groups/
-</span><span id="__span-5-26"><a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>│   │   ├── labels/
-</span><span id="__span-5-27"><a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>│   │   └── loads/
-</span><span id="__span-5-28"><a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>│   └── constraints/          # node-pair, surface, etc.
-</span><span id="__span-5-29"><a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a>│
-</span><span id="__span-5-30"><a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>└── stages/
-</span><span id="__span-5-31"><a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a>    └── stage_0/
-</span><span id="__span-5-32"><a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a>        ├── attrs:
-</span><span id="__span-5-33"><a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a>        │   ├── name=&quot;gravity&quot;, label=&quot;…&quot;
-</span><span id="__span-5-34"><a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a>        │   ├── kind=&quot;transient&quot;|&quot;static&quot;|&quot;mode&quot;
-</span><span id="__span-5-35"><a id="__codelineno-5-35" name="__codelineno-5-35" href="#__codelineno-5-35"></a>        │   └── mode-only: eigenvalue, frequency_hz, period_s, mode_index
-</span><span id="__span-5-36"><a id="__codelineno-5-36" name="__codelineno-5-36" href="#__codelineno-5-36"></a>        ├── time              (T,)         # for kind=&quot;mode&quot;: shape (1,) holding 0.0
-</span><span id="__span-5-37"><a id="__codelineno-5-37" name="__codelineno-5-37" href="#__codelineno-5-37"></a>        └── partitions/
-</span><span id="__span-5-38"><a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a>            └── partition_0/
-</span><span id="__span-5-39"><a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a>                ├── nodes/
-</span><span id="__span-5-40"><a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a>                │   ├── _ids                 (N,)
-</span><span id="__span-5-41"><a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a>                │   ├── displacement_x       (T, N)
-</span><span id="__span-5-42"><a id="__codelineno-5-42" name="__codelineno-5-42" href="#__codelineno-5-42"></a>                │   ├── displacement_y       (T, N)
-</span><span id="__span-5-43"><a id="__codelineno-5-43" name="__codelineno-5-43" href="#__codelineno-5-43"></a>                │   ├── reaction_force_x     (T, N)
-</span><span id="__span-5-44"><a id="__codelineno-5-44" name="__codelineno-5-44" href="#__codelineno-5-44"></a>                │   └── …
-</span><span id="__span-5-45"><a id="__codelineno-5-45" name="__codelineno-5-45" href="#__codelineno-5-45"></a>                │
-</span><span id="__span-5-46"><a id="__codelineno-5-46" name="__codelineno-5-46" href="#__codelineno-5-46"></a>                └── elements/
-</span><span id="__span-5-47"><a id="__codelineno-5-47" name="__codelineno-5-47" href="#__codelineno-5-47"></a>                    ├── _ids                 (E,)
-</span><span id="__span-5-48"><a id="__codelineno-5-48" name="__codelineno-5-48" href="#__codelineno-5-48"></a>                    │
-</span><span id="__span-5-49"><a id="__codelineno-5-49" name="__codelineno-5-49" href="#__codelineno-5-49"></a>                    ├── nodal_forces/        # globalForce / localForce
-</span><span id="__span-5-50"><a id="__codelineno-5-50" name="__codelineno-5-50" href="#__codelineno-5-50"></a>                    │   └── group_&lt;n&gt;/       # one per (class_tag, npe)
-</span><span id="__span-5-51"><a id="__codelineno-5-51" name="__codelineno-5-51" href="#__codelineno-5-51"></a>                    │       ├── attrs: class_tag, frame=&quot;global&quot;|&quot;local&quot;
-</span><span id="__span-5-52"><a id="__codelineno-5-52" name="__codelineno-5-52" href="#__codelineno-5-52"></a>                    │       ├── _element_index            (E_g,)
-</span><span id="__span-5-53"><a id="__codelineno-5-53" name="__codelineno-5-53" href="#__codelineno-5-53"></a>                    │       ├── nodal_resisting_force_x   (T, E_g, npe_g)
-</span><span id="__span-5-54"><a id="__codelineno-5-54" name="__codelineno-5-54" href="#__codelineno-5-54"></a>                    │       └── …
-</span><span id="__span-5-55"><a id="__codelineno-5-55" name="__codelineno-5-55" href="#__codelineno-5-55"></a>                    │
-</span><span id="__span-5-56"><a id="__codelineno-5-56" name="__codelineno-5-56" href="#__codelineno-5-56"></a>                    ├── line_stations/       # beam section forces
-</span><span id="__span-5-57"><a id="__codelineno-5-57" name="__codelineno-5-57" href="#__codelineno-5-57"></a>                    │   └── group_&lt;n&gt;/       # one per (class_tag, n_IP)
-</span><span id="__span-5-58"><a id="__codelineno-5-58" name="__codelineno-5-58" href="#__codelineno-5-58"></a>                    │       ├── attrs: class_tag, int_rule
-</span><span id="__span-5-59"><a id="__codelineno-5-59" name="__codelineno-5-59" href="#__codelineno-5-59"></a>                    │       ├── _element_index            (E_g,)
-</span><span id="__span-5-60"><a id="__codelineno-5-60" name="__codelineno-5-60" href="#__codelineno-5-60"></a>                    │       ├── _station_natural_coord    (n_IP_g,)
-</span><span id="__span-5-61"><a id="__codelineno-5-61" name="__codelineno-5-61" href="#__codelineno-5-61"></a>                    │       ├── axial_force               (T, E_g, n_IP_g)
-</span><span id="__span-5-62"><a id="__codelineno-5-62" name="__codelineno-5-62" href="#__codelineno-5-62"></a>                    │       └── …
-</span><span id="__span-5-63"><a id="__codelineno-5-63" name="__codelineno-5-63" href="#__codelineno-5-63"></a>                    │
-</span><span id="__span-5-64"><a id="__codelineno-5-64" name="__codelineno-5-64" href="#__codelineno-5-64"></a>                    ├── gauss_points/        # continuum stress/strain
-</span><span id="__span-5-65"><a id="__codelineno-5-65" name="__codelineno-5-65" href="#__codelineno-5-65"></a>                    │   └── group_&lt;n&gt;/       # one per (class_tag, int_rule)
-</span><span id="__span-5-66"><a id="__codelineno-5-66" name="__codelineno-5-66" href="#__codelineno-5-66"></a>                    │       ├── attrs: class_tag, int_rule, custom_rule_idx
-</span><span id="__span-5-67"><a id="__codelineno-5-67" name="__codelineno-5-67" href="#__codelineno-5-67"></a>                    │       ├── _element_index            (E_g,)
-</span><span id="__span-5-68"><a id="__codelineno-5-68" name="__codelineno-5-68" href="#__codelineno-5-68"></a>                    │       ├── _natural_coords           (n_GP_g, dim)
-</span><span id="__span-5-69"><a id="__codelineno-5-69" name="__codelineno-5-69" href="#__codelineno-5-69"></a>                    │       ├── _local_axes_quaternion    (E_g, 4)   # shells
-</span><span id="__span-5-70"><a id="__codelineno-5-70" name="__codelineno-5-70" href="#__codelineno-5-70"></a>                    │       ├── stress_xx                 (T, E_g, n_GP_g)
-</span><span id="__span-5-71"><a id="__codelineno-5-71" name="__codelineno-5-71" href="#__codelineno-5-71"></a>                    │       └── …
-</span><span id="__span-5-72"><a id="__codelineno-5-72" name="__codelineno-5-72" href="#__codelineno-5-72"></a>                    │
-</span><span id="__span-5-73"><a id="__codelineno-5-73" name="__codelineno-5-73" href="#__codelineno-5-73"></a>                    ├── fibers/              # within fiber-section GPs
-</span><span id="__span-5-74"><a id="__codelineno-5-74" name="__codelineno-5-74" href="#__codelineno-5-74"></a>                    │   └── group_&lt;n&gt;/       # one per fiber section
-</span><span id="__span-5-75"><a id="__codelineno-5-75" name="__codelineno-5-75" href="#__codelineno-5-75"></a>                    │       ├── attrs: section_tag, section_class
-</span><span id="__span-5-76"><a id="__codelineno-5-76" name="__codelineno-5-76" href="#__codelineno-5-76"></a>                    │       ├── _element_index            (sum_F,)
-</span><span id="__span-5-77"><a id="__codelineno-5-77" name="__codelineno-5-77" href="#__codelineno-5-77"></a>                    │       ├── _gp_index                 (sum_F,)
-</span><span id="__span-5-78"><a id="__codelineno-5-78" name="__codelineno-5-78" href="#__codelineno-5-78"></a>                    │       ├── _y, _z, _area             (sum_F,)
-</span><span id="__span-5-79"><a id="__codelineno-5-79" name="__codelineno-5-79" href="#__codelineno-5-79"></a>                    │       ├── _material_tag             (sum_F,)
-</span><span id="__span-5-80"><a id="__codelineno-5-80" name="__codelineno-5-80" href="#__codelineno-5-80"></a>                    │       ├── fiber_stress              (T, sum_F)
-</span><span id="__span-5-81"><a id="__codelineno-5-81" name="__codelineno-5-81" href="#__codelineno-5-81"></a>                    │       └── fiber_strain              (T, sum_F)
-</span><span id="__span-5-82"><a id="__codelineno-5-82" name="__codelineno-5-82" href="#__codelineno-5-82"></a>                    │
-</span><span id="__span-5-83"><a id="__codelineno-5-83" name="__codelineno-5-83" href="#__codelineno-5-83"></a>                    └── layers/              # layered shells
-</span><span id="__span-5-84"><a id="__codelineno-5-84" name="__codelineno-5-84" href="#__codelineno-5-84"></a>                        └── group_&lt;n&gt;/
-</span><span id="__span-5-85"><a id="__codelineno-5-85" name="__codelineno-5-85" href="#__codelineno-5-85"></a>                            ├── _element_index            (sum_L,)
-</span><span id="__span-5-86"><a id="__codelineno-5-86" name="__codelineno-5-86" href="#__codelineno-5-86"></a>                            ├── _gp_index                 (sum_L,)
-</span><span id="__span-5-87"><a id="__codelineno-5-87" name="__codelineno-5-87" href="#__codelineno-5-87"></a>                            ├── _layer_index              (sum_L,)
-</span><span id="__span-5-88"><a id="__codelineno-5-88" name="__codelineno-5-88" href="#__codelineno-5-88"></a>                            ├── _sub_gp_index             (sum_L,)
-</span><span id="__span-5-89"><a id="__codelineno-5-89" name="__codelineno-5-89" href="#__codelineno-5-89"></a>                            ├── _thickness                (sum_L,)
-</span><span id="__span-5-90"><a id="__codelineno-5-90" name="__codelineno-5-90" href="#__codelineno-5-90"></a>                            ├── _local_axes_quaternion    (sum_L, 4)
-</span><span id="__span-5-91"><a id="__codelineno-5-91" name="__codelineno-5-91" href="#__codelineno-5-91"></a>                            ├── stress_xx                 (T, sum_L)
-</span><span id="__span-5-92"><a id="__codelineno-5-92" name="__codelineno-5-92" href="#__codelineno-5-92"></a>                            └── …
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>run.h5
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>├── attrs:
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>│   ├── schema_version        &quot;1.0&quot;
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>│   ├── source_type           &quot;tcl_recorders&quot; | &quot;domain_capture&quot;
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>│   ├── source_path           original file or &quot;&lt;domain&gt;&quot;
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>│   ├── created_at            ISO timestamp
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>│   ├── apegmsh_version
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>│   └── analysis_label        optional user tag
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>│
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>├── model/                    # embedded FEMData snapshot
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>│   ├── attrs:
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>│   │   ├── snapshot_id       deterministic content hash
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>│   │   ├── ndm, ndf
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>│   │   ├── model_name
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>│   │   └── units
+</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>│   ├── nodes/
+</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>│   │   ├── ids               (N,)
+</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>│   │   ├── coords            (N, 3)
+</span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>│   │   ├── physical_groups/  # subgroups: name → ids
+</span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>│   │   ├── labels/           # apeGmsh-specific
+</span><span id="__span-7-21"><a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>│   │   ├── loads/            # resolved nodal loads
+</span><span id="__span-7-22"><a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>│   │   └── masses/
+</span><span id="__span-7-23"><a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>│   ├── elements/
+</span><span id="__span-7-24"><a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>│   │   ├── per-type subgroups (ids, connectivity)
+</span><span id="__span-7-25"><a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>│   │   ├── physical_groups/
+</span><span id="__span-7-26"><a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a>│   │   ├── labels/
+</span><span id="__span-7-27"><a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a>│   │   └── loads/
+</span><span id="__span-7-28"><a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>│   └── constraints/          # node-pair, surface, etc.
+</span><span id="__span-7-29"><a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a>│
+</span><span id="__span-7-30"><a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a>└── stages/
+</span><span id="__span-7-31"><a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a>    └── stage_0/
+</span><span id="__span-7-32"><a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a>        ├── attrs:
+</span><span id="__span-7-33"><a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a>        │   ├── name=&quot;gravity&quot;, label=&quot;…&quot;
+</span><span id="__span-7-34"><a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a>        │   ├── kind=&quot;transient&quot;|&quot;static&quot;|&quot;mode&quot;
+</span><span id="__span-7-35"><a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a>        │   └── mode-only: eigenvalue, frequency_hz, period_s, mode_index
+</span><span id="__span-7-36"><a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a>        ├── time              (T,)         # for kind=&quot;mode&quot;: shape (1,) holding 0.0
+</span><span id="__span-7-37"><a id="__codelineno-7-37" name="__codelineno-7-37" href="#__codelineno-7-37"></a>        └── partitions/
+</span><span id="__span-7-38"><a id="__codelineno-7-38" name="__codelineno-7-38" href="#__codelineno-7-38"></a>            └── partition_0/
+</span><span id="__span-7-39"><a id="__codelineno-7-39" name="__codelineno-7-39" href="#__codelineno-7-39"></a>                ├── nodes/
+</span><span id="__span-7-40"><a id="__codelineno-7-40" name="__codelineno-7-40" href="#__codelineno-7-40"></a>                │   ├── _ids                 (N,)
+</span><span id="__span-7-41"><a id="__codelineno-7-41" name="__codelineno-7-41" href="#__codelineno-7-41"></a>                │   ├── displacement_x       (T, N)
+</span><span id="__span-7-42"><a id="__codelineno-7-42" name="__codelineno-7-42" href="#__codelineno-7-42"></a>                │   ├── displacement_y       (T, N)
+</span><span id="__span-7-43"><a id="__codelineno-7-43" name="__codelineno-7-43" href="#__codelineno-7-43"></a>                │   ├── reaction_force_x     (T, N)
+</span><span id="__span-7-44"><a id="__codelineno-7-44" name="__codelineno-7-44" href="#__codelineno-7-44"></a>                │   └── …
+</span><span id="__span-7-45"><a id="__codelineno-7-45" name="__codelineno-7-45" href="#__codelineno-7-45"></a>                │
+</span><span id="__span-7-46"><a id="__codelineno-7-46" name="__codelineno-7-46" href="#__codelineno-7-46"></a>                └── elements/
+</span><span id="__span-7-47"><a id="__codelineno-7-47" name="__codelineno-7-47" href="#__codelineno-7-47"></a>                    ├── _ids                 (E,)
+</span><span id="__span-7-48"><a id="__codelineno-7-48" name="__codelineno-7-48" href="#__codelineno-7-48"></a>                    │
+</span><span id="__span-7-49"><a id="__codelineno-7-49" name="__codelineno-7-49" href="#__codelineno-7-49"></a>                    ├── nodal_forces/        # globalForce / localForce
+</span><span id="__span-7-50"><a id="__codelineno-7-50" name="__codelineno-7-50" href="#__codelineno-7-50"></a>                    │   └── group_&lt;n&gt;/       # one per (class_tag, npe)
+</span><span id="__span-7-51"><a id="__codelineno-7-51" name="__codelineno-7-51" href="#__codelineno-7-51"></a>                    │       ├── attrs: class_tag, frame=&quot;global&quot;|&quot;local&quot;
+</span><span id="__span-7-52"><a id="__codelineno-7-52" name="__codelineno-7-52" href="#__codelineno-7-52"></a>                    │       ├── _element_index            (E_g,)
+</span><span id="__span-7-53"><a id="__codelineno-7-53" name="__codelineno-7-53" href="#__codelineno-7-53"></a>                    │       ├── nodal_resisting_force_x   (T, E_g, npe_g)
+</span><span id="__span-7-54"><a id="__codelineno-7-54" name="__codelineno-7-54" href="#__codelineno-7-54"></a>                    │       └── …
+</span><span id="__span-7-55"><a id="__codelineno-7-55" name="__codelineno-7-55" href="#__codelineno-7-55"></a>                    │
+</span><span id="__span-7-56"><a id="__codelineno-7-56" name="__codelineno-7-56" href="#__codelineno-7-56"></a>                    ├── line_stations/       # beam section forces
+</span><span id="__span-7-57"><a id="__codelineno-7-57" name="__codelineno-7-57" href="#__codelineno-7-57"></a>                    │   └── group_&lt;n&gt;/       # one per (class_tag, n_IP)
+</span><span id="__span-7-58"><a id="__codelineno-7-58" name="__codelineno-7-58" href="#__codelineno-7-58"></a>                    │       ├── attrs: class_tag, int_rule
+</span><span id="__span-7-59"><a id="__codelineno-7-59" name="__codelineno-7-59" href="#__codelineno-7-59"></a>                    │       ├── _element_index            (E_g,)
+</span><span id="__span-7-60"><a id="__codelineno-7-60" name="__codelineno-7-60" href="#__codelineno-7-60"></a>                    │       ├── _station_natural_coord    (n_IP_g,)
+</span><span id="__span-7-61"><a id="__codelineno-7-61" name="__codelineno-7-61" href="#__codelineno-7-61"></a>                    │       ├── axial_force               (T, E_g, n_IP_g)
+</span><span id="__span-7-62"><a id="__codelineno-7-62" name="__codelineno-7-62" href="#__codelineno-7-62"></a>                    │       └── …
+</span><span id="__span-7-63"><a id="__codelineno-7-63" name="__codelineno-7-63" href="#__codelineno-7-63"></a>                    │
+</span><span id="__span-7-64"><a id="__codelineno-7-64" name="__codelineno-7-64" href="#__codelineno-7-64"></a>                    ├── gauss_points/        # continuum stress/strain
+</span><span id="__span-7-65"><a id="__codelineno-7-65" name="__codelineno-7-65" href="#__codelineno-7-65"></a>                    │   └── group_&lt;n&gt;/       # one per (class_tag, int_rule)
+</span><span id="__span-7-66"><a id="__codelineno-7-66" name="__codelineno-7-66" href="#__codelineno-7-66"></a>                    │       ├── attrs: class_tag, int_rule, custom_rule_idx
+</span><span id="__span-7-67"><a id="__codelineno-7-67" name="__codelineno-7-67" href="#__codelineno-7-67"></a>                    │       ├── _element_index            (E_g,)
+</span><span id="__span-7-68"><a id="__codelineno-7-68" name="__codelineno-7-68" href="#__codelineno-7-68"></a>                    │       ├── _natural_coords           (n_GP_g, dim)
+</span><span id="__span-7-69"><a id="__codelineno-7-69" name="__codelineno-7-69" href="#__codelineno-7-69"></a>                    │       ├── _local_axes_quaternion    (E_g, 4)   # shells
+</span><span id="__span-7-70"><a id="__codelineno-7-70" name="__codelineno-7-70" href="#__codelineno-7-70"></a>                    │       ├── stress_xx                 (T, E_g, n_GP_g)
+</span><span id="__span-7-71"><a id="__codelineno-7-71" name="__codelineno-7-71" href="#__codelineno-7-71"></a>                    │       └── …
+</span><span id="__span-7-72"><a id="__codelineno-7-72" name="__codelineno-7-72" href="#__codelineno-7-72"></a>                    │
+</span><span id="__span-7-73"><a id="__codelineno-7-73" name="__codelineno-7-73" href="#__codelineno-7-73"></a>                    ├── fibers/              # within fiber-section GPs
+</span><span id="__span-7-74"><a id="__codelineno-7-74" name="__codelineno-7-74" href="#__codelineno-7-74"></a>                    │   └── group_&lt;n&gt;/       # one per fiber section
+</span><span id="__span-7-75"><a id="__codelineno-7-75" name="__codelineno-7-75" href="#__codelineno-7-75"></a>                    │       ├── attrs: section_tag, section_class
+</span><span id="__span-7-76"><a id="__codelineno-7-76" name="__codelineno-7-76" href="#__codelineno-7-76"></a>                    │       ├── _element_index            (sum_F,)
+</span><span id="__span-7-77"><a id="__codelineno-7-77" name="__codelineno-7-77" href="#__codelineno-7-77"></a>                    │       ├── _gp_index                 (sum_F,)
+</span><span id="__span-7-78"><a id="__codelineno-7-78" name="__codelineno-7-78" href="#__codelineno-7-78"></a>                    │       ├── _y, _z, _area             (sum_F,)
+</span><span id="__span-7-79"><a id="__codelineno-7-79" name="__codelineno-7-79" href="#__codelineno-7-79"></a>                    │       ├── _material_tag             (sum_F,)
+</span><span id="__span-7-80"><a id="__codelineno-7-80" name="__codelineno-7-80" href="#__codelineno-7-80"></a>                    │       ├── fiber_stress              (T, sum_F)
+</span><span id="__span-7-81"><a id="__codelineno-7-81" name="__codelineno-7-81" href="#__codelineno-7-81"></a>                    │       └── fiber_strain              (T, sum_F)
+</span><span id="__span-7-82"><a id="__codelineno-7-82" name="__codelineno-7-82" href="#__codelineno-7-82"></a>                    │
+</span><span id="__span-7-83"><a id="__codelineno-7-83" name="__codelineno-7-83" href="#__codelineno-7-83"></a>                    └── layers/              # layered shells
+</span><span id="__span-7-84"><a id="__codelineno-7-84" name="__codelineno-7-84" href="#__codelineno-7-84"></a>                        └── group_&lt;n&gt;/
+</span><span id="__span-7-85"><a id="__codelineno-7-85" name="__codelineno-7-85" href="#__codelineno-7-85"></a>                            ├── _element_index            (sum_L,)
+</span><span id="__span-7-86"><a id="__codelineno-7-86" name="__codelineno-7-86" href="#__codelineno-7-86"></a>                            ├── _gp_index                 (sum_L,)
+</span><span id="__span-7-87"><a id="__codelineno-7-87" name="__codelineno-7-87" href="#__codelineno-7-87"></a>                            ├── _layer_index              (sum_L,)
+</span><span id="__span-7-88"><a id="__codelineno-7-88" name="__codelineno-7-88" href="#__codelineno-7-88"></a>                            ├── _sub_gp_index             (sum_L,)
+</span><span id="__span-7-89"><a id="__codelineno-7-89" name="__codelineno-7-89" href="#__codelineno-7-89"></a>                            ├── _thickness                (sum_L,)
+</span><span id="__span-7-90"><a id="__codelineno-7-90" name="__codelineno-7-90" href="#__codelineno-7-90"></a>                            ├── _local_axes_quaternion    (sum_L, 4)
+</span><span id="__span-7-91"><a id="__codelineno-7-91" name="__codelineno-7-91" href="#__codelineno-7-91"></a>                            ├── stress_xx                 (T, sum_L)
+</span><span id="__span-7-92"><a id="__codelineno-7-92" name="__codelineno-7-92" href="#__codelineno-7-92"></a>                            └── …
 </span></code></pre></div>
 <h4 id="schema-conventions">Schema conventions<a class="headerlink" href="#schema-conventions" title="Permanent link">&para;</a></h4>
 <ul>
@@ -3627,11 +3767,11 @@ above is source-agnostic.</p>
 <h4 id="cache-layout-recorder-transcoder-only">Cache layout (recorder transcoder only)<a class="headerlink" href="#cache-layout-recorder-transcoder-only" title="Permanent link">&para;</a></h4>
 <p>The cache lives at <code>&lt;project_root&gt;/results/</code> — visible at the
 project root, not hidden:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>&lt;project_root&gt;/results/
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>├── &lt;hash&gt;.h5                 # transcoded native HDF5
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>└── &lt;hash&gt;.manifest.h5        # small HDF5 sidecar (source path,
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>                              # mtime, size, parser_version,
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>                              # fem_snapshot_id, recorder spec)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>&lt;project_root&gt;/results/
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>├── &lt;hash&gt;.h5                 # transcoded native HDF5
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>└── &lt;hash&gt;.manifest.h5        # small HDF5 sidecar (source path,
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>                              # mtime, size, parser_version,
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>                              # fem_snapshot_id, recorder spec)
 </span></code></pre></div>
 <p>Manifest is <strong>HDF5</strong> (not JSON) so it can carry numpy ID arrays
 from the resolved spec without lossy serialization tricks.</p>
@@ -3642,52 +3782,52 @@ bump → invalidate all. On fem mismatch → refuse with a clear error
 <h3 id="layer-4-reader-protocol">Layer 4 — Reader protocol<a class="headerlink" href="#layer-4-reader-protocol" title="Permanent link">&para;</a></h3>
 <p>Two readers (<code>NativeReader</code>, <code>MPCOReader</code>), one protocol. The
 composite layer above never branches.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">ResultsReader</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="c1"># Stage discovery</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">stages</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">StageInfo</span><span class="p">]:</span> <span class="o">...</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">time_vector</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">partitions</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="c1"># FEM access (native: from embedded; MPCO: synthesized from MODEL)</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">fem</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FEMData</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
-</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>    <span class="c1"># Component discovery</span>
-</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">available_components</span><span class="p">(</span>
-</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">level</span><span class="p">:</span> <span class="n">ResultLevel</span><span class="p">,</span>
-</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
-</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    <span class="c1"># ResultLevel ∈ {NODES, ELEMENTS, LINE_STATIONS, GAUSS, FIBERS, LAYERS}</span>
-</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>
-</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>    <span class="c1"># Slab reads — return value-plus-metadata containers</span>
-</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_nodes</span><span class="p">(</span>
-</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>        <span class="n">node_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NodeSlab</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-7-21"><a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>
-</span><span id="__span-7-22"><a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_elements</span><span class="p">(</span>
-</span><span id="__span-7-23"><a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-7-24"><a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-7-25"><a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ElementSlab</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-7-26"><a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a>
-</span><span id="__span-7-27"><a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_line_stations</span><span class="p">(</span>
-</span><span id="__span-7-28"><a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-7-29"><a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-7-30"><a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LineStationSlab</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-7-31"><a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a>
-</span><span id="__span-7-32"><a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_gauss</span><span class="p">(</span>
-</span><span id="__span-7-33"><a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-7-34"><a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-7-35"><a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussSlab</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-7-36"><a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a>
-</span><span id="__span-7-37"><a id="__codelineno-7-37" name="__codelineno-7-37" href="#__codelineno-7-37"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_fibers</span><span class="p">(</span>
-</span><span id="__span-7-38"><a id="__codelineno-7-38" name="__codelineno-7-38" href="#__codelineno-7-38"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-7-39"><a id="__codelineno-7-39" name="__codelineno-7-39" href="#__codelineno-7-39"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gp_indices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-7-40"><a id="__codelineno-7-40" name="__codelineno-7-40" href="#__codelineno-7-40"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FiberSlab</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-7-41"><a id="__codelineno-7-41" name="__codelineno-7-41" href="#__codelineno-7-41"></a>
-</span><span id="__span-7-42"><a id="__codelineno-7-42" name="__codelineno-7-42" href="#__codelineno-7-42"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_layers</span><span class="p">(</span>
-</span><span id="__span-7-43"><a id="__codelineno-7-43" name="__codelineno-7-43" href="#__codelineno-7-43"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-7-44"><a id="__codelineno-7-44" name="__codelineno-7-44" href="#__codelineno-7-44"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gp_indices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">layer_indices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-7-45"><a id="__codelineno-7-45" name="__codelineno-7-45" href="#__codelineno-7-45"></a>        <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-7-46"><a id="__codelineno-7-46" name="__codelineno-7-46" href="#__codelineno-7-46"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LayerSlab</span><span class="p">:</span> <span class="o">...</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">ResultsReader</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="c1"># Stage discovery</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">stages</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">StageInfo</span><span class="p">]:</span> <span class="o">...</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">time_vector</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">partitions</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="c1"># FEM access (native: from embedded; MPCO: synthesized from MODEL)</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">fem</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FEMData</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    <span class="c1"># Component discovery</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">available_components</span><span class="p">(</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">level</span><span class="p">:</span> <span class="n">ResultLevel</span><span class="p">,</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>    <span class="c1"># ResultLevel ∈ {NODES, ELEMENTS, LINE_STATIONS, GAUSS, FIBERS, LAYERS}</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>    <span class="c1"># Slab reads — return value-plus-metadata containers</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_nodes</span><span class="p">(</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>        <span class="n">node_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NodeSlab</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_elements</span><span class="p">(</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ElementSlab</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a>
+</span><span id="__span-9-27"><a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_line_stations</span><span class="p">(</span>
+</span><span id="__span-9-28"><a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-9-29"><a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-30"><a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LineStationSlab</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-31"><a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a>
+</span><span id="__span-9-32"><a id="__codelineno-9-32" name="__codelineno-9-32" href="#__codelineno-9-32"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_gauss</span><span class="p">(</span>
+</span><span id="__span-9-33"><a id="__codelineno-9-33" name="__codelineno-9-33" href="#__codelineno-9-33"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-9-34"><a id="__codelineno-9-34" name="__codelineno-9-34" href="#__codelineno-9-34"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-35"><a id="__codelineno-9-35" name="__codelineno-9-35" href="#__codelineno-9-35"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GaussSlab</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-36"><a id="__codelineno-9-36" name="__codelineno-9-36" href="#__codelineno-9-36"></a>
+</span><span id="__span-9-37"><a id="__codelineno-9-37" name="__codelineno-9-37" href="#__codelineno-9-37"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_fibers</span><span class="p">(</span>
+</span><span id="__span-9-38"><a id="__codelineno-9-38" name="__codelineno-9-38" href="#__codelineno-9-38"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-9-39"><a id="__codelineno-9-39" name="__codelineno-9-39" href="#__codelineno-9-39"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gp_indices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-40"><a id="__codelineno-9-40" name="__codelineno-9-40" href="#__codelineno-9-40"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FiberSlab</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-41"><a id="__codelineno-9-41" name="__codelineno-9-41" href="#__codelineno-9-41"></a>
+</span><span id="__span-9-42"><a id="__codelineno-9-42" name="__codelineno-9-42" href="#__codelineno-9-42"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">read_layers</span><span class="p">(</span>
+</span><span id="__span-9-43"><a id="__codelineno-9-43" name="__codelineno-9-43" href="#__codelineno-9-43"></a>        <span class="bp">self</span><span class="p">,</span> <span class="n">stage_id</span><span class="p">,</span> <span class="n">component</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-9-44"><a id="__codelineno-9-44" name="__codelineno-9-44" href="#__codelineno-9-44"></a>        <span class="n">element_ids</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">gp_indices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">layer_indices</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-45"><a id="__codelineno-9-45" name="__codelineno-9-45" href="#__codelineno-9-45"></a>        <span class="n">time_slice</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-9-46"><a id="__codelineno-9-46" name="__codelineno-9-46" href="#__codelineno-9-46"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LayerSlab</span><span class="p">:</span> <span class="o">...</span>
 </span></code></pre></div>
 <p><code>StageInfo</code> carries <code>id</code>, <code>name</code>, <code>kind</code> (<code>"transient"|"static"|"mode"</code>),
 <code>n_steps</code>, and mode-only fields (<code>eigenvalue</code>, <code>frequency_hz</code>,
@@ -3701,81 +3841,81 @@ the composite asks "stress_xx for elements [5, 7, 11]", the reader
 figures out which groups they live in, reads the relevant slabs,
 concatenates. Caller never sees groups.</p>
 <h3 id="layer-5-composite-api-user-facing">Layer 5 — Composite API (user-facing)<a class="headerlink" href="#layer-5-composite-api-user-facing" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>        <span class="c1"># native path</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>        <span class="c1"># MPCO path</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>                                                        <span class="c1"># parses .out/.xml,</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>                                                        <span class="c1"># builds native HDF5,</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>                                                        <span class="c1"># opens for read</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="c1"># fem= is optional — fallbacks:</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="c1"># - native: FEMData reconstructed from /model/ group</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="c1"># - MPCO:   partial FEMData synthesized from /MODEL group</span>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span>     <span class="c1"># auto-bind from embedded fem</span>
-</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="n">results</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">g_session_fem</span><span class="p">)</span>       <span class="c1"># explicit override</span>
-</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>
-</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="c1"># Stages</span>
-</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="n">results</span><span class="o">.</span><span class="n">stages</span>                              <span class="c1"># list[StageInfo] — all stages</span>
-</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="n">gravity</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>          <span class="c1"># stage-scoped Results</span>
-</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="n">dynamic</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="s2">&quot;dynamic&quot;</span><span class="p">)</span>
-</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
-</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="c1"># Modes — sugar accessor that filters stages by kind=&quot;mode&quot;</span>
-</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="n">results</span><span class="o">.</span><span class="n">modes</span>                               <span class="c1"># list of mode-kind stages</span>
-</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="n">mode_3</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">modes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>                   <span class="c1"># 0-indexed (mode 3)</span>
-</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="n">mode_3</span><span class="o">.</span><span class="n">frequency_hz</span>                         <span class="c1"># 5.41</span>
-</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a><span class="n">mode_3</span><span class="o">.</span><span class="n">period_s</span>                             <span class="c1"># 0.185</span>
-</span><span id="__span-8-24"><a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a><span class="n">mode_3</span><span class="o">.</span><span class="n">eigenvalue</span>                           <span class="c1"># 1158.7</span>
-</span><span id="__span-8-25"><a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a><span class="n">shape_x</span> <span class="o">=</span> <span class="n">mode_3</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">)</span>
-</span><span id="__span-8-26"><a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a><span class="n">shape_x</span><span class="o">.</span><span class="n">values</span>                              <span class="c1"># ndarray (1, N) — single &quot;step&quot;</span>
-</span><span id="__span-8-27"><a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>
-</span><span id="__span-8-28"><a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="c1"># Nodal — selection by pg/label/ids matches FEMData</span>
-</span><span id="__span-8-29"><a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a><span class="n">disp_z</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span>
-</span><span id="__span-8-30"><a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a><span class="n">disp_z</span><span class="o">.</span><span class="n">values</span>                               <span class="c1"># ndarray (T, N)</span>
-</span><span id="__span-8-31"><a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a><span class="n">disp_z</span><span class="o">.</span><span class="n">node_ids</span>                             <span class="c1"># ndarray (N,)</span>
-</span><span id="__span-8-32"><a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a><span class="n">disp_z</span><span class="o">.</span><span class="n">time</span>                                 <span class="c1"># ndarray (T,)</span>
-</span><span id="__span-8-33"><a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a>
-</span><span id="__span-8-34"><a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a><span class="c1"># Single time step</span>
-</span><span id="__span-8-35"><a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a><span class="n">peak</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-</span><span id="__span-8-36"><a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span> <span class="n">time</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>   <span class="c1"># nearest step</span>
-</span><span id="__span-8-37"><a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a><span class="p">)</span>
-</span><span id="__span-8-38"><a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a><span class="n">peak</span><span class="o">.</span><span class="n">values</span>                                 <span class="c1"># ndarray (N,)</span>
-</span><span id="__span-8-39"><a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a>
-</span><span id="__span-8-40"><a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a><span class="c1"># Time slicing — numpy half-open semantics: [start, stop)</span>
-</span><span id="__span-8-41"><a id="__codelineno-8-41" name="__codelineno-8-41" href="#__codelineno-8-41"></a><span class="n">window</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-</span><span id="__span-8-42"><a id="__codelineno-8-42" name="__codelineno-8-42" href="#__codelineno-8-42"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span>
-</span><span id="__span-8-43"><a id="__codelineno-8-43" name="__codelineno-8-43" href="#__codelineno-8-43"></a>    <span class="n">time</span><span class="o">=</span><span class="nb">slice</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">),</span>                   <span class="c1"># 0.0 ≤ t &lt; 5.0</span>
-</span><span id="__span-8-44"><a id="__codelineno-8-44" name="__codelineno-8-44" href="#__codelineno-8-44"></a><span class="p">)</span>
-</span><span id="__span-8-45"><a id="__codelineno-8-45" name="__codelineno-8-45" href="#__codelineno-8-45"></a><span class="n">picks</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-</span><span id="__span-8-46"><a id="__codelineno-8-46" name="__codelineno-8-46" href="#__codelineno-8-46"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span>
-</span><span id="__span-8-47"><a id="__codelineno-8-47" name="__codelineno-8-47" href="#__codelineno-8-47"></a>    <span class="n">time</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">],</span>                      <span class="c1"># explicit step indices</span>
-</span><span id="__span-8-48"><a id="__codelineno-8-48" name="__codelineno-8-48" href="#__codelineno-8-48"></a><span class="p">)</span>
-</span><span id="__span-8-49"><a id="__codelineno-8-49" name="__codelineno-8-49" href="#__codelineno-8-49"></a>
-</span><span id="__span-8-50"><a id="__codelineno-8-50" name="__codelineno-8-50" href="#__codelineno-8-50"></a><span class="c1"># Continuum stress at GPs</span>
-</span><span id="__span-8-51"><a id="__codelineno-8-51" name="__codelineno-8-51" href="#__codelineno-8-51"></a><span class="n">sigma</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">gauss</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-</span><span id="__span-8-52"><a id="__codelineno-8-52" name="__codelineno-8-52" href="#__codelineno-8-52"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,</span>
-</span><span id="__span-8-53"><a id="__codelineno-8-53" name="__codelineno-8-53" href="#__codelineno-8-53"></a><span class="p">)</span>
-</span><span id="__span-8-54"><a id="__codelineno-8-54" name="__codelineno-8-54" href="#__codelineno-8-54"></a><span class="n">sigma</span><span class="o">.</span><span class="n">values</span>                                <span class="c1"># ndarray (T, sum_GP)</span>
-</span><span id="__span-8-55"><a id="__codelineno-8-55" name="__codelineno-8-55" href="#__codelineno-8-55"></a><span class="n">sigma</span><span class="o">.</span><span class="n">element_index</span>                         <span class="c1"># ndarray (sum_GP,)</span>
-</span><span id="__span-8-56"><a id="__codelineno-8-56" name="__codelineno-8-56" href="#__codelineno-8-56"></a><span class="n">sigma</span><span class="o">.</span><span class="n">natural_coords</span>                        <span class="c1"># ndarray (sum_GP, dim)</span>
-</span><span id="__span-8-57"><a id="__codelineno-8-57" name="__codelineno-8-57" href="#__codelineno-8-57"></a><span class="n">sigma</span><span class="o">.</span><span class="n">global_coords</span><span class="p">()</span>                       <span class="c1"># method — computed via fem</span>
-</span><span id="__span-8-58"><a id="__codelineno-8-58" name="__codelineno-8-58" href="#__codelineno-8-58"></a>
-</span><span id="__span-8-59"><a id="__codelineno-8-59" name="__codelineno-8-59" href="#__codelineno-8-59"></a><span class="c1"># Fibers</span>
-</span><span id="__span-8-60"><a id="__codelineno-8-60" name="__codelineno-8-60" href="#__codelineno-8-60"></a><span class="n">sf</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fibers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-</span><span id="__span-8-61"><a id="__codelineno-8-61" name="__codelineno-8-61" href="#__codelineno-8-61"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Columns&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;fiber_stress&quot;</span><span class="p">,</span>
-</span><span id="__span-8-62"><a id="__codelineno-8-62" name="__codelineno-8-62" href="#__codelineno-8-62"></a><span class="p">)</span>
-</span><span id="__span-8-63"><a id="__codelineno-8-63" name="__codelineno-8-63" href="#__codelineno-8-63"></a><span class="n">sf</span><span class="o">.</span><span class="n">values</span>                                   <span class="c1"># ndarray (T, sum_F)</span>
-</span><span id="__span-8-64"><a id="__codelineno-8-64" name="__codelineno-8-64" href="#__codelineno-8-64"></a><span class="n">sf</span><span class="o">.</span><span class="n">element_index</span><span class="p">,</span> <span class="n">sf</span><span class="o">.</span><span class="n">gp_index</span>               <span class="c1"># parent (elem, gp) per fiber</span>
-</span><span id="__span-8-65"><a id="__codelineno-8-65" name="__codelineno-8-65" href="#__codelineno-8-65"></a><span class="n">sf</span><span class="o">.</span><span class="n">y</span><span class="p">,</span> <span class="n">sf</span><span class="o">.</span><span class="n">z</span><span class="p">,</span> <span class="n">sf</span><span class="o">.</span><span class="n">area</span>                         <span class="c1"># section-local geometry</span>
-</span><span id="__span-8-66"><a id="__codelineno-8-66" name="__codelineno-8-66" href="#__codelineno-8-66"></a>
-</span><span id="__span-8-67"><a id="__codelineno-8-67" name="__codelineno-8-67" href="#__codelineno-8-67"></a><span class="c1"># Layered shells</span>
-</span><span id="__span-8-68"><a id="__codelineno-8-68" name="__codelineno-8-68" href="#__codelineno-8-68"></a><span class="n">sl</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">layers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
-</span><span id="__span-8-69"><a id="__codelineno-8-69" name="__codelineno-8-69" href="#__codelineno-8-69"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Slabs&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,</span>
-</span><span id="__span-8-70"><a id="__codelineno-8-70" name="__codelineno-8-70" href="#__codelineno-8-70"></a><span class="p">)</span>
-</span><span id="__span-8-71"><a id="__codelineno-8-71" name="__codelineno-8-71" href="#__codelineno-8-71"></a><span class="n">sl</span><span class="o">.</span><span class="n">element_index</span><span class="p">,</span> <span class="n">sl</span><span class="o">.</span><span class="n">gp_index</span><span class="p">,</span> <span class="n">sl</span><span class="o">.</span><span class="n">layer_index</span><span class="p">,</span> <span class="n">sl</span><span class="o">.</span><span class="n">sub_gp_index</span>
-</span><span id="__span-8-72"><a id="__codelineno-8-72" name="__codelineno-8-72" href="#__codelineno-8-72"></a>
-</span><span id="__span-8-73"><a id="__codelineno-8-73" name="__codelineno-8-73" href="#__codelineno-8-73"></a><span class="c1"># Inspection</span>
-</span><span id="__span-8-74"><a id="__codelineno-8-74" name="__codelineno-8-74" href="#__codelineno-8-74"></a><span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>            <span class="c1"># stages, partitions, components</span>
-</span><span id="__span-8-75"><a id="__codelineno-8-75" name="__codelineno-8-75" href="#__codelineno-8-75"></a><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">components</span><span class="p">()</span>                <span class="c1"># what&#39;s available where</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>        <span class="c1"># native path</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>        <span class="c1"># MPCO path</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>                                                        <span class="c1"># parses .out/.xml,</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>                                                        <span class="c1"># builds native HDF5,</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>                                                        <span class="c1"># opens for read</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="c1"># fem= is optional — fallbacks:</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="c1"># - native: FEMData reconstructed from /model/ group</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="c1"># - MPCO:   partial FEMData synthesized from /MODEL group</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span>     <span class="c1"># auto-bind from embedded fem</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="n">results</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">g_session_fem</span><span class="p">)</span>       <span class="c1"># explicit override</span>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>
+</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="c1"># Stages</span>
+</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="n">results</span><span class="o">.</span><span class="n">stages</span>                              <span class="c1"># list[StageInfo] — all stages</span>
+</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="n">gravity</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>          <span class="c1"># stage-scoped Results</span>
+</span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="n">dynamic</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="s2">&quot;dynamic&quot;</span><span class="p">)</span>
+</span><span id="__span-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>
+</span><span id="__span-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="c1"># Modes — sugar accessor that filters stages by kind=&quot;mode&quot;</span>
+</span><span id="__span-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a><span class="n">results</span><span class="o">.</span><span class="n">modes</span>                               <span class="c1"># list of mode-kind stages</span>
+</span><span id="__span-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a><span class="n">mode_3</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">modes</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span>                   <span class="c1"># 0-indexed (mode 3)</span>
+</span><span id="__span-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a><span class="n">mode_3</span><span class="o">.</span><span class="n">frequency_hz</span>                         <span class="c1"># 5.41</span>
+</span><span id="__span-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a><span class="n">mode_3</span><span class="o">.</span><span class="n">period_s</span>                             <span class="c1"># 0.185</span>
+</span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a><span class="n">mode_3</span><span class="o">.</span><span class="n">eigenvalue</span>                           <span class="c1"># 1158.7</span>
+</span><span id="__span-10-25"><a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a><span class="n">shape_x</span> <span class="o">=</span> <span class="n">mode_3</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">)</span>
+</span><span id="__span-10-26"><a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a><span class="n">shape_x</span><span class="o">.</span><span class="n">values</span>                              <span class="c1"># ndarray (1, N) — single &quot;step&quot;</span>
+</span><span id="__span-10-27"><a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a>
+</span><span id="__span-10-28"><a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a><span class="c1"># Nodal — selection by pg/label/ids matches FEMData</span>
+</span><span id="__span-10-29"><a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a><span class="n">disp_z</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span>
+</span><span id="__span-10-30"><a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a><span class="n">disp_z</span><span class="o">.</span><span class="n">values</span>                               <span class="c1"># ndarray (T, N)</span>
+</span><span id="__span-10-31"><a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a><span class="n">disp_z</span><span class="o">.</span><span class="n">node_ids</span>                             <span class="c1"># ndarray (N,)</span>
+</span><span id="__span-10-32"><a id="__codelineno-10-32" name="__codelineno-10-32" href="#__codelineno-10-32"></a><span class="n">disp_z</span><span class="o">.</span><span class="n">time</span>                                 <span class="c1"># ndarray (T,)</span>
+</span><span id="__span-10-33"><a id="__codelineno-10-33" name="__codelineno-10-33" href="#__codelineno-10-33"></a>
+</span><span id="__span-10-34"><a id="__codelineno-10-34" name="__codelineno-10-34" href="#__codelineno-10-34"></a><span class="c1"># Single time step</span>
+</span><span id="__span-10-35"><a id="__codelineno-10-35" name="__codelineno-10-35" href="#__codelineno-10-35"></a><span class="n">peak</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+</span><span id="__span-10-36"><a id="__codelineno-10-36" name="__codelineno-10-36" href="#__codelineno-10-36"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span> <span class="n">time</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>   <span class="c1"># nearest step</span>
+</span><span id="__span-10-37"><a id="__codelineno-10-37" name="__codelineno-10-37" href="#__codelineno-10-37"></a><span class="p">)</span>
+</span><span id="__span-10-38"><a id="__codelineno-10-38" name="__codelineno-10-38" href="#__codelineno-10-38"></a><span class="n">peak</span><span class="o">.</span><span class="n">values</span>                                 <span class="c1"># ndarray (N,)</span>
+</span><span id="__span-10-39"><a id="__codelineno-10-39" name="__codelineno-10-39" href="#__codelineno-10-39"></a>
+</span><span id="__span-10-40"><a id="__codelineno-10-40" name="__codelineno-10-40" href="#__codelineno-10-40"></a><span class="c1"># Time slicing — numpy half-open semantics: [start, stop)</span>
+</span><span id="__span-10-41"><a id="__codelineno-10-41" name="__codelineno-10-41" href="#__codelineno-10-41"></a><span class="n">window</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+</span><span id="__span-10-42"><a id="__codelineno-10-42" name="__codelineno-10-42" href="#__codelineno-10-42"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span>
+</span><span id="__span-10-43"><a id="__codelineno-10-43" name="__codelineno-10-43" href="#__codelineno-10-43"></a>    <span class="n">time</span><span class="o">=</span><span class="nb">slice</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">),</span>                   <span class="c1"># 0.0 ≤ t &lt; 5.0</span>
+</span><span id="__span-10-44"><a id="__codelineno-10-44" name="__codelineno-10-44" href="#__codelineno-10-44"></a><span class="p">)</span>
+</span><span id="__span-10-45"><a id="__codelineno-10-45" name="__codelineno-10-45" href="#__codelineno-10-45"></a><span class="n">picks</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+</span><span id="__span-10-46"><a id="__codelineno-10-46" name="__codelineno-10-46" href="#__codelineno-10-46"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">,</span>
+</span><span id="__span-10-47"><a id="__codelineno-10-47" name="__codelineno-10-47" href="#__codelineno-10-47"></a>    <span class="n">time</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">50</span><span class="p">,</span> <span class="mi">100</span><span class="p">],</span>                      <span class="c1"># explicit step indices</span>
+</span><span id="__span-10-48"><a id="__codelineno-10-48" name="__codelineno-10-48" href="#__codelineno-10-48"></a><span class="p">)</span>
+</span><span id="__span-10-49"><a id="__codelineno-10-49" name="__codelineno-10-49" href="#__codelineno-10-49"></a>
+</span><span id="__span-10-50"><a id="__codelineno-10-50" name="__codelineno-10-50" href="#__codelineno-10-50"></a><span class="c1"># Continuum stress at GPs</span>
+</span><span id="__span-10-51"><a id="__codelineno-10-51" name="__codelineno-10-51" href="#__codelineno-10-51"></a><span class="n">sigma</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">gauss</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+</span><span id="__span-10-52"><a id="__codelineno-10-52" name="__codelineno-10-52" href="#__codelineno-10-52"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,</span>
+</span><span id="__span-10-53"><a id="__codelineno-10-53" name="__codelineno-10-53" href="#__codelineno-10-53"></a><span class="p">)</span>
+</span><span id="__span-10-54"><a id="__codelineno-10-54" name="__codelineno-10-54" href="#__codelineno-10-54"></a><span class="n">sigma</span><span class="o">.</span><span class="n">values</span>                                <span class="c1"># ndarray (T, sum_GP)</span>
+</span><span id="__span-10-55"><a id="__codelineno-10-55" name="__codelineno-10-55" href="#__codelineno-10-55"></a><span class="n">sigma</span><span class="o">.</span><span class="n">element_index</span>                         <span class="c1"># ndarray (sum_GP,)</span>
+</span><span id="__span-10-56"><a id="__codelineno-10-56" name="__codelineno-10-56" href="#__codelineno-10-56"></a><span class="n">sigma</span><span class="o">.</span><span class="n">natural_coords</span>                        <span class="c1"># ndarray (sum_GP, dim)</span>
+</span><span id="__span-10-57"><a id="__codelineno-10-57" name="__codelineno-10-57" href="#__codelineno-10-57"></a><span class="n">sigma</span><span class="o">.</span><span class="n">global_coords</span><span class="p">()</span>                       <span class="c1"># method — computed via fem</span>
+</span><span id="__span-10-58"><a id="__codelineno-10-58" name="__codelineno-10-58" href="#__codelineno-10-58"></a>
+</span><span id="__span-10-59"><a id="__codelineno-10-59" name="__codelineno-10-59" href="#__codelineno-10-59"></a><span class="c1"># Fibers</span>
+</span><span id="__span-10-60"><a id="__codelineno-10-60" name="__codelineno-10-60" href="#__codelineno-10-60"></a><span class="n">sf</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fibers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+</span><span id="__span-10-61"><a id="__codelineno-10-61" name="__codelineno-10-61" href="#__codelineno-10-61"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Columns&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;fiber_stress&quot;</span><span class="p">,</span>
+</span><span id="__span-10-62"><a id="__codelineno-10-62" name="__codelineno-10-62" href="#__codelineno-10-62"></a><span class="p">)</span>
+</span><span id="__span-10-63"><a id="__codelineno-10-63" name="__codelineno-10-63" href="#__codelineno-10-63"></a><span class="n">sf</span><span class="o">.</span><span class="n">values</span>                                   <span class="c1"># ndarray (T, sum_F)</span>
+</span><span id="__span-10-64"><a id="__codelineno-10-64" name="__codelineno-10-64" href="#__codelineno-10-64"></a><span class="n">sf</span><span class="o">.</span><span class="n">element_index</span><span class="p">,</span> <span class="n">sf</span><span class="o">.</span><span class="n">gp_index</span>               <span class="c1"># parent (elem, gp) per fiber</span>
+</span><span id="__span-10-65"><a id="__codelineno-10-65" name="__codelineno-10-65" href="#__codelineno-10-65"></a><span class="n">sf</span><span class="o">.</span><span class="n">y</span><span class="p">,</span> <span class="n">sf</span><span class="o">.</span><span class="n">z</span><span class="p">,</span> <span class="n">sf</span><span class="o">.</span><span class="n">area</span>                         <span class="c1"># section-local geometry</span>
+</span><span id="__span-10-66"><a id="__codelineno-10-66" name="__codelineno-10-66" href="#__codelineno-10-66"></a>
+</span><span id="__span-10-67"><a id="__codelineno-10-67" name="__codelineno-10-67" href="#__codelineno-10-67"></a><span class="c1"># Layered shells</span>
+</span><span id="__span-10-68"><a id="__codelineno-10-68" name="__codelineno-10-68" href="#__codelineno-10-68"></a><span class="n">sl</span> <span class="o">=</span> <span class="n">gravity</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">layers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+</span><span id="__span-10-69"><a id="__codelineno-10-69" name="__codelineno-10-69" href="#__codelineno-10-69"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Slabs&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;stress_xx&quot;</span><span class="p">,</span>
+</span><span id="__span-10-70"><a id="__codelineno-10-70" name="__codelineno-10-70" href="#__codelineno-10-70"></a><span class="p">)</span>
+</span><span id="__span-10-71"><a id="__codelineno-10-71" name="__codelineno-10-71" href="#__codelineno-10-71"></a><span class="n">sl</span><span class="o">.</span><span class="n">element_index</span><span class="p">,</span> <span class="n">sl</span><span class="o">.</span><span class="n">gp_index</span><span class="p">,</span> <span class="n">sl</span><span class="o">.</span><span class="n">layer_index</span><span class="p">,</span> <span class="n">sl</span><span class="o">.</span><span class="n">sub_gp_index</span>
+</span><span id="__span-10-72"><a id="__codelineno-10-72" name="__codelineno-10-72" href="#__codelineno-10-72"></a>
+</span><span id="__span-10-73"><a id="__codelineno-10-73" name="__codelineno-10-73" href="#__codelineno-10-73"></a><span class="c1"># Inspection</span>
+</span><span id="__span-10-74"><a id="__codelineno-10-74" name="__codelineno-10-74" href="#__codelineno-10-74"></a><span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>            <span class="c1"># stages, partitions, components</span>
+</span><span id="__span-10-75"><a id="__codelineno-10-75" name="__codelineno-10-75" href="#__codelineno-10-75"></a><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">components</span><span class="p">()</span>                <span class="c1"># what&#39;s available where</span>
 </span></code></pre></div>
 <p>Selection rules match FEMData exactly: provide one of <code>pg=</code>,
 <code>label=</code>, <code>ids=</code> (or none → all). PG/label resolution requires
@@ -3820,17 +3960,17 @@ Selection by name still works (selection sets become PGs).
 Queries that touch missing fields (<code>fem.labels.entities("foo")</code>)
 raise with a clear message.</p>
 <h4 id="bind-semantics">Bind semantics<a class="headerlink" href="#bind-semantics" title="Permanent link">&para;</a></h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Bare construction — works for direct ID queries</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">raw</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">)</span>      <span class="c1"># auto-binds from MPCO MODEL</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">raw</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">ids</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">],</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">)</span>     <span class="c1"># OK</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="n">raw</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">)</span>        <span class="c1"># OK (PGs from MPCO)</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># Explicit re-bind — for the case where you re-built an identical</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="c1"># fem in a fresh session and want to use its labels / loads / Parts</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="n">results</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">g_session_fem</span><span class="p">)</span>
-</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>
-</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="c1"># Drift detection — bind compares snapshot_id hashes</span>
-</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">other_fem</span><span class="p">)</span>            <span class="c1"># raises: snapshot_id mismatch</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Bare construction — works for direct ID queries</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">raw</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">)</span>      <span class="c1"># auto-binds from MPCO MODEL</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">raw</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">ids</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">],</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">)</span>     <span class="c1"># OK</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">raw</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">)</span>        <span class="c1"># OK (PGs from MPCO)</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="c1"># Explicit re-bind — for the case where you re-built an identical</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># fem in a fresh session and want to use its labels / loads / Parts</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="n">results</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">g_session_fem</span><span class="p">)</span>
+</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1"># Drift detection — bind compares snapshot_id hashes</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">other_fem</span><span class="p">)</span>            <span class="c1"># raises: snapshot_id mismatch</span>
 </span></code></pre></div>
 <p>Bind validation is a single hash comparison: the embedded
 <code>snapshot_id</code> (from results) vs. the candidate FEMData's
@@ -4071,7 +4211,7 @@ backend reads everything else uses.</p>
 <h3 id="build-order-rationale">Build order rationale<a class="headerlink" href="#build-order-rationale" title="Permanent link">&para;</a></h3>
 <p>The user explicitly wants to <strong>rebuild the viewer from this</strong>.
 That makes the critical path:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>schema → native writer → native reader → composite API → MPCO reader
+<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>schema → native writer → native reader → composite API → MPCO reader
 </span></code></pre></div>
 <p>Once that loop closes, they can read existing STKO files and the
 viewer rebuild becomes its own project working against a stable
@@ -4081,55 +4221,55 @@ blocking the rebuild.</p>
 wholesale. No shims, no compatibility layer. New module ships under
 the same path.</p>
 <h3 id="top-level-package-layout-target">Top-level package layout (target)<a class="headerlink" href="#top-level-package-layout-target" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>src/apeGmsh/results/
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>├── __init__.py              # public API: Results, StageInfo, slab types
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>├── Results.py               # composite — user-facing class
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>├── _composites.py           # NodeResultsComposite, ElementResultsComposite, etc.
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>├── _slabs.py                # NodeSlab, GaussSlab, FiberSlab, LayerSlab dataclasses
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>├── _vocabulary.py           # canonical component names + shorthand expansion
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>├── _stage.py                # StageInfo, time slicing helpers
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>├── _bind.py                 # bind() validation logic
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>│
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>├── schema/
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>│   ├── __init__.py
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>│   ├── _native.py           # native HDF5 schema constants + path builders
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>│   └── _versions.py         # schema_version, parser_version
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>│
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>├── readers/
-</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>│   ├── __init__.py
-</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>│   ├── _protocol.py         # ResultsReader Protocol, ResultLevel enum
-</span><span id="__span-11-18"><a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>│   ├── _native.py           # NativeReader
-</span><span id="__span-11-19"><a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>│   └── _mpco.py             # MPCOReader (+ STKO name → canonical translation)
-</span><span id="__span-11-20"><a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>│
-</span><span id="__span-11-21"><a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>├── writers/
-</span><span id="__span-11-22"><a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>│   ├── __init__.py
-</span><span id="__span-11-23"><a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a>│   ├── _native.py           # NativeWriter (file-based, append + bulk)
-</span><span id="__span-11-24"><a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a>│   └── _cache.py            # cache key + manifest for transcoders
-</span><span id="__span-11-25"><a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a>│
-</span><span id="__span-11-26"><a id="__codelineno-11-26" name="__codelineno-11-26" href="#__codelineno-11-26"></a>├── transcoders/
-</span><span id="__span-11-27"><a id="__codelineno-11-27" name="__codelineno-11-27" href="#__codelineno-11-27"></a>│   ├── __init__.py
-</span><span id="__span-11-28"><a id="__codelineno-11-28" name="__codelineno-11-28" href="#__codelineno-11-28"></a>│   ├── _txt.py              # OpenSees text recorder parser
-</span><span id="__span-11-29"><a id="__codelineno-11-29" name="__codelineno-11-29" href="#__codelineno-11-29"></a>│   ├── _xml.py              # OpenSees XML recorder parser
-</span><span id="__span-11-30"><a id="__codelineno-11-30" name="__codelineno-11-30" href="#__codelineno-11-30"></a>│   └── _recorder.py         # RecorderTranscoder (orchestrates)
-</span><span id="__span-11-31"><a id="__codelineno-11-31" name="__codelineno-11-31" href="#__codelineno-11-31"></a>│
-</span><span id="__span-11-32"><a id="__codelineno-11-32" name="__codelineno-11-32" href="#__codelineno-11-32"></a>├── capture/
-</span><span id="__span-11-33"><a id="__codelineno-11-33" name="__codelineno-11-33" href="#__codelineno-11-33"></a>│   ├── __init__.py
-</span><span id="__span-11-34"><a id="__codelineno-11-34" name="__codelineno-11-34" href="#__codelineno-11-34"></a>│   └── _domain.py           # DomainCapture context manager (Strategy B)
-</span><span id="__span-11-35"><a id="__codelineno-11-35" name="__codelineno-11-35" href="#__codelineno-11-35"></a>│
-</span><span id="__span-11-36"><a id="__codelineno-11-36" name="__codelineno-11-36" href="#__codelineno-11-36"></a>└── export/
-</span><span id="__span-11-37"><a id="__codelineno-11-37" name="__codelineno-11-37" href="#__codelineno-11-37"></a>    ├── __init__.py
-</span><span id="__span-11-38"><a id="__codelineno-11-38" name="__codelineno-11-38" href="#__codelineno-11-38"></a>    ├── _vtu.py              # results.export.vtu(...)
-</span><span id="__span-11-39"><a id="__codelineno-11-39" name="__codelineno-11-39" href="#__codelineno-11-39"></a>    └── _pvd.py              # results.export.pvd(...)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>src/apeGmsh/results/
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>├── __init__.py              # public API: Results, StageInfo, slab types
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>├── Results.py               # composite — user-facing class
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>├── _composites.py           # NodeResultsComposite, ElementResultsComposite, etc.
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>├── _slabs.py                # NodeSlab, GaussSlab, FiberSlab, LayerSlab dataclasses
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>├── _vocabulary.py           # canonical component names + shorthand expansion
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>├── _stage.py                # StageInfo, time slicing helpers
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>├── _bind.py                 # bind() validation logic
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>│
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>├── schema/
+</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>│   ├── __init__.py
+</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>│   ├── _native.py           # native HDF5 schema constants + path builders
+</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>│   └── _versions.py         # schema_version, parser_version
+</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>│
+</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>├── readers/
+</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>│   ├── __init__.py
+</span><span id="__span-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>│   ├── _protocol.py         # ResultsReader Protocol, ResultLevel enum
+</span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>│   ├── _native.py           # NativeReader
+</span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>│   └── _mpco.py             # MPCOReader (+ STKO name → canonical translation)
+</span><span id="__span-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>│
+</span><span id="__span-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>├── writers/
+</span><span id="__span-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>│   ├── __init__.py
+</span><span id="__span-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>│   ├── _native.py           # NativeWriter (file-based, append + bulk)
+</span><span id="__span-13-24"><a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a>│   └── _cache.py            # cache key + manifest for transcoders
+</span><span id="__span-13-25"><a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a>│
+</span><span id="__span-13-26"><a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a>├── transcoders/
+</span><span id="__span-13-27"><a id="__codelineno-13-27" name="__codelineno-13-27" href="#__codelineno-13-27"></a>│   ├── __init__.py
+</span><span id="__span-13-28"><a id="__codelineno-13-28" name="__codelineno-13-28" href="#__codelineno-13-28"></a>│   ├── _txt.py              # OpenSees text recorder parser
+</span><span id="__span-13-29"><a id="__codelineno-13-29" name="__codelineno-13-29" href="#__codelineno-13-29"></a>│   ├── _xml.py              # OpenSees XML recorder parser
+</span><span id="__span-13-30"><a id="__codelineno-13-30" name="__codelineno-13-30" href="#__codelineno-13-30"></a>│   └── _recorder.py         # RecorderTranscoder (orchestrates)
+</span><span id="__span-13-31"><a id="__codelineno-13-31" name="__codelineno-13-31" href="#__codelineno-13-31"></a>│
+</span><span id="__span-13-32"><a id="__codelineno-13-32" name="__codelineno-13-32" href="#__codelineno-13-32"></a>├── capture/
+</span><span id="__span-13-33"><a id="__codelineno-13-33" name="__codelineno-13-33" href="#__codelineno-13-33"></a>│   ├── __init__.py
+</span><span id="__span-13-34"><a id="__codelineno-13-34" name="__codelineno-13-34" href="#__codelineno-13-34"></a>│   └── _domain.py           # DomainCapture context manager (Strategy B)
+</span><span id="__span-13-35"><a id="__codelineno-13-35" name="__codelineno-13-35" href="#__codelineno-13-35"></a>│
+</span><span id="__span-13-36"><a id="__codelineno-13-36" name="__codelineno-13-36" href="#__codelineno-13-36"></a>└── export/
+</span><span id="__span-13-37"><a id="__codelineno-13-37" name="__codelineno-13-37" href="#__codelineno-13-37"></a>    ├── __init__.py
+</span><span id="__span-13-38"><a id="__codelineno-13-38" name="__codelineno-13-38" href="#__codelineno-13-38"></a>    ├── _vtu.py              # results.export.vtu(...)
+</span><span id="__span-13-39"><a id="__codelineno-13-39" name="__codelineno-13-39" href="#__codelineno-13-39"></a>    └── _pvd.py              # results.export.pvd(...)
 </span></code></pre></div>
 <p>Recorder spec lives next to the existing OpenSees bridge:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>src/apeGmsh/solvers/
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>├── Recorders.py             # NEW — g.opensees.recorders composite
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>├── _recorder_specs.py       # NEW — declarative records + ResolvedRecorderSpec
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>└── _opensees_export.py      # MODIFIED — accept recorders=spec, emit commands
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>src/apeGmsh/solvers/
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>├── Recorders.py             # NEW — g.opensees.recorders composite
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>├── _recorder_specs.py       # NEW — declarative records + ResolvedRecorderSpec
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>└── _opensees_export.py      # MODIFIED — accept recorders=spec, emit commands
 </span></code></pre></div>
 <p>FEMData hashing lives next to <code>FEMData.py</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>src/apeGmsh/mesh/
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>└── _femdata_hash.py         # NEW — compute_snapshot_id(fem)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>src/apeGmsh/mesh/
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>└── _femdata_hash.py         # NEW — compute_snapshot_id(fem)
 </span></code></pre></div>
 <h3 id="phase-0-schema-lock-scaffolding">Phase 0 — Schema lock + scaffolding<a class="headerlink" href="#phase-0-schema-lock-scaffolding" title="Permanent link">&para;</a></h3>
 <p><strong>Goal:</strong> lock the native HDF5 schema, the canonical naming
