@@ -1,5 +1,312 @@
 # Changelog
 
+## v1.3.0 — ResultsViewer B++ redesign · live recorder + MPCO emission · spatial filters
+
+Nine PRs landing on top of v1.2.0. The ResultsViewer ships a full B++
+redesign — outline tree, plot pane, viewport HUDs (probe palette top-
+right, pick-readout top-left), inline kind picker, style presets,
+density toggle — replacing the right-dock tab strip. The recorder
+spec gains two new in-process execution strategies (`emit_recorders`
+and `emit_mpco`), so one declarative spec now drives five backend
+paths. The read side picks up `nearest_to` / `in_box` / `in_sphere` /
+`on_plane` spatial filters plus an `element_type=` selector, all
+composing additively with the existing `pg=` / `label=` /
+`selection=` / `ids=` vocabulary. Elastic beams (`ElasticBeam{2d,3d}`,
+`ElasticTimoshenkoBeam{2d,3d}`, `ModElasticBeam2d`) gain a synthesised
+2-station line-stations slab via the live capture path, matching the
+existing MPCO behaviour. Documentation gets a 6-card landing, grouped
+navigation, an 8-notebook curated examples gallery rendered inline
+via mkdocs-jupyter, a Recorder reference page, and a Reading &
+filtering results guide. **All 9 PRs merged green.**
+
+PRs in this release: [#43], [#44], [#46], [#47], [#48], [#50], [#51],
+[#52], [#49].
+
+### ADDED — ResultsViewer B++ redesign ([#43], [#46])
+
+Closes the [B++ Implementation Guide](architecture/apeGmsh_results_viewer.md).
+The right-dock tab strip (Stages / Diagrams / Settings / Inspector /
+Probes) is retired in favour of a 3×3 grid layout: title-bar row
+(40 px), three-column body (left rail · viewport · right rail),
+scrubber row (84 px).
+
+- **`ResultsWindow` shell** ([#43] B0). Wraps `ViewerWindow` with the
+  3×3 grid central widget. Hidden left (260 px) and right (380 px)
+  columns reserve space for the upcoming widgets.
+- **`OutlineTree`** ([#43] B1). Left-rail single navigator with four
+  groups: Stages, Diagrams, Probes, Plots. Replaces the StagesTab and
+  DiagramsTab. Visibility checkboxes toggle render; clicks drive the
+  details panel.
+- **`PlotPane` + `DetailsPanel`** ([#43] B2). Right-rail vertical-list
+  tabs (dot · label · ×). Re-homes the fiber-section, layer-
+  thickness, and time-history panels that previously floated as
+  `QDockWidget`s on the main-window edges. The DetailsPanel below
+  hosts contextual content (DiagramSettingsTab when a diagram row is
+  selected).
+- **`ProbePaletteHUD`** ([#43] B3). Floating panel in the viewport's
+  top-right corner with three mode buttons (Point / Line / Slice) +
+  Stop / Clear. Repositions on viewport resize via a Qt event filter.
+  Retires `ProbesTab`.
+- **`PickReadoutHUD`** ([#46]). Floating glass card in the viewport's
+  top-left corner. Subscribes to `ProbeOverlay.on_point_result` and
+  Director step / stage changes; renders the picked node id, snapped
+  coords, and one mono-typed line per active component value.
+  Retires `InspectorTab`.
+- **Shift-click → time-history plot** ([#46]). `ShiftClickPicker`
+  registers a low-priority VTK observer on `LeftButtonPressEvent`
+  that fires only when shift is held; opens (or focuses) a
+  `TimeHistoryPanel` as a closable plot-pane tab. The default
+  component prefers the active diagram's selector.
+- **Title-bar utility strip** ([#46]). Three decorative stop-light
+  dots, breadcrumb label, right-aligned icon strip with theme cycle,
+  clipboard screenshot, density toggle, help dialog. Theme cycles
+  through every palette in `PALETTES`.
+- **Density toggle** ([#46]). New `DensityManager` singleton mirroring
+  `ThemeManager`. Persists via `QSettings`. `DensityTokens` carry
+  `row_h`, `pad_x`, `pad_y`, `gap`, `fs_body`, `fs_head`. The
+  global stylesheet picks them up; toggling triggers a full restyle.
+- **Two-way tree ↔ plot-tab binding** ([#46]). The Plots group in
+  the outline tree mirrors the plot-pane tab list; clicking a Plots
+  row activates the matching tab. Empty Plots group falls back to a
+  hint placeholder.
+- **Inline 2×4 kind picker** ([#46]). Clicking the outline tree's
+  "+ Insert" button reveals a 2×4 grid of diagram-kind shortcuts
+  directly under the header. Selecting a kind opens
+  `AddDiagramDialog` pre-selected for that kind.
+- **Diagram picker pre-flight** ([#46]). The Add Diagram dialog now
+  greys out kinds whose topology has no data anywhere in the
+  Results file (`— no data` suffix). The Component combo
+  placeholder distinguishes "no data in file" from "no data in
+  selected stage".
+- **Style presets** ([#46]). New module
+  [`viewers/diagrams/_style_presets.py`] with `style_to_dict` /
+  `style_from_dict` codec, `KIND_TO_STYLE_CLASS` registry, and a
+  `StylePresetStore` (CRUD under `<QSettings AppConfigLocation>/
+  apeGmsh/style_presets/`). Add Diagram dialog gains a Preset combo;
+  `DiagramSettingsTab` gains a Save…/Apply footer. Path-traversal
+  sanitiser refuses unsafe names.
+- **Theme + global-preferences reachability** ([#46]). The
+  ResultsWindow help dialog promotes from `QMessageBox` to a proper
+  `QDialog` with footer buttons that open the Theme editor and
+  Global preferences dialogs (the dock-strip path the other viewers
+  use is gone in B5).
+- **Theme integration for the new shell** ([#43] B4). Hardcoded
+  inline stylesheets removed; the global `build_stylesheet` picks
+  up object-name selectors for every new widget (`#ResultsTitleBar`,
+  `#OutlineHeader`, `#PlotPaneHeader`, `#DetailsPanel`, `#ProbeHUD`,
+  `#OutlineKindPicker`, `#OutlineKindBtn`, etc.). All four palettes
+  (catppuccin_mocha, neutral_studio, catppuccin_latte, paper) render
+  cleanly.
+
+### ADDED — Live recorder + MPCO emission strategies ([#48])
+
+Two new in-process consumers on the recorder spec — same seam, two
+new code paths:
+
+- **`spec.emit_recorders(out_dir)`** — classic recorders pushed live
+  into the `ops` domain via `ops.recorder()` calls, with
+  `begin_stage` / `end_stage` scoping and per-stage filename
+  prefixes (`<stage>__<record>_<token>`).
+- **`spec.emit_mpco(path)`** — single in-process MPCO recorder with
+  a build-gate that raises with a clear remediation pointer when the
+  active openseespy build doesn't include MPCO.
+- Threads `stage_id` through emit → cache → transcoder →
+  `from_recorders` (default `None` preserves byte-for-byte
+  `export.tcl/py` compatibility).
+- `to_ops_args` / `mpco_ops_args` are the live-emit equivalents of
+  `format_python` / `emit_mpco_python`. Both flow through the
+  existing `LogicalRecorder` dataclass so source-form and
+  tuple-form share one source of truth.
+- Architecture doc rewritten:
+  [`apeGmsh_results_obtaining.md`](architecture/apeGmsh_results_obtaining.md)
+  covers the spec-as-seam pattern with the five-strategy
+  comparison table.
+- New user-facing guide:
+  [`guide_obtaining_results.md`](internal_docs/guide_obtaining_results.md)
+  with worked recipes per strategy + decision flowchart + pitfalls.
+- 46 new tests; full recorder/live/mpco sweep at 495 passing.
+
+### ADDED — Spatial filters on every read-side composite ([#51])
+
+Ergonomic spatial selection lands on every composite that returns
+slabs:
+
+| Filter | Semantics |
+|---|---|
+| `nearest_to(point, component=…)` | Single nearest entity to the query point |
+| `in_box(box_min, box_max, …)` | Half-open on the upper side: `[box_min, box_max)` so adjacent boxes don't double-count shared faces. Use `np.inf` to relax an axis |
+| `in_sphere(center, radius, …)` | Closed ball |
+| `on_plane(point_on_plane, normal, tolerance, …)` | Absolute distance ≤ tolerance |
+
+Available on `results.nodes` plus the six element-level composites
+(`results.elements`, `.elements.gauss`, `.line_stations`, `.fibers`,
+`.layers`, `.springs`) via the shared `_ElementGeometryMixin`.
+Element-side queries use centroids computed lazily from the FEM's
+node coordinates + per-type connectivity, robust to mixed-type
+meshes.
+
+- **Filters compose additively.** Spatial primitives intersect with
+  each named selector (`pg=` / `label=` / `selection=` / `ids=` /
+  `element_type=`) the same way:
+  ```python
+  results.nodes.in_box(
+      (-1, -1, 0), (1, 1, 5),
+      component="displacement_z", pg="Top",
+  )
+  ```
+- **`element_type=` selector** on every element-level composite.
+  Restricts the candidate set by broker element-type name
+  (`"Tet4"`, `"Hex8"`, `"Quad4"`, etc.). Resolves via
+  `fem.elements.types` and `fem.elements.resolve(element_type=…)`.
+- **Verbose parameter names per project preference**: `point` (was
+  `xyz`), `box_min` / `box_max` (was `p_min` / `p_max`), `center`,
+  `radius`, `point_on_plane`, `normal`, `tolerance`.
+- New user-facing guide:
+  [`guide_results_filtering.md`](internal_docs/guide_results_filtering.md)
+  — 12 sections covering the composite tree, selectors menu,
+  geometric helpers, additive composition, slab shapes, time
+  slicing, stage scoping, discovery API, worked recipes, pitfalls,
+  and what's queued.
+- 21 spatial tests + 18 existing composite tests pass.
+
+### ADDED — Elastic-beam line-stations synthesis ([#47])
+
+The Phase 11b live-capture path previously required a force- or
+disp-based beam-column section.force probe; closed-form elastic
+beams (`ElasticBeam{2d,3d}`, `ElasticTimoshenkoBeam{2d,3d}`,
+`ModElasticBeam2d`) were silently dropped because they have no
+integration points. The MPCO read path already synthesises a
+2-station slab from the `localForce` bucket — this commit ports the
+same synthesis to the live `DomainCapture` path.
+
+- New `synthesize_line_station_layout_for_elastic_beam(class_name)`
+  in [`solvers/_element_response.py`] — builds a 2-station
+  `ResponseLayout` at ξ ∈ {-1, +1} for any class with a
+  `NODAL_FORCE_CATALOG` entry, using canonical line-station
+  component names. Companion
+  `is_line_station_synthesis_catalogued` predicate.
+- `_LineStationGroup` gains a `mode` field; `_probe_element` splits
+  into `_probe_section_force` (existing) and
+  `_probe_local_force_synthesis` (new).
+- `_step_local_force` reads `ops.eleResponse(eid, "localForce")` once
+  per step and applies the standard sign flip on station 2 so the
+  slab matches section-force convention (mirrors the MPCO path).
+- **Loud skip warning.** `DomainCapture.end_stage` now emits a single
+  consolidated `UserWarning` if any elements were dropped from
+  line-stations recording, listing the breakdown by reason and a
+  sample of element IDs. Steers the user to MPCO or to rebuilding
+  as `ForceBeamColumn` instead of letting the silent skip turn into
+  a confusing empty diagram.
+- `examples/EOS Examples/example_buckleUP_v2.ipynb` gains a
+  `recs.line_stations(...)` call so its `elasticBeamColumn` braces /
+  columns / beams produce a real line-stations slab the
+  `LineForceDiagram` can render.
+
+### ADDED — Recorder vocabulary discovery ([#50])
+
+The recorder vocabulary is now discoverable from three surfaces, all
+sharing one source of truth:
+
+- **Method docstrings** on `Recorders.{nodes, elements, line_stations,
+  gauss, fibers, layers, modal}` enumerate every canonical component,
+  every shorthand expansion, the selector vocabulary, the cadence
+  options, coverage caveats per execution strategy, and a worked
+  example. mkdocstrings auto-renders these on
+  [`api/opensees.md`](api/opensees.md), so the API page now shows
+  the full menu.
+- **Static introspection methods**:
+  ```python
+  Recorders.categories()
+  Recorders.components_for(category)
+  Recorders.shorthands_for(category)
+  ```
+  Useful at the REPL, in notebooks, for validation messages.
+- **New reference page** at *Guides › Results › Recorder reference*
+  ([`guide_recorders_reference.md`](internal_docs/guide_recorders_reference.md))
+  — single-page menu with categories at a glance, shared selectors
+  and cadence, then per-method tables of components and shorthands.
+- 16 new introspection tests; full recorder sweep at 158 passing.
+
+### DOCS — 6-card landing, grouped nav, examples gallery ([#49], [#52], [#44], [`affa81d`])
+
+- **6-card landing** ([#49]) replaces the 2-card grid on
+  the docs home page. Cards are organised by user
+  intent: First steps, Quickstart & Examples, Build a model, Run &
+  read results, Architecture, API reference. Plus a 3-card
+  "What's new" band.
+- **Grouped navigation** ([#49]). `mkdocs.yml` reorganises the
+  bloated Guides and Architecture sections into collapsible
+  sub-headings: *Getting started* / *Building models* / *Physics* /
+  *Solver bridge* / *Results* / *Reference* under Guides;
+  *Foundations* / *Subsystems* / *Gmsh background* under
+  Architecture. No content moves.
+- **Curated examples gallery** ([#49]) — 8 EOS notebooks rendered
+  inline via mkdocs-jupyter at `/examples/notebooks/<name>/`.
+  `docs/_hooks.py` copies notebooks from `examples/EOS Examples/`
+  to `docs/examples/notebooks/` on every build (mtime-aware so
+  incremental rebuilds are fast); source of truth stays in
+  `examples/EOS Examples/`.
+- **8 hero notebooks modernised** ([#52]) — single-flow
+  apeGmsh-Results pedagogical template:
+  1. Imports + parameters
+  2. Geometry (apeGmsh)
+  3. Physical groups
+  4. Mesh
+  5. OpenSees model — vanilla openseespy
+  6. Declare recorders — apeGmsh
+  7. Run analysis with `spec.capture(...)` *or*
+     `spec.emit_recorders(...)`
+  8. Read results back via `Results`
+  9. Plot in-notebook
+  10. Optional viewer (subprocess, `APEGMSH_SKIP_VIEWER` honoured)
+
+  Strategy assignments mixed across the curriculum:
+  `01_hello_plate`, `04_portal_frame_2D`, `05_labels_and_pgs`,
+  `12_interface_tie`, `17_modal_analysis`, `19_pushover_elastoplastic`
+  use `spec.capture`; `02_cantilever_beam_2D`, `10b_part_assembly`
+  use `spec.emit_recorders`. All 8 verified end-to-end via
+  `nbconvert --execute` against closed-form solutions.
+- **Gallery page refresh** (`affa81d`). Each card calls out the
+  strategy used (`spec.capture` vs `spec.emit_recorders`), names the
+  verification target, and points at the specific pedagogical
+  moment that notebook teaches that others don't. New "Common
+  shape across every notebook" section makes the unified template
+  visible at the gallery level.
+- **31 EOS notebooks wired** ([#44]) with a "Capture results"
+  section before `g.end()`, providing two pedagogical paths:
+  manual `NativeWriter` and declarative
+  `Recorders().nodes(...) → DomainCapture` context. New
+  `scripts/wire_eos_notebook.py` (auto-wiring) and
+  `scripts/migrate_eos_legacy_api.py` (API-drift migrator) for
+  future notebooks. Both paths gate the viewer launch on
+  `APEGMSH_SKIP_VIEWER` for headless / nbconvert / CI runs.
+  Notebooks with pre-existing breakage moved to `to_review/` with a
+  README explaining each.
+
+### Test coverage
+
+| PR | New tests | Notes |
+|----|----------:|-------|
+| [#43] | — | Reorganises existing test infra (B0–B4 widget tests track the migration) |
+| [#46] | ~30 | HUD construction + callbacks, density manager, style presets CRUD, picker pre-flight |
+| [#47] | 4  | Elastic-beam round trip 3D / 2D, skip-warning fires once, clean-recording no-warning |
+| [#48] | 46 | Recorder/live/mpco sweep at 495 passing |
+| [#50] | 16 | Static introspection — categories / components_for / shorthands_for |
+| [#51] | 21 | nearest_to / in_box / in_sphere / on_plane / element_type semantics + additive intersection |
+| **Total** | **~117** |  |
+
+[#43]: https://github.com/nmorabowen/apeGmsh/pull/43
+[#44]: https://github.com/nmorabowen/apeGmsh/pull/44
+[#46]: https://github.com/nmorabowen/apeGmsh/pull/46
+[#47]: https://github.com/nmorabowen/apeGmsh/pull/47
+[#48]: https://github.com/nmorabowen/apeGmsh/pull/48
+[#49]: https://github.com/nmorabowen/apeGmsh/pull/49
+[#50]: https://github.com/nmorabowen/apeGmsh/pull/50
+[#51]: https://github.com/nmorabowen/apeGmsh/pull/51
+[#52]: https://github.com/nmorabowen/apeGmsh/pull/52
+
+---
+
 ## v1.2.0 — Results viewer: Gauss contour, scrubber animation, shape-function catalog
 
 Six PRs landing on top of v1.1.0's Results rebuild. `ContourDiagram`
