@@ -32,14 +32,14 @@ hide:
     (tags / labels / physical groups), queries, and CAD import.
     The right place to start.
 
--   :material-rocket-launch:{ .lg .middle } &nbsp; __[Quickstart & Examples](#examples)__
+-   :material-rocket-launch:{ .lg .middle } &nbsp; __[Quickstart & Examples](examples/index.md)__
 
     ---
 
     *Show me a working model.*
 
-    Hello-plate to building shells, embedded rebars, modal analysis —
-    notebooks you can copy and adapt.
+    Hello-plate, cantilever, portal frame, modal, pushover — a
+    curated gallery of notebooks rendered inline.
 
 -   :material-cube-outline:{ .lg .middle } &nbsp; __[Build a model](internal_docs/guide_basics.md)__
 
@@ -112,14 +112,6 @@ hide:
     [Reference →](api/results.md)
 
 </div>
-
-## <a id="examples"></a>Examples
-
-The `examples/` directory on GitHub holds a growing set of notebooks
-covering hello-plate models, cantilevers, modal analysis, embedded
-rebars, cohesive zones, and more. They live under
-[apeGmsh/examples](https://github.com/nmorabowen/apeGmsh/tree/main/examples)
-on GitHub for now; a curated docs gallery is coming.
 
 --8<-- "README.md"
 

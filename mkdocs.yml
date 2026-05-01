@@ -80,6 +80,15 @@ markdown_extensions:
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      include_source: true
+      ignore_h1_titles: true
+      execute: false
+      remove_tag_config:
+        remove_input_tags:
+          - hide-input
+        remove_cell_tags:
+          - hide-cell
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -125,6 +134,19 @@ nav:
           - Obtaining results: internal_docs/guide_obtaining_results.md
       - Reference:
           - Architecture overview: internal_docs/architecture.md
+  - Examples:
+      - Overview: examples/index.md
+      - Getting started:
+          - "Hello plate": examples/notebooks/01_hello_plate.ipynb
+          - "Cantilever beam (2D)": examples/notebooks/02_cantilever_beam_2D.ipynb
+      - Building richer models:
+          - "Portal frame (2D)": examples/notebooks/04_portal_frame_2D.ipynb
+          - "Labels & physical groups": examples/notebooks/05_labels_and_pgs.ipynb
+          - "Part assembly": examples/notebooks/10b_part_assembly.ipynb
+          - "Interface tie": examples/notebooks/12_interface_tie.ipynb
+      - Analysis types:
+          - "Modal analysis": examples/notebooks/17_modal_analysis.ipynb
+          - "Pushover (elastoplastic)": examples/notebooks/19_pushover_elastoplastic.ipynb
   - Architecture:
       - Foundations:
           - Overview: architecture/apeGmsh_architecture.md
