@@ -18,24 +18,108 @@ hide:
     and an OpenSees bridge. You still have the full Gmsh API underneath
     whenever you need it.
 
+## Where do you want to start?
+
 <div class="grid cards" markdown>
 
 -   :material-school:{ .lg .middle } &nbsp; __[First steps](internal_docs/first_steps.md)__
 
     ---
 
-    A conversational walkthrough — the session model, naming system
-    (tags / labels / physical groups), queries and selection, booleans,
-    and CAD import. The right place to start.
+    *I'm new — orient me.*
+
+    A conversational walkthrough of the session model, naming
+    (tags / labels / physical groups), queries, and CAD import.
+    The right place to start.
+
+-   :material-rocket-launch:{ .lg .middle } &nbsp; __[Quickstart & Examples](#examples)__
+
+    ---
+
+    *Show me a working model.*
+
+    Hello-plate to building shells, embedded rebars, modal analysis —
+    notebooks you can copy and adapt.
+
+-   :material-cube-outline:{ .lg .middle } &nbsp; __[Build a model](internal_docs/guide_basics.md)__
+
+    ---
+
+    *I'm meshing, constraining, and loading.*
+
+    The composite-by-composite reference: parts, mesh sizing, sections,
+    constraints, loads, masses.
+
+-   :material-chart-line:{ .lg .middle } &nbsp; __[Run & read results](internal_docs/guide_obtaining_results.md)__
+
+    ---
+
+    *I'm post-processing.*
+
+    Five strategies for obtaining results, the slab-based read API,
+    and the post-solve viewer.
+
+-   :material-bank:{ .lg .middle } &nbsp; __[Architecture](architecture/apeGmsh_architecture.md)__
+
+    ---
+
+    *Why is it built this way?*
+
+    Principles, the broker freeze, parts & assembly, the spec-as-seam
+    pattern for the OpenSees bridge.
 
 -   :material-book-open-variant:{ .lg .middle } &nbsp; __[API reference](api/index.md)__
 
     ---
 
+    *Look up a method.*
+
     Complete API surface — session composites, mesh, OpenSees bridge,
-    parts, constraints, loads, masses.
+    parts, constraints, loads, masses, results, viewers.
 
 </div>
+
+## What's new
+
+<div class="grid cards" markdown>
+
+-   :material-new-box: &nbsp; **Five-strategy results pipeline**
+
+    ---
+
+    A single declarative spec drives five execution paths — script
+    export, live recorders, domain capture, MPCO export, live MPCO.
+
+    [Architecture →](architecture/apeGmsh_results_obtaining.md) ·
+    [Guide →](internal_docs/guide_obtaining_results.md)
+
+-   :material-monitor-eye: &nbsp; **ResultsViewer redesign (B0–B5)**
+
+    ---
+
+    Post-solve viewer: diagrams, scrubber, persistent sessions,
+    multi-stage navigation.
+
+    [Architecture →](architecture/apeGmsh_results_viewer.md)
+
+-   :material-cog-transfer: &nbsp; **Native + MPCO + transcoder readers**
+
+    ---
+
+    One slab-based composite API across three on-disk formats.
+    `pg=` / `label=` / `selection=` selection vocabulary all the way.
+
+    [Reference →](api/results.md)
+
+</div>
+
+## <a id="examples"></a>Examples
+
+The `examples/` directory on GitHub holds a growing set of notebooks
+covering hello-plate models, cantilevers, modal analysis, embedded
+rebars, cohesive zones, and more. They live under
+[apeGmsh/examples](https://github.com/nmorabowen/apeGmsh/tree/main/examples)
+on GitHub for now; a curated docs gallery is coming.
 
 --8<-- "README.md"
 
@@ -46,4 +130,3 @@ hide:
 **Developed by:** Nicolás Mora Bowen · Patricio Palacios · José Abell · Guppi
 
 Part of José Abell's *El Ladruño Research Group*.
-

@@ -100,47 +100,56 @@ plugins:
 nav:
   - Home: index.md
   - Guides:
-      - First steps: internal_docs/first_steps.md
-      - Basics: internal_docs/guide_basics.md
-      - Parts & Assembly: internal_docs/guide_parts_assembly.md
-      - Parts vs Session: internal_docs/guide_parts_vs_session.md
-      - CAD Import: internal_docs/guide_cad_import.md
-      - Meshing: internal_docs/guide_meshing.md
-      - Partitioning: internal_docs/guide_partitioning.md
-      - Selection: internal_docs/guide_selection.md
-      - Queries: internal_docs/guide_queries.md
-      - Transforms: internal_docs/guide_transforms.md
-      - Constraints: internal_docs/guide_constraints.md
-      - Loads: internal_docs/guide_loads.md
-      - Masses: internal_docs/guide_masses.md
-      - Sections: internal_docs/guide_sections.md
-      - FEM Broker: internal_docs/guide_fem_broker.md
-      - OpenSees: internal_docs/guide_opensees.md
-      - Results: internal_docs/guide_results.md
-      - Obtaining results: internal_docs/guide_obtaining_results.md
-      - Architecture overview: internal_docs/architecture.md
+      - Getting started:
+          - First steps: internal_docs/first_steps.md
+          - Basics: internal_docs/guide_basics.md
+      - Building models:
+          - Parts & Assembly: internal_docs/guide_parts_assembly.md
+          - Parts vs Session: internal_docs/guide_parts_vs_session.md
+          - CAD Import: internal_docs/guide_cad_import.md
+          - Meshing: internal_docs/guide_meshing.md
+          - Partitioning: internal_docs/guide_partitioning.md
+          - Selection: internal_docs/guide_selection.md
+          - Queries: internal_docs/guide_queries.md
+          - Transforms: internal_docs/guide_transforms.md
+          - Sections: internal_docs/guide_sections.md
+      - Physics:
+          - Constraints: internal_docs/guide_constraints.md
+          - Loads: internal_docs/guide_loads.md
+          - Masses: internal_docs/guide_masses.md
+      - Solver bridge:
+          - FEM Broker: internal_docs/guide_fem_broker.md
+          - OpenSees: internal_docs/guide_opensees.md
+      - Results:
+          - Results container: internal_docs/guide_results.md
+          - Obtaining results: internal_docs/guide_obtaining_results.md
+      - Reference:
+          - Architecture overview: internal_docs/architecture.md
   - Architecture:
-      - Overview: architecture/apeGmsh_architecture.md
-      - Principles: architecture/apeGmsh_principles.md
-      - Navigation: architecture/apeGmsh_navigation.md
-      - Broker: architecture/apeGmsh_broker.md
-      - Parts & Assembly: architecture/apeGmsh_partInstanceAssemble.md
-      - Constraints: architecture/apeGmsh_constraints.md
-      - Loads: architecture/apeGmsh_loads.md
-      - Visualization: architecture/apeGmsh_visualization.md
-      - Results viewer: architecture/apeGmsh_results_viewer.md
-      - Results — Obtaining: architecture/apeGmsh_results_obtaining.md
-      - Aesthetic: architecture/apeGmsh_aesthetic.md
-      - Ground truth: architecture/apeGmsh_groundTruth.md
-      - Type hinting: architecture/apeGmsh_hinting.md
-      - "Gmsh — Basics": architecture/gmsh_basics.md
-      - "Gmsh — Geometry": architecture/gmsh_geometry_basics.md
-      - "Gmsh — Interface": architecture/gmsh_interface.md
-      - "Gmsh — Meshing basics": architecture/gmsh_meshing_basics.md
-      - "Gmsh — Meshing advanced": architecture/gmsh_meshing_advanced.md
-      - "Gmsh — Selection": architecture/gmsh_selection.md
-      - "Gmsh — Partitioning": architecture/gmsh_partitioning.md
-      - "Gmsh — API reference": architecture/gmsh_api_reference.md
+      - Foundations:
+          - Overview: architecture/apeGmsh_architecture.md
+          - Principles: architecture/apeGmsh_principles.md
+          - Navigation: architecture/apeGmsh_navigation.md
+          - Aesthetic: architecture/apeGmsh_aesthetic.md
+          - Ground truth: architecture/apeGmsh_groundTruth.md
+          - Type hinting: architecture/apeGmsh_hinting.md
+      - Subsystems:
+          - Broker: architecture/apeGmsh_broker.md
+          - Parts & Assembly: architecture/apeGmsh_partInstanceAssemble.md
+          - Constraints: architecture/apeGmsh_constraints.md
+          - Loads: architecture/apeGmsh_loads.md
+          - Visualization: architecture/apeGmsh_visualization.md
+          - Results viewer: architecture/apeGmsh_results_viewer.md
+          - Results — Obtaining: architecture/apeGmsh_results_obtaining.md
+      - Gmsh background:
+          - "Gmsh — Basics": architecture/gmsh_basics.md
+          - "Gmsh — Geometry": architecture/gmsh_geometry_basics.md
+          - "Gmsh — Interface": architecture/gmsh_interface.md
+          - "Gmsh — Meshing basics": architecture/gmsh_meshing_basics.md
+          - "Gmsh — Meshing advanced": architecture/gmsh_meshing_advanced.md
+          - "Gmsh — Selection": architecture/gmsh_selection.md
+          - "Gmsh — Partitioning": architecture/gmsh_partitioning.md
+          - "Gmsh — API reference": architecture/gmsh_api_reference.md
   - API Reference:
       - Overview: api/index.md
       - Session (apeGmsh): api/session.md
