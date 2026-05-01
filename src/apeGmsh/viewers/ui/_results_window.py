@@ -179,7 +179,14 @@ class ResultsWindow:
         win.setCentralWidget(central)
 
     def _make_title_bar(self, title: str):
-        """Row-0 widget — breadcrumb-style title text on a raised band."""
+        """Row-0 widget — stop-light dots, breadcrumb, utility icons.
+
+        Per spec §6 ``TitleBarSpan3``: three colored circles on the
+        left (purely decorative — Qt apps already get system
+        close/minimize/maximize from the OS chrome), breadcrumb text
+        in the middle, and a strip of utility icon buttons on the
+        right (theme toggle, screenshot, density toggle, help).
+        """
         from qtpy import QtWidgets, QtCore
 
         bar = QtWidgets.QFrame()
@@ -189,20 +196,126 @@ class ResultsWindow:
 
         lay = QtWidgets.QHBoxLayout(bar)
         lay.setContentsMargins(14, 0, 14, 0)
-        lay.setSpacing(8)
+        lay.setSpacing(10)
 
+        # ── Stop-light dots (decorative) ───────────────────────────
+        dots_holder = QtWidgets.QWidget()
+        dots_lay = QtWidgets.QHBoxLayout(dots_holder)
+        dots_lay.setContentsMargins(0, 0, 0, 0)
+        dots_lay.setSpacing(6)
+        for color in ("#ff5f57", "#febc2e", "#28c840"):
+            dot = QtWidgets.QLabel()
+            dot.setObjectName("ResultsTitleDot")
+            dot.setFixedSize(QtCore.QSize(11, 11))
+            dot.setStyleSheet(
+                f"background-color: {color}; border-radius: 5px;"
+            )
+            dots_lay.addWidget(dot)
+        lay.addWidget(dots_holder)
+
+        # ── Breadcrumb label ───────────────────────────────────────
         label = QtWidgets.QLabel(title)
         label.setObjectName("ResultsTitleLabel")
         label.setAlignment(QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft)
         lay.addWidget(label)
         lay.addStretch(1)
 
+        # ── Utility icon strip ─────────────────────────────────────
+        icons_holder = QtWidgets.QWidget()
+        icons_lay = QtWidgets.QHBoxLayout(icons_holder)
+        icons_lay.setContentsMargins(0, 0, 0, 0)
+        icons_lay.setSpacing(2)
+
+        self._btn_theme = self._make_title_icon_btn(
+            "☽", "Toggle theme (dark / light)", self._on_toggle_theme,
+        )
+        self._btn_screenshot = self._make_title_icon_btn(
+            "⎙", "Copy screenshot to clipboard", self._on_screenshot,
+        )
+        self._btn_density = self._make_title_icon_btn(
+            "⚡", "Toggle density (compact / comfortable)",
+            self._on_toggle_density,
+        )
+        self._btn_help = self._make_title_icon_btn(
+            "?", "Help / shortcuts", self._on_help,
+        )
+        for btn in (
+            self._btn_theme, self._btn_screenshot,
+            self._btn_density, self._btn_help,
+        ):
+            icons_lay.addWidget(btn)
+
+        lay.addWidget(icons_holder)
+
         # Theme-driven styling lives in viewers/ui/theme.py
         # (build_stylesheet); the QMainWindow's stylesheet cascades
         # to this widget via its #ResultsTitleBar / #ResultsTitleLabel
-        # object names.
+        # / #ResultsTitleIconBtn object names.
         self._title_label = label
         return bar
+
+    def _make_title_icon_btn(
+        self, glyph: str, tooltip: str, callback,
+    ):
+        from qtpy import QtWidgets, QtCore
+        btn = QtWidgets.QToolButton()
+        btn.setObjectName("ResultsTitleIconBtn")
+        btn.setText(glyph)
+        btn.setToolTip(tooltip)
+        btn.setFixedSize(QtCore.QSize(26, 24))
+        btn.setCursor(QtCore.Qt.PointingHandCursor)
+        btn.clicked.connect(callback)
+        return btn
+
+    # ------------------------------------------------------------------
+    # Title-bar utility callbacks
+    # ------------------------------------------------------------------
+
+    def _on_toggle_theme(self) -> None:
+        """Cycle through the registered themes (dark → paper → next)."""
+        from .theme import THEME, PALETTES
+        names = list(PALETTES.keys())
+        if not names:
+            return
+        try:
+            idx = names.index(THEME.current.name)
+        except ValueError:
+            idx = -1
+        THEME.set_theme(names[(idx + 1) % len(names)])
+
+    def _on_screenshot(self) -> None:
+        """Forward to the wrapped ViewerWindow's clipboard screenshot."""
+        try:
+            self._vw._screenshot()
+        except Exception:
+            pass
+
+    def _on_toggle_density(self) -> None:
+        """Cycle compact / comfortable density."""
+        try:
+            from .density import DENSITY
+        except Exception:
+            return
+        DENSITY.toggle()
+
+    def _on_help(self) -> None:
+        """Show a small modal with the keyboard shortcuts."""
+        from qtpy import QtWidgets
+        QtWidgets.QMessageBox.information(
+            self.window, "ResultsViewer — shortcuts",
+            "<b>Pick + measure</b><br/>"
+            "&nbsp;&nbsp;Click&nbsp;— select node / element<br/>"
+            "&nbsp;&nbsp;Shift&nbsp;+&nbsp;click — open time-history "
+            "in plot pane<br/><br/>"
+            "<b>Layout</b><br/>"
+            "&nbsp;&nbsp;Ctrl + Shift + L — collapse / restore left rail"
+            "<br/>"
+            "&nbsp;&nbsp;Ctrl + Shift + R — collapse / restore right "
+            "rail<br/><br/>"
+            "<b>Probe modes</b> (top-right HUD)<br/>"
+            "&nbsp;&nbsp;Point / Line / Slice — single-click to "
+            "activate, click again to stop.",
+        )
 
     def _make_holder(
         self,

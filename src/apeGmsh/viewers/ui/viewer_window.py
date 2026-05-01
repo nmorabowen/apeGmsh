@@ -316,6 +316,18 @@ class ViewerWindow:
         self._apply_palette(THEME.current)
         self._unsub_theme = THEME.subscribe(self._apply_palette)
 
+        # ── Density: re-apply the QSS on toggle ────────────────────
+        # Density only changes type / row sizing, so we just re-render
+        # the stylesheet with the new tokens — same path as a theme
+        # change.
+        try:
+            from .density import DENSITY
+            self._unsub_density = DENSITY.subscribe(
+                lambda _tok: self._apply_palette(THEME.current),
+            )
+        except Exception:
+            self._unsub_density = lambda: None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -511,7 +523,12 @@ class ViewerWindow:
 
     def _apply_palette(self, palette) -> None:
         """Apply *palette* to the window chrome + viewport + icons."""
-        self._window.setStyleSheet(build_stylesheet(palette))
+        try:
+            from .density import DENSITY
+            density = DENSITY.current
+        except Exception:
+            density = None
+        self._window.setStyleSheet(build_stylesheet(palette, density))
         try:
             from ..scene.background import apply_background
             apply_background(self._qt_interactor, palette)

@@ -88,6 +88,22 @@ def test_backcompat_stylesheet_constant_matches_factory():
     assert theme.STYLESHEET == theme.build_stylesheet(theme.PALETTE_DARK)
 
 
+def test_build_stylesheet_accepts_density_tokens():
+    from apeGmsh.viewers.ui.density import (
+        DENSITY_COMPACT, DENSITY_COMFORTABLE,
+    )
+    qss_compact = theme.build_stylesheet(theme.PALETTE_DARK, DENSITY_COMPACT)
+    qss_comf = theme.build_stylesheet(
+        theme.PALETTE_DARK, DENSITY_COMFORTABLE,
+    )
+    # Density only changes type / row sizing; the row-height appears
+    # in the QTreeWidget::item rule (min-height).
+    assert f"min-height: {DENSITY_COMPACT.row_h}px" in qss_compact
+    assert f"min-height: {DENSITY_COMFORTABLE.row_h}px" in qss_comf
+    # Compact and comfortable must produce different output.
+    assert qss_compact != qss_comf
+
+
 def test_backcompat_module_constants_resolve():
     # Downstream code imports these directly
     assert theme.BG_TOP == theme.PALETTE_DARK.bg_top
