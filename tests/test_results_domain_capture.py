@@ -374,33 +374,6 @@ def test_modal_capture_with_rotational_dofs(tmp_path: Path) -> None:
 
 
 # =====================================================================
-# Snapshot mismatch detection
-# =====================================================================
-
-def test_snapshot_mismatch_raises(tmp_path: Path) -> None:
-    """spec resolved against different fem → DomainCapture refuses."""
-    fem_orig = _MockFem([1, 2], salt=0)
-    fem_other = _MockFem([1, 2], salt=1)   # different coords → different hash
-    assert fem_orig.snapshot_id != fem_other.snapshot_id  # sanity
-
-    spec = _make_spec(
-        ResolvedRecorderRecord(
-            category="nodes", name="r",
-            components=("displacement_x",),
-            dt=None, n_steps=None,
-            node_ids=np.array([1, 2]),
-        ),
-        snapshot_id=fem_orig.snapshot_id,
-    )
-    fake = _FakeOps()
-    path = tmp_path / "run.h5"
-
-    with pytest.raises(RuntimeError, match="snapshot_id mismatch"):
-        with DomainCapture(spec, path, fem_other, ops=fake):
-            pass
-
-
-# =====================================================================
 # Element-level records still without catalog wiring: NotImplementedError
 # =====================================================================
 #

@@ -1,8 +1,13 @@
-"""Bind validation — links a results file to a FEMData by snapshot_id.
+"""Bind resolution — picks the FEMData to use when opening a results file.
 
-The bind contract: a FEMData and a results file are compatible iff
-their ``snapshot_id`` hashes match. Re-meshing produces a new hash;
-old artifacts refuse to bind to the new fem.
+Resolution prefers an explicit candidate when supplied (it typically
+carries richer apeGmsh-specific labels and provenance than the
+embedded snapshot), and falls back to the embedded FEM otherwise.
+
+The historic ``snapshot_id``-equality check has been removed: it is
+on the user to pair a candidate FEMData with a results file from the
+same run. The hash is still computed and stored for caching and
+metadata, but bind no longer rejects on mismatch.
 """
 from __future__ import annotations
 
@@ -14,42 +19,26 @@ if TYPE_CHECKING:
 
 
 class BindError(ValueError):
-    """Raised when a candidate FEMData does not match the embedded snapshot."""
+    """Retained for back-compat; no longer raised by :func:`resolve_bound_fem`."""
 
 
 def resolve_bound_fem(
     reader: "ResultsReader",
     candidate: "Optional[FEMData]",
 ) -> "Optional[FEMData]":
-    """Pick the right FEMData for binding, validating consistency.
+    """Pick the right FEMData for binding.
 
     Resolution rules:
 
     1. If ``candidate`` is None: return the reader's embedded fem
        (may itself be None — bare construction is allowed).
-    2. If ``candidate`` is provided and the reader has an embedded fem:
-       both must have matching ``snapshot_id``. Returns ``candidate``
-       (preferred — carries apeGmsh-specific labels and provenance
-       that may be richer than the embedded snapshot).
-    3. If ``candidate`` is provided and the reader has no embedded fem
-       (e.g. a results file written without the ``fem=`` argument):
-       returns ``candidate`` without further validation. The user has
-       opted in by providing it.
+    2. If ``candidate`` is provided: return it (preferred — carries
+       apeGmsh-specific labels and provenance that may be richer than
+       the embedded snapshot). No hash validation is performed; it is
+       the user's responsibility to provide a FEMData consistent with
+       the results file.
     """
     embedded = reader.fem()
-
     if candidate is None:
         return embedded
-
-    if embedded is None:
-        return candidate
-
-    if candidate.snapshot_id != embedded.snapshot_id:
-        raise BindError(
-            f"FEMData snapshot_id mismatch: results file has "
-            f"{embedded.snapshot_id!r}, candidate has "
-            f"{candidate.snapshot_id!r}. The candidate was built from "
-            f"a different mesh — re-extract get_fem_data() from the "
-            f"session that produced these results, or re-run the analysis."
-        )
     return candidate

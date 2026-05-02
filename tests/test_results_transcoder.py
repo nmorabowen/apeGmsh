@@ -183,31 +183,6 @@ def test_transcode_two_records_disjoint_nodes(tmp_path: Path) -> None:
 
 
 # =====================================================================
-# Snapshot mismatch
-# =====================================================================
-
-def test_transcode_snapshot_mismatch_raises(tmp_path: Path) -> None:
-    fem_a = _MockFem([1, 2], salt=0)
-    fem_b = _MockFem([1, 2], salt=1)
-    output_dir = tmp_path / "out"
-    output_dir.mkdir()
-
-    spec = ResolvedRecorderSpec(
-        fem_snapshot_id=fem_a.snapshot_id,
-        records=(ResolvedRecorderRecord(
-            category="nodes", name="r",
-            components=("displacement_x",),
-            dt=None, n_steps=None,
-            node_ids=np.array([1, 2]),
-        ),),
-    )
-
-    target = tmp_path / "out.h5"
-    with pytest.raises(RuntimeError, match="snapshot_id mismatch"):
-        RecorderTranscoder(spec, output_dir, target, fem_b).run()
-
-
-# =====================================================================
 # Element-level records are skipped (Phase 6 v1 limitation)
 # =====================================================================
 

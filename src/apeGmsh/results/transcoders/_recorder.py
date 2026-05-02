@@ -106,11 +106,9 @@ class RecorderTranscoder:
 
         Returns the path of the written file.
         """
-        if self._spec.fem_snapshot_id != self._fem.snapshot_id:
-            raise RuntimeError(
-                "ResolvedRecorderSpec was resolved against a different "
-                "FEMData (snapshot_id mismatch)."
-            )
+        # Snapshot-id consistency between spec and fem is no longer
+        # enforced — it's on the user to pair the right spec with the
+        # right FEMData.
 
         # Collect per-record parsed data first; only open the writer
         # once we know the time vector + merged node IDs.

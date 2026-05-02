@@ -783,23 +783,6 @@ class ResultsViewer:
             report("ResultsViewer._maybe_restore_session", exc)
             return
 
-        # Snapshot-id mismatch warning.
-        current_id = getattr(self._results.fem, "snapshot_id", None)
-        if (
-            session.fem_snapshot_id is not None
-            and current_id is not None
-            and session.fem_snapshot_id != current_id
-        ):
-            try:
-                win.set_status(
-                    "Saved session was for a different mesh "
-                    "(snapshot mismatch); skipping restore.",
-                    timeout=8000,
-                )
-            except Exception:
-                pass
-            return
-
         if not session.diagrams:
             return
 

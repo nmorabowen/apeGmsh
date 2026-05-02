@@ -307,14 +307,9 @@ class DomainCapture:
     def __enter__(self) -> "DomainCapture":
         from ..writers._native import NativeWriter
 
-        # Validate spec ↔ fem hash match (catches user error early).
-        if self._spec.fem_snapshot_id != self._fem.snapshot_id:
-            raise RuntimeError(
-                "ResolvedRecorderSpec was resolved against a different "
-                "FEMData (snapshot_id mismatch). Re-resolve the spec "
-                "with the correct fem before capturing."
-            )
-
+        # Snapshot-id consistency between spec and fem is no longer
+        # enforced — it's on the user to pair the right spec with the
+        # right FEMData.
         self._writer = NativeWriter(self._path)
         self._writer.open(
             fem=self._fem,

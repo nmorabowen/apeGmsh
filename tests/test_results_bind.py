@@ -61,13 +61,18 @@ def test_bind_after_construction(grav_results_with_fem) -> None:
         assert r.fem is not fem
 
 
-def test_bind_mismatch_raises(grav_results_with_fem, g, tmp_path: Path) -> None:
-    """A different mesh produces a different snapshot_id → BindError."""
+def test_bind_accepts_mismatched_fem(
+    grav_results_with_fem, g, tmp_path: Path,
+) -> None:
+    """bind() no longer validates snapshot_id — it's on the user.
+
+    Previously a different-mesh FEMData raised BindError; the check
+    was removed because legitimate workflows (re-meshing, importing
+    an mpco against a fresh fem) tripped it. The hash is still
+    computed and stored, just not enforced.
+    """
     path, _orig_fem = grav_results_with_fem
 
-    # Use a fresh session for the second model (the fixture's `g` is
-    # already used; we'll add another body to the same session — the
-    # fem we extract will have a different snapshot_id.)
     g.model.geometry.add_box(2, 0, 0, 1, 1, 1, label="box2")
     g.physical.add_volume("box2", name="Body2")
     g.mesh.sizing.set_global_size(2.0)
@@ -75,8 +80,9 @@ def test_bind_mismatch_raises(grav_results_with_fem, g, tmp_path: Path) -> None:
     other_fem = g.mesh.queries.get_fem_data(dim=3)
 
     with Results.from_native(path) as r:
-        with pytest.raises(BindError, match="snapshot_id mismatch"):
-            r.bind(other_fem)
+        rebound = r.bind(other_fem)
+        # Bind returned a Results bound to the candidate fem.
+        assert rebound.fem is other_fem
 
 
 def test_pg_query_works_after_bind(grav_results_with_fem, g) -> None:

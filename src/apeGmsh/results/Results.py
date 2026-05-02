@@ -270,11 +270,13 @@ class Results:
         return self._fem
 
     def bind(self, fem: "FEMData") -> "Results":
-        """Re-bind to ``fem`` after validating ``snapshot_id`` matches.
+        """Re-bind to ``fem``.
 
         Useful when you've re-built the same mesh in a fresh session
         and want labels / Parts that the embedded snapshot doesn't
-        carry. Raises ``BindError`` on hash mismatch.
+        carry. No hash validation is performed — pairing the FEMData
+        with a results file from the same run is the user's
+        responsibility.
         """
         bound = resolve_bound_fem(self._reader, fem)
         return self._derive(fem=bound)
