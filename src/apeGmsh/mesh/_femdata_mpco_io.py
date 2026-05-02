@@ -50,6 +50,13 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
     nodes_grp = group["NODES"]
     node_ids = np.asarray(nodes_grp["ID"][...], dtype=np.int64).flatten()
     coords = np.asarray(nodes_grp["COORDINATES"][...], dtype=np.float64)
+    # Capture the original spatial dim BEFORE padding — element-dim
+    # guessing depends on it (a 3-node element in a 2-D model is a
+    # triangle, but in a 3-D model it could be a quadratic beam).
+    ndm = (
+        int(coords.shape[1])
+        if coords.ndim == 2 and coords.shape[1] in (2, 3) else 3
+    )
     # Pad to (N, 3) if 2D — apeGmsh always stores 3D coords.
     if coords.ndim == 2 and coords.shape[1] == 2:
         coords = np.hstack(
@@ -78,7 +85,7 @@ def read_fem_from_mpco(group: "h5py.Group") -> "FEMData":
             info = make_type_info(
                 code=-class_tag,
                 gmsh_name=class_name,
-                dim=_guess_dim_from_npe(npe, _coords_dim(coords)),
+                dim=_guess_dim_from_class(class_name, npe, ndm),
                 order=1,           # MPCO doesn't expose order; assume linear
                 npe=npe,
                 count=ids.size,
@@ -161,27 +168,66 @@ def _parse_element_name(name: str) -> tuple[int, str, int, int] | None:
     )
 
 
-def _coords_dim(coords: ndarray) -> int:
-    """Spatial dim implied by the coords array (2 or 3)."""
-    if coords.ndim != 2:
-        return 3
-    # We pad 2D to 3D, so the original dim was 2 if z is all zeros.
-    # That heuristic is unreliable; default to 3.
-    return 3 if coords.shape[1] >= 3 else 2
+# Substrings on OpenSees class names that map deterministically to a
+# topological dim. Names are matched case-insensitively. Searched in
+# the order shown — first hit wins, so more specific tokens (e.g.
+# "Tri" → triangle) come before more generic ones.
+_DIM_BY_CLASS_TOKEN: tuple[tuple[str, int], ...] = (
+    # Solids
+    ("brick",       3),
+    ("hexahedron",  3),
+    ("hex",         3),
+    ("tet",         3),
+    ("wedge",       3),
+    ("prism",       3),
+    ("pyramid",     3),
+    # Surfaces
+    ("tri",         2),
+    ("quad",        2),
+    ("shell",       2),
+    ("plate",       2),
+    ("membrane",    2),
+    # Lines / point elements
+    ("beam",        1),
+    ("truss",       1),
+    ("zerolength",  1),
+    ("spring",      1),
+    ("dashpot",     1),
+    ("frame",       1),
+    ("link",        1),
+    ("twonodelink", 1),
+)
 
 
-def _guess_dim_from_npe(npe: int, ndm: int) -> int:
-    """Best-effort element topological dim from node-per-element count."""
-    # Lines: 2 or 3 nodes
-    if npe in (2, 3):
+def _guess_dim_from_class(
+    class_name: str, npe: int, ndm: int,
+) -> int:
+    """Best-effort element topological dim.
+
+    Priority:
+
+    1. OpenSees class name substring (most reliable — distinguishes
+       a 3-node ``Tri31`` triangle from a 3-node quadratic line).
+    2. ``npe`` + ``ndm`` heuristic (the prior behaviour).
+
+    ``ndm`` is the model's spatial dim, captured from the coords
+    array shape *before* the 2D-to-3D padding step.
+    """
+    name = (class_name or "").lower()
+    for token, dim in _DIM_BY_CLASS_TOKEN:
+        if token in name:
+            return dim
+    # Fallback: npe + ndm heuristic.
+    if npe == 2:
         return 1
-    # Triangles / quads
+    if npe == 3:
+        # 3 nodes in a 2-D model is almost certainly a triangle; in a
+        # 3-D model it might be a quadratic beam, so honour the model.
+        return 2 if ndm == 2 else 1
     if npe in (4, 8) and ndm == 2:
         return 2
     if npe == 4:
-        # Could be tet (3D) or quad (2D). Default to 3D in 3D models.
         return 3 if ndm == 3 else 2
-    # Solids
     if npe in (6, 8, 10, 20, 27):
         return 3
     return ndm
