@@ -2058,6 +2058,36 @@ _MPCO_LAYER_GROUP_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 
+# Element classes whose element-level ``"strain"`` / ``"strains"``
+# branch is missing from ``setResponse``, so ``ops.eleResponse(eid,
+# "strains")`` returns an empty vector even though every Gauss point
+# has a valid ``getStrain()`` on its NDMaterial. The
+# ``"material"`` / ``"integrPoint"`` branch (which delegates to the
+# material's own ``setResponse``) does work, so live capture and
+# recorders can fall back to per-Gauss-point queries via
+# ``ops.eleResponse(eid, "material", "<gp>", "strain")`` — the same
+# path MPCO uses internally (see MPCORecorder.cpp:6123–6126, 6276–
+# 6278). Stress is unaffected because Tri31 does have a working
+# element-level ``"stresses"`` branch (Tri31.cpp:1236).
+PER_MATERIAL_STRAIN_CLASSES: frozenset[str] = frozenset({
+    "Tri31",
+})
+
+
+def needs_per_material_strain(class_name: str, catalog_token: str) -> bool:
+    """Whether DomainCapture / recorder emit must use per-Gauss-point queries.
+
+    Returns True when the element class is in
+    :data:`PER_MATERIAL_STRAIN_CLASSES` *and* the catalog token is the
+    continuum strain token (``"strain"``). Shell generalized strain
+    (``"membrane_strain"`` / ``"curvature"`` / etc.) is unaffected
+    because shells route via the same ``"strains"`` keyword but their
+    per-material path returns layer-level continuum strain — not the
+    same logical quantity.
+    """
+    return catalog_token == "strain" and class_name in PER_MATERIAL_STRAIN_CLASSES
+
+
 def mpco_fiber_group_aliases(primary_keyword: str) -> tuple[str, ...]:
     """Return ``(primary,) + alias_keywords`` for a fibers MPCO read.
 

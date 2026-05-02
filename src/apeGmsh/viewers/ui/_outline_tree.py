@@ -38,9 +38,10 @@ def _qt():
 # use distinct subroles for the leaf kinds so iteration code can
 # tell them apart without inspecting the parent.
 _ROLE_STAGE_ID = 0x100
-_ROLE_DIAGRAM_OBJ = 0x101
+_ROLE_DIAGRAM_OBJ = 0x101         # legacy — single-layer rows; unused after pivot
 _ROLE_GROUP_KEY = 0x102
 _ROLE_PLOT_KEY = 0x103
+_ROLE_COMPOSITION_KEY = 0x104     # one Diagram = a stack of layers
 
 
 class OutlineTree:
@@ -59,6 +60,9 @@ class OutlineTree:
         self._on_diagram_selected: Optional[
             Callable[[Optional[Diagram]], None]
         ] = None
+        self._on_composition_selected: Optional[
+            Callable[[Optional[str]], None]
+        ] = None
         self._plot_pane: Any = None
         self._unsub_plot_tabs: Optional[Callable[[], None]] = None
 
@@ -69,7 +73,7 @@ class OutlineTree:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Header row: "OUTLINE" label + Insert button ─────────────
+        # ── Header row: "OUTLINE" label ─────────────────────────────
         header = QtWidgets.QFrame()
         header.setObjectName("OutlineHeader")
         header.setFixedHeight(LAYOUT.panel_header_height)
@@ -82,23 +86,17 @@ class OutlineTree:
         header_lay.addWidget(label)
         header_lay.addStretch(1)
 
-        self._btn_insert = QtWidgets.QPushButton("+ Insert")
-        self._btn_insert.setObjectName("OutlineInsertButton")
-        self._btn_insert.setToolTip("Add a new diagram")
-        self._btn_insert.setFlat(True)
-        self._btn_insert.setCheckable(True)
-        self._btn_insert.toggled.connect(self._on_insert_toggled)
-        header_lay.addWidget(self._btn_insert)
+        # + Add diagram — also reachable via right-click on the
+        # Diagrams group header in the tree.
+        self._btn_add_diagram = QtWidgets.QPushButton("+")
+        self._btn_add_diagram.setObjectName("OutlineAddButton")
+        self._btn_add_diagram.setFlat(True)
+        self._btn_add_diagram.setFixedWidth(24)
+        self._btn_add_diagram.setToolTip("Add a new diagram")
+        self._btn_add_diagram.clicked.connect(self._on_add_diagram)
+        header_lay.addWidget(self._btn_add_diagram)
 
         layout.addWidget(header)
-
-        # ── Inline 2×4 kind picker (B++ §4.1, §8) ───────────────────
-        # Hidden until the user clicks "+ Insert". Clicking a kind
-        # button hides the picker and opens AddDiagramDialog
-        # pre-selected for that kind.
-        self._kind_picker = self._make_kind_picker()
-        self._kind_picker.setVisible(False)
-        layout.addWidget(self._kind_picker)
 
         # ── Tree ────────────────────────────────────────────────────
         tree = QtWidgets.QTreeWidget()
@@ -112,10 +110,19 @@ class OutlineTree:
         tree.itemClicked.connect(self._on_item_clicked)
         tree.itemChanged.connect(self._on_item_changed)
         tree.currentItemChanged.connect(self._on_current_item_changed)
+        # Right-click context menu — composition rows get rename /
+        # duplicate / delete; the Diagrams group header gets Add
+        # diagram. Other rows: no menu.
+        tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        tree.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(tree, stretch=1)
         self._tree = tree
 
-        # ── Group items (one each for Stages / Diagrams / Probes / Plots) ──
+        # ── Group items ────────────────────────────────────────────
+        # Layers replaces the prior Catalog + Diagrams split: the
+        # creation flow lives in the DetailsPanel (+ Add layer
+        # button → settings-panel creation mode). The outline only
+        # shows what's *attached* — Stages, Layers, Probes, Plots.
         self._group_stages = self._make_group("Stages", "stages")
         self._group_diagrams = self._make_group("Diagrams", "diagrams")
         self._group_probes = self._make_group("Probes", "probes")
@@ -139,6 +146,14 @@ class OutlineTree:
 
         director.subscribe_stage(lambda _id: self._refresh_stages())
         director.subscribe_diagrams(self._refresh_diagrams)
+        # Composition changes (add / rename / set_active) fire here too.
+        self._unsub_compositions = director.compositions.subscribe(
+            self._refresh_diagrams,
+        )
+
+        # F2 on a composition row → enter edit mode for inline rename.
+        f2_sc = QtWidgets.QShortcut(QtCore.Qt.Key.Key_F2, tree)
+        f2_sc.activated.connect(self._begin_inline_rename)
 
         # Refresh on theme change so placeholder-row colours follow
         # the active palette.
@@ -163,10 +178,25 @@ class OutlineTree:
     ) -> None:
         """Register the callback fired when a Diagram row is selected.
 
-        The callback receives the selected ``Diagram`` instance, or
-        ``None`` if the selection moved off all Diagram rows.
+        Legacy single-layer event — kept around so existing wiring
+        compiles. After the v2 pivot, the outline doesn't list
+        individual diagrams anymore (one ``Diagram 1`` row groups all
+        layers); use :meth:`on_composition_selected` instead.
         """
         self._on_diagram_selected = callback
+
+    def on_composition_selected(
+        self, callback: Callable[[Optional[str]], None],
+    ) -> None:
+        """Register the callback fired when a composition row is selected.
+
+        v2: one outline row per *diagram* (composition) — each diagram
+        is the stack of layers shown in the details dock. Today the
+        only composition is keyed ``"default"``; multi-diagram support
+        is a planned extension.
+        """
+        self._on_composition_selected = callback
+
 
     # ------------------------------------------------------------------
     # Group building
@@ -231,47 +261,48 @@ class OutlineTree:
     # ------------------------------------------------------------------
 
     def _refresh_diagrams(self) -> None:
+        """Render one row per composition (Geometry + user-added).
+
+        The active composition is shown bold. Each row also shows its
+        layer count in parentheses when non-zero. Geometry is locked
+        (no Delete in its context menu).
+        """
         QtWidgets, QtCore = _qt()
-        # Preserve current selection across rebuilds so the details
-        # panel doesn't blink to "nothing selected" on every visibility
-        # toggle.
-        previously_selected = self._currently_selected_diagram()
+        from ..diagrams._compositions import GEOMETRY_ID
 
         self._tree.blockSignals(True)
         try:
             self._group_diagrams.takeChildren()
-            diagrams = self._director.registry.diagrams()
-            for d in diagrams:
-                item = QtWidgets.QTreeWidgetItem([d.display_label()])
-                item.setFlags(
-                    item.flags() | QtCore.Qt.ItemIsUserCheckable
-                )
-                item.setCheckState(
-                    0,
-                    QtCore.Qt.Checked if d.is_visible
-                    else QtCore.Qt.Unchecked,
-                )
-                # Stash the Diagram instance directly. A registry-index
-                # would drift if move/remove happens between paint and
-                # click; the instance reference is stable.
-                item.setData(0, _ROLE_DIAGRAM_OBJ, d)
+            mgr = self._director.compositions
+            active_id = mgr.active_id
+            for comp in mgr.compositions:
+                n = len(comp.layers)
+                label = comp.name if n == 0 else f"{comp.name} ({n})"
+                item = QtWidgets.QTreeWidgetItem([label])
+                item.setData(0, _ROLE_COMPOSITION_KEY, comp.id)
+                # Make rows editable so F2 / double-click can rename
+                # in place. Geometry is editable too (renamable but
+                # not deletable).
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable)
+                if comp.id == active_id:
+                    font = item.font(0)
+                    font.setBold(True)
+                    item.setFont(0, font)
+                if comp.locked:
+                    item.setToolTip(
+                        0,
+                        f"{comp.name} — base view (locked, can be "
+                        f"renamed). F2 / right-click to rename.",
+                    )
+                else:
+                    item.setToolTip(
+                        0,
+                        f"{comp.name} — F2 / right-click to rename, "
+                        f"duplicate, or delete.",
+                    )
                 self._group_diagrams.addChild(item)
-
-            if not diagrams:
-                empty = QtWidgets.QTreeWidgetItem(
-                    ["(none — click + Insert)"],
-                )
-                flags = empty.flags() & ~QtCore.Qt.ItemIsSelectable
-                empty.setFlags(flags)
-                empty.setForeground(0, self._dim_brush())
-                self._group_diagrams.addChild(empty)
         finally:
             self._tree.blockSignals(False)
-
-        # Restore selection if the previously-selected diagram still
-        # exists in the registry.
-        if previously_selected is not None:
-            self._select_diagram(previously_selected)
 
     # ------------------------------------------------------------------
     # Refresh — Probes / Plots placeholders
@@ -422,6 +453,8 @@ class OutlineTree:
     # ------------------------------------------------------------------
 
     def _on_item_clicked(self, item, _column: int) -> None:
+        if item is None:
+            return
         # Group toggle on click: feels right in an outline tree.
         if item.data(0, _ROLE_GROUP_KEY) is not None:
             item.setExpanded(not item.isExpanded())
@@ -442,76 +475,132 @@ class OutlineTree:
             self._plot_pane.set_active(plot_key)
             return
 
-    def _on_item_changed(self, item, column: int) -> None:
-        QtWidgets, QtCore = _qt()
-        diagram = item.data(0, _ROLE_DIAGRAM_OBJ)
-        if diagram is None:
+    def _on_item_changed(self, item, _column: int) -> None:
+        """Handle inline-rename commit on a composition row."""
+        if item is None:
             return
-        visible = item.checkState(0) == QtCore.Qt.Checked
-        if diagram.is_visible != visible:
-            self._director.registry.set_visible(diagram, visible)
+        comp_id = item.data(0, _ROLE_COMPOSITION_KEY)
+        if comp_id is None:
+            return
+        # Strip any trailing layer-count suffix the user may have left
+        # in the editor (e.g. "Geometry (3)" — drop the count).
+        text = item.text(0).strip()
+        if "(" in text and text.endswith(")"):
+            text = text[: text.rfind("(")].strip() or text
+        mgr = self._director.compositions
+        mgr.rename(comp_id, text)
+        # Manager observer fires _refresh_diagrams which restamps the
+        # display label with the right (count) suffix.
 
     def _on_current_item_changed(self, current, _previous) -> None:
-        if self._on_diagram_selected is None:
+        # Composition row → set it as the active composition and
+        # route to the details dock. Off the row → no change to
+        # active composition; just clear the panel listener.
+        composition_key = (
+            current.data(0, _ROLE_COMPOSITION_KEY)
+            if current is not None else None
+        )
+        if composition_key is not None:
+            # Set as active in the manager so all downstream
+            # consumers (details panel, + Add layer) see it.
+            try:
+                self._director.compositions.set_active(composition_key)
+            except Exception:
+                pass
+            if self._on_composition_selected is not None:
+                self._on_composition_selected(composition_key)
             return
-        diagram = (
-            current.data(0, _ROLE_DIAGRAM_OBJ) if current is not None else None
-        )
-        # Be permissive — only Diagram leaves carry _ROLE_DIAGRAM_OBJ;
-        # all other rows resolve to None and clear the details panel.
-        self._on_diagram_selected(diagram)
+        # Anywhere else: notify listeners so they idle.
+        if self._on_composition_selected is not None:
+            self._on_composition_selected(None)
+        if self._on_diagram_selected is not None:
+            self._on_diagram_selected(None)
 
-    @safe_slot
-    def _on_insert_toggled(self, checked: bool) -> None:
-        """Show / hide the inline 2×4 kind picker."""
-        self._kind_picker.setVisible(checked)
+    # ------------------------------------------------------------------
+    # Composition row actions (context menu, F2 rename, + Add diagram)
+    # ------------------------------------------------------------------
 
-    def _make_kind_picker(self):
-        """Construct the 2×4 grid of diagram-kind shortcuts.
+    def _on_context_menu(self, pos) -> None:
+        """Composition rows → rename / duplicate / delete.
+        Diagrams group header → Add diagram."""
+        QtWidgets, QtCore = _qt()
+        item = self._tree.itemAt(pos)
+        if item is None:
+            return
+        global_pos = self._tree.viewport().mapToGlobal(pos)
 
-        Buttons label themselves from ``kinds_available()``; clicking
-        a kind hides the picker and opens AddDiagramDialog pre-selected
-        for that kind. Sized to fit four columns × two rows on the
-        260-px-fixed left rail.
-        """
-        QtWidgets, _ = _qt()
-        from ._add_diagram_dialog import kinds_available
-        frame = QtWidgets.QFrame()
-        frame.setObjectName("OutlineKindPicker")
-        grid = QtWidgets.QGridLayout(frame)
-        grid.setContentsMargins(8, 6, 8, 6)
-        grid.setHorizontalSpacing(4)
-        grid.setVerticalSpacing(4)
+        # Diagrams group header → Add diagram only.
+        if item.data(0, _ROLE_GROUP_KEY) == "diagrams":
+            menu = QtWidgets.QMenu(self._widget)
+            act_add = menu.addAction("+ Add diagram")
+            chosen = menu.exec_(global_pos)
+            if chosen == act_add:
+                self._on_add_diagram()
+            return
 
-        kinds = kinds_available()
-        for idx, entry in enumerate(kinds):
-            r, c = divmod(idx, 4)
-            btn = QtWidgets.QToolButton()
-            btn.setObjectName("OutlineKindBtn")
-            btn.setText(entry.label)
-            btn.setToolTip(entry.label)
-            btn.setSizePolicy(
-                QtWidgets.QSizePolicy.Expanding,
-                QtWidgets.QSizePolicy.Fixed,
-            )
-            btn.setMinimumHeight(LAYOUT.panel_header_height)
-            btn.clicked.connect(
-                lambda _checked=False, kid=entry.kind_id: self._on_kind_chosen(kid)
-            )
-            grid.addWidget(btn, r, c)
-        return frame
+        comp_id = item.data(0, _ROLE_COMPOSITION_KEY)
+        if comp_id is None:
+            return
 
-    @safe_slot
-    def _on_kind_chosen(self, kind_id: str) -> None:
-        """Inline picker → modal dialog with the chosen kind pre-selected."""
-        # Hide the picker so the user sees the dialog land cleanly.
-        self._btn_insert.setChecked(False)
-        from ._add_diagram_dialog import AddDiagramDialog
-        dlg = AddDiagramDialog(
-            self._director, parent=self._widget, initial_kind=kind_id,
-        )
-        dlg.run()
-        # Registry's on_changed observer will refresh the diagrams group.
+        comp = self._director.compositions.find(comp_id)
+        if comp is None:
+            return
+
+        menu = QtWidgets.QMenu(self._widget)
+        act_rename = menu.addAction("Rename… (F2)")
+        act_duplicate = menu.addAction("Duplicate")
+        act_delete = menu.addAction("Delete")
+        if comp.locked:
+            act_delete.setEnabled(False)
+            act_delete.setToolTip("Geometry is locked and cannot be deleted")
+        menu.addSeparator()
+        act_add = menu.addAction("+ Add diagram")
+        chosen = menu.exec_(global_pos)
+        if chosen == act_rename:
+            self._tree.editItem(item, 0)
+        elif chosen == act_duplicate:
+            self._director.compositions.duplicate(comp_id)
+        elif chosen == act_delete:
+            self._on_delete_composition(comp_id)
+        elif chosen == act_add:
+            self._on_add_diagram()
+
+    def _begin_inline_rename(self) -> None:
+        """F2 → enter edit mode on the currently-selected composition row."""
+        item = self._tree.currentItem()
+        if item is None:
+            return
+        if item.data(0, _ROLE_COMPOSITION_KEY) is None:
+            return
+        self._tree.editItem(item, 0)
+
+    def _on_add_diagram(self) -> None:
+        """Header `+` / context menu → create a new composition."""
+        comp = self._director.compositions.add(name="Diagram", make_active=True)
+        # Refresh and highlight the new row so the user can immediately
+        # F2 to rename, or click + Add layer to start populating.
+        self._refresh_diagrams()
+        for i in range(self._group_diagrams.childCount()):
+            child = self._group_diagrams.child(i)
+            if child.data(0, _ROLE_COMPOSITION_KEY) == comp.id:
+                self._tree.setCurrentItem(child)
+                break
+
+    def _on_delete_composition(self, comp_id: str) -> None:
+        """Delete a composition + every layer belonging to it."""
+        mgr = self._director.compositions
+        comp = mgr.find(comp_id)
+        if comp is None or comp.locked:
+            return
+        # Tear down layers via the registry first; the manager just
+        # tracks groupings.
+        for layer in list(comp.layers):
+            try:
+                self._director.registry.remove(layer)
+            except Exception:
+                pass
+            mgr.remove_layer(layer)
+        mgr.remove(comp_id)
 
     # ------------------------------------------------------------------
     # Lookups
@@ -522,6 +611,15 @@ class OutlineTree:
         if item is None:
             return None
         return item.data(0, _ROLE_DIAGRAM_OBJ)
+
+    def _select_composition(self, comp_id: str) -> bool:
+        """Move the outline selection to the row for ``comp_id``."""
+        for i in range(self._group_diagrams.childCount()):
+            child = self._group_diagrams.child(i)
+            if child.data(0, _ROLE_COMPOSITION_KEY) == comp_id:
+                self._tree.setCurrentItem(child)
+                return True
+        return False
 
     def _select_diagram(self, diagram: Diagram) -> bool:
         """Select the row showing ``diagram``. Returns True if found."""

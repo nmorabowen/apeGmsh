@@ -113,6 +113,38 @@ class DiagramRegistry:
         if 0 <= index < len(self._diagrams):
             self.remove(self._diagrams[index])
 
+    def replace(self, old: Diagram, new: Diagram) -> Diagram:
+        """Swap ``old`` for ``new`` at the same registry index.
+
+        Used by the Layers panel to live-edit a diagram's Kind or Data
+        without losing its z-position. Detaches ``old`` and attaches
+        ``new`` (when bound). If ``new.attach()`` raises, ``old`` is
+        re-attached and the exception propagates so the caller can
+        surface it.
+        """
+        idx = self.index_of(old)
+        if idx is None:
+            # Treat as a plain add to keep callers simple.
+            return self.add(new)
+        was_attached = old.is_attached
+        if was_attached:
+            old.detach()
+        self._diagrams[idx] = new
+        if self.is_bound and not new.is_attached:
+            try:
+                new.attach(self._plotter, self._fem, self._scene)  # type: ignore[arg-type]
+            except Exception:
+                # Roll back: restore old at the same index and re-attach.
+                self._diagrams[idx] = old
+                if was_attached:
+                    try:
+                        old.attach(self._plotter, self._fem, self._scene)  # type: ignore[arg-type]
+                    except Exception:
+                        pass
+                raise
+        self._notify()
+        return new
+
     def clear(self) -> None:
         for d in list(self._diagrams):
             if d.is_attached:

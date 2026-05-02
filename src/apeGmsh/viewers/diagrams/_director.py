@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional
 import numpy as np
 from numpy import ndarray
 
+from ._compositions import CompositionManager
 from ._registry import DiagramRegistry
 
 if TYPE_CHECKING:
@@ -70,6 +71,10 @@ class ResultsDirector:
         self._registry = DiagramRegistry()
         self._registry.subscribe(self._fire_diagrams_changed)
 
+        # Composition manager — bootstraps a locked "Geometry"
+        # composition that's always present (Esc returns to it).
+        self._compositions = CompositionManager()
+
         self.on_step_changed: list[Callable[[int], None]] = []
         self.on_stage_changed: list[Callable[[str], None]] = []
         self.on_diagrams_changed: list[Callable[[], None]] = []
@@ -100,6 +105,10 @@ class ResultsDirector:
     @property
     def registry(self) -> DiagramRegistry:
         return self._registry
+
+    @property
+    def compositions(self) -> CompositionManager:
+        return self._compositions
 
     @property
     def stage_id(self) -> Optional[str]:
