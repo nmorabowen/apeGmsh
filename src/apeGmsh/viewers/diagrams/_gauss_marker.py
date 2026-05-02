@@ -151,6 +151,16 @@ class GaussPointDiagram(Diagram):
             reset_camera=False,
             lighting=False,
         )
+        # Pull the rasterized point billboards toward the camera so a
+        # 2-D model (GPs sit at z=0 alongside the substrate fill) doesn't
+        # lose them to z-fighting with the substrate. Same approach the
+        # wireframe overlay uses.
+        try:
+            mapper = actor.GetMapper()
+            mapper.SetResolveCoincidentTopologyToPolygonOffset()
+            mapper.SetResolveCoincidentTopologyPolygonOffsetParameters(-2.0, -2.0)
+        except Exception:
+            pass
         self._actor = actor
         self._actors = [actor]
 
