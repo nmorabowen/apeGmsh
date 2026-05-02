@@ -29,6 +29,20 @@ if TYPE_CHECKING:
     from .ui._diagram_settings_tab import DiagramSettingsTab
 
 
+# Module-level strong-reference set so ResultsViewer instances survive
+# the duration of their open window even when ``Results.viewer()`` is
+# called as an expression statement (the typical jupyter notebook
+# pattern). Without this, when ``app.exec_()`` returns immediately —
+# which happens whenever a Qt event loop is already running in the
+# kernel (``%gui qt``, ipykernel's qt backend, a prior viewer that left
+# the loop spinning) — ``show()`` returns, the caller doesn't capture
+# the return value, and the viewer is reaped by the garbage collector
+# the moment the cell finishes. Adding to this set on ``show()`` and
+# removing in ``_on_close`` keeps the window visible until the user
+# actually closes it.
+_LIVE_VIEWERS: "set[ResultsViewer]" = set()
+
+
 class ResultsViewer:
     """Post-solve interactive viewer.
 
@@ -112,6 +126,11 @@ class ResultsViewer:
         Returns ``self`` so callers can introspect the viewer state
         after the window closes.
         """
+        # Pin a strong ref so the window survives even when the kernel
+        # has a Qt event loop already running and ``app.exec_()``
+        # returns immediately (jupyter ``%gui qt`` and friends).
+        _LIVE_VIEWERS.add(self)
+
         # Lazy imports — keep ``apeGmsh.viewers`` importable in headless
         # environments. Qt / pyvistaqt only loaded when the user opens
         # an actual viewer.
@@ -732,6 +751,9 @@ class ResultsViewer:
                 self._director.unbind_plotter()
             except Exception:
                 pass
+        # Drop the strong ref pinned in show() so the viewer can be
+        # garbage-collected after the window closes.
+        _LIVE_VIEWERS.discard(self)
 
     # ------------------------------------------------------------------
     # Session persistence
