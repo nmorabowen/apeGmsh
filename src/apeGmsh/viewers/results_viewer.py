@@ -377,6 +377,205 @@ class ResultsViewer:
             self._session_panel.set_line_width_callback(_on_line_width)
             self._session_panel.set_opacity_callback(_on_opacity)
 
+        # ── Deformation modifier ──────────────────────────────────
+        # Globally warps the substrate by a nodal vector field. The
+        # reference (undeformed) point coordinates are captured once
+        # so toggling the modifier off restores them exactly. Per-step
+        # mutation propagates to:
+        #   - substrate fill + wireframe (they reference scene.grid)
+        #   - any layer whose actor renders an UnstructuredGrid /
+        #     PolyData with a ``vtkOriginalPointIds`` field (contour,
+        #     deformed_shape, …) — points are scattered from the
+        #     deformed substrate via the original-point map.
+        # Layers that own non-substrate point geometry (vector glyph
+        # source, gauss markers, node cloud) are out of scope for v1.
+        import numpy as _np
+        from .diagrams._kind_catalog import (
+            _vector_prefixes as _vp,
+            _union_across_stages as _uas,
+        )
+
+        self._reference_points = _np.asarray(
+            scene.grid.points, dtype=_np.float64,
+        ).copy()
+        self._deform_enabled: bool = False
+        self._deform_field: Optional[str] = None
+        self._deform_scale: float = 1.0
+
+        # Dense FEM-id -> substrate-row lookup, built once. Reused by
+        # the per-step field reader to scatter slab values back into a
+        # row-aligned (N, 3) buffer.
+        if scene.node_ids.size:
+            _max_id = int(scene.node_ids.max())
+            _deform_id_to_idx = _np.full(_max_id + 2, -1, dtype=_np.int64)
+            _deform_id_to_idx[scene.node_ids] = _np.arange(
+                scene.node_ids.size, dtype=_np.int64,
+            )
+        else:
+            _deform_id_to_idx = _np.array([], dtype=_np.int64)
+
+        # Pre-flight: which vector prefixes have ≥ 2 axes recorded on
+        # nodes across any stage? Filter to the ones that read like a
+        # global deformation source.
+        try:
+            available_vec_prefixes = set(_vp(_uas(director, "nodes")))
+        except Exception:
+            available_vec_prefixes = set()
+        deform_options: list[str] = [
+            p for p in ("displacement", "velocity", "acceleration")
+            if p in available_vec_prefixes
+        ]
+        if self._session_panel is not None:
+            self._session_panel.set_deform_options(deform_options)
+            if deform_options:
+                self._deform_field = deform_options[0]
+
+        def _read_deform_field(step: int) -> Optional[Any]:
+            """Return ``(N, 3)`` vector field at ``step`` for the active stage.
+
+            Reads ``<field>_x/_y/_z`` for every FEM node aligned to
+            ``scene.grid.points``. Pads to 3-D with zeros when an axis
+            is missing (e.g. 2-D model with only ``_x`` / ``_y``).
+            Returns ``None`` if no field is selected or the read fails.
+            """
+            if not self._deform_field or director.stage_id is None:
+                return None
+            try:
+                results = self._results.stage(director.stage_id)
+            except Exception:
+                return None
+            n = scene.node_ids.size
+            out = _np.zeros((n, 3), dtype=_np.float64)
+            id_to_idx = _deform_id_to_idx
+            any_axis = False
+            for axis, suf in enumerate(("x", "y", "z")):
+                comp = f"{self._deform_field}_{suf}"
+                try:
+                    slab = results.nodes.get(
+                        ids=scene.node_ids,
+                        component=comp,
+                        time=[int(step)],
+                    )
+                except Exception:
+                    continue
+                if slab.values.size == 0:
+                    continue
+                slab_ids = _np.asarray(slab.node_ids, dtype=_np.int64)
+                slab_vals = _np.asarray(slab.values[0], dtype=_np.float64)
+                # Map slab_ids back into substrate row indices via the
+                # dense lookup. Clip out-of-range ids to a sentinel
+                # row that the ``valid`` mask drops.
+                in_range = (
+                    (slab_ids >= 0) & (slab_ids < id_to_idx.size)
+                )
+                positions = _np.full(slab_ids.shape, -1, dtype=_np.int64)
+                positions[in_range] = id_to_idx[slab_ids[in_range]]
+                valid = positions >= 0
+                out[positions[valid], axis] = slab_vals[valid]
+                any_axis = True
+            return out if any_axis else None
+
+        def _sync_layer_grids(deformed_pts: "_np.ndarray | None") -> None:
+            """Propagate point coords to every layer whose mapper input
+            carries a ``vtkOriginalPointIds`` map back to the substrate.
+
+            ``deformed_pts`` is the current substrate point array
+            (already reference-equal to ``scene.grid.points`` after
+            the in-place mutation in ``_apply_deformation``). When
+            ``None``, restores the reference points.
+            """
+            if self._director is None:
+                return
+            target_pts = (
+                deformed_pts
+                if deformed_pts is not None
+                else self._reference_points
+            )
+            import pyvista as _pv
+            for d in self._director.registry.diagrams():
+                for actor in d._actors:                  # noqa: SLF001
+                    try:
+                        mapper = actor.GetMapper()
+                        if mapper is None:
+                            continue
+                        raw = mapper.GetInput()
+                        if raw is None:
+                            continue
+                        grid = _pv.wrap(raw)
+                        if grid is None or "vtkOriginalPointIds" not in grid.point_data:
+                            continue
+                        opid = _np.asarray(
+                            grid.point_data["vtkOriginalPointIds"],
+                            dtype=_np.int64,
+                        )
+                        if opid.size == 0:
+                            continue
+                        # Bounds-safe scatter; submesh point that maps
+                        # outside the substrate stays in place.
+                        in_range = (
+                            (opid >= 0) & (opid < target_pts.shape[0])
+                        )
+                        new_pts = _np.asarray(grid.points, dtype=_np.float64).copy()
+                        new_pts[in_range] = target_pts[opid[in_range]]
+                        grid.points = new_pts
+                    except Exception:
+                        continue
+
+        def _apply_deformation(step: int) -> None:
+            """Set ``scene.grid.points`` for ``step`` and sync layer grids.
+
+            ON: substrate points = reference + scale * field(step).
+            OFF: substrate points reset to reference (idempotent).
+            """
+            if not self._deform_enabled:
+                # Restore reference (idempotent — VTK no-op if equal).
+                scene.grid.points = self._reference_points.copy()
+                _sync_layer_grids(None)
+                _render()
+                return
+            field = _read_deform_field(int(step))
+            if field is None:
+                scene.grid.points = self._reference_points.copy()
+                _sync_layer_grids(None)
+                _render()
+                return
+            deformed = self._reference_points + float(self._deform_scale) * field
+            scene.grid.points = deformed
+            _sync_layer_grids(deformed)
+            _render()
+
+        self._apply_deformation = _apply_deformation
+
+        # Wire SessionPanel callbacks.
+        def _on_deform_enabled(checked: bool) -> None:
+            self._deform_enabled = bool(checked)
+            self._apply_deformation(int(director.step_index))
+
+        def _on_deform_field(prefix: str) -> None:
+            self._deform_field = str(prefix) if prefix else None
+            if self._deform_enabled:
+                self._apply_deformation(int(director.step_index))
+
+        def _on_deform_scale(value: float) -> None:
+            self._deform_scale = float(value)
+            if self._deform_enabled:
+                self._apply_deformation(int(director.step_index))
+
+        if self._session_panel is not None:
+            self._session_panel.set_deform_enabled_callback(_on_deform_enabled)
+            self._session_panel.set_deform_field_callback(_on_deform_field)
+            self._session_panel.set_deform_scale_callback(_on_deform_scale)
+
+        # Re-apply on every step / stage change while deformation is on.
+        director.subscribe_step(
+            lambda step: self._apply_deformation(int(step))
+            if self._deform_enabled else None,
+        )
+        director.subscribe_stage(
+            lambda _sid: self._apply_deformation(int(director.step_index))
+            if self._deform_enabled else None,
+        )
+
         # ── Time scrubber row (bottom of grid) ──────────────────────
         from .ui._time_scrubber import TimeScrubberDock
         scrubber = TimeScrubberDock(director)

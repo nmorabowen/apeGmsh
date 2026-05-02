@@ -4,6 +4,7 @@ Hosts session-scoped controls that don't belong inside the model
 (Outline) or per-diagram (Details) flows. Ships:
 
 - Visualization toggles (substrate mesh + node cloud overlay).
+- Deformation modifier (global warp of the substrate by a nodal field).
 - Theme picker.
 
 Future additions land here as new sections (density, layout reset,
@@ -140,6 +141,65 @@ class SessionPanel:
         sep.setFrameShadow(QtWidgets.QFrame.Sunken)
         outer.addWidget(sep)
 
+        # ── Deformation section ───────────────────────────────────
+        # Globally warps scene.grid.points by a nodal vector field.
+        # Field combo populated by ``set_deform_options(prefixes)``;
+        # empty list → whole section is disabled with an explanatory
+        # tooltip.
+        self._on_deform_enabled: Optional[Callable[[bool], None]] = None
+        self._on_deform_field: Optional[Callable[[str], None]] = None
+        self._on_deform_scale: Optional[Callable[[float], None]] = None
+
+        self._deform_label = QtWidgets.QLabel("Deformation")
+        self._deform_label.setStyleSheet("font-weight: 600;")
+        outer.addWidget(self._deform_label)
+
+        self._cb_deform = QtWidgets.QCheckBox("Deform")
+        self._cb_deform.setChecked(False)
+        self._cb_deform.toggled.connect(self._fire_deform_enabled)
+        outer.addWidget(self._cb_deform)
+
+        deform_form = QtWidgets.QFormLayout()
+        deform_form.setContentsMargins(0, 0, 0, 0)
+        deform_form.setSpacing(6)
+
+        self._combo_deform_field = QtWidgets.QComboBox()
+        self._combo_deform_field.currentIndexChanged.connect(
+            self._fire_deform_field,
+        )
+        deform_form.addRow("Tied to", self._combo_deform_field)
+
+        self._sb_deform_scale = QtWidgets.QDoubleSpinBox()
+        self._sb_deform_scale.setRange(0.0, 1e6)
+        self._sb_deform_scale.setSingleStep(0.5)
+        self._sb_deform_scale.setDecimals(3)
+        self._sb_deform_scale.setValue(1.0)
+        self._sb_deform_scale.valueChanged.connect(self._fire_deform_scale)
+        deform_form.addRow("Scale", self._sb_deform_scale)
+
+        outer.addLayout(deform_form)
+
+        # Section disabled until ``set_deform_options`` is called with
+        # a non-empty list. Default-disabled keeps the controls inert
+        # for files without nodal vector data.
+        self._set_deform_enabled_widgets(False)
+        self._deform_disabled_tooltip = (
+            "No nodal displacement / velocity / acceleration data "
+            "in this file."
+        )
+        for w in (
+            self._deform_label,
+            self._cb_deform,
+            self._combo_deform_field,
+            self._sb_deform_scale,
+        ):
+            w.setToolTip(self._deform_disabled_tooltip)
+
+        sep_def = QtWidgets.QFrame()
+        sep_def.setFrameShape(QtWidgets.QFrame.HLine)
+        sep_def.setFrameShadow(QtWidgets.QFrame.Sunken)
+        outer.addWidget(sep_def)
+
         # ── Theme picker ───────────────────────────────────────────
         form = QtWidgets.QFormLayout()
         form.setContentsMargins(0, 0, 0, 0)
@@ -219,6 +279,64 @@ class SessionPanel:
         """Late binding for the element-IDs label toggle."""
         self._on_show_element_ids = cb
 
+    def set_deform_enabled_callback(
+        self, cb: Optional[Callable[[bool], None]],
+    ) -> None:
+        """Late binding for the Deform checkbox."""
+        self._on_deform_enabled = cb
+
+    def set_deform_field_callback(
+        self, cb: Optional[Callable[[str], None]],
+    ) -> None:
+        """Late binding for the deformation-field combo (vector prefix)."""
+        self._on_deform_field = cb
+
+    def set_deform_scale_callback(
+        self, cb: Optional[Callable[[float], None]],
+    ) -> None:
+        """Late binding for the deformation-scale spinner."""
+        self._on_deform_scale = cb
+
+    def set_deform_options(self, prefixes: list[str]) -> None:
+        """Populate the deformation-field combo.
+
+        Pass an empty list to disable the whole section. The first
+        entry becomes the active selection without firing the
+        callback (the viewer reads :meth:`current_deform_field` after
+        ``show()`` if it needs the initial value).
+        """
+        QtWidgets, _ = _qt()
+        self._combo_deform_field.blockSignals(True)
+        try:
+            self._combo_deform_field.clear()
+            for pfx in prefixes:
+                self._combo_deform_field.addItem(pfx, pfx)
+        finally:
+            self._combo_deform_field.blockSignals(False)
+        has_options = bool(prefixes)
+        self._set_deform_enabled_widgets(has_options)
+        tip = "" if has_options else self._deform_disabled_tooltip
+        for w in (
+            self._deform_label,
+            self._cb_deform,
+            self._combo_deform_field,
+            self._sb_deform_scale,
+        ):
+            w.setToolTip(tip)
+
+    def current_deform_field(self) -> Optional[str]:
+        """Return the active prefix in the field combo (None if empty)."""
+        data = self._combo_deform_field.currentData()
+        if data is None:
+            return None
+        return str(data)
+
+    def current_deform_scale(self) -> float:
+        return float(self._sb_deform_scale.value())
+
+    def current_deform_enabled(self) -> bool:
+        return bool(self._cb_deform.isChecked())
+
     def close(self) -> None:
         """Detach observers — call when the host window closes."""
         try:
@@ -259,6 +377,37 @@ class SessionPanel:
     def _fire_show_element_ids(self, checked: bool) -> None:
         if self._on_show_element_ids is not None:
             self._on_show_element_ids(bool(checked))
+
+    def _fire_deform_enabled(self, checked: bool) -> None:
+        if self._on_deform_enabled is not None:
+            self._on_deform_enabled(bool(checked))
+
+    def _fire_deform_field(self, _idx: int) -> None:
+        if self._on_deform_field is None:
+            return
+        data = self._combo_deform_field.currentData()
+        if data is None:
+            return
+        self._on_deform_field(str(data))
+
+    def _fire_deform_scale(self, value: float) -> None:
+        if self._on_deform_scale is not None:
+            self._on_deform_scale(float(value))
+
+    def _set_deform_enabled_widgets(self, enabled: bool) -> None:
+        """Enable / disable every control in the Deformation section."""
+        for w in (
+            self._cb_deform,
+            self._combo_deform_field,
+            self._sb_deform_scale,
+        ):
+            w.setEnabled(bool(enabled))
+        if not enabled:
+            # Force the checkbox off so a deferred enable doesn't
+            # silently re-arm a stale ON state.
+            self._cb_deform.blockSignals(True)
+            self._cb_deform.setChecked(False)
+            self._cb_deform.blockSignals(False)
 
     def _on_theme_chosen(self, _idx: int) -> None:
         name = self._theme_combo.currentData()
