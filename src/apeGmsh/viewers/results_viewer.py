@@ -290,6 +290,11 @@ class ResultsViewer:
         except Exception:
             node_actor = None
         self._node_cloud_actor = node_actor
+        # Capture the glyphed sphere geometry + the centers it was
+        # built against. Used by ``_sync_node_cloud`` to translate
+        # each sphere when the substrate deforms. Reset whenever the
+        # cloud is rebuilt (point-size change, theme retint of glyphs).
+        self._capture_node_cloud_base()
 
         # Re-tint the substrate, wireframe, and node cloud when the
         # theme changes. Hex → 0..1 RGB for vtkProperty.SetColor.
@@ -396,7 +401,15 @@ class ResultsViewer:
                     new_actor.GetProperty().SetOpacity(old_opacity)
                 except Exception:
                     pass
-            _render()
+            # Re-capture base glyph + centers so deformation sync
+            # uses the new actor's coordinates as its reference.
+            self._capture_node_cloud_base()
+            # Re-apply current deformation so the rebuilt cloud
+            # immediately tracks the substrate.
+            try:
+                self._apply_deformation(int(director.step_index))
+            except Exception:
+                pass
 
         def _toggle_show_node_ids(checked: bool) -> None:
             self._set_node_id_labels(checked)
@@ -547,12 +560,14 @@ class ResultsViewer:
             ):
                 scene.grid.points = self._reference_points.copy()
                 _sync_layer_grids(None)
+                self._sync_node_cloud(None)
                 _render()
                 return
             field_vals = _read_deform_field(geom.deform_field, int(step))
             if field_vals is None:
                 scene.grid.points = self._reference_points.copy()
                 _sync_layer_grids(None)
+                self._sync_node_cloud(None)
                 _render()
                 return
             deformed = (
@@ -561,6 +576,7 @@ class ResultsViewer:
             )
             scene.grid.points = deformed
             _sync_layer_grids(deformed)
+            self._sync_node_cloud(deformed)
             _render()
 
         self._apply_deformation = _apply_deformation
@@ -735,6 +751,92 @@ class ResultsViewer:
         finally:
             unregister_error_handler(_slot_failure_to_status)
         return self
+
+    # ------------------------------------------------------------------
+    # Node-cloud deformation sync
+    # ------------------------------------------------------------------
+
+    def _capture_node_cloud_base(self) -> None:
+        """Snapshot the glyphed sphere geometry + the centers it was
+        built against. ``_sync_node_cloud`` reads these to translate
+        each sphere when the substrate deforms.
+
+        Called once after the cloud is built and again every time
+        :meth:`_on_point_size` rebuilds it. Resets to ``None`` if the
+        actor is missing or its mapper input is unwrappable.
+        """
+        self._node_cloud_base_glyph_pts = None
+        self._node_cloud_centers_at_build = None
+        self._node_cloud_pts_per_center = 0
+        if self._node_cloud_actor is None:
+            return
+        try:
+            import numpy as _np
+            import pyvista as _pv
+            mapper = self._node_cloud_actor.GetMapper()
+            if mapper is None:
+                return
+            raw = mapper.GetInput()
+            if raw is None:
+                return
+            glyph = _pv.wrap(raw)
+            base = _np.asarray(glyph.points, dtype=_np.float64).copy()
+            if self._scene is None or self._scene.grid is None:
+                return
+            n_centers = int(self._scene.grid.n_points)
+            if n_centers == 0:
+                return
+            n_glyph_pts = base.shape[0]
+            if n_glyph_pts % n_centers != 0:
+                return
+            self._node_cloud_base_glyph_pts = base
+            self._node_cloud_centers_at_build = _np.asarray(
+                self._scene.grid.points, dtype=_np.float64,
+            ).copy()
+            self._node_cloud_pts_per_center = n_glyph_pts // n_centers
+        except Exception:
+            self._node_cloud_base_glyph_pts = None
+            self._node_cloud_centers_at_build = None
+            self._node_cloud_pts_per_center = 0
+
+    def _sync_node_cloud(self, deformed_pts) -> None:
+        """Translate each sphere in the node cloud to follow the substrate.
+
+        Each sphere ``i`` has ``pts_per_center`` glyphed points; we
+        add ``deformed_pts[i] - centers_at_build[i]`` to every point
+        of that sphere. ``deformed_pts=None`` means "reset to the
+        reference (undeformed) state".
+        """
+        if (
+            self._node_cloud_actor is None
+            or self._node_cloud_base_glyph_pts is None
+            or self._node_cloud_centers_at_build is None
+            or self._node_cloud_pts_per_center == 0
+        ):
+            return
+        try:
+            import numpy as _np
+            import pyvista as _pv
+            target = (
+                _np.asarray(deformed_pts, dtype=_np.float64)
+                if deformed_pts is not None
+                else self._reference_points
+            )
+            shifts = target - self._node_cloud_centers_at_build
+            shifts_tiled = _np.repeat(
+                shifts, self._node_cloud_pts_per_center, axis=0,
+            )
+            new_pts = self._node_cloud_base_glyph_pts + shifts_tiled
+            mapper = self._node_cloud_actor.GetMapper()
+            if mapper is None:
+                return
+            raw = mapper.GetInput()
+            if raw is None:
+                return
+            glyph = _pv.wrap(raw)
+            glyph.points = new_pts
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Lifecycle
