@@ -568,10 +568,11 @@ class OutlineTree:
                     geom.compositions.set_active(None)
             except Exception:
                 pass
+            # Fire only the geometry callback — the composition
+            # handler must not run with None here, or it would clobber
+            # the panel that the geometry handler just opened.
             if self._on_geometry_selected is not None:
                 self._on_geometry_selected(geom_id)
-            if self._on_composition_selected is not None:
-                self._on_composition_selected(None)
             return
         comp_id = current.data(0, _ROLE_COMPOSITION_KEY)
         if comp_id is not None:
@@ -582,10 +583,9 @@ class OutlineTree:
                     owner.compositions.set_active(comp_id)
                 except Exception:
                     pass
+            # Fire only the composition callback (same reasoning).
             if self._on_composition_selected is not None:
                 self._on_composition_selected(comp_id)
-            if self._on_geometry_selected is not None:
-                self._on_geometry_selected(None)
             return
         self._fire_idle()
 

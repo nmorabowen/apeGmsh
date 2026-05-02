@@ -1171,11 +1171,18 @@ class ResultsViewer:
                 pass
 
     def _on_outline_composition_selected(self, key) -> None:
-        """Outline tree → composition row selected (or off-row)."""
+        """Outline tree → composition row selected (or off-row).
+
+        The outline only fires this with a non-None key when a
+        composition row becomes the current item; ``None`` only
+        arrives via :meth:`_outline._fire_idle` (off any row), in
+        which case we drop into the idle (empty) details state.
+        """
         if self._details_panel is None:
             return
         if key is None:
-            return  # geometry-selected callback handles routing
+            self._details_panel.clear()
+            return
         self._details_panel.show_stack()
 
     def _on_outline_geometry_selected(self, geom_id) -> None:

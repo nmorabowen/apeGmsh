@@ -181,8 +181,21 @@ class GeometrySettingsPanel:
     def _fire_deform_enabled(self, checked: bool) -> None:
         if self._reflecting or self._geom_id is None:
             return
+        enabled = bool(checked)
+        # Coalesce the field from the combo when the user enables
+        # deformation without having explicitly picked one — the
+        # combo's currentIndexChanged doesn't fire on initial
+        # population, so the geometry's deform_field stays None
+        # otherwise and the warp would short-circuit to ref points.
+        field_to_set: Optional[str] = None
+        if enabled:
+            geom = self._director.geometries.find(self._geom_id)
+            if geom is not None and not geom.deform_field:
+                data = self._combo_field.currentData()
+                if data is not None:
+                    field_to_set = str(data)
         self._director.geometries.set_deformation(
-            self._geom_id, enabled=bool(checked),
+            self._geom_id, enabled=enabled, field=field_to_set,
         )
 
     def _fire_field(self, _idx: int) -> None:
