@@ -64,12 +64,22 @@ class MPCOReader:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        self._h5.close()
+        try:
+            self._h5.close()
+        except Exception:
+            pass
 
     def __enter__(self) -> "MPCOReader":
         return self
 
     def __exit__(self, *exc) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        # Release the h5py handle when the reader is garbage-collected
+        # — otherwise re-running a notebook cell that recreates the
+        # Results object can leave the previous reader holding a file
+        # lock on Windows until the kernel restarts.
         self.close()
 
     # ------------------------------------------------------------------

@@ -48,12 +48,20 @@ class NativeReader:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        self._h5.close()
+        try:
+            self._h5.close()
+        except Exception:
+            pass
 
     def __enter__(self) -> "NativeReader":
         return self
 
     def __exit__(self, *exc) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        # Release the h5py handle on garbage collection so jupyter
+        # cell re-runs don't hold a Windows file lock on the .h5.
         self.close()
 
     # ------------------------------------------------------------------

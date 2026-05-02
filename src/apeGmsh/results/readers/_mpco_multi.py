@@ -167,10 +167,18 @@ class MPCOMultiPartitionReader:
 
     def close(self) -> None:
         for r in self._readers:
-            r.close()
+            try:
+                r.close()
+            except Exception:
+                pass
 
     def __enter__(self) -> "MPCOMultiPartitionReader":
         return self
+
+    def __del__(self) -> None:
+        # Release every per-partition h5py handle on GC so jupyter
+        # cell re-runs don't hold Windows file locks on the .mpco.
+        self.close()
 
     def __exit__(self, *exc) -> None:
         self.close()
