@@ -561,6 +561,7 @@ class ResultsViewer:
                 scene.grid.points = self._reference_points.copy()
                 _sync_layer_grids(None)
                 self._sync_node_cloud(None)
+                self._sync_diagram_substrate_points(None)
                 _render()
                 return
             field_vals = _read_deform_field(geom.deform_field, int(step))
@@ -568,6 +569,7 @@ class ResultsViewer:
                 scene.grid.points = self._reference_points.copy()
                 _sync_layer_grids(None)
                 self._sync_node_cloud(None)
+                self._sync_diagram_substrate_points(None)
                 _render()
                 return
             deformed = (
@@ -577,6 +579,7 @@ class ResultsViewer:
             scene.grid.points = deformed
             _sync_layer_grids(deformed)
             self._sync_node_cloud(deformed)
+            self._sync_diagram_substrate_points(deformed)
             _render()
 
         self._apply_deformation = _apply_deformation
@@ -837,6 +840,25 @@ class ResultsViewer:
             glyph.points = new_pts
         except Exception:
             pass
+
+    def _sync_diagram_substrate_points(self, deformed_pts) -> None:
+        """Forward the deformation to every layer's
+        :meth:`Diagram.sync_substrate_points` hook.
+
+        OPID-bearing submeshes (contour, etc.) are already handled by
+        ``_sync_layer_grids`` walking mapper inputs directly — those
+        layers' default no-op override skips this call. Layers that
+        own non-substrate point geometry (gauss markers,
+        future vector-glyph sync) get their points rewritten here.
+        """
+        if self._director is None or self._scene is None:
+            return
+        scene = self._scene
+        for d in self._director.registry.diagrams():
+            try:
+                d.sync_substrate_points(deformed_pts, scene)
+            except Exception:
+                continue
 
     # ------------------------------------------------------------------
     # Lifecycle

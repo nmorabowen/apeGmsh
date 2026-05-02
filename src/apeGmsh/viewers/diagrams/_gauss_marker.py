@@ -46,6 +46,11 @@ class GaussPointDiagram(Diagram):
         self._initial_clim: Optional[tuple[float, float]] = None
         self._runtime_clim: Optional[tuple[float, float]] = None
         self._runtime_cmap: Optional[str] = None
+        # Cached at attach so deformation sync can re-evaluate shape
+        # functions against deformed substrate coords without
+        # re-reading the slab from disk.
+        self._gp_element_index: Optional[ndarray] = None
+        self._gp_natural_coords: Optional[ndarray] = None
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -90,6 +95,16 @@ class GaussPointDiagram(Diagram):
             return
 
         # ── World positions via the slab's shape-fn helper ──────────
+        # Cache the per-GP arrays so deformation sync can recompute
+        # world coords later against deformed substrate points without
+        # re-reading the slab from disk.
+        self._gp_element_index = np.asarray(
+            slab.element_index, dtype=np.int64,
+        ).copy()
+        self._gp_natural_coords = np.asarray(
+            slab.natural_coords, dtype=np.float64,
+        ).copy()
+
         try:
             world = slab.global_coords(fem)
         except Exception:
@@ -164,12 +179,48 @@ class GaussPointDiagram(Diagram):
         except Exception:
             pass
 
+    def sync_substrate_points(
+        self, deformed_pts: "ndarray | None", scene: "FEMSceneData",
+    ) -> None:
+        """Re-evaluate GP world coords against ``deformed_pts``.
+
+        ``deformed_pts`` is the substrate's current point array (row-
+        aligned with ``scene.node_ids`` / ``fem.nodes.ids``). When
+        ``None``, the markers snap back to their reference (un-deformed)
+        positions computed from ``fem.nodes.coords``.
+
+        Mutates the cloud's points in place; the actor's mapper picks
+        up the change automatically.
+        """
+        if (
+            self._cloud is None
+            or self._fem is None
+            or self._gp_element_index is None
+            or self._gp_natural_coords is None
+        ):
+            return
+        try:
+            from apeGmsh.results._gauss_world_coords import (
+                compute_global_coords_from_arrays,
+            )
+            world = compute_global_coords_from_arrays(
+                self._gp_element_index,
+                self._gp_natural_coords,
+                self._fem,
+                node_coords_override=deformed_pts,
+            )
+            self._cloud.points = world
+        except Exception:
+            pass
+
     def detach(self) -> None:
         self._cloud = None
         self._actor = None
         self._scalar_array = None
         self._element_ids_to_read = ()
         self._initial_clim = None
+        self._gp_element_index = None
+        self._gp_natural_coords = None
         super().detach()
 
     # ------------------------------------------------------------------

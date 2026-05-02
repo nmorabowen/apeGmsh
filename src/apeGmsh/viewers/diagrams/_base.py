@@ -237,6 +237,27 @@ class Diagram:
         """
         return None
 
+    def sync_substrate_points(
+        self,
+        deformed_pts: "ndarray | None",
+        scene: "FEMSceneData",
+    ) -> None:
+        """Re-position the layer's owned geometry against the deformed
+        substrate.
+
+        Default: no-op. Subclasses whose actors carry their own
+        non-substrate point geometry (gauss markers via shape-function
+        evaluation, vector glyph source coords) override this to
+        recompute their points from ``deformed_pts``. Layers built via
+        ``scene.grid.extract_*`` already follow the substrate via the
+        ``vtkOriginalPointIds`` map and don't need to override.
+
+        ``deformed_pts`` is ``(num_substrate_points, 3)`` row-aligned
+        with ``scene.node_ids`` (and ``fem.nodes.ids``). ``None``
+        means "reset to the reference / undeformed state".
+        """
+        return None
+
     def make_side_panel(self, director: Any) -> Any:
         """Construct a dockable side-panel widget for this diagram.
 
