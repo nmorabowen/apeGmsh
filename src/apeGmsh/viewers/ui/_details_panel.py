@@ -59,6 +59,16 @@ class DetailsPanel:
         title = QtWidgets.QLabel("DETAILS")
         title.setObjectName("DetailsHeaderLabel")
         header_lay.addWidget(title)
+
+        # + Add layer button — sits in the header so it's reachable
+        # from any state. Click → settings panel switches to creation
+        # mode (no kind / no data pre-selected).
+        self._btn_add = QtWidgets.QPushButton("+ Add layer")
+        self._btn_add.setObjectName("DetailsAddButton")
+        self._btn_add.setFlat(True)
+        self._btn_add.setToolTip("Add a new diagram layer")
+        self._btn_add.clicked.connect(self._on_add_clicked)
+        header_lay.addWidget(self._btn_add)
         header_lay.addStretch(1)
 
         meta = QtWidgets.QLabel("")
@@ -91,13 +101,56 @@ class DetailsPanel:
         return self._widget
 
     def show_diagram(self, diagram: Diagram) -> None:
-        """Display the per-diagram settings for ``diagram``."""
+        """Legacy single-layer view. v2 pivot prefers :meth:`show_stack`."""
         self._settings_tab.set_selected(diagram)
         self._meta_label.setText(diagram.display_label())
         self._widget.setVisible(True)
 
+    def show_stack(self) -> None:
+        """Render every active layer as a stacked card in the details dock.
+
+        Called when the outline's ``Diagram 1`` row is selected. Each
+        registry diagram becomes one collapsible card with its own
+        Data combo + style controls + delete button.
+        """
+        try:
+            self._settings_tab.show_stack()
+        except Exception:
+            pass
+        n = len(self._settings_tab._director.registry)
+        self._meta_label.setText(f"Diagram 1 — {n} layer(s)")
+        self._widget.setVisible(True)
+
     def clear(self) -> None:
-        """Hide the panel — no selection, or non-leaf selection."""
-        self._settings_tab.set_selected(None)
+        """Idle state — keep the panel visible (the + Add button lives here),
+        but clear the body."""
+        try:
+            self._settings_tab.set_idle()
+        except Exception:
+            pass
         self._meta_label.setText("")
-        self._widget.setVisible(False)
+        # Panel stays visible — + Add layer is always available.
+        self._widget.setVisible(True)
+
+    def _on_add_clicked(self) -> None:
+        """+ Add layer → stack mode with a pending creation card.
+
+        When the active composition is the locked Geometry view (which
+        doesn't accept layers), this auto-creates a new Diagram
+        composition first and makes it active — *that* gets the new
+        layer. Otherwise the layer is added to the currently-active
+        composition.
+        """
+        try:
+            mgr = self._settings_tab._director.compositions   # noqa: SLF001
+            if not mgr.active_accepts_layers:
+                # Spawn a new composition; it auto-becomes active.
+                mgr.add(name="Diagram", make_active=True)
+            self._settings_tab.show_stack()
+            self._settings_tab.set_create_new(True)
+        except Exception:
+            pass
+        active = self._settings_tab._director.compositions.active   # noqa: SLF001
+        active_name = active.name if active is not None else "Diagram"
+        self._meta_label.setText(f"{active_name} — adding layer")
+        self._widget.setVisible(True)

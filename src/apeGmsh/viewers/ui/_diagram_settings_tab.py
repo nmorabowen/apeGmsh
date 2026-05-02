@@ -41,7 +41,20 @@ class DiagramSettingsTab:
     def __init__(self, director: "ResultsDirector") -> None:
         QtWidgets, _ = _qt()
         self._director = director
+        # ── Mode state — exactly one of three is active ─────────────
+        # ``_show_stack``: render every registry diagram as a stack
+        # of QGroupBox cards (the v2 pivot — clicking the outline's
+        # Diagram 1 row enters this mode).
+        # ``_create_new``: render the + Add layer creation form.
+        # ``_selected``  : legacy single-layer edit mode (kept for
+        # callers that still call ``set_selected``).
+        self._show_stack: bool = False
+        self._create_new: bool = False
         self._selected: Optional[Diagram] = None
+        # Cached kind catalog — built lazily from the bound Results
+        # the first time creation mode renders. Catalog is per-file
+        # so safe to memoize.
+        self._kind_catalog: Any = None
 
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
@@ -59,7 +72,8 @@ class DiagramSettingsTab:
         layout.addWidget(self._content, stretch=1)
 
         empty_hint = QtWidgets.QLabel(
-            "Select a diagram in the Diagrams tab to edit its settings."
+            "Click a Catalog entry to configure a new diagram, or "
+            "select an active diagram to edit it."
         )
         empty_hint.setWordWrap(True)
         # Color + italic come from the theme stylesheet via the
@@ -72,6 +86,11 @@ class DiagramSettingsTab:
         self._widget = widget
 
         director.subscribe_diagrams(self._on_diagrams_changed)
+        # Composition changes (rename, set_active, add/remove) — in
+        # stack mode this updates which cards are visible.
+        self._unsub_compositions = director.compositions.subscribe(
+            self._on_compositions_changed,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -82,16 +101,61 @@ class DiagramSettingsTab:
         return self._widget
 
     def set_selected(self, diagram: Optional[Diagram]) -> None:
-        """Switch to editing a different diagram (or none)."""
+        """Legacy single-layer edit mode. v2 prefers :meth:`show_stack`."""
         self._selected = diagram
+        if diagram is not None:
+            self._create_new = False
+            self._show_stack = False
         self._rebuild()
+
+    def set_create_new(self, active: bool) -> None:
+        """Toggle the new-layer creation card.
+
+        When active *and* stack mode is on, the creation form renders
+        as an extra card at the bottom of the stack (preserving the
+        existing layer cards above). When active without stack mode
+        (e.g. from idle), a standalone creation form is shown.
+        """
+        self._create_new = bool(active)
+        if active:
+            self._selected = None
+        self._rebuild()
+
+    def show_stack(self) -> None:
+        """Render every active diagram as a stacked card (v2 default mode)."""
+        self._show_stack = True
+        self._selected = None
+        # Note: don't toggle ``_create_new`` here — caller may have
+        # arrived via ``+ Add layer`` and want the pending card kept.
+        self._rebuild()
+
+    def set_idle(self) -> None:
+        """Drop into the empty-hint state (no mode active)."""
+        self._show_stack = False
+        self._create_new = False
+        self._selected = None
+        self._rebuild()
+
+    def _ensure_catalog(self) -> Any:
+        if self._kind_catalog is None:
+            from ..diagrams._kind_catalog import build_catalog
+            try:
+                self._kind_catalog = build_catalog(self._director)
+            except Exception:
+                self._kind_catalog = []
+        return self._kind_catalog
 
     # ------------------------------------------------------------------
     # Internal — rebuild content for the selection
     # ------------------------------------------------------------------
 
     def _on_diagrams_changed(self) -> None:
-        # If the selected diagram was removed, drop the reference.
+        # Stack mode: rebuild on every registry change so cards
+        # appear/disappear as layers are added/removed.
+        if self._show_stack:
+            self._rebuild()
+            return
+        # Legacy single-select: drop the reference if removed.
         if self._selected is None:
             return
         active = self._director.registry.diagrams()
@@ -99,18 +163,40 @@ class DiagramSettingsTab:
             self._selected = None
             self._rebuild()
 
+    def _on_compositions_changed(self) -> None:
+        # Active composition changed (or one was renamed) — refresh
+        # the title bar / cards if we're in stack mode.
+        if self._show_stack:
+            self._rebuild()
+
     def _rebuild(self) -> None:
         QtWidgets, _ = _qt()
-        # Clear content layout
-        while self._content_layout.count():
-            child = self._content_layout.takeAt(0)
-            w = child.widget() if child else None
-            if w is not None:
-                w.deleteLater()
+        # Clear content layout — recursive teardown so nested
+        # QFormLayout / QHBoxLayout children don't leak across modes.
+        self._clear_layout(self._content_layout)
 
+        # ── Stack mode (with optional pending creation card) ────────
+        if self._show_stack:
+            active = self._director.compositions.active
+            self._title.setText(active.name if active is not None else "Diagram")
+            self._empty_hint.setVisible(False)
+            self._content.setVisible(True)
+            self._build_stack_view(include_pending=self._create_new)
+            return
+
+        # ── Standalone creation mode (no stack context) ─────────────
+        if self._create_new:
+            self._title.setText("New layer")
+            self._empty_hint.setVisible(False)
+            self._content.setVisible(True)
+            self._build_creation_panel()
+            self._content_layout.addStretch(1)
+            return
+
+        # ── Legacy single-layer edit mode ───────────────────────────
         d = self._selected
         if d is None:
-            self._title.setText("No diagram selected.")
+            self._title.setText("Nothing selected.")
             self._empty_hint.setVisible(True)
             self._content.setVisible(False)
             return
@@ -119,6 +205,131 @@ class DiagramSettingsTab:
         self._empty_hint.setVisible(False)
         self._content.setVisible(True)
 
+        self._build_data_swap_row(d)
+        self._dispatch_kind_panel(d)
+        self._build_preset_row(d)
+        self._build_delete_row(d)
+        self._content_layout.addStretch(1)
+
+    # ------------------------------------------------------------------
+    # Stack mode
+    # ------------------------------------------------------------------
+
+    def _build_stack_view(self, *, include_pending: bool = False) -> None:
+        """Render one QGroupBox per *active-composition* layer.
+
+        Filters the registry's flat diagram list to just the layers
+        belonging to the active composition. Each card wraps the
+        same per-kind controls used in legacy edit mode. Cards are
+        added to a scroll area so a 5+ layer composition doesn't blow
+        up the dock height.
+
+        When ``include_pending`` is True, a *creation card* is
+        appended at the bottom — Kind ▾ + Data ▾ + Apply / Cancel —
+        so the user can configure a new layer while still seeing
+        every existing one.
+        """
+        QtWidgets, _ = _qt()
+        active = self._director.compositions.active
+        diagrams = list(active.layers) if active is not None else []
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QtWidgets.QWidget()
+        inner_lay = QtWidgets.QVBoxLayout(inner)
+        inner_lay.setContentsMargins(0, 0, 0, 0)
+        inner_lay.setSpacing(8)
+
+        if not diagrams and not include_pending:
+            mgr = self._director.compositions
+            active = mgr.active
+            if active is not None and active.locked:
+                msg = (
+                    "Geometry shows just the mesh — it doesn't accept "
+                    "layers.\n\nClick + Add layer to start a new "
+                    "diagram (or use the + button in the outline header)."
+                )
+            else:
+                msg = "No layers yet. Click + Add layer to add one."
+            empty = QtWidgets.QLabel(msg)
+            empty.setWordWrap(True)
+            empty.setObjectName("DiagramSettingsEmptyHint")
+            inner_lay.addWidget(empty)
+
+        for d in diagrams:
+            inner_lay.addWidget(self._build_layer_card(d))
+
+        if include_pending:
+            inner_lay.addWidget(self._build_pending_creation_card())
+
+        inner_lay.addStretch(1)
+        scroll.setWidget(inner)
+        self._content_layout.addWidget(scroll, stretch=1)
+
+    def _build_pending_creation_card(self) -> Any:
+        """A QGroupBox card holding the Kind+Data+Apply/Cancel form.
+
+        Same form as :meth:`_build_creation_panel` but rendered inside
+        a card so it stacks naturally below the existing layers.
+        """
+        QtWidgets, _ = _qt()
+        card = QtWidgets.QGroupBox("New layer")
+        card_lay = QtWidgets.QVBoxLayout(card)
+        card_lay.setContentsMargins(8, 4, 8, 6)
+        card_lay.setSpacing(4)
+        # Swap the target layout so the existing creation builder
+        # writes into this card instead of the outer content layout.
+        saved = self._content_layout
+        self._content_layout = card_lay
+        try:
+            self._build_creation_panel()
+        finally:
+            self._content_layout = saved
+        return card
+
+    def _build_layer_card(self, d: "Diagram") -> Any:
+        """Build one QGroupBox card for ``d`` containing all its controls.
+
+        Reuses every existing per-kind builder by temporarily swapping
+        ``self._content_layout`` to the card's own layout for the
+        duration of the build.
+        """
+        QtWidgets, _ = _qt()
+        from ._add_diagram_dialog import _KINDS as KIND_ENTRIES
+        id_to_label = {k.kind_id: k.label for k in KIND_ENTRIES}
+        title = id_to_label.get(d.kind, d.kind)
+        comp = getattr(d.selector, "component", "")
+        if comp:
+            title = f"{title} · {comp}"
+
+        card = QtWidgets.QGroupBox(title)
+        # Checkable groupbox = built-in visibility checkbox in the
+        # title row — wired to set_visible on the underlying diagram.
+        card.setCheckable(True)
+        card.setChecked(bool(d.is_visible))
+        card.toggled.connect(
+            lambda checked, d=d: self._director.registry.set_visible(
+                d, bool(checked),
+            ),
+        )
+        card_lay = QtWidgets.QVBoxLayout(card)
+        card_lay.setContentsMargins(8, 4, 8, 6)
+        card_lay.setSpacing(4)
+
+        # Swap the target layout so the existing builders write here.
+        saved = self._content_layout
+        self._content_layout = card_lay
+        try:
+            self._build_data_swap_row(d)
+            self._dispatch_kind_panel(d)
+            self._build_delete_row(d)
+        finally:
+            self._content_layout = saved
+        return card
+
+    def _dispatch_kind_panel(self, d: "Diagram") -> None:
+        """Dispatch to the right ``_build_*_panel`` for the kind."""
+        QtWidgets, _ = _qt()
         kind = d.kind
         if kind == "contour":
             self._build_contour_panel(d)
@@ -137,17 +348,328 @@ class DiagramSettingsTab:
                 f"No settings UI for kind {kind!r} yet."
             ))
 
-        # ── Preset row (Save / Apply) ──────────────────────────────
-        # Always available below the kind-specific panel so users can
-        # snapshot the current style of any diagram.
-        self._build_preset_row(d)
+    # ------------------------------------------------------------------
+    # Layout teardown helper
+    # ------------------------------------------------------------------
 
-        # ── Trailing stretch ───────────────────────────────────────
-        # Without this, excess vertical space (when the dock is taller
-        # than the form needs) creates a visible gap *between* widgets.
-        # The stretch absorbs the slack at the end so all controls
-        # remain packed at the top of the panel.
-        self._content_layout.addStretch(1)
+    def _clear_layout(self, layout) -> None:
+        """Recursively remove every widget *and* sub-layout from ``layout``.
+
+        Qt's ``takeAt(0)`` returns a ``QLayoutItem``. Three cases:
+
+        - widget item → ``deleteLater()`` it.
+        - layout item (e.g. nested ``QFormLayout`` / ``QHBoxLayout``)
+          → recurse, then ``deleteLater()`` the layout itself.
+        - spacer item → nothing to delete; just dropped on the floor
+          when the loop pops it.
+
+        Without the recursion, sub-layout widgets stay parented to the
+        outer container and reappear painted on top of the next
+        rebuild's widgets — visible as the overlapping rows reported
+        in PR #54's punch list.
+        """
+        while layout.count():
+            item = layout.takeAt(0)
+            if item is None:
+                continue
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+                continue
+            sub = item.layout()
+            if sub is not None:
+                self._clear_layout(sub)
+                sub.deleteLater()
+            # spacer items have neither widget() nor layout() — drop.
+
+    # ------------------------------------------------------------------
+    # Creation mode (+ Add layer) — Kind + Data + Apply / Cancel
+    # ------------------------------------------------------------------
+
+    def _build_creation_panel(self) -> None:
+        """Render Kind + Data + style preview + Apply/Cancel.
+
+        Uses the kind catalog to populate the dropdowns. The Kind combo
+        lists every kind; disabled kinds (no data feeds them in this
+        file) are still shown but tagged "(no data)" and unselectable.
+        Changing Kind repopulates the Data combo. Apply builds a spec,
+        instantiates the diagram, and adds it to the registry.
+        """
+        QtWidgets, _ = _qt()
+        from ._add_diagram_dialog import _KINDS as KIND_ENTRIES
+
+        catalog = self._ensure_catalog()
+        id_to_kind_entry = {k.kind_id: k for k in KIND_ENTRIES}
+
+        form = QtWidgets.QFormLayout()
+        self._content_layout.addLayout(form)
+
+        # ── Kind combo ─────────────────────────────────────────────
+        kind_combo = QtWidgets.QComboBox()
+        # Sort: enabled first (catalog order), disabled last.
+        enabled = [k for k in catalog if k.enabled]
+        disabled = [k for k in catalog if not k.enabled]
+        for k in enabled + disabled:
+            label = k.label if k.enabled else f"{k.label} — no data"
+            kind_combo.addItem(label, k.kind_id)
+            idx = kind_combo.count() - 1
+            if not k.enabled:
+                # Grey out + uncheckable item flag (Qt::NoItemFlags).
+                kind_combo.model().item(idx).setEnabled(False)
+        form.addRow("Kind:", kind_combo)
+
+        # ── Data combo (populated when Kind changes) ───────────────
+        data_combo = QtWidgets.QComboBox()
+        data_label = QtWidgets.QLabel("Data:")
+        form.addRow(data_label, data_combo)
+
+        def _populate_data_for(kind_id: str) -> None:
+            entry = next((k for k in catalog if k.kind_id == kind_id), None)
+            data_combo.blockSignals(True)
+            data_combo.clear()
+            if entry is None:
+                data_combo.blockSignals(False)
+                return
+            if not entry.requires_data:
+                data_combo.setEnabled(False)
+                data_combo.setEditText("(no data needed)")
+                data_label.setVisible(False)
+                data_combo.setVisible(False)
+            else:
+                data_label.setVisible(True)
+                data_combo.setVisible(True)
+                data_combo.setEnabled(True)
+                data_combo.addItems(list(entry.data_options))
+                if entry.default_data is not None:
+                    data_combo.setCurrentText(entry.default_data)
+            data_combo.blockSignals(False)
+
+        kind_combo.currentIndexChanged.connect(
+            lambda _i: _populate_data_for(kind_combo.currentData()),
+        )
+        # Initial population — pick first enabled kind.
+        if enabled:
+            kind_combo.setCurrentIndex(0)
+            _populate_data_for(enabled[0].kind_id)
+
+        # ── Apply / Cancel row ─────────────────────────────────────
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_cancel = QtWidgets.QPushButton("Cancel")
+        btn_apply = QtWidgets.QPushButton("Apply")
+        btn_apply.setDefault(True)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_apply)
+        self._content_layout.addLayout(btn_row)
+
+        btn_cancel.clicked.connect(lambda: self.set_create_new(False))
+        btn_apply.clicked.connect(
+            lambda: self._on_creation_apply(
+                kind_combo.currentData(),
+                data_combo.currentText().strip()
+                if data_combo.isEnabled() else "",
+            ),
+        )
+
+    def _on_creation_apply(self, kind_id: str, data: str) -> None:
+        """Build a Diagram from the creation form and add it to the registry."""
+        if not kind_id:
+            return
+        diagram = self._build_diagram(kind_id, data)
+        if diagram is None:
+            return
+        try:
+            self._director.registry.add(diagram)
+        except Exception as exc:
+            from .._failures import report
+            report("DiagramSettingsTab._on_creation_apply", exc)
+            return
+        # Tag the new layer with the active composition so the
+        # outline + stack view group it correctly.
+        active = self._director.compositions.active
+        if active is not None:
+            self._director.compositions.add_layer(active.id, diagram)
+        # Drop the pending-creation card; keep stack mode so the
+        # newly-added layer appears as a real card alongside the
+        # existing ones (registry.add fires the observer which
+        # triggers _rebuild via _on_diagrams_changed).
+        self._create_new = False
+        if not self._show_stack:
+            # Caller arrived without stack mode (e.g. legacy path) —
+            # fall through to the standalone edit mode.
+            self.set_selected(diagram)
+        else:
+            self._rebuild()
+
+    # ------------------------------------------------------------------
+    # Edit mode helpers: Data swap + Delete
+    # ------------------------------------------------------------------
+
+    def _build_data_swap_row(self, d: "Diagram") -> None:
+        """Component dropdown that live-swaps the diagram in place.
+
+        Same kind, different selector. Uses ``registry.replace()`` so
+        the layer keeps its z-position. Kind itself is shown as a
+        read-only label — to switch kind, the user deletes + re-adds.
+        """
+        QtWidgets, _ = _qt()
+        catalog = self._ensure_catalog()
+        kind_entry = next(
+            (k for k in catalog if k.kind_id == d.kind), None,
+        )
+
+        form = QtWidgets.QFormLayout()
+        self._content_layout.addLayout(form)
+
+        # Kind: read-only label.
+        kind_label = QtWidgets.QLabel(
+            kind_entry.label if kind_entry else d.kind,
+        )
+        form.addRow("Kind:", kind_label)
+
+        # Data combo (only if kind requires data).
+        if kind_entry is not None and not kind_entry.requires_data:
+            return
+        data_combo = QtWidgets.QComboBox()
+        if kind_entry is not None:
+            data_combo.addItems(list(kind_entry.data_options))
+        # Set current to the diagram's selector component.
+        current_comp = getattr(d.selector, "component", "")
+        if current_comp:
+            idx = data_combo.findText(current_comp)
+            if idx >= 0:
+                data_combo.setCurrentIndex(idx)
+            else:
+                # Component not in catalog list (e.g. user typed a
+                # custom name in a previous version); add it so we
+                # don't clobber it on selection.
+                data_combo.addItem(current_comp)
+                data_combo.setCurrentText(current_comp)
+        # Live swap on change.
+        data_combo.currentTextChanged.connect(
+            lambda new_data: self._on_data_swap(d, new_data),
+        )
+        form.addRow("Data:", data_combo)
+
+    def _on_data_swap(self, old: "Diagram", new_data: str) -> None:
+        if not new_data or new_data == getattr(old.selector, "component", ""):
+            return
+        new_diagram = self._build_diagram(old.kind, new_data)
+        if new_diagram is None:
+            return
+        # Locate the composition holding ``old`` so we can swap the
+        # membership too (preserve z-position within the comp).
+        comp = self._director.compositions.composition_for_layer(old)
+        try:
+            self._director.registry.replace(old, new_diagram)
+        except Exception as exc:
+            from .._failures import report
+            report("DiagramSettingsTab._on_data_swap", exc)
+            return
+        if comp is not None:
+            try:
+                idx = comp.layers.index(old)
+                comp.layers[idx] = new_diagram
+                # Manager observers don't fire on direct list mutation;
+                # nudge them so the outline label refreshes if needed.
+                self._director.compositions._notify()  # noqa: SLF001
+            except ValueError:
+                pass
+        # Selected reference is now the new diagram; rebuild form.
+        self._selected = new_diagram
+        self._rebuild()
+
+    def _build_delete_row(self, d: "Diagram") -> None:
+        QtWidgets, _ = _qt()
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch(1)
+        btn_delete = QtWidgets.QPushButton("Delete layer")
+        btn_delete.clicked.connect(lambda: self._on_delete(d))
+        btn_row.addWidget(btn_delete)
+        self._content_layout.addLayout(btn_row)
+
+    def _on_delete(self, d: "Diagram") -> None:
+        # Untag from the composition first, then remove from registry.
+        try:
+            self._director.compositions.remove_layer(d)
+        except Exception:
+            pass
+        try:
+            self._director.registry.remove(d)
+        except Exception as exc:
+            from .._failures import report
+            report("DiagramSettingsTab._on_delete", exc)
+            return
+        # _on_diagrams_changed clears self._selected if needed.
+
+    # ------------------------------------------------------------------
+    # Diagram constructor — shared by creation + data-swap
+    # ------------------------------------------------------------------
+
+    def _build_diagram(self, kind_id: str, data: str) -> Optional["Diagram"]:
+        """Instantiate a Diagram for ``kind_id`` + ``data``.
+
+        Builds a default style from the kind entry (mirrors
+        AddDiagramDialog). Returns None on failure (errors land in
+        the slot-failure pipeline so the user sees a status toast).
+        """
+        from ..diagrams._base import DiagramSpec
+        from ..diagrams._selectors import normalize as normalize_selector
+        from ..diagrams._styles import ContourStyle
+        from ._add_diagram_dialog import _KINDS as KIND_ENTRIES
+        from .._failures import report
+
+        kind_entry = next(
+            (k for k in KIND_ENTRIES if k.kind_id == kind_id), None,
+        )
+        if kind_entry is None:
+            return None
+
+        catalog_entry = next(
+            (k for k in self._ensure_catalog() if k.kind_id == kind_id), None,
+        )
+        component = data or ""
+        try:
+            selector = normalize_selector(component=component)
+        except Exception as exc:
+            report("DiagramSettingsTab._build_diagram", exc)
+            return None
+
+        style = kind_entry.make_default_style(component)
+        # Contour against gauss data: pin topology so the diagram
+        # reads from the gauss composite rather than nodes.
+        if kind_id == "contour":
+            comp_in_gauss = (
+                catalog_entry is not None
+                and component in catalog_entry.data_options
+            )
+            # Heuristic: if the component is a tensor (xx/yy/...) it's
+            # a gauss reading; vector axes (x/y/z) are nodal. The
+            # catalog already mixes both, so we route by suffix.
+            from ...solvers._element_response import split_canonical_component
+            parts = split_canonical_component(component)
+            is_tensor = parts is not None and parts[1] in {
+                "xx", "yy", "zz", "xy", "yz", "xz",
+            }
+            if comp_in_gauss and is_tensor:
+                style = ContourStyle(
+                    cmap=style.cmap, clim=style.clim, opacity=style.opacity,
+                    show_edges=style.show_edges,
+                    show_scalar_bar=style.show_scalar_bar,
+                    topology="gauss",
+                )
+
+        spec = DiagramSpec(
+            kind=kind_id,
+            selector=selector,
+            style=style,
+            stage_id=self._director.stage_id,
+        )
+        try:
+            return kind_entry.diagram_class(spec, self._director.results)
+        except Exception as exc:
+            report("DiagramSettingsTab._build_diagram", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Contour panel

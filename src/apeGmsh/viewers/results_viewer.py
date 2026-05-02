@@ -69,6 +69,10 @@ class ResultsViewer:
         self._settings_tab: "DiagramSettingsTab | None" = None
         self._time_scrubber: Any = None
         self._substrate_actor: Any = None
+        self._wireframe_actor: Any = None
+        self._node_cloud_actor: Any = None
+        self._node_label_actor: Any = None
+        self._element_label_actor: Any = None
         self._plot_pane: Any = None
         self._details_panel: Any = None
         self._session_panel: Any = None
@@ -157,7 +161,7 @@ class ResultsViewer:
         plot_pane = PlotPane()
         plot_pane.on_user_close(self._on_plot_user_close)
         details = DetailsPanel(settings_tab)
-        outline.on_diagram_selected(self._on_outline_diagram_selected)
+        outline.on_composition_selected(self._on_outline_composition_selected)
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
@@ -166,12 +170,6 @@ class ResultsViewer:
         win.set_details_widget(details.widget)
         self._plot_pane = plot_pane
         self._details_panel = details
-
-        # ── Session dock (viewer-level settings — theme, ...) ──────
-        from .ui._session_panel import SessionPanel
-        session = SessionPanel()
-        win.set_session_widget(session.widget)
-        self._session_panel = session
 
         # ── Plotter — substrate mesh ────────────────────────────────
         plotter = win.plotter
@@ -182,12 +180,27 @@ class ResultsViewer:
         # recolors when the user switches theme (subscribed below).
         from .ui.theme import THEME, _hex_to_rgb
         palette = THEME.current
+
+        # ── Session dock (viewer-level settings — theme, ...) ──────
+        # Constructed BEFORE the substrate so the panel's initial
+        # values come from the current preferences. Toggle / size
+        # callbacks are wired to the actors after they are built.
+        from .ui._session_panel import SessionPanel
+        session = SessionPanel(
+            point_size_initial=prefs.point_size,
+            line_width_initial=prefs.mesh_line_width,
+            opacity_initial=1.0,
+        )
+        win.set_session_widget(session.widget)
+        self._session_panel = session
+
+        # Substrate fill — drawn first; edges are rendered separately
+        # by the wireframe actor below so they stay on top of any
+        # contour diagram added later.
         actor = plotter.add_mesh(
             scene.grid,
             color=palette.substrate_color,
-            show_edges=True,
-            edge_color=palette.substrate_edge_color,
-            line_width=prefs.mesh_line_width,
+            show_edges=False,
             opacity=prefs.mesh_surface_opacity,
             lighting=True,
             smooth_shading=False,
@@ -196,22 +209,173 @@ class ResultsViewer:
         )
         self._substrate_actor = actor
 
-        # Re-tint the substrate when the theme changes. Hex → 0..1 RGB
-        # for vtkProperty.SetColor / SetEdgeColor.
+        # ── Wireframe overlay ──────────────────────────────────────
+        # Separate actor (style='wireframe') so the lines render on top
+        # of any contour / deformed-shape diagram that draws polygons at
+        # the same z-depth. Polygon-offset on the line mapper resolves
+        # coincident topology by pulling lines toward the camera, which
+        # eliminates z-fighting between the wireframe and the substrate
+        # / diagram polygons.
+        wireframe_actor = plotter.add_mesh(
+            scene.grid,
+            style="wireframe",
+            color=palette.substrate_edge_color,
+            line_width=prefs.mesh_line_width,
+            opacity=1.0,
+            lighting=False,
+            pickable=False,
+            name="results_wireframe",
+        )
+        try:
+            wf_mapper = wireframe_actor.GetMapper()
+            wf_mapper.SetResolveCoincidentTopologyToPolygonOffset()
+            wf_mapper.SetResolveCoincidentTopologyLineOffsetParameters(-1.0, -1.0)
+        except Exception:
+            pass
+        self._wireframe_actor = wireframe_actor
+
+        # ── Node-cloud overlay (matches the pre-solve mesh viewer) ─
+        # One sphere glyph per FEM node, drawn over the substrate so
+        # the user can see the discretization. Sized off the model
+        # diagonal so it scales with bounding box.
+        from .scene.glyph_points import build_node_cloud
+        try:
+            _, node_actor = build_node_cloud(
+                plotter,
+                scene.grid.points,
+                model_diagonal=scene.model_diagonal,
+                marker_size=prefs.point_size,
+                color=palette.node_accent,
+            )
+        except Exception:
+            node_actor = None
+        self._node_cloud_actor = node_actor
+
+        # Re-tint the substrate, wireframe, and node cloud when the
+        # theme changes. Hex → 0..1 RGB for vtkProperty.SetColor.
         def _refresh_substrate_colors(p) -> None:
-            if self._substrate_actor is None:
-                return
             try:
-                prop = self._substrate_actor.GetProperty()
-                r, g, b = _hex_to_rgb(p.substrate_color)
-                er, eg, eb = _hex_to_rgb(p.substrate_edge_color)
-                prop.SetColor(r / 255.0, g / 255.0, b / 255.0)
-                prop.SetEdgeColor(er / 255.0, eg / 255.0, eb / 255.0)
+                if self._substrate_actor is not None:
+                    prop = self._substrate_actor.GetProperty()
+                    r, g, b = _hex_to_rgb(p.substrate_color)
+                    prop.SetColor(r / 255.0, g / 255.0, b / 255.0)
+                if self._wireframe_actor is not None:
+                    er, eg, eb = _hex_to_rgb(p.substrate_edge_color)
+                    self._wireframe_actor.GetProperty().SetColor(
+                        er / 255.0, eg / 255.0, eb / 255.0,
+                    )
+                if self._node_cloud_actor is not None:
+                    nr, ng, nb = _hex_to_rgb(p.node_accent)
+                    self._node_cloud_actor.GetProperty().SetColor(
+                        nr / 255.0, ng / 255.0, nb / 255.0,
+                    )
                 if plotter is not None:
                     plotter.render()
             except Exception:
                 pass
         win.on_theme_changed(_refresh_substrate_colors)
+
+        # ── Bind SessionPanel visualization toggles to the actors ──
+        def _render() -> None:
+            try:
+                if plotter is not None:
+                    plotter.render()
+            except Exception:
+                pass
+
+        def _toggle_show_mesh(checked: bool) -> None:
+            v = 1 if checked else 0
+            for a in (self._substrate_actor, self._wireframe_actor):
+                if a is None:
+                    continue
+                try:
+                    a.SetVisibility(v)
+                except Exception:
+                    pass
+            _render()
+
+        def _toggle_show_nodes(checked: bool) -> None:
+            if self._node_cloud_actor is None:
+                return
+            try:
+                self._node_cloud_actor.SetVisibility(1 if checked else 0)
+            except Exception:
+                pass
+            _render()
+
+        def _on_line_width(value: float) -> None:
+            if self._wireframe_actor is None:
+                return
+            try:
+                self._wireframe_actor.GetProperty().SetLineWidth(float(value))
+            except Exception:
+                pass
+            _render()
+
+        def _on_opacity(value: float) -> None:
+            v = max(0.0, min(1.0, float(value)))
+            try:
+                if self._wireframe_actor is not None:
+                    self._wireframe_actor.GetProperty().SetOpacity(v)
+                if self._node_cloud_actor is not None:
+                    self._node_cloud_actor.GetProperty().SetOpacity(v)
+            except Exception:
+                pass
+            _render()
+
+        def _on_point_size(value: float) -> None:
+            # Glyph spheres ignore SetPointSize — rebuild the cloud at
+            # the new marker_size, preserving current visibility / opacity.
+            if self._node_cloud_actor is None or plotter is None:
+                return
+            from .scene.glyph_points import build_node_cloud as _build
+            old = self._node_cloud_actor
+            try:
+                old_visible = bool(old.GetVisibility())
+                old_opacity = float(old.GetProperty().GetOpacity())
+            except Exception:
+                old_visible, old_opacity = True, 1.0
+            try:
+                plotter.remove_actor(old)
+            except Exception:
+                pass
+            try:
+                _, new_actor = _build(
+                    plotter,
+                    scene.grid.points,
+                    model_diagonal=scene.model_diagonal,
+                    marker_size=float(value),
+                    color=THEME.current.node_accent,
+                )
+            except Exception:
+                new_actor = None
+            self._node_cloud_actor = new_actor
+            if new_actor is not None:
+                try:
+                    new_actor.SetVisibility(1 if old_visible else 0)
+                    new_actor.GetProperty().SetOpacity(old_opacity)
+                except Exception:
+                    pass
+            _render()
+
+        def _toggle_show_node_ids(checked: bool) -> None:
+            self._set_node_id_labels(checked)
+            _render()
+
+        def _toggle_show_element_ids(checked: bool) -> None:
+            self._set_element_id_labels(checked)
+            _render()
+
+        if self._session_panel is not None:
+            self._session_panel.set_show_mesh_callback(_toggle_show_mesh)
+            self._session_panel.set_show_nodes_callback(_toggle_show_nodes)
+            self._session_panel.set_show_node_ids_callback(_toggle_show_node_ids)
+            self._session_panel.set_show_element_ids_callback(
+                _toggle_show_element_ids,
+            )
+            self._session_panel.set_point_size_callback(_on_point_size)
+            self._session_panel.set_line_width_callback(_on_line_width)
+            self._session_panel.set_opacity_callback(_on_opacity)
 
         # ── Time scrubber row (bottom of grid) ──────────────────────
         from .ui._time_scrubber import TimeScrubberDock
@@ -294,6 +458,66 @@ class ResultsViewer:
 
         register_error_handler(_slot_failure_to_status)
         self._slot_failure_handler = _slot_failure_to_status
+
+        # ── Composition viewport gate ──────────────────────────────
+        # Only the *active* composition's layers paint into the
+        # viewport. When the user switches compositions, every
+        # layer not in the active one has its actors hidden. The
+        # per-card visibility checkbox controls the user's intent
+        # *within* the composition; the composition gate is an
+        # independent multiplicative filter.
+        def _apply_composition_gate() -> None:
+            mgr = director.compositions
+            active = mgr.active
+            active_layers = (
+                set(map(id, active.layers)) if active is not None else set()
+            )
+            for d in director.registry.diagrams():
+                in_active = id(d) in active_layers
+                desired = bool(d.is_visible) and in_active
+                # Touch the actor visibility directly — keeping the
+                # diagram's ``_visible`` flag intact so the user's
+                # per-card checkbox state is preserved when switching
+                # back.
+                for actor in d._actors:                         # noqa: SLF001
+                    try:
+                        actor.SetVisibility(desired)
+                    except Exception:
+                        pass
+            try:
+                if plotter is not None:
+                    plotter.render()
+            except Exception:
+                pass
+
+        director.compositions.subscribe(_apply_composition_gate)
+        # Also re-apply after registry changes (new layer added →
+        # apply gate so the new actor is hidden if its comp isn't
+        # active; layer removed → no-op).
+        director.registry.subscribe(_apply_composition_gate)
+        self._apply_composition_gate = _apply_composition_gate
+
+        # ── Esc shortcut → return to base view ─────────────────────
+        # Esc deselects the outline and drops the details panel into
+        # idle state — the viewport is left showing just the substrate
+        # mesh + node cloud + whatever active layers are visible.
+        # Uses ApplicationShortcut so VTK's QtInteractor doesn't
+        # swallow the key when the viewport has focus (same pattern
+        # as Ctrl+H / Q in ResultsWindow).
+        try:
+            from qtpy import QtWidgets, QtGui, QtCore
+            esc_sc = QtWidgets.QShortcut(
+                QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape),
+                win.window,
+            )
+            esc_sc.setContext(
+                QtCore.Qt.ShortcutContext.ApplicationShortcut,
+            )
+            esc_sc.activated.connect(self._on_escape)
+            self._esc_shortcut = esc_sc
+        except Exception as exc:
+            from ._failures import report
+            report("ResultsViewer._install_esc_shortcut", exc)
 
         # ── Restore previous session if requested ───────────────────
         self._maybe_restore_session(win)
@@ -470,6 +694,79 @@ class ResultsViewer:
     # Helpers
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Label overlays (node IDs / element IDs)
+    # ------------------------------------------------------------------
+
+    def _set_node_id_labels(self, visible: bool) -> None:
+        """Build (or remove) the ``add_point_labels`` actor for node IDs."""
+        if self._plotter is None or self._scene is None:
+            return
+        if self._node_label_actor is not None:
+            try:
+                self._plotter.remove_actor(self._node_label_actor)
+            except Exception:
+                pass
+            self._node_label_actor = None
+        if not visible:
+            return
+        from .ui.theme import THEME
+        from .ui.preferences_manager import PREFERENCES as _PREF
+        try:
+            coords = self._scene.grid.points
+            ids = self._scene.node_ids
+            if coords is None or len(coords) == 0:
+                return
+            labels = [str(int(t)) for t in ids]
+            self._node_label_actor = self._plotter.add_point_labels(
+                coords, labels,
+                font_size=_PREF.current.node_label_font_size,
+                text_color=THEME.current.text,
+                shape_color=THEME.current.mantle,
+                shape_opacity=0.6,
+                show_points=False,
+                always_visible=True,
+                pickable=False,
+                name="results_node_labels",
+            )
+        except Exception:
+            self._node_label_actor = None
+
+    def _set_element_id_labels(self, visible: bool) -> None:
+        """Build (or remove) the element-ID labels at cell centroids."""
+        if self._plotter is None or self._scene is None:
+            return
+        if self._element_label_actor is not None:
+            try:
+                self._plotter.remove_actor(self._element_label_actor)
+            except Exception:
+                pass
+            self._element_label_actor = None
+        if not visible:
+            return
+        from .ui.theme import THEME
+        from .ui.preferences_manager import PREFERENCES as _PREF
+        try:
+            grid = self._scene.grid
+            ids = self._scene.cell_to_element_id
+            if grid.n_cells == 0 or ids is None or len(ids) == 0:
+                return
+            centers = grid.cell_centers().points
+            labels = [str(int(t)) for t in ids]
+            self._element_label_actor = self._plotter.add_point_labels(
+                centers, labels,
+                font_size=_PREF.current.element_label_font_size,
+                text_color=THEME.current.success,
+                shape_color=THEME.current.mantle,
+                shape_opacity=0.6,
+                show_points=False,
+                always_visible=True,
+                pickable=False,
+                name="results_element_labels",
+            )
+        except Exception:
+            self._element_label_actor = None
+
     def _default_title(self) -> str:
         path = self._results._reader_path()    # noqa: SLF001 — internal API
         if path == "(in-memory)":
@@ -631,12 +928,58 @@ class ResultsViewer:
             pass
         self._plot_pane.remove_tab(("diagram", id(diagram)))
 
-    def _on_outline_diagram_selected(self, diagram) -> None:
-        """Outline tree's selection moved to/off a Diagram row."""
+    def _on_escape(self) -> None:
+        """Esc pressed in the viewport — return to the Geometry diagram.
+
+        Sets the locked Geometry composition active in the manager,
+        re-selects its outline row, and routes the details panel to
+        show the (empty) Geometry layer stack. Active layers stay
+        attached and visible — only the focus / selected composition
+        is reset.
+        """
+        # Drop input focus so any spinner / line-edit doesn't keep
+        # holding it after Esc.
+        try:
+            from qtpy import QtWidgets
+            fw = QtWidgets.QApplication.focusWidget()
+            if fw is not None:
+                fw.clearFocus()
+        except Exception:
+            pass
+        # Switch the active composition to Geometry.
+        try:
+            from .diagrams._compositions import GEOMETRY_ID
+            if self._director is not None:
+                self._director.compositions.set_active(GEOMETRY_ID)
+        except Exception:
+            pass
+        # Outline: select the Geometry row so it visually reflects
+        # active state.
+        try:
+            outline_widget = getattr(self, "_outline", None)
+            if outline_widget is not None:
+                outline_widget._select_composition(GEOMETRY_ID)  # noqa: SLF001
+        except Exception:
+            pass
+        # Details: stack view of Geometry (empty).
+        if self._details_panel is not None:
+            try:
+                self._details_panel.show_stack()
+            except Exception:
+                pass
+
+    def _on_outline_composition_selected(self, key) -> None:
+        """Outline tree clicked the single ``Diagram 1`` row (or off it).
+
+        ``key`` is ``"default"`` for the active composition, ``None``
+        when the selection moved off the row. Routes to the details
+        dock's stack view in the active case, or idle otherwise.
+        """
         if self._details_panel is None:
             return
-        if diagram is None:
+        if key is None:
             self._details_panel.clear()
         else:
-            self._details_panel.show_diagram(diagram)
+            self._details_panel.show_stack()
+
 
