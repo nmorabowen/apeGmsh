@@ -1,59 +1,68 @@
-"""ResultsWindow — Qt shell for the post-solve viewer (B++ design).
+"""ResultsWindow — Qt shell for the post-solve viewer.
 
-Composes :class:`ViewerWindow` and replaces its single-widget central
-area with a grid that follows the B++ Implementation Guide:
+Composes :class:`ViewerWindow` and arranges its central widget +
+side docks as a Qt-native dock layout:
 
 ::
 
     ┌──────────────────────────────────────────────────────────────┐
-    │ title bar                              row 0 · 40px · span 3 │
+    │ (OS native title bar — filename / minimise / maximise / ×)   │
     ├────────────┬─────────────────────────────┬───────────────────┤
-    │ tree       │  3D viewport (centerpiece)  │ plot pane         │
-    │ (260px)    │                             │ (380px)           │
+    │ Outline    │                             │ Plots             │
+    │ (dock,     │   3D viewport               │ Details           │
+    │  left)     │   (central widget)          │ Session           │
+    │            │                             │ (docks, right)    │
     ├────────────┴─────────────────────────────┴───────────────────┤
-    │ time scrubber dock                     row 2 · 84px · span 3 │
+    │ Time Scrubber (dock, bottom — Movable | Floatable, no close) │
     └──────────────────────────────────────────────────────────────┘
 
-The class is built up across phases. B0 shipped the title bar +
-viewport + scrubber row. B1–B5 filled in the left rail (outline
-tree), the right rail (plot pane + details panel), the viewport
-HUDs (probe palette, pick readout), and the title-bar breadcrumb.
-The legacy right-side QTabWidget dock inherited from
-:class:`ViewerWindow` is hidden in B5 — the grid's third cell now
-owns the right column directly.
+The five side panels are :class:`QDockWidget` instances: movable,
+floatable, tabifiable, with object names so layout state round-trips
+through ``QSettings``. The viewport is the immovable central widget.
+There is **no** custom in-window title bar — the OS-supplied window
+title bar already shows the filename, and any utility actions live
+in the left vertical toolbar (screenshot, camera presets) or the
+``Session`` dock (theme picker, …).
 
-ResultsWindow forwards the small API surface that
-:class:`ResultsViewer` consumes (``plotter``, ``window``,
-``set_status``, ``exec``) to the wrapped ViewerWindow, so the rest
-of the viewer is oblivious to the shell change.
+Layout persists across launches under ``QSettings('apeGmsh',
+'ResultsViewer')`` keys ``layout/state`` and ``layout/geometry``.
+``reset_layout()`` restores the default arrangement captured at
+startup.
+
+Public API consumed by :class:`ResultsViewer`:
+``plotter``, ``window``, ``set_status``, ``exec``,
+``set_left_widget``, ``set_right_widget``, ``set_details_widget``,
+``set_session_widget``, ``set_bottom_widget``, ``reset_layout``.
 """
 from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
+from ._layout_metrics import LAYOUT
 from .viewer_window import ViewerWindow
 
 
 class ResultsWindow:
     """Results-viewer-specific window shell.
 
-    Wraps a :class:`ViewerWindow` and rebuilds its central widget into
-    a 3-row grid: title bar, body row (tree | viewport | plot pane),
-    bottom scrubber row.
+    Wraps a :class:`ViewerWindow` and arranges its central widget +
+    side docks: viewport as the central widget, with Outline (left),
+    Plots / Details / Session (right), and Time Scrubber (bottom) as
+    movable :class:`QDockWidget` instances.
 
     Parameters
     ----------
     title
-        Window title.
+        Window title (shown in the OS title bar).
     on_close
         Optional callback invoked when the window is closed.
     """
 
-    # Spec dimensions (B++ Implementation Guide §3 "Grid spec").
-    _TITLE_HEIGHT = 40
-    _SCRUBBER_HEIGHT = 84
-    _LEFT_WIDTH = 260
-    _RIGHT_WIDTH = 380
+    # Layout schema — bumped whenever the dock set changes (added /
+    # removed / renamed). Saved layout state is only restored if the
+    # stored version matches; mismatched state is discarded so users
+    # don't get a half-broken arrangement after a structural change.
+    _LAYOUT_SCHEMA_VERSION = 4
 
     def __init__(
         self,
@@ -61,16 +70,45 @@ class ResultsWindow:
         title: str = "Results",
         on_close: Optional[Callable[[], None]] = None,
     ) -> None:
-        self._vw = ViewerWindow(title=title, on_close=on_close)
-        self._title_text = title
+        # Wrap user-supplied on_close so we always persist layout on shutdown.
+        # ViewerWindow's _MainWindow.closeEvent calls on_close *before* tearing
+        # down the VTK interactor, so saveState() still has a live window.
+        user_on_close = on_close
 
-        # Populated by _build_grid()
-        self._title_bar: Any = None
-        self._left_holder: Any = None
-        self._right_holder: Any = None
-        self._bottom_holder: Any = None
+        def _wrapped_on_close() -> None:
+            try:
+                self._save_layout()
+            except Exception:
+                pass
+            if user_on_close is not None:
+                user_on_close()
 
-        self._build_grid()
+        self._vw = ViewerWindow(title=title, on_close=_wrapped_on_close)
+
+        # Populated by _build_layout()
+        self._dock_left: Any = None
+        self._dock_right: Any = None
+        self._dock_details: Any = None
+        self._dock_session: Any = None
+        self._dock_bottom: Any = None
+        # Host widgets inside each dock's QScrollArea — content swap target.
+        self._left_host: Any = None
+        self._right_host: Any = None
+        self._details_host: Any = None
+        self._session_host: Any = None
+        self._bottom_host: Any = None
+        # Default state captured after layout is built — target for reset_layout.
+        self._default_layout_state: Any = None
+        self._default_layout_geometry: Any = None
+        # Focus-mode snapshot — populated when Ctrl+H hides everything,
+        # consumed when Ctrl+H restores. None = currently NOT in focus mode.
+        self._focus_state: Any = None
+        # Shortcut objects kept on the instance so Qt's parent-tracked
+        # GC doesn't reap them.
+        self._focus_shortcut: Any = None
+        self._close_shortcut: Any = None
+
+        self._build_layout()
 
     # ------------------------------------------------------------------
     # Public API (forwards / new)
@@ -92,318 +130,466 @@ class ResultsWindow:
     def exec(self) -> int:
         return self._vw.exec()
 
+    def on_theme_changed(self, callback) -> None:
+        """Register a callback fired with the new ``Palette`` on theme change.
+
+        Forwards to the wrapped :class:`ViewerWindow` so consumers
+        (e.g. :class:`ResultsViewer` updating substrate colors) don't
+        need to reach into private state.
+        """
+        self._vw.on_theme_changed(callback)
+
     def set_bottom_widget(self, widget) -> None:
-        """Mount a widget in the bottom scrubber row of the grid."""
-        self._set_holder_widget(self._bottom_holder, widget)
+        """Mount a widget in the bottom (time-scrubber) dock."""
+        self._set_host_widget(self._bottom_host, widget)
 
     def set_left_widget(self, widget) -> None:
-        """Mount a widget in the left (tree) column. Used in B1+."""
-        self._set_holder_widget(self._left_holder, widget)
-        # The left column is empty during B0; show it once populated
-        # so the layout doesn't reserve dead space.
-        self._left_holder.setVisible(widget is not None)
+        """Mount a widget in the left (Outline) dock."""
+        self._set_host_widget(self._left_host, widget)
+        # Hide the dock while empty so it doesn't reserve dead space.
+        self._dock_left.setVisible(widget is not None)
 
     def set_right_widget(self, widget) -> None:
-        """Mount a widget in the right (plot pane) column. Used in B2+."""
-        self._set_holder_widget(self._right_holder, widget)
-        self._right_holder.setVisible(widget is not None)
+        """Mount a widget in the right (Plots) dock."""
+        self._set_host_widget(self._right_host, widget)
+        self._dock_right.setVisible(widget is not None)
+
+    def set_details_widget(self, widget) -> None:
+        """Mount a widget in the right-side Details dock (tabified with Plots)."""
+        self._set_host_widget(self._details_host, widget)
+        self._dock_details.setVisible(widget is not None)
+
+    def set_session_widget(self, widget) -> None:
+        """Mount a widget in the right-side Session dock (viewer-level settings)."""
+        self._set_host_widget(self._session_host, widget)
+        self._dock_session.setVisible(widget is not None)
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _build_grid(self) -> None:
-        """Replace the wrapped ViewerWindow's central widget with the grid."""
+    def _build_layout(self) -> None:
+        """Replace the wrapped ViewerWindow's central+dock layout.
+
+        - VTK interactor stays where ``ViewerWindow`` put it: as the
+          window's central widget.
+        - Outline / Plots / Details / Session / Time Scrubber become
+          :class:`QDockWidget` instances on the left, right, and bottom
+          dock areas.
+        - The legacy ``_tabs_dock`` from :class:`ViewerWindow` is removed
+          from the layout (its widget stays alive for any external reader).
+        """
         from qtpy import QtWidgets, QtCore
 
         win = self._vw.window
-        plotter = self._vw.plotter
-        interactor_widget = plotter.interactor
 
-        # The wrapped ViewerWindow installs a right-side QDockWidget
-        # holding its own QTabWidget. The B++ shell owns the right
-        # column directly via the grid's third cell, so the dock is
-        # dead weight — hide it to keep the QMainWindow from reserving
-        # width for it. Removing the dock outright would also remove
-        # the tab widget which other viewers still depend on; hiding
-        # is sufficient.
+        # ── Retire the legacy right-side tabs dock ──────────────────
+        # ViewerWindow installs its own right-side QDockWidget for tabs.
+        # We're claiming that area for the Right Rail dock, so remove
+        # the legacy one from the layout. Do not delete — the underlying
+        # QTabWidget may still be referenced by other code paths.
         legacy_dock = getattr(self._vw, "_tabs_dock", None)
         if legacy_dock is not None:
-            legacy_dock.hide()
+            try:
+                win.removeDockWidget(legacy_dock)
+                legacy_dock.hide()
+            except Exception:
+                pass
 
-        central = QtWidgets.QWidget()
-        central.setObjectName("ResultsWindowCentral")
-        grid = QtWidgets.QGridLayout(central)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(0)
-
-        # Row 0 · title bar (span 3)
-        self._title_bar = self._make_title_bar(self._title_text)
-        grid.addWidget(self._title_bar, 0, 0, 1, 3)
-
-        # Row 1 · left | viewport | right
-        self._left_holder = self._make_holder(
-            min_width=self._LEFT_WIDTH, name="ResultsLeftHolder",
+        # ── Allow nested + tabified docks for full user control ─────
+        win.setDockNestingEnabled(True)
+        win.setDockOptions(
+            QtWidgets.QMainWindow.DockOption.AnimatedDocks
+            | QtWidgets.QMainWindow.DockOption.AllowNestedDocks
+            | QtWidgets.QMainWindow.DockOption.AllowTabbedDocks
         )
-        self._left_holder.setVisible(False)   # empty until B1
-        grid.addWidget(self._left_holder, 1, 0)
-
-        # Re-parent the QtInteractor's widget into the grid. Adding it
-        # to the layout reparents it to ``central`` automatically.
-        grid.addWidget(interactor_widget, 1, 1)
-
-        self._right_holder = self._make_holder(
-            min_width=self._RIGHT_WIDTH, name="ResultsRightHolder",
-        )
-        self._right_holder.setVisible(False)   # empty until B2
-        grid.addWidget(self._right_holder, 1, 2)
-
-        # Row 2 · scrubber (span 3)
-        self._bottom_holder = self._make_holder(
-            min_height=self._SCRUBBER_HEIGHT, name="ResultsBottomHolder",
-        )
-        grid.addWidget(self._bottom_holder, 2, 0, 1, 3)
-
-        # Column sizing — fixed left / right, 1fr center.
-        grid.setColumnStretch(0, 0)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 0)
-
-        # Row sizing — fixed title / scrubber, 1fr center.
-        grid.setRowMinimumHeight(0, self._TITLE_HEIGHT)
-        grid.setRowStretch(0, 0)
-        grid.setRowStretch(1, 1)
-        grid.setRowMinimumHeight(2, self._SCRUBBER_HEIGHT)
-        grid.setRowStretch(2, 0)
-
-        win.setCentralWidget(central)
-
-    def _make_title_bar(self, title: str):
-        """Row-0 widget — stop-light dots, breadcrumb, utility icons.
-
-        Per spec §6 ``TitleBarSpan3``: three colored circles on the
-        left (purely decorative — Qt apps already get system
-        close/minimize/maximize from the OS chrome), breadcrumb text
-        in the middle, and a strip of utility icon buttons on the
-        right (theme toggle, screenshot, density toggle, help).
-        """
-        from qtpy import QtWidgets, QtCore
-
-        bar = QtWidgets.QFrame()
-        bar.setObjectName("ResultsTitleBar")
-        bar.setFixedHeight(self._TITLE_HEIGHT)
-        bar.setFrameShape(QtWidgets.QFrame.NoFrame)
-
-        lay = QtWidgets.QHBoxLayout(bar)
-        lay.setContentsMargins(14, 0, 14, 0)
-        lay.setSpacing(10)
-
-        # ── Stop-light dots (decorative) ───────────────────────────
-        dots_holder = QtWidgets.QWidget()
-        dots_lay = QtWidgets.QHBoxLayout(dots_holder)
-        dots_lay.setContentsMargins(0, 0, 0, 0)
-        dots_lay.setSpacing(6)
-        for color in ("#ff5f57", "#febc2e", "#28c840"):
-            dot = QtWidgets.QLabel()
-            dot.setObjectName("ResultsTitleDot")
-            dot.setFixedSize(QtCore.QSize(11, 11))
-            dot.setStyleSheet(
-                f"background-color: {color}; border-radius: 5px;"
-            )
-            dots_lay.addWidget(dot)
-        lay.addWidget(dots_holder)
-
-        # ── Breadcrumb label ───────────────────────────────────────
-        label = QtWidgets.QLabel(title)
-        label.setObjectName("ResultsTitleLabel")
-        label.setAlignment(QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft)
-        lay.addWidget(label)
-        lay.addStretch(1)
-
-        # ── Utility icon strip ─────────────────────────────────────
-        icons_holder = QtWidgets.QWidget()
-        icons_lay = QtWidgets.QHBoxLayout(icons_holder)
-        icons_lay.setContentsMargins(0, 0, 0, 0)
-        icons_lay.setSpacing(2)
-
-        self._btn_theme = self._make_title_icon_btn(
-            "☽", "Toggle theme (dark / light)", self._on_toggle_theme,
-        )
-        self._btn_screenshot = self._make_title_icon_btn(
-            "⎙", "Copy screenshot to clipboard", self._on_screenshot,
-        )
-        self._btn_density = self._make_title_icon_btn(
-            "⚡", "Toggle density (compact / comfortable)",
-            self._on_toggle_density,
-        )
-        self._btn_help = self._make_title_icon_btn(
-            "?", "Help / shortcuts", self._on_help,
-        )
-        for btn in (
-            self._btn_theme, self._btn_screenshot,
-            self._btn_density, self._btn_help,
+        # When the user drags one dock onto another's title bar to tabify
+        # them, place the tab strip on the LEFT edge of every dock area
+        # (sidebar style — consistent regardless of which side the area
+        # sits on). Tab text stays horizontal via the proxy style
+        # applied below to any QTabBar QMainWindow creates for tabified
+        # docks.
+        for area in (
+            QtCore.Qt.LeftDockWidgetArea,
+            QtCore.Qt.RightDockWidgetArea,
+            QtCore.Qt.TopDockWidgetArea,
+            QtCore.Qt.BottomDockWidgetArea,
         ):
-            icons_lay.addWidget(btn)
+            win.setTabPosition(area, QtWidgets.QTabWidget.TabPosition.West)
 
-        lay.addWidget(icons_holder)
+        # Apply the horizontal-text proxy style to any QTabBar that
+        # QMainWindow creates for tabified docks. The bars don't exist
+        # until two docks get tabified, so we hook the QMainWindow's
+        # showEvent / a QTimer to scan for them once tabification has
+        # happened. For now, install on existing bars too (covers the
+        # restored-layout case where docks are already tabified).
+        from .viewer_window import _make_horizontal_tab_style
+        self._htab_style = _make_horizontal_tab_style()
+        # Parent the style to the window so Qt's GC keeps it alive.
+        self._htab_style.setParent(win)
 
-        # Theme-driven styling lives in viewers/ui/theme.py
-        # (build_stylesheet); the QMainWindow's stylesheet cascades
-        # to this widget via its #ResultsTitleBar / #ResultsTitleLabel
-        # / #ResultsTitleIconBtn object names.
-        self._title_label = label
-        return bar
+        def _apply_htab_style_to_tabbars() -> None:
+            for tb in win.findChildren(QtWidgets.QTabBar):
+                # Only restyle bars whose shape is West/East (vertical).
+                shape = tb.shape()
+                if shape in (
+                    QtWidgets.QTabBar.Shape.RoundedWest,
+                    QtWidgets.QTabBar.Shape.RoundedEast,
+                    QtWidgets.QTabBar.Shape.TriangularWest,
+                    QtWidgets.QTabBar.Shape.TriangularEast,
+                ):
+                    tb.setStyle(self._htab_style)
 
-    def _make_title_icon_btn(
-        self, glyph: str, tooltip: str, callback,
-    ):
-        from qtpy import QtWidgets, QtCore
-        btn = QtWidgets.QToolButton()
-        btn.setObjectName("ResultsTitleIconBtn")
-        btn.setText(glyph)
-        btn.setToolTip(tooltip)
-        btn.setFixedSize(QtCore.QSize(26, 24))
-        btn.setCursor(QtCore.Qt.PointingHandCursor)
-        btn.clicked.connect(callback)
-        return btn
+        # Apply now (covers restored layouts with already-tabified docks)
+        # and again shortly after Qt finishes laying out.
+        _apply_htab_style_to_tabbars()
+        QtCore.QTimer.singleShot(0, _apply_htab_style_to_tabbars)
+        self._apply_htab_style_to_tabbars = _apply_htab_style_to_tabbars
 
-    # ------------------------------------------------------------------
-    # Title-bar utility callbacks
-    # ------------------------------------------------------------------
+        # Catch tab bars created LATER (when the user drags one dock onto
+        # another to tabify them at runtime). QMainWindow creates the
+        # QTabBar as a child as part of that operation, so we listen for
+        # ChildAdded events and restyle any new tabbar.
+        outer_self = self
 
-    def _on_toggle_theme(self) -> None:
-        """Cycle through the registered themes (dark → paper → next)."""
-        from .theme import THEME, PALETTES
-        names = list(PALETTES.keys())
-        if not names:
-            return
+        class _TabBarChildFilter(QtCore.QObject):
+            def eventFilter(self, _obj, event):
+                if event.type() == QtCore.QEvent.Type.ChildAdded:
+                    child = event.child()
+                    if isinstance(child, QtWidgets.QTabBar):
+                        # Defer one tick — the tab bar's shape is set
+                        # *after* the ChildAdded event fires.
+                        QtCore.QTimer.singleShot(
+                            0, outer_self._apply_htab_style_to_tabbars,
+                        )
+                return False
+
+        self._tabbar_filter = _TabBarChildFilter(win)
+        win.installEventFilter(self._tabbar_filter)
+
+        # ── Five docks ──────────────────────────────────────────────
+        QDW = QtWidgets.QDockWidget
+        movable_floatable = (
+            QDW.DockWidgetFeature.DockWidgetMovable
+            | QDW.DockWidgetFeature.DockWidgetFloatable
+        )
+        with_close = movable_floatable | QDW.DockWidgetFeature.DockWidgetClosable
+
+        self._dock_left, self._left_host = self._make_dock(
+            "Outline", "dock_results_outline",
+            min_width=LAYOUT.outline_min_width,
+            features=with_close,
+        )
+        self._dock_left.setVisible(False)  # empty until ResultsViewer mounts it
+
+        self._dock_right, self._right_host = self._make_dock(
+            "Plots", "dock_results_right",
+            min_width=LAYOUT.right_min_width,
+            features=with_close,
+        )
+        self._dock_right.setVisible(False)  # empty until ResultsViewer mounts it
+
+        self._dock_details, self._details_host = self._make_dock(
+            "Details", "dock_results_details",
+            min_width=LAYOUT.right_min_width,
+            features=with_close,
+        )
+        self._dock_details.setVisible(False)  # empty until ResultsViewer mounts it
+
+        # Session: viewer-level settings (theme picker, ...). Tabified
+        # by default with Plots / Details on the right side; user can
+        # detach.
+        self._dock_session, self._session_host = self._make_dock(
+            "Session", "dock_results_session",
+            min_width=LAYOUT.right_min_width,
+            features=with_close,
+        )
+        self._dock_session.setVisible(False)  # empty until ResultsViewer mounts it
+
+        # Bottom: time scrubber. NOT closable — losing the playhead is a
+        # usability footgun. Floatable so power users can pop it out.
+        self._dock_bottom, self._bottom_host = self._make_dock(
+            "Time Scrubber", "dock_results_scrubber",
+            min_height=LAYOUT.scrubber_min_height,
+            features=movable_floatable,
+        )
+
+        win.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self._dock_left)
+        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_right)
+        # Split the right area so Plots (top) and Details (bottom) are
+        # independent docks by default — the user can drag one onto the
+        # other's title bar to tabify, and that drag is then preserved
+        # by saved layout state.
+        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_details)
+        win.splitDockWidget(
+            self._dock_right, self._dock_details, QtCore.Qt.Vertical,
+        )
+        # Session starts tabified with Details — viewer-level settings
+        # are an occasional-use surface, so sharing a tab strip with
+        # Details (also occasional) keeps the right column compact.
+        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_session)
+        win.tabifyDockWidget(self._dock_details, self._dock_session)
+        # Keep Details as the visible tab on first launch.
+        self._dock_details.raise_()
+
+        win.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._dock_bottom)
+
+        # Initial widths from LayoutMetrics.
         try:
-            idx = names.index(THEME.current.name)
-        except ValueError:
-            idx = -1
-        THEME.set_theme(names[(idx + 1) % len(names)])
-
-    def _on_screenshot(self) -> None:
-        """Forward to the wrapped ViewerWindow's clipboard screenshot."""
-        try:
-            self._vw._screenshot()
+            win.resizeDocks(
+                [self._dock_left, self._dock_right],
+                [LAYOUT.outline_initial_width, LAYOUT.right_initial_width],
+                QtCore.Qt.Horizontal,
+            )
         except Exception:
             pass
 
-    def _on_toggle_density(self) -> None:
-        """Cycle compact / comfortable density."""
+        # ── Capture default layout, then restore prior user layout ──
         try:
-            from .density import DENSITY
+            self._default_layout_state = win.saveState()
+            self._default_layout_geometry = win.saveGeometry()
         except Exception:
-            return
-        DENSITY.toggle()
+            self._default_layout_state = None
+            self._default_layout_geometry = None
+        self._restore_layout()
 
-    def _on_help(self) -> None:
-        """Show a small modal with shortcuts + customisation entry points.
+        # ── Focus-mode shortcut (Ctrl+H) ────────────────────────────
+        self._install_focus_shortcut()
 
-        ResultsViewer has no Session tab (the right dock retired in B5),
-        so the Theme editor and Global preferences dialogs — which
-        MeshViewer / ModelViewer expose via tab buttons — would be
-        unreachable from here without a discovery hook. The help
-        dialog doubles as that hook: clear shortcut reference plus two
-        buttons launching the respective editors.
-        """
-        from qtpy import QtWidgets
-        dlg = QtWidgets.QDialog(self.window)
-        dlg.setWindowTitle("ResultsViewer — shortcuts")
-        dlg.setModal(True)
-        dlg.setMinimumWidth(420)
-        layout = QtWidgets.QVBoxLayout(dlg)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(8)
-
-        text = QtWidgets.QLabel(
-            "<b>Pick + measure</b><br/>"
-            "&nbsp;&nbsp;Click&nbsp;— select node / element<br/>"
-            "&nbsp;&nbsp;Shift&nbsp;+&nbsp;click — open time-history "
-            "in plot pane<br/><br/>"
-            "<b>Layout</b><br/>"
-            "&nbsp;&nbsp;Ctrl + Shift + L — collapse / restore left rail"
-            "<br/>"
-            "&nbsp;&nbsp;Ctrl + Shift + R — collapse / restore right "
-            "rail<br/><br/>"
-            "<b>Probe modes</b> (top-right HUD)<br/>"
-            "&nbsp;&nbsp;Point / Line / Slice — single-click to "
-            "activate, click again to stop."
-        )
-        text.setWordWrap(True)
-        # QLabel auto-detects rich text from the <b>/<br> tags; no
-        # explicit setTextFormat needed.
-        layout.addWidget(text)
-
-        # Customisation actions — same dialogs MeshViewer / ModelViewer
-        # surface in their Session tabs.
-        btn_row = QtWidgets.QHBoxLayout()
-        btn_row.addStretch(1)
-
-        btn_theme = QtWidgets.QPushButton("Theme editor…")
-        def _open_theme():
-            try:
-                from .theme_editor_dialog import open_theme_editor
-                open_theme_editor(self.window)
-            except Exception:
-                pass
-        btn_theme.clicked.connect(_open_theme)
-        btn_row.addWidget(btn_theme)
-
-        btn_prefs = QtWidgets.QPushButton("Global preferences…")
-        def _open_prefs():
-            try:
-                from .preferences_dialog import open_preferences_dialog
-                open_preferences_dialog(self.window)
-            except Exception:
-                pass
-        btn_prefs.clicked.connect(_open_prefs)
-        btn_row.addWidget(btn_prefs)
-
-        btn_close = QtWidgets.QPushButton("Close")
-        btn_close.clicked.connect(dlg.accept)
-        btn_close.setDefault(True)
-        btn_row.addWidget(btn_close)
-
-        layout.addLayout(btn_row)
-        dlg.exec_()
-
-    def _make_holder(
+    def _make_dock(
         self,
+        title: str,
+        object_name: str,
         *,
         min_width: int = 0,
         min_height: int = 0,
-        name: str = "",
+        features,
     ):
-        """Empty container widget for one grid cell."""
-        from qtpy import QtWidgets
+        """Build a ``QDockWidget`` whose content is a scrollable host widget.
 
-        w = QtWidgets.QWidget()
-        if name:
-            w.setObjectName(name)
+        Returns ``(dock, host)``. Mount content with
+        ``self._set_host_widget(host, widget)``.
+        """
+        from qtpy import QtWidgets, QtCore
+
+        host = QtWidgets.QWidget()
+        host.setObjectName(f"{object_name}_host")
+        host_lay = QtWidgets.QVBoxLayout(host)
+        host_lay.setContentsMargins(0, 0, 0, 0)
+        host_lay.setSpacing(0)
+
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidget(host)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+        )
+        scroll.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+        )
+
+        dock = QtWidgets.QDockWidget(title)
+        dock.setObjectName(object_name)
+        dock.setWidget(scroll)
+        dock.setAllowedAreas(QtCore.Qt.DockWidgetArea.AllDockWidgetAreas)
+        dock.setFeatures(features)
         if min_width:
-            w.setMinimumWidth(min_width)
+            dock.setMinimumWidth(min_width)
         if min_height:
-            w.setMinimumHeight(min_height)
-        lay = QtWidgets.QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        return w
+            dock.setMinimumHeight(min_height)
+        return dock, host
 
     @staticmethod
-    def _set_holder_widget(holder, widget) -> None:
-        """Replace whatever's currently inside ``holder`` with ``widget``."""
-        layout = holder.layout()
+    def _set_host_widget(host, widget) -> None:
+        """Replace whatever's currently inside ``host`` with ``widget``.
+
+        The widget is added with stretch=1 and an Expanding size policy so
+        it grows to fill the dock — without this, panels with default
+        ``Preferred`` policy sit at the top with empty space below.
+        """
+        from qtpy import QtWidgets
+        layout = host.layout()
         while layout.count():
             item = layout.takeAt(0)
             old = item.widget()
             if old is not None:
                 old.setParent(None)
         if widget is not None:
-            layout.addWidget(widget)
+            try:
+                widget.setSizePolicy(
+                    QtWidgets.QSizePolicy.Policy.Expanding,
+                    QtWidgets.QSizePolicy.Policy.Expanding,
+                )
+            except Exception:
+                pass
+            layout.addWidget(widget, stretch=1)
 
-    def set_title_text(self, text: str) -> None:
-        """Update the title-bar text. Hooked up in B5 (breadcrumb)."""
-        if self._title_label is not None:
-            self._title_label.setText(text)
+    # ------------------------------------------------------------------
+    # Layout persistence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _layout_settings():
+        """Return the QSettings handle used for dock layout persistence."""
+        from qtpy.QtCore import QSettings
+        return QSettings("apeGmsh", "ResultsViewer")
+
+    def _save_layout(self) -> None:
+        """Persist the current dock arrangement and window geometry."""
+        win = self._vw.window
+        s = self._layout_settings()
+        try:
+            s.setValue("layout/schema_version", self._LAYOUT_SCHEMA_VERSION)
+            s.setValue("layout/geometry", win.saveGeometry())
+            s.setValue("layout/state", win.saveState())
+        except Exception:
+            pass
+
+    def _restore_layout(self) -> None:
+        """Restore the user's last dock arrangement, if any.
+
+        Skips restoration if the stored schema version doesn't match the
+        current build — applying a v1 state to a v2 layout produces
+        broken arrangements (e.g. tabified docks getting un-tabbed).
+        """
+        win = self._vw.window
+        s = self._layout_settings()
+
+        stored_version = s.value("layout/schema_version")
+        try:
+            stored_version_int = int(stored_version) if stored_version is not None else None
+        except (TypeError, ValueError):
+            stored_version_int = None
+        if stored_version_int != self._LAYOUT_SCHEMA_VERSION:
+            # Stored state is from a different layout schema — discard.
+            return
+
+        geom = s.value("layout/geometry")
+        state = s.value("layout/state")
+        if geom is not None:
+            try:
+                win.restoreGeometry(geom)
+            except Exception:
+                pass
+        if state is not None:
+            try:
+                win.restoreState(state)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Focus mode (Ctrl+H — hide every dock + left toolbar, then restore)
+    # ------------------------------------------------------------------
+
+    def _install_focus_shortcut(self) -> None:
+        """Wire Ctrl+H to :meth:`toggle_focus_mode` and Q to close.
+
+        Uses ``Qt.ApplicationShortcut`` because the VTK ``QtInteractor``
+        intercepts keyboard events at native level — Qt's default
+        ``WindowShortcut`` would never see the keys while the viewport
+        has focus.
+        """
+        from qtpy import QtWidgets, QtGui, QtCore
+        sc = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+H"), self._vw.window)
+        sc.setContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
+        sc.activated.connect(self.toggle_focus_mode)
+        self._focus_shortcut = sc
+
+        # Bare-Q closes the window. Bare keys are aggressive — a Spin/
+        # LineEdit being focused would still receive the key as input
+        # under ApplicationShortcut, so we guard with a focus check.
+        sc_q = QtWidgets.QShortcut(QtGui.QKeySequence("Q"), self._vw.window)
+        sc_q.setContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
+        sc_q.activated.connect(self._on_q_pressed)
+        self._close_shortcut = sc_q
+
+    def _on_q_pressed(self) -> None:
+        """Close the window — but skip if the user is typing in a field."""
+        from qtpy import QtWidgets
+        fw = QtWidgets.QApplication.focusWidget()
+        if isinstance(fw, (
+            QtWidgets.QLineEdit,
+            QtWidgets.QSpinBox,
+            QtWidgets.QDoubleSpinBox,
+            QtWidgets.QPlainTextEdit,
+            QtWidgets.QTextEdit,
+            QtWidgets.QComboBox,
+        )):
+            return
+        try:
+            self._vw.window.close()
+        except Exception:
+            pass
+
+    def toggle_focus_mode(self) -> None:
+        """Hide every dock + the left toolbar (focus mode), or restore.
+
+        On first call, snapshots which docks / toolbar were visible
+        and hides them. On second call, restores exactly that snapshot
+        — so a user who manually hid (e.g.) the Session dock before
+        entering focus mode comes back to the same arrangement.
+        """
+        docks = (
+            self._dock_left,
+            self._dock_right,
+            self._dock_details,
+            self._dock_session,
+            self._dock_bottom,
+        )
+        toolbar = getattr(self._vw, "_toolbar", None)
+
+        if self._focus_state is None:
+            # Currently in normal mode — capture state, hide everything.
+            self._focus_state = {
+                "docks": [d for d in docks if d is not None and d.isVisible()],
+                "toolbar_visible": (
+                    toolbar.isVisible() if toolbar is not None else False
+                ),
+            }
+            for d in docks:
+                if d is not None:
+                    d.setVisible(False)
+            if toolbar is not None:
+                toolbar.setVisible(False)
+            try:
+                self.set_status("Focus mode — Ctrl+H to restore", 3000)
+            except Exception:
+                pass
+        else:
+            # Restore the snapshot.
+            for d in self._focus_state["docks"]:
+                if d is not None:
+                    d.setVisible(True)
+            if toolbar is not None:
+                toolbar.setVisible(self._focus_state["toolbar_visible"])
+            self._focus_state = None
+            try:
+                self.set_status("Focus mode off", 2000)
+            except Exception:
+                pass
+
+    def reset_layout(self) -> None:
+        """Restore the default dock arrangement captured at startup."""
+        win = self._vw.window
+        if self._default_layout_state is not None:
+            try:
+                win.restoreState(self._default_layout_state)
+            except Exception:
+                pass
+        # Re-show every dock — a previous run may have closed one via
+        # the title-bar × button.
+        for dock in (
+            self._dock_left,
+            self._dock_right,
+            self._dock_details,
+            self._dock_session,
+            self._dock_bottom,
+        ):
+            if dock is not None:
+                dock.setVisible(True)
+        try:
+            self.set_status("Layout reset to default", 3000)
+        except Exception:
+            pass
+

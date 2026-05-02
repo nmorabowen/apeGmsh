@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 
 from ..diagrams._base import Diagram
+from ._layout_metrics import LAYOUT
 
 if TYPE_CHECKING:
     from ._diagram_settings_tab import DiagramSettingsTab
@@ -34,15 +35,15 @@ class DetailsPanel:
         re-hosted as the body for diagram selections.
     """
 
-    _MAX_HEIGHT = 220   # spec §4.4
-
     def __init__(self, settings_tab: "DiagramSettingsTab") -> None:
         QtWidgets, QtCore = _qt()
         self._settings_tab = settings_tab
 
         widget = QtWidgets.QWidget()
         widget.setObjectName("DetailsPanel")
-        widget.setMaximumHeight(self._MAX_HEIGHT)
+        # Note: the legacy 220-px height cap (B++ spec §4.4) was removed
+        # when the panel moved into its own QDockWidget — the dock now
+        # owns sizing, so the inner widget is free to fill the dock.
         outer = QtWidgets.QVBoxLayout(widget)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -50,7 +51,7 @@ class DetailsPanel:
         # ── Header ─────────────────────────────────────────────────
         header = QtWidgets.QFrame()
         header.setObjectName("DetailsHeader")
-        header.setFixedHeight(24)
+        header.setFixedHeight(LAYOUT.details_header_height)
         header_lay = QtWidgets.QHBoxLayout(header)
         header_lay.setContentsMargins(10, 0, 10, 0)
         header_lay.setSpacing(6)

@@ -62,7 +62,10 @@ class DiagramSettingsTab:
             "Select a diagram in the Diagrams tab to edit its settings."
         )
         empty_hint.setWordWrap(True)
-        empty_hint.setStyleSheet("color: gray; font-style: italic;")
+        # Color + italic come from the theme stylesheet via the
+        # DiagramSettingsEmptyHint objectName so the hint recolors
+        # with the active palette.
+        empty_hint.setObjectName("DiagramSettingsEmptyHint")
         layout.addWidget(empty_hint)
         self._empty_hint = empty_hint
 
@@ -138,6 +141,13 @@ class DiagramSettingsTab:
         # Always available below the kind-specific panel so users can
         # snapshot the current style of any diagram.
         self._build_preset_row(d)
+
+        # ── Trailing stretch ───────────────────────────────────────
+        # Without this, excess vertical space (when the dock is taller
+        # than the form needs) creates a visible gap *between* widgets.
+        # The stretch absorbs the slack at the end so all controls
+        # remain packed at the top of the panel.
+        self._content_layout.addStretch(1)
 
     # ------------------------------------------------------------------
     # Contour panel
@@ -228,23 +238,6 @@ class DiagramSettingsTab:
         )
         form.addRow("Scale:", scale_spin)
 
-        # Quick scale presets
-        preset_row = QtWidgets.QHBoxLayout()
-        for s in (1, 10, 100, 1000):
-            btn = QtWidgets.QPushButton(f"× {s}")
-            btn.setMaximumWidth(60)
-
-            def _make_handler(value: float):
-                def _handler() -> None:
-                    scale_spin.setValue(value)
-                    self._safe_call(d.set_scale, value)
-                return _handler
-
-            btn.clicked.connect(_make_handler(float(s)))
-            preset_row.addWidget(btn)
-        preset_row.addStretch(1)
-        self._content_layout.addLayout(preset_row)
-
         # Show-undeformed checkbox
         chk = QtWidgets.QCheckBox("Show undeformed reference")
         style = d.spec.style
@@ -278,24 +271,6 @@ class DiagramSettingsTab:
             lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
         )
         form.addRow("Scale:", scale_spin)
-
-        # Quick scale presets
-        preset_row = QtWidgets.QHBoxLayout()
-        for s in (0.1, 1, 10, 100):
-            btn = QtWidgets.QPushButton(f"× {s}")
-            btn.setMaximumWidth(60)
-
-            def _make_handler(value: float):
-                def _handler() -> None:
-                    new_scale = float(d.current_scale()) * value
-                    scale_spin.setValue(new_scale)
-                    self._safe_call(d.set_scale, new_scale)
-                return _handler
-
-            btn.clicked.connect(_make_handler(float(s)))
-            preset_row.addWidget(btn)
-        preset_row.addStretch(1)
-        self._content_layout.addLayout(preset_row)
 
         # Fill axis
         axis_combo = QtWidgets.QComboBox()

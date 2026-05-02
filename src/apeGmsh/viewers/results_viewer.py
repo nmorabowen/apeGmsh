@@ -71,6 +71,7 @@ class ResultsViewer:
         self._substrate_actor: Any = None
         self._plot_pane: Any = None
         self._details_panel: Any = None
+        self._session_panel: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
         # (node_id, component) -> TimeHistoryPanel; user-closable from
@@ -161,21 +162,31 @@ class ResultsViewer:
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
         outline.bind_plot_pane(plot_pane)
-        right_rail = self._build_right_rail(plot_pane.widget, details.widget)
-        win.set_right_widget(right_rail)
+        win.set_right_widget(plot_pane.widget)
+        win.set_details_widget(details.widget)
         self._plot_pane = plot_pane
         self._details_panel = details
+
+        # ── Session dock (viewer-level settings — theme, ...) ──────
+        from .ui._session_panel import SessionPanel
+        session = SessionPanel()
+        win.set_session_widget(session.widget)
+        self._session_panel = session
 
         # ── Plotter — substrate mesh ────────────────────────────────
         plotter = win.plotter
         self._plotter = plotter
 
         prefs = _PREF.current
+        # Substrate colors come from the active palette so the FEM mesh
+        # recolors when the user switches theme (subscribed below).
+        from .ui.theme import THEME, _hex_to_rgb
+        palette = THEME.current
         actor = plotter.add_mesh(
             scene.grid,
-            color="lightgray",
+            color=palette.substrate_color,
             show_edges=True,
-            edge_color="#444444",
+            edge_color=palette.substrate_edge_color,
             line_width=prefs.mesh_line_width,
             opacity=prefs.mesh_surface_opacity,
             lighting=True,
@@ -184,6 +195,23 @@ class ResultsViewer:
             reset_camera=True,
         )
         self._substrate_actor = actor
+
+        # Re-tint the substrate when the theme changes. Hex → 0..1 RGB
+        # for vtkProperty.SetColor / SetEdgeColor.
+        def _refresh_substrate_colors(p) -> None:
+            if self._substrate_actor is None:
+                return
+            try:
+                prop = self._substrate_actor.GetProperty()
+                r, g, b = _hex_to_rgb(p.substrate_color)
+                er, eg, eb = _hex_to_rgb(p.substrate_edge_color)
+                prop.SetColor(r / 255.0, g / 255.0, b / 255.0)
+                prop.SetEdgeColor(er / 255.0, eg / 255.0, eb / 255.0)
+                if plotter is not None:
+                    plotter.render()
+            except Exception:
+                pass
+        win.on_theme_changed(_refresh_substrate_colors)
 
         # ── Time scrubber row (bottom of grid) ──────────────────────
         from .ui._time_scrubber import TimeScrubberDock
@@ -612,14 +640,3 @@ class ResultsViewer:
         else:
             self._details_panel.show_diagram(diagram)
 
-    def _build_right_rail(self, plot_pane_widget, details_widget):
-        """Vertical stack: plot pane (top) + details (bottom)."""
-        from qtpy import QtWidgets
-        rail = QtWidgets.QWidget()
-        rail.setObjectName("ResultsRightRail")
-        lay = QtWidgets.QVBoxLayout(rail)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(plot_pane_widget, stretch=1)
-        lay.addWidget(details_widget, stretch=0)
-        return rail

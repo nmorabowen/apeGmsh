@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Hashable, Optional
 
+from ._layout_metrics import LAYOUT
+
 
 def _qt():
     from qtpy import QtWidgets, QtCore
@@ -36,7 +38,9 @@ def _qt():
 class PlotPane:
     """Vertical-list tab pane hosting 2-D plot widgets."""
 
-    _ROW_HEIGHT = 24
+    # Kept as a class attribute for backwards-compat with any external
+    # readers; sourced from LayoutMetrics.
+    _ROW_HEIGHT = LAYOUT.plot_row_height
 
     def __init__(self) -> None:
         QtWidgets, QtCore = _qt()
@@ -50,7 +54,7 @@ class PlotPane:
         # ── Header ─────────────────────────────────────────────────
         header = QtWidgets.QFrame()
         header.setObjectName("PlotPaneHeader")
-        header.setFixedHeight(28)
+        header.setFixedHeight(LAYOUT.panel_header_height)
         header_lay = QtWidgets.QHBoxLayout(header)
         header_lay.setContentsMargins(10, 0, 6, 0)
         header_lay.setSpacing(6)
@@ -76,7 +80,7 @@ class PlotPane:
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         scroll.setWidget(tab_holder)
-        scroll.setMaximumHeight(self._ROW_HEIGHT * 6)
+        scroll.setMaximumHeight(self._ROW_HEIGHT * LAYOUT.plot_tab_list_max_rows)
         outer.addWidget(scroll)
 
         # ── "+ New plot" row (B5 wires this) ───────────────────────

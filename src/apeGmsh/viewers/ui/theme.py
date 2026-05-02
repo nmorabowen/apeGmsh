@@ -93,6 +93,12 @@ class Palette:
     # ── Viewport — rendering intensity ──────────────────────────────
     ao_intensity: Literal["none", "light", "moderate"]
     corner_triad_default: bool              # default visibility of corner gizmo
+    # ── Viewport — ResultsViewer substrate (FEM mesh) ───────────────
+    # Defaults match the legacy hardcoded values in results_viewer.py,
+    # so every existing palette continues to render identically until
+    # individual themes choose to override.
+    substrate_color: str = "#bfbfbf"        # surface fill of the FEM mesh
+    substrate_edge_color: str = "#444444"   # element-edge line color
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -608,6 +614,16 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     else:
         d_row_h, d_pad_x, d_pad_y = 22, 8, 4
         d_fs_body, d_fs_head = 11.5, 11.0
+
+    # LayoutMetrics — corners + dock-separator width. Imported here
+    # rather than at module top because theme.py is loaded very early
+    # and we want to avoid widening that import surface.
+    from ._layout_metrics import LAYOUT
+    rad = LAYOUT.corner_radius
+    rad_sm = LAYOUT.corner_radius_small
+    rad_lg = LAYOUT.corner_radius_large
+    sep_w = LAYOUT.dock_separator_width
+    split_w = LAYOUT.splitter_handle_width
     return f"""
     QMainWindow {{
         background-color: {p.base};
@@ -660,12 +676,31 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     }}
     QSplitter::handle {{
         background-color: {p.surface0};
-        width: 2px;
-        height: 2px;
+        width: {split_w}px;
+        height: {split_w}px;
+    }}
+    /* Dock separator — the gap (and drag-handle) between adjacent
+       QDockWidgets, and between docks and the central widget. Width
+       comes from LayoutMetrics.dock_separator_width. */
+    QMainWindow::separator {{
+        background-color: {p.surface0};
+        width: {sep_w}px;
+        height: {sep_w}px;
+    }}
+    QMainWindow::separator:hover {{
+        background-color: {p.accent};
     }}
     QTabWidget::pane {{
         border: 1px solid {p.surface0};
         background: {p.base};
+    }}
+    /* Tab bar background — the empty strip beyond the last tab.
+       Without this, QTabBar inherits Qt's default (white on Windows),
+       which is the white strip visible to the right of tabified
+       docks like Plots/Details. */
+    QTabBar {{
+        background: {p.base};
+        border: none;
     }}
     QTabBar::tab {{
         background: {p.mantle};
@@ -683,11 +718,46 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     }}
     QDockWidget {{
         color: {p.text};
+        titlebar-close-icon: url(none);
+        titlebar-normal-icon: url(none);
     }}
+    /* Dock title bar — must be obviously visible since this is the
+       drag handle for moving / floating / tabifying the dock.
+       Stronger contrast + explicit min-height guarantees a grabbable
+       strip even when the surrounding chrome is the same hue family. */
     QDockWidget::title {{
-        background: {p.mantle};
-        padding: 4px;
-        border: 1px solid {p.surface0};
+        background: {p.surface1};
+        color: {p.text};
+        padding: 6px 10px;
+        border-top: 1px solid {p.accent};
+        border-bottom: 1px solid {p.surface0};
+        border-top-left-radius: {rad}px;
+        border-top-right-radius: {rad}px;
+        text-align: left;
+        font-weight: bold;
+        font-size: 11px;
+    }}
+    QDockWidget::close-button, QDockWidget::float-button {{
+        background: {p.surface0};
+        border: 1px solid {p.surface1};
+        border-radius: {rad_sm}px;
+        padding: 1px;
+    }}
+    QDockWidget::close-button:hover, QDockWidget::float-button:hover {{
+        background: {p.accent};
+    }}
+    /* Dock interior — without these rules, the QScrollArea wrapping
+       each panel falls through to Qt's default (white on Windows),
+       producing visible color seams against the themed chrome. */
+    QScrollArea {{
+        background-color: {p.base};
+        border: none;
+    }}
+    QScrollArea > QWidget > QWidget {{
+        background-color: {p.base};
+    }}
+    QStackedWidget {{
+        background-color: {p.base};
     }}
     /* ── Form widgets ────────────────────────────────────── */
     QComboBox {{
@@ -776,7 +846,7 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         background-color: {p.surface0};
         color: {p.text};
         border: 1px solid {p.surface1};
-        border-radius: 3px;
+        border-radius: {rad}px;
         padding: 3px 8px;
         font-size: 11px;
     }}
@@ -855,14 +925,12 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
         color: {p.text};
     }}
 
-    /* ── Results viewer chrome (B0–B3 widgets) ─────────────── */
-    QFrame#ResultsTitleBar {{
-        background-color: {p.mantle};
-        border-bottom: 1px solid {p.surface0};
-    }}
-    QLabel#ResultsTitleLabel {{
-        color: {p.text};
-        font-size: 12px;
+    /* ── Results viewer chrome ─────────────────────────────── */
+    /* DiagramSettingsTab empty-state hint — italic muted text shown
+       when no diagram is selected. Themed via overlay color. */
+    QLabel#DiagramSettingsEmptyHint {{
+        color: {p.overlay};
+        font-style: italic;
     }}
 
     /* Outline tree (left rail) */
@@ -1025,23 +1093,6 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     }}
     QToolButton#OutlineKindBtn:pressed {{
         background-color: {p.surface2};
-    }}
-
-    /* Title-bar utility icons (top-row strip) */
-    QToolButton#ResultsTitleIconBtn {{
-        background: transparent;
-        border: 1px solid transparent;
-        border-radius: 4px;
-        color: {p.subtext};
-        font-size: 13px;
-    }}
-    QToolButton#ResultsTitleIconBtn:hover {{
-        background-color: {p.surface0};
-        color: {p.text};
-        border-color: {p.surface1};
-    }}
-    QToolButton#ResultsTitleIconBtn:pressed {{
-        background-color: {p.surface1};
     }}
 
     /* Density-driven sizing (B++ §5 RV_DENSITY) */

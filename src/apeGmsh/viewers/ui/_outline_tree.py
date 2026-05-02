@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from .._failures import safe_slot
 from ..diagrams._base import Diagram
+from ._layout_metrics import LAYOUT
 
 if TYPE_CHECKING:
     from ..diagrams._director import ResultsDirector
@@ -71,7 +72,7 @@ class OutlineTree:
         # ── Header row: "OUTLINE" label + Insert button ─────────────
         header = QtWidgets.QFrame()
         header.setObjectName("OutlineHeader")
-        header.setFixedHeight(28)
+        header.setFixedHeight(LAYOUT.panel_header_height)
         header_lay = QtWidgets.QHBoxLayout(header)
         header_lay.setContentsMargins(10, 0, 6, 0)
         header_lay.setSpacing(6)
@@ -493,7 +494,7 @@ class OutlineTree:
                 QtWidgets.QSizePolicy.Expanding,
                 QtWidgets.QSizePolicy.Fixed,
             )
-            btn.setMinimumHeight(28)
+            btn.setMinimumHeight(LAYOUT.panel_header_height)
             btn.clicked.connect(
                 lambda _checked=False, kid=entry.kind_id: self._on_kind_chosen(kid)
             )

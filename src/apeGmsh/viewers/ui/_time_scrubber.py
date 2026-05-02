@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
+from ._layout_metrics import LAYOUT
+
 if TYPE_CHECKING:
     from ..diagrams._director import ResultsDirector
 
@@ -123,14 +125,14 @@ class TimeScrubberDock:
         layout.addWidget(self._slider, stretch=1)
 
         self._step_label = QtWidgets.QLabel("0 / 0")
-        self._step_label.setMinimumWidth(80)
+        self._step_label.setMinimumWidth(LAYOUT.scrubber_step_label_min_width)
         self._step_label.setAlignment(
             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
         )
         layout.addWidget(self._step_label)
 
         self._time_label = QtWidgets.QLabel("t = —")
-        self._time_label.setMinimumWidth(140)
+        self._time_label.setMinimumWidth(LAYOUT.scrubber_time_label_min_width)
         self._time_label.setAlignment(
             QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter
         )
