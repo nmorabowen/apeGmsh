@@ -165,10 +165,29 @@ def compute_global_coords_from_arrays(
     )
 
     # ── Per-element info: type code + node coords ─────────────────
+    # MPCO-derived FEMData carries synthetic negative codes (e.g.
+    # ``-33`` for Tri31) that don't exist in the Gmsh-keyed shape
+    # function catalog. Map them to the equivalent Gmsh linear code
+    # by (dim, npe) so the shape function evaluation hits instead of
+    # falling through to the bbox approximation.
+    _GMSH_CODE_BY_DIM_NPE: dict[tuple[int, int], int] = {
+        (1, 2): 1,   # Line2
+        (2, 3): 2,   # Tri3
+        (2, 4): 3,   # Quad4
+        (3, 4): 4,   # Tet4
+        (3, 8): 5,   # Hex8
+    }
     needed = set(int(e) for e in np.unique(eids))
     eid_info: dict[int, tuple[int, ndarray]] = {}
     for group in fem.elements:
-        type_code = int(group.element_type.code)
+        et = group.element_type
+        raw_code = int(et.code)
+        type_code = (
+            raw_code if raw_code >= 0
+            else _GMSH_CODE_BY_DIM_NPE.get(
+                (int(et.dim), int(et.npe)), raw_code,
+            )
+        )
         ids = np.asarray(group.ids, dtype=np.int64)
         conn = np.asarray(group.connectivity, dtype=np.int64)
         for k in range(len(group)):
