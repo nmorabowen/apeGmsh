@@ -2,8 +2,15 @@
 
 Reads :class:`GaussSlab`, calls ``slab.global_coords(fem)`` to map
 natural coords to world coords (proper shape fns for hex8 / quad4;
-centroid + bbox approximation otherwise), and adds a colored point
-cloud per GP.
+centroid + bbox approximation otherwise), and renders one **real**
+sphere glyph per GP — sized in world units off the model diagonal.
+
+We deliberately don't use ``render_points_as_spheres=True`` here: on
+co-planar (z=0) 2-D models that flag tends to lose its billboards to
+z-fighting with the substrate fill, and the only mitigation
+(``SetResolveCoincidentTopology…``) is global VTK state and ends up
+also disturbing the wireframe overlay. Real sphere geometry sits a
+finite radius above / below the plane and renders unambiguously.
 """
 from __future__ import annotations
 
@@ -39,9 +46,12 @@ class GaussPointDiagram(Diagram):
             )
         super().__init__(spec, results)
 
-        self._cloud: Optional[pv.PolyData] = None
+        self._cloud: Optional[pv.PolyData] = None         # input centers
+        self._glyphs: Optional[pv.PolyData] = None        # actor's input
         self._actor: Any = None
-        self._scalar_array: Optional[ndarray] = None
+        self._scalar_array: Optional[ndarray] = None      # per-center scalar
+        self._glyph_scalar_array: Optional[ndarray] = None  # per-glyph-point
+        self._pts_per_center: int = 0
         self._element_ids_to_read: tuple[int, ...] = ()
         self._initial_clim: Optional[tuple[float, float]] = None
         self._runtime_clim: Optional[tuple[float, float]] = None
@@ -51,6 +61,11 @@ class GaussPointDiagram(Diagram):
         # re-reading the slab from disk.
         self._gp_element_index: Optional[ndarray] = None
         self._gp_natural_coords: Optional[ndarray] = None
+        # Reference world coords + base glyph points captured at attach;
+        # used by sync_substrate_points to translate each sphere when
+        # the substrate deforms.
+        self._gp_centers_at_build: Optional[ndarray] = None
+        self._base_glyph_pts: Optional[ndarray] = None
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -112,12 +127,12 @@ class GaussPointDiagram(Diagram):
             # something than crash the viewer.
             world = np.zeros((slab.element_index.size, 3), dtype=np.float64)
 
+        center_scalars = np.asarray(slab.values[0], dtype=np.float64).copy()
         cloud = pv.PolyData(world)
-        cloud.point_data[_SCALAR_NAME] = (
-            np.asarray(slab.values[0], dtype=np.float64).copy()
-        )
+        cloud.point_data[_SCALAR_NAME] = center_scalars
         self._cloud = cloud
         self._scalar_array = cloud.point_data[_SCALAR_NAME]
+        self._gp_centers_at_build = np.asarray(world, dtype=np.float64).copy()
 
         # Initial clim
         if style.clim is not None:
@@ -135,37 +150,62 @@ class GaussPointDiagram(Diagram):
             else:
                 self._initial_clim = (0.0, 1.0)
 
+        # ── Real sphere glyphs at each GP center ────────────────────
+        # ``style.point_size`` keeps its prior semantic (bigger = more
+        # visible) but is now used to scale a world-space sphere
+        # radius off the model diagonal — same convention as the
+        # pre-solve mesh viewer's node cloud. This dodges the brittle
+        # ``render_points_as_spheres=True`` pixel-billboard path that
+        # was losing markers to z-fighting on planar models.
+        diag = float(getattr(scene, "model_diagonal", 0.0)) or 1.0
+        radius = 0.003 * diag * max(0.1, float(style.point_size) / 10.0)
+        sphere = pv.Sphere(
+            radius=radius, theta_resolution=10, phi_resolution=10,
+        )
+        n_per_center = sphere.n_points
+        glyphs = cloud.glyph(geom=sphere, scale=False, orient=False)
+        # pyvista propagates input point_data through ``glyph()``,
+        # but the resulting attribute is per-glyph-point. Re-stamp our
+        # canonical name in case the propagation skipped it (e.g. when
+        # an active scalar collision happens), then keep a handle to
+        # the per-glyph array for in-place per-step updates.
+        glyph_scalars = np.repeat(center_scalars, n_per_center)
+        glyphs.point_data[_SCALAR_NAME] = glyph_scalars
+        self._glyphs = glyphs
+        self._glyph_scalar_array = glyphs.point_data[_SCALAR_NAME]
+        self._pts_per_center = n_per_center
+        # Snapshot the unwarped glyph point coords so sync can translate
+        # each sphere by ``deformed[i] - centers_at_build[i]`` without
+        # rebuilding the glyph PolyData.
+        self._base_glyph_pts = np.asarray(
+            glyphs.points, dtype=np.float64,
+        ).copy()
+
         actor = plotter.add_mesh(
-            cloud,
+            glyphs,
             scalars=_SCALAR_NAME,
             cmap=self._runtime_cmap or style.cmap,
             clim=self._runtime_clim or self._initial_clim,
             opacity=style.opacity,
-            render_points_as_spheres=True,
-            point_size=style.point_size,
             show_scalar_bar=style.show_scalar_bar,
             scalar_bar_args={
                 "title": self.spec.selector.component,
             } if style.show_scalar_bar else None,
             name=self._actor_name(),
             reset_camera=False,
-            lighting=False,
+            smooth_shading=True,
+            lighting=True,
         )
-        # Pull the rasterized point billboards toward the camera so a
-        # 2-D model (GPs sit at z=0 alongside the substrate fill) doesn't
-        # lose them to z-fighting with the substrate. Same approach the
-        # wireframe overlay uses.
-        try:
-            mapper = actor.GetMapper()
-            mapper.SetResolveCoincidentTopologyToPolygonOffset()
-            mapper.SetResolveCoincidentTopologyPolygonOffsetParameters(-2.0, -2.0)
-        except Exception:
-            pass
         self._actor = actor
         self._actors = [actor]
 
     def update_to_step(self, step_index: int) -> None:
-        if self._cloud is None or self._scalar_array is None:
+        if (
+            self._scalar_array is None
+            or self._glyph_scalar_array is None
+            or self._glyphs is None
+            or self._pts_per_center == 0
+        ):
             return
         results = self._scoped_results()
         if results is None:
@@ -184,53 +224,68 @@ class GaussPointDiagram(Diagram):
         if slab_values.size != self._scalar_array.size:
             return
         self._scalar_array[:] = slab_values
+        # Tile the per-center scalar to per-glyph-point so every
+        # vertex on each sphere paints with the same color.
+        self._glyph_scalar_array[:] = np.repeat(
+            slab_values, self._pts_per_center,
+        )
         try:
-            self._cloud.Modified()
+            self._glyphs.Modified()
         except Exception:
             pass
 
     def sync_substrate_points(
         self, deformed_pts: "ndarray | None", scene: "FEMSceneData",
     ) -> None:
-        """Re-evaluate GP world coords against ``deformed_pts``.
+        """Translate every GP sphere to follow the deformed substrate.
 
-        ``deformed_pts`` is the substrate's current point array (row-
-        aligned with ``scene.node_ids`` / ``fem.nodes.ids``). When
-        ``None``, the markers snap back to their reference (un-deformed)
-        positions computed from ``fem.nodes.coords``.
-
-        Mutates the cloud's points in place; the actor's mapper picks
-        up the change automatically.
+        Re-evaluates the per-GP world coords against ``deformed_pts``
+        (or ``fem.nodes.coords`` when ``None``), then shifts each
+        sphere's glyph points by ``new_center[i] - center_at_build[i]``.
         """
         if (
-            self._cloud is None
+            self._glyphs is None
+            or self._cloud is None
             or self._fem is None
             or self._gp_element_index is None
             or self._gp_natural_coords is None
+            or self._gp_centers_at_build is None
+            or self._base_glyph_pts is None
+            or self._pts_per_center == 0
         ):
             return
         try:
             from apeGmsh.results._gauss_world_coords import (
                 compute_global_coords_from_arrays,
             )
-            world = compute_global_coords_from_arrays(
+            new_centers = compute_global_coords_from_arrays(
                 self._gp_element_index,
                 self._gp_natural_coords,
                 self._fem,
                 node_coords_override=deformed_pts,
             )
-            self._cloud.points = world
+            shifts = new_centers - self._gp_centers_at_build
+            shifts_tiled = np.repeat(shifts, self._pts_per_center, axis=0)
+            self._glyphs.points = self._base_glyph_pts + shifts_tiled
+            # Keep the input cloud's centers in sync so any code that
+            # reads ``self._cloud.points`` still sees the current state.
+            self._cloud.points = new_centers
         except Exception:
             pass
 
     def detach(self) -> None:
         self._cloud = None
+        self._glyphs = None
         self._actor = None
         self._scalar_array = None
+        self._glyph_scalar_array = None
+        self._pts_per_center = 0
         self._element_ids_to_read = ()
         self._initial_clim = None
         self._gp_element_index = None
         self._gp_natural_coords = None
+        self._gp_centers_at_build = None
+        self._base_glyph_pts = None
         super().detach()
 
     # ------------------------------------------------------------------
