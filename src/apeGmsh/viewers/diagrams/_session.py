@@ -61,12 +61,32 @@ _KIND_TO_STYLE: dict[str, type[DiagramStyle]] = {
 }
 
 
-SESSION_SCHEMA_VERSION = 1
+SESSION_SCHEMA_VERSION = 2
 
 
 # =====================================================================
 # Records
 # =====================================================================
+
+@dataclass(frozen=True)
+class CompositionSnapshot:
+    """One composition: name + layer-index references."""
+    id: Optional[str]
+    name: str
+    layer_indices: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class GeometrySnapshot:
+    """One geometry: deformation state + child compositions."""
+    id: Optional[str]
+    name: str
+    deform_enabled: bool = False
+    deform_field: Optional[str] = None
+    deform_scale: float = 1.0
+    active_composition_id: Optional[str] = None
+    compositions: tuple[CompositionSnapshot, ...] = ()
+
 
 @dataclass(frozen=True)
 class ViewerSession:
@@ -79,13 +99,20 @@ class ViewerSession:
     results_path
         Absolute path to the Results file the session was saved against.
     fem_snapshot_id
-        ``fem.snapshot_id`` at save time. Mismatch on reload triggers a
-        warning + skip; the user can still pick "force restore" if they
-        accept that selectors might fail.
+        ``fem.snapshot_id`` at save time. Stored as metadata; no longer
+        enforced on restore.
     saved_at
         ISO-8601 timestamp.
     diagrams
-        Tuple of ``DiagramSpec`` records.
+        Tuple of ``DiagramSpec`` records (flat list across every
+        geometry / composition). Compositions reference them by index.
+    geometries
+        Tuple of :class:`GeometrySnapshot` describing the
+        Geometry → Composition → Layer hierarchy. Empty for legacy
+        (v1) sessions, in which case all diagrams load into a single
+        "Restored" composition under the active Geometry.
+    active_geometry_id
+        UUID of the geometry that was active at save time, or None.
     active_stage_id
     active_step
     """
@@ -94,6 +121,8 @@ class ViewerSession:
     fem_snapshot_id: Optional[str]
     saved_at: str
     diagrams: tuple[DiagramSpec, ...]
+    geometries: tuple[GeometrySnapshot, ...] = ()
+    active_geometry_id: Optional[str] = None
     active_stage_id: Optional[str] = None
     active_step: int = 0
 
@@ -166,10 +195,18 @@ def serialize_session(
     specs: "list[DiagramSpec] | tuple[DiagramSpec, ...]",
     results_path: str | Path,
     fem_snapshot_id: Optional[str],
+    geometries: "list[GeometrySnapshot] | tuple[GeometrySnapshot, ...] | None" = None,
+    active_geometry_id: Optional[str] = None,
     active_stage_id: Optional[str] = None,
     active_step: int = 0,
 ) -> dict[str, Any]:
-    """Build the JSON-friendly dict for one viewer session."""
+    """Build the JSON-friendly dict for one viewer session.
+
+    ``geometries`` is the Geometry → Composition tree captured from
+    the live ``GeometryManager``; compositions reference layers by
+    their position in ``specs``. When ``None`` or empty we still emit
+    a v2 envelope (the restore path falls back to a single Geometry).
+    """
     return {
         "schema_version":   SESSION_SCHEMA_VERSION,
         "results_path":     str(Path(results_path).resolve()),
@@ -177,27 +214,79 @@ def serialize_session(
         "saved_at":         datetime.datetime.now(
             datetime.timezone.utc,
         ).isoformat(),
+        "active_geometry_id": active_geometry_id,
         "active_stage_id":  active_stage_id,
         "active_step":      int(active_step),
+        "geometries":       [
+            _serialize_geometry(g) for g in (geometries or ())
+        ],
         "diagrams":         [serialize_spec(s) for s in specs],
     }
+
+
+def _serialize_geometry(g: "GeometrySnapshot") -> dict[str, Any]:
+    return {
+        "id":    g.id,
+        "name":  g.name,
+        "deform_enabled":        bool(g.deform_enabled),
+        "deform_field":          g.deform_field,
+        "deform_scale":          float(g.deform_scale),
+        "active_composition_id": g.active_composition_id,
+        "compositions": [
+            {
+                "id":             c.id,
+                "name":           c.name,
+                "layer_indices":  list(c.layer_indices),
+            }
+            for c in g.compositions
+        ],
+    }
+
+
+def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
+    comps: list[CompositionSnapshot] = []
+    for craw in raw.get("compositions") or []:
+        try:
+            comps.append(CompositionSnapshot(
+                id=craw.get("id"),
+                name=str(craw.get("name", "Diagram")),
+                layer_indices=tuple(
+                    int(i) for i in (craw.get("layer_indices") or [])
+                ),
+            ))
+        except Exception:
+            continue
+    return GeometrySnapshot(
+        id=raw.get("id"),
+        name=str(raw.get("name", "Geometry")),
+        deform_enabled=bool(raw.get("deform_enabled", False)),
+        deform_field=raw.get("deform_field"),
+        deform_scale=float(raw.get("deform_scale", 1.0) or 1.0),
+        active_composition_id=raw.get("active_composition_id"),
+        compositions=tuple(comps),
+    )
 
 
 def deserialize_session(data: dict[str, Any]) -> ViewerSession:
     """Reconstruct a :class:`ViewerSession` from :func:`serialize_session`'s output.
 
     Diagram specs that fail to deserialize (unknown kind, bad fields)
-    are skipped; the resulting session simply contains fewer specs and
-    the caller's restore loop will report nothing for them. This keeps
-    a partial restore working when only one spec out of many references
-    a renamed kind.
+    are skipped; the resulting session simply contains fewer specs.
+    Legacy v1 sessions (no ``geometries`` block) deserialize with an
+    empty geometries tuple — :class:`ResultsViewer._apply_session`
+    bundles them into one "Restored" composition for back-compat.
     """
     diagrams: list[DiagramSpec] = []
     for raw in data.get("diagrams") or []:
         try:
             diagrams.append(deserialize_spec(raw))
         except Exception:
-            # Best-effort restore; corrupt entries get dropped.
+            continue
+    geometries: list[GeometrySnapshot] = []
+    for raw in data.get("geometries") or []:
+        try:
+            geometries.append(_deserialize_geometry(raw))
+        except Exception:
             continue
     return ViewerSession(
         schema_version=int(
@@ -207,6 +296,8 @@ def deserialize_session(data: dict[str, Any]) -> ViewerSession:
         fem_snapshot_id=data.get("fem_snapshot_id"),
         saved_at=str(data.get("saved_at", "")),
         diagrams=tuple(diagrams),
+        geometries=tuple(geometries),
+        active_geometry_id=data.get("active_geometry_id"),
         active_stage_id=data.get("active_stage_id"),
         active_step=int(data.get("active_step", 0) or 0),
     )
@@ -227,6 +318,8 @@ def save_session(
     specs: "list[DiagramSpec] | tuple[DiagramSpec, ...]",
     results_path: str | Path,
     fem_snapshot_id: Optional[str],
+    geometries: "list[GeometrySnapshot] | tuple[GeometrySnapshot, ...] | None" = None,
+    active_geometry_id: Optional[str] = None,
     target_path: str | Path | None = None,
     active_stage_id: Optional[str] = None,
     active_step: int = 0,
@@ -239,6 +332,8 @@ def save_session(
         specs=specs,
         results_path=results_path,
         fem_snapshot_id=fem_snapshot_id,
+        geometries=geometries,
+        active_geometry_id=active_geometry_id,
         active_stage_id=active_stage_id,
         active_step=active_step,
     )
@@ -261,6 +356,8 @@ def load_session(path: str | Path) -> ViewerSession:
 
 __all__ = [
     "SESSION_SCHEMA_VERSION",
+    "CompositionSnapshot",
+    "GeometrySnapshot",
     "ViewerSession",
     "default_session_path",
     "deserialize_session",

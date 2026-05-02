@@ -313,12 +313,83 @@ class DiagramSettingsTab:
         saved = self._content_layout
         self._content_layout = card_lay
         try:
+            self._build_reorder_row(d)
             self._build_data_swap_row(d)
             self._dispatch_kind_panel(d)
             self._build_delete_row(d)
         finally:
             self._content_layout = saved
         return card
+
+    def _build_reorder_row(self, d: "Diagram") -> None:
+        """↑ / ↓ buttons that move ``d`` within the active composition.
+
+        Order in the composition drives stack-view rendering order;
+        we mirror the move into the registry so paint order
+        (``z-order``) matches what the user sees.
+        """
+        QtWidgets, _ = _qt()
+        comp_mgr = self._director.compositions
+        comp = (
+            comp_mgr.composition_for_layer(d) if comp_mgr is not None
+            else None
+        )
+        if comp is None:
+            return
+        try:
+            idx = comp.layers.index(d)
+        except ValueError:
+            return
+        is_first = idx == 0
+        is_last = idx == len(comp.layers) - 1
+
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+        btn_up = QtWidgets.QPushButton("↑")
+        btn_up.setFixedWidth(28)
+        btn_up.setEnabled(not is_first)
+        btn_up.setToolTip("Move layer up (paint earlier)")
+        btn_up.clicked.connect(lambda _=False, d=d: self._on_move(d, -1))
+        btn_down = QtWidgets.QPushButton("↓")
+        btn_down.setFixedWidth(28)
+        btn_down.setEnabled(not is_last)
+        btn_down.setToolTip("Move layer down (paint later)")
+        btn_down.clicked.connect(lambda _=False, d=d: self._on_move(d, +1))
+        row.addWidget(btn_up)
+        row.addWidget(btn_down)
+        self._content_layout.addLayout(row)
+
+    def _on_move(self, d: "Diagram", delta: int) -> None:
+        """Slide ``d`` up (delta=-1) or down (delta=+1) within its
+        composition; mirror the move in the flat registry list."""
+        comp_mgr = self._director.compositions
+        comp = (
+            comp_mgr.composition_for_layer(d) if comp_mgr is not None
+            else None
+        )
+        if comp is None:
+            return
+        try:
+            idx = comp.layers.index(d)
+        except ValueError:
+            return
+        new_idx = max(0, min(idx + int(delta), len(comp.layers) - 1))
+        if new_idx == idx:
+            return
+        comp.layers.pop(idx)
+        comp.layers.insert(new_idx, d)
+        # Mirror to the registry so VTK paint order tracks the UI.
+        try:
+            registry = self._director.registry
+            r_idx = registry.index_of(d)
+            if r_idx is not None:
+                registry.move(r_idx, r_idx + int(delta))
+        except Exception:
+            pass
+        # Manager observers don't fire on direct layers-list mutation;
+        # nudge them so the stack rebuilds in the new order.
+        if comp_mgr is not None:
+            comp_mgr._notify()  # noqa: SLF001
 
     def _dispatch_kind_panel(self, d: "Diagram") -> None:
         """Dispatch to the right ``_build_*_panel`` for the kind."""

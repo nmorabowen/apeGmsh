@@ -895,15 +895,49 @@ class ResultsViewer:
         if path is None or self._director is None:
             return
         try:
-            from .diagrams._session import save_session
-            specs = [
-                d.spec for d in self._director.registry.diagrams()
-            ]
+            from .diagrams._session import (
+                save_session, GeometrySnapshot, CompositionSnapshot,
+            )
+            # Flat list of every Diagram instance in the registry, in
+            # registry order. Compositions reference these by index.
+            registry_diagrams = list(self._director.registry.diagrams())
+            id_to_index: dict[int, int] = {
+                id(d): i for i, d in enumerate(registry_diagrams)
+            }
+            specs = [d.spec for d in registry_diagrams]
+
+            # Geometry → Composition tree mirroring the live manager.
+            geom_mgr = self._director.geometries
+            geom_snapshots: list[GeometrySnapshot] = []
+            for geom in geom_mgr.geometries:
+                comp_snapshots: list[CompositionSnapshot] = []
+                for comp in geom.compositions.compositions:
+                    comp_snapshots.append(CompositionSnapshot(
+                        id=comp.id,
+                        name=comp.name,
+                        layer_indices=tuple(
+                            id_to_index[id(d)]
+                            for d in comp.layers
+                            if id(d) in id_to_index
+                        ),
+                    ))
+                geom_snapshots.append(GeometrySnapshot(
+                    id=geom.id,
+                    name=geom.name,
+                    deform_enabled=bool(geom.deform_enabled),
+                    deform_field=geom.deform_field,
+                    deform_scale=float(geom.deform_scale),
+                    active_composition_id=geom.compositions.active_id,
+                    compositions=tuple(comp_snapshots),
+                ))
+
             fem = self._results.fem
             save_session(
                 specs=specs,
                 results_path=path,
                 fem_snapshot_id=getattr(fem, "snapshot_id", None),
+                geometries=geom_snapshots,
+                active_geometry_id=geom_mgr.active_id,
                 active_stage_id=self._director.stage_id,
                 active_step=int(self._director.step_index),
             )
@@ -962,12 +996,13 @@ class ResultsViewer:
         return reply == QMessageBox.Yes
 
     def _apply_session(self, session: Any, win: Any) -> None:
-        """Reconstruct each spec into a Diagram and add to the registry.
+        """Reconstruct each spec into a Diagram and rebuild the
+        Geometry → Composition → Layer hierarchy.
 
-        Restored layers are bundled into a single Composition under
-        the active Geometry — old session JSON pre-dates the geometry
-        refactor, so there's no per-layer geometry assignment to
-        recover. The user can move them around afterwards.
+        v2 sessions carry the full hierarchy (with deformation state
+        per geometry). v1 sessions (no ``geometries`` block) bundle
+        every restored layer into one "Restored" composition under
+        the active geometry — same fallback as before.
         """
         from .diagrams._base import NoDataError
         from .ui._add_diagram_dialog import _KINDS
@@ -975,11 +1010,15 @@ class ResultsViewer:
         kind_to_class = {entry.kind_id: entry.diagram_class for entry in _KINDS}
         n_added = 0
         n_skipped = 0
+        # Build every Diagram instance and stash it at the same index
+        # the session JSON used (None for skipped specs so layer_indices
+        # references stay aligned).
         restored_layers: list[Any] = []
         for spec in session.diagrams:
             cls = kind_to_class.get(spec.kind)
             if cls is None:
                 n_skipped += 1
+                restored_layers.append(None)
                 continue
             try:
                 diagram = cls(spec, self._results)
@@ -988,23 +1027,75 @@ class ResultsViewer:
                 n_added += 1
             except NoDataError:
                 n_skipped += 1
+                restored_layers.append(None)
             except Exception as exc:
                 from ._failures import report
                 report(
                     f"ResultsViewer._apply_session({spec.kind})", exc,
                 )
                 n_skipped += 1
+                restored_layers.append(None)
 
-        # Bundle restored layers into one composition under the
-        # active Geometry. If none was active, do nothing.
-        if restored_layers:
-            geom = self._director.geometries.active
-            if geom is not None:
-                comp = geom.compositions.add(
-                    name="Restored", make_active=True,
+        geom_mgr = self._director.geometries
+        geom_snapshots = getattr(session, "geometries", ()) or ()
+
+        if geom_snapshots:
+            # ── v2: rebuild the full geometry tree ────────────────
+            # The bootstrap already created one "Geometry 1"; reuse
+            # it for the first snapshot and add() for the rest.
+            for gi, gsnap in enumerate(geom_snapshots):
+                if gi == 0 and len(geom_mgr.geometries) >= 1:
+                    geom = geom_mgr.geometries[0]
+                    geom_mgr.rename(geom.id, gsnap.name)
+                else:
+                    geom = geom_mgr.add(name=gsnap.name, make_active=False)
+                geom_mgr.set_deformation(
+                    geom.id,
+                    enabled=bool(gsnap.deform_enabled),
+                    field=gsnap.deform_field,
+                    scale=float(gsnap.deform_scale),
                 )
-                for d in restored_layers:
-                    geom.compositions.add_layer(comp.id, d)
+                # Compositions inside this geometry.
+                for csnap in gsnap.compositions:
+                    comp = geom.compositions.add(
+                        name=csnap.name, make_active=False,
+                    )
+                    for idx in csnap.layer_indices:
+                        if 0 <= idx < len(restored_layers):
+                            d = restored_layers[idx]
+                            if d is not None:
+                                geom.compositions.add_layer(comp.id, d)
+                # Restore active composition pointer.
+                if gsnap.active_composition_id is not None:
+                    # Find the composition we just added by its
+                    # POSITION — saved ids are stale UUIDs.
+                    matches = [
+                        c for c in geom.compositions.compositions
+                        if c.name == self._comp_name_for(gsnap, gsnap.active_composition_id)
+                    ]
+                    if matches:
+                        geom.compositions.set_active(matches[0].id)
+            # Restore active geometry pointer (by name match — saved
+            # UUIDs don't survive a re-bootstrap).
+            saved_active = self._geom_name_for(
+                geom_snapshots, session.active_geometry_id,
+            )
+            if saved_active:
+                for g in geom_mgr.geometries:
+                    if g.name == saved_active:
+                        geom_mgr.set_active(g.id)
+                        break
+        else:
+            # ── v1 fallback: bundle into one "Restored" composition ─
+            real_layers = [d for d in restored_layers if d is not None]
+            if real_layers:
+                geom = geom_mgr.active
+                if geom is not None:
+                    comp = geom.compositions.add(
+                        name="Restored", make_active=True,
+                    )
+                    for d in real_layers:
+                        geom.compositions.add_layer(comp.id, d)
 
         # Restore active stage / step where possible.
         try:
@@ -1024,6 +1115,29 @@ class ResultsViewer:
             win.set_status(msg, timeout=5000)
         except Exception:
             pass
+
+    @staticmethod
+    def _comp_name_for(
+        gsnap: Any, comp_id: Optional[str],
+    ) -> Optional[str]:
+        """Look up a composition's name in a snapshot by its saved id."""
+        if comp_id is None:
+            return None
+        for c in gsnap.compositions:
+            if c.id == comp_id:
+                return c.name
+        return None
+
+    @staticmethod
+    def _geom_name_for(
+        geom_snapshots: Any, geom_id: Optional[str],
+    ) -> Optional[str]:
+        if geom_id is None:
+            return None
+        for g in geom_snapshots:
+            if g.id == geom_id:
+                return g.name
+        return None
 
     # ------------------------------------------------------------------
     # Helpers

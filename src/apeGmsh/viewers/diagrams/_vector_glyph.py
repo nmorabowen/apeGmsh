@@ -43,6 +43,11 @@ class VectorGlyphDiagram(Diagram):
         self._actor: Any = None
         self._fem_ids_to_read: Optional[ndarray] = None
         self._submesh_pos_of_id: Optional[ndarray] = None
+        # Substrate row indices the arrow source points were sampled
+        # from. Cached at attach so sync_substrate_points can rebuild
+        # the source.points as ``deformed_pts[substrate_idx]`` when the
+        # active geometry deforms.
+        self._substrate_idx: Optional[ndarray] = None
         self._initial_scale: float = 1.0
         self._initial_clim: Optional[tuple[float, float]] = None
 
@@ -95,6 +100,7 @@ class VectorGlyphDiagram(Diagram):
         submesh_pos[node_ids] = np.arange(n, dtype=np.int64)
         self._submesh_pos_of_id = submesh_pos
         self._fem_ids_to_read = node_ids
+        self._substrate_idx = substrate_idx.copy()
 
         source = pv.PolyData(coords)
         source.point_data["_vec"] = np.zeros((n, 3), dtype=np.float64)
@@ -184,11 +190,44 @@ class VectorGlyphDiagram(Diagram):
         except Exception:
             pass
 
+    def sync_substrate_points(
+        self, deformed_pts: "ndarray | None", scene: "FEMSceneData",
+    ) -> None:
+        """Move arrow tails to follow the deformed substrate.
+
+        Re-samples ``self._substrate_idx`` rows from ``deformed_pts``
+        (or ``scene.grid.points`` when ``None`` — that's already at the
+        reference state by the time deformation sync runs). Then
+        rebuilds the arrow glyph PolyData and rebinds the mapper input
+        — same path ``update_to_step`` uses, so the arrows orient and
+        scale against the latest read vectors.
+        """
+        if (
+            self._source is None
+            or self._actor is None
+            or self._substrate_idx is None
+        ):
+            return
+        try:
+            target_pts = (
+                np.asarray(deformed_pts, dtype=np.float64)
+                if deformed_pts is not None
+                else np.asarray(scene.grid.points, dtype=np.float64)
+            )
+            self._source.points = target_pts[self._substrate_idx]
+            glyph = self._build_glyph(self.current_scale())
+            mapper = self._actor.GetMapper()
+            mapper.SetInputData(glyph)
+            mapper.Modified()
+        except Exception:
+            pass
+
     def detach(self) -> None:
         self._source = None
         self._actor = None
         self._fem_ids_to_read = None
         self._submesh_pos_of_id = None
+        self._substrate_idx = None
         self._initial_clim = None
         super().detach()
 

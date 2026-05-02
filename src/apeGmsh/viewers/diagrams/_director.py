@@ -28,6 +28,14 @@ from ._compositions import CompositionManager
 from ._geometries import GeometryManager
 from ._registry import DiagramRegistry
 
+
+# Synthetic stage id surfaced when 2+ real stages exist. Selecting it
+# walks the concatenated time vector across every real stage; the
+# director silently swaps the underlying Results stage as the user
+# scrubs across boundaries.
+COMBINED_STAGE_ID = "__all__"
+COMBINED_STAGE_NAME = "All stages"
+
 if TYPE_CHECKING:
     from apeGmsh.mesh.FEMData import FEMData
     from apeGmsh.results.Results import Results
@@ -76,6 +84,16 @@ class ResultsDirector:
         # own (initially empty) CompositionManager. Each geometry holds
         # the deformation state for its child compositions.
         self._geometries = GeometryManager()
+
+        # Combined-stage state. ``_combined_active`` mirrors the
+        # public ``stage_id == COMBINED_STAGE_ID`` view; ``_real_stages``
+        # is the snapshot of real stages at activation time;
+        # ``_combined_boundaries`` is the cumulative-step prefix array
+        # used to translate global step → (real_stage_id, local_step).
+        self._combined_active: bool = False
+        self._real_stages: "list[StageInfo]" = []
+        self._combined_boundaries: ndarray = np.array([], dtype=np.int64)
+        self._combined_time: ndarray = np.array([], dtype=np.float64)
 
         self.on_step_changed: list[Callable[[int], None]] = []
         self.on_stage_changed: list[Callable[[str], None]] = []
@@ -142,6 +160,8 @@ class ResultsDirector:
 
     @property
     def n_steps(self) -> int:
+        if self._combined_active:
+            return int(self._combined_time.size)
         if self._stage_id is None:
             return 0
         try:
@@ -151,6 +171,8 @@ class ResultsDirector:
 
     @property
     def time_vector(self) -> ndarray:
+        if self._combined_active:
+            return self._combined_time
         if self._stage_id is None:
             return np.array([], dtype=np.float64)
         try:
@@ -159,10 +181,31 @@ class ResultsDirector:
             return np.array([], dtype=np.float64)
 
     def stages(self) -> "list[StageInfo]":
-        return self._all_stages()
+        """Real stages, plus a synthetic combined entry when ≥ 2 exist."""
+        from apeGmsh.results.readers._protocol import StageInfo
+        real = self._all_stages()
+        if len(real) <= 1:
+            return real
+        total_steps = int(sum(int(s.n_steps or 0) for s in real))
+        combined = StageInfo(
+            id=COMBINED_STAGE_ID,
+            name=COMBINED_STAGE_NAME,
+            kind="combined",
+            n_steps=total_steps,
+        )
+        return real + [combined]
+
+    @property
+    def combined_active(self) -> bool:
+        """True when the user has the synthetic combined stage selected."""
+        return self._combined_active
 
     def current_time(self) -> Optional[float]:
-        """Time value at the current step, or None if no stage."""
+        """Time value at the current step (combined- or stage-local).
+
+        In combined mode this is the offset-shifted concatenated time;
+        in single-stage mode it's the stage's own time vector entry.
+        """
         tv = self.time_vector
         if tv.size == 0:
             return None
@@ -218,23 +261,123 @@ class ResultsDirector:
     def set_stage(self, stage_id_or_name: str) -> None:
         """Switch the active stage. Re-attaches every diagram against
         the new scoped Results.
+
+        Picking the synthetic ``COMBINED_STAGE_ID`` activates combined
+        mode: the time scrubber walks the concatenated time vector
+        across every real stage; the director silently swaps the
+        underlying Results stage on every boundary crossing.
         """
-        info = self._lookup_stage(stage_id_or_name)
-        if info.id == self._stage_id:
+        # Combined-stage entry — never matches a real StageInfo.
+        if stage_id_or_name == COMBINED_STAGE_ID:
+            self._activate_combined_mode()
             return
+
+        info = self._lookup_stage(stage_id_or_name)
+        leaving_combined = self._combined_active
+        if (
+            info.id == self._stage_id
+            and not leaving_combined
+        ):
+            return
+        self._combined_active = False
+        self._real_stages = []
+        self._combined_boundaries = np.array([], dtype=np.int64)
+        self._combined_time = np.array([], dtype=np.float64)
         self._stage_id = info.id
+        # Mirror to the unscoped Results so layer reads with no
+        # explicit stage_id route to this stage.
+        self._set_results_default_stage(info.id)
         self._step_index = 0
-        # Re-attach happens implicitly because diagrams hold references
-        # to the Results object (which is stage-aware via stage_id at
-        # read time). For Phase 0 we only have empty diagrams, but the
-        # contract is in place.
         self._registry.reattach_all()
         self._fire_stage_changed(info.id)
         self._registry.update_to_step(self._step_index)
         self._render()
 
+    def _activate_combined_mode(self) -> None:
+        """Enter combined mode using the current real-stage list."""
+        real = list(self._all_stages())
+        if len(real) <= 1:
+            # Nothing to combine; treat as a no-op.
+            return
+        # Cumulative step counts: boundaries[i] = sum(n_steps[0..i)).
+        # Length is len(real)+1 so binary search ``searchsorted`` lands
+        # on the correct stage for any global step in [0, total).
+        counts = np.asarray(
+            [int(s.n_steps or 0) for s in real], dtype=np.int64,
+        )
+        boundaries = np.concatenate([[0], np.cumsum(counts)])
+        # Concatenated time vector with monotone offsets so the
+        # scrubber x-axis stays single-valued. Offset for stage i is
+        # max(time[i-1]) + small epsilon to keep values strictly
+        # increasing across boundaries.
+        time_chunks: list[ndarray] = []
+        offset = 0.0
+        for s in real:
+            try:
+                tv = np.asarray(
+                    self._results.stage(s.id).time, dtype=np.float64,
+                )
+            except Exception:
+                tv = np.zeros(int(s.n_steps or 0), dtype=np.float64)
+            if tv.size == 0:
+                continue
+            shifted = tv + offset
+            time_chunks.append(shifted)
+            # Bump offset past the last value so the next stage's
+            # times don't overlap. Add a small epsilon (last delta or
+            # 1.0) to keep monotonicity strict.
+            last = float(shifted[-1]) if shifted.size else offset
+            tail_step = (
+                float(tv[-1] - tv[0]) / max(1, tv.size - 1)
+                if tv.size > 1 else 1.0
+            )
+            offset = last + max(tail_step, 1e-9)
+        combined_time = (
+            np.concatenate(time_chunks) if time_chunks
+            else np.array([], dtype=np.float64)
+        )
+
+        self._combined_active = True
+        self._real_stages = real
+        self._combined_boundaries = boundaries
+        self._combined_time = combined_time
+        self._step_index = 0
+        # Bind to the first real stage to start.
+        first_id = real[0].id
+        self._stage_id = first_id
+        self._set_results_default_stage(first_id)
+        self._registry.reattach_all()
+        self._fire_stage_changed(COMBINED_STAGE_ID)
+        self._registry.update_to_step(0)
+        self._render()
+
+    def _combined_translate(self, global_step: int) -> "tuple[str, int]":
+        """Map a combined-mode global step to ``(real_stage_id, local_step)``."""
+        if not self._real_stages:
+            return (self._stage_id or "", int(global_step))
+        # Find the stage whose half-open interval contains ``global_step``.
+        # boundaries[i] is the cumulative count BEFORE stage i; we want
+        # the largest i with boundaries[i] <= global_step.
+        stage_idx = int(
+            np.searchsorted(
+                self._combined_boundaries, int(global_step), side="right",
+            ) - 1
+        )
+        stage_idx = max(0, min(stage_idx, len(self._real_stages) - 1))
+        local = int(global_step) - int(
+            self._combined_boundaries[stage_idx]
+        )
+        return (self._real_stages[stage_idx].id, local)
+
     def set_step(self, step_index: int) -> None:
-        """Move the active step. Coalesces into one render."""
+        """Move the active step. Coalesces into one render.
+
+        In combined mode the global step is translated to
+        ``(real_stage_id, local_step)`` — when crossing a boundary
+        the underlying real stage is silently swapped (no
+        ``on_stage_changed`` fires; the user remains "on" the
+        combined view).
+        """
         n = self.n_steps
         if n == 0:
             return
@@ -242,9 +385,37 @@ class ResultsDirector:
         if clamped == self._step_index:
             return
         self._step_index = clamped
-        self._registry.update_to_step(clamped)
+
+        if self._combined_active:
+            real_id, local = self._combined_translate(clamped)
+            if real_id != self._stage_id:
+                self._stage_id = real_id
+                self._set_results_default_stage(real_id)
+                # Diagrams cached step-0 data against the previous
+                # stage; rebuild against the new stage.
+                self._registry.reattach_all()
+                self._registry.update_to_step(local)
+            else:
+                self._registry.update_to_step(local)
+        else:
+            self._registry.update_to_step(clamped)
+
         self._fire_step_changed(clamped)
         self._render()
+
+    def _set_results_default_stage(self, stage_id: Optional[str]) -> None:
+        """Mirror the active stage onto the unscoped Results so layer
+        reads with no pinned ``spec.stage_id`` route correctly.
+
+        Layers without an explicit stage typically aren't useful in
+        a multi-stage file (the read raises on ambiguity); combined
+        mode flips that — those layers become useful again because
+        the director re-binds the default per step.
+        """
+        try:
+            self._results._stage_id = stage_id  # noqa: SLF001
+        except Exception:
+            pass
 
     def read_at_pick(
         self,
