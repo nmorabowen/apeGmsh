@@ -12,25 +12,29 @@ registry remains the single source of truth for *which layers exist*;
 the manager tracks *how they're grouped* and *which composition is
 active*.
 
-Bootstrap state: one always-present "Geometry" composition with no
-layers — the user's base view of just mesh + nodes. ``Esc`` returns
-to it. The user can rename Geometry but not delete it.
+In the post-Geometry refactor, each :class:`CompositionManager` lives
+inside one :class:`Geometry` (see :mod:`._geometries`) — it owns the
+compositions of that geometry only. The previously bootstrapped locked
+"Geometry" composition is gone; the geometry concept now sits one
+level above.
 """
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Iterable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
     from ._base import Diagram
 
 
 # ---------------------------------------------------------------------
-# Special composition ids
+# Special composition ids (legacy)
 # ---------------------------------------------------------------------
 
-GEOMETRY_ID = "geometry"     # the locked, always-present base composition
+# Kept as a string constant for back-compat with old session JSON that
+# referenced it; new code should not depend on it.
+GEOMETRY_ID = "geometry"
 
 
 # ---------------------------------------------------------------------
@@ -44,16 +48,17 @@ class Composition:
     Attributes
     ----------
     id
-        Stable identifier — UUID for user-created compositions, the
-        constant :data:`GEOMETRY_ID` for the locked base composition.
+        Stable identifier — UUID for user-created compositions.
     name
         Display name (mutable). Manager.rename() updates it.
     layers
         Direct refs to the Diagram instances belonging to this
         composition. Order matches the layer-stack z-order.
     locked
-        ``True`` for Geometry — the manager refuses ``remove(id)`` for
-        locked compositions.
+        Reserved — currently always ``False``. Kept on the dataclass so
+        old code paths that read it don't break; the new model has no
+        locked compositions (the locked-Geometry concept moved up to
+        :class:`Geometry`).
     """
     id: str
     name: str
@@ -68,22 +73,16 @@ class Composition:
 class CompositionManager:
     """Registry of compositions + active-composition pointer + observers.
 
-    The Geometry composition is created on construction and made
-    active by default. Observers fire on add / remove / rename /
-    set_active / layer-membership changes — the OutlineTree subscribes
-    to repaint, the DetailsPanel subscribes to refresh the stack view.
+    Bootstrap state: empty. The owning :class:`Geometry` decides
+    whether to pre-create a default composition. Observers fire on
+    add / remove / rename / set_active / layer-membership changes.
     """
 
     def __init__(self) -> None:
         self._compositions: list[Composition] = []
         self._active_id: Optional[str] = None
         self._on_changed: list[Callable[[], None]] = []
-        # Bootstrap: locked Geometry composition.
-        geom = Composition(
-            id=GEOMETRY_ID, name="Geometry", layers=[], locked=True,
-        )
-        self._compositions.append(geom)
-        self._active_id = GEOMETRY_ID
+        self._parent_notify: Optional[Callable[[], None]] = None
 
     # ------------------------------------------------------------------
     # Iteration / lookup
@@ -101,13 +100,6 @@ class CompositionManager:
     @property
     def active_id(self) -> Optional[str]:
         return self._active_id
-
-    @property
-    def geometry(self) -> Composition:
-        """The locked base composition — guaranteed to exist."""
-        comp = self.find(GEOMETRY_ID)
-        assert comp is not None, "Geometry composition was deleted somehow"
-        return comp
 
     def find(self, comp_id: Optional[str]) -> Optional[Composition]:
         if comp_id is None:
@@ -128,8 +120,10 @@ class CompositionManager:
     # Mutations
     # ------------------------------------------------------------------
 
-    def add(self, name: str = "Diagram", *, make_active: bool = True) -> Composition:
-        """Append a new composition with a unique name (auto-numbers collisions)."""
+    def add(
+        self, name: str = "Diagram", *, make_active: bool = True,
+    ) -> Composition:
+        """Append a new composition with a unique name."""
         unique_name = self._unique_name(name)
         comp = Composition(id=str(uuid.uuid4()), name=unique_name)
         self._compositions.append(comp)
@@ -144,9 +138,7 @@ class CompositionManager:
         Note: the cloned composition references the SAME Diagram
         instances as the original. The caller is responsible for
         deep-cloning the underlying layers if independent state is
-        wanted (currently the user just wants a quick copy of the
-        same layers; a true deep copy would re-attach actors and is
-        out of scope for v1).
+        wanted.
         """
         src = self.find(comp_id)
         if src is None:
@@ -162,23 +154,19 @@ class CompositionManager:
         return new_comp
 
     def remove(self, comp_id: str) -> bool:
-        """Remove a composition. Refuses when it's locked.
+        """Remove a composition. Returns True on success.
 
-        Returns True if a composition was removed. The caller should
-        teardown the layers (call ``registry.remove`` on each) before
-        invoking this — the manager only drops the grouping, not the
-        underlying Diagram instances.
+        Caller is responsible for tearing down the layers (calling
+        ``registry.remove`` on each) before invoking this; the manager
+        only drops the grouping.
         """
         for i, c in enumerate(self._compositions):
             if c.id == comp_id:
-                if c.locked:
-                    return False
                 del self._compositions[i]
                 if self._active_id == comp_id:
                     self._active_id = (
-                        GEOMETRY_ID if self.find(GEOMETRY_ID) is not None
-                        else (self._compositions[0].id if self._compositions
-                              else None)
+                        self._compositions[0].id
+                        if self._compositions else None
                     )
                 self._notify()
                 return True
@@ -194,7 +182,6 @@ class CompositionManager:
             return False
         if comp.name == new_name:
             return False
-        # Avoid duplicates with other compositions.
         if any(
             c.id != comp_id and c.name == new_name for c in self._compositions
         ):
@@ -215,16 +202,12 @@ class CompositionManager:
     def add_layer(self, comp_id: str, layer: "Diagram") -> None:
         """Tag ``layer`` with composition ``comp_id``.
 
-        No-op if the layer is already a member of any composition or
-        if the target composition is locked (Geometry doesn't accept
-        layers — it's the base mesh-only view).
+        No-op if the layer is already a member of any composition.
         """
         if self.composition_for_layer(layer) is not None:
             return
         comp = self.find(comp_id)
         if comp is None:
-            return
-        if comp.locked:
             return
         comp.layers.append(layer)
         self._notify()
@@ -233,12 +216,10 @@ class CompositionManager:
     def active_accepts_layers(self) -> bool:
         """Whether ``+ Add layer`` should target the active composition.
 
-        ``False`` when no composition is active or when the active one
-        is locked (Geometry). Callers can branch to "create a new
-        diagram first" in that case.
+        ``False`` when no composition is active. Callers branch to
+        "create a new composition first" in that case.
         """
-        active = self.active
-        return active is not None and not active.locked
+        return self.active is not None
 
     def remove_layer(self, layer: "Diagram") -> None:
         """Drop ``layer`` from whichever composition owns it."""
@@ -259,6 +240,17 @@ class CompositionManager:
                 self._on_changed.remove(callback)
         return _unsub
 
+    def set_parent_notifier(
+        self, callback: Optional[Callable[[], None]],
+    ) -> None:
+        """Bridge composition events up to the owning Geometry's manager.
+
+        :class:`GeometryManager` calls this on construction so its own
+        ``subscribe()`` callbacks see every composition change without
+        each subscriber having to attach to every per-Geometry manager.
+        """
+        self._parent_notify = callback
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -276,5 +268,10 @@ class CompositionManager:
         for cb in list(self._on_changed):
             try:
                 cb()
+            except Exception:
+                pass
+        if self._parent_notify is not None:
+            try:
+                self._parent_notify()
             except Exception:
                 pass

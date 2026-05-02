@@ -160,8 +160,29 @@ class ResultsViewer:
         from .ui._details_panel import DetailsPanel
         plot_pane = PlotPane()
         plot_pane.on_user_close(self._on_plot_user_close)
-        details = DetailsPanel(settings_tab)
+        # ── Geometry settings panel for the details dock ──────────
+        # Built up-front so the details panel can route Geometry-row
+        # selections into it. Available-fields detection runs once
+        # against the union of every stage's nodal components.
+        from .ui._geometry_settings_panel import GeometrySettingsPanel
+        from .diagrams._kind_catalog import (
+            _vector_prefixes as _vp,
+            _union_across_stages as _uas,
+        )
+        try:
+            available_vec_prefixes = set(_vp(_uas(director, "nodes")))
+        except Exception:
+            available_vec_prefixes = set()
+        deform_field_options: list[str] = [
+            p for p in ("displacement", "velocity", "acceleration")
+            if p in available_vec_prefixes
+        ]
+        geometry_panel = GeometrySettingsPanel(
+            director, deform_field_options,
+        )
+        details = DetailsPanel(settings_tab, geometry_panel)
         outline.on_composition_selected(self._on_outline_composition_selected)
+        outline.on_geometry_selected(self._on_outline_geometry_selected)
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
@@ -377,30 +398,26 @@ class ResultsViewer:
             self._session_panel.set_line_width_callback(_on_line_width)
             self._session_panel.set_opacity_callback(_on_opacity)
 
-        # ── Deformation modifier ──────────────────────────────────
-        # Globally warps the substrate by a nodal vector field. The
-        # reference (undeformed) point coordinates are captured once
-        # so toggling the modifier off restores them exactly. Per-step
-        # mutation propagates to:
+        # ── Deformation modifier (per-Geometry) ──────────────────
+        # Each Geometry owns its own (enabled, field, scale) tuple.
+        # The substrate is warped by the *active* Geometry's settings.
+        # Reference (undeformed) substrate points are captured once;
+        # toggling deformation off / switching to an undeformed
+        # Geometry restores them exactly.
+        #
+        # Per-step mutation propagates to:
         #   - substrate fill + wireframe (they reference scene.grid)
         #   - any layer whose actor renders an UnstructuredGrid /
         #     PolyData with a ``vtkOriginalPointIds`` field (contour,
         #     deformed_shape, …) — points are scattered from the
         #     deformed substrate via the original-point map.
         # Layers that own non-substrate point geometry (vector glyph
-        # source, gauss markers, node cloud) are out of scope for v1.
+        # source, gauss markers, node cloud) don't follow yet.
         import numpy as _np
-        from .diagrams._kind_catalog import (
-            _vector_prefixes as _vp,
-            _union_across_stages as _uas,
-        )
 
         self._reference_points = _np.asarray(
             scene.grid.points, dtype=_np.float64,
         ).copy()
-        self._deform_enabled: bool = False
-        self._deform_field: Optional[str] = None
-        self._deform_scale: float = 1.0
 
         # Dense FEM-id -> substrate-row lookup, built once. Reused by
         # the per-step field reader to scatter slab values back into a
@@ -414,31 +431,15 @@ class ResultsViewer:
         else:
             _deform_id_to_idx = _np.array([], dtype=_np.int64)
 
-        # Pre-flight: which vector prefixes have ≥ 2 axes recorded on
-        # nodes across any stage? Filter to the ones that read like a
-        # global deformation source.
-        try:
-            available_vec_prefixes = set(_vp(_uas(director, "nodes")))
-        except Exception:
-            available_vec_prefixes = set()
-        deform_options: list[str] = [
-            p for p in ("displacement", "velocity", "acceleration")
-            if p in available_vec_prefixes
-        ]
-        if self._session_panel is not None:
-            self._session_panel.set_deform_options(deform_options)
-            if deform_options:
-                self._deform_field = deform_options[0]
-
-        def _read_deform_field(step: int) -> Optional[Any]:
+        def _read_deform_field(field: Optional[str], step: int) -> Optional[Any]:
             """Return ``(N, 3)`` vector field at ``step`` for the active stage.
 
             Reads ``<field>_x/_y/_z`` for every FEM node aligned to
             ``scene.grid.points``. Pads to 3-D with zeros when an axis
             is missing (e.g. 2-D model with only ``_x`` / ``_y``).
-            Returns ``None`` if no field is selected or the read fails.
+            Returns ``None`` if no field name was given or the read fails.
             """
-            if not self._deform_field or director.stage_id is None:
+            if not field or director.stage_id is None:
                 return None
             try:
                 results = self._results.stage(director.stage_id)
@@ -449,7 +450,7 @@ class ResultsViewer:
             id_to_idx = _deform_id_to_idx
             any_axis = False
             for axis, suf in enumerate(("x", "y", "z")):
-                comp = f"{self._deform_field}_{suf}"
+                comp = f"{field}_{suf}"
                 try:
                     slab = results.nodes.get(
                         ids=scene.node_ids,
@@ -462,9 +463,6 @@ class ResultsViewer:
                     continue
                 slab_ids = _np.asarray(slab.node_ids, dtype=_np.int64)
                 slab_vals = _np.asarray(slab.values[0], dtype=_np.float64)
-                # Map slab_ids back into substrate row indices via the
-                # dense lookup. Clip out-of-range ids to a sentinel
-                # row that the ``valid`` mask drops.
                 in_range = (
                     (slab_ids >= 0) & (slab_ids < id_to_idx.size)
                 )
@@ -476,14 +474,8 @@ class ResultsViewer:
             return out if any_axis else None
 
         def _sync_layer_grids(deformed_pts: "_np.ndarray | None") -> None:
-            """Propagate point coords to every layer whose mapper input
-            carries a ``vtkOriginalPointIds`` map back to the substrate.
-
-            ``deformed_pts`` is the current substrate point array
-            (already reference-equal to ``scene.grid.points`` after
-            the in-place mutation in ``_apply_deformation``). When
-            ``None``, restores the reference points.
-            """
+            """Scatter deformed substrate coords into every layer's
+            submesh via the ``vtkOriginalPointIds`` map."""
             if self._director is None:
                 return
             target_pts = (
@@ -510,70 +502,61 @@ class ResultsViewer:
                         )
                         if opid.size == 0:
                             continue
-                        # Bounds-safe scatter; submesh point that maps
-                        # outside the substrate stays in place.
                         in_range = (
                             (opid >= 0) & (opid < target_pts.shape[0])
                         )
-                        new_pts = _np.asarray(grid.points, dtype=_np.float64).copy()
+                        new_pts = _np.asarray(
+                            grid.points, dtype=_np.float64,
+                        ).copy()
                         new_pts[in_range] = target_pts[opid[in_range]]
                         grid.points = new_pts
                     except Exception:
                         continue
 
         def _apply_deformation(step: int) -> None:
-            """Set ``scene.grid.points`` for ``step`` and sync layer grids.
+            """Apply the active Geometry's deformation to the substrate.
 
-            ON: substrate points = reference + scale * field(step).
-            OFF: substrate points reset to reference (idempotent).
+            No active geometry / disabled / no field → reset to ref.
+            Otherwise: substrate points = ref + scale * field(step),
+            then propagate to layer submeshes.
             """
-            if not self._deform_enabled:
-                # Restore reference (idempotent — VTK no-op if equal).
+            geom = director.geometries.active
+            if (
+                geom is None
+                or not geom.deform_enabled
+                or not geom.deform_field
+            ):
                 scene.grid.points = self._reference_points.copy()
                 _sync_layer_grids(None)
                 _render()
                 return
-            field = _read_deform_field(int(step))
-            if field is None:
+            field_vals = _read_deform_field(geom.deform_field, int(step))
+            if field_vals is None:
                 scene.grid.points = self._reference_points.copy()
                 _sync_layer_grids(None)
                 _render()
                 return
-            deformed = self._reference_points + float(self._deform_scale) * field
+            deformed = (
+                self._reference_points
+                + float(geom.deform_scale) * field_vals
+            )
             scene.grid.points = deformed
             _sync_layer_grids(deformed)
             _render()
 
         self._apply_deformation = _apply_deformation
 
-        # Wire SessionPanel callbacks.
-        def _on_deform_enabled(checked: bool) -> None:
-            self._deform_enabled = bool(checked)
-            self._apply_deformation(int(director.step_index))
-
-        def _on_deform_field(prefix: str) -> None:
-            self._deform_field = str(prefix) if prefix else None
-            if self._deform_enabled:
-                self._apply_deformation(int(director.step_index))
-
-        def _on_deform_scale(value: float) -> None:
-            self._deform_scale = float(value)
-            if self._deform_enabled:
-                self._apply_deformation(int(director.step_index))
-
-        if self._session_panel is not None:
-            self._session_panel.set_deform_enabled_callback(_on_deform_enabled)
-            self._session_panel.set_deform_field_callback(_on_deform_field)
-            self._session_panel.set_deform_scale_callback(_on_deform_scale)
-
-        # Re-apply on every step / stage change while deformation is on.
+        # Re-apply on step / stage / geometry-state changes. The
+        # geometries observer covers active-geometry switches AND
+        # in-place deformation edits (set_deformation fires it too).
         director.subscribe_step(
-            lambda step: self._apply_deformation(int(step))
-            if self._deform_enabled else None,
+            lambda step: self._apply_deformation(int(step)),
         )
         director.subscribe_stage(
-            lambda _sid: self._apply_deformation(int(director.step_index))
-            if self._deform_enabled else None,
+            lambda _sid: self._apply_deformation(int(director.step_index)),
+        )
+        director.geometries.subscribe(
+            lambda: self._apply_deformation(int(director.step_index)),
         )
 
         # ── Time scrubber row (bottom of grid) ──────────────────────
@@ -666,18 +649,24 @@ class ResultsViewer:
         # *within* the composition; the composition gate is an
         # independent multiplicative filter.
         def _apply_composition_gate() -> None:
-            mgr = director.compositions
-            active = mgr.active
-            active_layers = (
-                set(map(id, active.layers)) if active is not None else set()
-            )
+            """Hide every layer that isn't in the active Geometry's
+            active Composition.
+
+            Two-level gate: a layer paints only when (a) its parent
+            Geometry is the active one, and (b) within that Geometry
+            its parent Composition is active. The per-card visibility
+            checkbox is an additional multiplicative filter on top.
+            """
+            geom_mgr = director.geometries
+            active_geom = geom_mgr.active
+            active_layers: set[int] = set()
+            if active_geom is not None:
+                active_comp = active_geom.compositions.active
+                if active_comp is not None:
+                    active_layers = set(map(id, active_comp.layers))
             for d in director.registry.diagrams():
                 in_active = id(d) in active_layers
                 desired = bool(d.is_visible) and in_active
-                # Touch the actor visibility directly — keeping the
-                # diagram's ``_visible`` flag intact so the user's
-                # per-card checkbox state is preserved when switching
-                # back.
                 for actor in d._actors:                         # noqa: SLF001
                     try:
                         actor.SetVisibility(desired)
@@ -689,7 +678,7 @@ class ResultsViewer:
             except Exception:
                 pass
 
-        director.compositions.subscribe(_apply_composition_gate)
+        director.geometries.subscribe(_apply_composition_gate)
         # Also re-apply after registry changes (new layer added →
         # apply gate so the new actor is hidden if its comp isn't
         # active; layer removed → no-op).
@@ -844,13 +833,20 @@ class ResultsViewer:
         return reply == QMessageBox.Yes
 
     def _apply_session(self, session: Any, win: Any) -> None:
-        """Reconstruct each spec into a Diagram and add to the registry."""
+        """Reconstruct each spec into a Diagram and add to the registry.
+
+        Restored layers are bundled into a single Composition under
+        the active Geometry — old session JSON pre-dates the geometry
+        refactor, so there's no per-layer geometry assignment to
+        recover. The user can move them around afterwards.
+        """
         from .diagrams._base import NoDataError
         from .ui._add_diagram_dialog import _KINDS
 
         kind_to_class = {entry.kind_id: entry.diagram_class for entry in _KINDS}
         n_added = 0
         n_skipped = 0
+        restored_layers: list[Any] = []
         for spec in session.diagrams:
             cls = kind_to_class.get(spec.kind)
             if cls is None:
@@ -859,9 +855,9 @@ class ResultsViewer:
             try:
                 diagram = cls(spec, self._results)
                 self._director.registry.add(diagram)
+                restored_layers.append(diagram)
                 n_added += 1
             except NoDataError:
-                # Stale spec (component renamed, fixture changed) — skip.
                 n_skipped += 1
             except Exception as exc:
                 from ._failures import report
@@ -869,6 +865,17 @@ class ResultsViewer:
                     f"ResultsViewer._apply_session({spec.kind})", exc,
                 )
                 n_skipped += 1
+
+        # Bundle restored layers into one composition under the
+        # active Geometry. If none was active, do nothing.
+        if restored_layers:
+            geom = self._director.geometries.active
+            if geom is not None:
+                comp = geom.compositions.add(
+                    name="Restored", make_active=True,
+                )
+                for d in restored_layers:
+                    geom.compositions.add_layer(comp.id, d)
 
         # Restore active stage / step where possible.
         try:
@@ -1128,16 +1135,13 @@ class ResultsViewer:
         self._plot_pane.remove_tab(("diagram", id(diagram)))
 
     def _on_escape(self) -> None:
-        """Esc pressed in the viewport — return to the Geometry diagram.
+        """Esc → return to the active Geometry's base view.
 
-        Sets the locked Geometry composition active in the manager,
-        re-selects its outline row, and routes the details panel to
-        show the (empty) Geometry layer stack. Active layers stay
-        attached and visible — only the focus / selected composition
-        is reset.
+        Deselects the active composition (so just the substrate paints
+        per the geometry's deformation), re-selects the active
+        Geometry's row in the outline, and routes the details dock to
+        the geometry settings panel.
         """
-        # Drop input focus so any spinner / line-edit doesn't keep
-        # holding it after Esc.
         try:
             from qtpy import QtWidgets
             fw = QtWidgets.QApplication.focusWidget()
@@ -1145,40 +1149,42 @@ class ResultsViewer:
                 fw.clearFocus()
         except Exception:
             pass
-        # Switch the active composition to Geometry.
+        if self._director is None:
+            return
+        active_geom = self._director.geometries.active
+        if active_geom is None:
+            return
         try:
-            from .diagrams._compositions import GEOMETRY_ID
-            if self._director is not None:
-                self._director.compositions.set_active(GEOMETRY_ID)
+            active_geom.compositions.set_active(None)
         except Exception:
             pass
-        # Outline: select the Geometry row so it visually reflects
-        # active state.
         try:
             outline_widget = getattr(self, "_outline", None)
             if outline_widget is not None:
-                outline_widget._select_composition(GEOMETRY_ID)  # noqa: SLF001
+                outline_widget._select_geometry(active_geom.id)  # noqa: SLF001
         except Exception:
             pass
-        # Details: stack view of Geometry (empty).
         if self._details_panel is not None:
             try:
-                self._details_panel.show_stack()
+                self._details_panel.show_geometry(active_geom.id)
             except Exception:
                 pass
 
     def _on_outline_composition_selected(self, key) -> None:
-        """Outline tree clicked the single ``Diagram 1`` row (or off it).
-
-        ``key`` is ``"default"`` for the active composition, ``None``
-        when the selection moved off the row. Routes to the details
-        dock's stack view in the active case, or idle otherwise.
-        """
+        """Outline tree → composition row selected (or off-row)."""
         if self._details_panel is None:
             return
         if key is None:
+            return  # geometry-selected callback handles routing
+        self._details_panel.show_stack()
+
+    def _on_outline_geometry_selected(self, geom_id) -> None:
+        """Outline tree → Geometry row selected (or off-row)."""
+        if self._details_panel is None:
+            return
+        if geom_id is None:
             self._details_panel.clear()
-        else:
-            self._details_panel.show_stack()
+            return
+        self._details_panel.show_geometry(geom_id)
 
 

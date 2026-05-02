@@ -86,9 +86,11 @@ class DiagramSettingsTab:
         self._widget = widget
 
         director.subscribe_diagrams(self._on_diagrams_changed)
-        # Composition changes (rename, set_active, add/remove) — in
-        # stack mode this updates which cards are visible.
-        self._unsub_compositions = director.compositions.subscribe(
+        # Geometry events fire on any state change (geometry list,
+        # active geometry, per-geometry composition list, active
+        # composition, rename, layer membership) — one subscription
+        # rebuilds the stack when relevant.
+        self._unsub_compositions = director.geometries.subscribe(
             self._on_compositions_changed,
         )
 
@@ -241,16 +243,7 @@ class DiagramSettingsTab:
         inner_lay.setSpacing(8)
 
         if not diagrams and not include_pending:
-            mgr = self._director.compositions
-            active = mgr.active
-            if active is not None and active.locked:
-                msg = (
-                    "Geometry shows just the mesh — it doesn't accept "
-                    "layers.\n\nClick + Add layer to start a new "
-                    "diagram (or use the + button in the outline header)."
-                )
-            else:
-                msg = "No layers yet. Click + Add layer to add one."
+            msg = "No layers yet. Click + Add layer to add one."
             empty = QtWidgets.QLabel(msg)
             empty.setWordWrap(True)
             empty.setObjectName("DiagramSettingsEmptyHint")
@@ -486,9 +479,10 @@ class DiagramSettingsTab:
             return
         # Tag the new layer with the active composition so the
         # outline + stack view group it correctly.
-        active = self._director.compositions.active
-        if active is not None:
-            self._director.compositions.add_layer(active.id, diagram)
+        comp_mgr = self._director.compositions
+        active = comp_mgr.active if comp_mgr is not None else None
+        if active is not None and comp_mgr is not None:
+            comp_mgr.add_layer(active.id, diagram)
         # Drop the pending-creation card; keep stack mode so the
         # newly-added layer appears as a real card alongside the
         # existing ones (registry.add fires the observer which
@@ -559,20 +553,24 @@ class DiagramSettingsTab:
             return
         # Locate the composition holding ``old`` so we can swap the
         # membership too (preserve z-position within the comp).
-        comp = self._director.compositions.composition_for_layer(old)
+        comp_mgr = self._director.compositions
+        comp = (
+            comp_mgr.composition_for_layer(old) if comp_mgr is not None
+            else None
+        )
         try:
             self._director.registry.replace(old, new_diagram)
         except Exception as exc:
             from .._failures import report
             report("DiagramSettingsTab._on_data_swap", exc)
             return
-        if comp is not None:
+        if comp is not None and comp_mgr is not None:
             try:
                 idx = comp.layers.index(old)
                 comp.layers[idx] = new_diagram
                 # Manager observers don't fire on direct list mutation;
                 # nudge them so the outline label refreshes if needed.
-                self._director.compositions._notify()  # noqa: SLF001
+                comp_mgr._notify()  # noqa: SLF001
             except ValueError:
                 pass
         # Selected reference is now the new diagram; rebuild form.
@@ -589,9 +587,12 @@ class DiagramSettingsTab:
         self._content_layout.addLayout(btn_row)
 
     def _on_delete(self, d: "Diagram") -> None:
-        # Untag from the composition first, then remove from registry.
+        # Untag from whichever geometry's composition owns it, then
+        # remove from the registry.
         try:
-            self._director.compositions.remove_layer(d)
+            owner = self._director.geometries.geometry_for_layer(d)
+            if owner is not None:
+                owner.compositions.remove_layer(d)
         except Exception:
             pass
         try:

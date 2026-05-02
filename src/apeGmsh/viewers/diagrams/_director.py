@@ -25,6 +25,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._compositions import CompositionManager
+from ._geometries import GeometryManager
 from ._registry import DiagramRegistry
 
 if TYPE_CHECKING:
@@ -71,9 +72,10 @@ class ResultsDirector:
         self._registry = DiagramRegistry()
         self._registry.subscribe(self._fire_diagrams_changed)
 
-        # Composition manager — bootstraps a locked "Geometry"
-        # composition that's always present (Esc returns to it).
-        self._compositions = CompositionManager()
+        # Geometry manager — bootstraps one "Geometry 1" that owns its
+        # own (initially empty) CompositionManager. Each geometry holds
+        # the deformation state for its child compositions.
+        self._geometries = GeometryManager()
 
         self.on_step_changed: list[Callable[[int], None]] = []
         self.on_stage_changed: list[Callable[[str], None]] = []
@@ -107,8 +109,24 @@ class ResultsDirector:
         return self._registry
 
     @property
-    def compositions(self) -> CompositionManager:
-        return self._compositions
+    def geometries(self) -> GeometryManager:
+        return self._geometries
+
+    @property
+    def compositions(self) -> Optional[CompositionManager]:
+        """The active geometry's CompositionManager (or None).
+
+        Back-compat property — most call sites still want "the
+        compositions the user is currently editing", which after the
+        Geometry refactor lives on the active Geometry. Subscribers
+        that need to track *every* state change (geometry list,
+        active geometry, composition list, rename) should use
+        :attr:`geometries` and ``geometries.subscribe`` instead — that
+        observer fires for any model change while this property's
+        value can switch out from under them on geometry change.
+        """
+        active = self._geometries.active
+        return active.compositions if active is not None else None
 
     @property
     def stage_id(self) -> Optional[str]:
