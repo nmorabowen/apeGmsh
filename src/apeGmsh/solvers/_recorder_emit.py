@@ -122,6 +122,51 @@ def _gauss_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
     return next(iter(keywords))
 
 
+def _per_material_strain_skip_reason(
+    rec: ResolvedRecorderRecord,
+) -> Optional[str]:
+    """Detect gauss-strain records the .out path can't capture.
+
+    Tri31 (and any future class listed in
+    :data:`apeGmsh.solvers._element_response.PER_MATERIAL_STRAIN_CLASSES`)
+    has no element-level ``setResponse('strains')`` branch — an
+    ``ops.recorder('Element', ..., 'strains')`` against such elements
+    writes only the time column, no strain values. The per-material
+    path (``ops.recorder('Element', ..., 'material', '<gp>',
+    'strain')``) does work, but emitting it requires a per-Gauss-point
+    fan-out the .out path doesn't currently handle.
+
+    Returns a user-facing reason string when the record should be
+    skipped at .out emission time, else ``None``. Callers either warn
+    + return empty (live emission) or embed the reason as a comment
+    (Tcl/Python export).
+    """
+    if rec.category != "gauss":
+        return None
+    class_name = rec.element_class_name
+    if class_name is None:
+        return None
+    from ._element_response import PER_MATERIAL_STRAIN_CLASSES
+    if class_name not in PER_MATERIAL_STRAIN_CLASSES:
+        return None
+    try:
+        keyword = _gauss_record_ops_keyword(rec)
+    except ValueError:
+        return None
+    if keyword != "strains":
+        return None
+    return (
+        f"Record {rec.name!r} (gauss strain) targets element class "
+        f"{class_name!r}, whose element-level setResponse('strains') "
+        f"is unimplemented in OpenSees — an .out recorder would write "
+        f"only the time column, no strain data. Use MPCO instead "
+        f"(``recorder mpco ... -E material.strain``, read with "
+        f"``Results.from_mpco(...)``), or capture in-process via "
+        f"apeGmsh.solvers.Recorders + DomainCapture "
+        f"(``Results.from_native(...)``)."
+    )
+
+
 def _nodal_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
     """Return the ops keyword (``"globalForce"`` / ``"localForce"``) for an elements record.
 
@@ -362,6 +407,11 @@ def _emit_element_simple(
     if rec.element_ids is None or rec.element_ids.size == 0:
         return
 
+    skip_reason = _per_material_strain_skip_reason(rec)
+    if skip_reason:
+        warnings.warn(skip_reason, RuntimeWarning, stacklevel=3)
+        return
+
     if rec.category == "gauss":
         # Token depends on components (stresses vs strains), not on
         # category alone. None means no recognised gauss components.
@@ -532,6 +582,10 @@ def emit_spec_tcl(
         if rec.category in _DEFERRED_CATEGORIES:
             lines.append(_tcl_unsupported_comment(rec))
             continue
+        skip_reason = _per_material_strain_skip_reason(rec)
+        if skip_reason:
+            lines.append(f";# SKIPPED: {skip_reason}")
+            continue
         sub = list(emit_logical(
             rec, output_dir=output_dir, file_format=file_format,
         ))
@@ -552,6 +606,10 @@ def emit_spec_python(
     for rec in records:
         if rec.category in _DEFERRED_CATEGORIES:
             lines.append(_py_unsupported_comment(rec))
+            continue
+        skip_reason = _per_material_strain_skip_reason(rec)
+        if skip_reason:
+            lines.append(f"# SKIPPED: {skip_reason}")
             continue
         sub = list(emit_logical(
             rec, output_dir=output_dir, file_format=file_format,

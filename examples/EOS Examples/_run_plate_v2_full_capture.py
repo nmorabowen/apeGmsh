@@ -105,10 +105,7 @@ recs.elements(
     pg="Plate",
 )
 recs.gauss(components="stress", pg="Plate")
-# (tri31 does not respond to the OpenSees ``strains`` query, so we
-# skip the strain recorder for this element type. von_mises_stress
-# also requires a tensor record context — the viewer can derive it
-# from the stress components on the fly.)
+recs.gauss(components="strain", pg="Plate")
 
 spec = recs.resolve(fem, ndm=2, ndf=2)
 
@@ -143,4 +140,4 @@ print(f"\nWrote {results_path}")
 print(f"  size: {size_kb:.1f} KB")
 print(f"  steps: {N_STEPS} (t = 0.1, 0.2, ..., 1.0)")
 print(f"  recorders: displacement, reaction_force, "
-      f"nodal_resisting_force, stress")
+      f"nodal_resisting_force, stress, strain")

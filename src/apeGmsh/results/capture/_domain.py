@@ -121,6 +121,7 @@ from ...solvers._element_response import (
     lookup_fiber,
     lookup_layer,
     lookup_nodal_force,
+    needs_per_material_strain,
     normalise_integration_points,
     resolve_layout_from_gp_x,
     synthesize_line_station_layout_for_elastic_beam,
@@ -773,6 +774,12 @@ class _GaussClassGroup:
     layout: ResponseLayout
     element_ids: list[int] = field(default_factory=list)
     steps: list[ndarray] = field(default_factory=list)
+    # When True, query the response via per-Gauss-point material
+    # delegation (``ops.eleResponse(eid, "material", "<gp>", "strain")``)
+    # because this element class lacks a working element-level branch
+    # for the requested token. See
+    # :func:`apeGmsh.solvers._element_response.needs_per_material_strain`.
+    via_per_material: bool = False
 
 
 class _GaussCapturer:
@@ -827,7 +834,12 @@ class _GaussCapturer:
                 continue
             layout = lookup(class_name, int_rule, self._catalog_token)
             grp = groups.setdefault(
-                (class_name, int_rule), _GaussClassGroup(layout=layout),
+                (class_name, int_rule), _GaussClassGroup(
+                    layout=layout,
+                    via_per_material=needs_per_material_strain(
+                        class_name, self._catalog_token,
+                    ),
+                ),
             )
             grp.element_ids.append(eid)
         self._groups = groups
@@ -840,11 +852,11 @@ class _GaussCapturer:
         for grp in self._groups.values():
             buf: list[ndarray] = []
             for eid in grp.element_ids:
-                vals = ops.eleResponse(eid, self._ops_keyword)
-                arr = np.asarray(vals, dtype=np.float64)
+                arr = self._query_element(ops, grp, eid)
                 if arr.size != grp.layout.flat_size_per_element:
                     raise ValueError(
-                        f"ops.eleResponse({eid}, {self._ops_keyword!r}) "
+                        f"ops.eleResponse for element {eid} "
+                        f"({'per-material' if grp.via_per_material else self._ops_keyword!r}) "
                         f"returned {arr.size} values but the catalog "
                         f"layout for {grp.layout.class_tag} expects "
                         f"{grp.layout.flat_size_per_element}."
@@ -852,6 +864,39 @@ class _GaussCapturer:
                 buf.append(arr)
             # (E_g, flat_size); stacked along time at write_to.
             grp.steps.append(np.stack(buf, axis=0))
+
+    def _query_element(
+        self, ops: Any, grp: "_GaussClassGroup", eid: int,
+    ) -> ndarray:
+        """Pull one element's flat response vector for the current step.
+
+        Default path is the bulk element-level keyword
+        (``ops.eleResponse(eid, "stresses"|"strains"|...)``). Classes
+        flagged with ``via_per_material=True`` (currently Tri31's
+        strain query) loop over Gauss points and concatenate
+        ``ops.eleResponse(eid, "material", "<gp>", "<token>")`` —
+        the same path MPCO takes through Tri31's
+        ``"material"``/``"integrPoint"`` setResponse branch.
+        """
+        if grp.via_per_material:
+            n_gp = grp.layout.n_gauss_points
+            n_comp = grp.layout.n_components_per_gp
+            flat: list[float] = []
+            for gp in range(1, n_gp + 1):
+                vals = ops.eleResponse(
+                    eid, "material", str(gp), self._catalog_token,
+                )
+                if len(vals) != n_comp:
+                    raise ValueError(
+                        f"ops.eleResponse({eid}, 'material', '{gp}', "
+                        f"{self._catalog_token!r}) returned "
+                        f"{len(vals)} values; catalog expects "
+                        f"{n_comp} per Gauss point."
+                    )
+                flat.extend(vals)
+            return np.asarray(flat, dtype=np.float64)
+        vals = ops.eleResponse(eid, self._ops_keyword)
+        return np.asarray(vals, dtype=np.float64)
 
     def write_to(
         self, writer: Any, stage_id: str, partition_id: str,
