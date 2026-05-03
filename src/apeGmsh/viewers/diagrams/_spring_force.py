@@ -125,7 +125,7 @@ class SpringForceDiagram(Diagram):
             slab = results.elements.springs.get(
                 ids=self._element_ids_to_read,
                 component=self.spec.selector.component,
-                time=[0],
+                time=None,
             )
         except Exception as exc:
             raise RuntimeError(
@@ -141,7 +141,8 @@ class SpringForceDiagram(Diagram):
             )
 
         slab_eids = np.asarray(slab.element_index, dtype=np.int64)
-        slab_values = np.asarray(slab.values[0], dtype=np.float64)
+        slab_values_all = np.asarray(slab.values, dtype=np.float64)  # (T, N)
+        slab_values = slab_values_all[0] if slab_values_all.size else slab_values_all
         n_slab = slab_eids.size
 
         # Reorder positions to match slab ordering
@@ -161,6 +162,10 @@ class SpringForceDiagram(Diagram):
 
         positions_in_slab_order = positions_in_slab_order[valid_mask]
         slab_values = slab_values[valid_mask]
+        slab_values_all = (
+            slab_values_all[:, valid_mask] if slab_values_all.ndim == 2
+            else slab_values_all
+        )
         n = positions_in_slab_order.shape[0]
         self._spring_positions = positions_in_slab_order
         self._slab_to_spring_pos = np.where(valid_mask)[0]
@@ -177,9 +182,12 @@ class SpringForceDiagram(Diagram):
             d = _direction_from_component(self.spec.selector.component)
         self._direction = d
 
-        # Auto scale at attach
+        # Auto scale at attach — global max-abs across every step
         if style.scale is None:
-            max_abs = float(np.abs(slab_values).max())
+            max_abs = (
+                float(np.abs(slab_values_all).max())
+                if slab_values_all.size else 0.0
+            )
             if max_abs > 0.0 and scene.model_diagonal > 0.0:
                 self._initial_scale = (
                     style.auto_scale_fraction * scene.model_diagonal / max_abs

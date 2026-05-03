@@ -114,15 +114,20 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         source.point_data["_mag"] = np.zeros(n, dtype=np.float64)
         self._source = source
 
-        # Read step-0 vectors
+        # Read step-0 vectors (for initial display) and compute global
+        # magnitude statistics across all steps for auto-fit scale/clim.
         vecs0 = self._read_vectors(0)
         source.point_data["_vec"][:] = vecs0
         mags0 = np.linalg.norm(vecs0, axis=1)
         source.point_data["_mag"][:] = mags0
 
+        global_mag_max = self._read_global_mag_max()
+
         # Determine scale (auto-fit if not provided)
         if style.scale is None:
-            max_abs = float(mags0.max()) if mags0.size else 0.0
+            max_abs = global_mag_max if global_mag_max > 0.0 else float(
+                mags0.max() if mags0.size else 0.0
+            )
             if max_abs > 0.0 and scene.model_diagonal > 0.0:
                 self._initial_scale = (
                     style.auto_scale_fraction * scene.model_diagonal / max_abs
@@ -132,21 +137,22 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         else:
             self._initial_scale = float(style.scale)
 
-        # Determine initial clim (over magnitudes)
+        # Determine initial clim (over magnitudes across all steps)
         if style.clim is not None:
             self._initial_clim = (
                 float(style.clim[0]), float(style.clim[1]),
             )
         else:
-            finite = mags0[np.isfinite(mags0)]
-            if finite.size:
-                lo = float(finite.min())
-                hi = float(finite.max())
-                if lo == hi:
-                    hi = lo + 1.0
-                self._initial_clim = (lo, hi)
-            else:
-                self._initial_clim = (0.0, 1.0)
+            hi = (
+                global_mag_max if global_mag_max > 0.0
+                else float(mags0[np.isfinite(mags0)].max())
+                if mags0.size and np.isfinite(mags0).any()
+                else 1.0
+            )
+            lo = 0.0
+            if hi <= lo:
+                hi = lo + 1.0
+            self._initial_clim = (lo, hi)
 
         # Build glyph PolyData
         glyph = self._build_glyph(self.current_scale())
@@ -345,6 +351,57 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             valid = positions >= 0
             out[positions[valid], axis] = slab_vals[valid]
         return out
+
+    def _read_global_mag_max(self) -> float:
+        """Maximum |vector| across every step. ``0.0`` if unavailable.
+
+        Reads each component's full ``(T, N)`` slab once and reduces to
+        a single scalar — ``sqrt(sum_axes(values**2)).max()``. Used to
+        size the auto-fit scale/clim so they're meaningful at the
+        end-of-history rather than at the (near-zero) first increment.
+        """
+        if self._fem_ids_to_read is None or self._submesh_pos_of_id is None:
+            return 0.0
+        results = self._scoped_results()
+        if results is None:
+            return 0.0
+        style: VectorGlyphStyle = self.spec.style    # type: ignore[assignment]
+
+        slabs: list[ndarray] = []
+        n_t = 0
+        slab_ids_ref: Optional[ndarray] = None
+        for comp in style.components[:3]:
+            try:
+                slab = results.nodes.get(
+                    ids=self._fem_ids_to_read,
+                    component=comp,
+                    time=None,
+                )
+            except Exception:
+                continue
+            if slab.values.size == 0:
+                continue
+            v = np.asarray(slab.values, dtype=np.float64)
+            if v.ndim != 2:
+                continue
+            slabs.append(v)
+            if v.shape[0] > n_t:
+                n_t = v.shape[0]
+            if slab_ids_ref is None:
+                slab_ids_ref = np.asarray(slab.node_ids, dtype=np.int64)
+        if not slabs or n_t == 0:
+            return 0.0
+        # Sum of squared values across components (broadcast safely if
+        # one component happens to have a different time count).
+        ssq = np.zeros_like(slabs[0])
+        for v in slabs:
+            t = min(ssq.shape[0], v.shape[0])
+            ssq[:t] += v[:t] ** 2
+        try:
+            mag_max = float(np.sqrt(ssq).max())
+        except ValueError:
+            return 0.0
+        return mag_max if np.isfinite(mag_max) else 0.0
 
     def _build_glyph(self, scale: float) -> pv.PolyData:
         """Return a freshly-built arrow PolyData from ``self._source``."""
