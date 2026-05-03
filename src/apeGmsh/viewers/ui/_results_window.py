@@ -62,7 +62,7 @@ class ResultsWindow:
     # removed / renamed). Saved layout state is only restored if the
     # stored version matches; mismatched state is discarded so users
     # don't get a half-broken arrangement after a structural change.
-    _LAYOUT_SCHEMA_VERSION = 4
+    _LAYOUT_SCHEMA_VERSION = 5
 
     def __init__(
         self,
@@ -88,12 +88,16 @@ class ResultsWindow:
         # Populated by _build_layout()
         self._dock_left: Any = None
         self._dock_right: Any = None
+        self._dock_diagram: Any = None
+        self._dock_geometry: Any = None
         self._dock_details: Any = None
         self._dock_session: Any = None
         self._dock_bottom: Any = None
         # Host widgets inside each dock's QScrollArea — content swap target.
         self._left_host: Any = None
         self._right_host: Any = None
+        self._diagram_host: Any = None
+        self._geometry_host: Any = None
         self._details_host: Any = None
         self._session_host: Any = None
         self._bottom_host: Any = None
@@ -159,10 +163,44 @@ class ResultsWindow:
         self._set_host_widget(self._details_host, widget)
         self._dock_details.setVisible(widget is not None)
 
+    def set_diagram_widget(self, widget) -> None:
+        """Mount a widget in the right-side Diagram dock (layer stack)."""
+        self._set_host_widget(self._diagram_host, widget)
+        self._dock_diagram.setVisible(widget is not None)
+
+    def set_geometry_widget(self, widget) -> None:
+        """Mount a widget in the right-side Geometry dock (geometry settings)."""
+        self._set_host_widget(self._geometry_host, widget)
+        self._dock_geometry.setVisible(widget is not None)
+
     def set_session_widget(self, widget) -> None:
         """Mount a widget in the right-side Session dock (viewer-level settings)."""
         self._set_host_widget(self._session_host, widget)
         self._dock_session.setVisible(widget is not None)
+
+    def raise_diagram_dock(self) -> None:
+        """Bring the Diagram dock to the front of its tab strip."""
+        if self._dock_diagram is not None:
+            try:
+                self._dock_diagram.raise_()
+            except Exception:
+                pass
+
+    def raise_geometry_dock(self) -> None:
+        """Bring the Geometry dock to the front of its tab strip."""
+        if self._dock_geometry is not None:
+            try:
+                self._dock_geometry.raise_()
+            except Exception:
+                pass
+
+    def raise_details_dock(self) -> None:
+        """Bring the Details dock to the front of its tab strip."""
+        if self._dock_details is not None:
+            try:
+                self._dock_details.raise_()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Internals
@@ -289,6 +327,20 @@ class ResultsWindow:
         )
         self._dock_right.setVisible(False)  # empty until ResultsViewer mounts it
 
+        self._dock_diagram, self._diagram_host = self._make_dock(
+            "Diagram", "dock_results_diagram",
+            min_width=LAYOUT.right_min_width,
+            features=with_close,
+        )
+        self._dock_diagram.setVisible(False)  # empty until ResultsViewer mounts it
+
+        self._dock_geometry, self._geometry_host = self._make_dock(
+            "Geometry", "dock_results_geometry",
+            min_width=LAYOUT.right_min_width,
+            features=with_close,
+        )
+        self._dock_geometry.setVisible(False)  # empty until ResultsViewer mounts it
+
         self._dock_details, self._details_host = self._make_dock(
             "Details", "dock_results_details",
             min_width=LAYOUT.right_min_width,
@@ -316,21 +368,22 @@ class ResultsWindow:
 
         win.addDockWidget(QtCore.Qt.LeftDockWidgetArea, self._dock_left)
         win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_right)
-        # Split the right area so Plots (top) and Details (bottom) are
-        # independent docks by default — the user can drag one onto the
-        # other's title bar to tabify, and that drag is then preserved
-        # by saved layout state.
-        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_details)
+        # Split the right area so Plots (top) and the dock-cluster
+        # (bottom) are independent. Diagram / Geometry / Details /
+        # Session start tabified together at the bottom; the user can
+        # drag any of them out to detach or re-arrange.
+        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_diagram)
         win.splitDockWidget(
-            self._dock_right, self._dock_details, QtCore.Qt.Vertical,
+            self._dock_right, self._dock_diagram, QtCore.Qt.Vertical,
         )
-        # Session starts tabified with Details — viewer-level settings
-        # are an occasional-use surface, so sharing a tab strip with
-        # Details (also occasional) keeps the right column compact.
+        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_geometry)
+        win.tabifyDockWidget(self._dock_diagram, self._dock_geometry)
+        win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_details)
+        win.tabifyDockWidget(self._dock_diagram, self._dock_details)
         win.addDockWidget(QtCore.Qt.RightDockWidgetArea, self._dock_session)
-        win.tabifyDockWidget(self._dock_details, self._dock_session)
-        # Keep Details as the visible tab on first launch.
-        self._dock_details.raise_()
+        win.tabifyDockWidget(self._dock_diagram, self._dock_session)
+        # Keep Diagram as the visible tab on first launch.
+        self._dock_diagram.raise_()
 
         win.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._dock_bottom)
 
@@ -533,6 +586,8 @@ class ResultsWindow:
         docks = (
             self._dock_left,
             self._dock_right,
+            self._dock_diagram,
+            self._dock_geometry,
             self._dock_details,
             self._dock_session,
             self._dock_bottom,

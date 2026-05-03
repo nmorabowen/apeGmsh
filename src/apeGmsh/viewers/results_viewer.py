@@ -89,6 +89,7 @@ class ResultsViewer:
         self._element_label_actor: Any = None
         self._plot_pane: Any = None
         self._details_panel: Any = None
+        self._geometry_panel: Any = None
         self._session_panel: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
@@ -174,15 +175,15 @@ class ResultsViewer:
         win.set_left_widget(outline.widget)
         self._outline = outline
 
-        # ── Right rail (plot pane + details) ────────────────────────
+        # ── Right rail (plot pane + dedicated Diagram / Geometry /
+        #               Details / Session docks) ───────────────────
         from .ui._plot_pane import PlotPane
         from .ui._details_panel import DetailsPanel
         plot_pane = PlotPane()
         plot_pane.on_user_close(self._on_plot_user_close)
-        # ── Geometry settings panel for the details dock ──────────
-        # Built up-front so the details panel can route Geometry-row
-        # selections into it. Available-fields detection runs once
-        # against the union of every stage's nodal components.
+        # ── Geometry settings panel ───────────────────────────────
+        # Available-fields detection runs once against the union of
+        # every stage's nodal components.
         from .ui._geometry_settings_panel import GeometrySettingsPanel
         from .diagrams._kind_catalog import (
             _vector_prefixes as _vp,
@@ -199,6 +200,10 @@ class ResultsViewer:
         geometry_panel = GeometrySettingsPanel(
             director, deform_field_options,
         )
+        # DetailsPanel is now a near-empty placeholder for future
+        # canvas-click contextual content (contour scale edits, picked
+        # node readouts, …). The diagram / geometry editors live in
+        # their own dedicated docks.
         details = DetailsPanel(settings_tab, geometry_panel)
         outline.on_composition_selected(self._on_outline_composition_selected)
         outline.on_geometry_selected(self._on_outline_geometry_selected)
@@ -207,9 +212,12 @@ class ResultsViewer:
         # activates the corresponding tab and vice versa.
         outline.bind_plot_pane(plot_pane)
         win.set_right_widget(plot_pane.widget)
+        win.set_diagram_widget(settings_tab.widget)
+        win.set_geometry_widget(geometry_panel.widget)
         win.set_details_widget(details.widget)
         self._plot_pane = plot_pane
         self._details_panel = details
+        self._geometry_panel = geometry_panel
 
         # ── Plotter — substrate mesh ────────────────────────────────
         plotter = win.plotter
@@ -613,6 +621,19 @@ class ResultsViewer:
         # ── Subscribe to diagram changes for side-panel docking ─────
         director.subscribe_diagrams(self._sync_side_panels)
 
+        # New layers attach against step 0 with the substrate at the
+        # reference shape — push the active step's values and re-fire
+        # the deformation sync so a freshly-added diagram lands on the
+        # same step + deformed shape as the rest of the scene.
+        def _refresh_new_layers() -> None:
+            try:
+                director.registry.update_to_step(int(director.step_index))
+            except Exception:
+                pass
+            self._apply_deformation(int(director.step_index))
+
+        director.subscribe_diagrams(_refresh_new_layers)
+
         # ── Probe overlay + viewport HUDs ───────────────────────────
         # ProbePaletteHUD: top-right mode strip (point/line/slice).
         # PickReadoutHUD: top-left glass card showing the latest pick
@@ -622,6 +643,7 @@ class ResultsViewer:
         from .overlays.probe_overlay import ProbeOverlay
         from .ui._viewport_hud import ProbePaletteHUD
         from .ui._pick_readout_hud import PickReadoutHUD
+        from .ui._shortcut_help_hud import ShortcutHelpHUD
         self._probe_overlay = ProbeOverlay(plotter, scene, director)
         self._probe_hud = ProbePaletteHUD(
             plotter.interactor,
@@ -632,6 +654,18 @@ class ResultsViewer:
             plotter.interactor,
             self._probe_overlay,
             director,
+        )
+        self._shortcut_hud = ShortcutHelpHUD(
+            plotter.interactor,
+            entries=[
+                ("Esc", "Deselect"),
+                ("Ctrl+H", "Toggle focus mode"),
+                ("Q", "Close window"),
+                ("N / E / G", "Pick mode — node / element / GP"),
+                ("Shift+LMB drag", "Rotate view"),
+                ("Shift+click", "Time-history at node"),
+                ("F2", "Rename outline item"),
+            ],
         )
 
         # ── Navigation: Shift+LMB drag = rotate, click = time-history.
@@ -1735,12 +1769,13 @@ class ResultsViewer:
         self._plot_pane.remove_tab(("diagram", id(diagram)))
 
     def _on_escape(self) -> None:
-        """Esc → return to the active Geometry's base view.
+        """Esc → deselect.
 
-        Deselects the active composition (so just the substrate paints
-        per the geometry's deformation), re-selects the active
-        Geometry's row in the outline, and routes the details dock to
-        the geometry settings panel.
+        Drops the active composition selection and any pick highlights
+        so the viewport returns to the substrate + node cloud + active
+        layers. Leaves the outline and details dock alone — the user's
+        previous navigation context (whatever row was selected) is not
+        overwritten.
         """
         try:
             from qtpy import QtWidgets
@@ -1758,19 +1793,6 @@ class ResultsViewer:
             active_geom.compositions.set_active(None)
         except Exception:
             pass
-        try:
-            outline_widget = getattr(self, "_outline", None)
-            if outline_widget is not None:
-                outline_widget._select_geometry(active_geom.id)  # noqa: SLF001
-        except Exception:
-            pass
-        if self._details_panel is not None:
-            try:
-                self._details_panel.show_geometry(active_geom.id)
-            except Exception:
-                pass
-        # Drop any pick highlight set by the pick observer so Esc is
-        # the universal "back to clean view" gesture.
         self._clear_element_highlight()
         self._clear_gp_highlight()
 
@@ -1779,23 +1801,34 @@ class ResultsViewer:
 
         The outline only fires this with a non-None key when a
         composition row becomes the current item; ``None`` only
-        arrives via :meth:`_outline._fire_idle` (off any row), in
-        which case we drop into the idle (empty) details state.
+        arrives via :meth:`_outline._fire_idle` (off any row).
+        Routes the layer-stack view into the dedicated Diagram dock.
         """
-        if self._details_panel is None:
-            return
         if key is None:
-            self._details_panel.clear()
             return
-        self._details_panel.show_stack()
+        try:
+            self._settings_tab.show_stack()
+        except Exception:
+            pass
+        win = self._win
+        if win is not None:
+            win.raise_diagram_dock()
 
     def _on_outline_geometry_selected(self, geom_id) -> None:
-        """Outline tree → Geometry row selected (or off-row)."""
-        if self._details_panel is None:
-            return
+        """Outline tree → Geometry row selected (or off-row).
+
+        Routes the geometry settings view into the dedicated Geometry
+        dock.
+        """
         if geom_id is None:
-            self._details_panel.clear()
             return
-        self._details_panel.show_geometry(geom_id)
+        if self._geometry_panel is not None:
+            try:
+                self._geometry_panel.show_geometry(geom_id)
+            except Exception:
+                pass
+        win = self._win
+        if win is not None:
+            win.raise_geometry_dock()
 
 
