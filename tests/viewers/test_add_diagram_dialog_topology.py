@@ -142,16 +142,19 @@ def test_topology_row_is_hidden_for_other_kinds(
 # =====================================================================
 
 
-def test_auto_topology_lists_union_of_nodes_and_gauss(
+def test_topology_combo_only_offers_nodes_and_gauss(
     qapp, director_with_nodes_and_gauss,
 ):
+    """The dialog dropped the legacy ``"auto"`` option — users now pick
+    explicitly between nodes and gauss."""
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
     dlg = AddDiagramDialog(director_with_nodes_and_gauss, parent=None)
     _set_kind(dlg, "contour")
-    _set_topology(dlg, "auto")
-    items = _component_items(dlg)
-    assert "displacement_z" in items
-    assert "stress_xx" in items
+    options = [
+        dlg._topology_combo.itemData(i)
+        for i in range(dlg._topology_combo.count())
+    ]
+    assert options == ["nodes", "gauss"]
 
 
 def test_nodes_topology_lists_nodes_only(
@@ -186,17 +189,41 @@ def test_switching_topology_repopulates_components(
     _set_kind(dlg, "contour")
 
     _set_topology(dlg, "nodes")
-    assert "stress_xx" not in _component_items(dlg)
+    items = _component_items(dlg)
+    assert "displacement_z" in items
+    assert "stress_xx" not in items
 
     _set_topology(dlg, "gauss")
     items = _component_items(dlg)
     assert "stress_xx" in items
     assert "displacement_z" not in items
 
-    _set_topology(dlg, "auto")
-    items = _component_items(dlg)
-    assert "stress_xx" in items
-    assert "displacement_z" in items
+
+# =====================================================================
+# Averaging row — visible only for contour + gauss
+# =====================================================================
+
+
+def test_averaging_row_visible_for_gauss_topology(
+    qapp, director_with_nodes_and_gauss,
+):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director_with_nodes_and_gauss, parent=None)
+    _set_kind(dlg, "contour")
+    _set_topology(dlg, "gauss")
+    assert not dlg._averaging_combo.isHidden()
+    assert not dlg._averaging_label.isHidden()
+
+
+def test_averaging_row_hidden_for_nodes_topology(
+    qapp, director_with_nodes_and_gauss,
+):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director_with_nodes_and_gauss, parent=None)
+    _set_kind(dlg, "contour")
+    _set_topology(dlg, "nodes")
+    assert dlg._averaging_combo.isHidden()
+    assert dlg._averaging_label.isHidden()
 
 
 # =====================================================================
@@ -204,13 +231,13 @@ def test_switching_topology_repopulates_components(
 # =====================================================================
 
 
-def test_default_component_under_auto_prefers_displacement_z(
+def test_default_component_under_nodes_prefers_displacement_z(
     qapp, director_with_nodes_and_gauss,
 ):
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
     dlg = AddDiagramDialog(director_with_nodes_and_gauss, parent=None)
     _set_kind(dlg, "contour")
-    _set_topology(dlg, "auto")
+    _set_topology(dlg, "nodes")
     assert dlg._component_combo.currentText() == "displacement_z"
 
 

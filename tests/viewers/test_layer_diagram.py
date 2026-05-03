@@ -334,3 +334,31 @@ def test_detach_clears_state(layer_results, headless_plotter):
     assert diagram._actor is None
     assert diagram._slab_layer is None
     assert not diagram.is_attached
+
+
+def test_detach_removes_scalar_bar(layer_results, headless_plotter):
+    """Repeated attach/detach cycles must not accumulate bars."""
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    for _ in range(3):
+        diagram = LayerStackDiagram(_spec(), results)
+        diagram.attach(headless_plotter, results.fem, scene)
+        diagram.detach()
+    bars = getattr(headless_plotter, "scalar_bars", {}) or {}
+    assert "stress_xx" not in bars
+
+
+def test_set_show_and_fmt_live(layer_results, headless_plotter):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.set_show_scalar_bar(False)
+    assert "stress_xx" not in headless_plotter.scalar_bars
+
+    diagram.set_show_scalar_bar(True)
+    assert "stress_xx" in headless_plotter.scalar_bars
+
+    diagram.set_fmt("%.5f")
+    assert headless_plotter.scalar_bars["stress_xx"].GetLabelFormat() == "%.5f"

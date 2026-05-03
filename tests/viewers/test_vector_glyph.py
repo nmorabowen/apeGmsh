@@ -200,3 +200,36 @@ def test_detach_clears_state(vector_results, headless_plotter):
     assert diagram._source is None
     assert diagram._actor is None
     assert not diagram.is_attached
+
+
+def test_detach_removes_scalar_bar(vector_results, headless_plotter):
+    """Magnitude-colored arrows register a scalar bar; detach must
+    drop it so repeated attach/detach cycles don't accumulate bars."""
+    scene = build_fem_scene(vector_results.fem)
+    for _ in range(3):
+        diagram = VectorGlyphDiagram(_spec(), vector_results)
+        diagram.attach(headless_plotter, vector_results.fem, scene)
+        diagram.detach()
+    bars = getattr(headless_plotter, "scalar_bars", {}) or {}
+    assert "displacement_x" not in bars
+
+
+def test_set_show_scalar_bar_toggles_live(vector_results, headless_plotter):
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec(), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+    assert "displacement_x" in headless_plotter.scalar_bars
+
+    diagram.set_show_scalar_bar(False)
+    assert "displacement_x" not in headless_plotter.scalar_bars
+
+    diagram.set_show_scalar_bar(True)
+    assert "displacement_x" in headless_plotter.scalar_bars
+
+
+def test_set_fmt_updates_label_format_live(vector_results, headless_plotter):
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec(), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+    diagram.set_fmt("%.2e")
+    assert headless_plotter.scalar_bars["displacement_x"].GetLabelFormat() == "%.2e"

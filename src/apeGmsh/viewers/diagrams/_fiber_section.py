@@ -27,6 +27,7 @@ from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
 from ._beam_geometry import compute_local_axes, station_position
+from ._scalar_bar_support import ScalarBarSupport
 from ._styles import FiberSectionStyle
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 _SCALAR_NAME = "_fiber_value"
 
 
-class FiberSectionDiagram(Diagram):
+class FiberSectionDiagram(ScalarBarSupport, Diagram):
     """Per-fiber dot cloud + 2-D section panel for fiber-section beams."""
 
     kind = "fiber_section"
@@ -76,6 +77,7 @@ class FiberSectionDiagram(Diagram):
         self._initial_clim: Optional[tuple[float, float]] = None
         self._runtime_clim: Optional[tuple[float, float]] = None
         self._runtime_cmap: Optional[str] = None
+        self._init_scalar_bar_state()
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -232,6 +234,7 @@ class FiberSectionDiagram(Diagram):
             scene.model_diagonal * style.point_size_fraction, 1e-6,
         )
 
+        bar_args = self._scalar_bar_args()
         actor = plotter.add_mesh(
             cloud,
             scalars=_SCALAR_NAME,
@@ -240,10 +243,8 @@ class FiberSectionDiagram(Diagram):
             opacity=style.opacity,
             render_points_as_spheres=True,
             point_size=10.0,        # screen-space; the dot cloud rendering
-            show_scalar_bar=style.show_scalar_bar,
-            scalar_bar_args={
-                "title": self.spec.selector.component,
-            } if style.show_scalar_bar else None,
+            show_scalar_bar=bar_args is not None,
+            scalar_bar_args=bar_args,
             name=self._actor_name(),
             reset_camera=False,
             lighting=False,
@@ -279,6 +280,7 @@ class FiberSectionDiagram(Diagram):
             pass
 
     def detach(self) -> None:
+        self._remove_scalar_bar(self._scalar_bar_title())
         self._cloud = None
         self._actor = None
         self._scalar_array = None

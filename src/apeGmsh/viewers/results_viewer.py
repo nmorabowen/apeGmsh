@@ -634,14 +634,43 @@ class ResultsViewer:
             director,
         )
 
-        # ── Shift-click → add time-history series (B++ §8) ─────────
-        # Shift+left-click anywhere on the substrate snaps to the
-        # nearest FEM node and opens (or focuses) a time-history tab
-        # in the plot pane. Plain clicks fall through to the existing
-        # picker / navigation handlers.
-        from .overlays.shift_click_picker import ShiftClickPicker
-        self._shift_click_picker = ShiftClickPicker(
-            plotter, self._on_shift_click_world,
+        # ── Navigation: Shift+LMB drag = rotate, click = time-history.
+        # ``install_navigation`` adds quaternion orbit (Shift+MMB),
+        # cursor-anchored zoom (scroll), and the Shift+LMB drag-detect
+        # rotate observer.
+        from .core.navigation import install_navigation
+        install_navigation(
+            plotter,
+            on_shift_click=self._on_shift_click_world,
+        )
+
+        # ── Plain LMB pick — node by default, element via E, GP via G.
+        # The pick observer absorbs plain LMB so the trackball does
+        # not also rotate on drag. Mode is toggled by ``N`` / ``E`` /
+        # ``G`` keypresses while the viewport has focus. Drag draws a
+        # rubber-band rectangle and on release picks all nodes /
+        # elements (per current mode) inside it (GP box-pick is not
+        # yet wired — the rectangle still renders but the release is
+        # a no-op in GP mode).
+        from .core.results_pick import (
+            install_results_pick, MODE_NODE, MODE_ELEMENT, MODE_GP,
+        )
+        self._pick_controller = install_results_pick(
+            plotter,
+            on_pick=self._on_results_pick,
+            on_box_pick=self._on_results_box_pick,
+            gp_resolver=self._resolve_gp_pick,
+            gp_candidates=self._collect_gp_candidates,
+            scene=scene,
+        )
+        plotter.add_key_event(
+            "n", lambda: self._set_pick_mode(MODE_NODE),
+        )
+        plotter.add_key_event(
+            "e", lambda: self._set_pick_mode(MODE_ELEMENT),
+        )
+        plotter.add_key_event(
+            "g", lambda: self._set_pick_mode(MODE_GP),
         )
 
         # ── Camera / view ──────────────────────────────────────────
@@ -1224,11 +1253,339 @@ class ResultsViewer:
         return f"Results — {Path(path).name}"
 
     # ------------------------------------------------------------------
+    # Plain-LMB pick — dispatch on mode (node / element)
+    # ------------------------------------------------------------------
+
+    def _on_results_pick(self, result) -> None:
+        """Dispatch a :class:`PickResult` based on its ``kind``."""
+        from .core.results_pick import MODE_NODE, MODE_ELEMENT, MODE_GP
+        if result.kind == MODE_NODE:
+            self._on_node_pick(result.world)
+        elif result.kind == MODE_ELEMENT:
+            self._on_element_pick(result.element_id, result.cell_id)
+        elif result.kind == MODE_GP:
+            self._on_gp_pick(
+                result.element_id, result.gp_index, result.world,
+            )
+
+    def _on_node_pick(self, world_pos) -> None:
+        """Drop a probe marker at the nearest node + refresh the HUD."""
+        if self._probe_overlay is None:
+            return
+        try:
+            import numpy as np
+            point = self._probe_overlay.probe_at_point(
+                np.asarray(world_pos),
+            )
+        except Exception as exc:
+            from ._failures import report
+            report("ResultsViewer._on_node_pick", exc)
+            return
+        cb = self._probe_overlay.on_point_result
+        if cb is not None:
+            try:
+                cb(point)
+            except Exception as exc:
+                from ._failures import report
+                report("ResultsViewer._on_node_pick.on_point_result", exc)
+
+    def _on_element_pick(self, element_id, cell_id) -> None:
+        """Highlight the picked element + post a status message."""
+        if element_id is None or cell_id is None:
+            return
+        self._highlight_element_cell(int(cell_id))
+        if self._win is not None:
+            self._win.set_status(
+                f"Picked element {int(element_id)} (cell {int(cell_id)}).",
+                timeout=4000,
+            )
+
+    def _resolve_gp_pick(self, picked_actor, cell_id):
+        """Walk active GaussPointDiagrams and resolve the picked cell.
+
+        Returns ``(element_id, gp_index, world_xyz)`` if any active
+        :class:`GaussPointDiagram` owns the picked actor and can map
+        ``cell_id`` to a GP center. ``None`` otherwise — the pick
+        observer treats that as "miss" and silently drops it.
+        """
+        if self._director is None or picked_actor is None:
+            return None
+        from .diagrams._gauss_marker import GaussPointDiagram
+        try:
+            diagrams = list(self._director.registry.diagrams())
+        except Exception:
+            return None
+        for d in diagrams:
+            if not isinstance(d, GaussPointDiagram):
+                continue
+            if getattr(d, "_actor", None) is not picked_actor:
+                continue
+            try:
+                return d.resolve_picked_cell(cell_id)
+            except Exception:
+                return None
+        return None
+
+    def _collect_gp_candidates(self):
+        """Aggregate GP centers across active GaussPointDiagrams.
+
+        Returns ``(centers, element_ids, gp_indices)`` arrays usable
+        directly by the box-pick path in ``results_pick.py``. Empty
+        arrays mean "no GP markers on screen". ``None`` on failure.
+        """
+        if self._director is None:
+            return None
+        import numpy as np
+        from .diagrams._gauss_marker import GaussPointDiagram
+        centers_list: list = []
+        eids_list: list = []
+        idxs_list: list = []
+        try:
+            diagrams = list(self._director.registry.diagrams())
+        except Exception:
+            return None
+        for d in diagrams:
+            if not isinstance(d, GaussPointDiagram):
+                continue
+            cloud = getattr(d, "_cloud", None)
+            eidx = getattr(d, "_gp_element_index", None)
+            if cloud is None or eidx is None:
+                continue
+            try:
+                pts = np.asarray(cloud.points, dtype=np.float64)
+                eidx_arr = np.asarray(eidx, dtype=np.int64)
+            except Exception:
+                continue
+            if pts.shape[0] != eidx_arr.size or pts.shape[0] == 0:
+                continue
+            centers_list.append(pts)
+            eids_list.append(eidx_arr)
+            idxs_list.append(np.arange(pts.shape[0], dtype=np.int64))
+        if not centers_list:
+            return (
+                np.zeros((0, 3), dtype=np.float64),
+                np.zeros(0, dtype=np.int64),
+                np.zeros(0, dtype=np.int64),
+            )
+        return (
+            np.concatenate(centers_list, axis=0),
+            np.concatenate(eids_list, axis=0),
+            np.concatenate(idxs_list, axis=0),
+        )
+
+    def _on_gp_pick(self, element_id, gp_index, world_pos) -> None:
+        """Highlight a halo at the picked GP + post a status message."""
+        if element_id is None or gp_index is None:
+            return
+        self._highlight_gp_world(world_pos)
+        if self._win is not None:
+            self._win.set_status(
+                f"Picked GP {int(gp_index)} on element {int(element_id)}.",
+                timeout=4000,
+            )
+
+    def _highlight_gp_world(self, world_pos) -> None:
+        """Drop a single GP highlight at ``world_pos``."""
+        import numpy as np
+        try:
+            pos = np.asarray(world_pos, dtype=np.float64).reshape(1, 3)
+        except Exception:
+            return
+        self._highlight_gps(pos)
+
+    def _highlight_gps(self, world_positions) -> None:
+        """Render bright spheres at one or more GP world coords.
+
+        ``world_positions`` is ``(N, 3)`` (or empty). Replaces any
+        prior GP highlight; empty input clears the overlay. Cleared
+        on next GP pick / Esc / mode change.
+        """
+        if self._scene is None or self._plotter is None:
+            return
+        try:
+            import numpy as np
+            import pyvista as pv
+        except Exception:
+            return
+        try:
+            pts = np.asarray(world_positions, dtype=np.float64)
+        except Exception:
+            return
+        self._clear_gp_highlight()
+        if pts.size == 0:
+            return
+        if pts.ndim != 2 or pts.shape[1] != 3:
+            return
+        diag = float(getattr(self._scene, "model_diagonal", 0.0)) or 1.0
+        radius = 0.008 * diag
+        try:
+            cloud = pv.PolyData(pts)
+            sphere = pv.Sphere(
+                radius=radius, theta_resolution=14, phi_resolution=14,
+            )
+            glyphs = cloud.glyph(geom=sphere, scale=False, orient=False)
+            actor = self._plotter.add_mesh(
+                glyphs,
+                color="#ffd400",
+                name="_results_pick_gp_highlight",
+                pickable=False,
+                reset_camera=False,
+                lighting=True,
+                smooth_shading=True,
+            )
+            self._gp_pick_highlight_actor = actor
+        except Exception:
+            self._gp_pick_highlight_actor = None
+
+    def _clear_gp_highlight(self) -> None:
+        if (
+            self._plotter is None
+            or getattr(self, "_gp_pick_highlight_actor", None) is None
+        ):
+            return
+        try:
+            self._plotter.remove_actor("_results_pick_gp_highlight")
+        except Exception:
+            pass
+        self._gp_pick_highlight_actor = None
+
+    def _on_results_box_pick(self, box_result) -> None:
+        """Dispatch a :class:`BoxPickResult` based on its ``kind``."""
+        from .core.results_pick import MODE_NODE, MODE_ELEMENT, MODE_GP
+        if box_result.kind == MODE_ELEMENT:
+            self._highlight_element_cells(box_result.cell_ids)
+            count = int(box_result.ids.size)
+            if self._win is not None:
+                self._win.set_status(
+                    f"Box-picked {count} element"
+                    f"{'' if count == 1 else 's'}.",
+                    timeout=4000,
+                )
+        elif box_result.kind == MODE_NODE:
+            count = int(box_result.ids.size)
+            if self._win is not None:
+                self._win.set_status(
+                    f"Box-picked {count} node{'' if count == 1 else 's'}.",
+                    timeout=4000,
+                )
+        elif box_result.kind == MODE_GP:
+            count = int(box_result.ids.size)
+            # Build the world-position array by mapping the picked
+            # (element_id, gp_index) pairs back through the candidate
+            # closure — much cheaper to re-query than to thread world
+            # coords through the BoxPickResult.
+            self._highlight_gps_for_box(box_result)
+            if self._win is not None:
+                self._win.set_status(
+                    f"Box-picked {count} GP{'' if count == 1 else 's'}.",
+                    timeout=4000,
+                )
+
+    def _highlight_gps_for_box(self, box_result) -> None:
+        """Look up world coords for a GP BoxPickResult and highlight them."""
+        if box_result.ids.size == 0:
+            self._clear_gp_highlight()
+            return
+        cand = self._collect_gp_candidates()
+        if cand is None:
+            return
+        import numpy as np
+        centers, eids, gp_idxs = cand
+        # Match (element_id, gp_index) pairs against the candidate
+        # arrays. Both sides are small enough for a python loop.
+        wanted = set(
+            (int(e), int(g))
+            for e, g in zip(box_result.ids, box_result.gp_indices)
+        )
+        pos = np.array(
+            [
+                centers[i]
+                for i in range(centers.shape[0])
+                if (int(eids[i]), int(gp_idxs[i])) in wanted
+            ],
+            dtype=np.float64,
+        ).reshape(-1, 3)
+        self._highlight_gps(pos)
+
+    def _highlight_element_cell(self, cell_id: int) -> None:
+        """Render a wireframe overlay around the picked substrate cell.
+
+        Replaces any prior highlight so only the latest pick is
+        visible. ``Esc`` clears via :meth:`_on_escape` (which already
+        also clears outline / probe state).
+        """
+        self._highlight_element_cells([int(cell_id)])
+
+    def _highlight_element_cells(self, cell_ids) -> None:
+        """Render a wireframe overlay around one or more picked cells.
+
+        ``cell_ids`` may be a sequence or numpy array; empty ⇒ clear
+        the current highlight. Each call replaces the prior highlight
+        — picks don't accumulate. ``Esc`` also clears.
+        """
+        if self._scene is None or self._plotter is None:
+            return
+        try:
+            import numpy as np
+            ids = np.asarray(cell_ids, dtype=np.int64).ravel()
+        except Exception:
+            return
+        self._clear_element_highlight()
+        if ids.size == 0:
+            return
+        try:
+            sub = self._scene.grid.extract_cells(ids)
+        except Exception:
+            return
+        try:
+            actor = self._plotter.add_mesh(
+                sub,
+                color="#ffd400",
+                style="wireframe",
+                line_width=3,
+                name="_results_pick_element_highlight",
+                pickable=False,
+                reset_camera=False,
+            )
+            self._element_pick_highlight_actor = actor
+        except Exception:
+            self._element_pick_highlight_actor = None
+
+    def _clear_element_highlight(self) -> None:
+        if (
+            self._plotter is None
+            or getattr(self, "_element_pick_highlight_actor", None) is None
+        ):
+            return
+        try:
+            self._plotter.remove_actor("_results_pick_element_highlight")
+        except Exception:
+            pass
+        self._element_pick_highlight_actor = None
+
+    def _set_pick_mode(self, mode: str) -> None:
+        """Toggle pick mode and post a status hint."""
+        if getattr(self, "_pick_controller", None) is None:
+            return
+        try:
+            self._pick_controller.set_mode(mode)
+        except ValueError:
+            return
+        if mode != "element":
+            self._clear_element_highlight()
+        if mode != "gp":
+            self._clear_gp_highlight()
+        if self._win is not None:
+            self._win.set_status(
+                f"Pick mode: {mode}.", timeout=2000,
+            )
+
+    # ------------------------------------------------------------------
     # Shift-click → time-history series
     # ------------------------------------------------------------------
 
     def _on_shift_click_world(self, world_pos) -> None:
-        """ShiftClickPicker callback — open a time-history for the picked node.
+        """Shift-click callback — open a time-history for the picked node.
 
         Snaps the shift-click world position to the nearest FEM node
         via the probe overlay, picks a default component (the first
@@ -1412,6 +1769,10 @@ class ResultsViewer:
                 self._details_panel.show_geometry(active_geom.id)
             except Exception:
                 pass
+        # Drop any pick highlight set by the pick observer so Esc is
+        # the universal "back to clean view" gesture.
+        self._clear_element_highlight()
+        self._clear_gp_highlight()
 
     def _on_outline_composition_selected(self, key) -> None:
         """Outline tree → composition row selected (or off-row).

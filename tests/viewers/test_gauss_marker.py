@@ -247,3 +247,84 @@ def test_diagram_detach_clears_state(gauss_results, headless_plotter):
     assert diagram._cloud is None
     assert diagram._actor is None
     assert not diagram.is_attached
+
+
+def test_diagram_detach_removes_scalar_bar(
+    gauss_results, headless_plotter,
+):
+    """Repeated attach/detach cycles must not accumulate bars."""
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    for _ in range(3):
+        spec = DiagramSpec(
+            kind="gauss_marker",
+            selector=SlabSelector(component="stress_xx"),
+            style=GaussMarkerStyle(),
+        )
+        diagram = GaussPointDiagram(spec, results)
+        diagram.attach(headless_plotter, results.fem, scene)
+        diagram.detach()
+    bars = getattr(headless_plotter, "scalar_bars", {}) or {}
+    assert "stress_xx" not in bars
+
+
+def test_resolve_picked_cell_maps_glyph_cell_to_gp(
+    gauss_results, headless_plotter,
+):
+    """``resolve_picked_cell(cell_id)`` divides by the diagram's
+    fixed cells-per-glyph block to recover the GP center index, and
+    looks up the matching ``element_id`` from the diagram's GP
+    metadata."""
+    results, eids = gauss_results
+    scene = build_fem_scene(results.fem)
+    spec = DiagramSpec(
+        kind="gauss_marker",
+        selector=SlabSelector(component="stress_xx"),
+        style=GaussMarkerStyle(),
+    )
+    diagram = GaussPointDiagram(spec, results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    cells_per = diagram._glyph_cells_per_center
+    assert cells_per > 0
+
+    # Cell index inside the first glyph block → GP center 0.
+    hit = diagram.resolve_picked_cell(0)
+    assert hit is not None
+    eid_first, gp_idx_first, world_first = hit
+    assert gp_idx_first == 0
+    assert eid_first == int(diagram._gp_element_index[0])
+    assert world_first.shape == (3,)
+
+    # A cell at the boundary of the second block → center 1.
+    hit2 = diagram.resolve_picked_cell(cells_per)
+    assert hit2 is not None
+    _, gp_idx_second, _ = hit2
+    assert gp_idx_second == 1
+
+    # Out-of-range cell → None.
+    n_centers = diagram._gp_element_index.size
+    out_of_range = n_centers * cells_per + 1
+    assert diagram.resolve_picked_cell(out_of_range) is None
+    assert diagram.resolve_picked_cell(-1) is None
+
+
+def test_set_show_and_fmt_live(gauss_results, headless_plotter):
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    spec = DiagramSpec(
+        kind="gauss_marker",
+        selector=SlabSelector(component="stress_xx"),
+        style=GaussMarkerStyle(),
+    )
+    diagram = GaussPointDiagram(spec, results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.set_show_scalar_bar(False)
+    assert "stress_xx" not in headless_plotter.scalar_bars
+
+    diagram.set_show_scalar_bar(True)
+    assert "stress_xx" in headless_plotter.scalar_bars
+
+    diagram.set_fmt("%.4f")
+    assert headless_plotter.scalar_bars["stress_xx"].GetLabelFormat() == "%.4f"

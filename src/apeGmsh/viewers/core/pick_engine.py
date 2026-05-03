@@ -229,6 +229,15 @@ class PickEngine:
 
         # ── LMB handlers ───────────────────────────────────────────
         def on_lmb_press(caller, _event):
+            # Shift+LMB is owned by navigation (drag → rotate, click
+            # → on_shift_click). Bail early so the rubber-band path
+            # doesn't fight the rotate gesture and so the priority-11
+            # navigation observer sees a clean abort chain.
+            try:
+                if caller.GetShiftKey():
+                    return
+            except Exception:
+                pass
             x, y = caller.GetEventPosition()
             engine._press_pos = (x, y)
             engine._dragging = False

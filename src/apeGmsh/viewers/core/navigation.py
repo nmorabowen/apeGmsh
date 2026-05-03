@@ -3,12 +3,16 @@ Navigation — Camera control via VTK observers.
 
 Installs mouse/keyboard bindings on a PyVista plotter:
 
-    Shift + Scroll wheel : quaternion orbit (around pivot or scene centre)
-    Scroll click (MMB)   : pan camera
+    Shift + LMB drag     : rotate (yaw/pitch via trackball Rotate())
+    Shift + MMB drag     : quaternion orbit around pivot (or scene centre)
+    MMB drag             : pan
+    RMB drag             : pan (secondary)
     Scroll wheel         : zoom toward mouse cursor
-    RMB drag             : pan camera (secondary)
 
-LMB is NOT intercepted — the :mod:`pick_engine` handles it.
+LMB without a modifier is NOT intercepted — the :mod:`pick_engine`
+handles it (click = pick, drag = rubber-band). Shift+LMB IS
+intercepted at priority 11 (above pick_engine's 10) so the rotate
+gesture shadows the rubber-band gesture cleanly.
 
 Usage::
 
@@ -18,7 +22,7 @@ Usage::
 from __future__ import annotations
 
 import math
-from typing import Callable
+from typing import Any, Callable
 
 import pyvista as pv
 
@@ -121,6 +125,8 @@ def install_navigation(
     plotter: pv.Plotter,
     *,
     get_orbit_pivot: Callable[[], tuple[float, float, float] | None] | None = None,
+    on_shift_click: Callable[["tuple[float, float, float]"], None] | None = None,
+    drag_threshold_px: int = 4,
 ) -> None:
     """Install camera-control observers on *plotter*.
 
@@ -132,6 +138,15 @@ def install_navigation(
         Returns ``(x, y, z)`` for orbit centre (e.g. selection centroid).
         When ``None`` or when the callable returns ``None``, orbit
         defaults to the visible scene centre.
+    on_shift_click : callable, optional
+        Invoked with the world-space ``(x, y, z)`` of a Shift+LMB click
+        when no drag occurred (drag triggers a rotate gesture instead).
+        Use this to wire a "shift-click adds a probe / time-history"
+        consumer without registering a separate VTK observer.
+    drag_threshold_px : int
+        Pixel distance the mouse must travel after Shift+LMB press
+        before the gesture is treated as a drag (rotate). Below this
+        threshold, ``on_shift_click`` fires on release instead.
     """
     import vtk
 
@@ -151,6 +166,16 @@ def install_navigation(
     _orbit_pivot: list[tuple | None] = [None]
     _orbit_last:  list[tuple | None] = [None]
 
+    # ── Shift+LMB drag-rotate state ─────────────────────────────────
+    # Set on Shift+LMB press; cleared on release. While set, the
+    # mouse-move observer watches for drag-threshold crossing and
+    # promotes the gesture to a trackball rotate.
+    _shift_lmb_press_pos: list[tuple | None] = [None]
+    _shift_lmb_did_rotate: list[bool] = [False]
+
+    # Cached lazy picker for the on_shift_click callback's world coord.
+    _shift_click_picker: list[Any] = [None]
+
     # ── tag storage for observer removal (if needed) ────────────────
     _tags: dict[str, int] = {}
 
@@ -169,6 +194,21 @@ def install_navigation(
             plotter.render()
             _abort(caller, _tags["move"])
             return
+        # Shift+LMB drag-detect: promote to rotate once the mouse
+        # crosses the drag threshold. Below the threshold, do nothing
+        # so a quick click still falls through to ``on_shift_click``.
+        if (
+            _shift_lmb_press_pos[0] is not None
+            and not _shift_lmb_did_rotate[0]
+        ):
+            px, py = caller.GetEventPosition()
+            sx, sy = _shift_lmb_press_pos[0]
+            if (px - sx) ** 2 + (py - sy) ** 2 > drag_threshold_px ** 2:
+                style.StartRotate()
+                _shift_lmb_did_rotate[0] = True
+            # Don't abort — the trackball at the default priority
+            # consumes the move and runs Rotate() now that state is
+            # VTKIS_ROTATE.
         # Don't abort — let trackball handle pan, let pick_engine see moves
 
     # ── Shift+Scroll: orbit ─────────────────────────────────────────
@@ -250,6 +290,62 @@ def install_navigation(
             style.EndPan()
         _abort(caller, _tags["rmb_release"])
 
+    # ── Shift+LMB: drag-detect → rotate; click → on_shift_click ─────
+    # Plain LMB is reserved for pick_engine (click = pick, drag =
+    # rubber-band). Shift+LMB drags engage the trackball's Rotate
+    # state mid-gesture; Shift+LMB clicks (no drag) fire the optional
+    # ``on_shift_click`` callback so consumers can wire a "shift-click
+    # adds a probe" behavior without their own observer. The press
+    # observer aborts so pick_engine (priority 10) and any default
+    # trackball Shift+LMB handling (which would Pan) never see the
+    # event.
+    def on_lmb_press(caller, _event):
+        if not caller.GetShiftKey():
+            return    # Plain LMB falls through to pick_engine.
+        _shift_lmb_press_pos[0] = caller.GetEventPosition()
+        _shift_lmb_did_rotate[0] = False
+        _abort(caller, _tags["lmb_press"])
+
+    def _world_pos_at_screen(x: int, y: int):
+        if _shift_click_picker[0] is None:
+            import vtk
+            picker = vtk.vtkCellPicker()
+            picker.SetTolerance(0.005)
+            _shift_click_picker[0] = picker
+        picker = _shift_click_picker[0]
+        try:
+            picker.Pick(int(x), int(y), 0, renderer)
+            if picker.GetCellId() < 0:
+                return None
+            return tuple(picker.GetPickPosition())
+        except Exception:
+            return None
+
+    def on_lmb_release(caller, _event):
+        if _shift_lmb_press_pos[0] is None:
+            return
+        did_rotate = _shift_lmb_did_rotate[0]
+        x, y = caller.GetEventPosition()
+        _shift_lmb_press_pos[0] = None
+        _shift_lmb_did_rotate[0] = False
+        if did_rotate:
+            style.EndRotate()
+            _abort(caller, _tags["lmb_release"])
+            return
+        # No drag — fire the click callback if one is wired.
+        if on_shift_click is not None:
+            world = _world_pos_at_screen(x, y)
+            if world is not None:
+                try:
+                    on_shift_click(world)
+                except Exception as exc:
+                    import sys
+                    print(
+                        f"[navigation] on_shift_click raised: {exc}",
+                        file=sys.stderr,
+                    )
+        _abort(caller, _tags["lmb_release"])
+
     # ── register ────────────────────────────────────────────────────
     _tags["move"]        = iren.AddObserver("MouseMoveEvent",            on_mouse_move,   10.0)
     _tags["mmb_press"]   = iren.AddObserver("MiddleButtonPressEvent",    on_mmb_press,    10.0)
@@ -258,3 +354,5 @@ def install_navigation(
     _tags["scroll_bwd"]  = iren.AddObserver("MouseWheelBackwardEvent",   on_scroll_bwd,   10.0)
     _tags["rmb_press"]   = iren.AddObserver("RightButtonPressEvent",     on_rmb_press,    10.0)
     _tags["rmb_release"] = iren.AddObserver("RightButtonReleaseEvent",   on_rmb_release,  10.0)
+    _tags["lmb_press"]   = iren.AddObserver("LeftButtonPressEvent",      on_lmb_press,    11.0)
+    _tags["lmb_release"] = iren.AddObserver("LeftButtonReleaseEvent",    on_lmb_release,  11.0)

@@ -1,24 +1,33 @@
 """ContourDiagram — paint scalar values on the substrate.
 
-Three rendering paths share one diagram, dispatched at attach time:
+Five rendering paths share one diagram, dispatched at attach time
+based on ``topology`` × ``averaging`` × per-element GP count:
 
-* **nodes** — values come from ``results.nodes.get(...)`` and are
-  painted as point data on a submesh extracted by node IDs.
-* **gauss_cell** — values come from ``results.elements.gauss.get(...)``
-  with exactly one Gauss point per element (CST / tri31, hex8 with
-  one-point integration). Painted as cell data on a submesh extracted
-  by element IDs.
-* **gauss_node** — values come from
-  ``results.elements.gauss.get(...)`` with multiple Gauss points per
-  element. The slab is extrapolated to corner nodes via the inverse
-  of the element shape-function matrix, then averaged across all
-  elements that share a node. Painted as point data, same scaffolding
-  as the nodes path.
+* **nodes** — ``topology="nodes"``. Values from
+  ``results.nodes.get(...)``, painted as point data on a submesh
+  extracted by node IDs. The ``averaging`` field is ignored — nodal
+  slabs already carry one value per global node.
+* **gauss_cell** — ``topology="gauss"``, ``averaging="discrete"``,
+  ``n_gp == 1`` per element (CST / tri31, hex8 with one-point
+  integration). Painted as cell data on a submesh extracted by
+  element IDs.
+* **gauss_cell_averaged** — ``topology="gauss"``,
+  ``averaging="averaged"``, ``n_gp == 1``. Same data as gauss_cell,
+  but spread to corner nodes and averaged across elements sharing
+  each node. Smooths boundaries between adjacent CSTs.
+* **gauss_node** — ``topology="gauss"``, ``averaging="averaged"``,
+  ``n_gp > 1``. Values extrapolated to corner nodes via the inverse
+  of the element shape-function matrix, then averaged across
+  elements that share a node. Painted as point data.
+* **gauss_node_discrete** — ``topology="gauss"``,
+  ``averaging="discrete"``, ``n_gp > 1``. Per-element extrapolation
+  with **no cross-element averaging**: each element keeps its own
+  corner values, rendered on a shattered submesh built via
+  ``UnstructuredGrid.separate_cells()``. Boundary jumps are visible.
 
-The user-facing ``ContourStyle.topology`` field has three values:
-``"auto"``, ``"nodes"``, ``"gauss"``. When ``"gauss"`` (or auto with a
-gauss-only component), the diagram peeks at step 0 to count GPs per
-element and picks ``gauss_cell`` vs. ``gauss_node`` automatically.
+The dispatch in ``_resolve_path`` and ``_attach_gauss`` peeks at the
+slab at step 0 to count GPs per element and picks the right gauss
+sub-path.
 
 Performance contract (locked in Phase 0, validated here):
 
@@ -39,6 +48,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._scalar_bar_support import ScalarBarSupport
 from ._styles import ContourStyle
 
 if TYPE_CHECKING:
@@ -52,16 +62,21 @@ _SCALAR_NAME = "_contour"
 # Style.topology values (user-facing)
 _TOPO_NODES = "nodes"
 _TOPO_GAUSS = "gauss"
-_TOPO_AUTO = "auto"
 
-# Internal effective-topology values — gauss splits into a cell-data
-# (n_gp==1) and a point-data (n_gp>1, extrapolated) sub-path.
+# Style.averaging values (user-facing) — only used when topology="gauss"
+_AVG_AVERAGED = "averaged"
+_AVG_DISCRETE = "discrete"
+
+# Internal effective-path values — gauss splits four ways depending on
+# n_gp per element and the averaging choice.
 _EFFECTIVE_NODES = "nodes"
-_EFFECTIVE_GAUSS_CELL = "gauss_cell"
-_EFFECTIVE_GAUSS_NODE = "gauss_node"
+_EFFECTIVE_GAUSS_CELL = "gauss_cell"                # n_gp==1, discrete
+_EFFECTIVE_GAUSS_CELL_AVERAGED = "gauss_cell_averaged"   # n_gp==1, averaged
+_EFFECTIVE_GAUSS_NODE = "gauss_node"                # n_gp>1, averaged
+_EFFECTIVE_GAUSS_NODE_DISCRETE = "gauss_node_discrete"   # n_gp>1, discrete
 
 
-class ContourDiagram(Diagram):
+class ContourDiagram(ScalarBarSupport, Diagram):
     """Scalar contour painted on a slice of the substrate mesh.
 
     The selector picks which nodes / elements carry data; everything
@@ -71,8 +86,8 @@ class ContourDiagram(Diagram):
     The class-level ``topology = "nodes"`` declaration informs the Add-
     Diagram dialog which composite to enumerate components from. Per-
     instance Gauss contour is opted into via
-    ``ContourStyle.topology = "gauss"``; ``"auto"`` picks based on
-    which composite has the requested component.
+    ``ContourStyle.topology = "gauss"``; the user must pick explicitly
+    (no auto-resolution against component availability).
     """
 
     kind = "contour"
@@ -105,10 +120,14 @@ class ContourDiagram(Diagram):
         self._submesh_cell_pos_of_eid: Optional[ndarray] = None
         self._fem_eids_to_read: Optional[ndarray] = None
 
+        # Discrete shattered-submesh runtime state (n_gp>1 + discrete)
+        self._discrete_cell_point_offsets: Optional[ndarray] = None
+
         # Mutable runtime overrides (style is frozen)
         self._runtime_clim: Optional[tuple[float, float]] = None
         self._runtime_opacity: Optional[float] = None
         self._runtime_cmap: Optional[str] = None
+        self._init_scalar_bar_state()
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -148,7 +167,7 @@ class ContourDiagram(Diagram):
                 return
             slab_eids, slab_values = fetched
             self._scatter_into_cell_scalar(slab_eids, slab_values)
-        elif topo == _EFFECTIVE_GAUSS_NODE:
+        elif topo in (_EFFECTIVE_GAUSS_NODE, _EFFECTIVE_GAUSS_CELL_AVERAGED):
             if self._scalar_array is None:
                 return
             fetched = self._fetch_step_values_gauss_node(step_index)
@@ -156,6 +175,10 @@ class ContourDiagram(Diagram):
                 return
             node_ids, nodal_values = fetched
             self._scatter_into_scalar(node_ids, nodal_values)
+        elif topo == _EFFECTIVE_GAUSS_NODE_DISCRETE:
+            if self._scalar_array is None:
+                return
+            self._refresh_shattered_at_step(step_index)
         else:    # _EFFECTIVE_NODES
             if self._scalar_array is None:
                 return
@@ -166,6 +189,11 @@ class ContourDiagram(Diagram):
             self._scatter_into_scalar(slab_node_ids, slab_values)
 
     def detach(self) -> None:
+        # Drop the scalar bar before tearing the actor down, otherwise
+        # PyVista leaves the bar's actor and registry entry in the
+        # plotter — every detach/re-attach cycle would otherwise leak
+        # one bar onto the screen.
+        self._remove_scalar_bar(self._scalar_bar_title())
         self._submesh = None
         self._actor = None
         self._scalar_array = None
@@ -174,6 +202,7 @@ class ContourDiagram(Diagram):
         self._cell_scalar_array = None
         self._submesh_cell_pos_of_eid = None
         self._fem_eids_to_read = None
+        self._discrete_cell_point_offsets = None
         self._initial_clim = None
         self._effective_topology = None
         super().detach()
@@ -244,40 +273,32 @@ class ContourDiagram(Diagram):
     # ------------------------------------------------------------------
 
     def _resolve_topology(self) -> str:
-        """Pick the effective topology based on style + availability.
+        """Validate and return the user-selected topology.
 
-        ``"nodes"`` and ``"gauss"`` are returned verbatim. ``"auto"``
-        prefers nodal data when both composites carry the requested
-        component; falls back to gauss; finally defaults to nodes
-        (the existing path) so the caller hits the original NoDataError
-        with its diagnose hint when neither has the component.
+        Only ``"nodes"`` and ``"gauss"`` are accepted — there is no
+        ``"auto"`` mode. The user picks the source explicitly.
         """
         style: ContourStyle = self.spec.style    # type: ignore[assignment]
-        requested = getattr(style, "topology", _TOPO_AUTO) or _TOPO_AUTO
+        requested = getattr(style, "topology", _TOPO_NODES) or _TOPO_NODES
         if requested == _TOPO_NODES:
             return _TOPO_NODES
         if requested == _TOPO_GAUSS:
             return _TOPO_GAUSS
-        if requested != _TOPO_AUTO:
-            raise ValueError(
-                f"ContourStyle.topology must be one of "
-                f"{{'auto', 'nodes', 'gauss'}}; got {requested!r}."
-            )
-        comp = self.spec.selector.component
-        results = self._scoped_results()
-        if results is None:
-            return _TOPO_NODES
-        try:
-            if comp in results.nodes.available_components():
-                return _TOPO_NODES
-        except Exception:
-            pass
-        try:
-            if comp in results.elements.gauss.available_components():
-                return _TOPO_GAUSS
-        except Exception:
-            pass
-        return _TOPO_NODES
+        raise ValueError(
+            f"ContourStyle.topology must be one of "
+            f"{{'nodes', 'gauss'}}; got {requested!r}."
+        )
+
+    def _resolve_averaging(self) -> str:
+        """Validate and return the user-selected averaging mode."""
+        style: ContourStyle = self.spec.style    # type: ignore[assignment]
+        requested = getattr(style, "averaging", _AVG_AVERAGED) or _AVG_AVERAGED
+        if requested in (_AVG_AVERAGED, _AVG_DISCRETE):
+            return requested
+        raise ValueError(
+            f"ContourStyle.averaging must be one of "
+            f"{{'averaged', 'discrete'}}; got {requested!r}."
+        )
 
     # ------------------------------------------------------------------
     # Attach — nodes path
@@ -365,7 +386,6 @@ class ContourDiagram(Diagram):
                 "ContourDiagram (gauss): could not scope Results to a "
                 "stage — diagram needs a stage_id on the spec."
             )
-        # Single read at step 0 — used for n_gp probe and initial scatter.
         slab_step0 = results.elements.gauss.get(
             ids=eids,
             component=self.spec.selector.component,
@@ -377,10 +397,19 @@ class ContourDiagram(Diagram):
                 f"{self.spec.selector.component!r} at step 0."
             )
         max_n_gp = per_element_max_gp_count(slab_step0)
+        averaging = self._resolve_averaging()
         if max_n_gp <= 1:
-            self._attach_gauss_cell(plotter, scene, slab_step0)
+            if averaging == _AVG_DISCRETE:
+                self._attach_gauss_cell(plotter, scene, slab_step0)
+            else:
+                self._attach_gauss_node(plotter, scene, slab_step0,
+                                       _EFFECTIVE_GAUSS_CELL_AVERAGED)
         else:
-            self._attach_gauss_node(plotter, scene, slab_step0)
+            if averaging == _AVG_DISCRETE:
+                self._attach_gauss_node_discrete(plotter, scene, slab_step0)
+            else:
+                self._attach_gauss_node(plotter, scene, slab_step0,
+                                       _EFFECTIVE_GAUSS_NODE)
 
     # ------------------------------------------------------------------
     # Attach — gauss cell-data path (n_gp == 1)
@@ -461,8 +490,20 @@ class ContourDiagram(Diagram):
     # ------------------------------------------------------------------
 
     def _attach_gauss_node(
-        self, plotter: Any, scene: "FEMSceneData", slab_step0: Any,
+        self,
+        plotter: Any,
+        scene: "FEMSceneData",
+        slab_step0: Any,
+        effective_topology: str = _EFFECTIVE_GAUSS_NODE,
     ) -> None:
+        """Extrapolate to nodes + average across elements; paint as point data.
+
+        Used by both the canonical ``gauss_node`` path (n_gp > 1) and
+        the ``gauss_cell_averaged`` path (n_gp == 1, smoothed). The
+        extrapolation primitive handles both cases — for n_gp == 1 it
+        broadcasts the cell value to each corner, then averaging yields
+        the mean of neighbouring cells at shared nodes.
+        """
         from ._base import NoDataError
         from apeGmsh.results._gauss_extrapolation import (
             extrapolate_gauss_slab_to_nodes,
@@ -479,7 +520,6 @@ class ContourDiagram(Diagram):
                 f"selected element matches the bound FEM)."
             )
 
-        # Map FEM node IDs → substrate point indices, drop misses.
         point_indices = self._fem_ids_to_substrate_indices(scene, node_ids)
         if point_indices.size == 0:
             raise NoDataError(
@@ -508,7 +548,7 @@ class ContourDiagram(Diagram):
             fem_ids_in_submesh.size, dtype=np.int64,
         )
 
-        self._effective_topology = _EFFECTIVE_GAUSS_NODE
+        self._effective_topology = effective_topology
         self._submesh = submesh
         self._submesh_pos_of_id = submesh_pos
         self._fem_ids_to_read = fem_ids_in_submesh
@@ -517,12 +557,175 @@ class ContourDiagram(Diagram):
         submesh.point_data[_SCALAR_NAME] = scalars
         self._scalar_array = submesh.point_data[_SCALAR_NAME]
 
-        # Scatter the step-0 extrapolation result.
         self._scatter_into_scalar(node_ids, nodal_values[0])
         self._initial_clim = self._compute_initial_clim(
             np.asarray(self._scalar_array),
         )
         self._add_actor(submesh, _SCALAR_NAME, preference="point")
+
+    # ------------------------------------------------------------------
+    # Attach — gauss discrete path (n_gp > 1, no cross-element averaging)
+    # ------------------------------------------------------------------
+
+    def _attach_gauss_node_discrete(
+        self, plotter: Any, scene: "FEMSceneData", slab_step0: Any,
+    ) -> None:
+        """Extrapolate per-element with no averaging; paint on shattered submesh.
+
+        Each cell owns its own copy of its corner points
+        (``UnstructuredGrid.separate_cells``), so neighbouring cells
+        can carry different values at "the same" geometric corner —
+        boundary jumps are visible. The corner ordering produced by
+        ``build_fem_scene`` (``conn[:, :n_corner]``) matches the
+        ordering used by the extrapolation primitive, so cell c's k-th
+        point in the shattered submesh receives the k-th corner value
+        from element ``cell_to_element_id[c]``.
+        """
+        from ._base import NoDataError
+        from apeGmsh.results._gauss_extrapolation import (
+            extrapolate_gauss_slab_per_element,
+        )
+
+        per_elem = extrapolate_gauss_slab_per_element(slab_step0, self._fem)
+        if per_elem.element_ids.size == 0:
+            raise NoDataError(
+                f"ContourDiagram (gauss-discrete): no element "
+                f"contributions for component "
+                f"{self.spec.selector.component!r} at step 0."
+            )
+
+        # Build {element_id: (n_corner,) values_at_step0} for fast lookup.
+        per_elem_step0: dict[int, ndarray] = {}
+        for eid, vals in zip(per_elem.element_ids, per_elem.values):
+            per_elem_step0[int(eid)] = np.asarray(vals[0], dtype=np.float64)
+
+        # Resolve selector to substrate cell indices (same as gauss_cell).
+        eids = self._resolved_element_ids
+        if eids is None:
+            cell_indices = np.arange(scene.grid.n_cells, dtype=np.int64)
+        else:
+            cell_indices = np.fromiter(
+                (
+                    scene.element_id_to_cell.get(int(e), -1)
+                    for e in eids
+                ),
+                dtype=np.int64,
+                count=len(eids),
+            )
+            cell_indices = cell_indices[cell_indices >= 0]
+            if cell_indices.size == 0:
+                raise NoDataError(
+                    f"ContourDiagram (gauss-discrete): selector "
+                    f"resolved to {eids.size} element(s) but none are "
+                    f"in the substrate mesh "
+                    f"(selector={self.spec.selector!r})."
+                )
+
+        extracted = scene.grid.extract_cells(cell_indices)
+        if extracted.n_cells == 0:
+            raise NoDataError(
+                "ContourDiagram (gauss-discrete): substrate submesh "
+                "has no cells for this selector — nothing to color."
+            )
+
+        try:
+            orig_cells = np.asarray(
+                extracted.cell_data["vtkOriginalCellIds"], dtype=np.int64,
+            )
+        except KeyError as exc:
+            raise NoDataError(
+                "ContourDiagram (gauss-discrete): extract_cells did "
+                "not provide vtkOriginalCellIds — cannot map cells "
+                "back to FEM element IDs."
+            ) from exc
+        fem_eids_in_submesh = scene.cell_to_element_id[orig_cells]
+
+        # Shatter: each cell now owns its own copies of its corner points.
+        submesh = extracted.separate_cells()
+        if submesh.n_points == 0:
+            raise NoDataError(
+                "ContourDiagram (gauss-discrete): shattered submesh "
+                "is empty — nothing to color."
+            )
+
+        # Cache per-cell point offsets so per-step updates don't have
+        # to walk the connectivity again.
+        cells_arr = np.asarray(submesh.cells, dtype=np.int64)
+        n_cells_sub = int(submesh.n_cells)
+        cell_point_offsets = np.empty(n_cells_sub + 1, dtype=np.int64)
+        cell_point_offsets[0] = 0
+        i = 0
+        for c in range(n_cells_sub):
+            npe_c = int(cells_arr[i])
+            cell_point_offsets[c + 1] = cell_point_offsets[c] + npe_c
+            i += 1 + npe_c
+
+        self._effective_topology = _EFFECTIVE_GAUSS_NODE_DISCRETE
+        self._submesh = submesh
+        self._fem_eids_to_read = fem_eids_in_submesh
+        self._discrete_cell_point_offsets = cell_point_offsets
+
+        scalars = np.zeros(submesh.n_points, dtype=np.float64)
+        submesh.point_data[_SCALAR_NAME] = scalars
+        self._scalar_array = submesh.point_data[_SCALAR_NAME]
+
+        self._scatter_per_element_into_shattered(per_elem_step0)
+        self._initial_clim = self._compute_initial_clim(
+            np.asarray(self._scalar_array),
+        )
+        self._add_actor(submesh, _SCALAR_NAME, preference="point")
+
+    def _scatter_per_element_into_shattered(
+        self, per_elem_step: dict,
+    ) -> None:
+        """Write per-element corner values into the shattered submesh array."""
+        if (self._scalar_array is None
+                or self._fem_eids_to_read is None
+                or getattr(self, "_discrete_cell_point_offsets", None) is None):
+            return
+        offsets = self._discrete_cell_point_offsets
+        eids = self._fem_eids_to_read
+        for c, eid in enumerate(eids):
+            vals = per_elem_step.get(int(eid))
+            if vals is None:
+                continue
+            lo = int(offsets[c])
+            hi = int(offsets[c + 1])
+            n = hi - lo
+            if vals.size < n:
+                continue
+            self._scalar_array[lo:hi] = vals[:n]
+        try:
+            self._submesh.Modified()
+        except Exception:
+            pass
+
+    def _refresh_shattered_at_step(self, step_index: int) -> None:
+        """Re-read the slab at ``step_index`` and rescatter into the
+        shattered submesh."""
+        if self._fem_eids_to_read is None:
+            return
+        results = self._scoped_results()
+        if results is None:
+            return
+        from apeGmsh.results._gauss_extrapolation import (
+            extrapolate_gauss_slab_per_element,
+        )
+        eids = self._resolved_element_ids
+        slab = results.elements.gauss.get(
+            ids=eids,
+            component=self.spec.selector.component,
+            time=[int(step_index)],
+        )
+        if slab.values.size == 0:
+            return
+        per_elem = extrapolate_gauss_slab_per_element(slab, self._fem)
+        if per_elem.element_ids.size == 0:
+            return
+        per_elem_step: dict[int, ndarray] = {}
+        for eid, vals in zip(per_elem.element_ids, per_elem.values):
+            per_elem_step[int(eid)] = np.asarray(vals[0], dtype=np.float64)
+        self._scatter_per_element_into_shattered(per_elem_step)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -542,6 +745,7 @@ class ContourDiagram(Diagram):
             if self._runtime_opacity is not None else style.opacity
         )
         clim = self._runtime_clim or self._initial_clim
+        bar_args = self._scalar_bar_args()
 
         actor = self._plotter.add_mesh(
             submesh,
@@ -551,10 +755,8 @@ class ContourDiagram(Diagram):
             clim=clim,
             opacity=opacity,
             show_edges=style.show_edges,
-            show_scalar_bar=style.show_scalar_bar,
-            scalar_bar_args={
-                "title": self.spec.selector.component,
-            } if style.show_scalar_bar else None,
+            show_scalar_bar=bar_args is not None,
+            scalar_bar_args=bar_args,
             name=self._actor_name(),
             reset_camera=False,
             lighting=True,
@@ -714,6 +916,7 @@ class ContourDiagram(Diagram):
             mapper.SetScalarRange(*clim)
         except Exception:
             pass
+
 
     def _scoped_results(self) -> "Optional[Results]":
         """Return a Results scoped to the diagram's stage (or the spec's)."""

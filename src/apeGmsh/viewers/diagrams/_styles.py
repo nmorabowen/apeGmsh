@@ -45,21 +45,38 @@ class ContourStyle(DiagramStyle):
     show_edges
         Whether to draw element edges over the contour fill.
     show_scalar_bar
-        Whether to render the colorbar overlay.
+        Whether to render the colorbar overlay. Also live-toggleable
+        via ``ContourDiagram.set_show_scalar_bar(bool)`` from the
+        details panel.
+    fmt
+        ``printf``-style format string for tick labels on the scalar
+        bar (e.g. ``"%.3g"``, ``"%.2e"``, ``"%.4f"``). Live-editable
+        via ``ContourDiagram.set_fmt(str)``.
     topology
-        ``"auto"`` (default) inspects which composite has the requested
-        component and prefers nodal data when both are available.
-        ``"nodes"`` forces the nodal-scalar path (point data); ``"gauss"``
-        forces the element-constant Gauss path (cell data, requires
-        ``n_gp == 1`` per element — e.g. CST / tri31, hex8 with one-
-        point integration).
+        ``"nodes"`` (default) forces the nodal-scalar path — values
+        come from ``results.nodes.get`` and are painted as point data.
+        ``"gauss"`` reads from ``results.elements.gauss.get``; the
+        rendering then depends on ``averaging`` and the per-element
+        Gauss-point count.
+    averaging
+        Only honored when ``topology == "gauss"``. ``"averaged"``
+        (default) extrapolates GP values to corners and averages
+        across elements that share a node — smooth contours that
+        cross element boundaries. ``"discrete"`` keeps each element's
+        own corner values (no cross-element averaging) and renders on
+        a shattered submesh, so element-boundary jumps are visible.
+        For elements with one Gauss point, ``"discrete"`` paints flat
+        cell data; ``"averaged"`` smears the cell value to corners and
+        averages across neighbours.
     """
-    cmap: str = "viridis"
+    cmap: str = "jet"
     clim: Optional[tuple[float, float]] = None
     opacity: float = 1.0
     show_edges: bool = False
     show_scalar_bar: bool = True
-    topology: str = "auto"
+    fmt: str = "%.3g"
+    topology: str = "nodes"
+    averaging: str = "averaged"
 
 
 @dataclass(frozen=True)
@@ -144,6 +161,8 @@ class VectorGlyphStyle(DiagramStyle):
     color: str = "#FFB000"
     use_magnitude_colors: bool = True
     arrow_tip_fraction: float = 0.25
+    show_scalar_bar: bool = True
+    fmt: str = "%.3g"
 
 
 @dataclass(frozen=True)
@@ -166,6 +185,7 @@ class GaussMarkerStyle(DiagramStyle):
     opacity: float = 1.0
     point_size: float = 12.0
     show_scalar_bar: bool = True
+    fmt: str = "%.3g"
 
 
 @dataclass(frozen=True)
@@ -223,6 +243,7 @@ class FiberSectionStyle(DiagramStyle):
     opacity: float = 1.0
     point_size_fraction: float = 0.005
     show_scalar_bar: bool = True
+    fmt: str = "%.3g"
     panel_marker_scale: float = 60.0
     panel_show_areas: bool = True
 
@@ -251,6 +272,7 @@ class LayerStackStyle(DiagramStyle):
     opacity: float = 1.0
     show_edges: bool = False
     show_scalar_bar: bool = True
+    fmt: str = "%.3g"
     aggregation: str = "mid_layer"
 
 

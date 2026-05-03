@@ -240,25 +240,41 @@ class AddDiagramDialog:
 
         # Topology — only relevant for Contour, where a
         # ContourStyle.topology field selects between nodal-scalar
-        # rendering (point data) and element-constant Gauss
-        # rendering (cell data, n_gp == 1). Shown for Contour, hidden
-        # for every other kind so the form stays uncluttered.
+        # rendering (point data) and Gauss-extrapolated rendering.
+        # Shown for Contour, hidden for every other kind so the form
+        # stays uncluttered.
         self._topology_label = QtWidgets.QLabel("Topology:")
         self._topology_combo = QtWidgets.QComboBox()
-        self._topology_combo.addItem("Auto",  "auto")
         self._topology_combo.addItem("Nodes", "nodes")
         self._topology_combo.addItem("Gauss", "gauss")
         self._topology_combo.setToolTip(
-            "Auto: prefer nodal data when both composites have the\n"
-            "component; fall through to Gauss otherwise.\n"
-            "Nodes: force the nodal-scalar path (point data).\n"
-            "Gauss: force the element-constant path (cell data;\n"
-            "requires n_gp == 1 per element)."
+            "Nodes: nodal-scalar path (point data; one value per\n"
+            "global node — e.g. displacement, reaction).\n"
+            "Gauss: read GP values from the elements composite. The\n"
+            "Averaging row controls whether jumps at element\n"
+            "boundaries are smoothed."
         )
         self._topology_combo.currentIndexChanged.connect(
             self._populate_components,
         )
+        self._topology_combo.currentIndexChanged.connect(
+            self._update_averaging_row_visibility,
+        )
         form.addRow(self._topology_label, self._topology_combo)
+
+        # Averaging — only relevant for Contour + Gauss topology.
+        self._averaging_label = QtWidgets.QLabel("Averaging:")
+        self._averaging_combo = QtWidgets.QComboBox()
+        self._averaging_combo.addItem("Averaged", "averaged")
+        self._averaging_combo.addItem("Discrete", "discrete")
+        self._averaging_combo.setToolTip(
+            "Averaged: extrapolate GP values to corners and average\n"
+            "across elements that share a node — smooth contours.\n"
+            "Discrete: each element keeps its own corner values\n"
+            "(no cross-element averaging) — boundary jumps visible.\n"
+            "For one-GP elements, Discrete paints flat cell colour."
+        )
+        form.addRow(self._averaging_label, self._averaging_combo)
 
         # Component — editable combo populated from the chosen
         # (kind, stage) pair. Editable so the user can also type a
@@ -332,6 +348,7 @@ class AddDiagramDialog:
 
         # Initial visibility + component list for the default kind.
         self._update_topology_row_visibility()
+        self._update_averaging_row_visibility()
         self._populate_components()
 
     # ------------------------------------------------------------------
@@ -344,9 +361,9 @@ class AddDiagramDialog:
         """Return ``kind_id`` of every kind whose topology is empty in
         every stage of this Results file.
 
-        Contour is treated specially: its dialog topology defaults to
-        ``"auto"`` (nodes ∪ gauss), so we mark it without-data only if
-        both composites are empty in every stage.
+        Contour is treated specially: it can read either composite, so
+        we mark it without-data only if both ``nodes`` and ``gauss``
+        composites are empty in every stage.
         """
         out: set[str] = set()
         try:
@@ -389,6 +406,7 @@ class AddDiagramDialog:
 
     def _on_kind_changed(self, *_args: Any) -> None:
         self._update_topology_row_visibility()
+        self._update_averaging_row_visibility()
         self._populate_components()
         self._populate_presets()
 
@@ -423,6 +441,17 @@ class AddDiagramDialog:
         self._topology_label.setVisible(is_contour)
         self._topology_combo.setVisible(is_contour)
 
+    def _update_averaging_row_visibility(self) -> None:
+        """Show the Averaging row only for Contour + Gauss topology."""
+        kind_entry: _KindEntry = self._kind_combo.currentData()
+        is_contour = kind_entry is not None and kind_entry.kind_id == "contour"
+        is_gauss = (
+            self._topology_combo.currentData() == "gauss"
+        )
+        show = is_contour and is_gauss
+        self._averaging_label.setVisible(show)
+        self._averaging_combo.setVisible(show)
+
     def _populate_components(self, *_args: Any) -> None:
         """Refresh the Component combo from the current (kind, stage)."""
         kind_entry: _KindEntry = self._kind_combo.currentData()
@@ -430,14 +459,12 @@ class AddDiagramDialog:
         if kind_entry is None or stage_id is None:
             return
 
-        # Resolve which composite(s) to enumerate. Contour is special:
-        # the user can override the class-default ("nodes") via the
-        # Topology sub-combo. ``"auto"`` lists the union of nodes and
-        # gauss components so the user sees everything reachable.
+        # Resolve which composite to enumerate. Contour is special:
+        # the user picks "nodes" or "gauss" via the Topology sub-combo.
         topology = _KIND_TO_TOPOLOGY.get(kind_entry.kind_id)
         contour_topology: str | None = None
         if kind_entry.kind_id == "contour":
-            contour_topology = self._topology_combo.currentData() or "auto"
+            contour_topology = self._topology_combo.currentData() or "nodes"
 
         components: list[str] = []
         try:
@@ -446,12 +473,7 @@ class AddDiagramDialog:
             scoped = None
 
         if scoped is not None:
-            if contour_topology == "auto":
-                # Union of nodes + gauss, sorted, deduplicated.
-                union = set(_components_for(scoped, "nodes"))
-                union.update(_components_for(scoped, "gauss"))
-                components = sorted(union)
-            elif contour_topology in ("nodes", "gauss"):
+            if contour_topology in ("nodes", "gauss"):
                 components = _components_for(scoped, contour_topology)
             elif topology is not None:
                 components = _components_for(scoped, topology)
@@ -467,7 +489,7 @@ class AddDiagramDialog:
         # explicit gauss topology falls into the "first available"
         # bucket since displacement_z isn't a gauss quantity.
         prefers_disp_z = (
-            topology == "nodes" and contour_topology in (None, "nodes", "auto")
+            topology == "nodes" and contour_topology in (None, "nodes")
         )
 
         self._component_combo.blockSignals(True)
@@ -579,14 +601,21 @@ class AddDiagramDialog:
         if style is None:
             style = kind_entry.make_default_style(component)
             if kind_entry.kind_id == "contour":
-                chosen = self._topology_combo.currentData() or "auto"
+                chosen_topology = (
+                    self._topology_combo.currentData() or "nodes"
+                )
+                chosen_averaging = (
+                    self._averaging_combo.currentData() or "averaged"
+                )
                 style = ContourStyle(
                     cmap=style.cmap,
                     clim=style.clim,
                     opacity=style.opacity,
                     show_edges=style.show_edges,
                     show_scalar_bar=style.show_scalar_bar,
-                    topology=chosen,
+                    fmt=style.fmt,
+                    topology=chosen_topology,
+                    averaging=chosen_averaging,
                 )
         label = self._label_edit.text().strip() or None
         spec = DiagramSpec(
