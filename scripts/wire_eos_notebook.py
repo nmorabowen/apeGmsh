@@ -391,8 +391,19 @@ if __name__ == "__main__":
         sys.exit(1)
     eos = Path("examples/EOS Examples")
     if sys.argv[1] == "--all":
-        targets = sorted(p for p in eos.glob("*.ipynb"))
+        # Notebooks now live in per-example folders, recurse to find them.
+        targets = sorted(p for p in eos.rglob("*.ipynb")
+                         if "checkpoint" not in str(p))
     else:
-        targets = [eos / a if not Path(a).exists() else Path(a) for a in sys.argv[1:]]
+        # Accept either bare name (resolved to <eos>/<stem>/<stem>.ipynb)
+        # or an explicit relative/absolute path.
+        def _resolve(arg: str) -> Path:
+            p = Path(arg)
+            if p.exists():
+                return p
+            stem = p.stem
+            candidate = eos / stem / p.name
+            return candidate if candidate.exists() else eos / arg
+        targets = [_resolve(a) for a in sys.argv[1:]]
     for p in targets:
         print(wire(p))

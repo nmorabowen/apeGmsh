@@ -58,9 +58,24 @@ def on_pre_build(config):
     if not src_dir.is_dir():
         return
 
+    # Notebooks live under curriculum/<tier>/<stem>/<stem>.ipynb.
+    _CURATED_TIERS = {
+        "01_hello_plate":            "01-fundamentals",
+        "02_cantilever_beam_2D":     "01-fundamentals",
+        "04_portal_frame_2D":        "01-fundamentals",
+        "05_labels_and_pgs":         "02-building-blocks",
+        "10b_part_assembly":         "03-assemblies",
+        "12_interface_tie":          "03-assemblies",
+        "17_modal_analysis":         "05-analysis-types",
+        "19_pushover_elastoplastic": "05-analysis-types",
+    }
     dst_dir.mkdir(parents=True, exist_ok=True)
     for name in CURATED_NOTEBOOKS:
-        src = src_dir / name
+        stem = Path(name).stem
+        tier = _CURATED_TIERS.get(stem)
+        if tier is None:
+            continue
+        src = src_dir / "curriculum" / tier / stem / name
         if not src.is_file():
             continue
         dst = dst_dir / name

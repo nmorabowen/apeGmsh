@@ -64,6 +64,7 @@ from apeGmsh.viewers.results_viewer import ResultsViewer
 from apeGmsh.viewers import settings, theme_editor
 from apeGmsh.viz.NotebookPreview import preview
 from apeGmsh.viz.Selection import Selection, SelectionComposite
+from apeGmsh._workdir import workdir
 
 # Backward-compatible alias (SelectionPicker was the pre-v1 name)
 SelectionPicker = ModelViewer
@@ -102,4 +103,5 @@ __all__ = [
     "settings",
     "theme_editor",
     "preview",
+    "workdir",
 ]

@@ -88,4 +88,4 @@ ignore_errors = true
 # those files only — library code stays strict.
 # ─────────────────────────────────────────────────────────────────────
 [tool.ruff.lint.per-file-ignores]
-"examples/EOS Examples/*.py" = ["E702"]
+"examples/EOS Examples/**/*.py" = ["E702"]

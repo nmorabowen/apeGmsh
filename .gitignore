@@ -29,6 +29,9 @@ opensees_venv/
 tests_out/
 tests/viewers/_screenshots/
 
+# Per-example generated artifacts (capture.h5, recorders/, exports/, …)
+**/outputs/
+
 # MkDocs build output
 site/
 

@@ -2,7 +2,7 @@
 Tests -- Cross-composite target resolution convention.
 
 Guarantees the two rules documented in
-``examples/EOS Examples/05_labels_and_pgs.py`` :
+``examples/EOS Examples/05_labels_and_pgs/05_labels_and_pgs.py`` :
 
 1. When the same name is registered as both a **label** and a
    **physical group**, ``target="..."`` resolves to the **label**
