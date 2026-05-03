@@ -201,6 +201,7 @@ class Recorders:
         dt: float | None = None,
         n_steps: int | None = None,
         name: str | None = None,
+        element_class_name: str | None = None,
     ) -> "Recorders":
         """Declare a per-element-node force recorder.
 
@@ -237,6 +238,7 @@ class Recorders:
             "elements", components,
             pg=pg, label=label, selection=selection, ids=ids,
             dt=dt, n_steps=n_steps, name=name,
+            element_class_name=element_class_name,
         )
         return self
 
@@ -251,6 +253,7 @@ class Recorders:
         dt: float | None = None,
         n_steps: int | None = None,
         name: str | None = None,
+        element_class_name: str | None = None,
     ) -> "Recorders":
         """Declare a beam line-station recorder.
 
@@ -290,6 +293,7 @@ class Recorders:
             "line_stations", components,
             pg=pg, label=label, selection=selection, ids=ids,
             dt=dt, n_steps=n_steps, name=name,
+            element_class_name=element_class_name,
         )
         return self
 
@@ -304,6 +308,7 @@ class Recorders:
         dt: float | None = None,
         n_steps: int | None = None,
         name: str | None = None,
+        element_class_name: str | None = None,
     ) -> "Recorders":
         """Declare a continuum Gauss-point recorder.
 
@@ -366,6 +371,7 @@ class Recorders:
             "gauss", components,
             pg=pg, label=label, selection=selection, ids=ids,
             dt=dt, n_steps=n_steps, name=name,
+            element_class_name=element_class_name,
         )
         return self
 
@@ -380,6 +386,7 @@ class Recorders:
         dt: float | None = None,
         n_steps: int | None = None,
         name: str | None = None,
+        element_class_name: str | None = None,
     ) -> "Recorders":
         """Declare a fiber-section recorder (uniaxial along fiber axis).
 
@@ -427,6 +434,7 @@ class Recorders:
             "fibers", components,
             pg=pg, label=label, selection=selection, ids=ids,
             dt=dt, n_steps=n_steps, name=name,
+            element_class_name=element_class_name,
         )
         return self
 
@@ -441,6 +449,7 @@ class Recorders:
         dt: float | None = None,
         n_steps: int | None = None,
         name: str | None = None,
+        element_class_name: str | None = None,
     ) -> "Recorders":
         """Declare a layered-shell layer recorder.
 
@@ -486,6 +495,7 @@ class Recorders:
             "layers", components,
             pg=pg, label=label, selection=selection, ids=ids,
             dt=dt, n_steps=n_steps, name=name,
+            element_class_name=element_class_name,
         )
         return self
 
@@ -738,15 +748,62 @@ class Recorders:
             layer_metadata = self._resolve_layer_section_metadata(
                 fem, ids_array,
             )
+        # Populate element_class_name for downstream consumers (.out
+        # transcoder needs it to disambiguate catalog entries that share
+        # a flat-size, e.g. tri31 vs SSPquad in 2D stress).
+        # Priority:
+        #   1. user-supplied hint on the record
+        #   2. lookup via OpenSees bridge's _elem_assignments by PG name
+        class_hint = rec.element_class_name
+        if class_hint is None:
+            class_hint = self._lookup_class_hint_for_pgs(rec.pg)
         return ResolvedRecorderRecord(
             category=rec.category,
             name=rec.name,
             components=expanded,
             dt=rec.dt, n_steps=rec.n_steps,
             element_ids=ids_array,
+            element_class_name=class_hint,
             layer_section_metadata=layer_metadata,
             source=rec,
         )
+
+    def _lookup_class_hint_for_pgs(
+        self, pgs: tuple[str, ...],
+    ) -> str | None:
+        """Resolve PG names to a single C++ element class name.
+
+        Walks ``opensees._elem_assignments`` for each PG, translates
+        ``ops_type`` (registry key, e.g. ``"tri31"``) to the catalog's
+        C++ class name (e.g. ``"Tri31"``) via ``_ELEM_REGISTRY``'s
+        ``cpp_class_name``. Returns the class name only when every PG
+        resolves to the same class — None otherwise (the .out
+        transcoder will then raise its useful error and the user can
+        pass ``element_class_name=`` explicitly).
+        """
+        if not pgs or self._opensees is None:
+            return None
+        elem_assignments = getattr(
+            self._opensees, "_elem_assignments", None,
+        ) or {}
+        if not elem_assignments:
+            return None
+        from ._element_specs import _ELEM_REGISTRY
+        names: set[str] = set()
+        for pg_name in pgs:
+            asgn = elem_assignments.get(pg_name)
+            if asgn is None:
+                continue
+            ops_type = asgn.get("ops_type")
+            if ops_type is None:
+                continue
+            spec = _ELEM_REGISTRY.get(ops_type)
+            if spec is None:
+                continue
+            names.add(spec.cpp_class_name or ops_type)
+        if len(names) == 1:
+            return next(iter(names))
+        return None
 
     def _resolve_layer_section_metadata(
         self,
@@ -884,6 +941,7 @@ class Recorders:
         dt: float | None,
         n_steps: int | None,
         name: str | None,
+        element_class_name: str | None = None,
     ) -> None:
         if category not in ALL_CATEGORIES:
             raise ValueError(
@@ -912,6 +970,7 @@ class Recorders:
             ids=tuple(int(i) for i in ids) if ids is not None else None,
             dt=dt,
             n_steps=n_steps,
+            element_class_name=element_class_name,
         ))
 
 

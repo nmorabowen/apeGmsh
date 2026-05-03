@@ -80,6 +80,16 @@ class _ElemSpec:
     has_layers         : bool = False     # layered shells / through-thickness
     has_line_stations  : bool = False     # beam section forces along length
 
+    # C++ class name — the key used by RESPONSE_CATALOG entries in
+    # _element_response.py. When None, the registry key (the user-facing
+    # ops_type) IS the C++ class name (e.g. "Tri31", "SSPquad"). Set
+    # explicitly when they differ, e.g. ops_type="stdBrick" → "Brick",
+    # ops_type="quad" → "FourNodeQuad". Used to populate
+    # ResolvedRecorderRecord.element_class_name so the .out transcoder
+    # can disambiguate elements that share a flat-size (e.g. Tri31 and
+    # SSPquad both produce 3-column 2D stress records).
+    cpp_class_name     : str | None = None
+
     def get_slots(self, ndm: int) -> tuple[str, ...]:
         if ndm == 2 and self.slots_2d is not None:
             return self.slots_2d
@@ -146,6 +156,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
+        cpp_class_name="Brick",
     ),
     "bbarBrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -154,6 +165,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={5: (0,1,2,3,4,5,6,7)},
         slots=("nodes", "matTag", "bodyForce"),
         has_gauss=True,
+        cpp_class_name="BbarBrick",
     ),
     "SSPbrick": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -172,6 +184,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={3: (0,1,2,3)},
         slots=("nodes", "thick", "eleType", "matTag"),
         has_gauss=True,
+        cpp_class_name="FourNodeQuad",
     ),
     "tri31": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -180,6 +193,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         node_reorder={2: (0,1,2)},
         slots=("nodes", "thick", "eleType", "matTag"),
         has_gauss=True,
+        cpp_class_name="Tri31",
     ),
     "SSPquad": _ElemSpec(
         mat_family="nd", needs_transf=False,
@@ -235,6 +249,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({1}),
         node_reorder={1: (0, 1)},
         slots=("nodes", "A", "matTag"),
+        cpp_class_name="Truss",
     ),
     "corotTruss": _ElemSpec(
         mat_family="uni", needs_transf=False,
@@ -242,6 +257,7 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
         gmsh_etypes=frozenset({1}),
         node_reorder={1: (0, 1)},
         slots=("nodes", "A", "matTag"),
+        cpp_class_name="CorotTruss",
     ),
 
     # ── 1-D beam (no section material; section props as scalars + geomTransf)

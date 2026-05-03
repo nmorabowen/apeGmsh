@@ -70,6 +70,15 @@ class RecorderRecord:
     # Modal-only
     n_modes: Optional[int] = None
 
+    # Optional user-supplied OpenSees C++ class name override. When set,
+    # ``Recorders.resolve`` uses this verbatim for
+    # :attr:`ResolvedRecorderRecord.element_class_name` instead of
+    # looking it up via ``OpenSees._elem_assignments``. Use this when
+    # the model is built with direct ``ops.element`` calls (no
+    # ``g.opensees.elements.assign``) and the .out transcoder needs a
+    # disambiguating hint (e.g. tri31 vs SSPquad share a flat size).
+    element_class_name: Optional[str] = None
+
 
 # =====================================================================
 # Resolved record (post-resolution against FEMData)
