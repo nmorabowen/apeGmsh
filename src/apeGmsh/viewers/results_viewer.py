@@ -1769,13 +1769,13 @@ class ResultsViewer:
         self._plot_pane.remove_tab(("diagram", id(diagram)))
 
     def _on_escape(self) -> None:
-        """Esc → deselect.
+        """Esc → clear pick visuals.
 
-        Drops the active composition selection and any pick highlights
-        so the viewport returns to the substrate + node cloud + active
-        layers. Leaves the outline and details dock alone — the user's
-        previous navigation context (whatever row was selected) is not
-        overwritten.
+        Drops every probe marker (P1, P2, …), element / GP highlights,
+        and the picked-readout HUD. Leaves the active composition
+        unchanged so layered diagrams stay visible — clearing
+        composition selection here previously hid every diagram via
+        the composition gate, which read as "diagrams broken".
         """
         try:
             from qtpy import QtWidgets
@@ -1786,15 +1786,18 @@ class ResultsViewer:
             pass
         if self._director is None:
             return
-        active_geom = self._director.geometries.active
-        if active_geom is None:
-            return
-        try:
-            active_geom.compositions.set_active(None)
-        except Exception:
-            pass
+        if self._probe_overlay is not None:
+            try:
+                self._probe_overlay.clear()
+            except Exception:
+                pass
         self._clear_element_highlight()
         self._clear_gp_highlight()
+        try:
+            if self._plotter is not None:
+                self._plotter.render()
+        except Exception:
+            pass
 
     def _on_outline_composition_selected(self, key) -> None:
         """Outline tree → composition row selected (or off-row).
