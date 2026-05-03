@@ -63,7 +63,102 @@ _MassT = TypeVar("_MassT", bound=MassDef)
 
 
 class MassesComposite:
-    """Mass composite — define + resolve nodal masses."""
+    """Solver-agnostic nodal-mass composite — declare on geometry,
+    accumulate per-node mass after meshing.
+
+    Two-stage pipeline
+    ------------------
+    1. **Declare** (pre-mesh): the factory methods on this composite
+       (:meth:`point`, :meth:`line`, :meth:`surface`, :meth:`volume`)
+       store :class:`~apeGmsh.solvers.Masses.MassDef` dataclasses
+       describing *intent* on geometric targets — concentrated
+       lumps, line densities, areal densities, or material density
+       on volumes.
+    2. **Resolve** (post-mesh): :meth:`resolve` (called automatically
+       by :meth:`Mesh.queries.get_fem_data`) walks the def list,
+       hands each one to
+       :class:`~apeGmsh.solvers.Masses.MassResolver`, and
+       **accumulates** contributions across overlapping targets so
+       each node ends up with at most one
+       :class:`~apeGmsh.solvers.Masses.MassRecord`.
+
+    Resolved records land on ``fem.nodes.masses`` as a
+    :class:`~apeGmsh.mesh._record_set.MassSet`. Each record carries
+    a length-6 mass vector ``(mx, my, mz, Ixx, Iyy, Izz)``;
+    downstream solver bridges slice it to the model's ``ndf`` (the
+    rotational components are dropped for ``ndf < 4``).
+
+    No patterns
+    -----------
+    Unlike :class:`LoadsComposite`, masses are **not** grouped by
+    pattern. Mass is intrinsic to the model — there is one nodal
+    mass per node regardless of which load pattern is active.
+
+    Reduction modes
+    ---------------
+    Each factory accepts ``reduction="lumped"`` (default) or
+    ``reduction="consistent"``:
+
+    * **lumped** — each element's total mass is split equally
+      among its corner nodes. Diagonal mass matrix; cheap and
+      stable for explicit dynamics.
+    * **consistent** — line elements use the proper
+      ``ρ_l L / 6 · [[2,1],[1,2]]`` consistent matrix; surface
+      and volume paths currently fall through to lumped because,
+      for tri3 / quad4 / tet4 / hex8 with constant density, the
+      consistent diagonal sum equals the lumped per-node share.
+      The separate paths are kept so higher-order types (tri6,
+      quad8, tet10, hex20) can be wired in without changing the
+      public API.
+
+    Avoiding double-counting
+    ------------------------
+    apeGmsh always emits explicit ``ops.mass(node, mx, my, mz, …)``
+    commands. If your OpenSees material or section also carries a
+    non-zero ``rho``, those contributions add to whatever this
+    composite emits. Either:
+
+    * keep ``rho=0`` on the material and let this composite carry
+      all inertia, **or**
+    * skip the matching :meth:`volume` / :meth:`surface` call and
+      let the material handle it.
+
+    Target identification
+    ---------------------
+    Targets follow the same flexible scheme as :class:`LoadsComposite`:
+
+    * a list of ``(dim, tag)`` tuples
+    * a part label (``g.parts.instances[label]``)
+    * a physical group name (``g.physical``)
+    * a mesh-selection name (``g.mesh_selection``)
+    * a Tier 1 internal label
+
+    Pass ``pg=`` / ``label=`` / ``tag=`` to bypass auto-resolution
+    and pin a specific source.
+
+    Examples
+    --------
+    Declare three sources of mass and resolve to nodes::
+
+        with apeGmsh(model_name="frame") as g:
+            # ... geometry + Parts ...
+
+            # Lumped mass at the top of a tower
+            g.masses.point("Antenna", mass=350.0)
+
+            # Cladding mass spread along an exterior edge
+            g.masses.line("Cladding", linear_density=120.0)
+
+            # Self-mass of all column volumes
+            g.masses.volume("Columns", density=7850.0)
+
+            g.mesh.generation.generate(dim=3)
+            fem = g.mesh.queries.get_fem_data(dim=3)
+
+            for m in fem.nodes.masses:
+                ops.mass(m.node_id, *m.mass[:3])    # ndm=3 only
+            print("Total mass:", fem.nodes.masses.total_mass())
+    """
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -84,12 +179,56 @@ class MassesComposite:
         reduction: str = "lumped",
         name: str | None = None,
     ) -> PointMassDef:
-        """Concentrated mass at the node(s) of *target*.
+        """Concentrated mass at every node of *target*.
 
-        Target resolution follows the FEM broker pattern:
-        ``pg=`` explicit PG, ``label=`` explicit label,
-        ``tag=`` direct Gmsh tag,
-        positional *target* tries label first then PG.
+        The same scalar ``mass`` (and optional rotational inertia
+        triple) is applied to every targeted node. Useful for
+        equipment, lumped fixtures, or any localised inertial
+        contribution that doesn't come from a material density.
+
+        Resolution emits one
+        :class:`~apeGmsh.solvers.Masses.MassRecord` per targeted
+        node, accumulated with any other mass contributions on the
+        same node.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag), optional
+            Target node(s). See class docstring for the lookup
+            order.
+        pg, label, tag :
+            Explicit-source overrides.
+        mass : float
+            Translational mass (per node) in model mass units.
+        rotational : (Ixx, Iyy, Izz), optional
+            Rotational inertia triple. Required for ``ndf >= 4``
+            models that carry rotational DOFs. Default ``None``
+            stores zero rotational inertia.
+        reduction : ``"lumped"`` or ``"consistent"``, default
+            ``"lumped"``
+            Has no effect for point masses (already lumped) — the
+            argument is accepted for API symmetry with the
+            distributed factories.
+        name : str, optional
+            Friendly name.
+
+        Returns
+        -------
+        PointMassDef
+
+        Raises
+        ------
+        KeyError
+            If ``target`` doesn't resolve.
+
+        Examples
+        --------
+        Equipment mass on a slab corner::
+
+            g.masses.point(
+                "Equipment", mass=2500.0,
+                rotational=(800.0, 800.0, 1200.0),
+            )
         """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(PointMassDef(
@@ -106,7 +245,53 @@ class MassesComposite:
         reduction: str = "lumped",
         name: str | None = None,
     ) -> LineMassDef:
-        """Distributed line mass on curve(s) of *target*."""
+        """Distributed line mass on the curve(s) of *target*.
+
+        ``linear_density`` is in mass per unit length (e.g. kg/m).
+        Each curve element contributes ``linear_density × edge_length``
+        of mass, distributed to its end nodes:
+
+        * ``"lumped"``: split equally between the two end nodes
+          (``½ × ρ_l × L`` each).
+        * ``"consistent"``: shape-function-integrated 2-node line
+          mass matrix ``ρ_l L / 6 · [[2, 1], [1, 2]]``. The
+          diagonal-summed nodal share equals ``ρ_l L / 2`` — same
+          as lumped at the diagonal level — so the visible
+          difference today is only in the coupling term emitted
+          for solvers that consume it.
+
+        Use cases: cladding mass per unit length on shells, ducts
+        or piping along a beam, façade panels along an edge.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag)
+            Curve(s) carrying the line mass.
+        pg, label, tag :
+            Explicit-source overrides.
+        linear_density : float
+            Mass per unit length.
+        reduction : ``"lumped"`` or ``"consistent"``, default
+            ``"lumped"``
+            Lumping scheme.
+        name : str, optional
+            Friendly name.
+
+        Returns
+        -------
+        LineMassDef
+
+        Raises
+        ------
+        KeyError
+            If ``target`` doesn't resolve.
+
+        Examples
+        --------
+        Curtain-wall cladding along a building edge::
+
+            g.masses.line("PerimeterEdge", linear_density=85.0)
+        """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(LineMassDef(
             target=t, target_source=src, name=name, reduction=reduction,
@@ -122,7 +307,52 @@ class MassesComposite:
         reduction: str = "lumped",
         name: str | None = None,
     ) -> SurfaceMassDef:
-        """Distributed surface mass on face(s) of *target*."""
+        """Distributed surface mass on the face(s) of *target*.
+
+        ``areal_density`` is in mass per unit area (e.g. kg/m² or
+        ``ρ × t`` for a shell of thickness ``t``). Each face element
+        contributes ``areal_density × face_area`` of mass,
+        distributed to its corner nodes:
+
+        * ``"lumped"``: equal split among corner nodes
+          (``ρ_a × A / n_corners`` each).
+        * ``"consistent"``: for tri3 / quad4 with constant areal
+          density the consistent diagonal sum equals lumped, so
+          the resolver currently falls through to the lumped
+          implementation. The separate path is reserved for
+          future higher-order shells.
+
+        Use cases: slab self-mass when modelled as a 2-D shell,
+        cladding panels, water mass on a deck, pavement.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag)
+            Surface(s) carrying the areal mass.
+        pg, label, tag :
+            Explicit-source overrides.
+        areal_density : float
+            Mass per unit area. For a shell of constant thickness
+            ``t`` and material density ``ρ``, pass ``ρ * t``.
+        reduction : ``"lumped"`` or ``"consistent"``, default
+            ``"lumped"``
+            Lumping scheme.
+        name : str, optional
+            Friendly name.
+
+        Returns
+        -------
+        SurfaceMassDef
+
+        Examples
+        --------
+        Concrete slab self-mass via shell areal density::
+
+            g.masses.surface(
+                "Slab",
+                areal_density=2400.0 * 0.20,   # ρ·t (kg/m²)
+            )
+        """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(SurfaceMassDef(
             target=t, target_source=src, name=name, reduction=reduction,
@@ -138,7 +368,54 @@ class MassesComposite:
         reduction: str = "lumped",
         name: str | None = None,
     ) -> VolumeMassDef:
-        """Distributed volume mass on volume(s) of *target*."""
+        """Distributed mass from material density over the volume(s)
+        of *target*.
+
+        ``density`` is in mass per unit volume (e.g. kg/m³). Each
+        volume element contributes ``density × element_volume`` of
+        mass, distributed to its corner nodes:
+
+        * ``"lumped"``: equal split among the element's corner
+          nodes (``ρ × V / n_corners`` each).
+        * ``"consistent"``: for tet4 / hex8 with constant density
+          the consistent diagonal sum equals lumped, so the
+          resolver currently falls through to the lumped
+          implementation. The separate path is reserved for
+          future higher-order solid types.
+
+        Pair this with a matching :meth:`loads.gravity` call for
+        gravitational body weight. **Don't double-count** — see the
+        class docstring on avoiding double-counting when the
+        OpenSees material also carries ``rho``.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag)
+            Volume(s) carrying the mass.
+        pg, label, tag :
+            Explicit-source overrides.
+        density : float
+            Material density (mass per unit volume).
+        reduction : ``"lumped"`` or ``"consistent"``, default
+            ``"lumped"``
+            Lumping scheme.
+        name : str, optional
+            Friendly name.
+
+        Returns
+        -------
+        VolumeMassDef
+
+        See Also
+        --------
+        loads.gravity : Apply matching gravitational body weight.
+
+        Examples
+        --------
+        Steel column self-mass::
+
+            g.masses.volume("Columns", density=7850.0)
+        """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(VolumeMassDef(
             target=t, target_source=src, name=name, reduction=reduction,

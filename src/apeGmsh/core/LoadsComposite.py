@@ -171,12 +171,69 @@ class LoadsComposite:
     def point(self, target=None, *, pg=None, label=None, tag=None,
               force_xyz=None, moment_xyz=None,
               name=None) -> PointLoadDef:
-        """Concentrated force/moment at the node(s) of *target*.
+        """Concentrated force and/or moment applied at every node of
+        *target*.
 
-        Target resolution follows the FEM broker pattern:
-        ``pg=`` explicit PG, ``label=`` explicit label,
-        ``tag=`` direct Gmsh tag,
-        positional *target* tries label first then PG.
+        Each node in the resolved target receives the **same** force
+        and moment vectors. Use this when the load point lives on a
+        named entity (a physical group, label, part, mesh selection,
+        or raw `(dim, tag)` list); use :meth:`point_closest` instead
+        when you only have world coordinates.
+
+        Resolution emits one
+        :class:`~apeGmsh.solvers.Loads.NodalLoadRecord` per
+        targeted node onto ``fem.nodes.loads``. Both ``force_xyz``
+        and ``moment_xyz`` may be supplied (or either alone), but
+        at least one of the two must be non-``None`` for the load
+        to do anything useful.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag), optional
+            Auto-resolved positional target — see the
+            :class:`LoadsComposite` docstring for the lookup order.
+            Pass ``pg=``, ``label=``, or ``tag=`` to bypass
+            auto-resolution.
+        pg, label, tag :
+            Explicit-source overrides. See the class docstring.
+        force_xyz : (Fx, Fy, Fz), optional
+            Concentrated force vector applied at each targeted
+            node, in model force units.
+        moment_xyz : (Mx, My, Mz), optional
+            Concentrated moment vector. For 2-D models pass a
+            length-1 tuple ``(Mz,)`` — the resolver will accept it.
+        name : str, optional
+            Friendly name for :meth:`summary` and the viewer.
+
+        Returns
+        -------
+        PointLoadDef
+            The stored definition (also appended to
+            ``self.load_defs``).
+
+        Raises
+        ------
+        KeyError
+            If ``target`` is a string that doesn't resolve to any
+            of label, physical group, part, or mesh selection.
+        ValueError
+            If neither ``target`` nor an explicit-source kwarg is
+            given.
+
+        See Also
+        --------
+        point_closest : Coordinate-driven variant — snap to the
+            nearest mesh node.
+        face_load : Apply a centroidal force/moment to a whole
+            face without rigidising it.
+
+        Examples
+        --------
+        >>> with g.loads.pattern("Lateral"):
+        ...     g.loads.point(
+        ...         "ColTop",
+        ...         force_xyz=(120e3, 0.0, 0.0),
+        ...     )
         """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(PointLoadDef(
@@ -225,11 +282,114 @@ class LoadsComposite:
              q_xyz=None, normal=False, away_from=None,
              reduction="tributary", target_form="nodal",
              name=None) -> LineLoadDef:
-        """Distributed line load along curve(s) of *target*.
+        """Distributed load (force per unit length) along the curve(s)
+        of *target*.
 
-        When ``normal=True``, the load acts along each edge's in-plane
-        (xy) normal with magnitude ``magnitude``; ``away_from`` picks
-        the sign so the normal points away from that reference point.
+        Three ways to specify the load vector:
+
+        * ``magnitude`` + ``direction``: scalar magnitude along a
+          fixed unit vector (or axis name ``"x"``/``"y"``/``"z"``).
+        * ``q_xyz``: explicit ``(qx, qy, qz)`` force-per-length
+          vector.
+        * ``normal=True`` + ``away_from``: edge-by-edge in-plane
+          pressure. The in-plane normal is sign-flipped per edge so
+          it points away from ``away_from`` (a reference point that
+          represents the *source* of the load — e.g. the centre of
+          an arched cavity loaded by internal pressure). Positive
+          ``magnitude`` then pushes into the structure.
+
+        For ``normal=True`` without ``away_from``, apeGmsh consults
+        the parent surface's Gmsh boundary orientation to decide
+        which side is "into the structure". If the curve has no
+        adjacent surface, or bounds more than one, the resolver
+        raises ``ValueError`` — disambiguate by passing
+        ``away_from``, or fall back to ``direction``/``q_xyz``.
+
+        Reduction and emission form
+        ---------------------------
+        * ``reduction="tributary"`` (default): split each edge's
+          length-weighted load equally between its two end nodes.
+          Emits :class:`NodalLoadRecord` on ``fem.nodes.loads``.
+        * ``reduction="consistent"``: shape-function integration
+          (line2 / line3) — equivalent to the FEM consistent load
+          vector. Required for higher-order elements where simple
+          tributary lumping is wrong.
+        * ``target_form="element"``: skip nodal lumping entirely
+          and emit one ``ElementLoadRecord`` per beam element with
+          ``load_type="beamUniform"`` — the solver's element
+          formulation handles the integration.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag), optional
+            Curve(s) to load.
+        pg, label, tag :
+            Explicit-source overrides. See class docstring.
+        magnitude : float, optional
+            Scalar force per unit length. Required if ``q_xyz`` is
+            ``None``. Required when ``normal=True``.
+        direction : tuple or {"x", "y", "z"}, default ``(0, 0, -1)``
+            Unit direction for ``magnitude``. Ignored when
+            ``q_xyz`` or ``normal=True`` is given.
+        q_xyz : (qx, qy, qz), optional
+            Explicit force-per-length vector — overrides
+            ``magnitude`` × ``direction``.
+        normal : bool, default False
+            If ``True``, treat the load as a 2-D pressure normal
+            to each edge in the xy-plane.
+        away_from : (x, y, z), optional
+            Reference point for ``normal=True`` direction
+            disambiguation.
+        reduction : ``"tributary"`` or ``"consistent"``, default
+            ``"tributary"``
+            How distributed loads are reduced to nodal records.
+        target_form : ``"nodal"`` or ``"element"``, default
+            ``"nodal"``
+            Output record type. ``"element"`` skips nodal lumping
+            and emits ``eleLoad``-style records.
+        name : str, optional
+            Friendly name.
+
+        Returns
+        -------
+        LineLoadDef
+
+        Raises
+        ------
+        ValueError
+            If neither ``magnitude`` nor ``q_xyz`` is supplied, or
+            ``normal=True`` is set without ``magnitude``.
+        KeyError
+            If ``target`` doesn't resolve.
+
+        Examples
+        --------
+        Uniform vertical line load on a beam edge::
+
+            g.loads.line(
+                "BeamEdge",
+                magnitude=-15e3,
+                direction=(0, 0, -1),
+            )
+
+        Internal pressure on a curved 2-D arch::
+
+            g.loads.line(
+                "InnerArc",
+                magnitude=p_int,
+                normal=True,
+                away_from=(0.0, 0.0, 0.0),
+            )
+
+        Element-form output for a beam carrying its own ``eleLoad``
+        per element::
+
+            g.loads.line(
+                "Girder",
+                magnitude=-25e3,
+                direction=(0, 0, -1),
+                target_form="element",
+            )
         """
         if magnitude is None and q_xyz is None:
             raise ValueError("line() requires either magnitude or q_xyz.")
@@ -248,7 +408,94 @@ class LoadsComposite:
                 magnitude=0.0, normal=True,
                 direction=(0., 0., -1.), reduction="tributary",
                 target_form="nodal", name=None) -> SurfaceLoadDef:
-        """Pressure or traction on surface(s) of *target*."""
+        """Pressure or traction on the surface(s) of *target*.
+
+        Two regimes selected by ``normal``:
+
+        * ``normal=True`` (default): scalar pressure normal to each
+          face. The face normal is computed at resolution time from
+          the mesh; positive ``magnitude`` *pushes into* the face
+          (i.e. acts opposite to the outward normal).
+        * ``normal=False``: vector traction along ``direction``,
+          independent of face orientation.
+
+        Reduction and emission form
+        ---------------------------
+        * ``reduction="tributary"`` (default): split each face's
+          area-weighted load equally among its corner nodes
+          (tri3 / quad4 corner mass).
+        * ``reduction="consistent"``: shape-function integration
+          via Gauss quadrature on the curved face — required for
+          tri6, quad8, quad9. For ``normal=True``, the curved
+          normal at each Gauss point is used.
+        * ``target_form="element"``: emit one
+          ``ElementLoadRecord`` per face with
+          ``load_type="surfacePressure"`` and let the solver's
+          element handle integration.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag)
+            Surface(s) to load.
+        pg, label, tag :
+            Explicit-source overrides.
+        magnitude : float, default 0.0
+            Pressure (force per unit area) when ``normal=True``,
+            or traction magnitude along ``direction`` otherwise.
+        normal : bool, default True
+            ``True`` → normal pressure; ``False`` → vector
+            traction.
+        direction : (dx, dy, dz), default ``(0, 0, -1)``
+            Unit traction direction. Ignored when ``normal=True``.
+        reduction : ``"tributary"`` or ``"consistent"``, default
+            ``"tributary"``
+            Lumping scheme.
+        target_form : ``"nodal"`` or ``"element"``, default
+            ``"nodal"``
+            Output record type.
+        name : str, optional
+            Friendly name.
+
+        Returns
+        -------
+        SurfaceLoadDef
+
+        Raises
+        ------
+        KeyError
+            If ``target`` doesn't resolve.
+
+        Examples
+        --------
+        Wind pressure on a vertical façade (positive into the
+        face)::
+
+            g.loads.surface(
+                "Facade",
+                magnitude=1.2e3,
+                normal=True,
+            )
+
+        Vertical live load on a slab (vector traction, not
+        pressure)::
+
+            g.loads.surface(
+                "Slab",
+                magnitude=2.5e3,
+                normal=False,
+                direction=(0, 0, -1),
+            )
+
+        Higher-order pressure with consistent reduction on a
+        quad8 mesh::
+
+            g.loads.surface(
+                "CurvedShell",
+                magnitude=p,
+                normal=True,
+                reduction="consistent",
+            )
+        """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(SurfaceLoadDef(
             target=t, target_source=src,
@@ -261,7 +508,83 @@ class LoadsComposite:
                 g=(0., 0., -9.81), density=None,
                 reduction="tributary", target_form="nodal",
                 name=None) -> GravityLoadDef:
-        """Body weight from gravity over volume(s) of *target*."""
+        """Body weight (``ρ · g``) over the volume(s) of *target*.
+
+        Convenience wrapper over :meth:`body` for the common case of
+        gravity loading. The total per-element load is
+        ``density × element_volume × g_vec``, distributed to the
+        element's nodes.
+
+        Reduction and emission form
+        ---------------------------
+        * ``reduction="tributary"`` (default): split each element's
+          weight equally among its corner nodes. Requires
+          ``density``.
+        * ``reduction="consistent"``: for tet4 / hex8 with constant
+          density, reduces to the same per-node share as tributary
+          (so behaviourally equivalent today, but the path is kept
+          separate for higher-order extensions).
+        * ``target_form="element"``: emit one
+          ``ElementLoadRecord`` per volume element with
+          ``load_type="bodyForce"`` carrying ``g`` and ``density``;
+          the solver's element formulation handles integration.
+          ``density=None`` is allowed in this form — the solver
+          reads it from the assigned material.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag)
+            Volume(s) carrying body weight.
+        pg, label, tag :
+            Explicit-source overrides.
+        g : (gx, gy, gz), default ``(0, 0, -9.81)``
+            Gravitational acceleration vector. **Unit-sensitive** —
+            use ``(0, 0, -9810)`` for mm models with kg-mm-s units,
+            etc.
+        density : float, optional
+            Material density (mass per unit volume). Required when
+            ``target_form="nodal"``; optional in element form.
+        reduction : ``"tributary"`` or ``"consistent"``, default
+            ``"tributary"``
+            Lumping scheme.
+        target_form : ``"nodal"`` or ``"element"``, default
+            ``"nodal"``
+            Output record type.
+        name : str, optional
+            Friendly name.
+
+        Returns
+        -------
+        GravityLoadDef
+
+        Raises
+        ------
+        ValueError
+            If ``density`` is missing for ``target_form="nodal"``.
+        KeyError
+            If ``target`` doesn't resolve.
+
+        See Also
+        --------
+        body : Generic per-volume body force vector.
+        masses.volume : Add the same density as nodal mass for
+            inertial response (don't double-count if the OpenSees
+            material already carries ``rho``).
+
+        Examples
+        --------
+        Self-weight of a concrete slab (kg-m-s, ρ = 2400 kg/m³)::
+
+            with g.loads.pattern("Dead"):
+                g.loads.gravity("Slab", density=2400)
+
+        Element-form gravity reading density from the material::
+
+            g.loads.gravity(
+                "ConcreteBlock",
+                target_form="element",
+            )
+        """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(GravityLoadDef(
             target=t, target_source=src,
@@ -274,7 +597,59 @@ class LoadsComposite:
              force_per_volume=(0., 0., 0.),
              reduction="tributary", target_form="nodal",
              name=None) -> BodyLoadDef:
-        """Generic per-volume body force on volume(s) of *target*."""
+        """Generic per-volume body force on the volume(s) of *target*.
+
+        General sibling of :meth:`gravity` — accepts an arbitrary
+        force-per-volume vector. The total per-element load is
+        ``force_per_volume × element_volume``, distributed to the
+        element's nodes.
+
+        Use cases beyond gravity:
+
+        * Centrifugal / rotational body force.
+        * Magnetic body force in coupled-physics models.
+        * Thermal expansion modelled as an equivalent body force.
+        * Any prescribed loading proportional to volume.
+
+        Parameters
+        ----------
+        target : str or list of (dim, tag)
+            Volume(s) to load.
+        pg, label, tag :
+            Explicit-source overrides.
+        force_per_volume : (bx, by, bz), default ``(0, 0, 0)``
+            Body force vector in force per unit volume.
+        reduction : ``"tributary"`` or ``"consistent"``, default
+            ``"tributary"``
+            Lumping scheme. ``"consistent"`` falls back to
+            tributary for tet4/hex8 (same per-node share for
+            constant body force).
+        target_form : ``"nodal"`` or ``"element"``, default
+            ``"nodal"``
+            Output record type. ``"element"`` emits one
+            ``ElementLoadRecord`` per volume element with
+            ``load_type="bodyForce"`` and ``params={"bf": ...}``.
+        name : str, optional
+            Friendly name.
+
+        Returns
+        -------
+        BodyLoadDef
+
+        See Also
+        --------
+        gravity : Convenience wrapper for ``ρ · g`` body force.
+
+        Examples
+        --------
+        Centrifugal body force ``ρ · ω² · r`` evaluated as a
+        constant approximation::
+
+            g.loads.body(
+                "Rotor",
+                force_per_volume=(omega**2 * rho * r_cg, 0, 0),
+            )
+        """
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(BodyLoadDef(
             target=t, target_source=src,
