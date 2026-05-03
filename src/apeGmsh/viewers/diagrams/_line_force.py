@@ -66,6 +66,13 @@ class LineForceDiagram(Diagram):
         self._element_ids_to_read: tuple[int, ...] = ()
         self._initial_scale: float = 1.0
         self._last_step: int = 0
+        # Per-station metadata used by sync_substrate_points to rebuild
+        # base points and local fill directions when the substrate warps.
+        self._station_eid: Optional[ndarray] = None
+        self._station_xi: Optional[ndarray] = None
+        # Endpoint substrate indices: eid -> (i_idx, j_idx) into
+        # ``scene.grid.points``. Cached at attach.
+        self._endpoint_subs_idx: dict[int, tuple[int, int]] = {}
 
         # Mutable runtime overrides
         self._runtime_scale: Optional[float] = None
@@ -113,7 +120,7 @@ class LineForceDiagram(Diagram):
             slab = results.elements.line_stations.get(
                 ids=self._element_ids_to_read,
                 component=self.spec.selector.component,
-                time=[0],
+                time=None,
             )
         except Exception as exc:
             raise RuntimeError(
@@ -135,13 +142,18 @@ class LineForceDiagram(Diagram):
 
         # ── Endpoint lookup for each unique beam ────────────────────
         unique_eids = np.unique(slab_eids)
-        endpoints = self._collect_endpoints(fem, unique_eids)
+        endpoints, endpoint_subs = self._collect_endpoints_with_subs(
+            fem, scene, unique_eids,
+        )
+        self._endpoint_subs_idx = endpoint_subs
 
         # ── Build per-beam geometry ─────────────────────────────────
         n_total = slab_eids.size
         base_points = np.zeros((n_total, 3), dtype=np.float64)
         fill_dirs = np.zeros((n_total, 3), dtype=np.float64)
         our_to_slab = np.zeros(n_total, dtype=np.int64)
+        station_eid = np.zeros(n_total, dtype=np.int64)
+        station_xi = np.zeros(n_total, dtype=np.float64)
 
         fill_axis_name = fill_axis_for(
             self.spec.selector.component,
@@ -176,6 +188,8 @@ class LineForceDiagram(Diagram):
                 )
                 fill_dirs[our_idx] = fill_dir
                 our_to_slab[our_idx] = sorted_slab_indices[k]
+                station_eid[our_idx] = eid_int
+                station_xi[our_idx] = float(sorted_xi[k])
 
             if n >= 2:
                 for k in range(n - 1):
@@ -198,6 +212,8 @@ class LineForceDiagram(Diagram):
         base_points = base_points[:running]
         fill_dirs = fill_dirs[:running]
         our_to_slab = our_to_slab[:running]
+        station_eid = station_eid[:running]
+        station_xi = station_xi[:running]
 
         # Patch placeholder -(idx+1) -> idx + running (top index).
         faces_arr = np.asarray(faces_list, dtype=np.int64)
@@ -213,10 +229,12 @@ class LineForceDiagram(Diagram):
         self._base_points = base_points
         self._fill_directions = fill_dirs
         self._our_to_slab_index = our_to_slab
+        self._station_eid = station_eid
+        self._station_xi = station_xi
 
-        # ── Auto-fit scale from step 0 if not user-supplied ─────────
+        # ── Auto-fit scale from global max across all steps ─────────
         if style.scale is None:
-            max_abs = float(np.abs(slab.values[0]).max())
+            max_abs = float(np.abs(slab.values).max()) if slab.values.size else 0.0
             if max_abs > 0.0 and scene.model_diagonal > 0.0:
                 self._initial_scale = (
                     style.auto_scale_fraction * scene.model_diagonal / max_abs
@@ -226,7 +244,8 @@ class LineForceDiagram(Diagram):
         else:
             self._initial_scale = float(style.scale)
 
-        # Apply step 0 values
+        # Apply step 0 values (initial display state; update_to_step
+        # will refresh once the director's current step is pushed)
         self._apply_values(np.asarray(slab.values[0], dtype=np.float64))
 
         actor = plotter.add_mesh(
@@ -264,6 +283,72 @@ class LineForceDiagram(Diagram):
         self._apply_values(np.asarray(slab.values[0], dtype=np.float64))
         self._last_step = int(step_index)
 
+    def sync_substrate_points(
+        self, deformed_pts: "ndarray | None", scene: "FEMSceneData",
+    ) -> None:
+        """Move the diagram fills to follow the deformed substrate.
+
+        For each beam in the slab, fetch the deformed endpoint coords,
+        rebuild ``base_points`` (and the per-station ``fill_directions``
+        from the new local axes), then re-apply the current step's
+        values so the top-of-fill points refresh against the new bases.
+        """
+        if (
+            self._fill_polydata is None
+            or self._base_points is None
+            or self._fill_directions is None
+            or self._station_eid is None
+            or self._station_xi is None
+            or not self._endpoint_subs_idx
+        ):
+            return
+        try:
+            target_pts = (
+                np.asarray(deformed_pts, dtype=np.float64)
+                if deformed_pts is not None
+                else np.asarray(scene.grid.points, dtype=np.float64)
+            )
+        except Exception:
+            return
+
+        style: LineForceStyle = self.spec.style    # type: ignore[assignment]
+        fill_axis_name = fill_axis_for(
+            self.spec.selector.component,
+            self._runtime_axis or style.fill_axis,
+        )
+
+        new_base = self._base_points.copy()
+        new_dirs = self._fill_directions.copy()
+        for eid, (si, sj) in self._endpoint_subs_idx.items():
+            if si >= target_pts.shape[0] or sj >= target_pts.shape[0]:
+                continue
+            ci = target_pts[si]
+            cj = target_pts[sj]
+            try:
+                _, y_local, z_local, _ = compute_local_axes(ci, cj)
+            except ValueError:
+                continue
+            fill_dir = y_local if fill_axis_name == "y" else z_local
+            mask = self._station_eid == eid
+            if not np.any(mask):
+                continue
+            xi = self._station_xi[mask]
+            for k_idx, xi_val in zip(np.where(mask)[0], xi):
+                new_base[k_idx] = station_position(ci, cj, float(xi_val))
+                new_dirs[k_idx] = fill_dir
+
+        self._base_points = new_base
+        self._fill_directions = new_dirs
+        # Rewrite the base block of the polydata in place; the top
+        # block is then refreshed by re-applying the last step's values.
+        try:
+            all_pts = np.asarray(self._fill_polydata.points)
+            all_pts[: self._n_stations] = new_base
+            self._fill_polydata.Modified()
+        except Exception:
+            return
+        self._reapply_last_step()
+
     def detach(self) -> None:
         self._fill_polydata = None
         self._fill_actor = None
@@ -272,6 +357,9 @@ class LineForceDiagram(Diagram):
         self._fill_directions = None
         self._our_to_slab_index = None
         self._element_ids_to_read = ()
+        self._station_eid = None
+        self._station_xi = None
+        self._endpoint_subs_idx = {}
         super().detach()
 
     # ------------------------------------------------------------------
@@ -370,22 +458,36 @@ class LineForceDiagram(Diagram):
         return np.asarray(ids, dtype=np.int64)
 
     @staticmethod
-    def _collect_endpoints(
-        fem: "FEMData", element_ids: ndarray,
-    ) -> dict[int, tuple[ndarray, ndarray]]:
-        """Build ``eid -> (coord_i, coord_j)`` for line elements in the set."""
+    def _collect_endpoints_with_subs(
+        fem: "FEMData",
+        scene: "FEMSceneData",
+        element_ids: ndarray,
+    ) -> "tuple[dict[int, tuple[ndarray, ndarray]], dict[int, tuple[int, int]]]":
+        """Return ``(eid -> (ci, cj), eid -> (i_sub, j_sub))``.
+
+        ``i_sub`` / ``j_sub`` are row indices into ``scene.grid.points``
+        (and ``scene.node_ids``) — what ``sync_substrate_points``
+        re-samples from to follow the deformed substrate.
+        """
         eid_set = {int(e) for e in element_ids}
         node_ids_arr = np.asarray(list(fem.nodes.ids), dtype=np.int64)
         coords_arr = np.asarray(fem.nodes.coords, dtype=np.float64)
         if node_ids_arr.size == 0:
-            return {}
+            return {}, {}
         max_nid = int(node_ids_arr.max())
         nid_to_idx = np.full(max_nid + 2, -1, dtype=np.int64)
         nid_to_idx[node_ids_arr] = np.arange(
             node_ids_arr.size, dtype=np.int64,
         )
 
-        out: dict[int, tuple[ndarray, ndarray]] = {}
+        # Substrate lookup: FEM node id -> row in scene.grid.points.
+        scene_ids = np.asarray(scene.node_ids, dtype=np.int64)
+        max_sid = int(scene_ids.max()) if scene_ids.size else -1
+        nid_to_sub = np.full(max(max_sid, max_nid) + 2, -1, dtype=np.int64)
+        nid_to_sub[scene_ids] = np.arange(scene_ids.size, dtype=np.int64)
+
+        coords_out: dict[int, tuple[ndarray, ndarray]] = {}
+        subs_out: dict[int, tuple[int, int]] = {}
         for group in fem.elements:
             if group.element_type.dim != 1:
                 continue
@@ -401,8 +503,12 @@ class LineForceDiagram(Diagram):
                 jj = nid_to_idx[nid_j]
                 if ii < 0 or jj < 0:
                     continue
-                out[eid] = (
+                coords_out[eid] = (
                     coords_arr[ii].copy(),
                     coords_arr[jj].copy(),
                 )
-        return out
+                si = int(nid_to_sub[nid_i]) if nid_i <= nid_to_sub.size - 1 else -1
+                sj = int(nid_to_sub[nid_j]) if nid_j <= nid_to_sub.size - 1 else -1
+                if si >= 0 and sj >= 0:
+                    subs_out[eid] = (si, sj)
+        return coords_out, subs_out

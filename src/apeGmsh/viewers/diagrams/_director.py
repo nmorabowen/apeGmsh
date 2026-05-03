@@ -105,10 +105,19 @@ class ResultsDirector:
         self._render_callback: Optional[Callable[[], None]] = None
 
         # Pick a default stage if there is exactly one (matches
-        # Results._resolve_stage's "auto" behaviour).
+        # Results._resolve_stage's "auto" behaviour). Park the time
+        # cursor at the last step of that stage so freshly-attached
+        # diagrams paint at the end of history (final state) instead
+        # of the near-zero first increment.
         stages = self._all_stages()
         if len(stages) == 1:
             self._stage_id = stages[0].id
+            try:
+                n = int(self._scoped_results().n_steps)
+            except Exception:
+                n = 0
+            if n > 0:
+                self._step_index = n - 1
 
     # ------------------------------------------------------------------
     # Properties
@@ -287,7 +296,14 @@ class ResultsDirector:
         # Mirror to the unscoped Results so layer reads with no
         # explicit stage_id route to this stage.
         self._set_results_default_stage(info.id)
-        self._step_index = 0
+        # Land on the last step of the new stage by default — see the
+        # constructor's note for why the end of history is the
+        # better starting point than step 0.
+        try:
+            n = int(self._scoped_results().n_steps)
+        except Exception:
+            n = 0
+        self._step_index = max(0, n - 1)
         self._registry.reattach_all()
         self._fire_stage_changed(info.id)
         self._registry.update_to_step(self._step_index)
@@ -341,14 +357,18 @@ class ResultsDirector:
         self._real_stages = real
         self._combined_boundaries = boundaries
         self._combined_time = combined_time
-        self._step_index = 0
-        # Bind to the first real stage to start.
-        first_id = real[0].id
+        # Land on the last global step in combined mode so the user
+        # sees end-of-history (final stage's final increment) by default.
+        last_global = int(combined_time.size) - 1 if combined_time.size else 0
+        self._step_index = max(0, last_global)
+        # Bind to the real stage that owns the last global step.
+        last_stage_idx = max(0, len(real) - 1)
+        first_id = real[last_stage_idx].id
         self._stage_id = first_id
         self._set_results_default_stage(first_id)
         self._registry.reattach_all()
         self._fire_stage_changed(COMBINED_STAGE_ID)
-        self._registry.update_to_step(0)
+        self._registry.update_to_step(self._step_index)
         self._render()
 
     def _combined_translate(self, global_step: int) -> "tuple[str, int]":

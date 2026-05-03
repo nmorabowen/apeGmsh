@@ -171,13 +171,15 @@ def test_set_stage_by_name(two_stage_results):
     assert d.n_steps == 3
 
 
-def test_set_stage_resets_step_to_zero(two_stage_results):
+def test_set_stage_lands_on_last_step(two_stage_results):
     d = ResultsDirector(two_stage_results)
     d.set_stage("gravity")
     d.set_step(3)
     assert d.step_index == 3
+    # Switching stage parks the cursor at end-of-history of the new
+    # stage so freshly-attached diagrams paint at the final state.
     d.set_stage("dynamic")
-    assert d.step_index == 0
+    assert d.step_index == d.n_steps - 1
 
 
 def test_set_unknown_stage_raises(two_stage_results):
@@ -206,8 +208,10 @@ def test_set_step_observer_fires(one_stage_results):
     d = ResultsDirector(one_stage_results)
     seen: list[int] = []
     d.subscribe_step(lambda i: seen.append(i))
-    d.set_step(2)
-    assert seen == [2]
+    # Director constructs at the last step (n_steps - 1); move to 0
+    # to trigger an observer fire.
+    d.set_step(0)
+    assert seen == [0]
 
 
 def test_set_same_step_does_not_fire(one_stage_results):
@@ -300,7 +304,8 @@ def test_render_callback_fires_once_per_step(one_stage_results):
         render_callback=lambda: calls.append(1),
     )
     n0 = len(calls)
-    d.set_step(2)
+    # Constructor lands on step n-1; move to 0 to actually change.
+    d.set_step(0)
     # One render for the step move
     assert len(calls) == n0 + 1
 

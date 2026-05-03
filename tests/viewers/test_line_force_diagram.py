@@ -250,8 +250,11 @@ def test_auto_scale_picks_fraction_of_diagonal(
     diagram = LineForceDiagram(spec, results)
     diagram.attach(headless_plotter, results.fem, scene)
 
-    # Step 0 raw_values shape is (T, n_beams, n_stations); pick max abs.
-    max_abs = float(np.abs(raw_values[0]).max())
+    # Auto-scale fits to the global max across every step (not step 0)
+    # so the largest fill across history hits ``auto_scale_fraction`` of
+    # the model diagonal — keeps load-controlled runs sane (step 0 is
+    # the first tiny increment).
+    max_abs = float(np.abs(raw_values).max())
     expected = (0.10 * scene.model_diagonal) / max_abs
     assert diagram._initial_scale == pytest.approx(expected)
 
