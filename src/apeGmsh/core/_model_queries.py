@@ -378,8 +378,10 @@ class _Queries:
 
         Parameters
         ----------
-        tags : entities whose boundary to query.
-        dim : default dimension for bare integer tags.
+        tags : int, label, PG name, ``(dim, tag)``, or list thereof.
+            Strings are resolved as label first (Tier 1, ``g.labels``),
+            then user physical-group name (Tier 2, ``g.physical``).
+        dim : default dimension for bare integer tags or string refs.
         oriented : if True, return oriented boundary (signs on tags).
         combined : if True, return the boundary of the combined entities.
         recursive : if True, recurse down to dimension 0.
@@ -393,9 +395,27 @@ class _Queries:
         -------
         ::
 
-            faces = g.model.queries.boundary(vol_tag)  # surfaces bounding a volume
+            faces = g.model.queries.boundary(vol_tag)            # by tag
+            edges = g.model.queries.boundary("Plate", dim=2)     # by label
         """
-        dt = self._model._as_dimtags(tags, dim)
+        if isinstance(tags, str):
+            from ._helpers import _resolve_string_to_dimtags
+            dt = _resolve_string_to_dimtags(
+                tags, default_dim=dim, session=self._model._parent,
+            )
+        elif (
+            isinstance(tags, list)
+            and tags
+            and all(isinstance(t, str) for t in tags)
+        ):
+            from ._helpers import _resolve_string_to_dimtags
+            dt = []
+            for name in tags:
+                dt.extend(_resolve_string_to_dimtags(
+                    name, default_dim=dim, session=self._model._parent,
+                ))
+        else:
+            dt = self._model._as_dimtags(tags, dim)
         return gmsh.model.getBoundary(
             dt,
             combined=combined,
