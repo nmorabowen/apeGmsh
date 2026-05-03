@@ -37,9 +37,16 @@ at the cost of substrate bookkeeping.
 Public API
 ----------
 
+``extrapolate_gauss_slab_per_element(slab, fem)``
+    Per-element extrapolated corner values, **no cross-element
+    averaging**. Returns a dict ``{element_id: (T, n_corner)}``.
+    Used by the discrete contour path that wants visible jumps at
+    element boundaries.
+
 ``extrapolate_gauss_slab_to_nodes(slab, fem)``
-    Return ``(node_ids, nodal_values)`` with ``nodal_values`` shape
-    ``(T, N)`` matching the slab's time axis.
+    The averaged path. Returns ``(node_ids, nodal_values)`` with
+    ``nodal_values`` shape ``(T, N)`` matching the slab's time axis.
+    Built on top of the per-element core.
 
 ``per_element_max_gp_count(slab)``
     Quick check used by ``ContourDiagram`` to decide whether to take
@@ -47,6 +54,7 @@ Public API
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -165,6 +173,122 @@ def _build_element_index(fem: "FEMData") -> dict[int, tuple[int, ndarray]]:
     return out
 
 
+@dataclass(frozen=True)
+class PerElementCornerValues:
+    """Per-element extrapolated corner values, no cross-element averaging.
+
+    Attributes
+    ----------
+    element_ids
+        ``(E,)`` int64 — FEM element IDs, in ascending order.
+    corner_node_ids
+        Length-``E`` list of ``(n_corner_e,)`` int64 arrays — corner
+        node IDs in the same order as the element's
+        ``group.connectivity[:, :n_corner]``. Matches the corner order
+        used by :func:`apeGmsh.viewers.scene.fem_scene.build_fem_scene`,
+        so a substrate cell's k-th point is the k-th entry here.
+    values
+        Length-``E`` list of ``(T, n_corner_e)`` float64 arrays —
+        extrapolated values at each corner of each element, before any
+        cross-element averaging.
+    time_count
+        Number of timesteps ``T``.
+    """
+    element_ids: ndarray
+    corner_node_ids: list
+    values: list
+    time_count: int
+
+
+def extrapolate_gauss_slab_per_element(
+    slab: "GaussSlab", fem: "FEMData",
+) -> PerElementCornerValues:
+    """Extrapolate a ``GaussSlab`` to per-element corner values.
+
+    No averaging across elements that share a node — each element keeps
+    its own corner values. Used by the discrete contour path; the
+    averaged path (:func:`extrapolate_gauss_slab_to_nodes`) is built on
+    top of this.
+
+    Empty slab returns an empty record with ``time_count`` derived from
+    the slab's value array (``T == 1`` for a 1-D values array).
+    """
+    eidx = np.asarray(slab.element_index, dtype=np.int64)
+    nat = np.asarray(slab.natural_coords, dtype=np.float64)
+    values = np.asarray(slab.values, dtype=np.float64)
+    if values.ndim == 1:
+        values = values[None, :]
+    T = values.shape[0]
+
+    if eidx.size == 0:
+        return PerElementCornerValues(
+            element_ids=np.zeros(0, dtype=np.int64),
+            corner_node_ids=[],
+            values=[],
+            time_count=T,
+        )
+
+    fem_nids = np.asarray(list(fem.nodes.ids), dtype=np.int64)
+    if fem_nids.size == 0:
+        return PerElementCornerValues(
+            element_ids=np.zeros(0, dtype=np.int64),
+            corner_node_ids=[],
+            values=[],
+            time_count=T,
+        )
+
+    elem_index = _build_element_index(fem)
+
+    # Group slab rows by element id, in ascending element-id order so
+    # downstream consumers get a stable iteration ordering.
+    order = np.argsort(eidx, kind="stable")
+    eidx_sorted = eidx[order]
+    splits = np.where(np.diff(eidx_sorted) != 0)[0] + 1
+    groups = np.split(order, splits)
+
+    out_eids: list[int] = []
+    out_corner_nids: list = []
+    out_values: list = []
+
+    for rows in groups:
+        if rows.size == 0:
+            continue
+        eid = int(eidx[rows[0]])
+        info = elem_index.get(eid)
+        if info is None:
+            continue
+        type_code, corner_nids = info
+        n_gp_e = rows.size
+        gp_vals = values[:, rows]    # (T, n_gp_e)
+        nat_e = nat[rows]            # (n_gp_e, dim)
+
+        if n_gp_e == 1:
+            per_corner = np.broadcast_to(
+                gp_vals, (T, corner_nids.size),
+            ).astype(np.float64, copy=True)
+        else:
+            M = _build_extrapolation_matrix(nat_e, type_code)
+            if M is None or M.shape[0] != corner_nids.size:
+                mean_vals = gp_vals.mean(axis=1, keepdims=True)
+                per_corner = np.broadcast_to(
+                    mean_vals, (T, corner_nids.size),
+                ).astype(np.float64, copy=True)
+            else:
+                per_corner = gp_vals @ M.T    # (T, n_corner)
+                per_corner = np.ascontiguousarray(per_corner, dtype=np.float64)
+
+        out_eids.append(eid)
+        out_corner_nids.append(corner_nids)
+        out_values.append(per_corner)
+
+    return PerElementCornerValues(
+        element_ids=np.asarray(out_eids, dtype=np.int64),
+        corner_node_ids=out_corner_nids,
+        values=out_values,
+        time_count=T,
+    )
+
+
 def extrapolate_gauss_slab_to_nodes(
     slab: "GaussSlab", fem: "FEMData",
 ) -> tuple[ndarray, ndarray]:
@@ -181,71 +305,19 @@ def extrapolate_gauss_slab_to_nodes(
 
     Empty slab returns ``(empty, (T, 0) array)``.
     """
-    eidx = np.asarray(slab.element_index, dtype=np.int64)
-    nat = np.asarray(slab.natural_coords, dtype=np.float64)
-    values = np.asarray(slab.values, dtype=np.float64)
-    if values.ndim == 1:
-        values = values[None, :]
-    T = values.shape[0]
-    if eidx.size == 0:
+    per_elem = extrapolate_gauss_slab_per_element(slab, fem)
+    T = per_elem.time_count
+    if per_elem.element_ids.size == 0:
         return (
             np.zeros(0, dtype=np.int64),
             np.zeros((T, 0), dtype=np.float64),
         )
 
-    # FEM node-id → row index in the global node arrays
-    fem_nids = np.asarray(list(fem.nodes.ids), dtype=np.int64)
-    if fem_nids.size == 0:
-        return (
-            np.zeros(0, dtype=np.int64),
-            np.zeros((T, 0), dtype=np.float64),
-        )
-
-    elem_index = _build_element_index(fem)
-
-    # Sparse accumulators keyed by FEM node id. Dict lookups are fast
-    # enough at result-viewer scale; avoiding a dense (N_fem, T) array
-    # also keeps memory bounded on large meshes.
     sums: dict[int, ndarray] = {}
     counts: dict[int, int] = {}
-
-    # Group slab rows by element id.
-    order = np.argsort(eidx, kind="stable")
-    eidx_sorted = eidx[order]
-    splits = np.where(np.diff(eidx_sorted) != 0)[0] + 1
-    groups = np.split(order, splits)
-
-    for rows in groups:
-        if rows.size == 0:
-            continue
-        eid = int(eidx[rows[0]])
-        info = elem_index.get(eid)
-        if info is None:
-            # Element id not in FEM — skip.
-            continue
-        type_code, corner_nids = info
-        n_gp_e = rows.size
-        gp_vals = values[:, rows]    # (T, n_gp_e)
-        nat_e = nat[rows]            # (n_gp_e, dim)
-
-        if n_gp_e == 1:
-            # Constant: assign the GP value to each corner equally.
-            per_corner = np.broadcast_to(
-                gp_vals, (T, corner_nids.size),
-            )
-        else:
-            M = _build_extrapolation_matrix(nat_e, type_code)
-            if M is None or M.shape[0] != corner_nids.size:
-                # Unsupported element type — fall back to per-element
-                # mean. Loses spatial detail but never wrong shape.
-                mean_vals = gp_vals.mean(axis=1, keepdims=True)
-                per_corner = np.broadcast_to(
-                    mean_vals, (T, corner_nids.size),
-                )
-            else:
-                # nodal[t, c] = sum_g M[c, g] * gp_vals[t, g]
-                per_corner = gp_vals @ M.T    # (T, n_corner)
-
+    for corner_nids, per_corner in zip(
+        per_elem.corner_node_ids, per_elem.values,
+    ):
         for c, nid in enumerate(corner_nids):
             nid_i = int(nid)
             col = per_corner[:, c]

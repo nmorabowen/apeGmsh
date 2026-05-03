@@ -21,6 +21,7 @@ import pyvista as pv
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._scalar_bar_support import ScalarBarSupport
 from ._styles import GaussMarkerStyle
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 _SCALAR_NAME = "_gp_value"
 
 
-class GaussPointDiagram(Diagram):
+class GaussPointDiagram(ScalarBarSupport, Diagram):
     """Sphere markers at Gauss-point world positions, colored by value."""
 
     kind = "gauss_marker"
@@ -66,6 +67,12 @@ class GaussPointDiagram(Diagram):
         # the substrate deforms.
         self._gp_centers_at_build: Optional[ndarray] = None
         self._base_glyph_pts: Optional[ndarray] = None
+        # Glyph cell→center mapping captured at attach: each input GP
+        # center contributes ``_glyph_cells_per_center`` consecutive
+        # cells in the output PolyData. Lets ``resolve_picked_cell``
+        # invert the picker's cell index back to a GP center.
+        self._glyph_cells_per_center: int = 0
+        self._init_scalar_bar_state()
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -163,6 +170,7 @@ class GaussPointDiagram(Diagram):
             radius=radius, theta_resolution=10, phi_resolution=10,
         )
         n_per_center = sphere.n_points
+        self._glyph_cells_per_center = int(sphere.n_cells)
         glyphs = cloud.glyph(geom=sphere, scale=False, orient=False)
         # pyvista propagates input point_data through ``glyph()``,
         # but the resulting attribute is per-glyph-point. Re-stamp our
@@ -181,16 +189,15 @@ class GaussPointDiagram(Diagram):
             glyphs.points, dtype=np.float64,
         ).copy()
 
+        bar_args = self._scalar_bar_args()
         actor = plotter.add_mesh(
             glyphs,
             scalars=_SCALAR_NAME,
             cmap=self._runtime_cmap or style.cmap,
             clim=self._runtime_clim or self._initial_clim,
             opacity=style.opacity,
-            show_scalar_bar=style.show_scalar_bar,
-            scalar_bar_args={
-                "title": self.spec.selector.component,
-            } if style.show_scalar_bar else None,
+            show_scalar_bar=bar_args is not None,
+            scalar_bar_args=bar_args,
             name=self._actor_name(),
             reset_camera=False,
             smooth_shading=True,
@@ -274,6 +281,7 @@ class GaussPointDiagram(Diagram):
             pass
 
     def detach(self) -> None:
+        self._remove_scalar_bar(self._scalar_bar_title())
         self._cloud = None
         self._glyphs = None
         self._actor = None
@@ -286,7 +294,58 @@ class GaussPointDiagram(Diagram):
         self._gp_natural_coords = None
         self._gp_centers_at_build = None
         self._base_glyph_pts = None
+        self._glyph_cells_per_center = 0
         super().detach()
+
+    # ------------------------------------------------------------------
+    # Picking — invert glyph cell index to GP center
+    # ------------------------------------------------------------------
+
+    def resolve_picked_cell(
+        self, cell_id: int,
+    ) -> Optional[tuple[int, int, "ndarray"]]:
+        """Map a picker cell index back to ``(element_id, gp_index, world)``.
+
+        Returns
+        -------
+        ``(element_id, gp_index, world_xyz)`` if ``cell_id`` lies within
+        this diagram's glyph cells, where ``gp_index`` is the row in
+        the slab that this GP came from (also doubles as the input
+        center index in the glyph PolyData). Returns ``None`` when
+        the cell index is out of range, the diagram isn't attached,
+        or the necessary metadata is missing — callers should treat a
+        ``None`` as "not my pick" and fall through.
+        """
+        if (
+            self._glyphs is None
+            or self._glyph_cells_per_center <= 0
+            or self._gp_element_index is None
+        ):
+            return None
+        try:
+            cell_id = int(cell_id)
+        except Exception:
+            return None
+        if cell_id < 0:
+            return None
+        center_idx = cell_id // self._glyph_cells_per_center
+        eidx = self._gp_element_index
+        if center_idx < 0 or center_idx >= eidx.size:
+            return None
+        try:
+            element_id = int(eidx[center_idx])
+        except Exception:
+            return None
+        # World coords come from the live cloud (kept in sync by
+        # ``sync_substrate_points``) so the highlight follows
+        # deformation if the active geometry is warped.
+        try:
+            world = np.asarray(
+                self._cloud.points[center_idx], dtype=np.float64,
+            ).copy()
+        except Exception:
+            return None
+        return (element_id, int(center_idx), world)
 
     # ------------------------------------------------------------------
     # Runtime style

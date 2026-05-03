@@ -728,6 +728,7 @@ class DiagramSettingsTab:
                     cmap=style.cmap, clim=style.clim, opacity=style.opacity,
                     show_edges=style.show_edges,
                     show_scalar_bar=style.show_scalar_bar,
+                    fmt=style.fmt,
                     topology="gauss",
                 )
 
@@ -811,6 +812,12 @@ class DiagramSettingsTab:
             lambda v: self._safe_call(d.set_opacity, v / 100.0)
         )
         form.addRow("Opacity:", opacity_slider)
+
+        # Scalar-bar live controls (Show + Format) — shared with the
+        # generic color panel used by fiber / layer / gauss_marker /
+        # vector_glyph so every contour-bearing diagram gets the same
+        # UI surface.
+        self._add_scalar_bar_controls(d, form)
 
     # ------------------------------------------------------------------
     # Deformed shape panel
@@ -1036,9 +1043,53 @@ class DiagramSettingsTab:
         autofit.clicked.connect(_autofit)
         self._content_layout.addWidget(autofit)
 
+        # Scalar-bar live controls — every diagram routed to this
+        # panel inherits ScalarBarSupport, so the setters exist.
+        self._add_scalar_bar_controls(d, form)
+
     # ------------------------------------------------------------------
-    # Helpers
+    # Scalar-bar controls — Show checkbox + Format line edit
     # ------------------------------------------------------------------
+
+    def _add_scalar_bar_controls(self, d: Diagram, form: Any) -> None:
+        """Append a Show-scale checkbox + Format field to ``form``.
+
+        Skips silently when the diagram doesn't support the live API
+        (older diagrams not yet on ``ScalarBarSupport``). The form
+        owner — the caller — keeps its existing layout.
+        """
+        if not hasattr(d, "set_show_scalar_bar") or not hasattr(d, "set_fmt"):
+            return
+        QtWidgets, _ = _qt()
+
+        show_chk = QtWidgets.QCheckBox("Show scale")
+        runtime_show = getattr(d, "_runtime_show_scalar_bar", None)
+        current_show = (
+            getattr(d.spec.style, "show_scalar_bar", True)
+            if runtime_show is None else bool(runtime_show)
+        )
+        show_chk.setChecked(bool(current_show))
+        show_chk.toggled.connect(
+            lambda v: self._safe_call(d.set_show_scalar_bar, bool(v))
+        )
+        form.addRow(show_chk)
+
+        fmt_edit = QtWidgets.QLineEdit()
+        fmt_edit.setPlaceholderText("%.3g")
+        current_fmt = (
+            getattr(d, "_runtime_fmt", None)
+            or getattr(d.spec.style, "fmt", "%.3g")
+        )
+        fmt_edit.setText(current_fmt)
+        fmt_edit.setToolTip(
+            "printf-style format for scalar-bar tick labels.\n"
+            "Examples: %.3g (general, 3 digits), %.2e (exponent),\n"
+            "%.4f (fixed, 4 decimals)."
+        )
+        fmt_edit.editingFinished.connect(
+            lambda: self._safe_call(d.set_fmt, fmt_edit.text() or "%.3g")
+        )
+        form.addRow("Format:", fmt_edit)
 
     # ------------------------------------------------------------------
     # Preset row

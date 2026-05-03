@@ -26,6 +26,7 @@ import pyvista as pv
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._scalar_bar_support import ScalarBarSupport
 from ._styles import LayerStackStyle
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ _SCALAR_NAME = "_layer_value"
 _AGGREGATIONS = ("mid_layer", "mean", "max_abs")
 
 
-class LayerStackDiagram(Diagram):
+class LayerStackDiagram(ScalarBarSupport, Diagram):
     """Shell mid-surface contour + through-thickness side panel."""
 
     kind = "layer_stack"
@@ -80,6 +81,7 @@ class LayerStackDiagram(Diagram):
         self._initial_clim: Optional[tuple[float, float]] = None
         self._runtime_clim: Optional[tuple[float, float]] = None
         self._runtime_cmap: Optional[str] = None
+        self._init_scalar_bar_state()
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -211,6 +213,7 @@ class LayerStackDiagram(Diagram):
             else:
                 self._initial_clim = (0.0, 1.0)
 
+        bar_args = self._scalar_bar_args()
         actor = plotter.add_mesh(
             submesh,
             scalars=_SCALAR_NAME,
@@ -218,10 +221,8 @@ class LayerStackDiagram(Diagram):
             clim=self._runtime_clim or self._initial_clim,
             opacity=style.opacity,
             show_edges=style.show_edges,
-            show_scalar_bar=style.show_scalar_bar,
-            scalar_bar_args={
-                "title": self.spec.selector.component,
-            } if style.show_scalar_bar else None,
+            show_scalar_bar=bar_args is not None,
+            scalar_bar_args=bar_args,
             name=self._actor_name(),
             reset_camera=False,
             lighting=True,
@@ -252,6 +253,7 @@ class LayerStackDiagram(Diagram):
         self._aggregate_into_scalars(slab_values)
 
     def detach(self) -> None:
+        self._remove_scalar_bar(self._scalar_bar_title())
         self._submesh = None
         self._actor = None
         self._scalar_array = None

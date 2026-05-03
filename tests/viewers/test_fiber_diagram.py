@@ -286,3 +286,32 @@ def test_detach_clears_state(fiber_results, headless_plotter):
     assert diagram._actor is None
     assert diagram._slab_y is None
     assert not diagram.is_attached
+
+
+def test_detach_removes_scalar_bar(fiber_results, headless_plotter):
+    """Repeated attach/detach cycles must not leave scalar bars
+    accumulated on the plotter."""
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    for _ in range(3):
+        diagram = FiberSectionDiagram(_make_spec(), results)
+        diagram.attach(headless_plotter, results.fem, scene)
+        diagram.detach()
+    bars = getattr(headless_plotter, "scalar_bars", {}) or {}
+    assert "fiber_stress" not in bars
+
+
+def test_set_show_and_fmt_live(fiber_results, headless_plotter):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.set_show_scalar_bar(False)
+    assert "fiber_stress" not in headless_plotter.scalar_bars
+
+    diagram.set_show_scalar_bar(True)
+    assert "fiber_stress" in headless_plotter.scalar_bars
+
+    diagram.set_fmt("%.2e")
+    assert headless_plotter.scalar_bars["fiber_stress"].GetLabelFormat() == "%.2e"

@@ -17,6 +17,7 @@ import pyvista as pv
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
+from ._scalar_bar_support import ScalarBarSupport
 from ._styles import VectorGlyphStyle
 
 if TYPE_CHECKING:
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from ..scene.fem_scene import FEMSceneData
 
 
-class VectorGlyphDiagram(Diagram):
+class VectorGlyphDiagram(ScalarBarSupport, Diagram):
     """Arrows at nodes, oriented and scaled by an N-component vector field."""
 
     kind = "vector_glyph"
@@ -53,6 +54,12 @@ class VectorGlyphDiagram(Diagram):
 
         self._runtime_scale: Optional[float] = None
         self._runtime_clim: Optional[tuple[float, float]] = None
+        self._init_scalar_bar_state()
+
+    def _scalar_bar_is_enabled(self) -> bool:
+        """VectorGlyph only paints a bar when colouring by magnitude."""
+        style: VectorGlyphStyle = self.spec.style    # type: ignore[assignment]
+        return bool(getattr(style, "use_magnitude_colors", False))
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -150,12 +157,13 @@ class VectorGlyphDiagram(Diagram):
             lighting=False,
         )
         if style.use_magnitude_colors:
+            bar_args = self._scalar_bar_args()
             kwargs.update(
                 scalars="_mag",
                 cmap=style.cmap,
                 clim=self._runtime_clim or self._initial_clim,
-                show_scalar_bar=True,
-                scalar_bar_args={"title": self.spec.selector.component},
+                show_scalar_bar=bar_args is not None,
+                scalar_bar_args=bar_args,
             )
         else:
             kwargs.update(
@@ -223,6 +231,9 @@ class VectorGlyphDiagram(Diagram):
             pass
 
     def detach(self) -> None:
+        # Drop the magnitude scalar bar before tearing the actor down
+        # so it doesn't accumulate across attach/detach cycles.
+        self._remove_scalar_bar(self._scalar_bar_title())
         self._source = None
         self._actor = None
         self._fem_ids_to_read = None
