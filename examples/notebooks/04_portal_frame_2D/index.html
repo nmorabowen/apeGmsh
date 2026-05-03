@@ -5243,7 +5243,9 @@ print(spec)</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"04_portal_frame_2D.h5"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">workdir</span>
+<span class="n">OUT</span> <span class="o">=</span> <span class="n">workdir</span><span class="p">()</span>
+<span class="n">results_path</span> <span class="o">=</span> <span class="n">OUT</span> <span class="o">/</span> <span class="s2">"capture.h5"</span>
 <span class="k">if</span> <span class="n">results_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
     <span class="n">results_path</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span>
 
@@ -5266,7 +5268,9 @@ print(spec)</div>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"wrote </span><span class="si">{</span><span class="n">results_path</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">results_path</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1024</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> KB)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">results_path = Path("04_portal_frame_2D.h5")
+<div class="clipboard-copy-txt" id="cell-7">from apeGmsh import workdir
+OUT = workdir()
+results_path = OUT / "capture.h5"
 if results_path.exists():
     results_path.unlink()
 

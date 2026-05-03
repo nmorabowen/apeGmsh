@@ -5179,7 +5179,9 @@ design at work.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">out_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"02_cantilever_out"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">workdir</span>
+<span class="n">OUT</span> <span class="o">=</span> <span class="n">workdir</span><span class="p">()</span>
+<span class="n">out_dir</span> <span class="o">=</span> <span class="n">OUT</span> <span class="o">/</span> <span class="s2">"recorders"</span>
 <span class="k">if</span> <span class="n">out_dir</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
     <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">out_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.out"</span><span class="p">):</span>
         <span class="n">f</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span>
@@ -5204,7 +5206,9 @@ design at work.</p>
 <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">out_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.out"</span><span class="p">)):</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span><span class="si">}</span><span class="s2"> B)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">out_dir = Path("02_cantilever_out")
+<div class="clipboard-copy-txt" id="cell-7">from apeGmsh import workdir
+OUT = workdir()
+out_dir = OUT / "recorders"
 if out_dir.exists():
     for f in out_dir.glob("*.out"):
         f.unlink()
