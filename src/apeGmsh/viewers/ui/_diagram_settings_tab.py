@@ -60,11 +60,21 @@ class DiagramSettingsTab:
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(6, 6, 6, 6)
 
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
         self._title = QtWidgets.QLabel("No diagram selected.")
         font = self._title.font()
         font.setBold(True)
         self._title.setFont(font)
-        layout.addWidget(self._title)
+        title_row.addWidget(self._title)
+        title_row.addStretch(1)
+        self._btn_add_layer = QtWidgets.QPushButton("+ Add layer")
+        self._btn_add_layer.setFlat(True)
+        self._btn_add_layer.setToolTip("Add a new diagram layer")
+        self._btn_add_layer.clicked.connect(self._on_add_layer_clicked)
+        title_row.addWidget(self._btn_add_layer)
+        layout.addLayout(title_row)
 
         self._content = QtWidgets.QWidget()
         self._content_layout = QtWidgets.QVBoxLayout(self._content)
@@ -137,6 +147,20 @@ class DiagramSettingsTab:
         self._create_new = False
         self._selected = None
         self._rebuild()
+
+    def _on_add_layer_clicked(self) -> None:
+        """+ Add layer → ensure a composition exists in the active
+        Geometry, then enter stack mode with a pending creation card.
+        """
+        geom_mgr = self._director.geometries
+        geom = geom_mgr.active
+        if geom is None:
+            return
+        comp_mgr = geom.compositions
+        if not comp_mgr.active_accepts_layers:
+            comp_mgr.add(name="Diagram", make_active=True)
+        self.show_stack()
+        self.set_create_new(True)
 
     def _ensure_catalog(self) -> Any:
         if self._kind_catalog is None:
