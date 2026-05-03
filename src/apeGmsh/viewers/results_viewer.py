@@ -938,6 +938,13 @@ class ResultsViewer:
                 self._director.unbind_plotter()
             except Exception:
                 pass
+        # Release the HDF5 file handle so the user can re-run the
+        # capture (overwrite the same path) without a PermissionError
+        # from the still-open reader.
+        try:
+            self._results.close()
+        except Exception:
+            pass
         # Drop the strong ref pinned in show() so the viewer can be
         # garbage-collected after the window closes.
         _LIVE_VIEWERS.discard(self)
