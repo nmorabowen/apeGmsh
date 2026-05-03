@@ -873,31 +873,30 @@ class DiagramSettingsTab:
         )
         form.addRow("Scale:", scale_spin)
 
-        # Fill axis
+        # Fill axis — local frame, world axes, or auto.
+        # World-axis options are useful for 2-D models you want to view
+        # obliquely: pick ``Global Z`` to extrude the diagram out of
+        # the model plane so it stays visible from any camera angle.
         axis_combo = QtWidgets.QComboBox()
         axis_combo.addItem("Auto (component default)", None)
         axis_combo.addItem("y_local", "y")
         axis_combo.addItem("z_local", "z")
-        # Reflect runtime override
+        axis_combo.addItem("Global X", "global_x")
+        axis_combo.addItem("Global Y", "global_y")
+        axis_combo.addItem("Global Z", "global_z")
+        # Reflect runtime override (or, if absent, the spec's style).
         runtime_axis = getattr(d, "_runtime_axis", None)
+        current = (
+            runtime_axis if runtime_axis is not None
+            else getattr(d.spec.style, "fill_axis", None)
+        )
         for i in range(axis_combo.count()):
-            if axis_combo.itemData(i) == runtime_axis:
+            if axis_combo.itemData(i) == current:
                 axis_combo.setCurrentIndex(i)
                 break
 
         def _on_axis_change(idx: int) -> None:
-            data = axis_combo.itemData(idx)
-            if data is None:
-                # "Auto" — clear the runtime override and re-attach so the
-                # default mapping is recomputed.
-                d._runtime_axis = None
-                if d.is_attached and d._fem is not None:
-                    plotter, scene = d._plotter, d._scene
-                    d.detach()
-                    d.attach(plotter, d._fem, scene)
-                self._fire_render()
-            else:
-                self._safe_call(d.set_fill_axis, str(data))
+            self._safe_call(d.set_fill_axis, axis_combo.itemData(idx))
 
         axis_combo.currentIndexChanged.connect(_on_axis_change)
         form.addRow("Fill axis:", axis_combo)

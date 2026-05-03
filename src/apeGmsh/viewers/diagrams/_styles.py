@@ -90,9 +90,20 @@ class LineForceStyle(DiagramStyle):
         selected at attach if left ``None`` so the largest fill is a
         configurable fraction of the model diagonal.
     fill_axis
-        ``"y"`` or ``"z"`` — local axis along which the fill extends.
-        ``None`` selects via ``component`` (axial / shear / bending
-        defaults from ``_beam_geometry.COMPONENT_TO_LOCAL_AXIS``).
+        Direction the fill extends from each beam, perpendicular to
+        the beam axis. Accepts:
+
+        * ``None`` — select via ``component`` (axial / shear / bending
+          defaults from ``_beam_geometry.COMPONENT_TO_LOCAL_AXIS``).
+        * ``"y"`` / ``"z"`` — local-frame axis.
+        * ``"global_x"`` / ``"global_y"`` / ``"global_z"`` — global axis,
+          projected perpendicular to each beam's axis.
+        * ``(dx, dy, dz)`` — explicit world-frame direction, projected
+          per beam.
+
+        World-frame overrides are useful for 2-D models you want to
+        view obliquely: pick ``"global_z"`` to extrude the diagram out
+        of the model plane so it stays visible from any camera angle.
     fill_color
         Solid fill color.
     edge_color
@@ -115,7 +126,7 @@ class LineForceStyle(DiagramStyle):
         fraction of the model's bounding-box diagonal.
     """
     scale: Optional[float] = None
-    fill_axis: Optional[str] = None
+    fill_axis: Optional["str | tuple[float, float, float]"] = None
     fill_color: str = "#3CB371"          # medium sea green — readable on dark themes
     edge_color: str = "#1F5C39"
     show_edges: bool = True

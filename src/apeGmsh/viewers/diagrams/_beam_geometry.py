@@ -153,6 +153,10 @@ def fill_axis_for(component: str, override: str | None = None) -> str:
 
     User override wins. Falls back to ``COMPONENT_TO_LOCAL_AXIS``,
     then to ``"y"`` for unknown components.
+
+    Note: this only handles the *local-frame* names. World-frame
+    overrides (``"global_x"``, ``"global_y"``, ``"global_z"``, or
+    a length-3 tuple) are resolved by :func:`resolve_fill_direction`.
     """
     if override is not None:
         if override not in ("y", "z"):
@@ -161,3 +165,93 @@ def fill_axis_for(component: str, override: str | None = None) -> str:
             )
         return override
     return COMPONENT_TO_LOCAL_AXIS.get(component, "y")
+
+
+_GLOBAL_AXIS_TO_VEC: dict[str, ndarray] = {
+    "global_x": np.array([1.0, 0.0, 0.0], dtype=np.float64),
+    "global_y": np.array([0.0, 1.0, 0.0], dtype=np.float64),
+    "global_z": np.array([0.0, 0.0, 1.0], dtype=np.float64),
+}
+
+
+FillAxisSpec = "str | tuple[float, float, float] | ndarray | None"
+
+
+def resolve_fill_direction(
+    component: str,
+    override: "FillAxisSpec",
+    x_local: ndarray,
+    y_local: ndarray,
+    z_local: ndarray,
+) -> ndarray:
+    """Resolve the unit fill direction for one beam.
+
+    Supported ``override`` forms:
+
+    * ``None`` — fall back to the component default in
+      ``COMPONENT_TO_LOCAL_AXIS`` (``"y"`` or ``"z"``).
+    * ``"y"`` / ``"z"`` — local-frame axis.
+    * ``"global_x" | "global_y" | "global_z"`` — global axis.
+    * ``(dx, dy, dz)`` — explicit world-frame direction.
+
+    For global / explicit overrides the result is the user direction
+    projected perpendicular to ``x_local`` and renormalised. If that
+    projection is degenerate (override parallel to the beam axis), the
+    function falls back to ``y_local`` so the diagram still renders.
+    """
+    if override is None or (isinstance(override, str) and override in ("y", "z")):
+        name = fill_axis_for(component, override if override in ("y", "z") else None)
+        return y_local if name == "y" else z_local
+
+    if isinstance(override, str):
+        vec = _GLOBAL_AXIS_TO_VEC.get(override)
+        if vec is None:
+            raise ValueError(
+                f"Unknown fill axis spec {override!r}. Must be one of "
+                f"'y', 'z', 'global_x', 'global_y', 'global_z' or a "
+                f"length-3 tuple."
+            )
+        d = vec
+    else:
+        d = np.asarray(override, dtype=np.float64).reshape(-1)
+        if d.size != 3:
+            raise ValueError(
+                f"Custom fill axis must have 3 components (got {d.size})."
+            )
+        norm = float(np.linalg.norm(d))
+        if norm < _DEGENERATE_EPS:
+            return y_local
+        d = d / norm
+
+    # Project perpendicular to x_local, then renormalise.
+    perp = d - float(np.dot(d, x_local)) * x_local
+    perp_norm = float(np.linalg.norm(perp))
+    if perp_norm < _DEGENERATE_EPS:
+        # Override is (almost) parallel to the beam axis — nothing
+        # sensible to render along; fall back to local y.
+        return y_local
+    return perp / perp_norm
+
+
+def normalize_fill_axis_spec(spec: "FillAxisSpec") -> "FillAxisSpec":
+    """Validate and canonicalise a user-supplied fill-axis spec.
+
+    Returns the spec unchanged if valid; raises ``ValueError`` otherwise.
+    Tuples are coerced to ``tuple[float, float, float]``.
+    """
+    if spec is None:
+        return None
+    if isinstance(spec, str):
+        if spec in ("y", "z") or spec in _GLOBAL_AXIS_TO_VEC:
+            return spec
+        raise ValueError(
+            f"Unknown fill axis name {spec!r}. Must be one of "
+            f"'y', 'z', 'global_x', 'global_y', 'global_z' or a "
+            f"length-3 tuple."
+        )
+    arr = np.asarray(spec, dtype=np.float64).reshape(-1)
+    if arr.size != 3:
+        raise ValueError(
+            f"Custom fill axis must have 3 components (got {arr.size})."
+        )
+    return (float(arr[0]), float(arr[1]), float(arr[2]))

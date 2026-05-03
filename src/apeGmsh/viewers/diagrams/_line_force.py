@@ -31,7 +31,8 @@ from numpy import ndarray
 from ._base import Diagram, DiagramSpec
 from ._beam_geometry import (
     compute_local_axes,
-    fill_axis_for,
+    normalize_fill_axis_spec,
+    resolve_fill_direction,
     station_position,
 )
 from ._styles import LineForceStyle
@@ -76,7 +77,9 @@ class LineForceDiagram(Diagram):
 
         # Mutable runtime overrides
         self._runtime_scale: Optional[float] = None
-        self._runtime_axis: Optional[str] = None    # forces full re-attach
+        # Forces full re-attach. ``None`` means "fall through to
+        # spec.style.fill_axis"; a non-None value (str or tuple) wins.
+        self._runtime_axis: "str | tuple[float, float, float] | None" = None
         self._runtime_flip: Optional[bool] = None
 
     # ------------------------------------------------------------------
@@ -155,9 +158,9 @@ class LineForceDiagram(Diagram):
         station_eid = np.zeros(n_total, dtype=np.int64)
         station_xi = np.zeros(n_total, dtype=np.float64)
 
-        fill_axis_name = fill_axis_for(
-            self.spec.selector.component,
-            self._runtime_axis or style.fill_axis,
+        axis_spec = (
+            self._runtime_axis if self._runtime_axis is not None
+            else style.fill_axis
         )
 
         faces_list: list[int] = []
@@ -168,11 +171,14 @@ class LineForceDiagram(Diagram):
                 continue
             ci, cj = endpoints[eid_int]
             try:
-                _, y_local, z_local, _ = compute_local_axes(ci, cj)
+                x_local, y_local, z_local, _ = compute_local_axes(ci, cj)
             except ValueError:
                 continue
 
-            fill_dir = y_local if fill_axis_name == "y" else z_local
+            fill_dir = resolve_fill_direction(
+                self.spec.selector.component,
+                axis_spec, x_local, y_local, z_local,
+            )
 
             slab_idx_for_beam = np.where(slab_eids == eid)[0]
             xi_values = slab_xi[slab_idx_for_beam]
@@ -312,9 +318,9 @@ class LineForceDiagram(Diagram):
             return
 
         style: LineForceStyle = self.spec.style    # type: ignore[assignment]
-        fill_axis_name = fill_axis_for(
-            self.spec.selector.component,
-            self._runtime_axis or style.fill_axis,
+        axis_spec = (
+            self._runtime_axis if self._runtime_axis is not None
+            else style.fill_axis
         )
 
         new_base = self._base_points.copy()
@@ -325,10 +331,13 @@ class LineForceDiagram(Diagram):
             ci = target_pts[si]
             cj = target_pts[sj]
             try:
-                _, y_local, z_local, _ = compute_local_axes(ci, cj)
+                x_local, y_local, z_local, _ = compute_local_axes(ci, cj)
             except ValueError:
                 continue
-            fill_dir = y_local if fill_axis_name == "y" else z_local
+            fill_dir = resolve_fill_direction(
+                self.spec.selector.component,
+                axis_spec, x_local, y_local, z_local,
+            )
             mask = self._station_eid == eid
             if not np.any(mask):
                 continue
@@ -377,22 +386,35 @@ class LineForceDiagram(Diagram):
         if self._fill_polydata is not None:
             self._reapply_last_step()
 
-    def set_fill_axis(self, axis: str) -> None:
-        """Switch the fill local axis ('y' or 'z').
+    def set_fill_axis(
+        self, axis: "str | tuple[float, float, float] | None",
+    ) -> None:
+        """Switch the fill direction.
+
+        Accepts:
+
+        * ``None`` — clear the runtime override and fall back to the
+          spec's ``style.fill_axis`` (or the component default if that
+          is also ``None``).
+        * ``"y"`` / ``"z"`` — local-frame axis.
+        * ``"global_x" | "global_y" | "global_z"`` — global axis,
+          projected perpendicular to each beam axis.
+        * ``(dx, dy, dz)`` — explicit world-frame direction.
 
         Triggers a full re-attach because the per-station fill
-        directions are baked at attach. We unbind, reset axis, rebind.
+        directions are baked at attach.
         """
-        if axis not in ("y", "z"):
-            raise ValueError(f"axis must be 'y' or 'z' (got {axis!r}).")
-        if self._runtime_axis == axis:
+        normalized = normalize_fill_axis_spec(axis)
+        if self._runtime_axis == normalized:
             return
-        self._runtime_axis = axis
+        self._runtime_axis = normalized
         if self.is_attached and self._fem is not None:
+            # Capture before detach() — that call clears _fem/_plotter/_scene.
             plotter = self._plotter
             scene = self._scene
+            fem = self._fem
             self.detach()
-            self.attach(plotter, self._fem, scene)
+            self.attach(plotter, fem, scene)
 
     def current_scale(self) -> float:
         if self._runtime_scale is not None:

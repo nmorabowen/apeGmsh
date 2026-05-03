@@ -315,6 +315,60 @@ def test_current_scale(beam_results, headless_plotter):
     assert diagram.current_scale() == 7.0
 
 
+def test_set_fill_axis_to_global_z(beam_results, headless_plotter):
+    """For an XY-plane beam, ``global_z`` makes the fill extend along +Z.
+
+    bending_moment_z normally fills along ``y_local`` (= +Y for a beam
+    along +X). Switching to ``global_z`` should reorient every station's
+    fill direction to +Z so the diagram extrudes out of the model plane.
+    """
+    results, _, _, _ = beam_results
+    scene = build_fem_scene(results.fem)
+    diagram = LineForceDiagram(_make_spec(scale=1.0), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    np.testing.assert_allclose(
+        diagram._fill_directions,
+        np.tile([0.0, 1.0, 0.0], (diagram._n_stations, 1)),
+    )
+
+    diagram.set_fill_axis("global_z")
+    np.testing.assert_allclose(
+        diagram._fill_directions,
+        np.tile([0.0, 0.0, 1.0], (diagram._n_stations, 1)),
+    )
+
+
+def test_set_fill_axis_none_clears_runtime_override(
+    beam_results, headless_plotter,
+):
+    results, _, _, _ = beam_results
+    scene = build_fem_scene(results.fem)
+    diagram = LineForceDiagram(_make_spec(scale=1.0), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.set_fill_axis("global_z")
+    assert diagram._runtime_axis == "global_z"
+    diagram.set_fill_axis(None)
+    assert diagram._runtime_axis is None
+    # Fill direction is back to the component default (y_local = +Y).
+    np.testing.assert_allclose(
+        diagram._fill_directions,
+        np.tile([0.0, 1.0, 0.0], (diagram._n_stations, 1)),
+    )
+
+
+def test_set_fill_axis_tuple(beam_results, headless_plotter):
+    results, _, _, _ = beam_results
+    scene = build_fem_scene(results.fem)
+    diagram = LineForceDiagram(_make_spec(scale=1.0), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.set_fill_axis((0.0, 0.0, 5.0))    # any +Z scaling
+    np.testing.assert_allclose(
+        diagram._fill_directions,
+        np.tile([0.0, 0.0, 1.0], (diagram._n_stations, 1)),
+    )
+
+
 # =====================================================================
 # In-place mutation contract
 # =====================================================================

@@ -12,6 +12,8 @@ from apeGmsh.viewers.diagrams._beam_geometry import (
     compute_local_axes,
     default_vecxz,
     fill_axis_for,
+    normalize_fill_axis_spec,
+    resolve_fill_direction,
     station_position,
 )
 
@@ -214,3 +216,116 @@ def test_component_to_local_axis_completeness():
     }
     for c in expected:
         assert c in COMPONENT_TO_LOCAL_AXIS
+
+
+# =====================================================================
+# resolve_fill_direction
+# =====================================================================
+
+def _basic_local_frame_xy_beam():
+    """Beam along +X in the XY plane → y_local = +Y, z_local = +Z."""
+    ci = np.array([0.0, 0.0, 0.0])
+    cj = np.array([1.0, 0.0, 0.0])
+    return compute_local_axes(ci, cj)[:3]
+
+
+def test_resolve_fill_direction_local_default():
+    """``None`` falls through to the component's default local axis."""
+    x, y, z = _basic_local_frame_xy_beam()
+    # bending_moment_z -> y_local
+    np.testing.assert_allclose(
+        resolve_fill_direction("bending_moment_z", None, x, y, z),
+        y,
+    )
+    # axial_force -> z_local
+    np.testing.assert_allclose(
+        resolve_fill_direction("axial_force", None, x, y, z),
+        z,
+    )
+
+
+def test_resolve_fill_direction_local_override():
+    x, y, z = _basic_local_frame_xy_beam()
+    np.testing.assert_allclose(
+        resolve_fill_direction("axial_force", "y", x, y, z), y,
+    )
+    np.testing.assert_allclose(
+        resolve_fill_direction("shear_y", "z", x, y, z), z,
+    )
+
+
+def test_resolve_fill_direction_global_axis():
+    """Global Z on an XY-plane beam stays +Z (already perpendicular)."""
+    x, y, z = _basic_local_frame_xy_beam()
+    out = resolve_fill_direction(
+        "bending_moment_z", "global_z", x, y, z,
+    )
+    np.testing.assert_allclose(out, [0.0, 0.0, 1.0])
+
+
+def test_resolve_fill_direction_global_strips_beam_component():
+    """Global X on a beam along +X must drop to a fallback (parallel)."""
+    x, y, z = _basic_local_frame_xy_beam()
+    out = resolve_fill_direction(
+        "axial_force", "global_x", x, y, z,
+    )
+    # Falls back to y_local because global_x is parallel to x_local.
+    np.testing.assert_allclose(out, y)
+
+
+def test_resolve_fill_direction_global_oblique():
+    """For an oblique beam, the global axis is projected perpendicular."""
+    ci = np.array([0.0, 0.0, 0.0])
+    cj = np.array([1.0, 1.0, 0.0])    # 45° in XY
+    x, y, z, _ = compute_local_axes(ci, cj)
+    out = resolve_fill_direction(
+        "bending_moment_z", "global_y", x, y, z,
+    )
+    # Should be perpendicular to x_local and unit-norm.
+    assert abs(float(np.dot(out, x))) < 1e-12
+    np.testing.assert_allclose(float(np.linalg.norm(out)), 1.0)
+
+
+def test_resolve_fill_direction_tuple():
+    x, y, z = _basic_local_frame_xy_beam()
+    out = resolve_fill_direction(
+        "axial_force", (0.0, 0.0, 2.0), x, y, z,
+    )
+    np.testing.assert_allclose(out, [0.0, 0.0, 1.0])
+
+
+def test_resolve_fill_direction_unknown_string_raises():
+    x, y, z = _basic_local_frame_xy_beam()
+    with pytest.raises(ValueError):
+        resolve_fill_direction("axial_force", "global_q", x, y, z)
+
+
+def test_resolve_fill_direction_zero_tuple_falls_back():
+    x, y, z = _basic_local_frame_xy_beam()
+    out = resolve_fill_direction("axial_force", (0.0, 0.0, 0.0), x, y, z)
+    np.testing.assert_allclose(out, y)
+
+
+# =====================================================================
+# normalize_fill_axis_spec
+# =====================================================================
+
+def test_normalize_fill_axis_spec_passthrough():
+    assert normalize_fill_axis_spec(None) is None
+    assert normalize_fill_axis_spec("y") == "y"
+    assert normalize_fill_axis_spec("global_z") == "global_z"
+
+
+def test_normalize_fill_axis_spec_tuple_coerces():
+    out = normalize_fill_axis_spec((1, 2, 3))
+    assert out == (1.0, 2.0, 3.0)
+
+
+def test_normalize_fill_axis_spec_rejects_unknown_string():
+    with pytest.raises(ValueError):
+        normalize_fill_axis_spec("axis_q")
+
+
+def test_normalize_fill_axis_spec_rejects_wrong_size():
+    with pytest.raises(ValueError):
+        normalize_fill_axis_spec((1.0, 2.0))
