@@ -760,13 +760,22 @@ class ResultsViewer:
             """
             geom_mgr = director.geometries
             active_geom = geom_mgr.active
-            active_layers: set[int] = set()
-            if active_geom is not None:
-                active_comp = active_geom.compositions.active
-                if active_comp is not None:
-                    active_layers = set(map(id, active_comp.layers))
+            active_comp = (
+                active_geom.compositions.active
+                if active_geom is not None else None
+            )
+            # When no composition is active anywhere, treat the gate
+            # as "show all" — the user hasn't picked a filter, so the
+            # only visibility signal is the per-card checkbox. This
+            # rescues sessions where active_composition_id was saved
+            # as None by a pre-#71/#72 click and otherwise leaves
+            # every diagram permanently hidden.
+            show_all = active_comp is None
+            active_layers: set[int] = (
+                set() if show_all else set(map(id, active_comp.layers))
+            )
             for d in director.registry.diagrams():
-                in_active = id(d) in active_layers
+                in_active = show_all or (id(d) in active_layers)
                 desired = bool(d.is_visible) and in_active
                 for actor in d._actors:                         # noqa: SLF001
                     try:
@@ -1145,6 +1154,17 @@ class ResultsViewer:
                     ]
                     if matches:
                         geom.compositions.set_active(matches[0].id)
+                # Heal stale sessions: pre-#71/#72 the active id could
+                # be saved as None (Esc / Geometry-row click). Without
+                # an active comp the gate hides every layer on restore,
+                # so default to the first composition when the user
+                # didn't explicitly pick one.
+                if (
+                    geom.compositions.active is None
+                    and geom.compositions.compositions
+                ):
+                    first = geom.compositions.compositions[0]
+                    geom.compositions.set_active(first.id)
             # Restore active geometry pointer (by name match — saved
             # UUIDs don't survive a re-bootstrap).
             saved_active = self._geom_name_for(
