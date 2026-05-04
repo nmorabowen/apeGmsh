@@ -69,6 +69,60 @@ from apeGmsh._workdir import workdir
 # Backward-compatible alias (SelectionPicker was the pre-v1 name)
 SelectionPicker = ModelViewer
 
+
+# ── Version + import banner ───────────────────────────────────────────
+def _resolve_version() -> str:
+    """Read the installed package version from importlib.metadata.
+
+    Falls back to ``"unknown"`` when the package isn't installed (e.g.
+    running directly from a source checkout without ``pip install -e``).
+    """
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+        try:
+            return version("apeGmsh")
+        except PackageNotFoundError:
+            return "unknown"
+    except Exception:
+        return "unknown"
+
+
+__version__ = _resolve_version()
+
+
+def _print_banner() -> None:
+    """Print the apeGmsh ASCII banner + version on import.
+
+    Set ``APEGMSH_QUIET=1`` to suppress (useful for tests / CI).
+    """
+    import os
+    import sys
+    if os.environ.get("APEGMSH_QUIET"):
+        return
+    banner = r"""
+ █████╗ ██████╗ ███████╗ ██████╗ ███╗   ███╗███████╗██╗  ██╗
+██╔══██╗██╔══██╗██╔════╝██╔════╝ ████╗ ████║██╔════╝██║  ██║
+███████║██████╔╝█████╗  ██║  ███╗██╔████╔██║███████╗███████║
+██╔══██║██╔═══╝ ██╔══╝  ██║   ██║██║╚██╔╝██║╚════██║██╔══██║
+██║  ██║██║     ███████╗╚██████╔╝██║ ╚═╝ ██║███████║██║  ██║
+╚═╝  ╚═╝╚═╝     ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝
+██╗      █████╗ ██████╗ ██████╗ ██╗   ██╗███╗   ██╗ ██████╗
+██║     ██╔══██╗██╔══██╗██╔══██╗██║   ██║████╗  ██║██╔═══██╗
+██║     ███████║██║  ██║██████╔╝██║   ██║██╔██╗ ██║██║   ██║
+██║     ██╔══██║██║  ██║██╔══██╗██║   ██║██║╚██╗██║██║   ██║
+███████╗██║  ██║██████╔╝██║  ██║╚██████╔╝██║ ╚████║╚██████╔╝
+╚══════╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝
+"""
+    try:
+        sys.stderr.write(banner)
+        sys.stderr.write(f"  apeGmsh v{__version__}\n\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+_print_banner()
+
 __all__ = [
     "_SessionBase",
     "apeGmsh",
@@ -104,4 +158,5 @@ __all__ = [
     "theme_editor",
     "preview",
     "workdir",
+    "__version__",
 ]
