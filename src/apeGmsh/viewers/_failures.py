@@ -57,6 +57,9 @@ def report(name: str, exc: BaseException) -> None:
     Always writes to stderr with a full traceback so CI logs and
     consoles capture it. Handler exceptions are themselves caught so a
     bad handler doesn't take the catch-and-report path with it.
+
+    Also routed through the action logger so the per-session log file
+    captures every error with full traceback.
     """
     print(
         f"[viewer] {name} raised {type(exc).__name__}: {exc}",
@@ -65,6 +68,11 @@ def report(name: str, exc: BaseException) -> None:
     traceback.print_exception(
         type(exc), exc, exc.__traceback__, file=sys.stderr,
     )
+    try:
+        from ._log import log_error
+        log_error("error", name, exc)
+    except Exception:
+        pass
     for cb in list(_HANDLERS):
         try:
             cb(name, exc)

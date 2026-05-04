@@ -132,6 +132,18 @@ class ResultsViewer:
         # returns immediately (jupyter ``%gui qt`` and friends).
         _LIVE_VIEWERS.add(self)
 
+        # Initialise the action logger early so anything that fires
+        # during construction (NoDataError on attach, FEM bind issues,
+        # ...) lands in the session log file. session.start is the
+        # logger's own header; this line records *which* file we just
+        # opened so the log is self-contained.
+        from ._log import log_action
+        results_path = getattr(self._results, "_path", None)  # noqa: SLF001
+        log_action(
+            "session", "open",
+            file=str(results_path) if results_path else "<in-memory>",
+        )
+
         # Lazy imports — keep ``apeGmsh.viewers`` importable in headless
         # environments. Qt / pyvistaqt only loaded when the user opens
         # an actual viewer.
@@ -995,6 +1007,8 @@ class ResultsViewer:
 
     def _on_close(self) -> None:
         """Detach diagrams and release plotter binding before window dies."""
+        from ._log import log_action, shutdown as _log_shutdown
+        log_action("session", "close")
         # Auto-save the session before tearing down — the diagrams
         # still hold their specs at this point.
         if self._save_session:
@@ -1014,6 +1028,9 @@ class ResultsViewer:
         # Drop the strong ref pinned in show() so the viewer can be
         # garbage-collected after the window closes.
         _LIVE_VIEWERS.discard(self)
+        # Flush + close log handlers so the session file is complete
+        # on disk by the time the user looks for it.
+        _log_shutdown()
 
     # ------------------------------------------------------------------
     # Session persistence
@@ -1396,11 +1413,24 @@ class ResultsViewer:
     def _on_results_pick(self, result) -> None:
         """Dispatch a :class:`PickResult` based on its ``kind``."""
         from .core.results_pick import MODE_NODE, MODE_ELEMENT, MODE_GP
+        from ._log import log_action
         if result.kind == MODE_NODE:
+            log_action(
+                "pick", "node",
+                world=tuple(round(c, 3) for c in result.world),
+            )
             self._on_node_pick(result.world)
         elif result.kind == MODE_ELEMENT:
+            log_action(
+                "pick", "element",
+                element_id=result.element_id, cell_id=result.cell_id,
+            )
             self._on_element_pick(result.element_id, result.cell_id)
         elif result.kind == MODE_GP:
+            log_action(
+                "pick", "gp",
+                element_id=result.element_id, gp_index=result.gp_index,
+            )
             self._on_gp_pick(
                 result.element_id, result.gp_index, result.world,
             )
@@ -1880,6 +1910,8 @@ class ResultsViewer:
         composition selection here previously hid every diagram via
         the composition gate, which read as "diagrams broken".
         """
+        from ._log import log_action
+        log_action("ui.shortcut", "escape")
         try:
             from qtpy import QtWidgets
             fw = QtWidgets.QApplication.focusWidget()
