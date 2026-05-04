@@ -553,12 +553,17 @@ class ResultsViewer:
                     except Exception:
                         continue
 
-        def _apply_deformation(step: int) -> None:
-            """Apply the active Geometry's deformation to the substrate.
+        # ── Pipeline primitives — see _dispatch.py for the contract ──
+        # The dispatcher below is the only place that composes these
+        # into event-driven sequences. Don't call them directly from
+        # observers — fire a dispatcher event instead.
 
-            No active geometry / disabled / no field → reset to ref.
-            Otherwise: substrate points = ref + scale * field(step),
-            then propagate to layer submeshes.
+        def _compute_deformed_pts(step: int) -> "_np.ndarray | None":
+            """Resolve the active Geometry's deformation field at step.
+
+            Returns None when the active geometry has no deformation
+            enabled or the field can't be read. Caller decides whether
+            to reset substrate to reference or apply the deformed.
             """
             geom = director.geometries.active
             if (
@@ -566,43 +571,160 @@ class ResultsViewer:
                 or not geom.deform_enabled
                 or not geom.deform_field
             ):
-                scene.grid.points = self._reference_points.copy()
-                _sync_layer_grids(None)
-                self._sync_node_cloud(None)
-                self._sync_diagram_substrate_points(None)
-                _render()
-                return
-            field_vals = _read_deform_field(geom.deform_field, int(step))
+                return None
+            field_vals = _read_deform_field(
+                geom.deform_field, int(step),
+            )
             if field_vals is None:
-                scene.grid.points = self._reference_points.copy()
-                _sync_layer_grids(None)
-                self._sync_node_cloud(None)
-                self._sync_diagram_substrate_points(None)
-                _render()
-                return
-            deformed = (
+                return None
+            return (
                 self._reference_points
                 + float(geom.deform_scale) * field_vals
             )
-            scene.grid.points = deformed
-            _sync_layer_grids(deformed)
-            self._sync_node_cloud(deformed)
-            self._sync_diagram_substrate_points(deformed)
-            _render()
 
-        self._apply_deformation = _apply_deformation
+        def _pump_step(layer) -> None:
+            """STEP primitive — push current step values."""
+            step = int(director.step_index)
+            if layer is not None:
+                try:
+                    layer.update_to_step(step)
+                except Exception:
+                    pass
+                return
+            try:
+                director.registry.update_to_step(step)
+            except Exception:
+                pass
 
-        # Re-apply on step / stage / geometry-state changes. The
-        # geometries observer covers active-geometry switches AND
-        # in-place deformation edits (set_deformation fires it too).
+        def _pump_deform(layer) -> None:
+            """DEFORM primitive.
+
+            ``layer=None``: full pump — recompute deformed_pts, mutate
+            ``scene.grid.points``, sync layer submeshes, sync node
+            cloud, sync every diagram's per-instance substrate state.
+
+            ``layer=<diagram>``: scoped — only sync that diagram against
+            the substrate's current points. Used after a single layer's
+            attach / re-attach so existing diagrams aren't re-pumped.
+            """
+            step = int(director.step_index)
+            deformed_pts = _compute_deformed_pts(step)
+            if layer is not None:
+                # Substrate is already at the right state from the most
+                # recent full DEFORM; just align this one diagram's
+                # base coords to it.
+                try:
+                    layer.sync_substrate_points(deformed_pts, scene)
+                except Exception:
+                    pass
+                return
+            if deformed_pts is None:
+                scene.grid.points = self._reference_points.copy()
+                _sync_layer_grids(None)
+                self._sync_node_cloud(None)
+                self._sync_diagram_substrate_points(None)
+                return
+            scene.grid.points = deformed_pts
+            _sync_layer_grids(deformed_pts)
+            self._sync_node_cloud(deformed_pts)
+            self._sync_diagram_substrate_points(deformed_pts)
+
+        def _pump_gate() -> None:
+            """GATE primitive — composition-based actor visibility.
+
+            No render here; the dispatcher coalesces RENDER per event.
+            """
+            geom_mgr = director.geometries
+            active_geom = geom_mgr.active
+            active_comp = (
+                active_geom.compositions.active
+                if active_geom is not None else None
+            )
+            show_all = active_comp is None
+            active_layers: set[int] = (
+                set() if show_all else set(map(id, active_comp.layers))
+            )
+            for d in director.registry.diagrams():
+                in_active = show_all or (id(d) in active_layers)
+                desired = bool(d.is_visible) and in_active
+                for actor in d._actors:                         # noqa: SLF001
+                    try:
+                        actor.SetVisibility(desired)
+                    except Exception:
+                        pass
+
+        def _pump_restack() -> None:
+            """Re-stack actors so paint order matches the layer order
+            in the registry.
+
+            VTK paints actors in the order they were added; reordering
+            via the ↑ / ↓ buttons updates the registry list but doesn't
+            move the actors. Detach + re-attach each diagram in order
+            (cheap when the polydata is cached on the instance).
+            """
+            for d in list(director.registry.diagrams()):
+                if not d.is_attached:
+                    continue
+                try:
+                    d.detach()
+                    d.attach(plotter, director.fem, scene)
+                except Exception:
+                    continue
+
+        # Stash for the rest of the file (probe overlay etc. still
+        # call _apply_composition_gate by name in some teardown paths).
+        self._apply_composition_gate = _pump_gate
+
+        # ── Dispatcher — single-source event pipeline ────────────────
+        from .diagrams._dispatch import (
+            Dispatcher,
+            STEP_CHANGED, DEFORM_CHANGED, STAGE_CHANGED,
+            COMP_ACTIVE_CHANGED, DIAGRAM_ATTACHED,
+            DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
+            LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
+        )
+        dispatcher = Dispatcher(
+            director,
+            pump_step=_pump_step,
+            pump_deform=_pump_deform,
+            pump_gate=_pump_gate,
+            pump_restack=_pump_restack,
+            render=_render,
+        )
+        director.dispatcher = dispatcher
+        self._dispatcher = dispatcher
+
+        # ── Observer wiring — every callback fires a dispatcher event.
+        # Director's existing observers are preserved (the time scrubber
+        # subscribes to on_step_changed for cursor sync); the dispatcher
+        # is an additional consumer that runs the matrix.
         director.subscribe_step(
-            lambda step: self._apply_deformation(int(step)),
+            lambda _step: dispatcher.fire(STEP_CHANGED),
         )
         director.subscribe_stage(
-            lambda _sid: self._apply_deformation(int(director.step_index)),
+            lambda _sid: dispatcher.fire(STAGE_CHANGED),
         )
-        director.geometries.subscribe(
-            lambda: self._apply_deformation(int(director.step_index)),
+        # Geometry-state covers: deform toggle/scale/field, active
+        # geometry change, comp create/rename/delete, comp active,
+        # layer membership. The compound (DEFORM + GATE) covers all.
+        # Granular dispatches from individual call sites (toggle,
+        # composition click) take precedence when they arrive first.
+        def _on_geometries_changed() -> None:
+            # Full pump — geometries observer is fired for many reasons,
+            # so we cover both DEFORM and GATE in one event.
+            try:
+                _pump_deform(None)
+            finally:
+                _pump_gate()
+            _render()
+
+        director.geometries.subscribe(_on_geometries_changed)
+        # Registry observer covers add/remove/move/visibility when the
+        # call site doesn't dispatch granularly. Conservative: just
+        # re-run the gate. Granular events from settings tab carry the
+        # right scope when they fire first.
+        director.registry.subscribe(
+            lambda: dispatcher.fire(COMP_ACTIVE_CHANGED),
         )
 
         # ── Time scrubber row (bottom of grid) ──────────────────────
@@ -619,20 +741,9 @@ class ResultsViewer:
         )
 
         # ── Subscribe to diagram changes for side-panel docking ─────
+        # Side-panel sync stays as its own observer — purely UI;
+        # doesn't touch the rendering pipeline.
         director.subscribe_diagrams(self._sync_side_panels)
-
-        # New layers attach against step 0 with the substrate at the
-        # reference shape — push the active step's values and re-fire
-        # the deformation sync so a freshly-added diagram lands on the
-        # same step + deformed shape as the rest of the scene.
-        def _refresh_new_layers() -> None:
-            try:
-                director.registry.update_to_step(int(director.step_index))
-            except Exception:
-                pass
-            self._apply_deformation(int(director.step_index))
-
-        director.subscribe_diagrams(_refresh_new_layers)
 
         # ── Probe overlay + viewport HUDs ───────────────────────────
         # ProbePaletteHUD: top-right mode strip (point/line/slice).
@@ -742,58 +853,9 @@ class ResultsViewer:
         register_error_handler(_slot_failure_to_status)
         self._slot_failure_handler = _slot_failure_to_status
 
-        # ── Composition viewport gate ──────────────────────────────
-        # Only the *active* composition's layers paint into the
-        # viewport. When the user switches compositions, every
-        # layer not in the active one has its actors hidden. The
-        # per-card visibility checkbox controls the user's intent
-        # *within* the composition; the composition gate is an
-        # independent multiplicative filter.
-        def _apply_composition_gate() -> None:
-            """Hide every layer that isn't in the active Geometry's
-            active Composition.
-
-            Two-level gate: a layer paints only when (a) its parent
-            Geometry is the active one, and (b) within that Geometry
-            its parent Composition is active. The per-card visibility
-            checkbox is an additional multiplicative filter on top.
-            """
-            geom_mgr = director.geometries
-            active_geom = geom_mgr.active
-            active_comp = (
-                active_geom.compositions.active
-                if active_geom is not None else None
-            )
-            # When no composition is active anywhere, treat the gate
-            # as "show all" — the user hasn't picked a filter, so the
-            # only visibility signal is the per-card checkbox. This
-            # rescues sessions where active_composition_id was saved
-            # as None by a pre-#71/#72 click and otherwise leaves
-            # every diagram permanently hidden.
-            show_all = active_comp is None
-            active_layers: set[int] = (
-                set() if show_all else set(map(id, active_comp.layers))
-            )
-            for d in director.registry.diagrams():
-                in_active = show_all or (id(d) in active_layers)
-                desired = bool(d.is_visible) and in_active
-                for actor in d._actors:                         # noqa: SLF001
-                    try:
-                        actor.SetVisibility(desired)
-                    except Exception:
-                        pass
-            try:
-                if plotter is not None:
-                    plotter.render()
-            except Exception:
-                pass
-
-        director.geometries.subscribe(_apply_composition_gate)
-        # Also re-apply after registry changes (new layer added →
-        # apply gate so the new actor is hidden if its comp isn't
-        # active; layer removed → no-op).
-        director.registry.subscribe(_apply_composition_gate)
-        self._apply_composition_gate = _apply_composition_gate
+        # Composition viewport gate is now ``_pump_gate`` above and
+        # fires via the dispatcher (no embedded render). Subscriptions
+        # also wired earlier — see ``_on_geometries_changed``.
 
         # ── Esc shortcut → return to base view ─────────────────────
         # Esc deselects the outline and drops the details panel into
@@ -1086,6 +1148,17 @@ class ResultsViewer:
         from .diagrams._base import NoDataError
         from .ui._add_diagram_dialog import _KINDS
 
+        # Suppress per-add registry pumps during the bulk restore.
+        # Without this, the registry observer fires K times for K
+        # layers, and each fire re-pumps every other layer
+        # (K(K+1)/2 cost). The batch context runs one full pump on
+        # exit instead.
+        dispatcher = getattr(self._director, "dispatcher", None)
+        _batch_cm = (
+            dispatcher.session_batch() if dispatcher is not None else None
+        )
+        if _batch_cm is not None:
+            _batch_cm.__enter__()
         kind_to_class = {entry.kind_id: entry.diagram_class for entry in _KINDS}
         n_added = 0
         n_skipped = 0
@@ -1197,6 +1270,14 @@ class ResultsViewer:
                 self._director.set_step(int(session.active_step))
         except Exception:
             pass
+
+        # Flush the batch — runs STEP + DEFORM + GATE + RENDER once
+        # against everything that was added during the loop above.
+        if _batch_cm is not None:
+            try:
+                _batch_cm.__exit__(None, None, None)
+            except Exception:
+                pass
 
         try:
             msg = f"Restored {n_added} diagram(s)"

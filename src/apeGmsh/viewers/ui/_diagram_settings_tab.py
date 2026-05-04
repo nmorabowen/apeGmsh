@@ -324,11 +324,14 @@ class DiagramSettingsTab:
         # title row — wired to set_visible on the underlying diagram.
         card.setCheckable(True)
         card.setChecked(bool(d.is_visible))
-        card.toggled.connect(
-            lambda checked, d=d: self._director.registry.set_visible(
-                d, bool(checked),
-            ),
-        )
+        def _on_card_toggled(checked: bool, _d=d) -> None:
+            self._director.registry.set_visible(_d, bool(checked))
+            disp = getattr(self._director, "dispatcher", None)
+            if disp is not None:
+                from ..diagrams._dispatch import LAYER_VISIBILITY_CHANGED
+                disp.fire(LAYER_VISIBILITY_CHANGED)
+
+        card.toggled.connect(_on_card_toggled)
         card_lay = QtWidgets.QVBoxLayout(card)
         card_lay.setContentsMargins(8, 4, 8, 6)
         card_lay.setSpacing(4)
@@ -442,6 +445,13 @@ class DiagramSettingsTab:
         # nudge them so the stack rebuilds in the new order.
         if comp_mgr is not None:
             comp_mgr._notify()  # noqa: SLF001
+        # Re-stack actors so VTK paint order matches the new layer
+        # order. Without this, the registry list updates but the
+        # actors paint in their original add-order.
+        disp = getattr(self._director, "dispatcher", None)
+        if disp is not None:
+            from ..diagrams._dispatch import LAYER_REORDERED
+            disp.fire(LAYER_REORDERED)
 
     def _dispatch_kind_panel(self, d: "Diagram") -> None:
         """Dispatch to the right ``_build_*_panel`` for the kind."""
@@ -606,6 +616,14 @@ class DiagramSettingsTab:
         active = comp_mgr.active if comp_mgr is not None else None
         if active is not None and comp_mgr is not None:
             comp_mgr.add_layer(active.id, diagram)
+        # Granular dispatch — push the new layer's step + deformation
+        # state and re-fire the gate now that it's tagged. Replaces the
+        # blanket _refresh_new_layers callback we previously hung off
+        # subscribe_diagrams.
+        disp = getattr(self._director, "dispatcher", None)
+        if disp is not None:
+            from ..diagrams._dispatch import DIAGRAM_ATTACHED
+            disp.fire(DIAGRAM_ATTACHED, layer=diagram)
         # Drop the pending-creation card; keep stack mode so the
         # newly-added layer appears as a real card alongside the
         # existing ones (registry.add fires the observer which
@@ -724,6 +742,11 @@ class DiagramSettingsTab:
             from .._failures import report
             report("DiagramSettingsTab._on_delete", exc)
             return
+        # Granular dispatch — gate refresh + render.
+        disp = getattr(self._director, "dispatcher", None)
+        if disp is not None:
+            from ..diagrams._dispatch import DIAGRAM_DETACHED
+            disp.fire(DIAGRAM_DETACHED)
         # _on_diagrams_changed clears self._selected if needed.
 
     # ------------------------------------------------------------------

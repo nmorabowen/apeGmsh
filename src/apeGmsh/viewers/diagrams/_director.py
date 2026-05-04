@@ -104,6 +104,13 @@ class ResultsDirector:
 
         self._render_callback: Optional[Callable[[], None]] = None
 
+        # Set by ``ResultsViewer.show()`` after the four pipeline pumps
+        # (STEP / DEFORM / GATE / RENDER) are wired. UI call sites that
+        # mutate state (DiagramSettingsTab, OutlineTree, …) fire events
+        # via ``director.dispatcher.fire(...)`` so a single matrix
+        # decides what primitives run.
+        self.dispatcher: Optional["Any"] = None
+
         # Pick a default stage if there is exactly one (matches
         # Results._resolve_stage's "auto" behaviour). Park the time
         # cursor at the last step of that stage so freshly-attached
@@ -415,6 +422,10 @@ class ResultsDirector:
                 # stage; rebuild against the new stage.
                 self._registry.reattach_all()
                 self._registry.update_to_step(local)
+                # Notify subscribers — combined mode previously hid
+                # the boundary cross from observers, leaving stale
+                # stage metadata in any UI that reflects it.
+                self._fire_stage_changed(real_id)
             else:
                 self._registry.update_to_step(local)
         else:
