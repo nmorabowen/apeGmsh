@@ -3,8 +3,8 @@ Navigation — Camera control via VTK observers.
 
 Installs mouse/keyboard bindings on a PyVista plotter:
 
-    Shift + LMB drag     : turntable orbit around pivot (no-roll)
-    Shift + MMB drag     : turntable orbit around pivot (alias)
+    Shift + LMB drag     : yaw-only turntable (rotation around up axis)
+    Shift + MMB drag     : full no-roll orbit (yaw + pitch)
     MMB drag             : pan
     RMB drag             : pan (secondary)
     Scroll wheel         : zoom (focal point fixed → stable rotate pivot)
@@ -12,11 +12,15 @@ Installs mouse/keyboard bindings on a PyVista plotter:
 LMB without a modifier is NOT intercepted — the :mod:`pick_engine`
 handles it (click = pick, drag = rubber-band). Shift+LMB IS
 intercepted at priority 11 (above pick_engine's 10) so the orbit
-gesture shadows the rubber-band gesture cleanly. Shift+LMB drag
-runs the same quaternion turntable orbit as Shift+MMB (with
-``OrthogonalizeViewUp()`` keeping the up vector locked), not the
-free trackball ``Rotate()`` — the trackball lets the up vector
-roll on long drags, which felt disorienting in the ResultsViewer.
+gesture shadows the rubber-band gesture cleanly.
+
+Both orbit gestures route through :func:`_orbit_around` (quaternion
+azimuth around ``cam.GetViewUp()`` × elevation around the camera
+right vector). Shift+LMB zeroes the elevation component so the up
+axis is *exactly* fixed — the model spins like a record on a
+turntable. Shift+MMB applies both axes for the cases where you need
+to pitch the camera. ``OrthogonalizeViewUp()`` after every apply
+keeps the up vector orthogonal to the new view direction.
 
 Usage::
 
@@ -167,8 +171,12 @@ def install_navigation(
     iren.SetInteractorStyle(style)
 
     # ── orbit state ─────────────────────────────────────────────────
+    # ``_orbit_mode`` toggles between the full no-roll orbit (yaw +
+    # pitch) and a yaw-only turntable. Shift+LMB sets "yaw_only" on
+    # drag-threshold cross; Shift+MMB sets "full" on press.
     _orbit_pivot: list[tuple | None] = [None]
     _orbit_last:  list[tuple | None] = [None]
+    _orbit_mode:  list[str | None]   = [None]
 
     # ── Shift+LMB drag-rotate state ─────────────────────────────────
     # Set on Shift+LMB press; cleared on release. While set, the
@@ -194,7 +202,9 @@ def install_navigation(
             px, py = caller.GetEventPosition()
             lx, ly = _orbit_last[0]
             _orbit_last[0] = (px, py)
-            _orbit_around(renderer, _orbit_pivot[0], px - lx, py - ly)
+            dx = px - lx
+            dy = 0 if _orbit_mode[0] == "yaw_only" else py - ly
+            _orbit_around(renderer, _orbit_pivot[0], dx, dy)
             plotter.render()
             _abort(caller, _tags["move"])
             return
@@ -218,6 +228,7 @@ def install_navigation(
                     pivot = _scene_center(renderer)
                 _orbit_pivot[0] = pivot
                 _orbit_last[0] = (px, py)
+                _orbit_mode[0] = "yaw_only"
                 _shift_lmb_did_rotate[0] = True
         # Don't abort — let trackball handle pan, let pick_engine see moves
 
@@ -232,9 +243,11 @@ def install_navigation(
                 pivot = _scene_center(renderer)
             _orbit_pivot[0] = pivot
             _orbit_last[0] = caller.GetEventPosition()
+            _orbit_mode[0] = "full"
         else:
             # MMB -> pan
             _orbit_pivot[0] = None
+            _orbit_mode[0] = None
             style.StartPan()
         _abort(caller, _tags["mmb_press"])
 
@@ -242,6 +255,7 @@ def install_navigation(
         if _orbit_pivot[0] is not None:
             _orbit_pivot[0] = None
             _orbit_last[0] = None
+            _orbit_mode[0] = None
             _abort(caller, _tags["mmb_release"])
             return
         state = style.GetState()
@@ -332,6 +346,7 @@ def install_navigation(
         if did_rotate:
             _orbit_pivot[0] = None
             _orbit_last[0] = None
+            _orbit_mode[0] = None
             _abort(caller, _tags["lmb_release"])
             return
         # No drag — fire the click callback if one is wired.
