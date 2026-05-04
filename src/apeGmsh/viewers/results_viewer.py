@@ -249,7 +249,6 @@ class ResultsViewer:
         session = SessionPanel(
             point_size_initial=prefs.point_size,
             line_width_initial=prefs.mesh_line_width,
-            opacity_initial=1.0,
         )
         win.set_session_widget(session.widget)
         self._session_panel = session
@@ -348,25 +347,51 @@ class ResultsViewer:
             except Exception:
                 pass
 
-        def _toggle_show_mesh(checked: bool) -> None:
-            v = 1 if checked else 0
-            for a in (self._substrate_actor, self._wireframe_actor):
-                if a is None:
-                    continue
-                try:
-                    a.SetVisibility(v)
-                except Exception:
-                    pass
-            _render()
+        def _apply_geometry_display() -> None:
+            """Push the active geometry's display state to actors.
 
-        def _toggle_show_nodes(checked: bool) -> None:
-            if self._node_cloud_actor is None:
+            Reads ``show_mesh / show_nodes / display_opacity`` off the
+            currently-active Geometry and projects them onto:
+
+            * substrate fill + wireframe — visibility tracks
+              ``show_mesh``; opacity tracks ``display_opacity`` (the
+              substrate fill keeps its preferences-driven baseline
+              alpha multiplied by ``display_opacity`` so a user who
+              starts at 80% baseline and dials the slider to 50%
+              ends up at 40%).
+            * node cloud — visibility tracks ``show_nodes``; opacity
+              tracks ``display_opacity`` directly.
+
+            Idempotent — safe to fire on every ``geometries`` change.
+            """
+            if self._director is None:
                 return
+            geom = self._director.geometries.active
+            if geom is None:
+                return
+            mesh_v = 1 if bool(geom.show_mesh) else 0
+            nodes_v = 1 if bool(geom.show_nodes) else 0
+            opacity = max(0.0, min(1.0, float(geom.display_opacity)))
+            substrate_alpha = float(prefs.mesh_surface_opacity) * opacity
             try:
-                self._node_cloud_actor.SetVisibility(1 if checked else 0)
+                if self._substrate_actor is not None:
+                    self._substrate_actor.SetVisibility(mesh_v)
+                    self._substrate_actor.GetProperty().SetOpacity(
+                        substrate_alpha,
+                    )
+                if self._wireframe_actor is not None:
+                    self._wireframe_actor.SetVisibility(mesh_v)
+                    self._wireframe_actor.GetProperty().SetOpacity(opacity)
+                if self._node_cloud_actor is not None:
+                    self._node_cloud_actor.SetVisibility(nodes_v)
+                    self._node_cloud_actor.GetProperty().SetOpacity(opacity)
             except Exception:
                 pass
-            _render()
+
+        # Stash on self so other call sites (point-size rebuild,
+        # session-restore) can reapply state without re-defining
+        # the actor walk.
+        self._apply_geometry_display = _apply_geometry_display
 
         def _on_line_width(value: float) -> None:
             if self._wireframe_actor is None:
@@ -377,29 +402,15 @@ class ResultsViewer:
                 pass
             _render()
 
-        def _on_opacity(value: float) -> None:
-            v = max(0.0, min(1.0, float(value)))
-            try:
-                if self._wireframe_actor is not None:
-                    self._wireframe_actor.GetProperty().SetOpacity(v)
-                if self._node_cloud_actor is not None:
-                    self._node_cloud_actor.GetProperty().SetOpacity(v)
-            except Exception:
-                pass
-            _render()
-
         def _on_point_size(value: float) -> None:
             # Glyph spheres ignore SetPointSize — rebuild the cloud at
-            # the new marker_size, preserving current visibility / opacity.
+            # the new marker_size. Visibility / opacity come from the
+            # active geometry (re-applied below) so the rebuild can't
+            # drift away from the per-Geometry display state.
             if self._node_cloud_actor is None or plotter is None:
                 return
             from .scene.glyph_points import build_node_cloud as _build
             old = self._node_cloud_actor
-            try:
-                old_visible = bool(old.GetVisibility())
-                old_opacity = float(old.GetProperty().GetOpacity())
-            except Exception:
-                old_visible, old_opacity = True, 1.0
             try:
                 plotter.remove_actor(old)
             except Exception:
@@ -415,15 +426,12 @@ class ResultsViewer:
             except Exception:
                 new_actor = None
             self._node_cloud_actor = new_actor
-            if new_actor is not None:
-                try:
-                    new_actor.SetVisibility(1 if old_visible else 0)
-                    new_actor.GetProperty().SetOpacity(old_opacity)
-                except Exception:
-                    pass
             # Re-capture base glyph + centers so deformation sync
             # uses the new actor's coordinates as its reference.
             self._capture_node_cloud_base()
+            # Re-apply the active geometry's display state — pushes
+            # show_nodes + display_opacity onto the freshly-built actor.
+            self._apply_geometry_display()
             # Re-apply current deformation so the rebuilt cloud
             # immediately tracks the substrate.
             try:
@@ -440,15 +448,15 @@ class ResultsViewer:
             _render()
 
         if self._session_panel is not None:
-            self._session_panel.set_show_mesh_callback(_toggle_show_mesh)
-            self._session_panel.set_show_nodes_callback(_toggle_show_nodes)
+            # show-mesh / show-nodes / opacity moved to the per-Geometry
+            # Display section. SessionPanel keeps the genuinely global
+            # cosmetics (point/line size, label toggles, theme).
             self._session_panel.set_show_node_ids_callback(_toggle_show_node_ids)
             self._session_panel.set_show_element_ids_callback(
                 _toggle_show_element_ids,
             )
             self._session_panel.set_point_size_callback(_on_point_size)
             self._session_panel.set_line_width_callback(_on_line_width)
-            self._session_panel.set_opacity_callback(_on_opacity)
 
         # ── Deformation modifier (per-Geometry) ──────────────────
         # Each Geometry owns its own (enabled, field, scale) tuple.
@@ -719,13 +727,21 @@ class ResultsViewer:
         )
         # Geometry-state covers: deform toggle/scale/field, active
         # geometry change, comp create/rename/delete, comp active,
-        # layer membership. The compound GEOMETRIES_CHANGED event runs
-        # DEFORM + GATE — idempotent, so safe to over-fire. Routing
-        # through the dispatcher (instead of calling pumps directly)
-        # means the trace covers it.
+        # layer membership, mesh/node/opacity display state. The
+        # compound GEOMETRIES_CHANGED event runs DEFORM + GATE —
+        # idempotent, so safe to over-fire. Routing through the
+        # dispatcher (instead of calling pumps directly) means the
+        # trace covers it.
         director.geometries.subscribe(
             lambda: dispatcher.fire(GEOMETRIES_CHANGED),
         )
+        # Display state (per-geometry show_mesh / show_nodes /
+        # display_opacity) is independent of the dispatch matrix —
+        # one direct subscription pushes the active geometry's values
+        # to the substrate / wireframe / node-cloud actors. The
+        # compound GEOMETRIES_CHANGED handles the heavier render
+        # plumbing; this just touches actor properties.
+        director.geometries.subscribe(_apply_geometry_display)
         # Registry observer covers add/remove/move/visibility when the
         # call site doesn't dispatch granularly. Conservative: just
         # re-run the gate. Granular events from settings tab carry the
@@ -1080,6 +1096,9 @@ class ResultsViewer:
                     deform_enabled=bool(geom.deform_enabled),
                     deform_field=geom.deform_field,
                     deform_scale=float(geom.deform_scale),
+                    show_mesh=bool(geom.show_mesh),
+                    show_nodes=bool(geom.show_nodes),
+                    display_opacity=float(geom.display_opacity),
                     active_composition_id=geom.compositions.active_id,
                     compositions=tuple(comp_snapshots),
                 ))
@@ -1218,6 +1237,12 @@ class ResultsViewer:
                     enabled=bool(gsnap.deform_enabled),
                     field=gsnap.deform_field,
                     scale=float(gsnap.deform_scale),
+                )
+                geom_mgr.set_display(
+                    geom.id,
+                    show_mesh=bool(gsnap.show_mesh),
+                    show_nodes=bool(gsnap.show_nodes),
+                    display_opacity=float(gsnap.display_opacity),
                 )
                 # Compositions inside this geometry.
                 for csnap in gsnap.compositions:

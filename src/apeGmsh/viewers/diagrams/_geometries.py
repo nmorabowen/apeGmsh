@@ -48,6 +48,17 @@ class Geometry:
         has been picked.
     deform_scale
         Scalar multiplier on the warp.
+    show_mesh
+        Whether the substrate fill + wireframe are visible while this
+        geometry is active. Per-geometry so a "deformed shell" view
+        can hide the wireframe while a "diagnostic" view keeps it.
+    show_nodes
+        Whether the node-cloud overlay is visible while this geometry
+        is active.
+    display_opacity
+        Single 0..1 alpha applied to substrate fill + wireframe + node
+        cloud when this geometry is active. Lets the user dim the
+        substrate so on-top diagrams (contour, line force) read better.
     compositions
         Per-geometry composition manager. Always non-null.
     """
@@ -56,6 +67,9 @@ class Geometry:
     deform_enabled: bool = False
     deform_field: Optional[str] = None
     deform_scale: float = 1.0
+    show_mesh: bool = True
+    show_nodes: bool = True
+    display_opacity: float = 1.0
     compositions: CompositionManager = field(default_factory=CompositionManager)
 
 
@@ -148,6 +162,9 @@ class GeometryManager:
         new_geom.deform_enabled = src.deform_enabled
         new_geom.deform_field = src.deform_field
         new_geom.deform_scale = src.deform_scale
+        new_geom.show_mesh = src.show_mesh
+        new_geom.show_nodes = src.show_nodes
+        new_geom.display_opacity = src.display_opacity
         self._geometries.append(new_geom)
         self._active_id = new_geom.id
         self._notify()
@@ -228,6 +245,44 @@ class GeometryManager:
         if scale is not None and float(scale) != geom.deform_scale:
             geom.deform_scale = float(scale)
             changed = True
+        if changed:
+            self._notify()
+        return changed
+
+    # ------------------------------------------------------------------
+    # Mutations — substrate display state on a geometry
+    # ------------------------------------------------------------------
+
+    def set_display(
+        self,
+        geom_id: str,
+        *,
+        show_mesh: Optional[bool] = None,
+        show_nodes: Optional[bool] = None,
+        display_opacity: Optional[float] = None,
+    ) -> bool:
+        """Update one or more display fields on a geometry.
+
+        Mirrors :meth:`set_deformation` — pass only what you want to
+        change; ``None`` leaves the existing value. Returns True if
+        anything changed. Observers fire once per call regardless of
+        how many fields were updated.
+        """
+        geom = self.find(geom_id)
+        if geom is None:
+            return False
+        changed = False
+        if show_mesh is not None and bool(show_mesh) != geom.show_mesh:
+            geom.show_mesh = bool(show_mesh)
+            changed = True
+        if show_nodes is not None and bool(show_nodes) != geom.show_nodes:
+            geom.show_nodes = bool(show_nodes)
+            changed = True
+        if display_opacity is not None:
+            clamped = max(0.0, min(1.0, float(display_opacity)))
+            if clamped != geom.display_opacity:
+                geom.display_opacity = clamped
+                changed = True
         if changed:
             self._notify()
         return changed

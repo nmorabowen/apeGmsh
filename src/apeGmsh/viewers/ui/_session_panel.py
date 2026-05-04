@@ -3,13 +3,16 @@
 Hosts session-scoped controls that don't belong inside the model
 (Outline) or per-diagram (Details) flows. Ships:
 
-- Visualization toggles (substrate mesh + node cloud overlay).
+- Cosmetic global toggles (node IDs / element IDs labels).
+- Sizing knobs (point size, line width).
 - Theme picker.
 
 The deformation editor previously lived here as a global modifier.
 After the Geometry refactor it moved into each Geometry's details
 panel, so deformation is now per-Geometry and each geometry can
-carry a different warp.
+carry a different warp. The same refactor moved the
+``Show mesh / Show nodes / Opacity`` controls into the per-Geometry
+Display section — those are also per-Geometry now.
 
 Future additions land here as new sections (density, layout reset,
 file actions, …).
@@ -40,33 +43,24 @@ class SessionPanel:
     def __init__(
         self,
         *,
-        on_show_mesh: Optional[Callable[[bool], None]] = None,
-        on_show_nodes: Optional[Callable[[bool], None]] = None,
         on_show_node_ids: Optional[Callable[[bool], None]] = None,
         on_show_element_ids: Optional[Callable[[bool], None]] = None,
         on_point_size: Optional[Callable[[float], None]] = None,
         on_line_width: Optional[Callable[[float], None]] = None,
-        on_opacity: Optional[Callable[[float], None]] = None,
-        show_mesh_initial: bool = True,
-        show_nodes_initial: bool = True,
         show_node_ids_initial: bool = False,
         show_element_ids_initial: bool = False,
         point_size_initial: float = 10.0,
         line_width_initial: float = 3.0,
-        opacity_initial: float = 1.0,
     ) -> None:
         QtWidgets, QtCore = _qt()
         from .theme import THEME, PALETTES
 
         self._theme = THEME
         self._palettes = PALETTES
-        self._on_show_mesh = on_show_mesh
-        self._on_show_nodes = on_show_nodes
         self._on_show_node_ids = on_show_node_ids
         self._on_show_element_ids = on_show_element_ids
         self._on_point_size = on_point_size
         self._on_line_width = on_line_width
-        self._on_opacity = on_opacity
 
         widget = QtWidgets.QWidget()
         widget.setObjectName("SessionPanel")
@@ -74,20 +68,13 @@ class SessionPanel:
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
-        # ── Visualization section ─────────────────────────────────
-        viz_label = QtWidgets.QLabel("Visualization")
+        # ── Labels section ─────────────────────────────────────────
+        # Show-mesh / Show-nodes / Opacity moved to the per-Geometry
+        # Display section. What stays here is the genuinely global
+        # cosmetic state — node/element ID labels and point/line size.
+        viz_label = QtWidgets.QLabel("Labels")
         viz_label.setStyleSheet("font-weight: 600;")
         outer.addWidget(viz_label)
-
-        self._cb_show_mesh = QtWidgets.QCheckBox("Show mesh")
-        self._cb_show_mesh.setChecked(bool(show_mesh_initial))
-        self._cb_show_mesh.toggled.connect(self._fire_show_mesh)
-        outer.addWidget(self._cb_show_mesh)
-
-        self._cb_show_nodes = QtWidgets.QCheckBox("Show nodes")
-        self._cb_show_nodes.setChecked(bool(show_nodes_initial))
-        self._cb_show_nodes.toggled.connect(self._fire_show_nodes)
-        outer.addWidget(self._cb_show_nodes)
 
         self._cb_show_node_ids = QtWidgets.QCheckBox("Show node IDs")
         self._cb_show_node_ids.setChecked(bool(show_node_ids_initial))
@@ -120,22 +107,6 @@ class SessionPanel:
         self._sb_line_width.setValue(float(line_width_initial))
         self._sb_line_width.valueChanged.connect(self._fire_line_width)
         viz_form.addRow("Line width", self._sb_line_width)
-
-        # Opacity slider — single knob applied to wireframe + node
-        # cloud together (the substrate fill opacity is separate and
-        # comes from preferences). 0..100 maps to 0.0..1.0.
-        opacity_row = QtWidgets.QHBoxLayout()
-        self._sl_opacity = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self._sl_opacity.setRange(0, 100)
-        self._sl_opacity.setValue(int(round(float(opacity_initial) * 100)))
-        self._sl_opacity_label = QtWidgets.QLabel(
-            f"{int(round(float(opacity_initial) * 100))}%"
-        )
-        self._sl_opacity_label.setMinimumWidth(36)
-        self._sl_opacity.valueChanged.connect(self._fire_opacity)
-        opacity_row.addWidget(self._sl_opacity)
-        opacity_row.addWidget(self._sl_opacity_label)
-        viz_form.addRow("Opacity", opacity_row)
 
         outer.addLayout(viz_form)
 
@@ -182,18 +153,6 @@ class SessionPanel:
     def widget(self):
         return self._widget
 
-    def set_show_mesh_callback(
-        self, cb: Optional[Callable[[bool], None]],
-    ) -> None:
-        """Late binding for the show-mesh callback (used by ResultsViewer)."""
-        self._on_show_mesh = cb
-
-    def set_show_nodes_callback(
-        self, cb: Optional[Callable[[bool], None]],
-    ) -> None:
-        """Late binding for the show-nodes callback."""
-        self._on_show_nodes = cb
-
     def set_point_size_callback(
         self, cb: Optional[Callable[[float], None]],
     ) -> None:
@@ -205,12 +164,6 @@ class SessionPanel:
     ) -> None:
         """Late binding for the substrate edge-width callback."""
         self._on_line_width = cb
-
-    def set_opacity_callback(
-        self, cb: Optional[Callable[[float], None]],
-    ) -> None:
-        """Late binding for the wireframe + node-cloud opacity callback."""
-        self._on_opacity = cb
 
     def set_show_node_ids_callback(
         self, cb: Optional[Callable[[bool], None]],
@@ -235,14 +188,6 @@ class SessionPanel:
     # Slots
     # ------------------------------------------------------------------
 
-    def _fire_show_mesh(self, checked: bool) -> None:
-        if self._on_show_mesh is not None:
-            self._on_show_mesh(bool(checked))
-
-    def _fire_show_nodes(self, checked: bool) -> None:
-        if self._on_show_nodes is not None:
-            self._on_show_nodes(bool(checked))
-
     def _fire_point_size(self, value: float) -> None:
         if self._on_point_size is not None:
             self._on_point_size(float(value))
@@ -250,12 +195,6 @@ class SessionPanel:
     def _fire_line_width(self, value: float) -> None:
         if self._on_line_width is not None:
             self._on_line_width(float(value))
-
-    def _fire_opacity(self, value: int) -> None:
-        frac = float(value) / 100.0
-        self._sl_opacity_label.setText(f"{value}%")
-        if self._on_opacity is not None:
-            self._on_opacity(frac)
 
     def _fire_show_node_ids(self, checked: bool) -> None:
         if self._on_show_node_ids is not None:

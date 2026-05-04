@@ -61,7 +61,7 @@ _KIND_TO_STYLE: dict[str, type[DiagramStyle]] = {
 }
 
 
-SESSION_SCHEMA_VERSION = 2
+SESSION_SCHEMA_VERSION = 3
 
 
 # =====================================================================
@@ -78,12 +78,20 @@ class CompositionSnapshot:
 
 @dataclass(frozen=True)
 class GeometrySnapshot:
-    """One geometry: deformation state + child compositions."""
+    """One geometry: deformation + display state + child compositions.
+
+    The ``show_mesh / show_nodes / display_opacity`` triple was added
+    in schema v3 to persist per-geometry substrate visibility. v2
+    snapshots load with the v3 defaults (mesh + nodes on, full alpha).
+    """
     id: Optional[str]
     name: str
     deform_enabled: bool = False
     deform_field: Optional[str] = None
     deform_scale: float = 1.0
+    show_mesh: bool = True
+    show_nodes: bool = True
+    display_opacity: float = 1.0
     active_composition_id: Optional[str] = None
     compositions: tuple[CompositionSnapshot, ...] = ()
 
@@ -231,6 +239,9 @@ def _serialize_geometry(g: "GeometrySnapshot") -> dict[str, Any]:
         "deform_enabled":        bool(g.deform_enabled),
         "deform_field":          g.deform_field,
         "deform_scale":          float(g.deform_scale),
+        "show_mesh":             bool(g.show_mesh),
+        "show_nodes":            bool(g.show_nodes),
+        "display_opacity":       float(g.display_opacity),
         "active_composition_id": g.active_composition_id,
         "compositions": [
             {
@@ -256,12 +267,18 @@ def _deserialize_geometry(raw: dict[str, Any]) -> GeometrySnapshot:
             ))
         except Exception:
             continue
+    # v2 sessions don't carry display fields — the dataclass defaults
+    # (mesh + nodes on, full opacity) match the historical global
+    # behavior so old saves restore unchanged.
     return GeometrySnapshot(
         id=raw.get("id"),
         name=str(raw.get("name", "Geometry")),
         deform_enabled=bool(raw.get("deform_enabled", False)),
         deform_field=raw.get("deform_field"),
         deform_scale=float(raw.get("deform_scale", 1.0) or 1.0),
+        show_mesh=bool(raw.get("show_mesh", True)),
+        show_nodes=bool(raw.get("show_nodes", True)),
+        display_opacity=float(raw.get("display_opacity", 1.0) or 1.0),
         active_composition_id=raw.get("active_composition_id"),
         compositions=tuple(comps),
     )

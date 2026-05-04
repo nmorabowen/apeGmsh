@@ -1,15 +1,20 @@
-"""GeometrySettingsPanel — deformation editor for a selected Geometry.
+"""GeometrySettingsPanel — deformation + display editor for a Geometry.
 
 Shown inside the DetailsPanel when the user picks a Geometry row in
-the outline. Hosts the Deformation section that previously lived in
-the SessionPanel; the controls now apply to whichever Geometry is
-selected, so different geometries can carry different warps.
+the outline. Hosts:
 
-Available-field detection is the same as before: only those vector
-prefixes (``displacement`` / ``velocity`` / ``acceleration``) that
-have ≥ 2 axis components recorded on nodes across any stage are
-offered. When none qualify, the section is disabled with a tooltip
-explaining why.
+* **Deformation** — toggle / field / scale (per-Geometry warp).
+* **Display** — show-mesh / show-nodes toggles + a single opacity
+  slider applied to substrate fill, wireframe, and node cloud while
+  the geometry is active. These were global SessionPanel knobs until
+  the geometry refactor; per-Geometry now lets one view dim the
+  substrate beneath a contour while another keeps full alpha.
+
+Available-field detection (Deformation section) is the same as before:
+only those vector prefixes (``displacement`` / ``velocity`` /
+``acceleration``) that have ≥ 2 axis components recorded on nodes
+across any stage are offered. When none qualify, the section is
+disabled with a tooltip explaining why.
 """
 from __future__ import annotations
 
@@ -115,6 +120,47 @@ class GeometrySettingsPanel:
                 w.setEnabled(False)
                 w.setToolTip(tip)
 
+        # ── Display section ──────────────────────────────────────
+        # Per-geometry mesh / node visibility + opacity (the global
+        # SessionPanel knobs moved here so each Geometry can carry
+        # its own substrate look — e.g. dim the mesh beneath a
+        # contour layer in one view, full alpha in another).
+        sep_disp = QtWidgets.QFrame()
+        sep_disp.setFrameShape(QtWidgets.QFrame.HLine)
+        sep_disp.setFrameShadow(QtWidgets.QFrame.Sunken)
+        outer.addWidget(sep_disp)
+
+        display_label = QtWidgets.QLabel("Display")
+        display_label.setStyleSheet("font-weight: 600;")
+        outer.addWidget(display_label)
+
+        self._cb_show_mesh = QtWidgets.QCheckBox("Show mesh")
+        self._cb_show_mesh.setChecked(True)
+        self._cb_show_mesh.toggled.connect(self._fire_show_mesh)
+        outer.addWidget(self._cb_show_mesh)
+
+        self._cb_show_nodes = QtWidgets.QCheckBox("Show nodes")
+        self._cb_show_nodes.setChecked(True)
+        self._cb_show_nodes.toggled.connect(self._fire_show_nodes)
+        outer.addWidget(self._cb_show_nodes)
+
+        display_form = QtWidgets.QFormLayout()
+        display_form.setContentsMargins(0, 0, 0, 0)
+        display_form.setSpacing(6)
+
+        opacity_row = QtWidgets.QHBoxLayout()
+        self._sl_opacity = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self._sl_opacity.setRange(0, 100)
+        self._sl_opacity.setValue(100)
+        self._sl_opacity_label = QtWidgets.QLabel("100%")
+        self._sl_opacity_label.setMinimumWidth(36)
+        self._sl_opacity.valueChanged.connect(self._fire_opacity)
+        opacity_row.addWidget(self._sl_opacity)
+        opacity_row.addWidget(self._sl_opacity_label)
+        display_form.addRow("Opacity", opacity_row)
+
+        outer.addLayout(display_form)
+
         outer.addStretch(1)
         self._widget = widget
 
@@ -169,6 +215,20 @@ class GeometrySettingsPanel:
             self._sb_scale.blockSignals(True)
             self._sb_scale.setValue(float(geom.deform_scale))
             self._sb_scale.blockSignals(False)
+
+            self._cb_show_mesh.blockSignals(True)
+            self._cb_show_mesh.setChecked(bool(geom.show_mesh))
+            self._cb_show_mesh.blockSignals(False)
+
+            self._cb_show_nodes.blockSignals(True)
+            self._cb_show_nodes.setChecked(bool(geom.show_nodes))
+            self._cb_show_nodes.blockSignals(False)
+
+            pct = int(round(float(geom.display_opacity) * 100))
+            self._sl_opacity.blockSignals(True)
+            self._sl_opacity.setValue(pct)
+            self._sl_opacity.blockSignals(False)
+            self._sl_opacity_label.setText(f"{pct}%")
         finally:
             self._reflecting = False
 
@@ -228,4 +288,46 @@ class GeometrySettingsPanel:
         )
         self._director.geometries.set_deformation(
             self._geom_id, scale=float(value),
+        )
+
+    def _fire_show_mesh(self, checked: bool) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "show_mesh_toggled",
+            geom=self._geom_id, show=bool(checked),
+        )
+        self._director.geometries.set_display(
+            self._geom_id, show_mesh=bool(checked),
+        )
+
+    def _fire_show_nodes(self, checked: bool) -> None:
+        if self._reflecting or self._geom_id is None:
+            return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "show_nodes_toggled",
+            geom=self._geom_id, show=bool(checked),
+        )
+        self._director.geometries.set_display(
+            self._geom_id, show_nodes=bool(checked),
+        )
+
+    def _fire_opacity(self, value: int) -> None:
+        # Update the readout immediately so the label tracks the
+        # slider regardless of whether we're reflecting (Qt's
+        # blockSignals only suppresses valueChanged → our slot, not
+        # the visual sync we want here).
+        self._sl_opacity_label.setText(f"{value}%")
+        if self._reflecting or self._geom_id is None:
+            return
+        frac = float(value) / 100.0
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "opacity_changed",
+            geom=self._geom_id, opacity=frac,
+        )
+        self._director.geometries.set_display(
+            self._geom_id, display_opacity=frac,
         )
