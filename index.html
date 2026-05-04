@@ -4271,7 +4271,7 @@ extras: <code>matplotlib</code> (plotting), <code>openseespy</code> (analysis),
 </span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="c1"># 2. Mesh — sub-composites under g.mesh</span>
 </span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
 </span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_mesh</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;simple&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;simple&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>
 </span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>    <span class="c1"># 3. Snapshot for the solver</span>
 </span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
@@ -4365,11 +4365,11 @@ session <em>is</em> the assembly. Parts are registered into
 </tr>
 <tr>
 <td><code>g.model.io</code></td>
-<td><code>load_step</code>, <code>load_iges</code>, <code>load_dxf</code>, <code>save_step</code>, <code>save_msh</code>, <code>heal_shapes</code></td>
+<td><code>load_step</code>, <code>save_step</code>, <code>load_iges</code>, <code>save_iges</code>, <code>load_dxf</code>, <code>save_dxf</code>, <code>load_msh</code>, <code>save_msh</code>, <code>heal_shapes</code></td>
 </tr>
 <tr>
 <td><code>g.model.queries</code></td>
-<td><code>bounding_box</code>, <code>center_of_mass</code>, <code>mass</code>, <code>boundary</code>, <code>adjacencies</code>, <code>entities_in_bounding_box</code>, <code>registry</code>, <code>remove</code>, <code>remove_duplicates</code>, <code>make_conformal</code>, <code>fragment_all</code></td>
+<td><code>bounding_box</code>, <code>center_of_mass</code>, <code>mass</code>, <code>boundary</code>, <code>boundary_curves</code>, <code>boundary_points</code>, <code>adjacencies</code>, <code>entities_in_bounding_box</code>, <code>registry</code>, <code>remove</code>, <code>remove_duplicates</code>, <code>make_conformal</code>, <code>plane</code>, <code>line</code>, <code>select</code></td>
 </tr>
 </tbody>
 </table>
@@ -4387,11 +4387,11 @@ session <em>is</em> the assembly. Parts are registered into
 <tbody>
 <tr>
 <td><code>g.mesh.generation</code></td>
-<td><code>generate</code>, <code>set_order</code>, <code>refine</code>, <code>optimize</code>, <code>set_algorithm</code></td>
+<td><code>generate</code>, <code>set_order</code>, <code>refine</code>, <code>optimize</code>, <code>set_algorithm</code>, <code>set_algorithm_by_physical</code></td>
 </tr>
 <tr>
 <td><code>g.mesh.sizing</code></td>
-<td><code>set_global_size</code>, <code>set_size</code>, <code>set_size_sources</code>, <code>set_size_callback</code>, <code>set_size_by_physical</code></td>
+<td><code>set_global_size</code>, <code>set_size_global</code>, <code>set_size</code>, <code>set_size_all_points</code>, <code>set_size_sources</code>, <code>set_size_callback</code>, <code>set_size_by_physical</code></td>
 </tr>
 <tr>
 <td><code>g.mesh.field</code></td>
@@ -4403,7 +4403,7 @@ session <em>is</em> the assembly. Parts are registered into
 </tr>
 <tr>
 <td><code>g.mesh.editing</code></td>
-<td><code>embed</code>, <code>set_periodic</code>, <code>clear</code>, <code>reverse</code>, <code>relocate_nodes</code>, <code>remove_duplicate_{nodes,elements}</code>, <code>affine_transform</code>, <code>import_stl</code>, <code>classify_surfaces</code>, <code>create_geometry</code></td>
+<td><code>embed</code>, <code>set_periodic</code>, <code>clear</code>, <code>reverse</code>, <code>relocate_nodes</code>, <code>remove_duplicate_{nodes,elements}</code>, <code>affine_transform</code>, <code>crack</code>, <code>import_stl</code>, <code>classify_surfaces</code>, <code>create_geometry</code></td>
 </tr>
 <tr>
 <td><code>g.mesh.queries</code></td>
@@ -4411,7 +4411,7 @@ session <em>is</em> the assembly. Parts are registered into
 </tr>
 <tr>
 <td><code>g.mesh.partitioning</code></td>
-<td><code>partition</code>, <code>unpartition</code>, <code>compute_renumbering</code>, <code>renumber_{nodes,elements,mesh}</code></td>
+<td><code>renumber</code>, <code>partition</code>, <code>partition_explicit</code>, <code>unpartition</code>, <code>n_partitions</code>, <code>summary</code>, <code>entity_table</code>, <code>save</code></td>
 </tr>
 </tbody>
 </table>
@@ -4433,11 +4433,11 @@ interactive windows.</p>
 </tr>
 <tr>
 <td><code>g.opensees.elements</code></td>
-<td><code>add_geom_transf</code>, <code>assign</code>, <code>fix</code></td>
+<td><code>add_geom_transf</code>, <code>vecxz</code>, <code>assign</code>, <code>fix</code></td>
 </tr>
 <tr>
 <td><code>g.opensees.ingest</code></td>
-<td><code>loads(fem)</code>, <code>masses(fem)</code> — ingest resolved records from a FEMData snapshot</td>
+<td><code>loads(fem)</code>, <code>sp(fem)</code>, <code>masses(fem)</code>, <code>constraints(fem)</code> — ingest resolved records from a FEMData snapshot</td>
 </tr>
 <tr>
 <td><code>g.opensees.inspect</code></td>
@@ -4457,7 +4457,7 @@ container with node IDs, coordinates, element connectivity, physical
 groups, mesh selection sets, and the resolved load/mass/constraint
 records. It's the single contract between Gmsh and any downstream
 solver.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_mesh</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># fem.node_ids, fem.element_ids, fem.node_coords, fem.connectivity</span>
@@ -4506,7 +4506,7 @@ fragmentation and re-tagging.</p>
 </span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">fragment_all</span><span class="p">()</span>   <span class="c1"># conformal interfaces</span>
 </span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>
 </span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_mesh</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="project-layout">Project layout<a class="headerlink" href="#project-layout" title="Permanent link">&para;</a></h2>
