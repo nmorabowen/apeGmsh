@@ -563,14 +563,13 @@ class OutlineTree:
         if geom_id is not None:
             try:
                 geom_mgr.set_active(geom_id)
-                geom = geom_mgr.find(geom_id)
-                if geom is not None:
-                    geom.compositions.set_active(None)
             except Exception:
                 pass
-            # Fire only the geometry callback — the composition
-            # handler must not run with None here, or it would clobber
-            # the panel that the geometry handler just opened.
+            # Selecting a Geometry row is a navigation gesture (open
+            # the Geometry settings dock), not a render-state gesture.
+            # Deactivating the composition here would fire the gate and
+            # hide every layer — users read that as "diagrams broken."
+            # Leave the active composition alone.
             if self._on_geometry_selected is not None:
                 self._on_geometry_selected(geom_id)
             return
