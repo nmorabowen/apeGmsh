@@ -60,6 +60,7 @@ from .readers._protocol import ResultsReader, StageInfo
 
 if TYPE_CHECKING:
     from ..mesh.FEMData import FEMData
+    from .plot import ResultsPlot
 
 
 # Sentinel for ``Results._derive`` so we can distinguish
@@ -102,6 +103,7 @@ class Results:
         self.nodes = NodeResultsComposite(self)
         self.elements = ElementResultsComposite(self)
         self.inspect = ResultsInspect(self)
+        self._plot: Optional["ResultsPlot"] = None
 
     # ------------------------------------------------------------------
     # Constructors
@@ -367,6 +369,28 @@ class Results:
         self.close()
 
     # ------------------------------------------------------------------
+    # Static plotting (matplotlib)
+    # ------------------------------------------------------------------
+
+    @property
+    def plot(self) -> "ResultsPlot":
+        """``results.plot`` — static matplotlib renderer.
+
+        Mirrors the interactive viewer's diagram catalog as headless,
+        publication-ready matplotlib figures::
+
+            results.plot.contour("displacement_z", step=-1)
+            results.plot.deformed(step=-1, scale=50, component="stress_xx")
+            results.plot.history(node=412, component="displacement_x")
+
+        Requires the ``[plot]`` extra (matplotlib).
+        """
+        if self._plot is None:
+            from .plot import ResultsPlot
+            self._plot = ResultsPlot(self)
+        return self._plot
+
+    # ------------------------------------------------------------------
     # Viewer
     # ------------------------------------------------------------------
 
@@ -557,4 +581,5 @@ class Results:
         new.nodes = NodeResultsComposite(new)
         new.elements = ElementResultsComposite(new)
         new.inspect = ResultsInspect(new)
+        new._plot = None
         return new
