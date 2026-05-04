@@ -349,18 +349,22 @@ class DiagramSettingsTab:
             self._build_reorder_row(d)
             self._build_data_swap_row(d)
             self._dispatch_kind_panel(d)
-            self._build_apply_button()
+            self._build_apply_button(d)
             self._build_delete_row(d)
         finally:
             self._content_layout = saved
             self._pending_appliers = saved_appliers
         return card
 
-    def _build_apply_button(self) -> None:
+    def _build_apply_button(self, d: "Diagram") -> None:
         """Bottom-of-card Apply button that commits all staged values.
 
         Snapshots the per-card appliers list so future cards' edits
-        don't leak into this card's button.
+        don't leak into this card's button. After the setters fire,
+        dispatches ``DIAGRAM_MODIFIED`` so RENDER coalesces and the
+        viewport actually paints — without this, scale changes mutate
+        the polydata in place but the user sees nothing until the
+        next unrelated event triggers a render.
         """
         QtWidgets, _ = _qt()
         appliers = list(self._pending_appliers or [])
@@ -372,6 +376,10 @@ class DiagramSettingsTab:
         def _commit() -> None:
             for fn in appliers:
                 self._safe_call(fn)
+            disp = getattr(self._director, "dispatcher", None)
+            if disp is not None:
+                from ..diagrams._dispatch import DIAGRAM_MODIFIED
+                disp.fire(DIAGRAM_MODIFIED, layer=d)
 
         btn.clicked.connect(_commit)
         self._content_layout.addWidget(btn)
