@@ -134,6 +134,9 @@ class DeformedShapeDiagram(Diagram):
         self._apply_step(0)
 
         # ── Add deformed mesh actor ─────────────────────────────────
+        # Both actors are decorative — picks fall through to the
+        # substrate (which already rides the deformation when the
+        # deform geometry is enabled).
         deformed_actor = plotter.add_mesh(
             deformed,
             color=style.color,
@@ -143,6 +146,7 @@ class DeformedShapeDiagram(Diagram):
             smooth_shading=False,
             name=self._actor_name("deformed"),
             reset_camera=False,
+            pickable=False,
         )
         self._deformed_actor = deformed_actor
 
@@ -158,6 +162,7 @@ class DeformedShapeDiagram(Diagram):
                 lighting=False,
                 name=self._actor_name("undeformed"),
                 reset_camera=False,
+                pickable=False,
             )
             self._undeformed_actor = undef_actor
         else:

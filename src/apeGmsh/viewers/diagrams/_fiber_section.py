@@ -248,6 +248,8 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
             name=self._actor_name(),
             reset_camera=False,
             lighting=False,
+            # Decorative overlay — picks pass through to the substrate.
+            pickable=False,
         )
         self._actor = actor
         self._actors = [actor]

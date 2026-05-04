@@ -227,6 +227,8 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
             reset_camera=False,
             lighting=True,
             smooth_shading=False,
+            # Decorative overlay — picks pass through to the substrate.
+            pickable=False,
         )
         self._actor = actor
         self._actors = [actor]

@@ -265,6 +265,10 @@ class LineForceDiagram(Diagram):
             smooth_shading=False,
             name=self._actor_name(),
             reset_camera=False,
+            # Decorative overlay — picks should pass through to the
+            # substrate so node/element/shift-click resolve to the
+            # actual mesh, not to the fill quad in front of it.
+            pickable=False,
         )
         self._fill_actor = actor
         self._actors = [actor]

@@ -761,6 +761,11 @@ class ContourDiagram(ScalarBarSupport, Diagram):
             reset_camera=False,
             lighting=True,
             smooth_shading=False,
+            # Picks fall through to the substrate. Cell IDs on this
+            # submesh would index a different topology than
+            # ``scene.cell_to_element_id``, so resolving an element
+            # off this actor would point to the wrong cell anyway.
+            pickable=False,
         )
         self._actor = actor
         self._actors = [actor]

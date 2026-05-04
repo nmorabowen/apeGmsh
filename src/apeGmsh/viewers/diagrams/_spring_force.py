@@ -219,6 +219,8 @@ class SpringForceDiagram(Diagram):
             name=self._actor_name(),
             reset_camera=False,
             show_scalar_bar=False,
+            # Decorative overlay — picks pass through to the substrate.
+            pickable=False,
         )
         self._actor = actor
         self._actors = [actor]
