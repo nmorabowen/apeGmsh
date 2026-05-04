@@ -1507,7 +1507,7 @@ Module-level only (camera math + VTK observer installer):
 - `_scene_center(renderer)`
 - `install_navigation(plotter, registry, *, pivot_fn=None, ...)` —
   installs mouse callbacks (`on_mouse_move`, `on_mmb_press`/`release`,
-  `_zoom_to_cursor`, `on_scroll_fwd/bwd`, `on_rmb_press/release`,
+  `_zoom`, `on_scroll_fwd/bwd`, `on_rmb_press/release`,
   `_abort`).
 
 #### `viewers/core/pick_engine.py`
