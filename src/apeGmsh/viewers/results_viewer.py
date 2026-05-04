@@ -669,20 +669,29 @@ class ResultsViewer:
         def _pump_gate() -> None:
             """GATE primitive — composition-based actor visibility.
 
+            Visibility is scoped to the active Geometry: a layer is
+            shown iff it belongs to a composition of the active
+            geometry, and (when a composition is active there) iff it
+            sits in that composition. Layers owned by other geometries
+            are hidden so a freshly-added empty geometry doesn't
+            inherit the previous geometry's diagrams.
+
             No render here; the dispatcher coalesces RENDER per event.
             """
             geom_mgr = director.geometries
             active_geom = geom_mgr.active
-            active_comp = (
-                active_geom.compositions.active
-                if active_geom is not None else None
-            )
-            show_all = active_comp is None
-            active_layers: set[int] = (
-                set() if show_all else set(map(id, active_comp.layers))
-            )
+            if active_geom is None:
+                visible_layers: set[int] = set()
+            else:
+                active_comp = active_geom.compositions.active
+                if active_comp is not None:
+                    visible_layers = set(map(id, active_comp.layers))
+                else:
+                    visible_layers = set()
+                    for c in active_geom.compositions.compositions:
+                        visible_layers.update(map(id, c.layers))
             for d in director.registry.diagrams():
-                in_active = show_all or (id(d) in active_layers)
+                in_active = id(d) in visible_layers
                 desired = bool(d.is_visible) and in_active
                 for actor in d._actors:                         # noqa: SLF001
                     try:
