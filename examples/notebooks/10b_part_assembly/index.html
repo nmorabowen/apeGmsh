@@ -5530,19 +5530,10 @@ fig.tight_layout()</div>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"APEGMSH_SKIP_VIEWER"</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">"[skip viewer] APEGMSH_SKIP_VIEWER set"</span><span class="p">)</span>
-<span class="k">else</span><span class="p">:</span>
-    <span class="n">handle</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"viewer pid: </span><span class="si">{</span><span class="n">handle</span><span class="o">.</span><span class="n">pid</span><span class="si">}</span><span class="s2">  — close the window to exit."</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">import os
-if os.environ.get("APEGMSH_SKIP_VIEWER"):
-    print("[skip viewer] APEGMSH_SKIP_VIEWER set")
-else:
-    handle = results.viewer(blocking=False)
-    print(f"viewer pid: {handle.pid}  — close the window to exit.")</div>
+<div class="clipboard-copy-txt" id="cell-12">results.viewer(blocking=False)
+</div>
 </div>
 </div>
 </div>
