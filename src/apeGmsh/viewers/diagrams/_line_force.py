@@ -348,14 +348,9 @@ class LineForceDiagram(Diagram):
 
         self._base_points = new_base
         self._fill_directions = new_dirs
-        # Rewrite the base block of the polydata in place; the top
-        # block is then refreshed by re-applying the last step's values.
-        try:
-            all_pts = np.asarray(self._fill_polydata.points)
-            all_pts[: self._n_stations] = new_base
-            self._fill_polydata.Modified()
-        except Exception:
-            return
+        # Re-applying the step rebuilds the full points array via
+        # _apply_values' property-setter assignment, which is what
+        # actually pushes the change through to the rendered actor.
         self._reapply_last_step()
 
     def detach(self) -> None:
@@ -447,7 +442,16 @@ class LineForceDiagram(Diagram):
         self.update_to_step(self._last_step)
 
     def _apply_values(self, slab_values: ndarray) -> None:
-        """Mutate the top half of the polydata points in place."""
+        """Refresh the polydata points for the new step values.
+
+        Builds the full ``(2N, 3)`` points array and assigns through
+        the pyvista property setter so vtkPoints' data array is
+        replaced and MTime bumped — the same path DeformedShape uses.
+        In-place buffer mutation via ``np.asarray(...)[idx] = ...``
+        is fragile here because the actor was added with no scalars,
+        and the renderer occasionally caches the original points
+        without re-reading after a bare ``polydata.Modified()``.
+        """
         if (
             self._fill_polydata is None
             or self._base_points is None
@@ -468,13 +472,13 @@ class LineForceDiagram(Diagram):
         offsets = (scale * ours)[:, None] * self._fill_directions
         top_points = self._base_points + offsets
 
-        # Layout: [base_0..base_{n-1}, top_0..top_{n-1}]
-        all_pts = np.asarray(self._fill_polydata.points)
-        all_pts[self._n_stations:] = top_points
-        try:
-            self._fill_polydata.Modified()
-        except Exception:
-            pass
+        # Layout: [base_0..base_{n-1}, top_0..top_{n-1}]. Build the
+        # full block fresh and hand it to the property setter — this
+        # is what reliably propagates through the mapper.
+        new_pts = np.empty((2 * self._n_stations, 3), dtype=np.float64)
+        new_pts[: self._n_stations] = self._base_points
+        new_pts[self._n_stations:] = top_points
+        self._fill_polydata.points = new_pts
 
     def _scoped_results(self) -> "Optional[Results]":
         if self.spec.stage_id is not None:

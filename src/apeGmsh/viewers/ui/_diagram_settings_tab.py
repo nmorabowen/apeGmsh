@@ -858,15 +858,15 @@ class DiagramSettingsTab:
         form = QtWidgets.QFormLayout()
         self._content_layout.addLayout(form)
 
-        # Cmap combo
+        # Cmap combo — staged via Apply.
         cmap_combo = QtWidgets.QComboBox()
         cmap_combo.setEditable(True)
         for name in _CMAP_PRESETS:
             cmap_combo.addItem(name)
         current_cmap = getattr(d, "_runtime_cmap", None) or d.spec.style.cmap
         cmap_combo.setCurrentText(current_cmap)
-        cmap_combo.currentTextChanged.connect(
-            lambda txt: self._safe_call(d.set_cmap, txt)
+        self._pending_appliers.append(
+            lambda: self._safe_call(d.set_cmap, cmap_combo.currentText())
         )
         form.addRow("Colormap:", cmap_combo)
 
@@ -894,6 +894,9 @@ class DiagramSettingsTab:
         autofit_btn = QtWidgets.QPushButton("Auto-fit at current step")
 
         def _autofit() -> None:
+            # Auto-fit reads the data and rewrites the spinboxes —
+            # the user still has to click Apply to commit, matching
+            # the staged-edit contract for every other control.
             new_clim = self._safe_call(d.autofit_clim_at_current_step)
             if new_clim is not None:
                 lo_spin.setValue(float(new_clim[0]))
@@ -902,7 +905,7 @@ class DiagramSettingsTab:
         autofit_btn.clicked.connect(_autofit)
         self._content_layout.addWidget(autofit_btn)
 
-        # Opacity slider
+        # Opacity slider — staged via Apply.
         opacity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         opacity_slider.setRange(0, 100)
         current_opacity = (
@@ -911,8 +914,8 @@ class DiagramSettingsTab:
             else d.spec.style.opacity
         )
         opacity_slider.setValue(int(round(float(current_opacity) * 100)))
-        opacity_slider.valueChanged.connect(
-            lambda v: self._safe_call(d.set_opacity, v / 100.0)
+        self._pending_appliers.append(
+            lambda: self._safe_call(d.set_opacity, opacity_slider.value() / 100.0)
         )
         form.addRow("Opacity:", opacity_slider)
 
@@ -942,7 +945,7 @@ class DiagramSettingsTab:
         )
         form.addRow("Scale:", scale_spin)
 
-        # Show-undeformed checkbox
+        # Show-undeformed checkbox — staged via Apply.
         chk = QtWidgets.QCheckBox("Show undeformed reference")
         style = d.spec.style
         current = (
@@ -951,8 +954,8 @@ class DiagramSettingsTab:
             else getattr(style, "show_undeformed", True)
         )
         chk.setChecked(bool(current))
-        chk.toggled.connect(
-            lambda v: self._safe_call(d.set_show_undeformed, bool(v))
+        self._pending_appliers.append(
+            lambda: self._safe_call(d.set_show_undeformed, bool(chk.isChecked()))
         )
         form.addRow("", chk)
 
@@ -998,27 +1001,31 @@ class DiagramSettingsTab:
                 axis_combo.setCurrentIndex(i)
                 break
 
-        def _on_axis_change(idx: int) -> None:
+        def _apply_axis() -> None:
             from .._log import log_action
-            new_axis = axis_combo.itemData(idx)
+            new_axis = axis_combo.itemData(axis_combo.currentIndex())
             log_action(
                 "ui.settings", "fill_axis_changed",
                 layer=d, axis=str(new_axis),
             )
             self._safe_call(d.set_fill_axis, new_axis)
 
-        axis_combo.currentIndexChanged.connect(_on_axis_change)
+        # Fill-axis change forces a full re-attach (the per-station
+        # fill directions are baked at attach), so it has to commit
+        # via Apply alongside scale / flip — clicking the combo no
+        # longer rebuilds the diagram on its own.
+        self._pending_appliers.append(_apply_axis)
         form.addRow("Fill axis:", axis_combo)
 
-        # Flip sign
+        # Flip sign — staged via Apply.
         flip_chk = QtWidgets.QCheckBox("Flip sign")
         runtime_flip = getattr(d, "_runtime_flip", None)
         style_flip = getattr(d.spec.style, "flip_sign", False)
         flip_chk.setChecked(bool(
             runtime_flip if runtime_flip is not None else style_flip
         ))
-        flip_chk.toggled.connect(
-            lambda v: self._safe_call(d.set_flip_sign, bool(v))
+        self._pending_appliers.append(
+            lambda: self._safe_call(d.set_flip_sign, bool(flip_chk.isChecked()))
         )
         form.addRow("", flip_chk)
 
@@ -1112,8 +1119,8 @@ class DiagramSettingsTab:
             or getattr(d.spec.style, "cmap", "viridis")
         )
         cmap_combo.setCurrentText(current_cmap)
-        cmap_combo.currentTextChanged.connect(
-            lambda txt: self._safe_call(d.set_cmap, txt)
+        self._pending_appliers.append(
+            lambda: self._safe_call(d.set_cmap, cmap_combo.currentText())
         )
         form.addRow("Colormap:", cmap_combo)
 
@@ -1139,6 +1146,9 @@ class DiagramSettingsTab:
         autofit = QtWidgets.QPushButton("Auto-fit at current step")
 
         def _autofit() -> None:
+            # Auto-fit reads the data and rewrites the spinboxes —
+            # the user still has to click Apply to commit, matching
+            # the staged-edit contract for every other control.
             new_clim = self._safe_call(d.autofit_clim_at_current_step)
             if new_clim is not None:
                 lo_spin.setValue(float(new_clim[0]))
@@ -1147,8 +1157,9 @@ class DiagramSettingsTab:
         autofit.clicked.connect(_autofit)
         self._content_layout.addWidget(autofit)
 
-        # Scalar-bar live controls — every diagram routed to this
+        # Scalar-bar controls — every diagram routed to this
         # panel inherits ScalarBarSupport, so the setters exist.
+        # Show / Format are staged via Apply alongside the rest.
         self._add_scalar_bar_controls(d, form)
 
     # ------------------------------------------------------------------
@@ -1160,7 +1171,8 @@ class DiagramSettingsTab:
 
         Skips silently when the diagram doesn't support the live API
         (older diagrams not yet on ``ScalarBarSupport``). The form
-        owner — the caller — keeps its existing layout.
+        owner — the caller — keeps its existing layout. Both controls
+        are staged via the per-card Apply button alongside cmap / clim.
         """
         if not hasattr(d, "set_show_scalar_bar") or not hasattr(d, "set_fmt"):
             return
@@ -1173,8 +1185,8 @@ class DiagramSettingsTab:
             if runtime_show is None else bool(runtime_show)
         )
         show_chk.setChecked(bool(current_show))
-        show_chk.toggled.connect(
-            lambda v: self._safe_call(d.set_show_scalar_bar, bool(v))
+        self._pending_appliers.append(
+            lambda: self._safe_call(d.set_show_scalar_bar, bool(show_chk.isChecked()))
         )
         form.addRow(show_chk)
 
@@ -1190,7 +1202,7 @@ class DiagramSettingsTab:
             "Examples: %.3g (general, 3 digits), %.2e (exponent),\n"
             "%.4f (fixed, 4 decimals)."
         )
-        fmt_edit.editingFinished.connect(
+        self._pending_appliers.append(
             lambda: self._safe_call(d.set_fmt, fmt_edit.text() or "%.3g")
         )
         form.addRow("Format:", fmt_edit)
