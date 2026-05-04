@@ -1,5 +1,93 @@
 # Changelog
 
+## v1.4.0 — ResultsViewer dock split · new-layer attach + lifecycle fixes · import banner
+
+Six PRs landing on top of v1.3.0. The post-solve viewer's right rail
+splits into dedicated **Diagram** and **Geometry** docks (tabified
+with Details and Session), with a new floating "?" shortcut HUD on
+the viewport. New-layer attach now pushes the active step + re-fires
+deformation sync so freshly-added line-force / vector-glyph layers
+land aligned with the rest of the scene instead of paint-then-drift.
+A series of selection-related composition-gate fixes (Esc, outline
+Geometry-row click, stale session restore) stop diagrams from
+silently disappearing when the user navigates the outline. The HDF5
+reader is now released on viewer close, so re-running a capture
+script in the same kernel no longer hits `PermissionError`. The
+package prints an ASCII banner + `__version__` on import (suppress
+with `APEGMSH_QUIET=1`) so the running version is unambiguous.
+
+PRs in this release: [#69], [#70], [#71], [#72], [#73], [#74].
+
+### ADDED — Diagram / Geometry dock split ([#69])
+
+The right rail's single Details dock — which previously stacked the
+DiagramSettingsTab and GeometrySettingsPanel inside a QStackedWidget
+— is split into two dedicated docks:
+
+- **Diagram** dock hosts `DiagramSettingsTab.widget` directly.
+- **Geometry** dock hosts `GeometrySettingsPanel.widget` directly.
+- **Details** dock is reserved for future canvas-driven contextual
+  content (contour scalebar edits, picked-node readouts).
+- Outline routing: clicking a Composition row raises the Diagram
+  dock; clicking a Geometry row raises the Geometry dock.
+- The "+ Add layer" button is now on the Diagram dock's title row.
+- Layout schema bumped to v5 — saved v4 layouts are discarded so
+  users land in the new arrangement on first launch.
+
+### ADDED — Floating shortcut help HUD ([#69])
+
+`ShortcutHelpHUD` — small "?" button in the viewport's bottom-right
+corner. Click pops a list of mapped keyboard shortcuts (Esc, Ctrl+H,
+Q, N/E/G, Shift+LMB, Shift+click, F2).
+
+### ADDED — Banner + `__version__` on import ([#73])
+
+`import apeGmsh` prints the ASCII banner + the installed version to
+stderr. `__version__` is now exposed at the package root, sourced
+from `importlib.metadata` (single source of truth = `pyproject.toml`).
+Set `APEGMSH_QUIET=1` to suppress for tests / CI / piped scripts.
+
+### FIXED — New-layer attach ([#69])
+
+After `registry.add(...)`, the director now pushes the active step
+to the new layer and re-fires `_apply_deformation`. Resolves:
+
+- Line-force diagrams that rendered as collapsed slivers because
+  step-0 internal forces are zero (the polydata was correct, the
+  values were wrong).
+- Vector glyphs that landed at undeformed positions until the user
+  manually scrubbed the time slider.
+
+### FIXED — HDF5 reader released on viewer close ([#70])
+
+`ResultsViewer._on_close` now calls `self._results.close()` so the
+NativeReader's file handle is released. Re-running a capture script
+in the same Jupyter kernel — which deletes and recreates the same
+`.h5` path — no longer hits `PermissionError: [WinError 32] The
+process cannot access the file because it is being used by another
+process`.
+
+### FIXED — Composition gate no longer silently hides diagrams ([#71], [#72], [#74])
+
+Three trigger paths surfaced the same symptom — layers visible in
+the dock with checkboxes still checked, but nothing painting in the
+viewport — because the composition gate hides every actor when no
+composition is "active":
+
+- **#71**: Esc previously called `compositions.set_active(None)`,
+  which fired the gate. Esc now only clears probe markers + element
+  / GP highlights and leaves composition state alone.
+- **#72**: Clicking a Geometry row in the outline previously called
+  `compositions.set_active(None)` for the same reason. Selecting a
+  Geometry row is now a navigation gesture; composition state is
+  left unchanged.
+- **#74**: The session JSON persists `active_composition_id`. Pre-#71
+  / pre-#72 sessions easily saved `null`. On restore, the gate then
+  hid every layer until the user clicked a Composition row. Two-part
+  fix: heal stale sessions by defaulting to the first composition
+  when the saved active id is null; relax the gate to "show all"
+  when no composition is active anywhere.
+
 ## v1.3.0 — ResultsViewer B++ redesign · live recorder + MPCO emission · spatial filters
 
 Nine PRs landing on top of v1.2.0. The ResultsViewer ships a full B++
