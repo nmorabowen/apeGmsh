@@ -222,11 +222,15 @@ def test_step_update_changes_top_points(
     diagram.attach(headless_plotter, results.fem, scene)
 
     n = diagram._n_stations
-    pts = np.asarray(diagram._fill_polydata.points)
-    diff_step0 = (pts[n:] - pts[:n]).copy()
+    # Re-fetch points after each step — _apply_values assigns through
+    # the pyvista property setter (replaces vtkPoints' data array), so
+    # a captured-once view goes stale.
+    pts0 = np.asarray(diagram._fill_polydata.points)
+    diff_step0 = (pts0[n:] - pts0[:n]).copy()
 
     diagram.update_to_step(2)
-    diff_step2 = pts[n:] - pts[:n]
+    pts2 = np.asarray(diagram._fill_polydata.points)
+    diff_step2 = pts2[n:] - pts2[:n]
 
     # Different magnitudes at different steps
     assert not np.allclose(diff_step0, diff_step2)
@@ -278,11 +282,12 @@ def test_set_scale_re_renders(beam_results, headless_plotter):
     diagram.attach(headless_plotter, results.fem, scene)
 
     n = diagram._n_stations
-    pts = np.asarray(diagram._fill_polydata.points)
-    diff_before = (pts[n:] - pts[:n]).copy()
+    pts_before = np.asarray(diagram._fill_polydata.points)
+    diff_before = (pts_before[n:] - pts_before[:n]).copy()
 
     diagram.set_scale(10.0)
-    diff_after = pts[n:] - pts[:n]
+    pts_after = np.asarray(diagram._fill_polydata.points)
+    diff_after = pts_after[n:] - pts_after[:n]
 
     np.testing.assert_allclose(diff_after, 10.0 * diff_before, atol=1e-9)
 
@@ -296,11 +301,12 @@ def test_set_flip_sign_inverts_offsets(
     diagram.attach(headless_plotter, results.fem, scene)
 
     n = diagram._n_stations
-    pts = np.asarray(diagram._fill_polydata.points)
-    diff_before = (pts[n:] - pts[:n]).copy()
+    pts_before = np.asarray(diagram._fill_polydata.points)
+    diff_before = (pts_before[n:] - pts_before[:n]).copy()
 
     diagram.set_flip_sign(True)
-    diff_after = pts[n:] - pts[:n]
+    pts_after = np.asarray(diagram._fill_polydata.points)
+    diff_after = pts_after[n:] - pts_after[:n]
 
     np.testing.assert_allclose(diff_after, -diff_before, atol=1e-10)
 
@@ -393,6 +399,53 @@ def test_actor_identity_stable_across_steps(
     assert id(diagram._fill_actor) == initial_actor_id
     assert diagram._fill_polydata is initial_poly
     assert id(diagram._fill_polydata) == initial_poly_id
+
+
+def test_sync_substrate_points_follows_deformation(
+    beam_results, headless_plotter,
+):
+    """Deformation pump: when the substrate points warp, the line
+    force diagram's base points should ride along — and the rendered
+    polydata.points must reflect the change.
+
+    Reproduces the user-reported "line diagram doesn't follow the
+    deformation" bug: the previous code mutated polydata.points in
+    place + bumped polydata.Modified(), but VTK's mapper was caching
+    the original GPU buffer. Switching _apply_values to assign through
+    the pyvista property setter (replaces vtkPoints' data array) is
+    what actually pushes the change through.
+    """
+    results, _, _, _ = beam_results
+    scene = build_fem_scene(results.fem)
+    diagram = LineForceDiagram(_make_spec(scale=1.0), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.update_to_step(2)
+
+    n = diagram._n_stations
+    pts_before = np.asarray(diagram._fill_polydata.points).copy()
+    base_before = pts_before[:n].copy()
+
+    # Synthesize a deformation: shift every substrate point +Y by 5.
+    target = np.asarray(scene.grid.points, dtype=np.float64).copy()
+    target[:, 1] += 5.0
+    diagram.sync_substrate_points(target, scene)
+
+    pts_after = np.asarray(diagram._fill_polydata.points)
+    base_after = pts_after[:n]
+    # Bases all moved by +5 in Y — every station endpoint sampled the
+    # warped substrate.
+    np.testing.assert_allclose(
+        base_after - base_before,
+        np.tile([0.0, 5.0, 0.0], (n, 1)),
+        atol=1e-9,
+    )
+    # And the top points still equal base + scale * value * fill_dir
+    # (i.e. the diagram redrew with the new bases, not just shifted).
+    diff_after = pts_after[n:] - pts_after[:n]
+    # Same direction (+Y) and same magnitudes as before the sync —
+    # the values came from update_to_step(2), unchanged by the warp.
+    diff_before = pts_before[n:] - pts_before[:n]
+    np.testing.assert_allclose(diff_after, diff_before, atol=1e-9)
 
 
 # =====================================================================
