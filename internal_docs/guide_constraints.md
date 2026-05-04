@@ -171,6 +171,27 @@ See `guide_loads.md` §10–11.
 This is the constraint you need when connecting a beam/frame model
 to a solid model. The phantom nodes bridge the DOF mismatch.
 
+**`node_to_surface_spring`** — same topology as `node_to_surface`, same
+call signature, but the master → phantom links are emitted as stiff
+`elasticBeamColumn` elements instead of kinematic `rigidLink('beam', ...)`
+constraints:
+
+```python
+g.constraints.node_to_surface_spring("frame_end", "solid_face")
+```
+
+Use this variant when the master carries **free rotational DOFs** (e.g. a
+fork support on a solid end face) that receive direct moment loading. The
+constraint-based `node_to_surface` can produce an ill-conditioned reduced
+stiffness matrix in that case because the master rotation DOFs only get
+stiffness through kinematic constraint back-propagation, with nothing
+attaching directly to them. Stiff beams give those rotations a real
+elastic stiffness path and the matrix conditioning recovers.
+
+Pick `node_to_surface` when the master rotations are themselves
+constrained or carry no moment; pick `node_to_surface_spring` when the
+master is a free rotation node receiving moments.
+
 
 ### Level 3 — Surface coupling
 
@@ -247,6 +268,7 @@ based on what solver commands they produce:
 - `rigid_body` → `NodeGroupRecord`
 - `kinematic_coupling` → `NodeGroupRecord`
 - `node_to_surface` → `NodeToSurfaceRecord` (phantom nodes + pairs)
+- `node_to_surface_spring` → `NodeToSurfaceRecord` (phantom nodes + stiff-beam pairs)
 
 **Surface-level** (`fem.elements.constraints`):
 - `tie` → `InterpolationRecord`

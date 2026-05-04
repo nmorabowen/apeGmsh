@@ -255,6 +255,27 @@ Labels travel through STEP round-trips via a JSON sidecar file
 labeled entity. On reimport, entities are matched by geometric
 proximity rather than tag numbers (which STEP does not preserve).
 
+**Querying with labels and PG names directly.** Most query and resolver
+methods accept labels and physical-group names anywhere they accept a
+tag. `g.model.queries.boundary(...)` is a representative example: it
+resolves a string as a label first (Tier 1, `g.labels`), then as a
+physical-group name (Tier 2, `g.physical`):
+
+```python
+g.model.geometry.add_box(0, 0, 0, 1, 1, 3, label="shaft")
+
+# All three forms work:
+faces = g.model.queries.boundary("shaft")          # label
+faces = g.model.queries.boundary("ColumnShaft")    # PG name (after promotion)
+faces = g.model.queries.boundary([(3, 1)])         # raw DimTag (discouraged)
+```
+
+This means you almost never need to materialise raw tags by hand.
+Build geometry with `label=`, then pass the label string straight to
+boundary, fragment, fuse, cut, intersect, constraint, load, and mass
+APIs. The dispatch happens in `_resolve_to_dimtags` — the same
+mechanism the boolean operations use.
+
 
 ## 3. OCC operations: fragment, fuse, cut, intersect
 

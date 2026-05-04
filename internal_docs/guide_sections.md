@@ -112,6 +112,106 @@ Creates a simple rectangular prism. Labels:
 - `{label}.start_face` — z=0 end
 - `{label}.end_face` — z=length end
 
+### rect_hollow — Hollow rectangular tube (HSS)
+
+```python
+hss = g.sections.rect_hollow(
+    b=200,       # outer width (mm)
+    h=300,       # outer height (mm)
+    t=10,        # wall thickness (mm)
+    length=3000,
+    label="hss",
+)
+```
+
+Builds an HSS by cutting a smaller box from a larger one. Labels:
+- `{label}.body` — the single hollow volume
+- `{label}.start_face`, `{label}.end_face` — z=0 / z=length
+
+### pipe_solid — Solid circular bar
+
+```python
+bar = g.sections.pipe_solid(
+    r=50,        # radius (mm)
+    length=2000,
+    label="bar",
+)
+```
+
+Labels: `{label}.body`, `{label}.start_face`, `{label}.end_face`.
+
+### pipe_hollow — Hollow circular pipe
+
+```python
+pipe = g.sections.pipe_hollow(
+    r_outer=80,  # outer radius (mm)
+    t=8,         # wall thickness (mm)
+    length=2000,
+    label="pipe",
+)
+```
+
+Built by cutting an inner cylinder from an outer cylinder.
+Labels: `{label}.body`, `{label}.start_face`, `{label}.end_face`.
+
+### angle_solid — L-shape (angle)
+
+```python
+angle = g.sections.angle_solid(
+    b=100,       # horizontal leg width (mm)
+    h=150,       # vertical leg height (mm)
+    t=10,        # thickness of both legs (mm)
+    length=3000,
+    label="L",
+)
+```
+
+Built by fusing two rectangles, extruding, and slicing along the
+inside corner so each leg is its own labeled volume.
+
+**Labels created:**
+- `{label}.horizontal_leg` — the X-direction leg
+- `{label}.vertical_leg` — the Y-direction leg
+- Outer-face labels from `classify_angle_outer_faces`
+- `{label}.start_face`, `{label}.end_face`
+
+### channel_solid — C-shape (channel)
+
+```python
+chan = g.sections.channel_solid(
+    bf=80,       # flange width (mm)
+    tf=10,       # flange thickness (mm)
+    h=180,       # clear web height (mm)
+    tw=8,        # web thickness (mm)
+    length=3000,
+    label="C",
+)
+```
+
+Same `bf / tf / h / tw` parameter set as `W_solid`, sliced into
+flange and web sub-volumes.
+
+**Labels created:**
+- `{label}.top_flange`, `{label}.bottom_flange`, `{label}.web`
+- Outer-face labels from `classify_w_outer_faces`
+- `{label}.start_face`, `{label}.end_face`
+
+### tee_solid — T-shape (tee)
+
+```python
+tee = g.sections.tee_solid(
+    bf=120,      # flange width (mm)
+    tf=12,       # flange thickness (mm)
+    h=180,       # stem height (mm)
+    tw=10,       # stem thickness (mm)
+    length=3000,
+    label="T",
+)
+```
+
+Built by fusing a flange rectangle with a stem rectangle and slicing
+at the stem boundaries.
+
 ### W_shell — Wide-flange shell section (mid-surfaces)
 
 ```python

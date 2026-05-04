@@ -706,10 +706,10 @@ the resolver:
 
 ```python
 fem = g.mesh.queries.get_fem_data(dim=3)
-node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)
+node_map = g.parts.build_node_map(fem.nodes.ids, fem.nodes.coords)
 face_map = g.parts.build_face_map(node_map)
 records  = g.constraints.resolve(
-    fem.node_ids, fem.node_coords,
+    fem.nodes.ids, fem.nodes.coords,
     node_map=node_map,
     face_map=face_map,
 )

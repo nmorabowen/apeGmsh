@@ -278,8 +278,8 @@ g.constraints.equal_dof("solid", "frame", dofs=[1, 2, 3], tolerance=1e-3)
 g.constraints.rigid_link("frame", "solid", link_type="beam")
 
 fem = g.mesh.queries.get_fem_data(dim=3)
-node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)
-records = g.constraints.resolve(fem.node_ids, fem.node_coords, node_map=node_map)
+node_map = g.parts.build_node_map(fem.nodes.ids, fem.nodes.coords)
+records = g.constraints.resolve(fem.nodes.ids, fem.nodes.coords, node_map=node_map)
 ```
 
 
