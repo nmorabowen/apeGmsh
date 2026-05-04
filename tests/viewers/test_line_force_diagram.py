@@ -448,6 +448,18 @@ def test_sync_substrate_points_follows_deformation(
     np.testing.assert_allclose(diff_after, diff_before, atol=1e-9)
 
 
+def test_actor_is_not_pickable(beam_results, headless_plotter):
+    """The fill is a decorative overlay — pick clicks must fall
+    through to the substrate so node/element/shift-click resolve to
+    real mesh nodes, not the quad geometry of the diagram.
+    """
+    results, _, _, _ = beam_results
+    scene = build_fem_scene(results.fem)
+    diagram = LineForceDiagram(_make_spec(scale=1.0), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    assert diagram._fill_actor.GetPickable() == 0
+
+
 # =====================================================================
 # Detach
 # =====================================================================

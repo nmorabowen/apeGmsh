@@ -161,6 +161,8 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             name=self._actor_name(),
             reset_camera=False,
             lighting=False,
+            # Decorative overlay — picks pass through to the substrate.
+            pickable=False,
         )
         if style.use_magnitude_colors:
             bar_args = self._scalar_bar_args()
