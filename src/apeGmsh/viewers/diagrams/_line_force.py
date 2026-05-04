@@ -413,8 +413,22 @@ class LineForceDiagram(Diagram):
             plotter = self._plotter
             scene = self._scene
             fem = self._fem
+            last_step = self._last_step
             self.detach()
             self.attach(plotter, fem, scene)
+            # Re-attach starts at step-0 values against the undeformed
+            # FEM coords. Push the step the user was on, then sync to
+            # the current (possibly deformed) substrate so the diagram
+            # lands aligned without requiring an extra UI gesture.
+            try:
+                self.update_to_step(int(last_step))
+            except Exception:
+                pass
+            if scene is not None:
+                try:
+                    self.sync_substrate_points(None, scene)
+                except Exception:
+                    pass
 
     def current_scale(self) -> float:
         if self._runtime_scale is not None:
