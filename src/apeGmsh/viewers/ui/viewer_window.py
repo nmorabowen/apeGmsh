@@ -416,10 +416,24 @@ class ViewerWindow:
             self._window.showMaximized()
         else:
             self._window.show()
+        # raise_() + activateWindow(): under jupyter %gui qt the kernel's
+        # input hook already runs a Qt event loop, so the self._app.exec_()
+        # below returns immediately, the cell finishes, and the kernel
+        # goes back to idle. The window is alive (pinned by _LIVE_VIEWERS
+        # in ResultsViewer) but the OS leaves it behind the browser —
+        # show() alone doesn't request foreground. These two calls bring
+        # the window to the top of the Z-order and at minimum trigger a
+        # taskbar flash. No-op when exec_() actually blocks (terminal
+        # python, mesh viewer outside a kernel).
+        self._window.raise_()
+        self._window.activateWindow()
         try:
             self._qt_interactor.render()
-        except Exception:
-            pass
+        except Exception as exc:
+            import sys
+            import traceback
+            print(f"[viewer] initial render() failed: {exc}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
         return self._app.exec_()
 
     # ------------------------------------------------------------------
