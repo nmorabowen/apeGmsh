@@ -67,7 +67,7 @@ with apeGmsh(model_name="plate") as g:
     # 2. Mesh — sub-composites under g.mesh
     g.mesh.sizing.set_global_size(10)
     g.mesh.generation.generate(dim=2)
-    g.mesh.partitioning.renumber_mesh(method="simple", base=1)
+    g.mesh.partitioning.renumber(dim=2, method="simple", base=1)
 
     # 3. Snapshot for the solver
     fem = g.mesh.queries.get_fem_data(dim=2)
@@ -107,8 +107,8 @@ Five focused namespaces for OCC geometry:
 | `g.model.geometry`   | `add_point`, `add_line`, `add_box`, `add_sphere`, `add_cylinder`, ... |
 | `g.model.boolean`    | `fuse`, `cut`, `intersect`, `fragment` |
 | `g.model.transforms` | `translate`, `rotate`, `scale`, `mirror`, `copy`, `extrude`, `revolve`, `sweep`, `thru_sections` |
-| `g.model.io`         | `load_step`, `load_iges`, `load_dxf`, `save_step`, `save_msh`, `heal_shapes` |
-| `g.model.queries`    | `bounding_box`, `center_of_mass`, `mass`, `boundary`, `adjacencies`, `entities_in_bounding_box`, `registry`, `remove`, `remove_duplicates`, `make_conformal`, `fragment_all` |
+| `g.model.io`         | `load_step`, `save_step`, `load_iges`, `save_iges`, `load_dxf`, `save_dxf`, `load_msh`, `save_msh`, `heal_shapes` |
+| `g.model.queries`    | `bounding_box`, `center_of_mass`, `mass`, `boundary`, `boundary_curves`, `boundary_points`, `adjacencies`, `entities_in_bounding_box`, `registry`, `remove`, `remove_duplicates`, `make_conformal`, `plane`, `line`, `select` |
 
 Plus `g.model.selection` (entity selection) and flat `g.model.sync()`,
 `g.model.viewer()`.
@@ -119,13 +119,13 @@ Seven focused namespaces for meshing:
 
 | Access | Methods |
 |---|---|
-| `g.mesh.generation`   | `generate`, `set_order`, `refine`, `optimize`, `set_algorithm` |
-| `g.mesh.sizing`       | `set_global_size`, `set_size`, `set_size_sources`, `set_size_callback`, `set_size_by_physical` |
+| `g.mesh.generation`   | `generate`, `set_order`, `refine`, `optimize`, `set_algorithm`, `set_algorithm_by_physical` |
+| `g.mesh.sizing`       | `set_global_size`, `set_size_global`, `set_size`, `set_size_all_points`, `set_size_sources`, `set_size_callback`, `set_size_by_physical` |
 | `g.mesh.field`        | `distance`, `threshold`, `box`, `math_eval`, `boundary_layer`, `minimum`, `set_background` |
 | `g.mesh.structured`   | `set_transfinite_{curve,surface,volume,automatic}`, `set_recombine`, `recombine`, `set_smoothing`, `set_compound` |
-| `g.mesh.editing`      | `embed`, `set_periodic`, `clear`, `reverse`, `relocate_nodes`, `remove_duplicate_{nodes,elements}`, `affine_transform`, `import_stl`, `classify_surfaces`, `create_geometry` |
+| `g.mesh.editing`      | `embed`, `set_periodic`, `clear`, `reverse`, `relocate_nodes`, `remove_duplicate_{nodes,elements}`, `affine_transform`, `crack`, `import_stl`, `classify_surfaces`, `create_geometry` |
 | `g.mesh.queries`      | `get_nodes`, `get_elements`, `get_fem_data`, `get_element_properties`, `get_element_qualities`, `quality_report` |
-| `g.mesh.partitioning` | `partition`, `unpartition`, `compute_renumbering`, `renumber_{nodes,elements,mesh}` |
+| `g.mesh.partitioning` | `renumber`, `partition`, `partition_explicit`, `unpartition`, `n_partitions`, `summary`, `entity_table`, `save` |
 
 Plus flat `g.mesh.viewer()` and `g.mesh.results_viewer()` for
 interactive windows.
@@ -137,8 +137,8 @@ Five focused namespaces for the OpenSees bridge:
 | Access | Methods |
 |---|---|
 | `g.opensees.materials` | `add_nd_material`, `add_uni_material`, `add_section` |
-| `g.opensees.elements`  | `add_geom_transf`, `assign`, `fix` |
-| `g.opensees.ingest`    | `loads(fem)`, `masses(fem)` — ingest resolved records from a FEMData snapshot |
+| `g.opensees.elements`  | `add_geom_transf`, `vecxz`, `assign`, `fix` |
+| `g.opensees.ingest`    | `loads(fem)`, `sp(fem)`, `masses(fem)`, `constraints(fem)` — ingest resolved records from a FEMData snapshot |
 | `g.opensees.inspect`   | `node_table`, `element_table`, `summary` |
 | `g.opensees.export`    | `tcl(path)`, `py(path)` |
 
@@ -154,7 +154,7 @@ records. It's the single contract between Gmsh and any downstream
 solver.
 
 ```python
-g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
 fem = g.mesh.queries.get_fem_data(dim=3)
 
 # fem.node_ids, fem.element_ids, fem.node_coords, fem.connectivity
@@ -209,7 +209,7 @@ with apeGmsh(model_name="I_beam") as g:
     g.parts.fragment_all()   # conformal interfaces
 
     g.mesh.generation.generate(dim=3)
-    g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+    g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
     fem = g.mesh.queries.get_fem_data(dim=3)
 ```
 
