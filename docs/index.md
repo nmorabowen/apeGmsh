@@ -97,8 +97,10 @@ hide:
 
     ---
 
-    Post-solve viewer: diagrams, scrubber, persistent sessions,
-    multi-stage navigation.
+    Post-solve viewer: diagrams (contour, vector glyph, line force,
+    fiber section, layer stack, gauss markers, spring force,
+    **applied loads**, **reactions**), scrubber, persistent
+    sessions, multi-stage navigation.
 
     [Architecture →](architecture/apeGmsh_results_viewer.md)
 
