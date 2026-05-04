@@ -2,334 +2,334 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/changelog/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/constraints/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/fem/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/loads/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/masses/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/mesh/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/model/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/opensees/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/parts/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/results/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/sections/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/session/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/viewers/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/api/viz/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/01_hello_plate/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/02_cantilever_beam_2D/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/04_portal_frame_2D/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/05_labels_and_pgs/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/10b_part_assembly/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/12_interface_tie/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/17_modal_analysis/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/examples/notebooks/19_pushover_elastoplastic/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/MIGRATION_v1/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/Results_architecture/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/architecture/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/design_brief_results_viewer/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/first_steps/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_basics/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_cad_import/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_constraints/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_fem_broker/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_loads/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_masses/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_meshing/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_obtaining_results/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_opensees/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_partitioning/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_parts_assembly/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_parts_vs_session/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_queries/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_recorders_reference/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_results/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_results_filtering/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_sections/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_selection/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/guide_transforms/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_aesthetic/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_element_transcoding/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_fuse_group/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_instance_computed_view/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_mesh_selection_set/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_phase_11b_line_stations/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_results_viewer/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_rigid_element/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_v2_final/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_v2_unified_architecture/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_viewer_box_select/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_viewer_light_theme/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/internal_docs/plan_viewer_pg_persistence/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_aesthetic/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_architecture/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_broker/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_constraints/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_groundTruth/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_hinting/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_loads/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_navigation/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_partInstanceAssemble/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_principles/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_results_obtaining/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_results_viewer/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/apeGmsh_visualization/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/gmsh_api_reference/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/gmsh_basics/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/gmsh_geometry_basics/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/gmsh_interface/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/gmsh_meshing_advanced/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/gmsh_meshing_basics/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/gmsh_partitioning/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
     <url>
          <loc>https://nmorabowen.github.io/apeGmsh/architecture/gmsh_selection/</loc>
-         <lastmod>2026-05-03</lastmod>
+         <lastmod>2026-05-04</lastmod>
     </url>
 </urlset>
