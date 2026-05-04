@@ -72,11 +72,35 @@ SelectionPicker = ModelViewer
 
 # ── Version + import banner ───────────────────────────────────────────
 def _resolve_version() -> str:
-    """Read the installed package version from importlib.metadata.
+    """Resolve the apeGmsh version, preferring the live source tree.
 
-    Falls back to ``"unknown"`` when the package isn't installed (e.g.
-    running directly from a source checkout without ``pip install -e``).
+    Editable installs (``pip install -e .``) and source checkouts
+    don't refresh ``importlib.metadata`` on every save — bumping
+    ``pyproject.toml`` shows the *old* installed version until the
+    user reinstalls. To make the banner reflect the source-tree
+    version automatically, read ``pyproject.toml`` first when one
+    sits next to the package; fall back to installed metadata when
+    running from a wheel.
     """
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    # ``__init__.py`` lives at ``<repo>/src/apeGmsh/__init__.py``;
+    # ``pyproject.toml`` is two levels up.
+    pyproj = os.path.normpath(os.path.join(here, "..", "..", "pyproject.toml"))
+    if os.path.isfile(pyproj):
+        try:
+            try:
+                import tomllib    # Python 3.11+
+            except ImportError:
+                import tomli as tomllib    # type: ignore[no-redef]
+            with open(pyproj, "rb") as f:
+                data = tomllib.load(f)
+            version_str = data.get("project", {}).get("version")
+            if version_str:
+                return str(version_str)
+        except Exception:
+            pass
+    # Wheel install / no source tree — read installed metadata.
     try:
         from importlib.metadata import version, PackageNotFoundError
         try:
