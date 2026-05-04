@@ -411,7 +411,22 @@ class Results:
             The spawned process handle (non-blocking).
         """
         if not blocking:
-            return self._spawn_viewer_subprocess(title=title)
+            handle = self._spawn_viewer_subprocess(title=title)
+            # The subprocess opens its own NativeReader against the
+            # path; the parent kernel's reader is no longer needed for
+            # rendering. Close it here so the user can re-run a capture
+            # script (which deletes / recreates the same .h5) without
+            # hitting ``PermissionError: file is being used by another
+            # process`` — Windows refuses to unlink a file that any
+            # process has open, even read-only.
+            #
+            # If the user wants to keep querying ``results`` after the
+            # spawn, they can re-bind via ``Results.from_native(path)``.
+            try:
+                self.close()
+            except Exception:
+                pass
+            return handle
         from ..viewers.results_viewer import ResultsViewer
         return ResultsViewer(
             self,
