@@ -3,16 +3,20 @@ Navigation — Camera control via VTK observers.
 
 Installs mouse/keyboard bindings on a PyVista plotter:
 
-    Shift + LMB drag     : rotate (yaw/pitch via trackball Rotate())
-    Shift + MMB drag     : quaternion orbit around pivot (or scene centre)
+    Shift + LMB drag     : turntable orbit around pivot (no-roll)
+    Shift + MMB drag     : turntable orbit around pivot (alias)
     MMB drag             : pan
     RMB drag             : pan (secondary)
     Scroll wheel         : zoom (focal point fixed → stable rotate pivot)
 
 LMB without a modifier is NOT intercepted — the :mod:`pick_engine`
 handles it (click = pick, drag = rubber-band). Shift+LMB IS
-intercepted at priority 11 (above pick_engine's 10) so the rotate
-gesture shadows the rubber-band gesture cleanly.
+intercepted at priority 11 (above pick_engine's 10) so the orbit
+gesture shadows the rubber-band gesture cleanly. Shift+LMB drag
+runs the same quaternion turntable orbit as Shift+MMB (with
+``OrthogonalizeViewUp()`` keeping the up vector locked), not the
+free trackball ``Rotate()`` — the trackball lets the up vector
+roll on long drags, which felt disorienting in the ResultsViewer.
 
 Usage::
 
@@ -194,9 +198,12 @@ def install_navigation(
             plotter.render()
             _abort(caller, _tags["move"])
             return
-        # Shift+LMB drag-detect: promote to rotate once the mouse
-        # crosses the drag threshold. Below the threshold, do nothing
-        # so a quick click still falls through to ``on_shift_click``.
+        # Shift+LMB drag-detect: promote to turntable orbit once the
+        # mouse crosses the drag threshold. Below the threshold, do
+        # nothing so a quick click still falls through to
+        # ``on_shift_click``. We arm the same orbit state Shift+MMB
+        # uses (``_orbit_pivot`` + ``_orbit_last``) so the next move
+        # event drives ``_orbit_around`` via the branch above.
         if (
             _shift_lmb_press_pos[0] is not None
             and not _shift_lmb_did_rotate[0]
@@ -204,11 +211,14 @@ def install_navigation(
             px, py = caller.GetEventPosition()
             sx, sy = _shift_lmb_press_pos[0]
             if (px - sx) ** 2 + (py - sy) ** 2 > drag_threshold_px ** 2:
-                style.StartRotate()
+                pivot = None
+                if get_orbit_pivot is not None:
+                    pivot = get_orbit_pivot()
+                if pivot is None:
+                    pivot = _scene_center(renderer)
+                _orbit_pivot[0] = pivot
+                _orbit_last[0] = (px, py)
                 _shift_lmb_did_rotate[0] = True
-            # Don't abort — the trackball at the default priority
-            # consumes the move and runs Rotate() now that state is
-            # VTKIS_ROTATE.
         # Don't abort — let trackball handle pan, let pick_engine see moves
 
     # ── Shift+Scroll: orbit ─────────────────────────────────────────
@@ -281,10 +291,10 @@ def install_navigation(
             style.EndPan()
         _abort(caller, _tags["rmb_release"])
 
-    # ── Shift+LMB: drag-detect → rotate; click → on_shift_click ─────
+    # ── Shift+LMB: drag-detect → orbit; click → on_shift_click ──────
     # Plain LMB is reserved for pick_engine (click = pick, drag =
-    # rubber-band). Shift+LMB drags engage the trackball's Rotate
-    # state mid-gesture; Shift+LMB clicks (no drag) fire the optional
+    # rubber-band). Shift+LMB drags engage the quaternion turntable
+    # orbit (no-roll); Shift+LMB clicks (no drag) fire the optional
     # ``on_shift_click`` callback so consumers can wire a "shift-click
     # adds a probe" behavior without their own observer. The press
     # observer aborts so pick_engine (priority 10) and any default
@@ -320,7 +330,8 @@ def install_navigation(
         _shift_lmb_press_pos[0] = None
         _shift_lmb_did_rotate[0] = False
         if did_rotate:
-            style.EndRotate()
+            _orbit_pivot[0] = None
+            _orbit_last[0] = None
             _abort(caller, _tags["lmb_release"])
             return
         # No drag — fire the click callback if one is wired.
