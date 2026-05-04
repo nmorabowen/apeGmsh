@@ -1,5 +1,53 @@
 # Changelog
 
+## v1.5.0 — Applied loads + reactions diagrams · geometry-scoped gate
+
+One PR landing on top of v1.4.0's post-release work. The
+ResultsViewer gains two new diagram kinds in the Add layer dropdown
+— **Applied loads** (constant force arrows, one diagram per load
+pattern) and **Reactions** (recorded reaction forces and moments,
+auto-scaling per step with the time slider). The composition gate
+is also tightened so adding a brand-new Geometry no longer leaves
+the previous Geometry's diagrams visible.
+
+PR in this release: [#92].
+
+### ADDED — Applied loads diagram ([#92])
+
+`Add layer → Applied loads` lists every `fem.nodes.loads` pattern
+that carries at least one non-zero force record. Each diagram
+renders force arrows at the resolved nodes for one pattern. Reference
+magnitudes only — the broker does not carry the OpenSees
+`timeSeries` function, so step scaling is intentionally deferred
+(the diagram's `update_to_step` is a documented no-op until
+timeSeries metadata lands in the broker). Moments are not drawn
+yet; they need a different glyph and will follow.
+
+### ADDED — Reactions diagram ([#92])
+
+`Add layer → Reactions` (enabled iff the file has any
+`reaction_force_*` or `reaction_moment_*` recordings). Forces render
+as straight arrows; moments use the existing `moment_glyph` curved
+arrow. Each family auto-fits its own scale because forces and
+torques have different units. The diagram is step-resolved — every
+time-slider move re-reads the slab and rebuilds the glyphs. An
+auto-filter drops nodes whose magnitude max-over-time is below
+`zero_tol × global_max`, so free-interior nodes don't pollute the
+scene with near-zero arrows.
+
+### FIXED — Composition gate scoped to active Geometry ([#92])
+
+The gate previously hid layers using the flat diagram registry, so
+adding a new (empty) Geometry kept the previous Geometry's diagrams
+visible — `active_comp is None` set `show_all=True` and turned every
+actor on regardless of which Geometry owned it. The visible-layer
+set is now restricted to compositions of the active Geometry; an
+empty Geometry shows nothing, an existing one with no active
+composition still shows its own layers (preserving the prior
+single-Geometry "show all" intent within the active Geometry).
+
+[#92]: https://github.com/nmorabowen/apeGmsh/pull/92
+
 ## v1.4.0 — ResultsViewer dock split · new-layer attach + lifecycle fixes · import banner
 
 Six PRs landing on top of v1.3.0. The post-solve viewer's right rail
