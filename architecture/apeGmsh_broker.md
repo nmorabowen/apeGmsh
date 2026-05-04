@@ -31,11 +31,14 @@ glue them into a solver-agnostic interface.
 
 ```
 src/apeGmsh/mesh/
-├── FEMData.py           ← the four chambers + top-level broker
-├── _group_set.py        ← PhysicalGroupSet / LabelSet (name-first tiers)
-├── _record_set.py       ← NodeConstraintSet, NodalLoadSet, MassSet, …
-├── _element_types.py    ← ElementTypeInfo / ElementGroup / GroupResult
-└── _fem_factory.py      ← from_gmsh / from_msh construction
+├── FEMData.py             ← the four chambers + top-level broker
+├── _group_set.py          ← PhysicalGroupSet / LabelSet (name-first tiers)
+├── _record_set.py         ← NodeConstraintSet, NodalLoadSet, MassSet, …
+├── _element_types.py      ← ElementTypeInfo / ElementGroup / GroupResult
+├── _fem_factory.py        ← from_gmsh / from_msh construction
+├── _femdata_hash.py       ← snapshot_id digest (Results binding)
+├── _femdata_native_io.py  ← FEMData ⇄ native HDF5 (/model/ group)
+└── _femdata_mpco_io.py    ← FEMData ← MPCO MODEL/ group
 ```
 
 ---
@@ -78,7 +81,7 @@ Concretely, `from_gmsh` does five things inside `_fem_factory.py`:
 4. Snapshots the `Parts` registry's `part_label → set[node_id]` and
    `part_label → set[element_id]` maps so `get(target="col_01")` keeps
    working after the session closes (see `NodeComposite._part_node_map`
-   in `FEMData.py:275`).
+   in `FEMData.py:279`).
 5. Builds `MeshInfo` with element-type metadata and computes the
    semi-bandwidth in one numpy pass (`_compute_bandwidth`).
 
@@ -169,6 +172,7 @@ fem.nodes.get(
     label=None,          # explicit      : label name(s)
     tag=None,            # explicit      : raw PG tag or (dim, tag)
     partition=None,      # intersection  : partition filter
+    dim=None,            # intersection  : entity-dimension filter
 ) -> NodeResult
 ```
 
@@ -560,7 +564,8 @@ Point forces per pattern. Records are `NodalLoadRecord`.
 ```python
 for pat in fem.nodes.loads.patterns():
     for rec in fem.nodes.loads.by_pattern(pat):
-        ops.load(rec.node_id, *rec.values)
+        ops.load(rec.node_id, *(rec.force_xyz or (0,0,0)),
+                              *(rec.moment_xyz or (0,0,0)))
 ```
 
 `.summary()` returns a per-pattern DataFrame.
@@ -583,10 +588,10 @@ flag splitting homogeneous (`fix`) from non-homogeneous (`sp`)
 constraints.
 
 ```python
-for r in fem.nodes.sp.homogeneous():          # boolean mask per DOF
-    ops.fix(r.node_id, *r.flags)
+for r in fem.nodes.sp.homogeneous():           # one record per (node, dof)
+    ops.sp(r.node_id, r.dof, 0.0)              # value is 0.0 for fix
 
-for r in fem.nodes.sp.prescribed():            # value per DOF
+for r in fem.nodes.sp.prescribed():            # non-homogeneous value
     ops.sp(r.node_id, r.dof, r.value)
 
 fem.nodes.sp.by_node(nid)                      # all SPs on one node
@@ -598,12 +603,32 @@ Lumped nodal masses. Records are `MassRecord`.
 
 ```python
 for r in fem.nodes.masses:
-    ops.mass(r.node_id, *r.values)
+    ops.mass(r.node_id, *r.mass)              # length-6 tuple (mx,my,mz,Ixx,Iyy,Izz)
 
 fem.nodes.masses.total_mass()
 fem.nodes.masses.by_node(nid)
 fem.nodes.masses.summary()
 ```
+
+### 7.12 FEMData IO surface (Results binding)
+
+Three top-level methods on `FEMData` are load-bearing for the Results
+module's snapshot/binding contract:
+
+* `snapshot_id` (`FEMData.py:1124`) — cached deterministic content
+  hash over nodes, per-type element connectivity, physical groups, and
+  labels. Computed once via `_femdata_hash.compute_snapshot_id`. Used
+  as the linking key in `Results.bind()`; the [[apeGmsh_broker]] never
+  *enforces* matches — pairing remains the user's responsibility.
+* `to_native_h5(group)` / `from_native_h5(group)` (`FEMData.py:1181`,
+  `:1192`) — round-trip a FEMData into an open HDF5 ``/model/`` group.
+  Loads / masses / constraints are deliberately not serialised (they
+  do not contribute to `snapshot_id`). Two FEMData objects produced
+  by this round-trip yield identical `snapshot_id`.
+* `from_mpco_model(group)` (`FEMData.py:1204`) — synthesise a partial
+  FEMData from an MPCO `MODEL/` group (nodes, elements per OpenSees
+  class tag, PG-from-Region). `snapshot_id` will not match a native
+  FEMData of the same mesh.
 
 ---
 
@@ -700,7 +725,7 @@ for group in fem.elements:
 
 # --- boundary conditions ------------------------------------------------
 for r in fem.nodes.sp.homogeneous():
-    ops.fix(r.node_id, *r.flags)
+    ops.sp(r.node_id, r.dof, 0.0)
 
 # --- constraints --------------------------------------------------------
 for master, slaves in fem.nodes.constraints.rigid_link_groups():
@@ -714,12 +739,13 @@ for p in fem.nodes.constraints.equal_dofs():
 for pat in fem.nodes.loads.patterns():
     ops.pattern('Plain', hash(pat) & 0x7fffffff, 1)
     for r in fem.nodes.loads.by_pattern(pat):
-        ops.load(r.node_id, *r.values)
+        ops.load(r.node_id, *(r.force_xyz or (0,0,0)),
+                            *(r.moment_xyz or (0,0,0)))
     ops.remove('loadPattern', hash(pat) & 0x7fffffff)
 
 # --- masses -------------------------------------------------------------
 for r in fem.nodes.masses:
-    ops.mass(r.node_id, *r.values)
+    ops.mass(r.node_id, *r.mass)
 ```
 
 Nothing in that script calls gmsh, reads a file, or holds a
@@ -776,7 +802,7 @@ A few rules for adding to the broker:
 3. [[apeGmsh_groundTruth]] §2 — where the tier-1 / tier-2 split comes
    from and why it has to survive the freeze.
 4. This file — *what* `FEMData` is made of.
-5. `src/apeGmsh/mesh/FEMData.py` — the 1155-line ground truth; skim
+5. `src/apeGmsh/mesh/FEMData.py` — the ~1240-line ground truth; skim
    classes in the order Node → Element → MeshInfo → Inspect → FEMData.
 6. `src/apeGmsh/mesh/_fem_factory.py` — how the four chambers are
    actually populated from a live gmsh session.

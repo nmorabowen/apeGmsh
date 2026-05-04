@@ -14,7 +14,7 @@ them. MSH is different: it already contains nodes, elements, and
 direct path into the **FEM broker**, skipping geometry and meshing
 entirely.
 
-The guide is grounded in the current source on `nmb_WIP`:
+The guide is grounded in the current source:
 
 - `src/apeGmsh/core/_model_io.py` — `load_iges`, `load_step`,
   `heal_shapes`, `load_msh`, `save_*`

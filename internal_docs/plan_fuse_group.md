@@ -1,5 +1,7 @@
 # Implementation Plan: `PartsRegistry.fuse_group()`
 
+> **Status:** Delivered — `PartsRegistry.fuse_group` shipped (see `src/apeGmsh/core/_parts_fragmentation.py`).
+
 ## Motivation
 
 When building complex geometry from simpler primitives (I-beam from three boxes,

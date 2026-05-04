@@ -45,7 +45,7 @@ g.plot                    → viz/Plot.Plot                     (composite on se
 g.model.selection         → viz/Selection.SelectionComposite  (composite on Model)
 g.model.viewer(**kw)      → viewers/model_viewer.ModelViewer  (interactive BRep)
 g.mesh.viewer(**kw)       → viewers/mesh_viewer.MeshViewer    (interactive mesh + overlays)
-fem.viewer(blocking=)     → Results.viewer → apeGmshViewer    (external frozen-snapshot viewer)
+Results.viewer(blocking=)  → viewers/results_viewer.ResultsViewer (in-process Qt + PyVista; apeGmshViewer/ is frozen)
 GeomTransfViewer().show() → viewers/geom_transf_viewer        (Three.js browser widget)
 VTKExport / Results.to_vtu → .vtu / .pvd for ParaView
 ```
@@ -60,11 +60,16 @@ src/apeGmsh/
 ├── viewers/              ← interactive Qt / PyVista viewport
 │   ├── model_viewer.py   (ModelViewer)
 │   ├── mesh_viewer.py    (MeshViewer)
+│   ├── results_viewer.py (ResultsViewer — post-solve)
 │   ├── geom_transf_viewer.py (GeomTransfViewer, Three.js)
 │   ├── settings()        package-level → opens persistent-prefs dialog
 │   ├── theme_editor()    package-level → opens theme editor dialog
+│   ├── _log.py           per-session action logger (stderr + ~/.apegmsh/viewer-logs/*.log)
+│   ├── _failures.py      safe_slot / safe_connect — surfaces silent Qt slot exceptions
+│   ├── __main__.py       `python -m apeGmsh.viewers <path>` — subprocess entry for Results.viewer(blocking=False)
 │   ├── core/             pick engine, entity registry, color, visibility, navigation
 │   ├── scene/            brep_scene, mesh_scene, glyph_points, origin_markers
+│   ├── diagrams/         post-solve diagram catalogue + dispatcher (Contour, DeformedShape, LineForce, Loads, Reactions, …)
 │   ├── ui/               Qt window + tabs + theme + preferences + theme editor
 │   └── overlays/         constraint / moment / glyph / origin_markers helpers
 └── results/Results.py    ← external-viewer dispatch + .vtu bundling
@@ -202,17 +207,20 @@ flowchart TD
     subgraph VIEWERS [top-level viewers]
         MV[ModelViewer]
         MsV[MeshViewer]
+        RV[ResultsViewer — post-solve]
         GTV[GeomTransfViewer — Three.js]
     end
 
     MV --> W
     MsV --> W
+    RV --> W
     W --> T1
     W --> T2
     W --> TH
     MV --> BS
     MsV --> MS
     MsV --> OV
+    RV --> MS
     BS --> ER
     MS --> ER
     MS --> GP
@@ -222,6 +230,7 @@ flowchart TD
     PE --> SS
     MsV --> NV
     MV --> NV
+    RV --> NV
 ```
 
 ### 2.1 Top-level viewers
@@ -614,6 +623,26 @@ Five rules for adding to the visualization surface:
    + stdout, `viewers/` for Qt + PyVista + overlays. Do not mix. If
    a concept needs both a matplotlib and a PyVista rendering, write
    two files.
+
+7. **Funnel ResultsViewer gestures through the event-loop dispatcher.**
+   `viewers/diagrams/_dispatch.py` is the single pipeline for the
+   four primitives that drive what the viewport paints — **STEP**
+   (push step values to diagrams), **DEFORM** (recompute deformed
+   substrate points), **GATE** (composition visibility gate), and
+   **RENDER** (one coalesced `plotter.render()`). Every UI gesture,
+   observer, and shortcut routes through `Dispatcher.fire(event_kind,
+   ...)`, which selects the right primitive sequence from the event
+   matrix. Bypassing the dispatcher (calling `plotter.render()`
+   directly, or mutating actor visibility outside `GATE`) re-introduces
+   the N-squared registry pump and silently breaks the composition
+   gate — don't.
+
+Two cross-cutting helpers live at `viewers/` package root:
+`_log.py` (per-session action logger writing to
+`~/.apegmsh/viewer-logs/session-*.log`, used by every dispatch /
+gesture) and `__main__.py` (`python -m apeGmsh.viewers <path>` —
+the subprocess entry point that `Results.viewer(blocking=False)`
+spawns).
 
 ---
 

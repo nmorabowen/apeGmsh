@@ -40,7 +40,7 @@ bandwidth-reducing orderings.
 ## 2. Simple renumbering
 
 ```python
-g.mesh.partitioning.renumber_mesh(dim=3, method="simple", base=1)
+g.mesh.partitioning.renumber(dim=3, method="simple", base=1)
 fem = g.mesh.queries.get_fem_data(dim=3)
 ```
 
@@ -56,7 +56,7 @@ bandwidth optimization. Use this when you just need contiguous IDs
 ## 3. RCM renumbering
 
 ```python
-g.mesh.partitioning.renumber_mesh(dim=3, method="rcm", base=1)
+g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
 fem = g.mesh.queries.get_fem_data(dim=3)
 print(f"Bandwidth: {fem.info.bandwidth}")
 ```
@@ -83,9 +83,8 @@ ordering is already decent).
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
 | `dim` | 2 | Element dimension for adjacency graph |
-| `method` | `"simple"` | `"simple"` (contiguous) or `"rcm"` (bandwidth-minimizing) |
+| `method` | `"rcm"` | `"simple"` (contiguous), `"rcm"`, `"hilbert"`, or `"metis"` |
 | `base` | 1 | Starting ID. 1 for OpenSees/Abaqus, 0 for C-style |
-| `used_only` | True | Only renumber nodes connected to elements |
 
 
 ## 5. Mesh partitioning (for MPI)
@@ -109,20 +108,12 @@ g.mesh.partitioning.unpartition()
 - Parallel mesh export (each partition → separate file)
 
 
-## 6. Low-level renumbering
+## 6. Public API
 
-For custom renumbering schemes:
-
-```python
-# Compute renumbering without applying it
-node_old, node_new = g.mesh.partitioning.compute_renumbering(
-    dim=3, method="rcm", base=1,
-)
-
-# Apply manually
-g.mesh.partitioning.renumber_nodes(node_old, node_new)
-g.mesh.partitioning.renumber_elements(elem_old, elem_new)
-```
+`renumber()` is the only public entry point on `_Partitioning`. It handles
+both nodes and elements in a single call; the per-step helpers
+(`_renumber_nodes_simple`, `_renumber_elements_simple`) are private and
+should not be invoked directly.
 
 
 ## 7. Standalone Numberer
@@ -134,8 +125,8 @@ from apeGmsh.solvers import Numberer
 
 fem = g.mesh.queries.get_fem_data(dim=3)
 numb = Numberer(fem)
-info = numb.renumber(method="rcm", base=1)
-print(f"Bandwidth reduced: {info.bandwidth}")
+nm = numb.renumber(method="rcm", base=1)   # → NumberedMesh
+print(nm)
 ```
 
 

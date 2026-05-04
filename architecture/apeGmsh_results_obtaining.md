@@ -363,14 +363,17 @@ Every read-side `Results.from_*` call walks the same protocol:
 
 1. The file embeds (native) or synthesizes (MPCO) a `FEMData`
    snapshot tagged with a `snapshot_id`.
-2. If the user passed a `fem=` snapshot, hashes must match —
-   otherwise `BindError`.
+2. If the user passed a `fem=` snapshot, it is preferred (it
+   typically carries richer apeGmsh-specific labels and provenance
+   than the embedded snapshot).
 3. Without `fem=`, the embedded/synthesized snapshot is used
    directly.
 
-So a spec resolved against `fem` and a results file produced from
-that run are **provably consistent** — the snapshot ID is the
-contract. This is what lets `pg="Top"` work on `results.nodes.get`
+The `snapshot_id` hash is computed and stored as metadata, but bind
+never enforces equality — pairing a FEMData with a results file from
+the same run is the user's responsibility (see `_bind.py:8-10`). The
+`BindError` symbol is retained for back-compat but is no longer
+raised. This is what lets `pg="Top"` work on `results.nodes.get`
 even after the gmsh session has closed.
 
 ---

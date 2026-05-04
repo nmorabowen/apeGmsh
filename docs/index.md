@@ -113,6 +113,17 @@ hide:
 
     [Reference →](api/results.md)
 
+-   :material-package-variant: &nbsp; **v1.4 – v1.5 polish**
+
+    ---
+
+    Import banner with `APEGMSH_QUIET=1` opt-out, event-loop
+    dispatcher for the viewers, per-card Apply on diagram layers,
+    per-Geometry display fix, and applied-loads & reactions
+    diagrams.
+
+    [Changelog →](changelog.md)
+
 </div>
 
 --8<-- "README.md"

@@ -28,7 +28,7 @@ results = Results.from_native("run.h5")
 results = Results.from_native("run.h5", fem=fem)   # explicit bind override
 ```
 
-A native file embeds a frozen `FEMData` snapshot under `/model/`. If `fem=` is omitted, that snapshot is the bound FEMData. If `fem=` is provided and the file embeds a snapshot, the two `snapshot_id` hashes must match.
+A native file embeds a frozen `FEMData` snapshot under `/model/`. If `fem=` is omitted, that snapshot is the bound FEMData. If `fem=` is provided it is preferred (it typically carries richer apeGmsh-specific labels and provenance than the embedded snapshot). The `snapshot_id` hash is computed and stored as metadata, but bind never enforces equality — pairing a FEMData with a results file from the same run is the user's responsibility.
 
 ### `Results.from_mpco` — STKO HDF5
 
@@ -57,7 +57,7 @@ results = Results.from_recorders(spec, "out/", fem=fem)
 gravity = Results.from_recorders(spec, "out/", fem=fem, stage_id="gravity")
 ```
 
-`from_recorders` transcodes the recorder files into a cached HDF5 (`writers/_cache.py`), keyed on file mtimes + spec `snapshot_id`, and then opens that through `from_native`. Subsequent calls with unchanged inputs return the cached HDF5 directly. `fem=` is required — the spec's `snapshot_id` must match.
+`from_recorders` transcodes the recorder files into a cached HDF5 (`writers/_cache.py`), keyed on file mtimes + spec `snapshot_id`, and then opens that through `from_native`. Subsequent calls with unchanged inputs return the cached HDF5 directly. `fem=` is required (omitting it raises `TypeError`) because the spec's `snapshot_id` participates in the cache key — but no hash equality is enforced against the resulting file.
 
 
 ## Stage scoping
@@ -181,6 +181,8 @@ in_box = results.nodes.get(component="displacement_z").in_box(
 
 Full coverage of selectors, slab dataclass shapes, time slicing, and the `.available_components()` discovery API lives in [`guide_results_filtering.md`](guide_results_filtering.md). The vocabulary (`displacement_z`, `stress_xx`, `section.fiber.stress`, etc.) is documented in [`guide_recorders_reference.md`](guide_recorders_reference.md).
 
+**Tri31 strain gap.** The Tri31 element has no element-level `"strains"` response branch in OpenSees (only `"stresses"`). Domain capture routes around this by collecting strain per Gauss-point material via `ops.eleResponse(eid, "material", "<gp>", "strain")` for any class listed in `PER_MATERIAL_STRAIN_CLASSES` (`solvers/_element_response.py:2072`); see `capture/_domain.py:870-874` for the per-material query path. From the read side this is invisible — `results.elements.gauss.get(component="strain_xx", pg="Body")` works the same as for any other continuum class.
+
 
 ## Practical workflow
 
@@ -230,7 +232,7 @@ results.inspect.summary()    # multi-line human-readable summary
 print(repr(results))         # same as .inspect.summary()
 ```
 
-The summary lists stages, kinds, step counts, available components, and the bound FEMData. It's the first thing to print when a results file behaves unexpectedly.
+The summary lists stages, kinds, step counts, available components, and the bound FEMData. It's the first thing to print when a results file behaves unexpectedly. When a specific component comes back empty, call `results.inspect.diagnose("stress_xx")` for a per-level routing report that shows where the component lives or why it's missing.
 
 
 ## See also

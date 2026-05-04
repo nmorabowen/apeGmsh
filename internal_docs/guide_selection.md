@@ -321,12 +321,12 @@ This is the `FEMData` source-agnostic contract in action: a constraint handler o
 Here is what the two sides look like in one session, so you can see where everything lands on the broker:
 
 ```python
-import apeGmsh as pyg
+from apeGmsh import apeGmsh
 
-g = pyg.Session(verbose=True)
+g = apeGmsh(model_name="selection_demo", verbose=True)
 
 # --- Geometry (pre-mesh) -------------------------------------------
-g.part.add_box(0, 0, 0, 10, 10, 10, name="blk")
+g.model.geometry.add_box(0, 0, 0, 10, 10, 10, label="blk")
 g.model.sync()
 
 # Geometric selection → physical group (survives meshing)

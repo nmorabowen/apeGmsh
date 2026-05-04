@@ -13,7 +13,7 @@ The guide is grounded in the current source:
 - `src/apeGmsh/core/LoadsComposite.py` — the user-facing composite
 - `src/apeGmsh/solvers/Loads.py` — `LoadDef`, `LoadRecord`, and
   `LoadResolver` (pure mesh math, no Gmsh)
-- `src/apeGmsh/mesh/FEMData.py` — the `NodalLoadSet` / `SPSet` / `ElementLoadSet` that lands in the broker
+- `src/apeGmsh/mesh/_record_set.py` — the `NodalLoadSet` / `SPSet` / `ElementLoadSet` that lands in the broker
 
 All snippets assume an open session:
 
@@ -60,8 +60,8 @@ pairs: names survive remeshing; tags do not.
 ## 2. Targets: what a load can be attached to
 
 Every load factory takes a `target` as its first argument. A target is
-any of four things, resolved in this order by
-`LoadsComposite._resolve_target`:
+any of five things, resolved in this order by
+`LoadsComposite._resolve_target` (`LoadsComposite.py:108-117`):
 
 1. **A raw list of `(dim, tag)` tuples.** Escape hatch for low-level
    code. `g.loads.point([(0, 12)], force_xyz=(0, 0, -1000))`.
@@ -69,22 +69,28 @@ any of four things, resolved in this order by
    under that name, the load attaches to its nodes or elements directly.
    This is the only way to load a subset of an entity that was carved
    out by a post-mesh selection.
-3. **A physical group name.** Looked up via
+3. **A label name (Tier 1).** A `_label:`-prefixed physical group
+   produced by `g.labels` / part labels. Checked against
+   `gmsh.model.getPhysicalGroups()` after the prefix is added.
+4. **A physical group name (Tier 2).** User-authored PG, looked up via
    `gmsh.model.getPhysicalGroups()` and `getPhysicalName`. Loads apply
    to every entity in the group.
-4. **A part label.** Falls back to `g.parts.instances[label].entities`.
+5. **A part label.** Falls back to `g.parts._instances[label].entities`.
 
-If a name matches nothing in any of the four layers, you get a
-`KeyError` immediately at definition time, not during resolution. That
-is deliberate: typos are cheap to fix before meshing and expensive to
-chase after.
+If a name matches nothing in any of the five layers, you get a
+`KeyError` — but **not** at definition time. `_add_def` only validates
+the `(reduction, target_form)` dispatch; target resolution runs from
+`validate_pre_mesh()` (called by `Mesh.generate()` before meshing) and
+again from `get_fem_data()` at resolve time. Typos surface at
+``g.mesh.generation.generate(...)``, before any expensive mesh work.
 
-The four-layer lookup is the reason this guide recommends physical
-groups or part labels for almost everything. Both are created from
-geometry and survive any mesh refinement. Mesh selections are powerful
-but coupled to a specific mesh state; use them when you genuinely need
-to pick nodes by coordinate, proximity, or a post-mesh query, and
-accept that the selection has to be rebuilt if the mesh changes.
+The five-layer lookup is the reason this guide recommends physical
+groups, labels, or part labels for almost everything. All three are
+created from geometry and survive any mesh refinement. Mesh selections
+are powerful but coupled to a specific mesh state; use them when you
+genuinely need to pick nodes by coordinate, proximity, or a post-mesh
+query, and accept that the selection has to be rebuilt if the mesh
+changes.
 
 
 ## 3. Patterns
@@ -214,17 +220,47 @@ with g.loads.pattern("tip_load"):
     g.loads.point("tip", force_xyz=(0.0, 0.0, -10_000.0))
 ```
 
-`force_xyz` is optional; so is `moment_xyz`. At least one must be
-nonzero, and specifying a moment on a model whose DOF count is less
-than 4 raises a `ValueError` during resolution (no rotational DOFs to
-absorb it). A 2D model (`ndf=3`) accepts `force_xyz=(Fx, Fy)` and a
-single scalar moment `moment_xyz=(Mz,)`.
+`force_xyz` is optional; so is `moment_xyz`. The resolver accumulates a
+length-6 `(Fx, Fy, Fz, Mx, My, Mz)` vector unconditionally — there is
+no `ndf < 4` check at resolution time. The slice down to the active
+DOF count happens at solver-ingest time (the OpenSees bridge drops
+moment components for `ndf < 4` models). A 2-D planar frame
+(`ndm=2, ndf=3`) accepts `force_xyz=(Fx, Fy)` and a single scalar
+moment `moment_xyz=(Mz,)`. Note that `ndf=3` is **not** a 2-D-only
+flag: a 3-D continuum model also runs at `ndf=3` (three translations,
+no rotations) — there the moment components are simply discarded by
+the bridge.
 
 Targeting anything with more than one node broadcasts the *same*
 force to each of them, which is rarely what you want for a line or
 area — that is what distributed loads are for. The only legitimate
 use of a multi-node point-load target is applying an identical
 reaction at a row of pinned nodes (e.g., a support jack).
+
+### 5.1 `point_closest` — coordinate-driven point loads
+
+When the load point doesn't sit on a named entity, use `point_closest`
+to snap it to the nearest mesh node at resolve time:
+
+```python
+g.loads.point_closest(
+    xyz=(2.5, 0.0, 3.0),
+    force_xyz=(0, 0, -10_000),
+)
+```
+
+Optional kwargs:
+
+- `tol=` — apply the load to **every** node within ``tol`` of `xyz`
+  instead of the single nearest one. Useful for distributing a point
+  load across a small cluster.
+- `within=` (or `pg=` / `label=` / `tag=`) — restrict the snap pool
+  to a named entity. Without it the search runs against every domain
+  node.
+- `snap_distance` — written back onto the def after resolution so it
+  surfaces in `summary()`.
+
+See `Loads.py:58-75` (`PointClosestLoadDef`) and `LoadsComposite.py`.
 
 
 ## 6. Line loads
@@ -270,6 +306,31 @@ proper parabolic moment diagram inside the element. With
 `target_form="nodal"`, the same line load lumps into two end forces
 per element and the internal moment diagram is piecewise linear —
 still correct at the nodes, but wrong between them.
+
+### 6.1 Normal pressure on a curve — `normal=True`
+
+For 2-D pressure loads (or in-plane normal pressure on a 3-D edge
+that bounds a single surface), pass `normal=True` instead of a
+direction. The in-plane normal `(t_y, -t_x, 0)` is sign-flipped per
+edge so it points away from `away_from=` (a reference point that
+represents the *source* of the load — e.g. the centre of an arched
+cavity loaded by internal pressure). Positive `magnitude` then
+pushes into the structure:
+
+```python
+g.loads.line(
+    "cavity_arch",
+    magnitude=1.0e5,
+    normal=True,
+    away_from=(0.0, 0.0, 0.0),
+)
+```
+
+Without `away_from`, apeGmsh consults the parent surface's Gmsh
+boundary orientation to decide which side is "into the structure".
+If the curve has no adjacent surface, or bounds more than one, the
+resolver raises `ValueError` — disambiguate by passing `away_from`.
+See `Loads.py:98-99` (`LineLoadDef.normal` / `away_from`).
 
 
 ## 7. Surface loads

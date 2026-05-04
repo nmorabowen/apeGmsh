@@ -1,5 +1,7 @@
 # Element Transcoding — Plan
 
+> **Status:** Partly implemented — `_element_response.py` and `cpp_class_name` plumbing landed; element-level capture/emit still in progress for some categories.
+
 > [!note] Status
 > Scoped April 2026 after Phases 0–8 landed. The Results module's
 > read path (Phase 3) and all three write strategies (Phases 5/6/7/8)

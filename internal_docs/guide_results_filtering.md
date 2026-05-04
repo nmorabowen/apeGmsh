@@ -556,7 +556,13 @@ results.nodes.get(pg="Top", ...)
 
 Either pass `fem=` to `from_native` or call `results.bind(fem)`. The
 embedded `FEMData` snapshot from native files works for IDs but not
-always for labels — the binding contract is hash-checked.
+always for labels — the session-side FEMData typically carries richer
+labels and Part provenance. The `snapshot_id` hash is computed and
+stored as metadata, but bind never enforces equality — pairing a
+FEMData with a results file from the same run is the user's
+responsibility. When a query returns nothing unexpectedly, call
+`results.inspect.diagnose("<component>")` for a per-level routing
+report.
 
 ### 10.2  "My in_box returns nothing"
 

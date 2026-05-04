@@ -73,20 +73,21 @@ flowchart LR
 
 ## 2. LoadDef hierarchy (pre-mesh, intent)
 
-Seven dataclasses, all inheriting from `LoadDef`. Each carries a
+Eight dataclasses, all inheriting from `LoadDef`. Each carries a
 `target` identifier (flexible — resolved by the composite), a `pattern`
 name (for grouping), and — for distributed loads — a `reduction` and
 `target_form` pair that selects the math at resolve-time.
 
-| Def subclass           | Geometric scope            | Extra fields                                                    |
-| ---------------------- | -------------------------- | --------------------------------------------------------------- |
-| `PointLoadDef`         | node(s)                    | `force_xyz`, `moment_xyz`                                       |
-| `LineLoadDef`          | curve / 1-D entity         | `magnitude`+`direction` or `q_xyz`                              |
-| `SurfaceLoadDef`       | face / 2-D entity          | `magnitude`, `normal: bool`, `direction`                        |
-| `GravityLoadDef`       | volume / 3-D entity        | `g=(gx,gy,gz)`, `density` (or ``None`` to defer to the solver)  |
-| `BodyLoadDef`          | volume / 3-D entity        | `force_per_volume=(bx,by,bz)`                                   |
-| `FaceLoadDef`          | single face, centroid load | `force_xyz`, `moment_xyz` (least-norm to nodes)                 |
-| `FaceSPDef`            | single face, prescribed u  | `dofs`, `disp_xyz`, `rot_xyz` (rigid-body motion at centroid)   |
+| Def subclass             | Geometric scope            | Extra fields                                                    |
+| ------------------------ | -------------------------- | --------------------------------------------------------------- |
+| `PointLoadDef`           | node(s)                    | `force_xyz`, `moment_xyz`                                       |
+| `PointClosestLoadDef`    | nearest mesh node(s) to xyz | `xyz_request`, `within`, `tol`, `snap_distance` (writeback)   |
+| `LineLoadDef`            | curve / 1-D entity         | `magnitude`+`direction`/`q_xyz`; `normal`+`away_from`           |
+| `SurfaceLoadDef`         | face / 2-D entity          | `magnitude`, `normal: bool`, `direction`                        |
+| `GravityLoadDef`         | volume / 3-D entity        | `g=(gx,gy,gz)`, `density` (or ``None`` to defer to the solver)  |
+| `BodyLoadDef`            | volume / 3-D entity        | `force_per_volume=(bx,by,bz)`                                   |
+| `FaceLoadDef`            | single face, centroid load | `force_xyz`, `moment_xyz` (least-norm to nodes)                 |
+| `FaceSPDef`              | single face, prescribed u  | `dofs`, `disp_xyz`, `rot_xyz` (rigid-body motion at centroid)   |
 
 All Def subclasses inherit three pipeline-selecting fields from the
 base class:
@@ -129,21 +130,34 @@ method either appends a `LoadDef` or consumes one at resolve-time.
 Each mirrors the Def subclass it builds:
 
 ```python
-g.loads.point   (target, *, pg=None, label=None, tag=None,
-                 force_xyz=None, moment_xyz=None, name=None)
-g.loads.line    (target, *, magnitude=None, direction=(0,0,-1),
-                 q_xyz=None, reduction="tributary",
-                 target_form="nodal", name=None)
-g.loads.surface (target, *, magnitude=0., normal=True,
-                 direction=(0,0,-1), reduction="tributary",
-                 target_form="nodal", name=None)
-g.loads.gravity (target, *, g=(0,0,-9.81), density=None,
-                 reduction="tributary", target_form="nodal", name=None)
-g.loads.body    (target, *, force_per_volume=(0,0,0),
-                 reduction="tributary", target_form="nodal", name=None)
-g.loads.face_load(target, *, force_xyz=None, moment_xyz=None, name=None)
-g.loads.face_sp (target, *, dofs=None, disp_xyz=None, rot_xyz=None, name=None)
+g.loads.point         (target, *, pg=None, label=None, tag=None,
+                       force_xyz=None, moment_xyz=None, name=None)
+g.loads.point_closest (xyz, *, within=None, pg=None, label=None, tag=None,
+                       force_xyz=None, moment_xyz=None,
+                       tol=None, name=None)
+g.loads.line          (target, *, magnitude=None, direction=(0,0,-1),
+                       q_xyz=None, reduction="tributary",
+                       target_form="nodal", name=None)
+g.loads.surface       (target, *, magnitude=0., normal=True,
+                       direction=(0,0,-1), reduction="tributary",
+                       target_form="nodal", name=None)
+g.loads.gravity       (target, *, g=(0,0,-9.81), density=None,
+                       reduction="tributary", target_form="nodal", name=None)
+g.loads.body          (target, *, force_per_volume=(0,0,0),
+                       reduction="tributary", target_form="nodal", name=None)
+g.loads.face_load     (target, *, force_xyz=None, moment_xyz=None, name=None)
+g.loads.face_sp       (target, *, dofs=None, disp_xyz=None, rot_xyz=None, name=None)
 ```
+
+> [!tip] `point_closest` — coordinate-driven point loads
+> When the load point doesn't live on a named PG/label, give a
+> world-coordinate `xyz` and let the composite snap to the nearest
+> mesh node at resolve time. `within=` (PG / label / part / DimTag
+> list) restricts the candidate pool. `tol=None` (default) returns
+> the single nearest node; `tol > 0` returns every node inside that
+> radius. The actual snap distance is written back to
+> `defn.snap_distance` after resolve so it surfaces in `summary()`
+> (see `LoadsComposite.py:245-278, 1065-1121`).
 
 ### 3.2 Target resolution (the five-step lookup)
 
@@ -189,17 +203,18 @@ combination raises **before** the def is stored, so the failure
 message names the offending call site, not the resolve pass.
 
 ```
-PointLoadDef     │ tributary / nodal     → _resolve_point
-LineLoadDef      │ {trib,cons} × nodal   → _resolve_line_{tributary,consistent}
-                 │ {trib,cons} × element → _resolve_line_element
-SurfaceLoadDef   │ {trib,cons} × nodal   → _resolve_surface_{tributary,consistent}
-                 │ {trib,cons} × element → _resolve_surface_element
-GravityLoadDef   │ {trib,cons} × nodal   → _resolve_gravity_{tributary,consistent}
-                 │ {trib,cons} × element → _resolve_gravity_element
-BodyLoadDef      │ {trib,cons} × nodal   → _resolve_body_tributary
-                 │ {trib,cons} × element → _resolve_body_element
-FaceLoadDef      │ tributary / nodal     → _resolve_face_load
-FaceSPDef        │ tributary / nodal     → _resolve_face_sp
+PointLoadDef          │ tributary / nodal     → _resolve_point
+PointClosestLoadDef   │ tributary / nodal     → _resolve_point_closest
+LineLoadDef           │ {trib,cons} × nodal   → _resolve_line_{tributary,consistent}
+                      │ {trib,cons} × element → _resolve_line_element
+SurfaceLoadDef        │ {trib,cons} × nodal   → _resolve_surface_{tributary,consistent}
+                      │ {trib,cons} × element → _resolve_surface_element
+GravityLoadDef        │ {trib,cons} × nodal   → _resolve_gravity_{tributary,consistent}
+                      │ {trib,cons} × element → _resolve_gravity_element
+BodyLoadDef           │ {trib,cons} × nodal   → _resolve_body_tributary
+                      │ {trib,cons} × element → _resolve_body_element
+FaceLoadDef           │ tributary / nodal     → _resolve_face_load
+FaceSPDef             │ tributary / nodal     → _resolve_face_sp
 ```
 
 Each `_resolve_<kind>` method is a thin shim: it queries Gmsh for the
@@ -218,6 +233,32 @@ hands raw arrays to `LoadResolver`. Three helpers back this:
 The fast path for part-label targets uses the pre-computed `node_map`
 (built by [[apeGmsh_partInstanceAssemble#PartsRegistry|`g.parts.build_node_map`]])
 instead of re-querying Gmsh.
+
+### 3.4 Per-edge normal pressure on lines
+
+`LineLoadDef.normal=True` (with optional `away_from=(x0, y0, z0)`,
+`Loads.py:98-99`) emits a force-per-length vector perpendicular to
+each edge in the xy-plane. Three composite-side helpers back this:
+
+- `_curve_inplane_sign(curve_tag)` — uses `gmsh.model.getAdjacencies`
+  + oriented boundary to recover the in-plane "into-structure" sign
+  when the curve bounds exactly one surface
+  (`LoadsComposite.py:1143`).
+- `_edge_normal_q(...)` — builds the per-edge normal vector
+  `(-Ty, Tx, 0)` (or its mirror), flipping toward / away from
+  `away_from` when given (`LoadsComposite.py:1176`).
+- `_collect_line_normal_items(...)` — walks every 1-D mesh element on
+  the resolved entities and bundles `(n1, n2, q)` tuples for the
+  resolver (`LoadsComposite.py:1210`).
+
+### 3.5 `validate_pre_mesh()`
+
+`LoadsComposite.validate_pre_mesh()` (`LoadsComposite.py:753`) walks
+every stored `LoadDef` whose `target` is a string and re-runs
+`_resolve_target` so unknown labels / PGs / part labels surface as
+`KeyError` *before* meshing. It is invoked by `Mesh.generate(...)`
+so typos fail fast rather than after minutes of meshing. Raw
+`(dim, tag)` lists are skipped.
 
 ---
 

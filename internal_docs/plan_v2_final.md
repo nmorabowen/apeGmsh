@@ -1,5 +1,7 @@
 # pyGmsh v2 — Final Implementation Plan
 
+> **Status:** Delivered — v2 architecture (no Assembly class, parts registry, unified composites) is what shipped through v1.0+. Historical reference.
+
 ## Architecture Principles
 
 1. **pyGmsh IS the assembly.** Single runtime, all features always available.

@@ -158,6 +158,10 @@ Rotation format is `(angle_rad, ax, ay, az)` for rotation about the origin, or
 `(angle_rad, ax, ay, az, cx, cy, cz)` to specify a custom center of rotation.
 Rotation is applied before translation.
 
+For post-import edits and array generation, every Instance exposes an `inst.edit`
+composite (and every Part a `part.edit` composite) with `translate`, `rotate`,
+`mirror`, `copy`, `pattern_linear`, `pattern_polar`, and `align_to` methods.
+
 ## Phase 4 — Fragment for Conformal Meshing
 
 When two parts share an interface (a beam sitting on a column, a slab touching a
@@ -186,13 +190,15 @@ will trigger a warning during fragmentation.  Use `g.parts.from_model()` or
 
 ## Phase 5 — Physical Groups and Mesh Generation
 
-### Automatic physical groups from parts
+### Promote part labels to physical groups
 
-The simplest path—one physical group per instance label:
+The simplest path—promote each part label to a physical group of the same name:
 
 ```python
-g.parts.add_physical_groups()
-# → {"col_left": 1, "col_right": 2, "beam_top": 3, "foundation": 4}
+g.labels.promote_to_physical("col_left")
+g.labels.promote_to_physical("col_right")
+g.labels.promote_to_physical("beam_top")
+g.labels.promote_to_physical("foundation")
 ```
 
 ### Manual physical groups
@@ -201,8 +207,8 @@ For finer control (e.g., tagging surfaces for boundary conditions), use the
 standard `g.physical` API:
 
 ```python
-g.physical.add("base_fixed", dim=2, tags=[...])
-g.physical.add("load_surface", dim=2, tags=[...])
+g.physical.add(2, [...], name="base_fixed")
+g.physical.add(2, [...], name="load_surface")
 ```
 
 ### Mesh generation
@@ -344,8 +350,10 @@ g.parts.add(beam,   label="beam_top",  translate=(0, 0, 3.0))
 
 g.parts.fragment_all()
 
-# Physical groups
-g.parts.add_physical_groups()
+# Physical groups (one per part label)
+g.labels.promote_to_physical("col_left")
+g.labels.promote_to_physical("col_right")
+g.labels.promote_to_physical("beam_top")
 
 # Mesh
 g.mesh.sizing.set_size_global(min_size=50, max_size=150)

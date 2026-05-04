@@ -1,5 +1,7 @@
 # pyGmsh v2 — Unified Architecture Implementation Plan
 
+> **Status:** Delivered — v2 architecture (no Assembly class, parts registry, unified composites) is what shipped through v1.0+. Historical reference.
+
 ## Vision
 
 pyGmsh becomes the single full-featured runtime. Whether you model one body or assemble ten, you use the same object with all composites available. Assembly is removed. Part stays as an optional standalone geometry builder.

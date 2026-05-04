@@ -1,5 +1,7 @@
 # Design Note: Rigid Element Formulation for node_to_surface
 
+> **Status:** Aspirational — design note only; the in-use workaround is `node_to_surface_spring` (stiff-beam variant).
+
 ## Problem
 
 `rigidLink` in OpenSees is an **MP_Constraint** (constraint equation), not an element.

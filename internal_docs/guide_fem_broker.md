@@ -111,16 +111,34 @@ fem.elements.connectivity  # ndarray(E, npe)   dtype=object
 **Selection API:**
 
 ```python
-ids, conn = fem.elements.get(pg="Body")           # by PG
-ids, conn = fem.elements.get(label="col.web")     # by label
-ids, conn = fem.elements.get()                    # all elements
+# .get() returns a GroupResult — a collection of per-type ElementGroups
+result = fem.elements.get(pg="Body")
+ids    = result.ids                  # all element IDs concatenated
+conn   = result.connectivity         # only valid if homogeneous (single type)
+
+# Flatten to (ids, conn) when you know the selection is single-type
+ids, conn = fem.elements.resolve(pg="Body")          # by PG
+ids, conn = fem.elements.resolve(label="col.web")    # by label
+ids, conn = fem.elements.resolve()                   # all elements (single-type)
+
+# Or pick one type from a mixed selection
+ids, conn = fem.elements.resolve(pg="Body", element_type="tet4")
+
+# Iterate per-type when the selection mixes types
+for group in fem.elements.get(pg="Body"):
+    for eid, conn_row in group:
+        ops.element(group.element_type.name, eid, *conn_row, mat_tag)
 
 # Individual
 eids = fem.elements.get_ids(pg="Body")
-conn = fem.elements.get_connectivity(pg="Body")
 ```
 
-Returns an `ElementResult` NamedTuple with `.to_dataframe()`.
+`.get()` returns a `GroupResult` (`_element_types.py:232`); it is
+**not** a NamedTuple and unpacking it via `ids, conn = ...` will
+fail. Use `.resolve()` for the flat tuple form, or access `.ids` /
+`.connectivity` attributes on the `GroupResult`. There is no
+`get_connectivity(...)` shortcut — use
+`fem.elements.resolve(...).` `[1]` or `fem.elements.get(...).connectivity`.
 
 **Random access:**
 
@@ -292,6 +310,89 @@ fem.info.summary()       # one-line string
 ```
 
 
+## Snapshot identity and persistence
+
+The broker carries a content-addressed identifier and three persistence
+entry points (`FEMData.py:1124, 1181, 1192, 1204`):
+
+```python
+fem.snapshot_id          # str — deterministic content hash, cached
+```
+
+`snapshot_id` is the linking contract for the Results module:
+`Results.bind()` uses it to refuse pairing a results file against a
+mesh it didn't come from. Computed on first access from
+`_femdata_hash.compute_snapshot_id`.
+
+```python
+import h5py
+
+# Embed this FEMData inside a results HDF5 group
+with h5py.File("run.h5", "a") as f:
+    fem.to_native_h5(f.require_group("model"))
+
+# Round-trip through the same group later
+with h5py.File("run.h5", "r") as f:
+    fem2 = FEMData.from_native_h5(f["model"])
+assert fem2.snapshot_id == fem.snapshot_id    # same hash
+```
+
+`from_native_h5` reconstructs nodes, elements (per type), physical
+groups, and labels. Loads / masses / constraints are not round-tripped
+because they don't influence `snapshot_id` and the viewer doesn't need
+them.
+
+```python
+# Synthesize a partial FEMData from an MPCO MODEL/ group
+with h5py.File("results.mpco", "r") as f:
+    fem_mpco = FEMData.from_mpco_model(f["MODEL"])
+```
+
+`from_mpco_model` carries nodes, elements (keyed by negated OpenSees
+class tag instead of Gmsh codes), and physical groups derived from
+MPCO Regions. Labels and pre-mesh declarations are absent. The
+`snapshot_id` will not match a native FEMData built from the same
+mesh — that's expected.
+
+
+## SP records (prescribed displacements)
+
+`g.loads.face_sp(...)` produces `SPRecord` entries on `fem.nodes.sp`
+(`FEMData.py:270`). The set behaves like the other record sub-composites:
+
+```python
+for rec in fem.nodes.sp.homogeneous():
+    # rec.node_id, rec.dof   -- emit ops.fix(...)
+    ...
+
+for rec in fem.nodes.sp.prescribed():
+    # rec.node_id, rec.dof, rec.value   -- emit ops.sp(...)
+    ...
+```
+
+Ingest into the OpenSees bridge via `g.opensees.ingest.sp(fem)`.
+
+
+## Selection shorthand and dim filter
+
+`.get(...)` accepts a positional `target=` shorthand (auto-resolved
+against PGs first, then labels, then parts) and a `dim=` filter to
+narrow by entity dimension (`FEMData.py:300-309`):
+
+```python
+# Positional shorthand — searches PGs, then labels
+result = fem.elements.get("Body")
+
+# Restrict to a dimension when a name exists at multiple dims
+result = fem.elements.get("interface", dim=2)    # only the 2-D entities
+
+# Combine with element_type for a single-type slice
+ids, conn = fem.elements.get("Body", dim=3).resolve(element_type="tet4")
+```
+
+A list passed to `target=` is interpreted as a **union** of targets.
+
+
 ## Complete solver workflow
 
 ```python
@@ -329,8 +430,13 @@ for nid, xyz in fem.nodes.constraints.phantom_nodes():
     ops.node(nid, *xyz)
 
 # 3. Elements
-for eid, conn in zip(*fem.elements.get()):
-    ops.element("FourNodeTetrahedron", eid, *conn, mat_tag)
+for group in fem.elements.get():
+    for eid, conn in group:
+        ops.element("FourNodeTetrahedron", eid, *conn, mat_tag)
+# Or if you know the mesh is single-type:
+# ids, conn = fem.elements.resolve()
+# for eid, row in zip(ids, conn):
+#     ops.element("FourNodeTetrahedron", eid, *row, mat_tag)
 
 # 4. Supports
 for nid in fem.nodes.get_ids(pg="Base"):

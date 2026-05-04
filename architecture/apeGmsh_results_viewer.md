@@ -189,6 +189,8 @@ The implementation phasing is in the plan; this is the target catalogue.
 | `LayerStackDiagram`       | `LayerSlab`                     | Shell mid-surface contour + side panel: through-thickness profile at picked GP                           |
 | `SpringForceDiagram`      | `SpringSlab`                    | Force arrow along the configured spring direction at zero-length elements                                |
 | `GaussPointDiagram`       | `GaussSlab`                     | Sphere markers at natural→global GP locations, colored by component value                                |
+| `LoadsDiagram`            | `fem.nodes.loads.by_pattern(...)` (broker, not a Results slab) | Constant force arrows at loaded nodes, per pattern; not step-resolved (timeSeries info absent) |
+| `ReactionsDiagram`        | `NodeSlab` (`reaction_force_*` + `reaction_moment_*`) | Straight arrows for forces, curved-arrow glyphs for moments at constrained nodes; auto-filtered by per-node max |
 
 Two intentional non-diagrams:
 
@@ -334,6 +336,72 @@ For modal browsing (`kind="mode"` stages), the Director exposes
 them; each mode is its own scoped Results so step semantics collapse to
 `step_index=0`, `T=1`.
 
+### 4.4 Geometry → Composition → Diagram hierarchy
+
+The diagram registry is wrapped by a three-level outline
+(`viewers/diagrams/_geometries.py:10-21`):
+
+```
+GeometryManager           ← director.geometries
+└── Geometry              ← outline first level
+    └── CompositionManager
+        └── Composition   ← outline second level (UI: "Diagram")
+            └── Diagram   ← layer (Contour, VectorGlyph, …)
+```
+
+A **Geometry** is a deformation-bearing container that owns a list
+of compositions. **Deformation is per-Geometry** (field + scale) and
+only the active Geometry renders — switching geometry re-applies that
+geometry's deformation to the substrate and routes per-Geometry state
+to its compositions. A **Composition** is what the user sees as
+"Diagram" in the outline; it bundles one or more **Layers** (the
+internal `Diagram` instances). Bootstrap is one always-present
+"Geometry 1" with an empty composition manager; the manager refuses
+to remove the last surviving geometry so the viewer always has
+somewhere to land.
+
+#### 4.4a Per-Geometry display panel
+
+When a Geometry row is selected in the outline, the Details dock
+shows `viewers/ui/_geometry_settings_panel.py` with two sections:
+**Deformation** (toggle / field / scale) and **Display** (show-mesh /
+show-nodes toggles + a single opacity slider applied to substrate
+fill, wireframe, and node cloud while the geometry is active). These
+were global SessionPanel knobs before the geometry refactor; per-
+Geometry now lets one view dim its substrate beneath a contour while
+another keeps full alpha.
+
+### 4.5 Event-loop dispatcher
+
+`viewers/diagrams/_dispatch.py` is the single pipeline for the four
+primitives that drive what the viewport paints:
+
+* **STEP** — push current step values to one or all diagrams
+  (`Diagram.update_to_step(step_index)`).
+* **DEFORM** — recompute deformed substrate points and call
+  `Diagram.sync_substrate_points` on one or all diagrams; mutates
+  `scene.grid.points` in place when the scope is "all".
+* **GATE** — run the composition gate: each actor's visibility is
+  `d.is_visible AND (no_active_comp OR id(d) in active_layers)`.
+* **RENDER** — single coalesced `plotter.render()`.
+
+Every UI gesture, observer, and shortcut funnels through
+`Dispatcher.fire(event_kind, ...)`, which selects the right primitive
+sequence from the event matrix (e.g. `step_changed` → STEP + DEFORM +
+RENDER; `comp_active_changed` → GATE + RENDER). The
+`session_batch(...)` context manager suppresses every primitive in
+between and runs one full pump on exit, used during `_apply_session`
+to kill the N-squared registry pump.
+
+### 4.6 Observability
+
+Every dispatch / gesture / pick / error funnels through
+`viewers/_log.py::log_action`. Two destinations: stderr (INFO+, one
+human-readable line per gesture) and a per-session file
+(`~/.apegmsh/viewer-logs/session-YYYYMMDD-HHMMSS.log`, DEBUG+, full
+action trail). Bug reports attach the most recent file and we replay
+every gesture the user made.
+
 ---
 
 ## 5. Selection — what gets data
@@ -379,46 +447,58 @@ new diagram.
 
 ### 6.1 Window layout
 
-Reuses `viewers/ui/viewer_window.ViewerWindow` — same QMainWindow
-shell as `MeshViewer` / `ModelViewer`. Tabs differ.
+Wraps `viewers/ui/viewer_window.ViewerWindow` in a Qt-native dock
+arrangement (`viewers/ui/_results_window.py`). The viewport is the
+immovable central widget; five `QDockWidget` panels surround it,
+movable / floatable / tabifiable, with object names so layout state
+round-trips through `QSettings`.
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│ Menu Bar                                                  │
-├──────┬──────────────────────────────────────┬────────────-┤
-│ Tool │                                       │  Tabs dock │
-│ bar  │   VTK Viewport                        │  (right)   │
-│      │                                       │            │
-├──────┴──────────────────────────────────────┴────────────-┤
-│ Time scrubber  ── play ── stage selector ── mode picker   │
-├───────────────────────────────────────────────────────────┤
-│ Status Bar                                                │
-└───────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ (OS native title bar)                                        │
+├────────────┬─────────────────────────────┬───────────────────┤
+│ Outline    │                             │ Plots             │
+│ (dock,     │   3D viewport               │ Details           │
+│  left)     │   (central widget)          │ Session           │
+│            │                             │ (docks, right)    │
+├────────────┴─────────────────────────────┴───────────────────┤
+│ Time Scrubber (dock, bottom — Movable | Floatable, no close) │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-The **time scrubber bar** is a dedicated dock at the bottom of the
-viewport — not a tab. It carries the step slider, time-value readout,
+The **Time Scrubber** dock is always visible because time is the
+primary axis — it carries the step slider, time-value readout,
 play / pause / step / loop controls, stage dropdown, and (for modal
-files) the mode browser. Always visible because time is the primary
-axis.
+files) the mode browser. Layout persists across launches under
+`QSettings('apeGmsh', 'ResultsViewer')`; `reset_layout()` restores
+the default arrangement captured at startup.
 
-### 6.2 Tabs
+### 6.2 Docks
 
-| Tab                  | Owns                                                         |
-| -------------------- | ------------------------------------------------------------ |
-| **Diagrams**         | Diagram list — add / remove / reorder / toggle visibility    |
-| **Diagram settings** | Per-diagram styling — colormap, clim, scale, opacity, …      |
-| **Selection**        | Active picked entity / box-selection results, "make diagram" |
-| **Inspector**        | Picked element / node — id, coords, current values, history  |
-| **Probes**           | Point / line / plane probes (mined from `apeGmshViewer/`)    |
-| **Stages**           | Stage list with kind / n_steps / time range; mode browser    |
-| **Visibility**       | `VisibilityManager` controls — hide / isolate / reveal       |
-| **Session**          | Theme + per-session preferences (reused from MeshViewer)     |
+| Dock              | Owns                                                                                                  |
+| ----------------- | ----------------------------------------------------------------------------------------------------- |
+| **Outline**       | Three-level tree — Geometries → Compositions ("Diagrams") → Layers; add / remove / reorder / toggle    |
+| **Plots**         | Diagram-specific 2-D side panels (fiber section, layer through-thickness, time history)               |
+| **Details**       | Context-sensitive editor: outline-selected Geometry / Composition / Layer settings, picked entity     |
+| **Session**       | Theme picker, restore / save session, screenshot, view presets, per-session preferences               |
+| **Time Scrubber** | Step slider, time readout, play / pause / step / loop, stage dropdown, mode browser                   |
 
-The **Diagrams** tab is the spine of the workflow — adding a diagram
+The **Outline** dock is the spine of the workflow — adding a layer
 opens a small dialog (kind, slab selector, component, stage, initial
-style) and the new diagram appears in the list. Toggling its visibility
-mutes its actors without detaching. Removing it detaches and disposes.
+style) and the new layer appears under its Composition. Toggling its
+visibility mutes its actors without detaching; removing detaches and
+disposes. Per-layer / per-Geometry editors render into the **Details**
+dock when their outline row is selected.
+
+#### 6.2a Per-card Apply
+
+Settings cards (in the Details dock) **stage** edits and commit them
+on a per-card **Apply** button rather than emitting on every
+keystroke. Pending value-edit appliers are collected during widget
+construction and committed together when Apply is clicked
+(`viewers/ui/_diagram_settings_tab.py:378-379, 608`). This kills the
+mid-typing render storm and gives the user a clear commit point —
+Cancel discards staged edits.
 
 ### 6.3 Diagram-specific side panels
 

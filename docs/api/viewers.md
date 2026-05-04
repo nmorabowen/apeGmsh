@@ -12,6 +12,20 @@ package and is not documented here.
 
 ::: apeGmsh.viewers.mesh_viewer.MeshViewer
 
+## ResultsViewer — `Results.viewer()`
+
+::: apeGmsh.viewers.results_viewer.ResultsViewer
+
 ## Geometric transform viewer
 
 ::: apeGmsh.viewers.geom_transf_viewer.GeomTransfViewer
+
+## Preferences
+
+### `settings()`
+
+::: apeGmsh.viewers.settings
+
+### `theme_editor()`
+
+::: apeGmsh.viewers.theme_editor

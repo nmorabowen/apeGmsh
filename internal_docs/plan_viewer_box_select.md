@@ -6,6 +6,8 @@ tags: [apeGmsh, viewer, picking, bugfix, plan]
 
 # Viewer Mouse Box-Select — Fix Plan
 
+> **Status: delivered** — box-select shipped via `viewers/core/pick_engine.py`.
+
 > [!summary] One-line
 > Drag-box selection in `ModelViewer` misses entities that are clearly
 > inside the rubber-band on HiDPI displays, and silently discards

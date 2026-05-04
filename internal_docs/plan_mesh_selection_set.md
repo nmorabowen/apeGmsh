@@ -1,5 +1,7 @@
 # MeshSelectionSet Implementation Plan
 
+> **Status:** Delivered — `MeshSelectionSet` shipped; `g.mesh_selection` wired; FEMData carries the snapshot.
+
 ## Overview
 
 A new post-mesh selection system complementary to `PhysicalGroups`, using the same `(dim, tag) + name` identity contract. Lives as a top-level composite `g.mesh_selection` alongside `g.physical`.

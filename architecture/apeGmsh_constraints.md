@@ -159,11 +159,23 @@ g.constraints.tie(
 )
 ```
 
-### 3.1 The one exception: `node_to_surface`
+### 3.1 The exceptions: `node_to_surface` and `embedded`
 
-`NodeToSurfaceDef` (and its spring variant) **bypass label
-validation** because its "master" is a bare geometry *point* entity
-tag and its "slave" is a raw surface entity tag. The composite's
+The `_add_def` guard skips label validation for both
+`NodeToSurfaceDef` (and its spring variant) **and** `EmbeddedDef`
+(`ConstraintsComposite.py:236`). Both reach into Gmsh by raw entity
+tags rather than part-label instances:
+
+* `NodeToSurfaceDef` — "master" is a bare geometry *point* entity tag
+  and "slave" is a raw surface entity tag.
+* `EmbeddedDef` — accepts explicit `host_entities` and
+  `embedded_entities` keyword args (`_constraint_defs.py:271-274`),
+  each a list of `(dim, tag)`. When omitted, the resolver falls back
+  to `_entities_for_label(label)` which tries the `g.parts` instance
+  registry first, then a physical-group name fallback
+  (`ConstraintsComposite.py:1272-1299`).
+
+For `node_to_surface` the composite's
 `node_to_surface(master, slave, ...)` factory resolves these via
 `_helpers.resolve_to_tags(...)` up-front and stores:
 
@@ -224,7 +236,8 @@ Mortar         ─┼─→ _resolve_face_both Mortar       → resolve_mortar
 NodeToSurface       ─┐                 NodeToSurface       → resolve_node_to_surface
 NodeToSurfaceSpring ─┴─→ _resolve_node_to_surface  NodeToSurfaceSpring → resolve_node_to_surface_spring
 
-Embedded → _resolve_embedded   (NotImplementedError — reserved for future)
+Embedded → _resolve_embedded   Embedded → resolve_embedded
+                                (implemented for tet4 / tri3 hosts via ASDEmbeddedNodeElement)
 ```
 
 ### 4.2 Five dispatch helpers
@@ -240,7 +253,7 @@ of geometric primitive the resolver needs*:
 | `_resolve_face_slave`       | master faces + slave nodes | Tie                       |
 | `_resolve_face_both`        | both faces + both node sets | TiedContact, Mortar      |
 | `_resolve_node_to_surface`  | direct Gmsh queries | NodeToSurface / Spring         |
-| `_resolve_embedded`         | — (unimplemented) | Embedded                         |
+| `_resolve_embedded`         | host elems + embedded nodes (implemented) | Embedded         |
 
 Each helper calls two low-level utilities:
 
@@ -282,8 +295,10 @@ empty records:
 
 ```python
 if has_face_constraints and face_map is None:
-    warnings.warn("Surface constraints defined but face_map=None.",
-                  stacklevel=2)
+    raise TypeError(
+        "Surface constraints are defined but face_map=None. "
+        "Call resolve(..., face_map=parts.build_face_map(node_map)) "
+        "or use Mesh.get_fem_data() which builds face_map automatically.")
 ```
 
 The end-user rarely sees this because `Mesh.get_fem_data` builds both
@@ -486,10 +501,11 @@ because you have to emit the phantom nodes before the rigid links).
    `_RESOLVER_METHOD` entry + a resolver method + (optionally) a
    record subclass.** The five tables are the source of truth;
    there is no "magic" that auto-infers any of them.
-2. **Use part labels for master/slave.** The only exceptions are
-   `NodeToSurfaceDef` and `NodeToSurfaceSpringDef`, which operate on
-   raw geometry tags. If your new constraint takes bare node tags,
-   add it to the `isinstance(defn, NodeToSurfaceDef)` guard in
+2. **Use part labels for master/slave.** The exceptions are
+   `NodeToSurfaceDef`/`NodeToSurfaceSpringDef` (raw point/surface
+   tags) and `EmbeddedDef` (entity-list keyword args). If your new
+   constraint also bypasses label resolution, add it to the
+   `isinstance(defn, (NodeToSurfaceDef, EmbeddedDef))` guard in
    `_add_def` (or refactor the guard into a method).
 3. **The resolver stays pure.** No gmsh imports in
    `_constraint_resolver.py` or `_constraint_geom.py`. If you need a

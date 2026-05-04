@@ -172,7 +172,8 @@ inside corner so each leg is its own labeled volume.
 **Labels created:**
 - `{label}.horizontal_leg` — the X-direction leg
 - `{label}.vertical_leg` — the Y-direction leg
-- Outer-face labels from `classify_angle_outer_faces`
+- `{label}.horizontal_leg_face`, `{label}.vertical_leg_face` — outer-skin
+  faces from `classify_angle_outer_faces`
 - `{label}.start_face`, `{label}.end_face`
 
 ### channel_solid — C-shape (channel)
@@ -229,7 +230,6 @@ represented as surfaces at their mid-plane locations.
 - `{label}.top_flange` — upper flange surface
 - `{label}.bottom_flange` — lower flange surface
 - `{label}.web` — web surface
-- Start/end edges rather than faces (1D boundaries)
 
 Use this when meshing with shell elements (dim=2) instead of
 solid elements (dim=3).

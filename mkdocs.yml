@@ -165,6 +165,7 @@ nav:
           - Visualization: architecture/apeGmsh_visualization.md
           - Results viewer: architecture/apeGmsh_results_viewer.md
           - Results — Obtaining: architecture/apeGmsh_results_obtaining.md
+          - Results — Architecture: internal_docs/Results_architecture.md
       - Gmsh background:
           - "Gmsh — Basics": architecture/gmsh_basics.md
           - "Gmsh — Geometry": architecture/gmsh_geometry_basics.md
@@ -197,6 +198,9 @@ nav:
       - Mesh selection sets: internal_docs/plan_mesh_selection_set.md
       - Rigid element: internal_docs/plan_rigid_element.md
       - Instance computed view (deferred): internal_docs/plan_instance_computed_view.md
+      - Element transcoding: internal_docs/plan_element_transcoding.md
+      - "Phase 11b — Line stations": internal_docs/plan_phase_11b_line_stations.md
+      - "Results viewer — Design brief": internal_docs/design_brief_results_viewer.md
       - "Viewer — Box select": internal_docs/plan_viewer_box_select.md
       - "Viewer — Light theme": internal_docs/plan_viewer_light_theme.md
       - "Viewer — PG persistence": internal_docs/plan_viewer_pg_persistence.md

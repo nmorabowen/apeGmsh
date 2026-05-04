@@ -1,6 +1,12 @@
 # Results Viewer — Implementation Plan
 
 > [!note] Status
+> Phases 0-6 complete (shipped through v1.4-v1.5). Post-phase
+> additions: Composition/Geometry hierarchy, event-loop dispatcher,
+> per-card Apply, per-Geometry display, applied-loads + reactions
+> diagrams. See `architecture/apeGmsh_results_viewer.md` for current
+> state.
+>
 > Phasing for the post-solve viewer rebuild. Companion to
 > [[apeGmsh_results_viewer|the directives document]] — read that first.
 > The directives are the architectural charter (what we build); this

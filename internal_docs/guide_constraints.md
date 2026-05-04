@@ -8,8 +8,13 @@ how constraints land in the broker and get consumed by a solver.
 Grounded in the current source:
 
 - `src/apeGmsh/core/ConstraintsComposite.py` — the user-facing composite
-- `src/apeGmsh/solvers/Constraints.py` — `ConstraintDef`, `ConstraintRecord`,
-  and `ConstraintResolver`
+- `src/apeGmsh/solvers/_constraint_defs.py` — `ConstraintDef` subclasses
+- `src/apeGmsh/solvers/_constraint_records.py` — `ConstraintRecord` subclasses
+- `src/apeGmsh/solvers/_constraint_resolver.py` — `ConstraintResolver`
+- `src/apeGmsh/solvers/_constraint_geom.py` — geometry helpers shared by the resolver
+- `src/apeGmsh/solvers/_kinds.py` — `ConstraintKind` (and `LoadKind`) constants
+- `src/apeGmsh/solvers/Constraints.py` — re-export shim that surfaces the names
+  above under the historical import path
 - `src/apeGmsh/mesh/_record_set.py` — `NodeConstraintSet`, `SurfaceConstraintSet`
 
 All snippets assume an open session:
@@ -162,6 +167,17 @@ creates phantom nodes:
 g.constraints.node_to_surface("frame_end", "solid_face")
 ```
 
+When `master` is a string it is resolved via `resolve_to_tags(..., dim=0)` —
+i.e. the name must refer to a geometric **point** entity (a vertex), not a
+curve/surface/volume label. `slave`, in contrast, is resolved at `dim=2`
+(surface entities). See `ConstraintsComposite.py:837`.
+
+Note: `node_to_surface` (and `embedded`, below) bypass the strict
+``part-label`` validation that other constraint factories run in
+`_add_def` — both definition types are allowed to carry bare entity
+tags / mixed labels because they are looked up later through their
+own resolvers (`ConstraintsComposite.py:236`).
+
 For **pure BC application** (force/moment or prescribed displacement on a
 face without a structural element at the reference), prefer
 `g.loads.face_load()` / `g.loads.face_sp()` instead — they distribute
@@ -191,6 +207,14 @@ elastic stiffness path and the matrix conditioning recovers.
 Pick `node_to_surface` when the master rotations are themselves
 constrained or carry no moment; pick `node_to_surface_spring` when the
 master is a free rotation node receiving moments.
+
+**Emission contrast.** The plain `node_to_surface` variant emits its
+master→phantom links through `fem.nodes.constraints.phantom_nodes()`
+plus `pairs()` (kinematic `rigidLink('beam', ...)`). The spring
+variant routes the same topology through
+`fem.nodes.constraints.stiff_beam_groups()` instead — each group
+becomes one `elasticBeamColumn` element per master/phantom pair. The
+factory entry point lives at `ConstraintsComposite.py:906`.
 
 
 ### Level 3 — Surface coupling
@@ -224,6 +248,13 @@ g.constraints.embedded("concrete_volume", "rebar_lines")
 ```
 
 Slave (embedded) nodes follow the displacement field of the host elements.
+
+Implemented end-to-end: at resolution time `_resolve_embedded`
+(`ConstraintsComposite.py:1218`) collects the host tet4/tri3 elements
+and the embedded-curve nodes, drops embedded nodes that coincide with
+a host corner (already rigidly attached via shared connectivity), and
+hands the remainder to `resolver.resolve_embedded` which lands real
+`InterpolationRecord`s on `fem.elements.constraints`.
 
 
 ### Level 4 — Surface-to-surface

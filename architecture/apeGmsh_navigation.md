@@ -253,7 +253,7 @@ for the full broker surface.
 | --------------------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
 | open the interactive Qt model viewer    | `g.model.viewer()` or `g.model.gui()`                    | `viewers/model_viewer.py`                        |
 | open the mesh viewer                    | `g.mesh.viewer()`                                        | `viewers/mesh_viewer.py`                         |
-| open the results viewer                 | `g.mesh.results_viewer(...)` / `Results(...).viewer()`   | `results/Results.py`                             |
+| open the results viewer                 | `g.mesh.results_viewer(...)` / `Results(...).viewer()`   | `results/Results.py` (in-process; not the external `apeGmshViewer` package) |
 | plot geometry / mesh in matplotlib      | `g.plot.geometry(...)` / `g.plot.mesh(...)`              | `viz/Plot.py`                                    |
 | label entities / nodes / elements       | `g.plot.label_entities(...)` / `label_nodes(...)` / `label_elements(...)` | `viz/Plot.py`                                    |
 | export a VTU for ParaView               | `VTKExport(g).add_node_scalar(...).write("out.vtu")`     | `viz/VTKExport.py`                               |
@@ -381,6 +381,8 @@ and `Constraints` (the facade module).
   - `.cleanup(self)`
   - `.save(self, file_path, *, fmt=None, write_anchors=True, _internal_autopersist=False)`
   - `.has_file` **[property]**
+  - `.edit` **[composite]** — `PartEdit` (see `core/_part_edit.py`):
+    `.copy`, `.translate`, `.rotate`, pattern helpers.
   - `.__repr__(self)`
 
 #### `core/Labels.py`
@@ -456,6 +458,7 @@ tables.
   - `.__init__(self, parent)`
   - `.pattern(self, name)` **[contextmanager]**
   - `.point(self, target=None, *, pg=None, label=None, tag=None, force_xyz=None, moment_xyz=None, name=None)`
+  - `.point_closest(self, xyz, *, within=None, pg=None, label=None, tag=None, force_xyz=None, moment_xyz=None, tol=None, name=None)`
   - `.line(self, target=None, *, pg=None, label=None, tag=None, magnitude=None, direction=None, q_xyz=None, reduction="tributary", target_form=None, name=None)`
   - `.surface(self, target=None, *, pg=None, label=None, tag=None, magnitude=None, normal=None, direction=None, reduction="tributary", target_form=None, name=None)`
   - `.gravity(self, target=None, *, pg=None, label=None, tag=None, g=(0,0,-9.81), density=None, reduction="tributary", target_form=None, name=None)`
@@ -642,6 +645,9 @@ Module-level functions (no classes):
 #### `core/_parts_registry.py`
 - `Instance` **[record]** — frozen dataclass, the output of importing a
   `Part` into the session. Carries `name`, `entities`, `com_by_label`.
+  Also exposes `.edit: InstanceEdit` (attached on registry insert; see
+  `core/_instance_edit.py`) for placement transforms on the live
+  instance.
   - `.__post_init__(self)`
 - `_InstanceLabels` **[helper]** — tab-completion shim exposing each
   label on an `Instance` as a prefixed attribute.

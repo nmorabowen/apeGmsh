@@ -544,8 +544,9 @@ rebar_curves = g.physical.entities("Rebars", dim=1)
 g.mesh.editing.embed(rebar_curves, in_tag=concrete_vol, dim=1, in_dim=3)
 ```
 
-Because `g.parts.add_physical_groups()` (`_parts_registry.py`) already
-creates one PG per registered instance, the resolver also doubles as a
+Because Part instances default to `_auto_pg_from_label = True`
+(`core/Part.py`), the per-instance label is auto-promoted to a physical
+group at registration time — so the resolver also doubles as a
 "by part label" lookup for the common case — `g.physical.entities("col")`
 and `g.parts.instances["col"].entities[dim]` give the same tags. Where the
 PG route is strictly more expressive is when you want to group *across*
@@ -645,9 +646,9 @@ g.physical.get_nodes(dim, tag) -> dict
 g.physical.summary() -> DataFrame
 ```
 
-`g.parts.add_physical_groups(dim=None)` (`_parts_registry.py`) is the
-one-liner that creates one physical group per registered instance, so you get
-named handles for every part without touching raw tags.
+Part instances default to `_auto_pg_from_label = True` (`core/Part.py`),
+so registration creates one physical group per instance automatically —
+you get named handles for every part without touching raw tags.
 
 **`g.mesh_selection` (MeshSelectionSet, `mesh/MeshSelectionSet.py`)** is the
 mesh-driven route. It identifies subsets directly on the mesh — by spatial
@@ -701,19 +702,19 @@ conformal, fragmented entities.
 
 ### Stage 2 — resolution, on the mesh
 
-After `g.mesh.generation.generate()` you extract an FEM view of the mesh and feed it to
-the resolver:
+After `g.mesh.generation.generate()` the resolver runs automatically inside
+`get_fem_data()` — it extracts the mesh, builds the node/face/connectivity
+maps, and walks `constraint_defs` to produce records:
 
 ```python
 fem = g.mesh.queries.get_fem_data(dim=3)
-node_map = g.parts.build_node_map(fem.nodes.ids, fem.nodes.coords)
-face_map = g.parts.build_face_map(node_map)
-records  = g.constraints.resolve(
-    fem.nodes.ids, fem.nodes.coords,
-    node_map=node_map,
-    face_map=face_map,
-)
+# fem.constraints.{node,surface} are already populated
 ```
+
+`get_fem_data()` is the high-level entry point; calling
+`g.constraints.resolve(...)` directly is an internal path that requires
+several extra kwargs (`elem_tags`, `connectivity`, `node_map`, `face_map`)
+and is normally not invoked by users.
 
 - `build_node_map` returns a `dict[label, set[int]]` that assigns every mesh
   node to the instance(s) whose bounding box contains it. This is the
@@ -767,7 +768,7 @@ with apeGmsh(model_name="demo") as g:
     (g.mesh.generation
         .generate(dim=3)
         .set_order(2))
-    g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+    g.mesh.partitioning.renumber(method="rcm", base=1)
 
     # 6. Declare constraints against part labels (pre-resolution)
     g.constraints.tie(master_label="col", slave_label="bm")

@@ -74,6 +74,10 @@ with apeGmsh(model_name="plate") as g:
     print(fem.info)
 ```
 
+On import, apeGmsh prints an ASCII banner with the version to
+`stderr`. Set `APEGMSH_QUIET=1` to suppress it (useful for tests
+and CI).
+
 ## Architecture
 
 `apeGmsh` is a session object that owns a single `gmsh` kernel and a
@@ -296,6 +300,10 @@ PyVista + Qt, but they target different stages of the workflow.
 
 The standalone viewer auto-detects Jupyter and runs in a subprocess
 so the notebook keeps its kernel; in scripts it runs blocking.
+
+**What's new in viewers (v1.5.0):** applied-loads and reactions
+diagrams, per-card Apply (each diagram layer commits independently),
+and a per-Geometry display fix so only the active geometry renders.
 
 Source layout:
 

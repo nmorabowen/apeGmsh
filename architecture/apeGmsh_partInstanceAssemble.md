@@ -127,7 +127,7 @@ an Abaqus assembly.
 `model`, `labels`, `physical`, `inspect`, `plot` — deliberately **no**
 `mesh` and **no** solver composites. A Part cannot be meshed, cannot
 carry constraints, cannot hold loads. That asymmetry is enforced by
-the `_COMPOSITES` tuple in `Part.py` (line 129) and is not optional.
+the `_COMPOSITES` tuple in `Part.py` (line 130) and is not optional.
 
 ```python
 from apeGmsh import Part
@@ -173,7 +173,7 @@ unchanged at `False`.
 ### 3.3 Labels inside a Part
 
 A Part has `_auto_pg_from_label = True` (set in
-`Part.__init__:151`). This means every geometry method that takes a
+`Part.__init__:158`). This means every geometry method that takes a
 `label="..."` kwarg routes through `Model._register`, which creates a
 Tier 1 label PG (`_label:` prefix, see [[apeGmsh_groundTruth]] §2) for
 that entity. The label travels through the STEP sidecar into the
@@ -284,7 +284,7 @@ fragmentation is a closed surface of three methods
 (`fragment_all`, `fragment_pair`, `fuse_group`) that are too
 implementation-heavy to inline in the registry but share every field.
 
-### 5.1 Four entry points for creating instances
+### 5.1 Five entry points for creating instances
 
 Every Instance on the registry is created by exactly one of these:
 
@@ -364,7 +364,7 @@ The method delegates to `_import_cad`, which does six things in order:
 3. Apply `rotate` then `translate` to the **highest-dim entities
    only** — OCC propagates the transform through sub-topology
    automatically. Applying to all dims raises "OpenCASCADE transform
-   changed the number of shapes" (`_apply_transforms:649`).
+   changed the number of shapes" (`_apply_transforms:740`).
 4. Read the `.apegmsh.json` sidecar if present and call
    `rebind_physical_groups(anchors=..., translate=..., rotate=...)`
    (see [[apeGmsh_groundTruth]] §6 for the COM-anchor + bbox
@@ -463,7 +463,7 @@ Three invariants come out of this:
 
 **(A) Label uniqueness.** Two instances of the same Part produce two
 disjoint label sets (`col_01.web` and `col_02.web`). The prefix is
-literally `f"{label}.{pg_name}"` (`_parts_registry.py:600`). Collisions
+literally `f"{label}.{pg_name}"` (`_parts_registry.py:691`). Collisions
 are impossible by construction — the registry already rejects
 duplicate instance labels on every entry path.
 
@@ -691,7 +691,7 @@ wrapped in the `pg_preserved()` invariant from
 4. This file — *what* Parts and Instances are, *how* they compose.
 5. `src/apeGmsh/core/Part.py` — the Part class, auto-persist, save.
 6. `src/apeGmsh/core/_parts_registry.py` — `Instance`,
-   `_InstanceLabels`, `PartsRegistry`, the four entry points, node /
+   `_InstanceLabels`, `PartsRegistry`, the five entry points, node /
    face maps.
 7. `src/apeGmsh/core/_parts_fragmentation.py` — fragment_all,
    fragment_pair, fuse_group with in-place entity rewrites.

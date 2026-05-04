@@ -42,7 +42,13 @@ Meshing composite. Seven focused sub-composites.
 
 ::: apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet
 
+::: apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore
+
 ::: apeGmsh.mesh.MshLoader.MshLoader
+
+!!! warning "Legacy"
+    `Partition` below is the standalone, pre-composite class. New code
+    should use the live `g.mesh.partitioning` composite documented above.
 
 ::: apeGmsh.mesh.Partition.Partition
 

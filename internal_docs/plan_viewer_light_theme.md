@@ -6,6 +6,8 @@ tags: [apeGmsh, viewer, theme, ui, plan]
 
 # Viewer Light Theme + Theme Switching — Plan
 
+> **Superseded** — full theming system shipped (10 themes + `theme_editor` dialog). See `architecture/apeGmsh_visualization.md` §3a-§3b.
+
 > [!summary] One-line
 > The viewers today hardcode a single Catppuccin Mocha (dark) theme in
 > `viewers/ui/theme.py`, with the palette's hex constants leaking into

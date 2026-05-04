@@ -13,6 +13,8 @@ tags:
 
 # Plan: Aesthetic System Implementation
 
+> **Status:** Delivered — three theme presets + `theme_editor` dialog shipped (see `src/apeGmsh/viewers/ui/theme_editor_dialog.py`).
+
 Implements the design spec in
 [[apeGmsh_aesthetic]] (`architecture/apeGmsh_aesthetic.md`).
 Touches only the `viewers/` package; `viz/` and the external

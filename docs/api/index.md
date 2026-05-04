@@ -25,3 +25,14 @@ session object's layout:
     default. Sub-composite implementation modules (`_mesh_generation`,
     `_model_geometry`, etc.) are documented under their parent
     composite page.
+
+## Utilities
+
+Top-level helpers re-exported from `apeGmsh` that don't have a
+dedicated composite page:
+
+- `apeGmsh.workdir` — context manager for the working directory.
+- `apeGmsh.preview` — notebook viewer.
+- `apeGmsh.settings`, `apeGmsh.theme_editor` — viewer preferences and
+  theme editor (see [Viewers](viewers.md)).
+- `SelectionPicker` is a back-compat alias for `ModelViewer`.

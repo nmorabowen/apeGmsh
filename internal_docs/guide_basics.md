@@ -429,9 +429,9 @@ with apeGmsh(model_name="ssi_demo", verbose=True) as g:
 
     # --- Physical groups (for materials + BCs) -------------------------
     # Labels still resolve because fragment updated the registry.
-    g.physical.add_from_label("soil",    name="Soil",    dim=3)
-    g.physical.add_from_label("footing", name="Footing", dim=3)
-    g.physical.add_from_label("column",  name="Column",  dim=3)
+    g.physical.from_label("soil",    name="Soil",    dim=3)
+    g.physical.from_label("footing", name="Footing", dim=3)
+    g.physical.from_label("column",  name="Column",  dim=3)
 
     # --- Mesh ----------------------------------------------------------
     g.mesh.sizing.set_size_global(0.5)
@@ -471,9 +471,9 @@ try:
     pieces = g.model.boolean.fragment(soil, [footing] + column)
 
     # --- Cell 5: physical groups + mesh ---------------------------------
-    g.physical.add_from_label("soil",    name="Soil",    dim=3)
-    g.physical.add_from_label("footing", name="Footing", dim=3)
-    g.physical.add_from_label("column",  name="Column",  dim=3)
+    g.physical.from_label("soil",    name="Soil",    dim=3)
+    g.physical.from_label("footing", name="Footing", dim=3)
+    g.physical.from_label("column",  name="Column",  dim=3)
 
     g.mesh.sizing.set_size_global(0.5)
     g.mesh.generation.generate(dim=3)

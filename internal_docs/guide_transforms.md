@@ -286,6 +286,11 @@ g.model.transforms.mirror(tags, a, b, c, d, *, dim=3, sync=True)
 
 **Returns:** `self` (for chaining).
 
+For instance-level work, the higher-level alternative is
+`inst.edit.mirror(plane=..., normal=..., point=...)`, which accepts a
+named plane (`"xy"`, `"xz"`, `"yz"`) or a normal vector through a point
+instead of the raw `ax+by+cz+d=0` form.
+
 The plane equation can feel abstract, but the common cases are simple:
 
 | Plane | Equation | `(a, b, c, d)` |

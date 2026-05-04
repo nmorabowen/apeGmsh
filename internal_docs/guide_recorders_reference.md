@@ -73,6 +73,17 @@ Provide **at most one**:
 Modal records honour `dt=` / `n_steps=` only at the file-format level
 (MPCO writes the modes once per cadence event).
 
+## Disambiguation hint — `element_class_name=`
+
+Every method except `modal(...)` accepts an optional
+`element_class_name=` kwarg (verified at `Recorders.py:204, 256, 311,
+389, 452`). It is a hint for the `.out` transcoder when the same
+component name could come from more than one OpenSees element class
+sharing a selector — the transcoder uses the hint to pick the right
+element class without falling back to heuristics. Pass it when the
+out-file decoder warns about an ambiguous component, otherwise leave
+it `None`.
+
 ---
 
 ## `recorders.nodes(...)`
@@ -346,11 +357,32 @@ declare, call resolve, read the error.
 
 ---
 
+## Registry inspection and reset
+
+The `Recorders` registry supports the standard container protocols
+(`Recorders.py:886-895`):
+
+```python
+recs = g.opensees.recorders
+
+len(recs)          # number of declared records
+list(recs)         # iterate -- yields RecorderRecord objects
+recs.clear()       # drop all declarations and reset the auto-id counter
+```
+
+`clear()` is useful when re-running a parametric study in the same
+session — call it before re-declaring recorders so the auto-id
+counter starts back at zero.
+
+---
+
 ## See also
 
 - [Obtaining results](guide_obtaining_results.md) — five execution
   strategies.
-- [Architecture — Obtaining the database](../architecture/apeGmsh_results_obtaining.md) —
-  the spec-as-seam pattern.
-- [API reference — OpenSees](../api/opensees.md) — `Recorders` class
-  with auto-rendered method signatures.
+- Architecture — *Obtaining the database* (`architecture/apeGmsh_results_obtaining.md`) —
+  the spec-as-seam pattern. (Lives outside `internal_docs/`; navigate
+  via the published site's *Architecture* section.)
+- API reference — *OpenSees* (`docs/api/opensees.md`) — `Recorders`
+  class with auto-rendered method signatures. (Lives under
+  `docs_dir`; navigate via the published site's *API* section.)

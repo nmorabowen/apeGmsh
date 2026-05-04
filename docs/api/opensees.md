@@ -1,6 +1,6 @@
 # OpenSees — `g.opensees`
 
-OpenSees bridge composite. Five focused sub-composites + flat
+OpenSees bridge composite. Six focused sub-composites + flat
 lifecycle methods.
 
 ## `g.opensees`
@@ -28,6 +28,10 @@ lifecycle methods.
 ### `g.opensees.export`
 
 ::: apeGmsh.solvers._opensees_export._Export
+
+### `g.opensees.recorders`
+
+::: apeGmsh.solvers.Recorders.Recorders
 
 ## Numberer
 

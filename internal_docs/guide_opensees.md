@@ -8,7 +8,7 @@ connectivity -- the bridge builds the entire model from physical groups and
 FEMData snapshots you have already defined.
 
 The bridge lives on every session as `g.opensees`, a composition container with
-five sub-composites and two lifecycle entry points:
+six sub-composites and two lifecycle entry points:
 
 | Sub-composite         | Purpose                                      |
 |-----------------------|----------------------------------------------|
@@ -17,6 +17,7 @@ five sub-composites and two lifecycle entry points:
 | `g.opensees.ingest`   | pull resolved loads/masses/constraints from FEMData |
 | `g.opensees.inspect`  | post-build node/element tables and summary    |
 | `g.opensees.export`   | Tcl and openseespy script emission            |
+| `g.opensees.recorders`| recorder declarations (mounted from `Recorders`); see `guide_recorders_reference.md` |
 
 Plus two lifecycle methods on the bridge itself: `g.opensees.set_model(ndm, ndf)`
 and `g.opensees.build()`.
@@ -220,6 +221,18 @@ g.opensees.elements.add_geom_transf("Beams", "Linear")
 g.opensees.elements.add_geom_transf("Beams3D", "Corotational", vecxz=[0, 1, 0])
 ```
 
+For non-axis-aligned beams, the static helper
+`g.opensees.elements.vecxz(axis, local_z=(0, 0, 1), roll_deg=0.0)`
+computes a valid `vecxz` from the beam's axis vector and a reference
+local-z direction, with optional section rotation about the beam axis
+via `roll_deg`. See `_opensees_elements.py:44-116`.
+
+```python
+# Inclined beam, default local-z toward global +Z
+vxz = g.opensees.elements.vecxz(axis=(1, 0, 1))
+g.opensees.elements.add_geom_transf("Diag", "Linear", vecxz=vxz)
+```
+
 ### 3.4 Boundary conditions -- `fix`
 
 Apply homogeneous single-point constraints to every node in a physical group:
@@ -361,6 +374,22 @@ structure mirrors the Tcl output. Both methods return `_Export` for chaining:
 ```python
 g.opensees.export.tcl("model.tcl").py("model.py")
 ```
+
+### 6.3 Embedding recorders in the exported script
+
+Both `export.tcl` and `export.py` accept four recorder-related kwargs
+(`_opensees_export.py:30-38, 260-268`):
+
+| Kwarg                    | Purpose |
+|--------------------------|---------|
+| `recorders=`             | A `ResolvedRecorderSpec` to emit alongside the model. One `recorder ...` line (or `ops.recorder(...)` call) per resolved record, after the model definition. |
+| `recorders_output_dir=`  | Directory prefix for recorder output files. Default `""` = same dir as the script. Trailing `/` optional. |
+| `recorders_file_format=` | `"out"` (text, default) or `"xml"`, or `"mpco"`. The `"mpco"` value switches the emitter to `to_mpco_tcl_command` / `to_mpco_python_command` and writes a single MPCO recorder block instead of per-record `.out` lines. |
+| `manifest_path=`         | Where to write the recorder manifest sidecar (HDF5). Required for the `.out` transcoder to decode the emitted files. Defaults to `<path>.manifest.h5` when `recorders` is given. |
+
+The user is responsible for resolving `recorders` against the same
+`FEMData` snapshot the bridge was built from — there is no enforcement
+in the exporter.
 
 
 ## 7. Inspection

@@ -121,6 +121,8 @@ grav = Results.from_recorders(spec, "out/", fem=fem, stage_id="gravity")
 dyn  = Results.from_recorders(spec, "out/", fem=fem, stage_id="dynamic")
 ```
 
+When `stage_id` is set and `stage_name` is left at its default (`"analysis"`), `from_recorders` mirrors `stage_name = stage_id` automatically so the loaded Results stage carries the meaningful name (`Results.py:179-180`).
+
 ### How it works
 
 - `__enter__` validates the spec; raises immediately if it contains
@@ -213,6 +215,14 @@ for mode in results.modes:
 | Interactive-friendly | Output is apeGmsh-native, not Tcl-compatible |
 | Modal handled natively | |
 
+> **Tri31 strain routing.** Tri31 has no element-level `"strains"`
+> branch in OpenSees (only `"stresses"`). For any class listed in
+> `PER_MATERIAL_STRAIN_CLASSES` (`solvers/_element_response.py:2072`),
+> capture queries strain per Gauss-point material via
+> `ops.eleResponse(eid, "material", "<gp>", "strain")`
+> (`capture/_domain.py:870-874`). Reads are unaffected — see the
+> Tri31 note in [`guide_results.md`](guide_results.md).
+
 ---
 
 ## Strategy C₁ — Export with MPCO, run with STKO
@@ -235,6 +245,9 @@ For parallel runs:
 ```python
 # Multi-partition .mpco — auto-discovers .part-N siblings
 results = Results.from_mpco("run.part-0.mpco")
+
+# Opt out of auto-discovery (read only the named partition)
+results = Results.from_mpco("run.part-0.mpco", merge_partitions=False)
 ```
 
 | Pros | Cons |

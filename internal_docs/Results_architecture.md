@@ -41,12 +41,14 @@ results through a **single composite API** that mirrors `FEMData`.
 4. **Composite API mirrors FEMData.** Same `pg=`/`label=` selection
    vocabulary, same immutable-snapshot feel. A user who knows
    FEMData already knows Results.
-5. **Soft FEM coupling, hash-linked.** Results can be built without
+5. **Soft FEM coupling, hash-tagged.** Results can be built without
    a FEMData (raw inspection works). PG/label resolution and viewer
    plotting require a bound FEM. Native HDF5 embeds the FEMData
    snapshot; MPCO files reconstruct a partial FEMData from their
-   `MODEL` group. Bind validation is a single hash comparison
-   (`snapshot_id`).
+   `MODEL` group. The `snapshot_id` hash is computed and stored as
+   metadata, but bind never enforces equality — pairing a FEMData
+   with a results file from the same run is the user's
+   responsibility.
 6. **Verbose, human-readable component names.** No abbreviations
    except universal mechanics tensor indices (`xx`, `xy`, …). Backend
    adapters translate to canonical names on the way in.
@@ -635,13 +637,17 @@ membership. This hash is the contract that ties artifacts together:
 - A `run.h5` file embeds the FEMData snapshot in `/model/`, including
   its `snapshot_id`.
 - A resolved recorder spec carries the `snapshot_id` of the FEMData
-  it was resolved against.
-- `bind()` validates `snapshot_id` matches; the spec's emit/capture
-  paths refuse if the active FEMData's hash differs.
+  it was resolved against (and it participates in the recorder
+  cache key).
+- `bind()` does **not** validate `snapshot_id`. The hash is computed
+  and stored as metadata, but bind never enforces equality —
+  pairing a FEMData with a results file from the same run is the
+  user's responsibility (see `_bind.py:8-10`).
 
-Re-meshing produces a new hash automatically. Old artifacts (specs,
-results files) refuse to bind to the new fem with a clear error,
-instead of silently producing wrong results.
+Re-meshing produces a new hash automatically, which keeps caches
+honest, but old artifacts will still bind silently against a new
+FEMData. The `BindError` symbol is retained for back-compat but is
+no longer raised.
 
 #### Native HDF5 — full snapshot
 
@@ -683,20 +689,20 @@ raw.nodes.get(pg="Top", component="displacement_x")        # OK (PGs from MPCO)
 # fem in a fresh session and want to use its labels / loads / Parts
 results = raw.bind(g_session_fem)
 
-# Drift detection — bind compares snapshot_id hashes
-results = raw.bind(other_fem)            # raises: snapshot_id mismatch
+# No drift detection — bind accepts any FEMData
+results = raw.bind(other_fem)            # accepted; no hash check
 ```
 
-Bind validation is a single hash comparison: the embedded
-`snapshot_id` (from results) vs. the candidate FEMData's
-`snapshot_id`. If they match, the candidate is byte-for-byte
-equivalent and the bind succeeds. If they differ, the bind fails
-loudly — the alternative is silently plotting on the wrong geometry.
+The `snapshot_id` hash is computed and stored as metadata, but bind
+never enforces equality — pairing a FEMData with a results file from
+the same run is the user's responsibility (see `_bind.py:8-10`). The
+`BindError` symbol is retained for back-compat but is no longer
+raised.
 
 For MPCO files (no native snapshot_id), the partial FEMData
-synthesized from `MODEL/` gets a hash computed on the fly. A
-session FEM whose hash matches that synthesized hash binds
-successfully.
+synthesized from `MODEL/` gets a hash computed on the fly for
+metadata. Bind accepts any candidate regardless of how that hash
+compares.
 
 ### Canonical naming vocabulary
 
@@ -849,8 +855,7 @@ src/apeGmsh/results/
 ├── _composites.py           # NodeResultsComposite, ElementResultsComposite, etc.
 ├── _slabs.py                # NodeSlab, GaussSlab, FiberSlab, LayerSlab dataclasses
 ├── _vocabulary.py           # canonical component names + shorthand expansion
-├── _stage.py                # StageInfo, time slicing helpers
-├── _bind.py                 # bind() validation logic
+├── _bind.py                 # bind() resolution (lenient — no hash check)
 │
 ├── schema/
 │   ├── __init__.py
@@ -874,15 +879,15 @@ src/apeGmsh/results/
 │   ├── _xml.py              # OpenSees XML recorder parser
 │   └── _recorder.py         # RecorderTranscoder (orchestrates)
 │
-├── capture/
-│   ├── __init__.py
-│   └── _domain.py           # DomainCapture context manager (Strategy B)
-│
-└── export/
+└── capture/
     ├── __init__.py
-    ├── _vtu.py              # results.export.vtu(...)
-    └── _pvd.py              # results.export.pvd(...)
+    └── _domain.py           # DomainCapture context manager (Strategy B)
 ```
+
+> **Drift from the original plan.** As shipped, `StageInfo` lives
+> in `readers/_protocol.py` (no separate `_stage.py`), and the
+> `export/` subpackage (`results.export.vtu/pvd`) was deferred —
+> Phase 10 was not delivered.
 
 Recorder spec lives next to the existing OpenSees bridge:
 
@@ -1009,8 +1014,9 @@ overwritten in this phase. No shims.
   `label=`, `ids=`; component/time slicing; stage scoping
 - `tests/results/test_results_modes.py` — `results.modes` filters
   correctly; per-mode attrs accessible; mode shape is shape (1, N)
-- `tests/results/test_results_bind.py` — bind succeeds on matching
-  snapshot_id, raises on mismatch
+- `tests/test_results_bind.py` — auto-bind from embedded snapshot,
+  explicit bind with matching hash, and `test_bind_accepts_mismatched_fem`
+  (lenient contract — bind no longer raises on snapshot_id mismatch)
 - `tests/results/test_results_self_contained.py` — open `run.h5`
   without external FEM, FEMData reconstructed from `/model/`,
   PG queries work
@@ -1339,9 +1345,10 @@ optional — used only when the viewer asks for labeled axes.
   bound FEMData. Matches MPCO; correct under large deformation.
 - **Group-by-(class_tag, int_rule).** Rectangular per-group arrays;
   reader stitches across groups.
-- **Soft FEM coupling, hash-linked.** Bare construction works;
-  PG queries need bound FEM. `bind()` validates by `snapshot_id`
-  hash comparison. Re-meshing → new hash → old artifacts refuse.
+- **Soft FEM coupling, hash-tagged.** Bare construction works;
+  PG queries need bound FEM. The `snapshot_id` hash is computed and
+  stored as metadata, but `bind()` never enforces equality — pairing
+  is the user's responsibility (see `_bind.py:8-10`).
 - **All recorders OpenSees gives us.** `nodes`, `elements`,
   `line_stations`, `gauss`, `fibers`, `layers`, `modal`.
 - **Both component shorthand and explicit.** `"displacement"`

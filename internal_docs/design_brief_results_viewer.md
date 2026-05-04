@@ -1,5 +1,7 @@
 # ResultsViewer — Design Brief
 
+> **Status:** this brief froze pre-v1.4 — see `architecture/apeGmsh_results_viewer.md` for current shell.
+
 > Audience: a UI/UX designer with no finite-element-analysis background.
 > Purpose: give them enough domain context, current-state grounding, and reference points to propose a layout for the post-solve results viewer.
 
@@ -72,11 +74,12 @@ Multiple diagrams can be active at once.
 
 Built in Qt + PyVista (embedded VTK 3-D viewport). The shell is:
 
-- **Center**: 3-D viewport (the structure).
-- **Right dock**: tab strip with five tabs — Stages, Diagrams, Settings, Inspector, Probes.
-- **Bottom dock**: time scrubber.
-- **Top**: menu bar + toolbar (camera controls, view presets).
-- **Floating side panels**: extra 2-D plots that some diagrams need (e.g. a cross-section plot for fiber diagrams, a through-thickness plot for shells). These currently dock or float somewhat ad-hoc.
+- **Center**: 3-D viewport (the structure, central widget — immovable).
+- **Left dock**: **Outline** — three-level tree (Geometries → Compositions/"Diagrams" → Layers).
+- **Right docks**: **Plots**, **Details**, **Session** — diagram side plots, context-sensitive editor, and theme/session controls.
+- **Bottom dock**: **Time Scrubber** — step slider, play/pause, stage dropdown, mode browser.
+- **Top**: OS title bar + left vertical toolbar (camera presets, screenshot).
+- All five side panels are `QDockWidget` instances — movable, floatable, tabifiable; layout persists across launches via `QSettings`.
 
 Key file paths (for reference, not for the designer):
 

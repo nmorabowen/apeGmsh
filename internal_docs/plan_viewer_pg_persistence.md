@@ -6,6 +6,8 @@ tags: [apeGmsh, viewer, physical-groups, bugfix, plan]
 
 # Viewer Physical Group Persistence — Fix Plan
 
+> **Status: delivered** — PG persistence shipped per recent viewer commits.
+
 > [!summary] One-line
 > Physical groups created in `ModelViewer` do not always end up in
 > `gmsh` after the viewer closes. Multiple bugs in

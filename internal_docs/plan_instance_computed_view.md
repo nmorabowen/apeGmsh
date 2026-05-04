@@ -1,5 +1,7 @@
 # Plan B: `Instance.entities` as a computed label-backed view
 
+> **Status:** Deferred — symptom-fixed; structural rewrite not pursued.
+
 **Status:** Deferred (2026-04-23). Not in v1.0.3.
 
 ## Context

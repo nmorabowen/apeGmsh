@@ -390,18 +390,15 @@ same namespace — they are the "reorganise DOFs" surface.
 -g.mesh.unpartition()
 +g.mesh.partitioning.unpartition()
 
--old, new = g.mesh.compute_renumbering("RCMK")
-+old, new = g.mesh.partitioning.compute_renumbering("RCMK")
-
--g.mesh.renumber_nodes(old, new)
-+g.mesh.partitioning.renumber_nodes(old, new)
-
--g.mesh.renumber_elements(old, new)
-+g.mesh.partitioning.renumber_elements(old, new)
-
 -g.mesh.renumber_mesh(method="rcm", base=1)
-+g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
++result = g.mesh.partitioning.renumber(dim=2, method="rcm", base=1)
 ```
+
+The split `compute_renumbering` / `renumber_nodes` / `renumber_elements`
+surface from v0 has been collapsed into a single
+`partitioning.renumber(dim, *, method, base)` call (see
+`mesh/_mesh_partitioning.py:134`), which returns a `RenumberResult`
+with the old→new maps for both nodes and elements.
 
 ### What stays on `Mesh` directly
 
@@ -982,7 +979,7 @@ with apeGmsh(model_name="cantilever") as g:
 
     g.mesh.sizing.set_global_size(0.5)
     g.mesh.generation.generate(3)
-    g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+    g.mesh.partitioning.renumber(method="rcm", base=1)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     print(f"total mass: {fem.nodes.masses.total_mass():.0f} kg")

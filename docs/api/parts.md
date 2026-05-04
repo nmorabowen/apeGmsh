@@ -15,3 +15,15 @@ in and tracks which tags belong to which label.
 ## Instance
 
 ::: apeGmsh.core._parts_registry.Instance
+
+## Part edit composite — `part.edit`
+
+::: apeGmsh.core._part_edit.PartEdit
+
+## Instance edit composite — `inst.edit`
+
+::: apeGmsh.core._instance_edit.InstanceEdit
+
+## Labels
+
+::: apeGmsh.core.Labels.Labels

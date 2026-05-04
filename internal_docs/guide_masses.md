@@ -60,8 +60,11 @@ g.masses.point("flywheel", mass=200.0, rotational=(10.0, 10.0, 50.0))
 ```
 
 `rotational=(Ixx, Iyy, Izz)` adds rotational inertia terms. These
-only matter for 6-DOF models (ndf=6). For solids (ndf=3), rotational
-terms are ignored during resolution.
+only matter for 6-DOF models (ndf=6). The `MassResolver` always stores
+a length-6 vector `(mx, my, mz, Ixx, Iyy, Izz)` regardless of `ndf` —
+the rotational components are not dropped at resolve time. The slice
+down to the active DOF count happens at solver-ingest time (the
+OpenSees bridge drops the rotational triple for `ndf < 4` models).
 
 
 ### Line mass

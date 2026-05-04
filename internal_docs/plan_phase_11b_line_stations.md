@@ -1,5 +1,7 @@
 # Phase 11b — Line stations + nodal forces topology levels
 
+> **Status:** Aspirational — extension of element transcoding; blocked on per-instance integration-rule catalog.
+
 > [!note] Status
 > Scoped April 2026 after Phase 11a Round A (trusses) landed. Phase 11a
 > v1 covered the Gauss-level topology (`elements/gauss_points/`) for
