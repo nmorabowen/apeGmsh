@@ -151,8 +151,8 @@ apeGmsh ``ResultsViewer``:
    modal, and multi-recorder runs.
 
 Both produce a file that ``Results.from_native(path).viewer()`` can
-open. The viewer launch is gated on ``APEGMSH_SKIP_VIEWER`` so this
-notebook is safe to run under nbconvert / CI.
+open. ``Results.viewer`` itself honours ``APEGMSH_SKIP_VIEWER``, so
+this notebook is safe to run under nbconvert / CI without changes.
 """
 
 
@@ -274,16 +274,11 @@ print(f"capture -> {{results_capture}} ({{results_capture.stat().st_size/1024:.1
 
 def _viewer_cell() -> str:
     return """\
-# Open the captured run in the apeGmsh ResultsViewer (subprocess,
-# non-blocking). Set APEGMSH_SKIP_VIEWER=1 to skip in headless / CI.
-import os
+# Open the captured run in the apeGmsh ResultsViewer (subprocess, non-blocking).
+# Set APEGMSH_SKIP_VIEWER=1 in the environment to skip the GUI under nbconvert / CI.
 from apeGmsh.results import Results
 results = Results.from_native(results_capture)
-if os.environ.get("APEGMSH_SKIP_VIEWER"):
-    print("[skip viewer] APEGMSH_SKIP_VIEWER set")
-else:
-    handle = results.viewer(blocking=False)
-    print(f"viewer pid: {handle.pid}  -- close window to exit.")
+results.viewer(blocking=False)
 """
 
 

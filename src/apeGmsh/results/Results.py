@@ -409,7 +409,15 @@ class Results:
             The viewer instance after the window closes (blocking).
         subprocess.Popen
             The spawned process handle (non-blocking).
+        None
+            If ``APEGMSH_SKIP_VIEWER`` is set in the environment. This
+            lets the same cell run under ``jupyter nbconvert --execute``
+            or in CI without spawning a GUI window.
         """
+        import os
+        if os.environ.get("APEGMSH_SKIP_VIEWER"):
+            print("[skip viewer] APEGMSH_SKIP_VIEWER set")
+            return None
         if not blocking:
             handle = self._spawn_viewer_subprocess(title=title)
             # The subprocess opens its own NativeReader against the
