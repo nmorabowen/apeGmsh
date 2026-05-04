@@ -822,16 +822,19 @@ class ResultsViewer:
                 ("Ctrl+H", "Toggle focus mode"),
                 ("Q", "Close window"),
                 ("N / E / G", "Pick mode — node / element / GP"),
-                ("Shift+LMB drag", "Rotate view"),
+                ("Shift+LMB drag", "Orbit (no-roll, around pivot)"),
+                ("Shift+MMB drag", "Orbit (alias)"),
+                ("MMB / RMB drag", "Pan"),
+                ("Scroll", "Zoom (focal point fixed)"),
                 ("Shift+click", "Time-history at node"),
                 ("F2", "Rename outline item"),
             ],
         )
 
-        # ── Navigation: Shift+LMB drag = rotate, click = time-history.
-        # ``install_navigation`` adds quaternion orbit (Shift+MMB),
-        # cursor-anchored zoom (scroll), and the Shift+LMB drag-detect
-        # rotate observer.
+        # ── Navigation: Shift+LMB drag = orbit, click = time-history.
+        # ``install_navigation`` binds the no-roll quaternion orbit
+        # (Shift+LMB and Shift+MMB), focal-point-anchored scroll zoom,
+        # and the Shift+LMB drag-detect / click split.
         from .core.navigation import install_navigation
         install_navigation(
             plotter,
