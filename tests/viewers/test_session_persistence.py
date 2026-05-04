@@ -22,6 +22,7 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.diagrams._session import (
     SESSION_SCHEMA_VERSION,
+    GeometrySnapshot,
     ViewerSession,
     default_session_path,
     deserialize_session,
@@ -247,3 +248,73 @@ def test_save_then_load_preserves_visible_and_label_flags(tmp_path: Path):
     restored = session.diagrams[0]
     assert restored.visible is False
     assert restored.label == "Custom label"
+
+
+# =====================================================================
+# Geometry snapshot — display state (schema v3)
+# =====================================================================
+
+def test_v3_geometry_snapshot_persists_display_state(tmp_path: Path):
+    """show_mesh / show_nodes / display_opacity round-trip through JSON."""
+    geom = GeometrySnapshot(
+        id="g0",
+        name="Test geom",
+        deform_enabled=True,
+        deform_field="displacement",
+        deform_scale=2.0,
+        show_mesh=False,
+        show_nodes=True,
+        display_opacity=0.4,
+    )
+    saved = save_session(
+        specs=[_make_contour_spec()],
+        results_path=tmp_path / "run.h5",
+        fem_snapshot_id=None,
+        geometries=[geom],
+    )
+    session = load_session(saved)
+    assert len(session.geometries) == 1
+    restored = session.geometries[0]
+    assert restored.show_mesh is False
+    assert restored.show_nodes is True
+    assert restored.display_opacity == pytest.approx(0.4)
+
+
+def test_v2_session_loads_with_display_defaults(tmp_path: Path):
+    """A v2 session JSON (no display fields) must load with defaults."""
+    payload = {
+        "schema_version": 2,
+        "results_path": str(tmp_path / "run.h5"),
+        "fem_snapshot_id": None,
+        "saved_at": "",
+        "geometries": [
+            {
+                "id": "g0",
+                "name": "Geometry 1",
+                "deform_enabled": True,
+                "deform_field": "displacement",
+                "deform_scale": 5.0,
+                "active_composition_id": None,
+                "compositions": [],
+            },
+        ],
+        "diagrams": [serialize_spec(_make_contour_spec())],
+    }
+    target = tmp_path / "v2.json"
+    target.write_text(json.dumps(payload), encoding="utf-8")
+
+    session = load_session(target)
+    geom = session.geometries[0]
+    # Display fields default to the historical "everything visible,
+    # full alpha" behavior so old saves render the same as before.
+    assert geom.show_mesh is True
+    assert geom.show_nodes is True
+    assert geom.display_opacity == pytest.approx(1.0)
+    # Deformation state still loads.
+    assert geom.deform_enabled is True
+    assert geom.deform_scale == pytest.approx(5.0)
+
+
+def test_session_schema_version_is_3():
+    """Sanity: the constant tracks the latest schema."""
+    assert SESSION_SCHEMA_VERSION == 3
