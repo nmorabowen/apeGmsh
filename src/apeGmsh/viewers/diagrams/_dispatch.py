@@ -19,10 +19,10 @@ Every UI gesture / observer / shortcut funnels through
 sequence from the event matrix. This is the only place those four
 primitives may run.
 
-Trace logging is ON by default during the active dispatcher rollout
-so bug reports automatically come with a dispatch log. Set
-``APEGMSH_VIEWER_TRACE=0`` (or ``off`` / ``false`` / ``no``) to
-silence.
+Every dispatch fires through ``apeGmsh.viewers._log.log_action``
+(category ``dispatch``). The session log file captures the full
+sequence with timestamps + duration; bug reports attach the most
+recent file and we replay every gesture.
 
 Event matrix (mirrors the contract locked in PR review):
 
@@ -45,10 +45,11 @@ primitive in between, then runs one full pump on exit. Use it during
 """
 from __future__ import annotations
 
-import os
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator, Optional
+
+from .._log import log_action
 
 # Public event kinds
 STEP_CHANGED = "step_changed"
@@ -68,22 +69,6 @@ PICK_CLEARED = "pick_cleared"
 # when they fire first; this is the catch-all so the trace covers
 # every geometry observer fire.
 GEOMETRIES_CHANGED = "geometries_changed"
-
-def _trace_enabled() -> bool:
-    """Trace defaults ON during the active dispatcher-debugging period.
-
-    Set ``APEGMSH_VIEWER_TRACE=0`` (or ``"off"``, ``"false"``, ``"no"``)
-    to silence. Any other value — and unset — keeps trace ON, so bug
-    reports automatically come with a dispatch log.
-    """
-    val = os.environ.get("APEGMSH_VIEWER_TRACE")
-    if val is None:
-        return True
-    return val.lower() not in ("0", "off", "false", "no", "")
-
-
-_TRACE = _trace_enabled()
-
 
 class Dispatcher:
     """Event-loop pipeline for ResultsViewer.
@@ -129,11 +114,13 @@ class Dispatcher:
         """
         if self._suppress_depth > 0:
             self._suppressed_kinds.add(kind)
-            self._trace(f"SUPPRESSED {kind}")
+            log_action(
+                "dispatch", "suppressed",
+                kind=kind, layer=_layer_id(layer), _level="debug",
+            )
             return
 
-        t0 = time.perf_counter() if _TRACE else 0.0
-        self._trace(f"BEGIN {kind} layer={_layer_id(layer)}")
+        t0 = time.perf_counter()
 
         if kind == STEP_CHANGED:
             self._pump_step(None)
@@ -175,13 +162,16 @@ class Dispatcher:
         elif kind == PICK_CLEARED:
             pass    # only RENDER fires
         else:
-            self._trace(f"  unknown event {kind!r} — RENDER only")
+            log_action(
+                "dispatch", "unknown_kind", kind=kind, _level="warning",
+            )
 
         self._render()
 
-        if _TRACE:
-            dt = (time.perf_counter() - t0) * 1000.0
-            self._trace(f"END   {kind} ({dt:.2f} ms)")
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        log_action(
+            "dispatch", kind, layer=_layer_id(layer), duration_ms=round(dt_ms, 2),
+        )
 
     @contextmanager
     def session_batch(self) -> Iterator[None]:
@@ -191,32 +181,30 @@ class Dispatcher:
         observer doesn't pump ``K(K+1)/2`` times for K layers.
         """
         self._suppress_depth += 1
-        self._trace(f"BATCH start (depth={self._suppress_depth})")
+        log_action(
+            "dispatch", "batch_start", depth=self._suppress_depth,
+            _level="debug",
+        )
         try:
             yield
         finally:
             self._suppress_depth -= 1
-            self._trace(f"BATCH end   (depth={self._suppress_depth})")
             if self._suppress_depth == 0 and self._suppressed_kinds:
                 kinds = sorted(self._suppressed_kinds)
                 self._suppressed_kinds.clear()
-                self._trace(f"BATCH flush (suppressed: {kinds})")
+                log_action(
+                    "dispatch", "batch_flush", suppressed=str(kinds),
+                )
                 # One full pump matching STAGE_CHANGED semantics —
                 # everything was potentially mutated.
                 self._pump_step(None)
                 self._pump_deform(None)
                 self._pump_gate()
                 self._render()
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _trace(msg: str) -> None:
-        if _TRACE:
-            import sys
-            print(f"[viewer-dispatch] {msg}", file=sys.stderr)
+            log_action(
+                "dispatch", "batch_end", depth=self._suppress_depth,
+                _level="debug",
+            )
 
 
 def _layer_id(layer: Any) -> str:

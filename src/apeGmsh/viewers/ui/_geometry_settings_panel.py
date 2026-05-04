@@ -194,6 +194,11 @@ class GeometrySettingsPanel:
                 data = self._combo_field.currentData()
                 if data is not None:
                     field_to_set = str(data)
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "deform_toggled",
+            geom=self._geom_id, enabled=bool(enabled), field=field_to_set,
+        )
         self._director.geometries.set_deformation(
             self._geom_id, enabled=enabled, field=field_to_set,
         )
@@ -204,6 +209,11 @@ class GeometrySettingsPanel:
         data = self._combo_field.currentData()
         if data is None:
             return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "deform_field_changed",
+            geom=self._geom_id, field=str(data),
+        )
         self._director.geometries.set_deformation(
             self._geom_id, field=str(data),
         )
@@ -211,6 +221,11 @@ class GeometrySettingsPanel:
     def _fire_scale(self, value: float) -> None:
         if self._reflecting or self._geom_id is None:
             return
+        from .._log import log_action
+        log_action(
+            "ui.geometry", "deform_scale_changed",
+            geom=self._geom_id, scale=float(value),
+        )
         self._director.geometries.set_deformation(
             self._geom_id, scale=float(value),
         )

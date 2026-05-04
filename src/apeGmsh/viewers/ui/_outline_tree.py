@@ -561,6 +561,8 @@ class OutlineTree:
         geom_mgr = self._director.geometries
         geom_id = current.data(0, _ROLE_GEOMETRY_KEY)
         if geom_id is not None:
+            from .._log import log_action
+            log_action("ui.outline", "geometry_selected", geom=geom_id)
             try:
                 geom_mgr.set_active(geom_id)
             except Exception:
@@ -575,6 +577,8 @@ class OutlineTree:
             return
         comp_id = current.data(0, _ROLE_COMPOSITION_KEY)
         if comp_id is not None:
+            from .._log import log_action
+            log_action("ui.outline", "composition_selected", comp=comp_id)
             owner = geom_mgr.geometry_for_composition(comp_id)
             if owner is not None:
                 try:

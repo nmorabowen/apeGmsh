@@ -325,6 +325,11 @@ class DiagramSettingsTab:
         card.setCheckable(True)
         card.setChecked(bool(d.is_visible))
         def _on_card_toggled(checked: bool, _d=d) -> None:
+            from .._log import log_action
+            log_action(
+                "ui.settings", "visibility_toggled",
+                layer=_d, visible=bool(checked),
+            )
             self._director.registry.set_visible(_d, bool(checked))
             disp = getattr(self._director, "dispatcher", None)
             if disp is not None:
@@ -374,6 +379,11 @@ class DiagramSettingsTab:
         btn.setToolTip("Apply pending value edits in this layer")
 
         def _commit() -> None:
+            from .._log import log_action
+            log_action(
+                "ui.settings", "apply_clicked",
+                layer=d, n_appliers=len(appliers),
+            )
             for fn in appliers:
                 self._safe_call(fn)
             disp = getattr(self._director, "dispatcher", None)
@@ -449,6 +459,11 @@ class DiagramSettingsTab:
                 registry.move(r_idx, r_idx + int(delta))
         except Exception:
             pass
+        from .._log import log_action
+        log_action(
+            "ui.settings", "reorder_layer",
+            layer=d, delta=int(delta), new_idx=new_idx,
+        )
         # Manager observers don't fire on direct layers-list mutation;
         # nudge them so the stack rebuilds in the new order.
         if comp_mgr is not None:
@@ -624,6 +639,11 @@ class DiagramSettingsTab:
         active = comp_mgr.active if comp_mgr is not None else None
         if active is not None and comp_mgr is not None:
             comp_mgr.add_layer(active.id, diagram)
+        from .._log import log_action
+        log_action(
+            "ui.settings", "add_layer",
+            kind=kind_id, component=data, layer=diagram,
+        )
         # Granular dispatch — push the new layer's step + deformation
         # state and re-fire the gate now that it's tagged. Replaces the
         # blanket _refresh_new_layers callback we previously hung off
@@ -744,6 +764,8 @@ class DiagramSettingsTab:
                 owner.compositions.remove_layer(d)
         except Exception:
             pass
+        from .._log import log_action
+        log_action("ui.settings", "delete_layer", layer=d)
         try:
             self._director.registry.remove(d)
         except Exception as exc:
@@ -977,7 +999,13 @@ class DiagramSettingsTab:
                 break
 
         def _on_axis_change(idx: int) -> None:
-            self._safe_call(d.set_fill_axis, axis_combo.itemData(idx))
+            from .._log import log_action
+            new_axis = axis_combo.itemData(idx)
+            log_action(
+                "ui.settings", "fill_axis_changed",
+                layer=d, axis=str(new_axis),
+            )
+            self._safe_call(d.set_fill_axis, new_axis)
 
         axis_combo.currentIndexChanged.connect(_on_axis_change)
         form.addRow("Fill axis:", axis_combo)
