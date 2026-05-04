@@ -16487,7 +16487,22 @@ subprocess.Popen
 <span class="normal"><a href="#__codelineno-0-418">418</a></span>
 <span class="normal"><a href="#__codelineno-0-419">419</a></span>
 <span class="normal"><a href="#__codelineno-0-420">420</a></span>
-<span class="normal"><a href="#__codelineno-0-421">421</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-373"><a id="__codelineno-0-373" name="__codelineno-0-373"></a><span class="k">def</span><span class="w"> </span><span class="nf">viewer</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-421">421</a></span>
+<span class="normal"><a href="#__codelineno-0-422">422</a></span>
+<span class="normal"><a href="#__codelineno-0-423">423</a></span>
+<span class="normal"><a href="#__codelineno-0-424">424</a></span>
+<span class="normal"><a href="#__codelineno-0-425">425</a></span>
+<span class="normal"><a href="#__codelineno-0-426">426</a></span>
+<span class="normal"><a href="#__codelineno-0-427">427</a></span>
+<span class="normal"><a href="#__codelineno-0-428">428</a></span>
+<span class="normal"><a href="#__codelineno-0-429">429</a></span>
+<span class="normal"><a href="#__codelineno-0-430">430</a></span>
+<span class="normal"><a href="#__codelineno-0-431">431</a></span>
+<span class="normal"><a href="#__codelineno-0-432">432</a></span>
+<span class="normal"><a href="#__codelineno-0-433">433</a></span>
+<span class="normal"><a href="#__codelineno-0-434">434</a></span>
+<span class="normal"><a href="#__codelineno-0-435">435</a></span>
+<span class="normal"><a href="#__codelineno-0-436">436</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-373"><a id="__codelineno-0-373" name="__codelineno-0-373"></a><span class="k">def</span><span class="w"> </span><span class="nf">viewer</span><span class="p">(</span>
 </span><span id="__span-0-374"><a id="__codelineno-0-374" name="__codelineno-0-374"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-375"><a id="__codelineno-0-375" name="__codelineno-0-375"></a>    <span class="o">*</span><span class="p">,</span>
 </span><span id="__span-0-376"><a id="__codelineno-0-376" name="__codelineno-0-376"></a>    <span class="n">blocking</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
@@ -16528,14 +16543,29 @@ subprocess.Popen
 </span><span id="__span-0-411"><a id="__codelineno-0-411" name="__codelineno-0-411"></a><span class="sd">        The spawned process handle (non-blocking).</span>
 </span><span id="__span-0-412"><a id="__codelineno-0-412" name="__codelineno-0-412"></a><span class="sd">    &quot;&quot;&quot;</span>
 </span><span id="__span-0-413"><a id="__codelineno-0-413" name="__codelineno-0-413"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">blocking</span><span class="p">:</span>
-</span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_spawn_viewer_subprocess</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="n">title</span><span class="p">)</span>
-</span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">..viewers.results_viewer</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResultsViewer</span>
-</span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a>    <span class="k">return</span> <span class="n">ResultsViewer</span><span class="p">(</span>
-</span><span id="__span-0-417"><a id="__codelineno-0-417" name="__codelineno-0-417"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-418"><a id="__codelineno-0-418" name="__codelineno-0-418"></a>        <span class="n">title</span><span class="o">=</span><span class="n">title</span><span class="p">,</span>
-</span><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a>        <span class="n">restore_session</span><span class="o">=</span><span class="n">restore_session</span><span class="p">,</span>
-</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a>        <span class="n">save_session</span><span class="o">=</span><span class="n">save_session</span><span class="p">,</span>
-</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a>    <span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
+</span><span id="__span-0-414"><a id="__codelineno-0-414" name="__codelineno-0-414"></a>        <span class="n">handle</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_spawn_viewer_subprocess</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="n">title</span><span class="p">)</span>
+</span><span id="__span-0-415"><a id="__codelineno-0-415" name="__codelineno-0-415"></a>        <span class="c1"># The subprocess opens its own NativeReader against the</span>
+</span><span id="__span-0-416"><a id="__codelineno-0-416" name="__codelineno-0-416"></a>        <span class="c1"># path; the parent kernel&#39;s reader is no longer needed for</span>
+</span><span id="__span-0-417"><a id="__codelineno-0-417" name="__codelineno-0-417"></a>        <span class="c1"># rendering. Close it here so the user can re-run a capture</span>
+</span><span id="__span-0-418"><a id="__codelineno-0-418" name="__codelineno-0-418"></a>        <span class="c1"># script (which deletes / recreates the same .h5) without</span>
+</span><span id="__span-0-419"><a id="__codelineno-0-419" name="__codelineno-0-419"></a>        <span class="c1"># hitting ``PermissionError: file is being used by another</span>
+</span><span id="__span-0-420"><a id="__codelineno-0-420" name="__codelineno-0-420"></a>        <span class="c1"># process`` — Windows refuses to unlink a file that any</span>
+</span><span id="__span-0-421"><a id="__codelineno-0-421" name="__codelineno-0-421"></a>        <span class="c1"># process has open, even read-only.</span>
+</span><span id="__span-0-422"><a id="__codelineno-0-422" name="__codelineno-0-422"></a>        <span class="c1">#</span>
+</span><span id="__span-0-423"><a id="__codelineno-0-423" name="__codelineno-0-423"></a>        <span class="c1"># If the user wants to keep querying ``results`` after the</span>
+</span><span id="__span-0-424"><a id="__codelineno-0-424" name="__codelineno-0-424"></a>        <span class="c1"># spawn, they can re-bind via ``Results.from_native(path)``.</span>
+</span><span id="__span-0-425"><a id="__codelineno-0-425" name="__codelineno-0-425"></a>        <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-0-426"><a id="__codelineno-0-426" name="__codelineno-0-426"></a>            <span class="bp">self</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</span><span id="__span-0-427"><a id="__codelineno-0-427" name="__codelineno-0-427"></a>        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-0-428"><a id="__codelineno-0-428" name="__codelineno-0-428"></a>            <span class="k">pass</span>
+</span><span id="__span-0-429"><a id="__codelineno-0-429" name="__codelineno-0-429"></a>        <span class="k">return</span> <span class="n">handle</span>
+</span><span id="__span-0-430"><a id="__codelineno-0-430" name="__codelineno-0-430"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">..viewers.results_viewer</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResultsViewer</span>
+</span><span id="__span-0-431"><a id="__codelineno-0-431" name="__codelineno-0-431"></a>    <span class="k">return</span> <span class="n">ResultsViewer</span><span class="p">(</span>
+</span><span id="__span-0-432"><a id="__codelineno-0-432" name="__codelineno-0-432"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-433"><a id="__codelineno-0-433" name="__codelineno-0-433"></a>        <span class="n">title</span><span class="o">=</span><span class="n">title</span><span class="p">,</span>
+</span><span id="__span-0-434"><a id="__codelineno-0-434" name="__codelineno-0-434"></a>        <span class="n">restore_session</span><span class="o">=</span><span class="n">restore_session</span><span class="p">,</span>
+</span><span id="__span-0-435"><a id="__codelineno-0-435" name="__codelineno-0-435"></a>        <span class="n">save_session</span><span class="o">=</span><span class="n">save_session</span><span class="p">,</span>
+</span><span id="__span-0-436"><a id="__codelineno-0-436" name="__codelineno-0-436"></a>    <span class="p">)</span><span class="o">.</span><span class="n">show</span><span class="p">()</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
