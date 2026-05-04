@@ -19,8 +19,10 @@ Every UI gesture / observer / shortcut funnels through
 sequence from the event matrix. This is the only place those four
 primitives may run.
 
-Set ``APEGMSH_VIEWER_TRACE=1`` to print every dispatch with timestamp +
-duration — useful for diagnosing race conditions and missed pumps.
+Trace logging is ON by default during the active dispatcher rollout
+so bug reports automatically come with a dispatch log. Set
+``APEGMSH_VIEWER_TRACE=0`` (or ``off`` / ``false`` / ``no``) to
+silence.
 
 Event matrix (mirrors the contract locked in PR review):
 
@@ -59,8 +61,28 @@ DIAGRAM_MODIFIED = "diagram_modified"
 LAYER_VISIBILITY_CHANGED = "layer_visibility_changed"
 LAYER_REORDERED = "layer_reordered"
 PICK_CLEARED = "pick_cleared"
+# Compound event covering any change to the geometry tree:
+# deform toggle/scale/field, active geometry, comp create/rename/
+# delete, comp active, layer membership. Granular dispatches from
+# individual call sites (toggle, composition click) take precedence
+# when they fire first; this is the catch-all so the trace covers
+# every geometry observer fire.
+GEOMETRIES_CHANGED = "geometries_changed"
 
-_TRACE = bool(os.environ.get("APEGMSH_VIEWER_TRACE"))
+def _trace_enabled() -> bool:
+    """Trace defaults ON during the active dispatcher-debugging period.
+
+    Set ``APEGMSH_VIEWER_TRACE=0`` (or ``"off"``, ``"false"``, ``"no"``)
+    to silence. Any other value — and unset — keeps trace ON, so bug
+    reports automatically come with a dispatch log.
+    """
+    val = os.environ.get("APEGMSH_VIEWER_TRACE")
+    if val is None:
+        return True
+    return val.lower() not in ("0", "off", "false", "no", "")
+
+
+_TRACE = _trace_enabled()
 
 
 class Dispatcher:
@@ -118,6 +140,12 @@ class Dispatcher:
             self._pump_deform(None)
         elif kind == DEFORM_CHANGED:
             self._pump_deform(None)
+        elif kind == GEOMETRIES_CHANGED:
+            # Compound: deform may have changed (scale/toggle/field)
+            # AND composition active may have changed. Run both pumps;
+            # they're idempotent.
+            self._pump_deform(None)
+            self._pump_gate()
         elif kind == STAGE_CHANGED:
             # The director itself runs reattach_all + update_to_step
             # before firing this event; the dispatcher just refreshes

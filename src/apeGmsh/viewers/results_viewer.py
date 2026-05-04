@@ -682,6 +682,7 @@ class ResultsViewer:
             COMP_ACTIVE_CHANGED, DIAGRAM_ATTACHED,
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
+            GEOMETRIES_CHANGED,
         )
         dispatcher = Dispatcher(
             director,
@@ -706,19 +707,13 @@ class ResultsViewer:
         )
         # Geometry-state covers: deform toggle/scale/field, active
         # geometry change, comp create/rename/delete, comp active,
-        # layer membership. The compound (DEFORM + GATE) covers all.
-        # Granular dispatches from individual call sites (toggle,
-        # composition click) take precedence when they arrive first.
-        def _on_geometries_changed() -> None:
-            # Full pump — geometries observer is fired for many reasons,
-            # so we cover both DEFORM and GATE in one event.
-            try:
-                _pump_deform(None)
-            finally:
-                _pump_gate()
-            _render()
-
-        director.geometries.subscribe(_on_geometries_changed)
+        # layer membership. The compound GEOMETRIES_CHANGED event runs
+        # DEFORM + GATE — idempotent, so safe to over-fire. Routing
+        # through the dispatcher (instead of calling pumps directly)
+        # means the trace covers it.
+        director.geometries.subscribe(
+            lambda: dispatcher.fire(GEOMETRIES_CHANGED),
+        )
         # Registry observer covers add/remove/move/visibility when the
         # call site doesn't dispatch granularly. Conservative: just
         # re-run the gate. Granular events from settings tab carry the
