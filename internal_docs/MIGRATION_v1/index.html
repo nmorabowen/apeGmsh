@@ -2160,6 +2160,8 @@
       
         
       
+        
+      
     
     
     
@@ -2385,6 +2387,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3205,6 +3235,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3433,6 +3469,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4910,18 +5030,14 @@ same namespace — they are the "reorganise DOFs" surface.</p>
 </span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="gd">-g.mesh.unpartition()</span>
 </span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="gi">+g.mesh.partitioning.unpartition()</span>
 </span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="gd">-old, new = g.mesh.compute_renumbering(&quot;RCMK&quot;)</span>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="gi">+old, new = g.mesh.partitioning.compute_renumbering(&quot;RCMK&quot;)</span>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="gd">-g.mesh.renumber_nodes(old, new)</span>
-</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="gi">+g.mesh.partitioning.renumber_nodes(old, new)</span>
-</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>
-</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="gd">-g.mesh.renumber_elements(old, new)</span>
-</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a><span class="gi">+g.mesh.partitioning.renumber_elements(old, new)</span>
-</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>
-</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a><span class="gd">-g.mesh.renumber_mesh(method=&quot;rcm&quot;, base=1)</span>
-</span><span id="__span-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a><span class="gi">+g.mesh.partitioning.renumber_mesh(method=&quot;rcm&quot;, base=1)</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="gd">-g.mesh.renumber_mesh(method=&quot;rcm&quot;, base=1)</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="gi">+result = g.mesh.partitioning.renumber(dim=2, method=&quot;rcm&quot;, base=1)</span>
 </span></code></pre></div>
+<p>The split <code>compute_renumbering</code> / <code>renumber_nodes</code> / <code>renumber_elements</code>
+surface from v0 has been collapsed into a single
+<code>partitioning.renumber(dim, *, method, base)</code> call (see
+<code>mesh/_mesh_partitioning.py:134</code>), which returns a <code>RenumberResult</code>
+with the old→new maps for both nodes and elements.</p>
 <h3 id="what-stays-on-mesh-directly">What stays on <code>Mesh</code> directly<a class="headerlink" href="#what-stays-on-mesh-directly" title="Permanent link">&para;</a></h3>
 <p>Only two entry points remain flat on <code>g.mesh</code> — both open interactive
 windows and neither makes sense inside a sub-composite:</p>
@@ -5413,7 +5529,7 @@ Mesh, and OpenSees sub-composite splits:</p>
 </span><span id="__span-33-13"><a id="__codelineno-33-13" name="__codelineno-33-13" href="#__codelineno-33-13"></a>
 </span><span id="__span-33-14"><a id="__codelineno-33-14" name="__codelineno-33-14" href="#__codelineno-33-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
 </span><span id="__span-33-15"><a id="__codelineno-33-15" name="__codelineno-33-15" href="#__codelineno-33-15"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-33-16"><a id="__codelineno-33-16" name="__codelineno-33-16" href="#__codelineno-33-16"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_mesh</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-33-16"><a id="__codelineno-33-16" name="__codelineno-33-16" href="#__codelineno-33-16"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-33-17"><a id="__codelineno-33-17" name="__codelineno-33-17" href="#__codelineno-33-17"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-33-18"><a id="__codelineno-33-18" name="__codelineno-33-18" href="#__codelineno-33-18"></a>
 </span><span id="__span-33-19"><a id="__codelineno-33-19" name="__codelineno-33-19" href="#__codelineno-33-19"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;total mass: </span><span class="si">{</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">total_mass</span><span class="p">()</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> kg&quot;</span><span class="p">)</span>

@@ -2164,6 +2164,8 @@
       
         
       
+        
+      
     
     
     
@@ -2582,6 +2584,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#712-femdata-io-surface-results-binding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.12 FEMData IO surface (Results binding)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2856,6 +2869,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3676,6 +3717,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3904,6 +3951,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4398,6 +4529,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#712-femdata-io-surface-results-binding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7.12 FEMData IO surface (Results binding)
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4552,11 +4694,14 @@ IDs and connectivity arrays before the user writes a single
 chambers, the parsing objects each one emits, and the conventions that
 glue them into a solver-agnostic interface.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>src/apeGmsh/mesh/
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── FEMData.py           ← the four chambers + top-level broker
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── _group_set.py        ← PhysicalGroupSet / LabelSet (name-first tiers)
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── _record_set.py       ← NodeConstraintSet, NodalLoadSet, MassSet, …
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── _element_types.py    ← ElementTypeInfo / ElementGroup / GroupResult
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>└── _fem_factory.py      ← from_gmsh / from_msh construction
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── FEMData.py             ← the four chambers + top-level broker
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── _group_set.py          ← PhysicalGroupSet / LabelSet (name-first tiers)
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>├── _record_set.py         ← NodeConstraintSet, NodalLoadSet, MassSet, …
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>├── _element_types.py      ← ElementTypeInfo / ElementGroup / GroupResult
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>├── _fem_factory.py        ← from_gmsh / from_msh construction
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>├── _femdata_hash.py       ← snapshot_id digest (Results binding)
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>├── _femdata_native_io.py  ← FEMData ⇄ native HDF5 (/model/ group)
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>└── _femdata_mpco_io.py    ← FEMData ← MPCO MODEL/ group
 </span></code></pre></div>
 <hr />
 <h2 id="1-the-broker-as-a-forked-freeze">1. The broker as a forked freeze<a class="headerlink" href="#1-the-broker-as-a-forked-freeze" title="Permanent link">&para;</a></h2>
@@ -4590,7 +4735,7 @@ four public attributes are plain Python objects holding numpy arrays:</p>
 <li>Snapshots the <code>Parts</code> registry's <code>part_label → set[node_id]</code> and
    <code>part_label → set[element_id]</code> maps so <code>get(target="col_01")</code> keeps
    working after the session closes (see <code>NodeComposite._part_node_map</code>
-   in <code>FEMData.py:275</code>).</li>
+   in <code>FEMData.py:279</code>).</li>
 <li>Builds <code>MeshInfo</code> with element-type metadata and computes the
    semi-bandwidth in one numpy pass (<code>_compute_bandwidth</code>).</li>
 </ol>
@@ -4689,7 +4834,8 @@ every selection. It takes three orthogonal axes:</p>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">label</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>          <span class="c1"># explicit      : label name(s)</span>
 </span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">tag</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>            <span class="c1"># explicit      : raw PG tag or (dim, tag)</span>
 </span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">partition</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>      <span class="c1"># intersection  : partition filter</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NodeResult</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">dim</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>            <span class="c1"># intersection  : entity-dimension filter</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NodeResult</span>
 </span></code></pre></div>
 <p>The <code>target=</code> path auto-tries resolution <strong>label → PG → part</strong> (matching
 <code>LoadsComposite._resolve_target</code>). That precedence is the same one used
@@ -5117,7 +5263,8 @@ split:</p>
 <p>Point forces per pattern. Records are <code>NodalLoadRecord</code>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
 </span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>    <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">):</span>
-</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">rec</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">force_xyz</span> <span class="ow">or</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">)),</span>
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>                              <span class="o">*</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">moment_xyz</span> <span class="ow">or</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">)))</span>
 </span></code></pre></div>
 <p><code>.summary()</code> returns a per-pattern DataFrame.</p>
 <h3 id="79-elementloadset-_record_setpy">7.9 <code>ElementLoadSet</code>  (<code>_record_set.py</code>)<a class="headerlink" href="#79-elementloadset-_record_setpy" title="Permanent link">&para;</a></h3>
@@ -5131,10 +5278,10 @@ split:</p>
 <p>Single-point constraints. Records are <code>SPRecord</code> with a <code>prescribed</code>
 flag splitting homogeneous (<code>fix</code>) from non-homogeneous (<code>sp</code>)
 constraints.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">homogeneous</span><span class="p">():</span>          <span class="c1"># boolean mask per DOF</span>
-</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">r</span><span class="o">.</span><span class="n">flags</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">homogeneous</span><span class="p">():</span>           <span class="c1"># one record per (node, dof)</span>
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">dof</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>              <span class="c1"># value is 0.0 for fix</span>
 </span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>
-</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">prescribed</span><span class="p">():</span>            <span class="c1"># value per DOF</span>
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">prescribed</span><span class="p">():</span>            <span class="c1"># non-homogeneous value</span>
 </span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">dof</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 </span><span id="__span-26-6"><a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>
 </span><span id="__span-26-7"><a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">by_node</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span>                      <span class="c1"># all SPs on one node</span>
@@ -5142,12 +5289,31 @@ constraints.</p>
 <h3 id="711-massset-_record_setpy">7.11 <code>MassSet</code>  (<code>_record_set.py</code>)<a class="headerlink" href="#711-massset-_record_setpy" title="Permanent link">&para;</a></h3>
 <p>Lumped nodal masses. Records are <code>MassRecord</code>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="p">:</span>
-</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">r</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">r</span><span class="o">.</span><span class="n">mass</span><span class="p">)</span>              <span class="c1"># length-6 tuple (mx,my,mz,Ixx,Iyy,Izz)</span>
 </span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>
 </span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">total_mass</span><span class="p">()</span>
 </span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">by_node</span><span class="p">(</span><span class="n">nid</span><span class="p">)</span>
 </span><span id="__span-27-6"><a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>
 </span></code></pre></div>
+<h3 id="712-femdata-io-surface-results-binding">7.12 FEMData IO surface (Results binding)<a class="headerlink" href="#712-femdata-io-surface-results-binding" title="Permanent link">&para;</a></h3>
+<p>Three top-level methods on <code>FEMData</code> are load-bearing for the Results
+module's snapshot/binding contract:</p>
+<ul>
+<li><code>snapshot_id</code> (<code>FEMData.py:1124</code>) — cached deterministic content
+  hash over nodes, per-type element connectivity, physical groups, and
+  labels. Computed once via <code>_femdata_hash.compute_snapshot_id</code>. Used
+  as the linking key in <code>Results.bind()</code>; the [[apeGmsh_broker]] never
+  <em>enforces</em> matches — pairing remains the user's responsibility.</li>
+<li><code>to_native_h5(group)</code> / <code>from_native_h5(group)</code> (<code>FEMData.py:1181</code>,
+  <code>:1192</code>) — round-trip a FEMData into an open HDF5 <code>/model/</code> group.
+  Loads / masses / constraints are deliberately not serialised (they
+  do not contribute to <code>snapshot_id</code>). Two FEMData objects produced
+  by this round-trip yield identical <code>snapshot_id</code>.</li>
+<li><code>from_mpco_model(group)</code> (<code>FEMData.py:1204</code>) — synthesise a partial
+  FEMData from an MPCO <code>MODEL/</code> group (nodes, elements per OpenSees
+  class tag, PG-from-Region). <code>snapshot_id</code> will not match a native
+  FEMData of the same mesh.</li>
+</ul>
 <hr />
 <h2 id="8-cross-cutting-conventions">8. Cross-cutting conventions<a class="headerlink" href="#8-cross-cutting-conventions" title="Permanent link">&para;</a></h2>
 <p>Five rules apply across every chamber. Every one exists for a concrete
@@ -5226,7 +5392,7 @@ walks every chamber in the order a solver actually needs:</p>
 </span><span id="__span-28-24"><a id="__codelineno-28-24" name="__codelineno-28-24" href="#__codelineno-28-24"></a>
 </span><span id="__span-28-25"><a id="__codelineno-28-25" name="__codelineno-28-25" href="#__codelineno-28-25"></a><span class="c1"># --- boundary conditions ------------------------------------------------</span>
 </span><span id="__span-28-26"><a id="__codelineno-28-26" name="__codelineno-28-26" href="#__codelineno-28-26"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">homogeneous</span><span class="p">():</span>
-</span><span id="__span-28-27"><a id="__codelineno-28-27" name="__codelineno-28-27" href="#__codelineno-28-27"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">r</span><span class="o">.</span><span class="n">flags</span><span class="p">)</span>
+</span><span id="__span-28-27"><a id="__codelineno-28-27" name="__codelineno-28-27" href="#__codelineno-28-27"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">dof</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
 </span><span id="__span-28-28"><a id="__codelineno-28-28" name="__codelineno-28-28" href="#__codelineno-28-28"></a>
 </span><span id="__span-28-29"><a id="__codelineno-28-29" name="__codelineno-28-29" href="#__codelineno-28-29"></a><span class="c1"># --- constraints --------------------------------------------------------</span>
 </span><span id="__span-28-30"><a id="__codelineno-28-30" name="__codelineno-28-30" href="#__codelineno-28-30"></a><span class="k">for</span> <span class="n">master</span><span class="p">,</span> <span class="n">slaves</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">rigid_link_groups</span><span class="p">():</span>
@@ -5240,12 +5406,13 @@ walks every chamber in the order a solver actually needs:</p>
 </span><span id="__span-28-38"><a id="__codelineno-28-38" name="__codelineno-28-38" href="#__codelineno-28-38"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
 </span><span id="__span-28-39"><a id="__codelineno-28-39" name="__codelineno-28-39" href="#__codelineno-28-39"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s1">&#39;Plain&#39;</span><span class="p">,</span> <span class="nb">hash</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0x7fffffff</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-28-40"><a id="__codelineno-28-40" name="__codelineno-28-40" href="#__codelineno-28-40"></a>    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">):</span>
-</span><span id="__span-28-41"><a id="__codelineno-28-41" name="__codelineno-28-41" href="#__codelineno-28-41"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">r</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
-</span><span id="__span-28-42"><a id="__codelineno-28-42" name="__codelineno-28-42" href="#__codelineno-28-42"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="s1">&#39;loadPattern&#39;</span><span class="p">,</span> <span class="nb">hash</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0x7fffffff</span><span class="p">)</span>
-</span><span id="__span-28-43"><a id="__codelineno-28-43" name="__codelineno-28-43" href="#__codelineno-28-43"></a>
-</span><span id="__span-28-44"><a id="__codelineno-28-44" name="__codelineno-28-44" href="#__codelineno-28-44"></a><span class="c1"># --- masses -------------------------------------------------------------</span>
-</span><span id="__span-28-45"><a id="__codelineno-28-45" name="__codelineno-28-45" href="#__codelineno-28-45"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="p">:</span>
-</span><span id="__span-28-46"><a id="__codelineno-28-46" name="__codelineno-28-46" href="#__codelineno-28-46"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">r</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+</span><span id="__span-28-41"><a id="__codelineno-28-41" name="__codelineno-28-41" href="#__codelineno-28-41"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">force_xyz</span> <span class="ow">or</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">)),</span>
+</span><span id="__span-28-42"><a id="__codelineno-28-42" name="__codelineno-28-42" href="#__codelineno-28-42"></a>                            <span class="o">*</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">moment_xyz</span> <span class="ow">or</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">)))</span>
+</span><span id="__span-28-43"><a id="__codelineno-28-43" name="__codelineno-28-43" href="#__codelineno-28-43"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="s1">&#39;loadPattern&#39;</span><span class="p">,</span> <span class="nb">hash</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0x7fffffff</span><span class="p">)</span>
+</span><span id="__span-28-44"><a id="__codelineno-28-44" name="__codelineno-28-44" href="#__codelineno-28-44"></a>
+</span><span id="__span-28-45"><a id="__codelineno-28-45" name="__codelineno-28-45" href="#__codelineno-28-45"></a><span class="c1"># --- masses -------------------------------------------------------------</span>
+</span><span id="__span-28-46"><a id="__codelineno-28-46" name="__codelineno-28-46" href="#__codelineno-28-46"></a><span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="p">:</span>
+</span><span id="__span-28-47"><a id="__codelineno-28-47" name="__codelineno-28-47" href="#__codelineno-28-47"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">r</span><span class="o">.</span><span class="n">mass</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Nothing in that script calls gmsh, reads a file, or holds a
 <code>(dim, tag)</code> pair. That is the shape of a working broker.</p>
@@ -5304,7 +5471,7 @@ walks every chamber in the order a solver actually needs:</p>
 <li>[[apeGmsh_groundTruth]] §2 — where the tier-1 / tier-2 split comes
    from and why it has to survive the freeze.</li>
 <li>This file — <em>what</em> <code>FEMData</code> is made of.</li>
-<li><code>src/apeGmsh/mesh/FEMData.py</code> — the 1155-line ground truth; skim
+<li><code>src/apeGmsh/mesh/FEMData.py</code> — the ~1240-line ground truth; skim
    classes in the order Node → Element → MeshInfo → Inspect → FEMData.</li>
 <li><code>src/apeGmsh/mesh/_fem_factory.py</code> — how the four chambers are
    actually populated from a live gmsh session.</li>

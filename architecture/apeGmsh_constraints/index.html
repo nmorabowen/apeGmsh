@@ -2164,6 +2164,8 @@
       
         
       
+        
+      
     
     
     
@@ -2424,10 +2426,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#31-the-one-exception-node_to_surface" class="md-nav__link">
+  <a href="#31-the-exceptions-node_to_surface-and-embedded" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3.1 The one exception: node_to_surface
+        3.1 The exceptions: node_to_surface and embedded
       
     </span>
   </a>
@@ -2680,6 +2682,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3500,6 +3530,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3728,6 +3764,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4008,10 +4128,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#31-the-one-exception-node_to_surface" class="md-nav__link">
+  <a href="#31-the-exceptions-node_to_surface-and-embedded" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3.1 The one exception: node_to_surface
+        3.1 The exceptions: node_to_surface and embedded
       
     </span>
   </a>
@@ -4430,10 +4550,22 @@ interface"</em>:</p>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">slave_entities</span><span class="o">=</span><span class="p">[(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">17</span><span class="p">)],</span>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
 </span></code></pre></div>
-<h3 id="31-the-one-exception-node_to_surface">3.1 The one exception: <code>node_to_surface</code><a class="headerlink" href="#31-the-one-exception-node_to_surface" title="Permanent link">&para;</a></h3>
-<p><code>NodeToSurfaceDef</code> (and its spring variant) <strong>bypass label
-validation</strong> because its "master" is a bare geometry <em>point</em> entity
-tag and its "slave" is a raw surface entity tag. The composite's
+<h3 id="31-the-exceptions-node_to_surface-and-embedded">3.1 The exceptions: <code>node_to_surface</code> and <code>embedded</code><a class="headerlink" href="#31-the-exceptions-node_to_surface-and-embedded" title="Permanent link">&para;</a></h3>
+<p>The <code>_add_def</code> guard skips label validation for both
+<code>NodeToSurfaceDef</code> (and its spring variant) <strong>and</strong> <code>EmbeddedDef</code>
+(<code>ConstraintsComposite.py:236</code>). Both reach into Gmsh by raw entity
+tags rather than part-label instances:</p>
+<ul>
+<li><code>NodeToSurfaceDef</code> — "master" is a bare geometry <em>point</em> entity tag
+  and "slave" is a raw surface entity tag.</li>
+<li><code>EmbeddedDef</code> — accepts explicit <code>host_entities</code> and
+  <code>embedded_entities</code> keyword args (<code>_constraint_defs.py:271-274</code>),
+  each a list of <code>(dim, tag)</code>. When omitted, the resolver falls back
+  to <code>_entities_for_label(label)</code> which tries the <code>g.parts</code> instance
+  registry first, then a physical-group name fallback
+  (<code>ConstraintsComposite.py:1272-1299</code>).</li>
+</ul>
+<p>For <code>node_to_surface</code> the composite's
 <code>node_to_surface(master, slave, ...)</code> factory resolves these via
 <code>_helpers.resolve_to_tags(...)</code> up-front and stores:</p>
 <ul>
@@ -4481,7 +4613,8 @@ calling three different <code>ConstraintResolver.resolve_*</code> methods.</p>
 </span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>NodeToSurface       ─┐                 NodeToSurface       → resolve_node_to_surface
 </span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>NodeToSurfaceSpring ─┴─→ _resolve_node_to_surface  NodeToSurfaceSpring → resolve_node_to_surface_spring
 </span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>Embedded → _resolve_embedded   (NotImplementedError — reserved for future)
+</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>Embedded → _resolve_embedded   Embedded → resolve_embedded
+</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>                                (implemented for tet4 / tri3 hosts via ASDEmbeddedNodeElement)
 </span></code></pre></div>
 <h3 id="42-five-dispatch-helpers">4.2 Five dispatch helpers<a class="headerlink" href="#42-five-dispatch-helpers" title="Permanent link">&para;</a></h3>
 <p>The private <code>_resolve_*</code> methods on the composite group by <em>what kind
@@ -4527,7 +4660,7 @@ of geometric primitive the resolver needs</em>:</p>
 </tr>
 <tr>
 <td><code>_resolve_embedded</code></td>
-<td>— (unimplemented)</td>
+<td>host elems + embedded nodes (implemented)</td>
 <td>Embedded</td>
 </tr>
 </tbody>
@@ -4566,8 +4699,10 @@ you have surface-type defs (<code>TieDef</code>, <code>TiedContactDef</code>, <c
 the composite <em>warns</em> and those constraints silently resolve to
 empty records:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">if</span> <span class="n">has_face_constraints</span> <span class="ow">and</span> <span class="n">face_map</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">warnings</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s2">&quot;Surface constraints defined but face_map=None.&quot;</span><span class="p">,</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>                  <span class="n">stacklevel</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>        <span class="s2">&quot;Surface constraints are defined but face_map=None. &quot;</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>        <span class="s2">&quot;Call resolve(..., face_map=parts.build_face_map(node_map)) &quot;</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>        <span class="s2">&quot;or use Mesh.get_fem_data() which builds face_map automatically.&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The end-user rarely sees this because <code>Mesh.get_fem_data</code> builds both
 maps before calling resolve.</p>
@@ -4810,10 +4945,11 @@ because you have to emit the phantom nodes before the rigid links).</p>
    <code>_RESOLVER_METHOD</code> entry + a resolver method + (optionally) a
    record subclass.</strong> The five tables are the source of truth;
    there is no "magic" that auto-infers any of them.</li>
-<li><strong>Use part labels for master/slave.</strong> The only exceptions are
-   <code>NodeToSurfaceDef</code> and <code>NodeToSurfaceSpringDef</code>, which operate on
-   raw geometry tags. If your new constraint takes bare node tags,
-   add it to the <code>isinstance(defn, NodeToSurfaceDef)</code> guard in
+<li><strong>Use part labels for master/slave.</strong> The exceptions are
+   <code>NodeToSurfaceDef</code>/<code>NodeToSurfaceSpringDef</code> (raw point/surface
+   tags) and <code>EmbeddedDef</code> (entity-list keyword args). If your new
+   constraint also bypasses label resolution, add it to the
+   <code>isinstance(defn, (NodeToSurfaceDef, EmbeddedDef))</code> guard in
    <code>_add_def</code> (or refactor the guard into a method).</li>
 <li><strong>The resolver stays pure.</strong> No gmsh imports in
    <code>_constraint_resolver.py</code> or <code>_constraint_geom.py</code>. If you need a

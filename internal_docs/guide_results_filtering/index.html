@@ -2615,6 +2615,8 @@
       
         
       
+        
+      
     
     
     
@@ -2840,6 +2842,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3660,6 +3690,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3888,6 +3924,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -5118,7 +5238,13 @@ filters compose.</p>
 </span></code></pre></div>
 <p>Either pass <code>fem=</code> to <code>from_native</code> or call <code>results.bind(fem)</code>. The
 embedded <code>FEMData</code> snapshot from native files works for IDs but not
-always for labels — the binding contract is hash-checked.</p>
+always for labels — the session-side FEMData typically carries richer
+labels and Part provenance. The <code>snapshot_id</code> hash is computed and
+stored as metadata, but bind never enforces equality — pairing a
+FEMData with a results file from the same run is the user's
+responsibility. When a query returns nothing unexpectedly, call
+<code>results.inspect.diagnose("&lt;component&gt;")</code> for a per-level routing
+report.</p>
 <h3 id="102-my-in_box-returns-nothing">10.2  "My in_box returns nothing"<a class="headerlink" href="#102-my-in_box-returns-nothing" title="Permanent link">&para;</a></h3>
 <p>Three common causes:</p>
 <ul>

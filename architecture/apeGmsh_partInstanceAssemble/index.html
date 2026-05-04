@@ -2164,6 +2164,8 @@
       
         
       
+        
+      
     
     
     
@@ -2435,15 +2437,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#51-four-entry-points-for-creating-instances" class="md-nav__link">
+  <a href="#51-five-entry-points-for-creating-instances" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5.1 Four entry points for creating instances
+        5.1 Five entry points for creating instances
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="5.1 Four entry points for creating instances">
+    <nav class="md-nav" aria-label="5.1 Five entry points for creating instances">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -2774,6 +2776,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3594,6 +3624,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3822,6 +3858,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4141,15 +4261,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#51-four-entry-points-for-creating-instances" class="md-nav__link">
+  <a href="#51-five-entry-points-for-creating-instances" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5.1 Four entry points for creating instances
+        5.1 Five entry points for creating instances
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="5.1 Four entry points for creating instances">
+    <nav class="md-nav" aria-label="5.1 Five entry points for creating instances">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4500,7 +4620,7 @@ an Abaqus assembly.</p>
 <code>model</code>, <code>labels</code>, <code>physical</code>, <code>inspect</code>, <code>plot</code> — deliberately <strong>no</strong>
 <code>mesh</code> and <strong>no</strong> solver composites. A Part cannot be meshed, cannot
 carry constraints, cannot hold loads. That asymmetry is enforced by
-the <code>_COMPOSITES</code> tuple in <code>Part.py</code> (line 129) and is not optional.</p>
+the <code>_COMPOSITES</code> tuple in <code>Part.py</code> (line 130) and is not optional.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">Part</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">plate</span> <span class="o">=</span> <span class="n">Part</span><span class="p">(</span><span class="s2">&quot;plate&quot;</span><span class="p">)</span>
@@ -4551,7 +4671,7 @@ explicit save runs (<code>Part.save:345</code>), and <code>_owns_file</code> is 
 unchanged at <code>False</code>.</p>
 <h3 id="33-labels-inside-a-part">3.3 Labels inside a Part<a class="headerlink" href="#33-labels-inside-a-part" title="Permanent link">&para;</a></h3>
 <p>A Part has <code>_auto_pg_from_label = True</code> (set in
-<code>Part.__init__:151</code>). This means every geometry method that takes a
+<code>Part.__init__:158</code>). This means every geometry method that takes a
 <code>label="..."</code> kwarg routes through <code>Model._register</code>, which creates a
 Tier 1 label PG (<code>_label:</code> prefix, see [[apeGmsh_groundTruth]] §2) for
 that entity. The label travels through the STEP sidecar into the
@@ -4637,7 +4757,7 @@ exception to "no mixins" (tenet i). The exception is justified because
 fragmentation is a closed surface of three methods
 (<code>fragment_all</code>, <code>fragment_pair</code>, <code>fuse_group</code>) that are too
 implementation-heavy to inline in the registry but share every field.</p>
-<h3 id="51-four-entry-points-for-creating-instances">5.1 Four entry points for creating instances<a class="headerlink" href="#51-four-entry-points-for-creating-instances" title="Permanent link">&para;</a></h3>
+<h3 id="51-five-entry-points-for-creating-instances">5.1 Five entry points for creating instances<a class="headerlink" href="#51-five-entry-points-for-creating-instances" title="Permanent link">&para;</a></h3>
 <p>Every Instance on the registry is created by exactly one of these:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>flowchart LR
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    subgraph Entry [Entry points on g.parts]
@@ -4729,7 +4849,7 @@ Part/Instance/Assembly pipeline manifests:</p>
 <li>Apply <code>rotate</code> then <code>translate</code> to the <strong>highest-dim entities
    only</strong> — OCC propagates the transform through sub-topology
    automatically. Applying to all dims raises "OpenCASCADE transform
-   changed the number of shapes" (<code>_apply_transforms:649</code>).</li>
+   changed the number of shapes" (<code>_apply_transforms:740</code>).</li>
 <li>Read the <code>.apegmsh.json</code> sidecar if present and call
    <code>rebind_physical_groups(anchors=..., translate=..., rotate=...)</code>
    (see [[apeGmsh_groundTruth]] §6 for the COM-anchor + bbox
@@ -4809,7 +4929,7 @@ step by step:</p>
 <p>Three invariants come out of this:</p>
 <p><strong>(A) Label uniqueness.</strong> Two instances of the same Part produce two
 disjoint label sets (<code>col_01.web</code> and <code>col_02.web</code>). The prefix is
-literally <code>f"{label}.{pg_name}"</code> (<code>_parts_registry.py:600</code>). Collisions
+literally <code>f"{label}.{pg_name}"</code> (<code>_parts_registry.py:691</code>). Collisions
 are impossible by construction — the registry already rejects
 duplicate instance labels on every entry path.</p>
 <p><strong>(B) Umbrella + sub-labels.</strong> Every instance gets one umbrella label
@@ -5041,7 +5161,7 @@ wrapped in the <code>pg_preserved()</code> invariant from
 <li>This file — <em>what</em> Parts and Instances are, <em>how</em> they compose.</li>
 <li><code>src/apeGmsh/core/Part.py</code> — the Part class, auto-persist, save.</li>
 <li><code>src/apeGmsh/core/_parts_registry.py</code> — <code>Instance</code>,
-   <code>_InstanceLabels</code>, <code>PartsRegistry</code>, the four entry points, node /
+   <code>_InstanceLabels</code>, <code>PartsRegistry</code>, the five entry points, node /
    face maps.</li>
 <li><code>src/apeGmsh/core/_parts_fragmentation.py</code> — fragment_all,
    fragment_pair, fuse_group with in-place entity rewrites.</li>

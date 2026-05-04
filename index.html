@@ -2424,6 +2424,8 @@
       
         
       
+        
+      
     
     
     
@@ -2649,6 +2651,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3469,6 +3499,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3697,6 +3733,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4214,6 +4334,15 @@ sessions, multi-stage navigation.</p>
 <code>pg=</code> / <code>label=</code> / <code>selection=</code> selection vocabulary all the way.</p>
 <p><a href="api/results/">Reference →</a></p>
 </li>
+<li>
+<p>:material-package-variant: &nbsp; <strong>v1.4 – v1.5 polish</strong></p>
+<hr />
+<p>Import banner with <code>APEGMSH_QUIET=1</code> opt-out, event-loop
+dispatcher for the viewers, per-card Apply on diagram layers,
+per-Geometry display fix, and applied-loads &amp; reactions
+diagrams.</p>
+<p><a href="changelog/">Changelog →</a></p>
+</li>
 </ul>
 </div>
 <h1 id="apegmsh">apeGmsh<a class="headerlink" href="#apegmsh" title="Permanent link">&para;</a></h1>
@@ -4277,6 +4406,9 @@ extras: <code>matplotlib</code> (plotting), <code>openseespy</code> (analysis),
 </span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 </span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="p">)</span>
 </span></code></pre></div>
+<p>On import, apeGmsh prints an ASCII banner with the version to
+<code>stderr</code>. Set <code>APEGMSH_QUIET=1</code> to suppress it (useful for tests
+and CI).</p>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <p><code>apeGmsh</code> is a session object that owns a single <code>gmsh</code> kernel and a
 set of focused composites. <strong>There is no Assembly class</strong> — the
@@ -4606,6 +4738,9 @@ PyVista + Qt, but they target different stages of the workflow.</p>
 </table>
 <p>The standalone viewer auto-detects Jupyter and runs in a subprocess
 so the notebook keeps its kernel; in scripts it runs blocking.</p>
+<p><strong>What's new in viewers (v1.5.0):</strong> applied-loads and reactions
+diagrams, per-card Apply (each diagram layer commits independently),
+and a per-Geometry display fix so only the active geometry renders.</p>
 <p>Source layout:</p>
 <ul>
 <li><code>src/apeGmsh/viewers/</code> — embedded viewers (<code>ModelViewer</code>,

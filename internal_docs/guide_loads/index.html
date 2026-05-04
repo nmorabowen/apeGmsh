@@ -1034,6 +1034,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="5. Point loads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-point_closest-coordinate-driven-point-loads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 point_closest — coordinate-driven point loads
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1044,6 +1061,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="6. Line loads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-normal-pressure-on-a-curve-normaltrue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Normal pressure on a curve — normal=True
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2404,6 +2438,8 @@
       
         
       
+        
+      
     
     
     
@@ -2629,6 +2665,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3449,6 +3513,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3677,6 +3747,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -3942,6 +4096,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="5. Point loads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-point_closest-coordinate-driven-point-loads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 point_closest — coordinate-driven point loads
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3952,6 +4123,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="6. Line loads">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-normal-pressure-on-a-curve-normaltrue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Normal pressure on a curve — normal=True
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4087,7 +4275,7 @@ solver.</p>
 <li><code>src/apeGmsh/core/LoadsComposite.py</code> — the user-facing composite</li>
 <li><code>src/apeGmsh/solvers/Loads.py</code> — <code>LoadDef</code>, <code>LoadRecord</code>, and
   <code>LoadResolver</code> (pure mesh math, no Gmsh)</li>
-<li><code>src/apeGmsh/mesh/FEMData.py</code> — the <code>NodalLoadSet</code> / <code>SPSet</code> / <code>ElementLoadSet</code> that lands in the broker</li>
+<li><code>src/apeGmsh/mesh/_record_set.py</code> — the <code>NodalLoadSet</code> / <code>SPSet</code> / <code>ElementLoadSet</code> that lands in the broker</li>
 </ul>
 <p>All snippets assume an open session:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
@@ -4123,8 +4311,8 @@ reason load definitions accept <em>names</em> rather than raw <code>(dim, tag)</
 pairs: names survive remeshing; tags do not.</p>
 <h2 id="2-targets-what-a-load-can-be-attached-to">2. Targets: what a load can be attached to<a class="headerlink" href="#2-targets-what-a-load-can-be-attached-to" title="Permanent link">&para;</a></h2>
 <p>Every load factory takes a <code>target</code> as its first argument. A target is
-any of four things, resolved in this order by
-<code>LoadsComposite._resolve_target</code>:</p>
+any of five things, resolved in this order by
+<code>LoadsComposite._resolve_target</code> (<code>LoadsComposite.py:108-117</code>):</p>
 <ol>
 <li><strong>A raw list of <code>(dim, tag)</code> tuples.</strong> Escape hatch for low-level
    code. <code>g.loads.point([(0, 12)], force_xyz=(0, 0, -1000))</code>.</li>
@@ -4132,21 +4320,27 @@ any of four things, resolved in this order by
    under that name, the load attaches to its nodes or elements directly.
    This is the only way to load a subset of an entity that was carved
    out by a post-mesh selection.</li>
-<li><strong>A physical group name.</strong> Looked up via
+<li><strong>A label name (Tier 1).</strong> A <code>_label:</code>-prefixed physical group
+   produced by <code>g.labels</code> / part labels. Checked against
+   <code>gmsh.model.getPhysicalGroups()</code> after the prefix is added.</li>
+<li><strong>A physical group name (Tier 2).</strong> User-authored PG, looked up via
    <code>gmsh.model.getPhysicalGroups()</code> and <code>getPhysicalName</code>. Loads apply
    to every entity in the group.</li>
-<li><strong>A part label.</strong> Falls back to <code>g.parts.instances[label].entities</code>.</li>
+<li><strong>A part label.</strong> Falls back to <code>g.parts._instances[label].entities</code>.</li>
 </ol>
-<p>If a name matches nothing in any of the four layers, you get a
-<code>KeyError</code> immediately at definition time, not during resolution. That
-is deliberate: typos are cheap to fix before meshing and expensive to
-chase after.</p>
-<p>The four-layer lookup is the reason this guide recommends physical
-groups or part labels for almost everything. Both are created from
-geometry and survive any mesh refinement. Mesh selections are powerful
-but coupled to a specific mesh state; use them when you genuinely need
-to pick nodes by coordinate, proximity, or a post-mesh query, and
-accept that the selection has to be rebuilt if the mesh changes.</p>
+<p>If a name matches nothing in any of the five layers, you get a
+<code>KeyError</code> — but <strong>not</strong> at definition time. <code>_add_def</code> only validates
+the <code>(reduction, target_form)</code> dispatch; target resolution runs from
+<code>validate_pre_mesh()</code> (called by <code>Mesh.generate()</code> before meshing) and
+again from <code>get_fem_data()</code> at resolve time. Typos surface at
+<code>g.mesh.generation.generate(...)</code>, before any expensive mesh work.</p>
+<p>The five-layer lookup is the reason this guide recommends physical
+groups, labels, or part labels for almost everything. All three are
+created from geometry and survive any mesh refinement. Mesh selections
+are powerful but coupled to a specific mesh state; use them when you
+genuinely need to pick nodes by coordinate, proximity, or a post-mesh
+query, and accept that the selection has to be rebuilt if the mesh
+changes.</p>
 <h2 id="3-patterns">3. Patterns<a class="headerlink" href="#3-patterns" title="Permanent link">&para;</a></h2>
 <p>A load <em>pattern</em> is a string label that groups load definitions into a
 logical set. Patterns map directly onto the concept of a load pattern
@@ -4249,25 +4443,50 @@ vertex:</p>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;tip_load&quot;</span><span class="p">):</span>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span><span class="p">(</span><span class="s2">&quot;tip&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">10_000.0</span><span class="p">))</span>
 </span></code></pre></div>
-<p><code>force_xyz</code> is optional; so is <code>moment_xyz</code>. At least one must be
-nonzero, and specifying a moment on a model whose DOF count is less
-than 4 raises a <code>ValueError</code> during resolution (no rotational DOFs to
-absorb it). A 2D model (<code>ndf=3</code>) accepts <code>force_xyz=(Fx, Fy)</code> and a
-single scalar moment <code>moment_xyz=(Mz,)</code>.</p>
+<p><code>force_xyz</code> is optional; so is <code>moment_xyz</code>. The resolver accumulates a
+length-6 <code>(Fx, Fy, Fz, Mx, My, Mz)</code> vector unconditionally — there is
+no <code>ndf &lt; 4</code> check at resolution time. The slice down to the active
+DOF count happens at solver-ingest time (the OpenSees bridge drops
+moment components for <code>ndf &lt; 4</code> models). A 2-D planar frame
+(<code>ndm=2, ndf=3</code>) accepts <code>force_xyz=(Fx, Fy)</code> and a single scalar
+moment <code>moment_xyz=(Mz,)</code>. Note that <code>ndf=3</code> is <strong>not</strong> a 2-D-only
+flag: a 3-D continuum model also runs at <code>ndf=3</code> (three translations,
+no rotations) — there the moment components are simply discarded by
+the bridge.</p>
 <p>Targeting anything with more than one node broadcasts the <em>same</em>
 force to each of them, which is rarely what you want for a line or
 area — that is what distributed loads are for. The only legitimate
 use of a multi-node point-load target is applying an identical
 reaction at a row of pinned nodes (e.g., a support jack).</p>
+<h3 id="51-point_closest-coordinate-driven-point-loads">5.1 <code>point_closest</code> — coordinate-driven point loads<a class="headerlink" href="#51-point_closest-coordinate-driven-point-loads" title="Permanent link">&para;</a></h3>
+<p>When the load point doesn't sit on a named entity, use <code>point_closest</code>
+to snap it to the nearest mesh node at resolve time:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point_closest</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">xyz</span><span class="o">=</span><span class="p">(</span><span class="mf">2.5</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">),</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">10_000</span><span class="p">),</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Optional kwargs:</p>
+<ul>
+<li><code>tol=</code> — apply the load to <strong>every</strong> node within <code>tol</code> of <code>xyz</code>
+  instead of the single nearest one. Useful for distributing a point
+  load across a small cluster.</li>
+<li><code>within=</code> (or <code>pg=</code> / <code>label=</code> / <code>tag=</code>) — restrict the snap pool
+  to a named entity. Without it the search runs against every domain
+  node.</li>
+<li><code>snap_distance</code> — written back onto the def after resolution so it
+  surfaces in <code>summary()</code>.</li>
+</ul>
+<p>See <code>Loads.py:58-75</code> (<code>PointClosestLoadDef</code>) and <code>LoadsComposite.py</code>.</p>
 <h2 id="6-line-loads">6. Line loads<a class="headerlink" href="#6-line-loads" title="Permanent link">&para;</a></h2>
 <p>A line load is a distributed force per unit length along a 1-D
 geometric entity (a curve) or the underlying beam / truss elements
 that were meshed on it. You can specify it in two equivalent ways:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Scalar magnitude + direction</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;beams&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">2.0e3</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;z&quot;</span><span class="p">)</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Explicit per-component vector</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;beams&quot;</span><span class="p">,</span> <span class="n">q_xyz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">2.0e3</span><span class="p">))</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Scalar magnitude + direction</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;beams&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">2.0e3</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;z&quot;</span><span class="p">)</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># Explicit per-component vector</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;beams&quot;</span><span class="p">,</span> <span class="n">q_xyz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">2.0e3</span><span class="p">))</span>
 </span></code></pre></div>
 <p><code>magnitude</code> is a scalar (force per unit length). <code>direction</code> is
 either an axis name <code>"x" | "y" | "z"</code> or a 3-vector; it is not
@@ -4278,13 +4497,13 @@ and <code>direction=(0, 0, -9.81)</code> gives you −9.81 per unit length.
 <p>The <code>reduction</code>/<code>target_form</code> choices matter most here. A beam loaded
 along its span is the classic case where element-form output is
 worth it:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;live&quot;</span><span class="p">):</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>        <span class="s2">&quot;floor_beams&quot;</span><span class="p">,</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>        <span class="n">magnitude</span><span class="o">=-</span><span class="mf">5.0e3</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;z&quot;</span><span class="p">,</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>        <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;consistent&quot;</span><span class="p">,</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;element&quot;</span><span class="p">,</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;live&quot;</span><span class="p">):</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>        <span class="s2">&quot;floor_beams&quot;</span><span class="p">,</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>        <span class="n">magnitude</span><span class="o">=-</span><span class="mf">5.0e3</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;z&quot;</span><span class="p">,</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>        <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;consistent&quot;</span><span class="p">,</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>        <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;element&quot;</span><span class="p">,</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="p">)</span>
 </span></code></pre></div>
 <p>With <code>target_form="element"</code> the broker contains one
 <code>ElementLoadRecord</code> per beam element, carrying the original <code>q_xyz</code>
@@ -4294,16 +4513,36 @@ proper parabolic moment diagram inside the element. With
 <code>target_form="nodal"</code>, the same line load lumps into two end forces
 per element and the internal moment diagram is piecewise linear —
 still correct at the nodes, but wrong between them.</p>
+<h3 id="61-normal-pressure-on-a-curve-normaltrue">6.1 Normal pressure on a curve — <code>normal=True</code><a class="headerlink" href="#61-normal-pressure-on-a-curve-normaltrue" title="Permanent link">&para;</a></h3>
+<p>For 2-D pressure loads (or in-plane normal pressure on a 3-D edge
+that bounds a single surface), pass <code>normal=True</code> instead of a
+direction. The in-plane normal <code>(t_y, -t_x, 0)</code> is sign-flipped per
+edge so it points away from <code>away_from=</code> (a reference point that
+represents the <em>source</em> of the load — e.g. the centre of an arched
+cavity loaded by internal pressure). Positive <code>magnitude</code> then
+pushes into the structure:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="s2">&quot;cavity_arch&quot;</span><span class="p">,</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="n">magnitude</span><span class="o">=</span><span class="mf">1.0e5</span><span class="p">,</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">normal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">away_from</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">),</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Without <code>away_from</code>, apeGmsh consults the parent surface's Gmsh
+boundary orientation to decide which side is "into the structure".
+If the curve has no adjacent surface, or bounds more than one, the
+resolver raises <code>ValueError</code> — disambiguate by passing <code>away_from</code>.
+See <code>Loads.py:98-99</code> (<code>LineLoadDef.normal</code> / <code>away_from</code>).</p>
 <h2 id="7-surface-loads">7. Surface loads<a class="headerlink" href="#7-surface-loads" title="Permanent link">&para;</a></h2>
 <p>Surface loads apply a pressure or traction to a 2-D geometric entity
 or the mesh faces sitting on it. The distinction between "pressure"
 and "traction" is controlled by the <code>normal</code> flag:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Pressure (scalar, perpendicular to each face, positive into the face)</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;roof&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">3.0e3</span><span class="p">,</span> <span class="n">normal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Traction (vector, same direction on every face regardless of normal)</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;facade_west&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=+</span><span class="mf">1.2e3</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>                <span class="n">normal</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Pressure (scalar, perpendicular to each face, positive into the face)</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;roof&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">3.0e3</span><span class="p">,</span> <span class="n">normal</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Traction (vector, same direction on every face regardless of normal)</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;facade_west&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=+</span><span class="mf">1.2e3</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>                <span class="n">normal</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Pressure is the right model for wind, snow, water, or any load that
 follows the surface orientation: if the roof is sloped, the load is
@@ -4320,11 +4559,11 @@ rarely worth the plumbing.</p>
 <h2 id="8-gravity">8. Gravity<a class="headerlink" href="#8-gravity" title="Permanent link">&para;</a></h2>
 <p>Gravity is a body load with special affordances. Instead of writing
 <code>g.loads.body(vol, force_per_volume=(0, 0, -ρ·g))</code> by hand, you write:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;concrete_columns&quot;</span><span class="p">,</span> <span class="n">g</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">9.81</span><span class="p">),</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;concrete_columns&quot;</span><span class="p">,</span> <span class="n">g</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">9.81</span><span class="p">),</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The <code>g</code> vector defaults to <code>(0, 0, -9.81)</code>, so the common case is a
 one-liner:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;concrete_columns&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;concrete_columns&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>density=None</code> is also valid and tells the solver bridge to read the
 density from the assigned material or section — this is the
@@ -4348,7 +4587,7 @@ section, not the load.</p>
 <p>Any body force that is <em>not</em> gravity — a magnetic body force, a
 centrifugal acceleration, a thermal expansion driving force re-cast
 as a body load — goes through <code>g.loads.body</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">body</span><span class="p">(</span><span class="s2">&quot;rotor_volume&quot;</span><span class="p">,</span> <span class="n">force_per_volume</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.5e4</span><span class="p">))</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">body</span><span class="p">(</span><span class="s2">&quot;rotor_volume&quot;</span><span class="p">,</span> <span class="n">force_per_volume</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.5e4</span><span class="p">))</span>
 </span></code></pre></div>
 <p>The only difference from <code>gravity</code> is the absence of a density term:
 <code>force_per_volume</code> is the full vector, already multiplied by whatever
@@ -4360,9 +4599,9 @@ instead.</p>
 coupling it to a structural element, <code>face_load</code> distributes the
 load directly to the face nodes — no reference node, no phantom, no
 conditioning issues:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;tip&quot;</span><span class="p">):</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;tip_face&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">10_000</span><span class="p">))</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;tip_face&quot;</span><span class="p">,</span> <span class="n">moment_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">100_000</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;tip&quot;</span><span class="p">):</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;tip_face&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">10_000</span><span class="p">))</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_load</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;tip_face&quot;</span><span class="p">,</span> <span class="n">moment_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">100_000</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
 </span></code></pre></div>
 <p><strong>Force distribution:</strong> the total force <code>F</code> is split equally among
 all <code>N</code> nodes on the face: <code>f_i = F / N</code>.</p>
@@ -4385,20 +4624,20 @@ downstream solver adapter sees no difference.</p>
 <h2 id="11-face-prescribed-displacements">11. Face-prescribed displacements<a class="headerlink" href="#11-face-prescribed-displacements" title="Permanent link">&para;</a></h2>
 <p><code>face_sp</code> maps a rigid-body motion at the face centroid to per-node
 prescribed displacements:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Homogeneous fix (all face nodes fixed in x, y, z)</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Prescribed translation at centroid</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>                <span class="n">disp_xyz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.01</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1"># Prescribed rotation about centroid</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>                <span class="n">rot_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">))</span>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="c1"># Combined</span>
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>                <span class="n">disp_xyz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.01</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">rot_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">))</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Homogeneous fix (all face nodes fixed in x, y, z)</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="c1"># Prescribed translation at centroid</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>                <span class="n">disp_xyz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.01</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="c1"># Prescribed rotation about centroid</span>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>                <span class="n">rot_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">))</span>
+</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>
+</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a><span class="c1"># Combined</span>
+</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;base_face&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
+</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>                <span class="n">disp_xyz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.01</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">rot_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.01</span><span class="p">))</span>
 </span></code></pre></div>
 <p>For each face node, the displacement is computed as:</p>
 <div class="language-text highlight"><pre><span></span><code>u_i = disp_xyz + rot_xyz × r_i
@@ -4413,38 +4652,38 @@ The <code>dofs</code> mask follows the same convention as <code>elements.fix()</
 <h2 id="12-putting-it-all-together">12. Putting it all together<a class="headerlink" href="#12-putting-it-all-together" title="Permanent link">&para;</a></h2>
 <p>A realistic load script for a small building model reads like this,
 and it is the shape of script you should aim for:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;office_block&quot;</span><span class="p">)</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="c1"># ... parts, physical groups, mesh ...</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;self_weight&quot;</span><span class="p">):</span>
-</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;rc_volumes&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
-</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;steel_volumes&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">7850</span><span class="p">)</span>
-</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>
-</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;superimposed_dead&quot;</span><span class="p">):</span>
-</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;floors&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">1.5e3</span><span class="p">)</span>   <span class="c1"># finishes</span>
-</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;facade_beams&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">3.0e3</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;z&quot;</span><span class="p">,</span>
-</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>                 <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;element&quot;</span><span class="p">)</span>
-</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>
-</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;live&quot;</span><span class="p">):</span>
-</span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;floors&quot;</span><span class="p">,</span>      <span class="n">magnitude</span><span class="o">=-</span><span class="mf">3.0e3</span><span class="p">)</span>
-</span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;roof&quot;</span><span class="p">,</span>        <span class="n">magnitude</span><span class="o">=-</span><span class="mf">1.0e3</span><span class="p">)</span>
-</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>
-</span><span id="__span-12-21"><a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;crane_point&quot;</span><span class="p">):</span>
-</span><span id="__span-12-22"><a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span><span class="p">(</span><span class="s2">&quot;crane_hook&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">50_000</span><span class="p">))</span>
-</span><span id="__span-12-23"><a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a>
-</span><span id="__span-12-24"><a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a><span class="c1"># Resolve happens automatically inside get_fem_data()</span>
-</span><span id="__span-12-25"><a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
-</span><span id="__span-12-26"><a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>
-</span><span id="__span-12-27"><a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
-</span><span id="__span-12-28"><a id="__codelineno-12-28" name="__codelineno-12-28" href="#__codelineno-12-28"></a>    <span class="n">nodal</span>   <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
-</span><span id="__span-12-29"><a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>    <span class="n">element</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
-</span><span id="__span-12-30"><a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">pat</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">nodal</span><span class="p">),</span> <span class="s2">&quot;nodal records,&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">element</span><span class="p">),</span> <span class="s2">&quot;element records&quot;</span><span class="p">)</span>
-</span><span id="__span-12-31"><a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>
-</span><span id="__span-12-32"><a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;office_block&quot;</span><span class="p">)</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="c1"># ... parts, physical groups, mesh ...</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;self_weight&quot;</span><span class="p">):</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;rc_volumes&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span><span class="p">(</span><span class="s2">&quot;steel_volumes&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">7850</span><span class="p">)</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;superimposed_dead&quot;</span><span class="p">):</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;floors&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">1.5e3</span><span class="p">)</span>   <span class="c1"># finishes</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;facade_beams&quot;</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=-</span><span class="mf">3.0e3</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">&quot;z&quot;</span><span class="p">,</span>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>                 <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;element&quot;</span><span class="p">)</span>
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a>
+</span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;live&quot;</span><span class="p">):</span>
+</span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;floors&quot;</span><span class="p">,</span>      <span class="n">magnitude</span><span class="o">=-</span><span class="mf">3.0e3</span><span class="p">)</span>
+</span><span id="__span-14-19"><a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span><span class="p">(</span><span class="s2">&quot;roof&quot;</span><span class="p">,</span>        <span class="n">magnitude</span><span class="o">=-</span><span class="mf">1.0e3</span><span class="p">)</span>
+</span><span id="__span-14-20"><a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a>
+</span><span id="__span-14-21"><a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;crane_point&quot;</span><span class="p">):</span>
+</span><span id="__span-14-22"><a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span><span class="p">(</span><span class="s2">&quot;crane_hook&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">50_000</span><span class="p">))</span>
+</span><span id="__span-14-23"><a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a>
+</span><span id="__span-14-24"><a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a><span class="c1"># Resolve happens automatically inside get_fem_data()</span>
+</span><span id="__span-14-25"><a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
+</span><span id="__span-14-26"><a id="__codelineno-14-26" name="__codelineno-14-26" href="#__codelineno-14-26"></a>
+</span><span id="__span-14-27"><a id="__codelineno-14-27" name="__codelineno-14-27" href="#__codelineno-14-27"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
+</span><span id="__span-14-28"><a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a>    <span class="n">nodal</span>   <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
+</span><span id="__span-14-29"><a id="__codelineno-14-29" name="__codelineno-14-29" href="#__codelineno-14-29"></a>    <span class="n">element</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
+</span><span id="__span-14-30"><a id="__codelineno-14-30" name="__codelineno-14-30" href="#__codelineno-14-30"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">pat</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">nodal</span><span class="p">),</span> <span class="s2">&quot;nodal records,&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">element</span><span class="p">),</span> <span class="s2">&quot;element records&quot;</span><span class="p">)</span>
+</span><span id="__span-14-31"><a id="__codelineno-14-31" name="__codelineno-14-31" href="#__codelineno-14-31"></a>
+</span><span id="__span-14-32"><a id="__codelineno-14-32" name="__codelineno-14-32" href="#__codelineno-14-32"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
 </span></code></pre></div>
 <p>Three things about this script are worth noting. First, every load
 targets a <em>name</em> — nothing references a Gmsh tag directly, so the
@@ -4457,26 +4696,26 @@ nodes, no manual integration, no <code>if ndf == 3 else 6</code>. The
 <h2 id="13-debugging-loads">13. Debugging loads<a class="headerlink" href="#13-debugging-loads" title="Permanent link">&para;</a></h2>
 <p>Loads are easy to get wrong and easy to inspect. Three cheap sanity
 checks will catch almost everything:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1"># (a) how many records in each pattern?</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">nodal</span>   <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    <span class="n">element</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">pat</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">nodal</span><span class="p">),</span> <span class="s2">&quot;nodal,&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">element</span><span class="p">),</span> <span class="s2">&quot;element&quot;</span><span class="p">)</span>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="c1"># (b) total applied force per pattern — should match hand calc</span>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
-</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
-</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>    <span class="n">total_f</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>    <span class="n">total_m</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>    <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">):</span>
-</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>        <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">force_xyz</span>  <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span> <span class="n">total_f</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">force_xyz</span><span class="p">)</span>
-</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>        <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">moment_xyz</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span> <span class="n">total_m</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">moment_xyz</span><span class="p">)</span>
-</span><span id="__span-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">pat</span><span class="p">,</span> <span class="s2">&quot;ΣF =&quot;</span><span class="p">,</span> <span class="n">total_f</span><span class="p">,</span> <span class="s2">&quot;ΣM =&quot;</span><span class="p">,</span> <span class="n">total_m</span><span class="p">)</span>
-</span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>
-</span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a><span class="c1"># (c) visual check via the viewer</span>
-</span><span id="__span-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">view</span><span class="o">.</span><span class="n">load_arrows</span><span class="p">(</span><span class="n">pattern</span><span class="o">=</span><span class="s2">&quot;live&quot;</span><span class="p">)</span>   <span class="c1"># if implemented</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># (a) how many records in each pattern?</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="n">nodal</span>   <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="n">element</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">)</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">pat</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">nodal</span><span class="p">),</span> <span class="s2">&quot;nodal,&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">element</span><span class="p">),</span> <span class="s2">&quot;element&quot;</span><span class="p">)</span>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>
+</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="c1"># (b) total applied force per pattern — should match hand calc</span>
+</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
+</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>    <span class="n">total_f</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>    <span class="n">total_m</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>    <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">):</span>
+</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>        <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">force_xyz</span>  <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span> <span class="n">total_f</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">force_xyz</span><span class="p">)</span>
+</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>        <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">moment_xyz</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span> <span class="n">total_m</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">moment_xyz</span><span class="p">)</span>
+</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">pat</span><span class="p">,</span> <span class="s2">&quot;ΣF =&quot;</span><span class="p">,</span> <span class="n">total_f</span><span class="p">,</span> <span class="s2">&quot;ΣM =&quot;</span><span class="p">,</span> <span class="n">total_m</span><span class="p">)</span>
+</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>
+</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a><span class="c1"># (c) visual check via the viewer</span>
+</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">view</span><span class="o">.</span><span class="n">load_arrows</span><span class="p">(</span><span class="n">pattern</span><span class="o">=</span><span class="s2">&quot;live&quot;</span><span class="p">)</span>   <span class="c1"># if implemented</span>
 </span></code></pre></div>
 <p>Check (b) is the one that catches the most bugs: a gravity load whose
 sign is inverted, a pressure applied to the wrong face orientation,
@@ -4492,17 +4731,17 @@ but less friendly when you typed the wrong label.</p>
 <p>A solver adapter never calls into <code>LoadsComposite</code>. It reads a
 <code>NodalLoadSet</code> / <code>SPSet</code> / <code>ElementLoadSet</code> out of the broker and
 walks them:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="c1"># open a solver load pattern / load case here</span>
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">):</span>
-</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>        <span class="c1"># rec.node_id, rec.force_xyz, rec.moment_xyz</span>
-</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>        <span class="c1"># Either may be None; each is a length-3 tuple when present.</span>
-</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>        <span class="o">...</span>
-</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>    <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">):</span>
-</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>        <span class="c1"># rec.element_id, rec.load_type, rec.params</span>
-</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>        <span class="o">...</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="k">for</span> <span class="n">pat</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">patterns</span><span class="p">():</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="c1"># open a solver load pattern / load case here</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">):</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>        <span class="c1"># rec.node_id, rec.force_xyz, rec.moment_xyz</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>        <span class="c1"># Either may be None; each is a length-3 tuple when present.</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>        <span class="o">...</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a>    <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">by_pattern</span><span class="p">(</span><span class="n">pat</span><span class="p">):</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a>        <span class="c1"># rec.element_id, rec.load_type, rec.params</span>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a>        <span class="o">...</span>
 </span></code></pre></div>
 <p><code>NodalLoadRecord</code> stores spatial 3-vectors (<code>force_xyz</code>, <code>moment_xyz</code>)
 and knows nothing about the solver's DOF count. The adapter maps
@@ -4514,13 +4753,13 @@ frame uses all six; a 3D solid ignores moments.
 to pick the right native command. Both records carry their <code>pattern</code>
 and <code>name</code>, so the adapter can replay the grouping the user wrote.</p>
 <p><strong>SP records</strong> from <code>face_sp</code> live in a separate sub-composite:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Homogeneous fix records</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">homogeneous</span><span class="p">():</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="c1"># Prescribed displacement records</span>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">prescribed</span><span class="p">():</span>
-</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="n">rec</span><span class="o">.</span><span class="n">dof</span><span class="p">,</span> <span class="n">rec</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># Homogeneous fix records</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">homogeneous</span><span class="p">():</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="c1"># Prescribed displacement records</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">prescribed</span><span class="p">():</span>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="n">rec</span><span class="o">.</span><span class="n">dof</span><span class="p">,</span> <span class="n">rec</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 </span></code></pre></div>
 <p>The contract is deliberately dumb: a list of records, each fully
 self-describing, no cross-references. That is what makes the broker

@@ -776,10 +776,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-low-level-renumbering" class="md-nav__link">
+  <a href="#6-public-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Low-level renumbering
+        6. Public API
       
     </span>
   </a>
@@ -2310,6 +2310,8 @@
       
         
       
+        
+      
     
     
     
@@ -2535,6 +2537,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3355,6 +3385,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3603,6 +3639,90 @@
   
   
     <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../plan_viewer_box_select/" class="md-nav__link">
         
   
@@ -3823,10 +3943,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-low-level-renumbering" class="md-nav__link">
+  <a href="#6-public-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Low-level renumbering
+        6. Public API
       
     </span>
   </a>
@@ -3917,7 +4037,7 @@ and unordered (no spatial locality). This causes two problems:</p>
 <p>Renumbering solves both: contiguous IDs (no gaps) and optionally
 bandwidth-reducing orderings.</p>
 <h2 id="2-simple-renumbering">2. Simple renumbering<a class="headerlink" href="#2-simple-renumbering" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_mesh</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;simple&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;simple&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span></code></pre></div>
 <p><code>method="simple"</code> assigns contiguous IDs starting from <code>base</code>:
@@ -3927,7 +4047,7 @@ bandwidth-reducing orderings.</p>
 bandwidth optimization. Use this when you just need contiguous IDs
 (e.g., for OpenSees which requires base=1).</p>
 <h2 id="3-rcm-renumbering">3. RCM renumbering<a class="headerlink" href="#3-rcm-renumbering" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_mesh</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Bandwidth: </span><span class="si">{</span><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="o">.</span><span class="n">bandwidth</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </span></code></pre></div>
@@ -3961,18 +4081,13 @@ ordering is already decent).</p>
 </tr>
 <tr>
 <td><code>method</code></td>
-<td><code>"simple"</code></td>
-<td><code>"simple"</code> (contiguous) or <code>"rcm"</code> (bandwidth-minimizing)</td>
+<td><code>"rcm"</code></td>
+<td><code>"simple"</code> (contiguous), <code>"rcm"</code>, <code>"hilbert"</code>, or <code>"metis"</code></td>
 </tr>
 <tr>
 <td><code>base</code></td>
 <td>1</td>
 <td>Starting ID. 1 for OpenSees/Abaqus, 0 for C-style</td>
-</tr>
-<tr>
-<td><code>used_only</code></td>
-<td>True</td>
-<td>Only renumber nodes connected to elements</td>
 </tr>
 </tbody>
 </table>
@@ -3989,25 +4104,19 @@ exported to separate mesh files for parallel solvers.</p>
 - MPI-parallel OpenSees runs
 - Domain decomposition methods
 - Parallel mesh export (each partition → separate file)</p>
-<h2 id="6-low-level-renumbering">6. Low-level renumbering<a class="headerlink" href="#6-low-level-renumbering" title="Permanent link">&para;</a></h2>
-<p>For custom renumbering schemes:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Compute renumbering without applying it</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">node_old</span><span class="p">,</span> <span class="n">node_new</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">compute_renumbering</span><span class="p">(</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="p">)</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="c1"># Apply manually</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_nodes</span><span class="p">(</span><span class="n">node_old</span><span class="p">,</span> <span class="n">node_new</span><span class="p">)</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_elements</span><span class="p">(</span><span class="n">elem_old</span><span class="p">,</span> <span class="n">elem_new</span><span class="p">)</span>
-</span></code></pre></div>
+<h2 id="6-public-api">6. Public API<a class="headerlink" href="#6-public-api" title="Permanent link">&para;</a></h2>
+<p><code>renumber()</code> is the only public entry point on <code>_Partitioning</code>. It handles
+both nodes and elements in a single call; the per-step helpers
+(<code>_renumber_nodes_simple</code>, <code>_renumber_elements_simple</code>) are private and
+should not be invoked directly.</p>
 <h2 id="7-standalone-numberer">7. Standalone Numberer<a class="headerlink" href="#7-standalone-numberer" title="Permanent link">&para;</a></h2>
 <p>For renumbering a FEMData object without modifying the Gmsh model:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.solvers</span><span class="w"> </span><span class="kn">import</span> <span class="n">Numberer</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">numb</span> <span class="o">=</span> <span class="n">Numberer</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">info</span> <span class="o">=</span> <span class="n">numb</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Bandwidth reduced: </span><span class="si">{</span><span class="n">info</span><span class="o">.</span><span class="n">bandwidth</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.solvers</span><span class="w"> </span><span class="kn">import</span> <span class="n">Numberer</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">numb</span> <span class="o">=</span> <span class="n">Numberer</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">nm</span> <span class="o">=</span> <span class="n">numb</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># → NumberedMesh</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">nm</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="8-best-practices">8. Best practices<a class="headerlink" href="#8-best-practices" title="Permanent link">&para;</a></h2>
 <ol>

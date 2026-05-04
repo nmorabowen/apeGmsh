@@ -2404,6 +2404,8 @@
       
         
       
+        
+      
     
     
     
@@ -2629,6 +2631,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3449,6 +3479,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3677,6 +3713,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4231,7 +4351,8 @@ inside corner so each leg is its own labeled volume.</p>
 <p><strong>Labels created:</strong>
 - <code>{label}.horizontal_leg</code> — the X-direction leg
 - <code>{label}.vertical_leg</code> — the Y-direction leg
-- Outer-face labels from <code>classify_angle_outer_faces</code>
+- <code>{label}.horizontal_leg_face</code>, <code>{label}.vertical_leg_face</code> — outer-skin
+  faces from <code>classify_angle_outer_faces</code>
 - <code>{label}.start_face</code>, <code>{label}.end_face</code></p>
 <h3 id="channel_solid-c-shape-channel">channel_solid — C-shape (channel)<a class="headerlink" href="#channel_solid-c-shape-channel" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">chan</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">sections</span><span class="o">.</span><span class="n">channel_solid</span><span class="p">(</span>
@@ -4273,8 +4394,7 @@ represented as surfaces at their mid-plane locations.</p>
 <p><strong>Labels created:</strong>
 - <code>{label}.top_flange</code> — upper flange surface
 - <code>{label}.bottom_flange</code> — lower flange surface
-- <code>{label}.web</code> — web surface
-- Start/end edges rather than faces (1D boundaries)</p>
+- <code>{label}.web</code> — web surface</p>
 <p>Use this when meshing with shell elements (dim=2) instead of
 solid elements (dim=3).</p>
 <h2 id="4-positioning-and-orientation">4. Positioning and orientation<a class="headerlink" href="#4-positioning-and-orientation" title="Permanent link">&para;</a></h2>

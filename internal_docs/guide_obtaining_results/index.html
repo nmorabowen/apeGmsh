@@ -2466,6 +2466,8 @@
       
         
       
+        
+      
     
     
     
@@ -2691,6 +2693,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3511,6 +3541,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3739,6 +3775,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4310,6 +4430,7 @@ script written, no subprocess</strong>.</p>
 </span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="n">grav</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>
 </span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="n">dyn</span>  <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">&quot;dynamic&quot;</span><span class="p">)</span>
 </span></code></pre></div>
+<p>When <code>stage_id</code> is set and <code>stage_name</code> is left at its default (<code>"analysis"</code>), <code>from_recorders</code> mirrors <code>stage_name = stage_id</code> automatically so the loaded Results stage carries the meaningful name (<code>Results.py:179-180</code>).</p>
 <h3 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>__enter__</code> validates the spec; raises immediately if it contains
@@ -4471,6 +4592,15 @@ topology level and modal stages.</p>
 </tr>
 </tbody>
 </table>
+<blockquote>
+<p><strong>Tri31 strain routing.</strong> Tri31 has no element-level <code>"strains"</code>
+branch in OpenSees (only <code>"stresses"</code>). For any class listed in
+<code>PER_MATERIAL_STRAIN_CLASSES</code> (<code>solvers/_element_response.py:2072</code>),
+capture queries strain per Gauss-point material via
+<code>ops.eleResponse(eid, "material", "&lt;gp&gt;", "strain")</code>
+(<code>capture/_domain.py:870-874</code>). Reads are unaffected — see the
+Tri31 note in <a href="../guide_results/"><code>guide_results.md</code></a>.</p>
+</blockquote>
 <hr />
 <h2 id="strategy-c1-export-with-mpco-run-with-stko">Strategy C₁ — Export with MPCO, run with STKO<a class="headerlink" href="#strategy-c1-export-with-mpco-run-with-stko" title="Permanent link">&para;</a></h2>
 <p>For the STKO ecosystem and big parallel runs.</p>
@@ -4485,6 +4615,9 @@ re-transcoding.</p>
 <p>For parallel runs:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Multi-partition .mpco — auto-discovers .part-N siblings</span>
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.part-0.mpco&quot;</span><span class="p">)</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># Opt out of auto-discovery (read only the named partition)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.part-0.mpco&quot;</span><span class="p">,</span> <span class="n">merge_partitions</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </span></code></pre></div>
 <table>
 <thead>

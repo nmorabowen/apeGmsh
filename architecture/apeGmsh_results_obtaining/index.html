@@ -16,7 +16,7 @@
         <link rel="prev" href="../apeGmsh_results_viewer/">
       
       
-        <link rel="next" href="../gmsh_basics/">
+        <link rel="next" href="../../internal_docs/Results_architecture/">
       
       
         
@@ -2164,6 +2164,8 @@
       
         
       
+        
+      
     
     
     
@@ -2665,6 +2667,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -3477,6 +3507,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3705,6 +3741,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4505,14 +4625,17 @@ pre-stage emission. Multi-stage live emission opts into the prefix.</p>
 <ol>
 <li>The file embeds (native) or synthesizes (MPCO) a <code>FEMData</code>
    snapshot tagged with a <code>snapshot_id</code>.</li>
-<li>If the user passed a <code>fem=</code> snapshot, hashes must match —
-   otherwise <code>BindError</code>.</li>
+<li>If the user passed a <code>fem=</code> snapshot, it is preferred (it
+   typically carries richer apeGmsh-specific labels and provenance
+   than the embedded snapshot).</li>
 <li>Without <code>fem=</code>, the embedded/synthesized snapshot is used
    directly.</li>
 </ol>
-<p>So a spec resolved against <code>fem</code> and a results file produced from
-that run are <strong>provably consistent</strong> — the snapshot ID is the
-contract. This is what lets <code>pg="Top"</code> work on <code>results.nodes.get</code>
+<p>The <code>snapshot_id</code> hash is computed and stored as metadata, but bind
+never enforces equality — pairing a FEMData with a results file from
+the same run is the user's responsibility (see <code>_bind.py:8-10</code>). The
+<code>BindError</code> symbol is retained for back-compat but is no longer
+raised. This is what lets <code>pg="Top"</code> work on <code>results.nodes.get</code>
 even after the gmsh session has closed.</p>
 <hr />
 <h2 id="7-why-this-layering-matters">7. Why this layering matters<a class="headerlink" href="#7-why-this-layering-matters" title="Permanent link">&para;</a></h2>

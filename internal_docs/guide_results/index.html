@@ -2371,6 +2371,8 @@
       
         
       
+        
+      
     
     
     
@@ -2596,6 +2598,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3416,6 +3446,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3644,6 +3680,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4023,7 +4143,7 @@
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">)</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>   <span class="c1"># explicit bind override</span>
 </span></code></pre></div>
-<p>A native file embeds a frozen <code>FEMData</code> snapshot under <code>/model/</code>. If <code>fem=</code> is omitted, that snapshot is the bound FEMData. If <code>fem=</code> is provided and the file embeds a snapshot, the two <code>snapshot_id</code> hashes must match.</p>
+<p>A native file embeds a frozen <code>FEMData</code> snapshot under <code>/model/</code>. If <code>fem=</code> is omitted, that snapshot is the bound FEMData. If <code>fem=</code> is provided it is preferred (it typically carries richer apeGmsh-specific labels and provenance than the embedded snapshot). The <code>snapshot_id</code> hash is computed and stored as metadata, but bind never enforces equality — pairing a FEMData with a results file from the same run is the user's responsibility.</p>
 <h3 id="resultsfrom_mpco-stko-hdf5"><code>Results.from_mpco</code> — STKO HDF5<a class="headerlink" href="#resultsfrom_mpco-stko-hdf5" title="Permanent link">&para;</a></h3>
 <p>For files written by the STKO MPCO recorder (Strategy C₁/C₂).</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;run.mpco&quot;</span><span class="p">)</span>
@@ -4042,7 +4162,7 @@
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># Multi-stage — pick the stage you want by id</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">gravity</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">&quot;gravity&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p><code>from_recorders</code> transcodes the recorder files into a cached HDF5 (<code>writers/_cache.py</code>), keyed on file mtimes + spec <code>snapshot_id</code>, and then opens that through <code>from_native</code>. Subsequent calls with unchanged inputs return the cached HDF5 directly. <code>fem=</code> is required — the spec's <code>snapshot_id</code> must match.</p>
+<p><code>from_recorders</code> transcodes the recorder files into a cached HDF5 (<code>writers/_cache.py</code>), keyed on file mtimes + spec <code>snapshot_id</code>, and then opens that through <code>from_native</code>. Subsequent calls with unchanged inputs return the cached HDF5 directly. <code>fem=</code> is required (omitting it raises <code>TypeError</code>) because the spec's <code>snapshot_id</code> participates in the cache key — but no hash equality is enforced against the resulting file.</p>
 <h2 id="stage-scoping">Stage scoping<a class="headerlink" href="#stage-scoping" title="Permanent link">&para;</a></h2>
 <p>Every results file holds one or more <strong>stages</strong>. A stage is one analysis segment (a gravity push, a transient run, a single eigenmode) tagged with a <code>kind</code> (<code>"static"</code>, <code>"transient"</code>, <code>"mode"</code>) and a name.</p>
 <p>A top-level <code>Results</code> carries all stages. Reads disambiguate automatically when there is exactly one stage; with multiple stages, you have to pick:</p>
@@ -4123,6 +4243,7 @@ return <code>None</code> immediately — useful when running notebooks under
 </span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>Full coverage of selectors, slab dataclass shapes, time slicing, and the <code>.available_components()</code> discovery API lives in <a href="../guide_results_filtering/"><code>guide_results_filtering.md</code></a>. The vocabulary (<code>displacement_z</code>, <code>stress_xx</code>, <code>section.fiber.stress</code>, etc.) is documented in <a href="../guide_recorders_reference/"><code>guide_recorders_reference.md</code></a>.</p>
+<p><strong>Tri31 strain gap.</strong> The Tri31 element has no element-level <code>"strains"</code> response branch in OpenSees (only <code>"stresses"</code>). Domain capture routes around this by collecting strain per Gauss-point material via <code>ops.eleResponse(eid, "material", "&lt;gp&gt;", "strain")</code> for any class listed in <code>PER_MATERIAL_STRAIN_CLASSES</code> (<code>solvers/_element_response.py:2072</code>); see <code>capture/_domain.py:870-874</code> for the per-material query path. From the read side this is invisible — <code>results.elements.gauss.get(component="strain_xx", pg="Body")</code> works the same as for any other continuum class.</p>
 <h2 id="practical-workflow">Practical workflow<a class="headerlink" href="#practical-workflow" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
 </span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
@@ -4164,7 +4285,7 @@ return <code>None</code> immediately — useful when running notebooks under
 <div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>    <span class="c1"># multi-line human-readable summary</span>
 </span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nb">print</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">results</span><span class="p">))</span>         <span class="c1"># same as .inspect.summary()</span>
 </span></code></pre></div>
-<p>The summary lists stages, kinds, step counts, available components, and the bound FEMData. It's the first thing to print when a results file behaves unexpectedly.</p>
+<p>The summary lists stages, kinds, step counts, available components, and the bound FEMData. It's the first thing to print when a results file behaves unexpectedly. When a specific component comes back empty, call <code>results.inspect.diagnose("stress_xx")</code> for a per-level routing report that shows where the component lives or why it's missing.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../guide_obtaining_results/"><code>guide_obtaining_results.md</code></a> — five strategies for writing results files</li>

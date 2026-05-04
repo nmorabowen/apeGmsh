@@ -2377,6 +2377,8 @@
       
         
       
+        
+      
     
     
     
@@ -2602,6 +2604,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3422,6 +3452,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3650,6 +3686,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4065,8 +4185,11 @@ double-counting at shared boundaries.</p>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">point</span><span class="p">(</span><span class="s2">&quot;flywheel&quot;</span><span class="p">,</span> <span class="n">mass</span><span class="o">=</span><span class="mf">200.0</span><span class="p">,</span> <span class="n">rotational</span><span class="o">=</span><span class="p">(</span><span class="mf">10.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mf">50.0</span><span class="p">))</span>
 </span></code></pre></div>
 <p><code>rotational=(Ixx, Iyy, Izz)</code> adds rotational inertia terms. These
-only matter for 6-DOF models (ndf=6). For solids (ndf=3), rotational
-terms are ignored during resolution.</p>
+only matter for 6-DOF models (ndf=6). The <code>MassResolver</code> always stores
+a length-6 vector <code>(mx, my, mz, Ixx, Iyy, Izz)</code> regardless of <code>ndf</code> —
+the rotational components are not dropped at resolve time. The slice
+down to the active DOF count happens at solver-ingest time (the
+OpenSees bridge drops the rotational triple for <code>ndf &lt; 4</code> models).</p>
 <h3 id="line-mass">Line mass<a class="headerlink" href="#line-mass" title="Permanent link">&para;</a></h3>
 <p>Distributed mass per unit length along a curve:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">line</span><span class="p">(</span><span class="s2">&quot;beams&quot;</span><span class="p">,</span> <span class="n">linear_density</span><span class="o">=</span><span class="mf">50.0</span><span class="p">)</span>  <span class="c1"># 50 kg/m</span>

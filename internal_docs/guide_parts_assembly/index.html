@@ -737,10 +737,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#automatic-physical-groups-from-parts" class="md-nav__link">
+  <a href="#promote-part-labels-to-physical-groups" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Automatic physical groups from parts
+        Promote part labels to physical groups
       
     </span>
   </a>
@@ -2499,6 +2499,8 @@
       
         
       
+        
+      
     
     
     
@@ -2724,6 +2726,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3544,6 +3574,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3772,6 +3808,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4085,10 +4205,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#automatic-physical-groups-from-parts" class="md-nav__link">
+  <a href="#promote-part-labels-to-physical-groups" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Automatic physical groups from parts
+        Promote part labels to physical groups
       
     </span>
   </a>
@@ -4382,6 +4502,9 @@ imported entities:</p>
 <p>Rotation format is <code>(angle_rad, ax, ay, az)</code> for rotation about the origin, or
 <code>(angle_rad, ax, ay, az, cx, cy, cz)</code> to specify a custom center of rotation.
 Rotation is applied before translation.</p>
+<p>For post-import edits and array generation, every Instance exposes an <code>inst.edit</code>
+composite (and every Part a <code>part.edit</code> composite) with <code>translate</code>, <code>rotate</code>,
+<code>mirror</code>, <code>copy</code>, <code>pattern_linear</code>, <code>pattern_polar</code>, and <code>align_to</code> methods.</p>
 <h2 id="phase-4-fragment-for-conformal-meshing">Phase 4 — Fragment for Conformal Meshing<a class="headerlink" href="#phase-4-fragment-for-conformal-meshing" title="Permanent link">&para;</a></h2>
 <p>When two parts share an interface (a beam sitting on a column, a slab touching a
 wall), their meshes must be conformal at that interface.  <code>fragment_all()</code> performs
@@ -4400,16 +4523,18 @@ tags.</p>
 will trigger a warning during fragmentation.  Use <code>g.parts.from_model()</code> or
 <code>g.parts.register()</code> to adopt orphan entities before fragmenting.</p>
 <h2 id="phase-5-physical-groups-and-mesh-generation">Phase 5 — Physical Groups and Mesh Generation<a class="headerlink" href="#phase-5-physical-groups-and-mesh-generation" title="Permanent link">&para;</a></h2>
-<h3 id="automatic-physical-groups-from-parts">Automatic physical groups from parts<a class="headerlink" href="#automatic-physical-groups-from-parts" title="Permanent link">&para;</a></h3>
-<p>The simplest path—one physical group per instance label:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">add_physical_groups</span><span class="p">()</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="c1"># → {&quot;col_left&quot;: 1, &quot;col_right&quot;: 2, &quot;beam_top&quot;: 3, &quot;foundation&quot;: 4}</span>
+<h3 id="promote-part-labels-to-physical-groups">Promote part labels to physical groups<a class="headerlink" href="#promote-part-labels-to-physical-groups" title="Permanent link">&para;</a></h3>
+<p>The simplest path—promote each part label to a physical group of the same name:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">promote_to_physical</span><span class="p">(</span><span class="s2">&quot;col_left&quot;</span><span class="p">)</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">promote_to_physical</span><span class="p">(</span><span class="s2">&quot;col_right&quot;</span><span class="p">)</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">promote_to_physical</span><span class="p">(</span><span class="s2">&quot;beam_top&quot;</span><span class="p">)</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">promote_to_physical</span><span class="p">(</span><span class="s2">&quot;foundation&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="manual-physical-groups">Manual physical groups<a class="headerlink" href="#manual-physical-groups" title="Permanent link">&para;</a></h3>
 <p>For finer control (e.g., tagging surfaces for boundary conditions), use the
 standard <code>g.physical</code> API:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;base_fixed&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">])</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;load_surface&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">])</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="p">[</span><span class="o">...</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;base_fixed&quot;</span><span class="p">)</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="p">[</span><span class="o">...</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;load_surface&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="mesh-generation">Mesh generation<a class="headerlink" href="#mesh-generation" title="Permanent link">&para;</a></h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_global</span><span class="p">(</span><span class="n">min_size</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">max_size</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
@@ -4516,27 +4641,29 @@ needed by the solver.</p>
 </span><span id="__span-19-23"><a id="__codelineno-19-23" name="__codelineno-19-23" href="#__codelineno-19-23"></a>
 </span><span id="__span-19-24"><a id="__codelineno-19-24" name="__codelineno-19-24" href="#__codelineno-19-24"></a><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">fragment_all</span><span class="p">()</span>
 </span><span id="__span-19-25"><a id="__codelineno-19-25" name="__codelineno-19-25" href="#__codelineno-19-25"></a>
-</span><span id="__span-19-26"><a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a><span class="c1"># Physical groups</span>
-</span><span id="__span-19-27"><a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">add_physical_groups</span><span class="p">()</span>
-</span><span id="__span-19-28"><a id="__codelineno-19-28" name="__codelineno-19-28" href="#__codelineno-19-28"></a>
-</span><span id="__span-19-29"><a id="__codelineno-19-29" name="__codelineno-19-29" href="#__codelineno-19-29"></a><span class="c1"># Mesh</span>
-</span><span id="__span-19-30"><a id="__codelineno-19-30" name="__codelineno-19-30" href="#__codelineno-19-30"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_global</span><span class="p">(</span><span class="n">min_size</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">max_size</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
-</span><span id="__span-19-31"><a id="__codelineno-19-31" name="__codelineno-19-31" href="#__codelineno-19-31"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-19-32"><a id="__codelineno-19-32" name="__codelineno-19-32" href="#__codelineno-19-32"></a>
-</span><span id="__span-19-33"><a id="__codelineno-19-33" name="__codelineno-19-33" href="#__codelineno-19-33"></a><span class="c1"># Constraints</span>
-</span><span id="__span-19-34"><a id="__codelineno-19-34" name="__codelineno-19-34" href="#__codelineno-19-34"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span><span class="s2">&quot;beam_top&quot;</span><span class="p">,</span> <span class="s2">&quot;col_left&quot;</span><span class="p">,</span>  <span class="n">tolerance</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
-</span><span id="__span-19-35"><a id="__codelineno-19-35" name="__codelineno-19-35" href="#__codelineno-19-35"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span><span class="s2">&quot;beam_top&quot;</span><span class="p">,</span> <span class="s2">&quot;col_right&quot;</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
-</span><span id="__span-19-36"><a id="__codelineno-19-36" name="__codelineno-19-36" href="#__codelineno-19-36"></a>
-</span><span id="__span-19-37"><a id="__codelineno-19-37" name="__codelineno-19-37" href="#__codelineno-19-37"></a><span class="c1"># Resolve and export</span>
-</span><span id="__span-19-38"><a id="__codelineno-19-38" name="__codelineno-19-38" href="#__codelineno-19-38"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-19-39"><a id="__codelineno-19-39" name="__codelineno-19-39" href="#__codelineno-19-39"></a><span class="n">node_map</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">build_node_map</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">ids</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">coords</span><span class="p">)</span>
-</span><span id="__span-19-40"><a id="__codelineno-19-40" name="__codelineno-19-40" href="#__codelineno-19-40"></a><span class="n">face_map</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">build_face_map</span><span class="p">(</span><span class="n">node_map</span><span class="p">)</span>
-</span><span id="__span-19-41"><a id="__codelineno-19-41" name="__codelineno-19-41" href="#__codelineno-19-41"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">ids</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">coords</span><span class="p">,</span>
-</span><span id="__span-19-42"><a id="__codelineno-19-42" name="__codelineno-19-42" href="#__codelineno-19-42"></a>                      <span class="n">node_map</span><span class="o">=</span><span class="n">node_map</span><span class="p">,</span> <span class="n">face_map</span><span class="o">=</span><span class="n">face_map</span><span class="p">)</span>
-</span><span id="__span-19-43"><a id="__codelineno-19-43" name="__codelineno-19-43" href="#__codelineno-19-43"></a>
-</span><span id="__span-19-44"><a id="__codelineno-19-44" name="__codelineno-19-44" href="#__codelineno-19-44"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
-</span><span id="__span-19-45"><a id="__codelineno-19-45" name="__codelineno-19-45" href="#__codelineno-19-45"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;portal_frame.py&quot;</span><span class="p">)</span>
-</span><span id="__span-19-46"><a id="__codelineno-19-46" name="__codelineno-19-46" href="#__codelineno-19-46"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+</span><span id="__span-19-26"><a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a><span class="c1"># Physical groups (one per part label)</span>
+</span><span id="__span-19-27"><a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">promote_to_physical</span><span class="p">(</span><span class="s2">&quot;col_left&quot;</span><span class="p">)</span>
+</span><span id="__span-19-28"><a id="__codelineno-19-28" name="__codelineno-19-28" href="#__codelineno-19-28"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">promote_to_physical</span><span class="p">(</span><span class="s2">&quot;col_right&quot;</span><span class="p">)</span>
+</span><span id="__span-19-29"><a id="__codelineno-19-29" name="__codelineno-19-29" href="#__codelineno-19-29"></a><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">promote_to_physical</span><span class="p">(</span><span class="s2">&quot;beam_top&quot;</span><span class="p">)</span>
+</span><span id="__span-19-30"><a id="__codelineno-19-30" name="__codelineno-19-30" href="#__codelineno-19-30"></a>
+</span><span id="__span-19-31"><a id="__codelineno-19-31" name="__codelineno-19-31" href="#__codelineno-19-31"></a><span class="c1"># Mesh</span>
+</span><span id="__span-19-32"><a id="__codelineno-19-32" name="__codelineno-19-32" href="#__codelineno-19-32"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_global</span><span class="p">(</span><span class="n">min_size</span><span class="o">=</span><span class="mi">50</span><span class="p">,</span> <span class="n">max_size</span><span class="o">=</span><span class="mi">150</span><span class="p">)</span>
+</span><span id="__span-19-33"><a id="__codelineno-19-33" name="__codelineno-19-33" href="#__codelineno-19-33"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-19-34"><a id="__codelineno-19-34" name="__codelineno-19-34" href="#__codelineno-19-34"></a>
+</span><span id="__span-19-35"><a id="__codelineno-19-35" name="__codelineno-19-35" href="#__codelineno-19-35"></a><span class="c1"># Constraints</span>
+</span><span id="__span-19-36"><a id="__codelineno-19-36" name="__codelineno-19-36" href="#__codelineno-19-36"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span><span class="s2">&quot;beam_top&quot;</span><span class="p">,</span> <span class="s2">&quot;col_left&quot;</span><span class="p">,</span>  <span class="n">tolerance</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+</span><span id="__span-19-37"><a id="__codelineno-19-37" name="__codelineno-19-37" href="#__codelineno-19-37"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span><span class="s2">&quot;beam_top&quot;</span><span class="p">,</span> <span class="s2">&quot;col_right&quot;</span><span class="p">,</span> <span class="n">tolerance</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+</span><span id="__span-19-38"><a id="__codelineno-19-38" name="__codelineno-19-38" href="#__codelineno-19-38"></a>
+</span><span id="__span-19-39"><a id="__codelineno-19-39" name="__codelineno-19-39" href="#__codelineno-19-39"></a><span class="c1"># Resolve and export</span>
+</span><span id="__span-19-40"><a id="__codelineno-19-40" name="__codelineno-19-40" href="#__codelineno-19-40"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-19-41"><a id="__codelineno-19-41" name="__codelineno-19-41" href="#__codelineno-19-41"></a><span class="n">node_map</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">build_node_map</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">ids</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">coords</span><span class="p">)</span>
+</span><span id="__span-19-42"><a id="__codelineno-19-42" name="__codelineno-19-42" href="#__codelineno-19-42"></a><span class="n">face_map</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">build_face_map</span><span class="p">(</span><span class="n">node_map</span><span class="p">)</span>
+</span><span id="__span-19-43"><a id="__codelineno-19-43" name="__codelineno-19-43" href="#__codelineno-19-43"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">ids</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">coords</span><span class="p">,</span>
+</span><span id="__span-19-44"><a id="__codelineno-19-44" name="__codelineno-19-44" href="#__codelineno-19-44"></a>                      <span class="n">node_map</span><span class="o">=</span><span class="n">node_map</span><span class="p">,</span> <span class="n">face_map</span><span class="o">=</span><span class="n">face_map</span><span class="p">)</span>
+</span><span id="__span-19-45"><a id="__codelineno-19-45" name="__codelineno-19-45" href="#__codelineno-19-45"></a>
+</span><span id="__span-19-46"><a id="__codelineno-19-46" name="__codelineno-19-46" href="#__codelineno-19-46"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</span><span id="__span-19-47"><a id="__codelineno-19-47" name="__codelineno-19-47" href="#__codelineno-19-47"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;portal_frame.py&quot;</span><span class="p">)</span>
+</span><span id="__span-19-48"><a id="__codelineno-19-48" name="__codelineno-19-48" href="#__codelineno-19-48"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
 </span></code></pre></div>
 <h2 id="summary-of-the-pipeline">Summary of the Pipeline<a class="headerlink" href="#summary-of-the-pipeline" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>Part                          apeGmsh (Assembly)

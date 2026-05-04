@@ -2405,6 +2405,8 @@
       
         
       
+        
+      
     
     
     
@@ -2630,6 +2632,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3450,6 +3480,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3678,6 +3714,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4476,9 +4596,9 @@ all prepared for a conformal mesh.</p>
 </span><span id="__span-12-29"><a id="__codelineno-12-29" name="__codelineno-12-29" href="#__codelineno-12-29"></a>
 </span><span id="__span-12-30"><a id="__codelineno-12-30" name="__codelineno-12-30" href="#__codelineno-12-30"></a>    <span class="c1"># --- Physical groups (for materials + BCs) -------------------------</span>
 </span><span id="__span-12-31"><a id="__codelineno-12-31" name="__codelineno-12-31" href="#__codelineno-12-31"></a>    <span class="c1"># Labels still resolve because fragment updated the registry.</span>
-</span><span id="__span-12-32"><a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_from_label</span><span class="p">(</span><span class="s2">&quot;soil&quot;</span><span class="p">,</span>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Soil&quot;</span><span class="p">,</span>    <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-12-33"><a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_from_label</span><span class="p">(</span><span class="s2">&quot;footing&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Footing&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-12-34"><a id="__codelineno-12-34" name="__codelineno-12-34" href="#__codelineno-12-34"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_from_label</span><span class="p">(</span><span class="s2">&quot;column&quot;</span><span class="p">,</span>  <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Column&quot;</span><span class="p">,</span>  <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-12-32"><a id="__codelineno-12-32" name="__codelineno-12-32" href="#__codelineno-12-32"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">from_label</span><span class="p">(</span><span class="s2">&quot;soil&quot;</span><span class="p">,</span>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Soil&quot;</span><span class="p">,</span>    <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-12-33"><a id="__codelineno-12-33" name="__codelineno-12-33" href="#__codelineno-12-33"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">from_label</span><span class="p">(</span><span class="s2">&quot;footing&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Footing&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-12-34"><a id="__codelineno-12-34" name="__codelineno-12-34" href="#__codelineno-12-34"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">from_label</span><span class="p">(</span><span class="s2">&quot;column&quot;</span><span class="p">,</span>  <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Column&quot;</span><span class="p">,</span>  <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-12-35"><a id="__codelineno-12-35" name="__codelineno-12-35" href="#__codelineno-12-35"></a>
 </span><span id="__span-12-36"><a id="__codelineno-12-36" name="__codelineno-12-36" href="#__codelineno-12-36"></a>    <span class="c1"># --- Mesh ----------------------------------------------------------</span>
 </span><span id="__span-12-37"><a id="__codelineno-12-37" name="__codelineno-12-37" href="#__codelineno-12-37"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_global</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
@@ -4514,9 +4634,9 @@ rebuilding the geometry.</p>
 </span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>    <span class="n">pieces</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">boolean</span><span class="o">.</span><span class="n">fragment</span><span class="p">(</span><span class="n">soil</span><span class="p">,</span> <span class="p">[</span><span class="n">footing</span><span class="p">]</span> <span class="o">+</span> <span class="n">column</span><span class="p">)</span>
 </span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>
 </span><span id="__span-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>    <span class="c1"># --- Cell 5: physical groups + mesh ---------------------------------</span>
-</span><span id="__span-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_from_label</span><span class="p">(</span><span class="s2">&quot;soil&quot;</span><span class="p">,</span>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Soil&quot;</span><span class="p">,</span>    <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_from_label</span><span class="p">(</span><span class="s2">&quot;footing&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Footing&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_from_label</span><span class="p">(</span><span class="s2">&quot;column&quot;</span><span class="p">,</span>  <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Column&quot;</span><span class="p">,</span>  <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">from_label</span><span class="p">(</span><span class="s2">&quot;soil&quot;</span><span class="p">,</span>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Soil&quot;</span><span class="p">,</span>    <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">from_label</span><span class="p">(</span><span class="s2">&quot;footing&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Footing&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">from_label</span><span class="p">(</span><span class="s2">&quot;column&quot;</span><span class="p">,</span>  <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Column&quot;</span><span class="p">,</span>  <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-13-24"><a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a>
 </span><span id="__span-13-25"><a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_size_global</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
 </span><span id="__span-13-26"><a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>

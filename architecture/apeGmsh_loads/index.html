@@ -2164,6 +2164,8 @@
       
         
       
+        
+      
     
     
     
@@ -2423,6 +2425,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#34-per-edge-normal-pressure-on-lines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 Per-edge normal pressure on lines
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-validate_pre_mesh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 validate_pre_mesh()
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2574,6 +2598,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3394,6 +3446,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3622,6 +3680,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -3873,6 +4015,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#34-per-edge-normal-pressure-on-lines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.4 Per-edge normal pressure on lines
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-validate_pre_mesh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.5 validate_pre_mesh()
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4022,7 +4186,7 @@ composites.</em></p>
 </blockquote>
 <hr />
 <h2 id="2-loaddef-hierarchy-pre-mesh-intent">2. LoadDef hierarchy (pre-mesh, intent)<a class="headerlink" href="#2-loaddef-hierarchy-pre-mesh-intent" title="Permanent link">&para;</a></h2>
-<p>Seven dataclasses, all inheriting from <code>LoadDef</code>. Each carries a
+<p>Eight dataclasses, all inheriting from <code>LoadDef</code>. Each carries a
 <code>target</code> identifier (flexible — resolved by the composite), a <code>pattern</code>
 name (for grouping), and — for distributed loads — a <code>reduction</code> and
 <code>target_form</code> pair that selects the math at resolve-time.</p>
@@ -4041,9 +4205,14 @@ name (for grouping), and — for distributed loads — a <code>reduction</code> 
 <td><code>force_xyz</code>, <code>moment_xyz</code></td>
 </tr>
 <tr>
+<td><code>PointClosestLoadDef</code></td>
+<td>nearest mesh node(s) to xyz</td>
+<td><code>xyz_request</code>, <code>within</code>, <code>tol</code>, <code>snap_distance</code> (writeback)</td>
+</tr>
+<tr>
 <td><code>LineLoadDef</code></td>
 <td>curve / 1-D entity</td>
-<td><code>magnitude</code>+<code>direction</code> or <code>q_xyz</code></td>
+<td><code>magnitude</code>+<code>direction</code>/<code>q_xyz</code>; <code>normal</code>+<code>away_from</code></td>
 </tr>
 <tr>
 <td><code>SurfaceLoadDef</code></td>
@@ -4108,21 +4277,35 @@ tenet-(ix) sense: it holds state (<code>load_defs</code>, <code>load_records</co
 method either appends a <code>LoadDef</code> or consumes one at resolve-time.</p>
 <h3 id="31-seven-factory-methods">3.1 Seven factory methods<a class="headerlink" href="#31-seven-factory-methods" title="Permanent link">&para;</a></h3>
 <p>Each mirrors the Def subclass it builds:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span>   <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>                 <span class="n">force_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">moment_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span>    <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>                 <span class="n">q_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>                 <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;nodal&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span> <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=</span><span class="mf">0.</span><span class="p">,</span> <span class="n">normal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>                 <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>                 <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;nodal&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span> <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">g</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="o">-</span><span class="mf">9.81</span><span class="p">),</span> <span class="n">density</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>                 <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span> <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;nodal&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">body</span>    <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">force_per_volume</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">),</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>                 <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span> <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;nodal&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_load</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">moment_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span> <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">disp_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">rot_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span>         <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>                       <span class="n">force_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">moment_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point_closest</span> <span class="p">(</span><span class="n">xyz</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">within</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">pg</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>                       <span class="n">force_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">moment_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>                       <span class="n">tol</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">line</span>          <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>                       <span class="n">q_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>                       <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;nodal&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">surface</span>       <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">magnitude</span><span class="o">=</span><span class="mf">0.</span><span class="p">,</span> <span class="n">normal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>                       <span class="n">direction</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">),</span> <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>                       <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;nodal&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">gravity</span>       <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">g</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="o">-</span><span class="mf">9.81</span><span class="p">),</span> <span class="n">density</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>                       <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span> <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;nodal&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">body</span>          <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">force_per_volume</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">),</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>                       <span class="n">reduction</span><span class="o">=</span><span class="s2">&quot;tributary&quot;</span><span class="p">,</span> <span class="n">target_form</span><span class="o">=</span><span class="s2">&quot;nodal&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_load</span>     <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">moment_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">face_sp</span>       <span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">disp_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">rot_xyz</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </span></code></pre></div>
+<blockquote>
+<p>[!tip] <code>point_closest</code> — coordinate-driven point loads
+When the load point doesn't live on a named PG/label, give a
+world-coordinate <code>xyz</code> and let the composite snap to the nearest
+mesh node at resolve time. <code>within=</code> (PG / label / part / DimTag
+list) restricts the candidate pool. <code>tol=None</code> (default) returns
+the single nearest node; <code>tol &gt; 0</code> returns every node inside that
+radius. The actual snap distance is written back to
+<code>defn.snap_distance</code> after resolve so it surfaces in <code>summary()</code>
+(see <code>LoadsComposite.py:245-278, 1065-1121</code>).</p>
+</blockquote>
 <h3 id="32-target-resolution-the-five-step-lookup">3.2 Target resolution (the five-step lookup)<a class="headerlink" href="#32-target-resolution-the-five-step-lookup" title="Permanent link">&para;</a></h3>
 <p>Every factory method accepts a flexible <code>target</code> plus three explicit
 keyword overrides (<code>pg=</code>, <code>label=</code>, <code>tag=</code>). Under the hood,
@@ -4194,17 +4377,18 @@ the live session.</p>
 combo at factory time — an unsupported <code>(reduction, target_form)</code>
 combination raises <strong>before</strong> the def is stored, so the failure
 message names the offending call site, not the resolve pass.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>PointLoadDef     │ tributary / nodal     → _resolve_point
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>LineLoadDef      │ {trib,cons} × nodal   → _resolve_line_{tributary,consistent}
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>                 │ {trib,cons} × element → _resolve_line_element
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>SurfaceLoadDef   │ {trib,cons} × nodal   → _resolve_surface_{tributary,consistent}
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>                 │ {trib,cons} × element → _resolve_surface_element
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>GravityLoadDef   │ {trib,cons} × nodal   → _resolve_gravity_{tributary,consistent}
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>                 │ {trib,cons} × element → _resolve_gravity_element
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>BodyLoadDef      │ {trib,cons} × nodal   → _resolve_body_tributary
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>                 │ {trib,cons} × element → _resolve_body_element
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>FaceLoadDef      │ tributary / nodal     → _resolve_face_load
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>FaceSPDef        │ tributary / nodal     → _resolve_face_sp
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>PointLoadDef          │ tributary / nodal     → _resolve_point
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>PointClosestLoadDef   │ tributary / nodal     → _resolve_point_closest
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>LineLoadDef           │ {trib,cons} × nodal   → _resolve_line_{tributary,consistent}
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>                      │ {trib,cons} × element → _resolve_line_element
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>SurfaceLoadDef        │ {trib,cons} × nodal   → _resolve_surface_{tributary,consistent}
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>                      │ {trib,cons} × element → _resolve_surface_element
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>GravityLoadDef        │ {trib,cons} × nodal   → _resolve_gravity_{tributary,consistent}
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>                      │ {trib,cons} × element → _resolve_gravity_element
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>BodyLoadDef           │ {trib,cons} × nodal   → _resolve_body_tributary
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>                      │ {trib,cons} × element → _resolve_body_element
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>FaceLoadDef           │ tributary / nodal     → _resolve_face_load
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>FaceSPDef             │ tributary / nodal     → _resolve_face_sp
 </span></code></pre></div>
 <p>Each <code>_resolve_&lt;kind&gt;</code> method is a thin shim: it queries Gmsh for the
 right geometry primitive (edges, faces, element connectivity) and
@@ -4222,6 +4406,29 @@ hands raw arrays to <code>LoadResolver</code>. Three helpers back this:</p>
 <p>The fast path for part-label targets uses the pre-computed <code>node_map</code>
 (built by [[apeGmsh_partInstanceAssemble#PartsRegistry|<code>g.parts.build_node_map</code>]])
 instead of re-querying Gmsh.</p>
+<h3 id="34-per-edge-normal-pressure-on-lines">3.4 Per-edge normal pressure on lines<a class="headerlink" href="#34-per-edge-normal-pressure-on-lines" title="Permanent link">&para;</a></h3>
+<p><code>LineLoadDef.normal=True</code> (with optional <code>away_from=(x0, y0, z0)</code>,
+<code>Loads.py:98-99</code>) emits a force-per-length vector perpendicular to
+each edge in the xy-plane. Three composite-side helpers back this:</p>
+<ul>
+<li><code>_curve_inplane_sign(curve_tag)</code> — uses <code>gmsh.model.getAdjacencies</code></li>
+<li>oriented boundary to recover the in-plane "into-structure" sign
+  when the curve bounds exactly one surface
+  (<code>LoadsComposite.py:1143</code>).</li>
+<li><code>_edge_normal_q(...)</code> — builds the per-edge normal vector
+  <code>(-Ty, Tx, 0)</code> (or its mirror), flipping toward / away from
+  <code>away_from</code> when given (<code>LoadsComposite.py:1176</code>).</li>
+<li><code>_collect_line_normal_items(...)</code> — walks every 1-D mesh element on
+  the resolved entities and bundles <code>(n1, n2, q)</code> tuples for the
+  resolver (<code>LoadsComposite.py:1210</code>).</li>
+</ul>
+<h3 id="35-validate_pre_mesh">3.5 <code>validate_pre_mesh()</code><a class="headerlink" href="#35-validate_pre_mesh" title="Permanent link">&para;</a></h3>
+<p><code>LoadsComposite.validate_pre_mesh()</code> (<code>LoadsComposite.py:753</code>) walks
+every stored <code>LoadDef</code> whose <code>target</code> is a string and re-runs
+<code>_resolve_target</code> so unknown labels / PGs / part labels surface as
+<code>KeyError</code> <em>before</em> meshing. It is invoked by <code>Mesh.generate(...)</code>
+so typos fail fast rather than after minutes of meshing. Raw
+<code>(dim, tag)</code> lists are skipped.</p>
 <hr />
 <h2 id="4-patterns-grouping-defs-for-the-solver">4. Patterns — grouping defs for the solver<a class="headerlink" href="#4-patterns-grouping-defs-for-the-solver" title="Permanent link">&para;</a></h2>
 <p>OpenSees organizes loads into <em>patterns</em> (each with a <code>timeSeries</code>). The

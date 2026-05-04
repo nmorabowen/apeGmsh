@@ -2455,6 +2455,8 @@
       
         
       
+        
+      
     
     
     
@@ -2680,6 +2682,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3500,6 +3530,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3728,6 +3764,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4788,8 +4908,9 @@ accepts a list of tags:</p>
 </span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="n">rebar_curves</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">entities</span><span class="p">(</span><span class="s2">&quot;Rebars&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">editing</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">rebar_curves</span><span class="p">,</span> <span class="n">in_tag</span><span class="o">=</span><span class="n">concrete_vol</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">in_dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Because <code>g.parts.add_physical_groups()</code> (<code>_parts_registry.py</code>) already
-creates one PG per registered instance, the resolver also doubles as a
+<p>Because Part instances default to <code>_auto_pg_from_label = True</code>
+(<code>core/Part.py</code>), the per-instance label is auto-promoted to a physical
+group at registration time — so the resolver also doubles as a
 "by part label" lookup for the common case — <code>g.physical.entities("col")</code>
 and <code>g.parts.instances["col"].entities[dim]</code> give the same tags. Where the
 PG route is strictly more expressive is when you want to group <em>across</em>
@@ -4902,9 +5023,9 @@ re-reading a <code>.msh</code> file.</p>
 </span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span>
 </span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">DataFrame</span>
 </span></code></pre></div>
-<p><code>g.parts.add_physical_groups(dim=None)</code> (<code>_parts_registry.py</code>) is the
-one-liner that creates one physical group per registered instance, so you get
-named handles for every part without touching raw tags.</p>
+<p>Part instances default to <code>_auto_pg_from_label = True</code> (<code>core/Part.py</code>),
+so registration creates one physical group per instance automatically —
+you get named handles for every part without touching raw tags.</p>
 <p><strong><code>g.mesh_selection</code> (MeshSelectionSet, <code>mesh/MeshSelectionSet.py</code>)</strong> is the
 mesh-driven route. It identifies subsets directly on the mesh — by spatial
 predicate, element type, or explicit IDs — and is the right tool for things
@@ -4946,17 +5067,16 @@ mesh data:</p>
 is why fragmentation has to happen first: the labels must already point at the
 conformal, fragmented entities.</p>
 <h3 id="stage-2-resolution-on-the-mesh">Stage 2 — resolution, on the mesh<a class="headerlink" href="#stage-2-resolution-on-the-mesh" title="Permanent link">&para;</a></h3>
-<p>After <code>g.mesh.generation.generate()</code> you extract an FEM view of the mesh and feed it to
-the resolver:</p>
+<p>After <code>g.mesh.generation.generate()</code> the resolver runs automatically inside
+<code>get_fem_data()</code> — it extracts the mesh, builds the node/face/connectivity
+maps, and walks <code>constraint_defs</code> to produce records:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="n">node_map</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">build_node_map</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">ids</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">coords</span><span class="p">)</span>
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="n">face_map</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">build_face_map</span><span class="p">(</span><span class="n">node_map</span><span class="p">)</span>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="n">records</span>  <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span>
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">ids</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">coords</span><span class="p">,</span>
-</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>    <span class="n">node_map</span><span class="o">=</span><span class="n">node_map</span><span class="p">,</span>
-</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>    <span class="n">face_map</span><span class="o">=</span><span class="n">face_map</span><span class="p">,</span>
-</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="p">)</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="c1"># fem.constraints.{node,surface} are already populated</span>
 </span></code></pre></div>
+<p><code>get_fem_data()</code> is the high-level entry point; calling
+<code>g.constraints.resolve(...)</code> directly is an internal path that requires
+several extra kwargs (<code>elem_tags</code>, <code>connectivity</code>, <code>node_map</code>, <code>face_map</code>)
+and is normally not invoked by users.</p>
 <ul>
 <li><code>build_node_map</code> returns a <code>dict[label, set[int]]</code> that assigns every mesh
   node to the instance(s) whose bounding box contains it. This is the
@@ -5004,7 +5124,7 @@ mapping to one section of this guide:</p>
 </span><span id="__span-21-23"><a id="__codelineno-21-23" name="__codelineno-21-23" href="#__codelineno-21-23"></a>    <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span>
 </span><span id="__span-21-24"><a id="__codelineno-21-24" name="__codelineno-21-24" href="#__codelineno-21-24"></a>        <span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span><span id="__span-21-25"><a id="__codelineno-21-25" name="__codelineno-21-25" href="#__codelineno-21-25"></a>        <span class="o">.</span><span class="n">set_order</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
-</span><span id="__span-21-26"><a id="__codelineno-21-26" name="__codelineno-21-26" href="#__codelineno-21-26"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber_mesh</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-21-26"><a id="__codelineno-21-26" name="__codelineno-21-26" href="#__codelineno-21-26"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </span><span id="__span-21-27"><a id="__codelineno-21-27" name="__codelineno-21-27" href="#__codelineno-21-27"></a>
 </span><span id="__span-21-28"><a id="__codelineno-21-28" name="__codelineno-21-28" href="#__codelineno-21-28"></a>    <span class="c1"># 6. Declare constraints against part labels (pre-resolution)</span>
 </span><span id="__span-21-29"><a id="__codelineno-21-29" name="__codelineno-21-29" href="#__codelineno-21-29"></a>    <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="n">master_label</span><span class="o">=</span><span class="s2">&quot;col&quot;</span><span class="p">,</span> <span class="n">slave_label</span><span class="o">=</span><span class="s2">&quot;bm&quot;</span><span class="p">)</span>

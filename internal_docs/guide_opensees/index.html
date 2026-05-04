@@ -1339,6 +1339,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#63-embedding-recorders-in-the-exported-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Embedding recorders in the exported script
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2610,6 +2621,8 @@
       
         
       
+        
+      
     
     
     
@@ -2835,6 +2848,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3655,6 +3696,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3883,6 +3930,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4306,6 +4437,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#63-embedding-recorders-in-the-exported-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Embedding recorders in the exported script
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4494,7 +4636,7 @@ Tcl or openseespy scripts. You never touch raw node numbering or element
 connectivity -- the bridge builds the entire model from physical groups and
 FEMData snapshots you have already defined.</p>
 <p>The bridge lives on every session as <code>g.opensees</code>, a composition container with
-five sub-composites and two lifecycle entry points:</p>
+six sub-composites and two lifecycle entry points:</p>
 <table>
 <thead>
 <tr>
@@ -4522,6 +4664,10 @@ five sub-composites and two lifecycle entry points:</p>
 <tr>
 <td><code>g.opensees.export</code></td>
 <td>Tcl and openseespy script emission</td>
+</tr>
+<tr>
+<td><code>g.opensees.recorders</code></td>
+<td>recorder declarations (mounted from <code>Recorders</code>); see <code>guide_recorders_reference.md</code></td>
 </tr>
 </tbody>
 </table>
@@ -4726,10 +4872,19 @@ system. Register one before calling <code>assign</code>:</p>
 </span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># 3-D frame -- vecxz required</span>
 </span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">add_geom_transf</span><span class="p">(</span><span class="s2">&quot;Beams3D&quot;</span><span class="p">,</span> <span class="s2">&quot;Corotational&quot;</span><span class="p">,</span> <span class="n">vecxz</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>
 </span></code></pre></div>
+<p>For non-axis-aligned beams, the static helper
+<code>g.opensees.elements.vecxz(axis, local_z=(0, 0, 1), roll_deg=0.0)</code>
+computes a valid <code>vecxz</code> from the beam's axis vector and a reference
+local-z direction, with optional section rotation about the beam axis
+via <code>roll_deg</code>. See <code>_opensees_elements.py:44-116</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Inclined beam, default local-z toward global +Z</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">vxz</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">vecxz</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">add_geom_transf</span><span class="p">(</span><span class="s2">&quot;Diag&quot;</span><span class="p">,</span> <span class="s2">&quot;Linear&quot;</span><span class="p">,</span> <span class="n">vecxz</span><span class="o">=</span><span class="n">vxz</span><span class="p">)</span>
+</span></code></pre></div>
 <h3 id="34-boundary-conditions-fix">3.4 Boundary conditions -- <code>fix</code><a class="headerlink" href="#34-boundary-conditions-fix" title="Permanent link">&para;</a></h3>
 <p>Apply homogeneous single-point constraints to every node in a physical group:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;BasePlate&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;PinnedBase&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>  <span class="c1"># ndf=6</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;BasePlate&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;PinnedBase&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">])</span>  <span class="c1"># ndf=6</span>
 </span></code></pre></div>
 <p>The <code>dofs</code> list must have exactly <code>ndf</code> entries (<code>1</code> = fixed, <code>0</code> = free). The
 <code>dim</code> keyword disambiguates when a name exists at multiple dimensions. Unlike
@@ -4746,27 +4901,27 @@ records by the FEMData snapshot, and injected into the bridge through
 <code>g.opensees.ingest</code>. This "define on the session, resolve on the snapshot"
 architecture means the same definitions work for any solver bridge.</p>
 <h3 id="41-pulling-loads-ingestloadsfem">4.1 Pulling loads -- <code>ingest.loads(fem)</code><a class="headerlink" href="#41-pulling-loads-ingestloadsfem" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div>
 <p>This translates <code>fem.nodes.loads</code> and <code>fem.elements.loads</code> into internal
 load-pattern dicts. Each pattern you defined with <code>g.loads.pattern(...)</code> becomes
 its own <code>pattern Plain</code> block in the output. Supported element load types are
 <code>beamUniform</code> (<code>wy</code>, <code>wz</code>, <code>wx</code>) and <code>surfacePressure</code> (<code>p</code>).</p>
 <h3 id="42-pulling-masses-ingestmassesfem">4.2 Pulling masses -- <code>ingest.masses(fem)</code><a class="headerlink" href="#42-pulling-masses-ingestmassesfem" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">masses</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">masses</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Translates <code>fem.nodes.masses</code> into <code>ops.mass(node, mx, my, mz, ...)</code> commands.
 If you defined volume masses with <code>g.masses.volume(...)</code>, the FEMData snapshot
 has already distributed them to nodes -- the bridge passes them through.</p>
 <h3 id="43-pulling-sp-records-ingestspfem">4.3 Pulling SP records -- <code>ingest.sp(fem)</code><a class="headerlink" href="#43-pulling-sp-records-ingestspfem" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Translates <code>fem.nodes.sp</code> (populated by <code>g.loads.face_sp(...)</code>) into internal
 SP records. At export time, homogeneous records become <code>ops.fix()</code> calls and
 non-zero prescribed displacements become <code>ops.sp(node, dof, value)</code> calls.</p>
 <h3 id="44-pulling-constraints-ingestconstraintsfem">4.4 Pulling constraints -- <code>ingest.constraints(fem)</code><a class="headerlink" href="#44-pulling-constraints-ingestconstraintsfem" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">tie_penalty</span><span class="o">=</span><span class="mf">1e12</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">tie_penalty</span><span class="o">=</span><span class="mf">1e12</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Ingests constraint records from <code>fem.nodes.constraints</code> and
 <code>fem.elements.constraints</code>. Currently the bridge emits <strong>tie</strong> constraints as
@@ -4780,15 +4935,15 @@ constraints (<code>equalDOF</code>, <code>rigidLink</code>) and rigid diaphragms
 emission is deferred to future phases.</p>
 <h3 id="45-chaining-ingest-calls">4.5 Chaining ingest calls<a class="headerlink" href="#45-chaining-ingest-calls" title="Permanent link">&para;</a></h3>
 <p>All methods return <code>self</code>, so a common pattern is:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>    <span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>    <span class="o">.</span><span class="n">masses</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>    <span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">tie_penalty</span><span class="o">=</span><span class="mf">1e12</span><span class="p">))</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="o">.</span><span class="n">sp</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="o">.</span><span class="n">masses</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">tie_penalty</span><span class="o">=</span><span class="mf">1e12</span><span class="p">))</span>
 </span></code></pre></div>
 <h2 id="5-building-the-model-build">5. Building the Model -- <code>build()</code><a class="headerlink" href="#5-building-the-model-build" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
 </span></code></pre></div>
 <p>This extracts the active Gmsh mesh and constructs all internal tables. It must
 be called after <code>g.mesh.generation.generate()</code> and after all declarations.</p>
@@ -4805,37 +4960,69 @@ export.</p>
 <p>The export sub-composite writes the built model to disk. Both exporters read
 exclusively from internal tables -- no Gmsh I/O.</p>
 <h3 id="61-tcl-script-exporttclpath">6.1 Tcl script -- <code>export.tcl(path)</code><a class="headerlink" href="#61-tcl-script-exporttclpath" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Produces a complete OpenSees Tcl input file containing (in order): model
 builder, nodes, materials/sections/transforms, element connectivity with
 physical-group comments, tied-interface elements, fix commands, nodal masses,
 and load patterns with <code>eleLoad</code> commands for beam-uniform and surface loads.</p>
 <h3 id="62-openseespy-script-exportpypath">6.2 openseespy script -- <code>export.py(path)</code><a class="headerlink" href="#62-openseespy-script-exportpypath" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;model.py&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;model.py&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Produces an equivalent Python script using <code>openseespy.opensees as ops</code>. The
 structure mirrors the Tcl output. Both methods return <code>_Export</code> for chaining:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;model.py&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;model.py&quot;</span><span class="p">)</span>
 </span></code></pre></div>
+<h3 id="63-embedding-recorders-in-the-exported-script">6.3 Embedding recorders in the exported script<a class="headerlink" href="#63-embedding-recorders-in-the-exported-script" title="Permanent link">&para;</a></h3>
+<p>Both <code>export.tcl</code> and <code>export.py</code> accept four recorder-related kwargs
+(<code>_opensees_export.py:30-38, 260-268</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Kwarg</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>recorders=</code></td>
+<td>A <code>ResolvedRecorderSpec</code> to emit alongside the model. One <code>recorder ...</code> line (or <code>ops.recorder(...)</code> call) per resolved record, after the model definition.</td>
+</tr>
+<tr>
+<td><code>recorders_output_dir=</code></td>
+<td>Directory prefix for recorder output files. Default <code>""</code> = same dir as the script. Trailing <code>/</code> optional.</td>
+</tr>
+<tr>
+<td><code>recorders_file_format=</code></td>
+<td><code>"out"</code> (text, default) or <code>"xml"</code>, or <code>"mpco"</code>. The <code>"mpco"</code> value switches the emitter to <code>to_mpco_tcl_command</code> / <code>to_mpco_python_command</code> and writes a single MPCO recorder block instead of per-record <code>.out</code> lines.</td>
+</tr>
+<tr>
+<td><code>manifest_path=</code></td>
+<td>Where to write the recorder manifest sidecar (HDF5). Required for the <code>.out</code> transcoder to decode the emitted files. Defaults to <code>&lt;path&gt;.manifest.h5</code> when <code>recorders</code> is given.</td>
+</tr>
+</tbody>
+</table>
+<p>The user is responsible for resolving <code>recorders</code> against the same
+<code>FEMData</code> snapshot the bridge was built from — there is no enforcement
+in the exporter.</p>
 <h2 id="7-inspection">7. Inspection<a class="headerlink" href="#7-inspection" title="Permanent link">&para;</a></h2>
 <p>The inspect sub-composite provides three methods. <code>summary()</code> works any time;
 <code>node_table()</code> and <code>element_table()</code> require <code>build()</code> (raise <code>RuntimeError</code>
 otherwise).</p>
 <h3 id="71-summary">7.1 Summary<a class="headerlink" href="#71-summary" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
 </span></code></pre></div>
 <p>Returns a multi-line string listing all registered materials, element
 assignments, boundary conditions, load patterns, and (post-build) node/element
 counts by type and physical group. The quickest sanity check before exporting.</p>
 <h3 id="72-node-table">7.2 Node table<a class="headerlink" href="#72-node-table" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="n">df</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">node_table</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">df</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">node_table</span><span class="p">()</span>
 </span></code></pre></div>
 <p>DataFrame indexed by OpenSees node ID with <code>x</code>, <code>y</code>, <code>z</code> coordinates,
 <code>fix_1</code>...<code>fix_{ndf}</code> boolean flags, and <code>load_1</code>...<code>load_{ndf}</code> cumulative
 force values. Useful for verifying boundary conditions and load placement.</p>
 <h3 id="73-element-table">7.3 Element table<a class="headerlink" href="#73-element-table" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">df</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">element_table</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="n">df</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">element_table</span><span class="p">()</span>
 </span></code></pre></div>
 <p>DataFrame indexed by element ID with <code>gmsh_id</code>, <code>ops_type</code>, <code>pg_name</code>,
 <code>mat_name</code>, <code>mat_tag</code>, <code>sec_tag</code>, <code>transf_tag</code>, <code>n_nodes</code>, <code>nodes</code> (tuple),
@@ -4843,68 +5030,68 @@ force values. Useful for verifying boundary conditions and load placement.</p>
 <h2 id="8-complete-example">8. Complete Example<a class="headerlink" href="#8-complete-example" title="Permanent link">&para;</a></h2>
 <p>End-to-end: create a concrete block, mesh, define materials and BCs, apply
 loads, build, and export.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="c1"># ── Session ───────────────────────────────────────────────</span>
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="s2">&quot;concrete_block&quot;</span><span class="p">)</span>
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
-</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>
-</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="c1"># ── Geometry ──────────────────────────────────────────────</span>
-</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="c1"># A simple 2m x 1m x 1m block</span>
-</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">2.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Block&quot;</span><span class="p">)</span>
-</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>
-</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="c1"># Label the base surface for boundary conditions</span>
-</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_surfaces</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span><span class="o">.</span><span class="n">label</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span>
-</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>
-</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a><span class="c1"># Label the top surface for loading</span>
-</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_surfaces</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">))</span><span class="o">.</span><span class="n">label</span><span class="p">(</span><span class="s2">&quot;Top&quot;</span><span class="p">)</span>
-</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a>
-</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
-</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a>
-</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="c1"># ── Mesh ──────────────────────────────────────────────────</span>
-</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_size_global</span><span class="p">(</span><span class="mf">0.15</span><span class="p">)</span>
-</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a>
-</span><span id="__span-23-23"><a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="c1"># ── OpenSees material ────────────────────────────────────</span>
-</span><span id="__span-23-24"><a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">materials</span><span class="o">.</span><span class="n">add_nd_material</span><span class="p">(</span>
-</span><span id="__span-23-25"><a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a>    <span class="s2">&quot;Concrete&quot;</span><span class="p">,</span> <span class="s2">&quot;ElasticIsotropic&quot;</span><span class="p">,</span>
-</span><span id="__span-23-26"><a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a>    <span class="n">E</span><span class="o">=</span><span class="mf">30e9</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">rho</span><span class="o">=</span><span class="mi">2400</span><span class="p">,</span>
-</span><span id="__span-23-27"><a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a><span class="p">)</span>
-</span><span id="__span-23-28"><a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a>
-</span><span id="__span-23-29"><a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a><span class="c1"># ── Element assignment ───────────────────────────────────</span>
-</span><span id="__span-23-30"><a id="__codelineno-23-30" name="__codelineno-23-30" href="#__codelineno-23-30"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span>
-</span><span id="__span-23-31"><a id="__codelineno-23-31" name="__codelineno-23-31" href="#__codelineno-23-31"></a>    <span class="s2">&quot;Block&quot;</span><span class="p">,</span> <span class="s2">&quot;FourNodeTetrahedron&quot;</span><span class="p">,</span>
-</span><span id="__span-23-32"><a id="__codelineno-23-32" name="__codelineno-23-32" href="#__codelineno-23-32"></a>    <span class="n">material</span><span class="o">=</span><span class="s2">&quot;Concrete&quot;</span><span class="p">,</span>
-</span><span id="__span-23-33"><a id="__codelineno-23-33" name="__codelineno-23-33" href="#__codelineno-23-33"></a>    <span class="n">bodyForce</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">9.81</span> <span class="o">*</span> <span class="mi">2400</span><span class="p">],</span>
-</span><span id="__span-23-34"><a id="__codelineno-23-34" name="__codelineno-23-34" href="#__codelineno-23-34"></a><span class="p">)</span>
-</span><span id="__span-23-35"><a id="__codelineno-23-35" name="__codelineno-23-35" href="#__codelineno-23-35"></a>
-</span><span id="__span-23-36"><a id="__codelineno-23-36" name="__codelineno-23-36" href="#__codelineno-23-36"></a><span class="c1"># ── Boundary conditions ──────────────────────────────────</span>
-</span><span id="__span-23-37"><a id="__codelineno-23-37" name="__codelineno-23-37" href="#__codelineno-23-37"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
-</span><span id="__span-23-38"><a id="__codelineno-23-38" name="__codelineno-23-38" href="#__codelineno-23-38"></a>
-</span><span id="__span-23-39"><a id="__codelineno-23-39" name="__codelineno-23-39" href="#__codelineno-23-39"></a><span class="c1"># ── Loads ─────────────────────────────────────────────────</span>
-</span><span id="__span-23-40"><a id="__codelineno-23-40" name="__codelineno-23-40" href="#__codelineno-23-40"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Gravity&quot;</span><span class="p">):</span>
-</span><span id="__span-23-41"><a id="__codelineno-23-41" name="__codelineno-23-41" href="#__codelineno-23-41"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span><span class="p">(</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">50e3</span><span class="p">))</span>
-</span><span id="__span-23-42"><a id="__codelineno-23-42" name="__codelineno-23-42" href="#__codelineno-23-42"></a>
-</span><span id="__span-23-43"><a id="__codelineno-23-43" name="__codelineno-23-43" href="#__codelineno-23-43"></a><span class="c1"># ── Masses ────────────────────────────────────────────────</span>
-</span><span id="__span-23-44"><a id="__codelineno-23-44" name="__codelineno-23-44" href="#__codelineno-23-44"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">volume</span><span class="p">(</span><span class="s2">&quot;Block&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
-</span><span id="__span-23-45"><a id="__codelineno-23-45" name="__codelineno-23-45" href="#__codelineno-23-45"></a>
-</span><span id="__span-23-46"><a id="__codelineno-23-46" name="__codelineno-23-46" href="#__codelineno-23-46"></a><span class="c1"># ── Model dimensions ─────────────────────────────────────</span>
-</span><span id="__span-23-47"><a id="__codelineno-23-47" name="__codelineno-23-47" href="#__codelineno-23-47"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">set_model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-23-48"><a id="__codelineno-23-48" name="__codelineno-23-48" href="#__codelineno-23-48"></a>
-</span><span id="__span-23-49"><a id="__codelineno-23-49" name="__codelineno-23-49" href="#__codelineno-23-49"></a><span class="c1"># ── FEMData snapshot and ingest ──────────────────────────</span>
-</span><span id="__span-23-50"><a id="__codelineno-23-50" name="__codelineno-23-50" href="#__codelineno-23-50"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-23-51"><a id="__codelineno-23-51" name="__codelineno-23-51" href="#__codelineno-23-51"></a><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span>
-</span><span id="__span-23-52"><a id="__codelineno-23-52" name="__codelineno-23-52" href="#__codelineno-23-52"></a>    <span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-23-53"><a id="__codelineno-23-53" name="__codelineno-23-53" href="#__codelineno-23-53"></a>    <span class="o">.</span><span class="n">masses</span><span class="p">(</span><span class="n">fem</span><span class="p">))</span>
-</span><span id="__span-23-54"><a id="__codelineno-23-54" name="__codelineno-23-54" href="#__codelineno-23-54"></a>
-</span><span id="__span-23-55"><a id="__codelineno-23-55" name="__codelineno-23-55" href="#__codelineno-23-55"></a><span class="c1"># ── Build and inspect ────────────────────────────────────</span>
-</span><span id="__span-23-56"><a id="__codelineno-23-56" name="__codelineno-23-56" href="#__codelineno-23-56"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
-</span><span id="__span-23-57"><a id="__codelineno-23-57" name="__codelineno-23-57" href="#__codelineno-23-57"></a><span class="nb">print</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
-</span><span id="__span-23-58"><a id="__codelineno-23-58" name="__codelineno-23-58" href="#__codelineno-23-58"></a>
-</span><span id="__span-23-59"><a id="__codelineno-23-59" name="__codelineno-23-59" href="#__codelineno-23-59"></a><span class="c1"># ── Export ────────────────────────────────────────────────</span>
-</span><span id="__span-23-60"><a id="__codelineno-23-60" name="__codelineno-23-60" href="#__codelineno-23-60"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;block_model.tcl&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;block_model.py&quot;</span><span class="p">)</span>
-</span><span id="__span-23-61"><a id="__codelineno-23-61" name="__codelineno-23-61" href="#__codelineno-23-61"></a>
-</span><span id="__span-23-62"><a id="__codelineno-23-62" name="__codelineno-23-62" href="#__codelineno-23-62"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="c1"># ── Session ───────────────────────────────────────────────</span>
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="s2">&quot;concrete_block&quot;</span><span class="p">)</span>
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
+</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>
+</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="c1"># ── Geometry ──────────────────────────────────────────────</span>
+</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="c1"># A simple 2m x 1m x 1m block</span>
+</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span>  <span class="mf">2.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;Block&quot;</span><span class="p">)</span>
+</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>
+</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="c1"># Label the base surface for boundary conditions</span>
+</span><span id="__span-24-12"><a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_surfaces</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span><span class="o">.</span><span class="n">label</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span>
+</span><span id="__span-24-13"><a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a>
+</span><span id="__span-24-14"><a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a><span class="c1"># Label the top surface for loading</span>
+</span><span id="__span-24-15"><a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_surfaces</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">))</span><span class="o">.</span><span class="n">label</span><span class="p">(</span><span class="s2">&quot;Top&quot;</span><span class="p">)</span>
+</span><span id="__span-24-16"><a id="__codelineno-24-16" name="__codelineno-24-16" href="#__codelineno-24-16"></a>
+</span><span id="__span-24-17"><a id="__codelineno-24-17" name="__codelineno-24-17" href="#__codelineno-24-17"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+</span><span id="__span-24-18"><a id="__codelineno-24-18" name="__codelineno-24-18" href="#__codelineno-24-18"></a>
+</span><span id="__span-24-19"><a id="__codelineno-24-19" name="__codelineno-24-19" href="#__codelineno-24-19"></a><span class="c1"># ── Mesh ──────────────────────────────────────────────────</span>
+</span><span id="__span-24-20"><a id="__codelineno-24-20" name="__codelineno-24-20" href="#__codelineno-24-20"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">set_size_global</span><span class="p">(</span><span class="mf">0.15</span><span class="p">)</span>
+</span><span id="__span-24-21"><a id="__codelineno-24-21" name="__codelineno-24-21" href="#__codelineno-24-21"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-24-22"><a id="__codelineno-24-22" name="__codelineno-24-22" href="#__codelineno-24-22"></a>
+</span><span id="__span-24-23"><a id="__codelineno-24-23" name="__codelineno-24-23" href="#__codelineno-24-23"></a><span class="c1"># ── OpenSees material ────────────────────────────────────</span>
+</span><span id="__span-24-24"><a id="__codelineno-24-24" name="__codelineno-24-24" href="#__codelineno-24-24"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">materials</span><span class="o">.</span><span class="n">add_nd_material</span><span class="p">(</span>
+</span><span id="__span-24-25"><a id="__codelineno-24-25" name="__codelineno-24-25" href="#__codelineno-24-25"></a>    <span class="s2">&quot;Concrete&quot;</span><span class="p">,</span> <span class="s2">&quot;ElasticIsotropic&quot;</span><span class="p">,</span>
+</span><span id="__span-24-26"><a id="__codelineno-24-26" name="__codelineno-24-26" href="#__codelineno-24-26"></a>    <span class="n">E</span><span class="o">=</span><span class="mf">30e9</span><span class="p">,</span> <span class="n">nu</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">rho</span><span class="o">=</span><span class="mi">2400</span><span class="p">,</span>
+</span><span id="__span-24-27"><a id="__codelineno-24-27" name="__codelineno-24-27" href="#__codelineno-24-27"></a><span class="p">)</span>
+</span><span id="__span-24-28"><a id="__codelineno-24-28" name="__codelineno-24-28" href="#__codelineno-24-28"></a>
+</span><span id="__span-24-29"><a id="__codelineno-24-29" name="__codelineno-24-29" href="#__codelineno-24-29"></a><span class="c1"># ── Element assignment ───────────────────────────────────</span>
+</span><span id="__span-24-30"><a id="__codelineno-24-30" name="__codelineno-24-30" href="#__codelineno-24-30"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span>
+</span><span id="__span-24-31"><a id="__codelineno-24-31" name="__codelineno-24-31" href="#__codelineno-24-31"></a>    <span class="s2">&quot;Block&quot;</span><span class="p">,</span> <span class="s2">&quot;FourNodeTetrahedron&quot;</span><span class="p">,</span>
+</span><span id="__span-24-32"><a id="__codelineno-24-32" name="__codelineno-24-32" href="#__codelineno-24-32"></a>    <span class="n">material</span><span class="o">=</span><span class="s2">&quot;Concrete&quot;</span><span class="p">,</span>
+</span><span id="__span-24-33"><a id="__codelineno-24-33" name="__codelineno-24-33" href="#__codelineno-24-33"></a>    <span class="n">bodyForce</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">9.81</span> <span class="o">*</span> <span class="mi">2400</span><span class="p">],</span>
+</span><span id="__span-24-34"><a id="__codelineno-24-34" name="__codelineno-24-34" href="#__codelineno-24-34"></a><span class="p">)</span>
+</span><span id="__span-24-35"><a id="__codelineno-24-35" name="__codelineno-24-35" href="#__codelineno-24-35"></a>
+</span><span id="__span-24-36"><a id="__codelineno-24-36" name="__codelineno-24-36" href="#__codelineno-24-36"></a><span class="c1"># ── Boundary conditions ──────────────────────────────────</span>
+</span><span id="__span-24-37"><a id="__codelineno-24-37" name="__codelineno-24-37" href="#__codelineno-24-37"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
+</span><span id="__span-24-38"><a id="__codelineno-24-38" name="__codelineno-24-38" href="#__codelineno-24-38"></a>
+</span><span id="__span-24-39"><a id="__codelineno-24-39" name="__codelineno-24-39" href="#__codelineno-24-39"></a><span class="c1"># ── Loads ─────────────────────────────────────────────────</span>
+</span><span id="__span-24-40"><a id="__codelineno-24-40" name="__codelineno-24-40" href="#__codelineno-24-40"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Gravity&quot;</span><span class="p">):</span>
+</span><span id="__span-24-41"><a id="__codelineno-24-41" name="__codelineno-24-41" href="#__codelineno-24-41"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">point</span><span class="p">(</span><span class="s2">&quot;Top&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mf">50e3</span><span class="p">))</span>
+</span><span id="__span-24-42"><a id="__codelineno-24-42" name="__codelineno-24-42" href="#__codelineno-24-42"></a>
+</span><span id="__span-24-43"><a id="__codelineno-24-43" name="__codelineno-24-43" href="#__codelineno-24-43"></a><span class="c1"># ── Masses ────────────────────────────────────────────────</span>
+</span><span id="__span-24-44"><a id="__codelineno-24-44" name="__codelineno-24-44" href="#__codelineno-24-44"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">volume</span><span class="p">(</span><span class="s2">&quot;Block&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
+</span><span id="__span-24-45"><a id="__codelineno-24-45" name="__codelineno-24-45" href="#__codelineno-24-45"></a>
+</span><span id="__span-24-46"><a id="__codelineno-24-46" name="__codelineno-24-46" href="#__codelineno-24-46"></a><span class="c1"># ── Model dimensions ─────────────────────────────────────</span>
+</span><span id="__span-24-47"><a id="__codelineno-24-47" name="__codelineno-24-47" href="#__codelineno-24-47"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">set_model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-24-48"><a id="__codelineno-24-48" name="__codelineno-24-48" href="#__codelineno-24-48"></a>
+</span><span id="__span-24-49"><a id="__codelineno-24-49" name="__codelineno-24-49" href="#__codelineno-24-49"></a><span class="c1"># ── FEMData snapshot and ingest ──────────────────────────</span>
+</span><span id="__span-24-50"><a id="__codelineno-24-50" name="__codelineno-24-50" href="#__codelineno-24-50"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-24-51"><a id="__codelineno-24-51" name="__codelineno-24-51" href="#__codelineno-24-51"></a><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span>
+</span><span id="__span-24-52"><a id="__codelineno-24-52" name="__codelineno-24-52" href="#__codelineno-24-52"></a>    <span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-24-53"><a id="__codelineno-24-53" name="__codelineno-24-53" href="#__codelineno-24-53"></a>    <span class="o">.</span><span class="n">masses</span><span class="p">(</span><span class="n">fem</span><span class="p">))</span>
+</span><span id="__span-24-54"><a id="__codelineno-24-54" name="__codelineno-24-54" href="#__codelineno-24-54"></a>
+</span><span id="__span-24-55"><a id="__codelineno-24-55" name="__codelineno-24-55" href="#__codelineno-24-55"></a><span class="c1"># ── Build and inspect ────────────────────────────────────</span>
+</span><span id="__span-24-56"><a id="__codelineno-24-56" name="__codelineno-24-56" href="#__codelineno-24-56"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</span><span id="__span-24-57"><a id="__codelineno-24-57" name="__codelineno-24-57" href="#__codelineno-24-57"></a><span class="nb">print</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+</span><span id="__span-24-58"><a id="__codelineno-24-58" name="__codelineno-24-58" href="#__codelineno-24-58"></a>
+</span><span id="__span-24-59"><a id="__codelineno-24-59" name="__codelineno-24-59" href="#__codelineno-24-59"></a><span class="c1"># ── Export ────────────────────────────────────────────────</span>
+</span><span id="__span-24-60"><a id="__codelineno-24-60" name="__codelineno-24-60" href="#__codelineno-24-60"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;block_model.tcl&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">py</span><span class="p">(</span><span class="s2">&quot;block_model.py&quot;</span><span class="p">)</span>
+</span><span id="__span-24-61"><a id="__codelineno-24-61" name="__codelineno-24-61" href="#__codelineno-24-61"></a>
+</span><span id="__span-24-62"><a id="__codelineno-24-62" name="__codelineno-24-62" href="#__codelineno-24-62"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
 </span></code></pre></div>
 <p>The exported files are self-contained model definitions. Run them with
 <code>opensees block_model.tcl</code> or <code>python block_model.py</code> after appending your
@@ -4932,22 +5119,22 @@ Append your analysis block or source/import the generated file from a driver
 script.</p>
 <h3 id="tie-constraints-for-non-conformal-interfaces">Tie constraints for non-conformal interfaces<a class="headerlink" href="#tie-constraints-for-non-conformal-interfaces" title="Permanent link">&para;</a></h3>
 <p>Connect parts with non-matching meshes using apeGmsh ties:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">&quot;ColumnTop&quot;</span><span class="p">,</span> <span class="s2">&quot;SlabBottom&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
-</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">tie_penalty</span><span class="o">=</span><span class="mf">1e12</span><span class="p">)</span>
-</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">&quot;ColumnTop&quot;</span><span class="p">,</span> <span class="s2">&quot;SlabBottom&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">ingest</span><span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">tie_penalty</span><span class="o">=</span><span class="mf">1e12</span><span class="p">)</span>
+</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
 </span></code></pre></div>
 <p>The bridge emits <code>ASDEmbeddedNodeElement</code> commands with penalty formulation.
 Set <code>tie_penalty</code> to <code>1e10</code>--<code>1e12</code> for structural models; the OpenSees default
 of <code>1e18</code> can cause ill-conditioning with iterative solvers.</p>
 <h3 id="chaining-within-sub-composites">Chaining within sub-composites<a class="headerlink" href="#chaining-within-sub-composites" title="Permanent link">&para;</a></h3>
 <p>Every method returns <code>self</code>, so you can chain within a sub-composite:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span>
-</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>    <span class="o">.</span><span class="n">add_geom_transf</span><span class="p">(</span><span class="s2">&quot;ColTransf&quot;</span><span class="p">,</span> <span class="s2">&quot;PDelta&quot;</span><span class="p">,</span> <span class="n">vecxz</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
-</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>    <span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="s2">&quot;Columns&quot;</span><span class="p">,</span> <span class="s2">&quot;elasticBeamColumn&quot;</span><span class="p">,</span> <span class="n">geom_transf</span><span class="o">=</span><span class="s2">&quot;ColTransf&quot;</span><span class="p">,</span>
-</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>            <span class="n">A</span><span class="o">=</span><span class="mf">0.04</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="mf">200e9</span><span class="p">,</span> <span class="n">G</span><span class="o">=</span><span class="mf">77e9</span><span class="p">,</span> <span class="n">Jx</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">Iy</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">)</span>
-</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>    <span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="s2">&quot;SlabSurface&quot;</span><span class="p">,</span> <span class="s2">&quot;ShellMITC4&quot;</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="s2">&quot;Slab&quot;</span><span class="p">)</span>
-</span><span id="__span-25-6"><a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>    <span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]))</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">elements</span>
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>    <span class="o">.</span><span class="n">add_geom_transf</span><span class="p">(</span><span class="s2">&quot;ColTransf&quot;</span><span class="p">,</span> <span class="s2">&quot;PDelta&quot;</span><span class="p">,</span> <span class="n">vecxz</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>    <span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="s2">&quot;Columns&quot;</span><span class="p">,</span> <span class="s2">&quot;elasticBeamColumn&quot;</span><span class="p">,</span> <span class="n">geom_transf</span><span class="o">=</span><span class="s2">&quot;ColTransf&quot;</span><span class="p">,</span>
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>            <span class="n">A</span><span class="o">=</span><span class="mf">0.04</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="mf">200e9</span><span class="p">,</span> <span class="n">G</span><span class="o">=</span><span class="mf">77e9</span><span class="p">,</span> <span class="n">Jx</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">Iy</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="mf">2e-4</span><span class="p">)</span>
+</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>    <span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="s2">&quot;SlabSurface&quot;</span><span class="p">,</span> <span class="s2">&quot;ShellMITC4&quot;</span><span class="p">,</span> <span class="n">material</span><span class="o">=</span><span class="s2">&quot;Slab&quot;</span><span class="p">)</span>
+</span><span id="__span-26-6"><a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>    <span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">]))</span>
 </span></code></pre></div>
 <p>Chaining across sub-composites does not work -- <code>materials.add_*</code> returns the
 <code>_Materials</code> instance, not the bridge. Start a new expression for each

@@ -13,6 +13,10 @@
         <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/plan_element_transcoding/">
       
       
+        <link rel="prev" href="../plan_instance_computed_view/">
+      
+      
+        <link rel="next" href="../plan_phase_11b_line_stations/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>Element Transcoding — Plan - apeGmsh</title>
+        <title>Element transcoding - apeGmsh</title>
       
     
     
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Element Transcoding — Plan
+              Element transcoding
             
           </span>
         </div>
@@ -2156,6 +2160,8 @@
       
         
       
+        
+      
     
     
     
@@ -2381,6 +2387,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3176,8 +3210,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -3201,6 +3237,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3210,11 +3252,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
@@ -3235,7 +3277,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3429,6 +3471,281 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#whats-stubbed-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's stubbed today
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-missing-the-metadata-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's missing — the metadata table
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scope
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-11a-element-response-metadata-unflattening-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 11a — Element response metadata + unflattening core
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Phase 11a — Element response metadata + unflattening core">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#step-1-build-the-metadata-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 1 — Build the metadata table
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-2-wire-into-the-three-stubs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 2 — Wire into the three stubs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#step-3-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Step 3 — Tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whats-not-in-this-plan-out-of-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What's NOT in this plan (out of scope)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#effort-estimate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Effort estimate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-unblocks-element-data-everywhere-at-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this unblocks element data everywhere at once
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision-points-before-starting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision points before starting
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -3779,6 +4096,7 @@
 
 <h1 id="element-transcoding-plan">Element Transcoding — Plan<a class="headerlink" href="#element-transcoding-plan" title="Permanent link">&para;</a></h1>
 <blockquote>
+<p><strong>Status:</strong> Partly implemented — <code>_element_response.py</code> and <code>cpp_class_name</code> plumbing landed; element-level capture/emit still in progress for some categories.</p>
 <p>[!note] Status
 Scoped April 2026 after Phases 0–8 landed. The Results module's
 read path (Phase 3) and all three write strategies (Phases 5/6/7/8)

@@ -1200,6 +1200,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#snapshot-identity-and-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Snapshot identity and persistence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sp-records-prescribed-displacements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SP records (prescribed displacements)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selection-shorthand-and-dim-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selection shorthand and dim filter
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#complete-solver-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2360,6 +2393,8 @@
       
         
       
+        
+      
     
     
     
@@ -2585,6 +2620,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3405,6 +3468,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3633,6 +3702,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -3945,6 +4098,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#snapshot-identity-and-persistence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Snapshot identity and persistence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sp-records-prescribed-displacements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SP records (prescribed displacements)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selection-shorthand-and-dim-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selection shorthand and dim filter
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#complete-solver-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4063,15 +4249,33 @@ array attributes — pick whichever fits the call site:</p>
 </span></code></pre></div>
 <p><code>npe</code> is "nodes per element" — a property of the mesh. For linear tets <code>npe == 4</code>; for linear quads <code>npe == 4</code>; for linear hexes <code>npe == 8</code>. The connectivity references match <code>fem.nodes.ids</code>.</p>
 <p><strong>Selection API:</strong></p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">ids</span><span class="p">,</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>           <span class="c1"># by PG</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">ids</span><span class="p">,</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;col.web&quot;</span><span class="p">)</span>     <span class="c1"># by label</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">ids</span><span class="p">,</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>                    <span class="c1"># all elements</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="c1"># Individual</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="n">eids</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get_ids</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get_connectivity</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># .get() returns a GroupResult — a collection of per-type ElementGroups</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">ids</span>    <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">ids</span>                  <span class="c1"># all element IDs concatenated</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">conn</span>   <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">connectivity</span>         <span class="c1"># only valid if homogeneous (single type)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="c1"># Flatten to (ids, conn) when you know the selection is single-type</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">ids</span><span class="p">,</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>          <span class="c1"># by PG</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">ids</span><span class="p">,</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">&quot;col.web&quot;</span><span class="p">)</span>    <span class="c1"># by label</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="n">ids</span><span class="p">,</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>                   <span class="c1"># all elements (single-type)</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="c1"># Or pick one type from a mixed selection</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="n">ids</span><span class="p">,</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">element_type</span><span class="o">=</span><span class="s2">&quot;tet4&quot;</span><span class="p">)</span>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="c1"># Iterate per-type when the selection mixes types</span>
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">):</span>
+</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>    <span class="k">for</span> <span class="n">eid</span><span class="p">,</span> <span class="n">conn_row</span> <span class="ow">in</span> <span class="n">group</span><span class="p">:</span>
+</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">element_type</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">eid</span><span class="p">,</span> <span class="o">*</span><span class="n">conn_row</span><span class="p">,</span> <span class="n">mat_tag</span><span class="p">)</span>
+</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>
+</span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="c1"># Individual</span>
+</span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a><span class="n">eids</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get_ids</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Returns an <code>ElementResult</code> NamedTuple with <code>.to_dataframe()</code>.</p>
+<p><code>.get()</code> returns a <code>GroupResult</code> (<code>_element_types.py:232</code>); it is
+<strong>not</strong> a NamedTuple and unpacking it via <code>ids, conn = ...</code> will
+fail. Use <code>.resolve()</code> for the flat tuple form, or access <code>.ids</code> /
+<code>.connectivity</code> attributes on the <code>GroupResult</code>. There is no
+<code>get_connectivity(...)</code> shortcut — use
+<code>fem.elements.resolve(...).</code> <code>[1]</code> or <code>fem.elements.get(...).connectivity</code>.</p>
 <p><strong>Random access:</strong></p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">idx</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">connectivity</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>    <span class="c1"># -&gt; [n1, n2, n3, ...]</span>
@@ -4188,71 +4392,135 @@ tie, mortar, tied_contact, distributing</p>
 </span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="o">.</span><span class="n">elem_type_name</span>  <span class="c1"># e.g. &quot;Tetrahedron 4&quot;</span>
 </span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>       <span class="c1"># one-line string</span>
 </span></code></pre></div>
+<h2 id="snapshot-identity-and-persistence">Snapshot identity and persistence<a class="headerlink" href="#snapshot-identity-and-persistence" title="Permanent link">&para;</a></h2>
+<p>The broker carries a content-addressed identifier and three persistence
+entry points (<code>FEMData.py:1124, 1181, 1192, 1204</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">fem</span><span class="o">.</span><span class="n">snapshot_id</span>          <span class="c1"># str — deterministic content hash, cached</span>
+</span></code></pre></div>
+<p><code>snapshot_id</code> is the linking contract for the Results module:
+<code>Results.bind()</code> uses it to refuse pairing a results file against a
+mesh it didn't come from. Computed on first access from
+<code>_femdata_hash.compute_snapshot_id</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">h5py</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="c1"># Embed this FEMData inside a results HDF5 group</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="k">with</span> <span class="n">h5py</span><span class="o">.</span><span class="n">File</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="s2">&quot;a&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="n">fem</span><span class="o">.</span><span class="n">to_native_h5</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">require_group</span><span class="p">(</span><span class="s2">&quot;model&quot;</span><span class="p">))</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="c1"># Round-trip through the same group later</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="k">with</span> <span class="n">h5py</span><span class="o">.</span><span class="n">File</span><span class="p">(</span><span class="s2">&quot;run.h5&quot;</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>    <span class="n">fem2</span> <span class="o">=</span> <span class="n">FEMData</span><span class="o">.</span><span class="n">from_native_h5</span><span class="p">(</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;model&quot;</span><span class="p">])</span>
+</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a><span class="k">assert</span> <span class="n">fem2</span><span class="o">.</span><span class="n">snapshot_id</span> <span class="o">==</span> <span class="n">fem</span><span class="o">.</span><span class="n">snapshot_id</span>    <span class="c1"># same hash</span>
+</span></code></pre></div>
+<p><code>from_native_h5</code> reconstructs nodes, elements (per type), physical
+groups, and labels. Loads / masses / constraints are not round-tripped
+because they don't influence <code>snapshot_id</code> and the viewer doesn't need
+them.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># Synthesize a partial FEMData from an MPCO MODEL/ group</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="k">with</span> <span class="n">h5py</span><span class="o">.</span><span class="n">File</span><span class="p">(</span><span class="s2">&quot;results.mpco&quot;</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>    <span class="n">fem_mpco</span> <span class="o">=</span> <span class="n">FEMData</span><span class="o">.</span><span class="n">from_mpco_model</span><span class="p">(</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;MODEL&quot;</span><span class="p">])</span>
+</span></code></pre></div>
+<p><code>from_mpco_model</code> carries nodes, elements (keyed by negated OpenSees
+class tag instead of Gmsh codes), and physical groups derived from
+MPCO Regions. Labels and pre-mesh declarations are absent. The
+<code>snapshot_id</code> will not match a native FEMData built from the same
+mesh — that's expected.</p>
+<h2 id="sp-records-prescribed-displacements">SP records (prescribed displacements)<a class="headerlink" href="#sp-records-prescribed-displacements" title="Permanent link">&para;</a></h2>
+<p><code>g.loads.face_sp(...)</code> produces <code>SPRecord</code> entries on <code>fem.nodes.sp</code>
+(<code>FEMData.py:270</code>). The set behaves like the other record sub-composites:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">homogeneous</span><span class="p">():</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>    <span class="c1"># rec.node_id, rec.dof   -- emit ops.fix(...)</span>
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>    <span class="o">...</span>
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">sp</span><span class="o">.</span><span class="n">prescribed</span><span class="p">():</span>
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>    <span class="c1"># rec.node_id, rec.dof, rec.value   -- emit ops.sp(...)</span>
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>    <span class="o">...</span>
+</span></code></pre></div>
+<p>Ingest into the OpenSees bridge via <code>g.opensees.ingest.sp(fem)</code>.</p>
+<h2 id="selection-shorthand-and-dim-filter">Selection shorthand and dim filter<a class="headerlink" href="#selection-shorthand-and-dim-filter" title="Permanent link">&para;</a></h2>
+<p><code>.get(...)</code> accepts a positional <code>target=</code> shorthand (auto-resolved
+against PGs first, then labels, then parts) and a <code>dim=</code> filter to
+narrow by entity dimension (<code>FEMData.py:300-309</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="c1"># Positional shorthand — searches PGs, then labels</span>
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="c1"># Restrict to a dimension when a name exists at multiple dims</span>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="n">result</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;interface&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>    <span class="c1"># only the 2-D entities</span>
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="c1"># Combine with element_type for a single-type slice</span>
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a><span class="n">ids</span><span class="p">,</span> <span class="n">conn</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">element_type</span><span class="o">=</span><span class="s2">&quot;tet4&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>A list passed to <code>target=</code> is interpreted as a <strong>union</strong> of targets.</p>
 <h2 id="complete-solver-workflow">Complete solver workflow<a class="headerlink" href="#complete-solver-workflow" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="s2">&quot;cantilever&quot;</span><span class="p">)</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="c1"># Geometry + labels</span>
-</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;beam&quot;</span><span class="p">)</span>
-</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">([</span><span class="o">...</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span>
-</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_volume</span><span class="p">([</span><span class="o">...</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
-</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a>
-</span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="c1"># Constraints, loads, masses (pre-mesh definitions)</span>
-</span><span id="__span-19-12"><a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
-</span><span id="__span-19-13"><a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Gravity&quot;</span><span class="p">):</span>
-</span><span id="__span-19-14"><a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">body</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">9810</span><span class="p">))</span>
-</span><span id="__span-19-15"><a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">volume</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
-</span><span id="__span-19-16"><a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a>
-</span><span id="__span-19-17"><a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a><span class="c1"># Mesh</span>
-</span><span id="__span-19-18"><a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-19-19"><a id="__codelineno-19-19" name="__codelineno-19-19" href="#__codelineno-19-19"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-19-20"><a id="__codelineno-19-20" name="__codelineno-19-20" href="#__codelineno-19-20"></a>
-</span><span id="__span-19-21"><a id="__codelineno-19-21" name="__codelineno-19-21" href="#__codelineno-19-21"></a><span class="c1"># Build solver model</span>
-</span><span id="__span-19-22"><a id="__codelineno-19-22" name="__codelineno-19-22" href="#__codelineno-19-22"></a><span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
-</span><span id="__span-19-23"><a id="__codelineno-19-23" name="__codelineno-19-23" href="#__codelineno-19-23"></a><span class="n">ops</span><span class="o">.</span><span class="n">wipe</span><span class="p">()</span>
-</span><span id="__span-19-24"><a id="__codelineno-19-24" name="__codelineno-19-24" href="#__codelineno-19-24"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="s2">&quot;basic&quot;</span><span class="p">,</span> <span class="s2">&quot;-ndm&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="s2">&quot;-ndf&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-19-25"><a id="__codelineno-19-25" name="__codelineno-19-25" href="#__codelineno-19-25"></a>
-</span><span id="__span-19-26"><a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a><span class="c1"># 1. Domain nodes</span>
-</span><span id="__span-19-27"><a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a><span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
-</span><span id="__span-19-28"><a id="__codelineno-19-28" name="__codelineno-19-28" href="#__codelineno-19-28"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="o">*</span><span class="n">xyz</span><span class="p">)</span>
-</span><span id="__span-19-29"><a id="__codelineno-19-29" name="__codelineno-19-29" href="#__codelineno-19-29"></a>
-</span><span id="__span-19-30"><a id="__codelineno-19-30" name="__codelineno-19-30" href="#__codelineno-19-30"></a><span class="c1"># 2. Phantom nodes from constraints</span>
-</span><span id="__span-19-31"><a id="__codelineno-19-31" name="__codelineno-19-31" href="#__codelineno-19-31"></a><span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">phantom_nodes</span><span class="p">():</span>
-</span><span id="__span-19-32"><a id="__codelineno-19-32" name="__codelineno-19-32" href="#__codelineno-19-32"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="o">*</span><span class="n">xyz</span><span class="p">)</span>
-</span><span id="__span-19-33"><a id="__codelineno-19-33" name="__codelineno-19-33" href="#__codelineno-19-33"></a>
-</span><span id="__span-19-34"><a id="__codelineno-19-34" name="__codelineno-19-34" href="#__codelineno-19-34"></a><span class="c1"># 3. Elements</span>
-</span><span id="__span-19-35"><a id="__codelineno-19-35" name="__codelineno-19-35" href="#__codelineno-19-35"></a><span class="k">for</span> <span class="n">eid</span><span class="p">,</span> <span class="n">conn</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="o">*</span><span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">()):</span>
-</span><span id="__span-19-36"><a id="__codelineno-19-36" name="__codelineno-19-36" href="#__codelineno-19-36"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="p">(</span><span class="s2">&quot;FourNodeTetrahedron&quot;</span><span class="p">,</span> <span class="n">eid</span><span class="p">,</span> <span class="o">*</span><span class="n">conn</span><span class="p">,</span> <span class="n">mat_tag</span><span class="p">)</span>
-</span><span id="__span-19-37"><a id="__codelineno-19-37" name="__codelineno-19-37" href="#__codelineno-19-37"></a>
-</span><span id="__span-19-38"><a id="__codelineno-19-38" name="__codelineno-19-38" href="#__codelineno-19-38"></a><span class="c1"># 4. Supports</span>
-</span><span id="__span-19-39"><a id="__codelineno-19-39" name="__codelineno-19-39" href="#__codelineno-19-39"></a><span class="k">for</span> <span class="n">nid</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get_ids</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">):</span>
-</span><span id="__span-19-40"><a id="__codelineno-19-40" name="__codelineno-19-40" href="#__codelineno-19-40"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-19-41"><a id="__codelineno-19-41" name="__codelineno-19-41" href="#__codelineno-19-41"></a>
-</span><span id="__span-19-42"><a id="__codelineno-19-42" name="__codelineno-19-42" href="#__codelineno-19-42"></a><span class="c1"># 5. Node constraints</span>
-</span><span id="__span-19-43"><a id="__codelineno-19-43" name="__codelineno-19-43" href="#__codelineno-19-43"></a><span class="n">K</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Kind</span>
-</span><span id="__span-19-44"><a id="__codelineno-19-44" name="__codelineno-19-44" href="#__codelineno-19-44"></a><span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">pairs</span><span class="p">():</span>
-</span><span id="__span-19-45"><a id="__codelineno-19-45" name="__codelineno-19-45" href="#__codelineno-19-45"></a>    <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">EQUAL_DOF</span><span class="p">:</span>
-</span><span id="__span-19-46"><a id="__codelineno-19-46" name="__codelineno-19-46" href="#__codelineno-19-46"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">equalDOF</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">slave_node</span><span class="p">,</span> <span class="o">*</span><span class="n">c</span><span class="o">.</span><span class="n">dofs</span><span class="p">)</span>
-</span><span id="__span-19-47"><a id="__codelineno-19-47" name="__codelineno-19-47" href="#__codelineno-19-47"></a>
-</span><span id="__span-19-48"><a id="__codelineno-19-48" name="__codelineno-19-48" href="#__codelineno-19-48"></a><span class="c1"># 6. Loads (3D frame, ndf=6)</span>
-</span><span id="__span-19-49"><a id="__codelineno-19-49" name="__codelineno-19-49" href="#__codelineno-19-49"></a><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="p">(</span><span class="s2">&quot;Constant&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-19-50"><a id="__codelineno-19-50" name="__codelineno-19-50" href="#__codelineno-19-50"></a><span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Plain&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-19-51"><a id="__codelineno-19-51" name="__codelineno-19-51" href="#__codelineno-19-51"></a><span class="k">for</span> <span class="n">load</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="p">:</span>
-</span><span id="__span-19-52"><a id="__codelineno-19-52" name="__codelineno-19-52" href="#__codelineno-19-52"></a>    <span class="n">fx</span><span class="p">,</span> <span class="n">fy</span><span class="p">,</span> <span class="n">fz</span> <span class="o">=</span> <span class="n">load</span><span class="o">.</span><span class="n">force_xyz</span>  <span class="ow">or</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
-</span><span id="__span-19-53"><a id="__codelineno-19-53" name="__codelineno-19-53" href="#__codelineno-19-53"></a>    <span class="n">mx</span><span class="p">,</span> <span class="n">my</span><span class="p">,</span> <span class="n">mz</span> <span class="o">=</span> <span class="n">load</span><span class="o">.</span><span class="n">moment_xyz</span> <span class="ow">or</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
-</span><span id="__span-19-54"><a id="__codelineno-19-54" name="__codelineno-19-54" href="#__codelineno-19-54"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">load</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="n">fx</span><span class="p">,</span> <span class="n">fy</span><span class="p">,</span> <span class="n">fz</span><span class="p">,</span> <span class="n">mx</span><span class="p">,</span> <span class="n">my</span><span class="p">,</span> <span class="n">mz</span><span class="p">)</span>
-</span><span id="__span-19-55"><a id="__codelineno-19-55" name="__codelineno-19-55" href="#__codelineno-19-55"></a>
-</span><span id="__span-19-56"><a id="__codelineno-19-56" name="__codelineno-19-56" href="#__codelineno-19-56"></a><span class="c1"># 7. Masses</span>
-</span><span id="__span-19-57"><a id="__codelineno-19-57" name="__codelineno-19-57" href="#__codelineno-19-57"></a><span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="p">:</span>
-</span><span id="__span-19-58"><a id="__codelineno-19-58" name="__codelineno-19-58" href="#__codelineno-19-58"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">m</span><span class="o">.</span><span class="n">mass</span><span class="p">)</span>
-</span><span id="__span-19-59"><a id="__codelineno-19-59" name="__codelineno-19-59" href="#__codelineno-19-59"></a>
-</span><span id="__span-19-60"><a id="__codelineno-19-60" name="__codelineno-19-60" href="#__codelineno-19-60"></a><span class="c1"># Introspection</span>
-</span><span id="__span-19-61"><a id="__codelineno-19-61" name="__codelineno-19-61" href="#__codelineno-19-61"></a><span class="nb">print</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
-</span><span id="__span-19-62"><a id="__codelineno-19-62" name="__codelineno-19-62" href="#__codelineno-19-62"></a><span class="nb">print</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">constraint_summary</span><span class="p">())</span>
-</span><span id="__span-19-63"><a id="__codelineno-19-63" name="__codelineno-19-63" href="#__codelineno-19-63"></a>
-</span><span id="__span-19-64"><a id="__codelineno-19-64" name="__codelineno-19-64" href="#__codelineno-19-64"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="s2">&quot;cantilever&quot;</span><span class="p">)</span>
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>
+</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="c1"># Geometry + labels</span>
+</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;beam&quot;</span><span class="p">)</span>
+</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_surface</span><span class="p">([</span><span class="o">...</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span>
+</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_volume</span><span class="p">([</span><span class="o">...</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
+</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>
+</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="c1"># Constraints, loads, masses (pre-mesh definitions)</span>
+</span><span id="__span-24-12"><a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">equal_dof</span><span class="p">(</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+</span><span id="__span-24-13"><a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a><span class="k">with</span> <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Gravity&quot;</span><span class="p">):</span>
+</span><span id="__span-24-14"><a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a>    <span class="n">g</span><span class="o">.</span><span class="n">loads</span><span class="o">.</span><span class="n">body</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">force_xyz</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">9810</span><span class="p">))</span>
+</span><span id="__span-24-15"><a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a><span class="n">g</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">volume</span><span class="p">(</span><span class="s2">&quot;Body&quot;</span><span class="p">,</span> <span class="n">density</span><span class="o">=</span><span class="mi">2400</span><span class="p">)</span>
+</span><span id="__span-24-16"><a id="__codelineno-24-16" name="__codelineno-24-16" href="#__codelineno-24-16"></a>
+</span><span id="__span-24-17"><a id="__codelineno-24-17" name="__codelineno-24-17" href="#__codelineno-24-17"></a><span class="c1"># Mesh</span>
+</span><span id="__span-24-18"><a id="__codelineno-24-18" name="__codelineno-24-18" href="#__codelineno-24-18"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-24-19"><a id="__codelineno-24-19" name="__codelineno-24-19" href="#__codelineno-24-19"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-24-20"><a id="__codelineno-24-20" name="__codelineno-24-20" href="#__codelineno-24-20"></a>
+</span><span id="__span-24-21"><a id="__codelineno-24-21" name="__codelineno-24-21" href="#__codelineno-24-21"></a><span class="c1"># Build solver model</span>
+</span><span id="__span-24-22"><a id="__codelineno-24-22" name="__codelineno-24-22" href="#__codelineno-24-22"></a><span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
+</span><span id="__span-24-23"><a id="__codelineno-24-23" name="__codelineno-24-23" href="#__codelineno-24-23"></a><span class="n">ops</span><span class="o">.</span><span class="n">wipe</span><span class="p">()</span>
+</span><span id="__span-24-24"><a id="__codelineno-24-24" name="__codelineno-24-24" href="#__codelineno-24-24"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="s2">&quot;basic&quot;</span><span class="p">,</span> <span class="s2">&quot;-ndm&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="s2">&quot;-ndf&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-24-25"><a id="__codelineno-24-25" name="__codelineno-24-25" href="#__codelineno-24-25"></a>
+</span><span id="__span-24-26"><a id="__codelineno-24-26" name="__codelineno-24-26" href="#__codelineno-24-26"></a><span class="c1"># 1. Domain nodes</span>
+</span><span id="__span-24-27"><a id="__codelineno-24-27" name="__codelineno-24-27" href="#__codelineno-24-27"></a><span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+</span><span id="__span-24-28"><a id="__codelineno-24-28" name="__codelineno-24-28" href="#__codelineno-24-28"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="o">*</span><span class="n">xyz</span><span class="p">)</span>
+</span><span id="__span-24-29"><a id="__codelineno-24-29" name="__codelineno-24-29" href="#__codelineno-24-29"></a>
+</span><span id="__span-24-30"><a id="__codelineno-24-30" name="__codelineno-24-30" href="#__codelineno-24-30"></a><span class="c1"># 2. Phantom nodes from constraints</span>
+</span><span id="__span-24-31"><a id="__codelineno-24-31" name="__codelineno-24-31" href="#__codelineno-24-31"></a><span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">phantom_nodes</span><span class="p">():</span>
+</span><span id="__span-24-32"><a id="__codelineno-24-32" name="__codelineno-24-32" href="#__codelineno-24-32"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">node</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="o">*</span><span class="n">xyz</span><span class="p">)</span>
+</span><span id="__span-24-33"><a id="__codelineno-24-33" name="__codelineno-24-33" href="#__codelineno-24-33"></a>
+</span><span id="__span-24-34"><a id="__codelineno-24-34" name="__codelineno-24-34" href="#__codelineno-24-34"></a><span class="c1"># 3. Elements</span>
+</span><span id="__span-24-35"><a id="__codelineno-24-35" name="__codelineno-24-35" href="#__codelineno-24-35"></a><span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+</span><span id="__span-24-36"><a id="__codelineno-24-36" name="__codelineno-24-36" href="#__codelineno-24-36"></a>    <span class="k">for</span> <span class="n">eid</span><span class="p">,</span> <span class="n">conn</span> <span class="ow">in</span> <span class="n">group</span><span class="p">:</span>
+</span><span id="__span-24-37"><a id="__codelineno-24-37" name="__codelineno-24-37" href="#__codelineno-24-37"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="p">(</span><span class="s2">&quot;FourNodeTetrahedron&quot;</span><span class="p">,</span> <span class="n">eid</span><span class="p">,</span> <span class="o">*</span><span class="n">conn</span><span class="p">,</span> <span class="n">mat_tag</span><span class="p">)</span>
+</span><span id="__span-24-38"><a id="__codelineno-24-38" name="__codelineno-24-38" href="#__codelineno-24-38"></a><span class="c1"># Or if you know the mesh is single-type:</span>
+</span><span id="__span-24-39"><a id="__codelineno-24-39" name="__codelineno-24-39" href="#__codelineno-24-39"></a><span class="c1"># ids, conn = fem.elements.resolve()</span>
+</span><span id="__span-24-40"><a id="__codelineno-24-40" name="__codelineno-24-40" href="#__codelineno-24-40"></a><span class="c1"># for eid, row in zip(ids, conn):</span>
+</span><span id="__span-24-41"><a id="__codelineno-24-41" name="__codelineno-24-41" href="#__codelineno-24-41"></a><span class="c1">#     ops.element(&quot;FourNodeTetrahedron&quot;, eid, *row, mat_tag)</span>
+</span><span id="__span-24-42"><a id="__codelineno-24-42" name="__codelineno-24-42" href="#__codelineno-24-42"></a>
+</span><span id="__span-24-43"><a id="__codelineno-24-43" name="__codelineno-24-43" href="#__codelineno-24-43"></a><span class="c1"># 4. Supports</span>
+</span><span id="__span-24-44"><a id="__codelineno-24-44" name="__codelineno-24-44" href="#__codelineno-24-44"></a><span class="k">for</span> <span class="n">nid</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get_ids</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">):</span>
+</span><span id="__span-24-45"><a id="__codelineno-24-45" name="__codelineno-24-45" href="#__codelineno-24-45"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-24-46"><a id="__codelineno-24-46" name="__codelineno-24-46" href="#__codelineno-24-46"></a>
+</span><span id="__span-24-47"><a id="__codelineno-24-47" name="__codelineno-24-47" href="#__codelineno-24-47"></a><span class="c1"># 5. Node constraints</span>
+</span><span id="__span-24-48"><a id="__codelineno-24-48" name="__codelineno-24-48" href="#__codelineno-24-48"></a><span class="n">K</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">Kind</span>
+</span><span id="__span-24-49"><a id="__codelineno-24-49" name="__codelineno-24-49" href="#__codelineno-24-49"></a><span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">pairs</span><span class="p">():</span>
+</span><span id="__span-24-50"><a id="__codelineno-24-50" name="__codelineno-24-50" href="#__codelineno-24-50"></a>    <span class="k">if</span> <span class="n">c</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="n">K</span><span class="o">.</span><span class="n">EQUAL_DOF</span><span class="p">:</span>
+</span><span id="__span-24-51"><a id="__codelineno-24-51" name="__codelineno-24-51" href="#__codelineno-24-51"></a>        <span class="n">ops</span><span class="o">.</span><span class="n">equalDOF</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">master_node</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">slave_node</span><span class="p">,</span> <span class="o">*</span><span class="n">c</span><span class="o">.</span><span class="n">dofs</span><span class="p">)</span>
+</span><span id="__span-24-52"><a id="__codelineno-24-52" name="__codelineno-24-52" href="#__codelineno-24-52"></a>
+</span><span id="__span-24-53"><a id="__codelineno-24-53" name="__codelineno-24-53" href="#__codelineno-24-53"></a><span class="c1"># 6. Loads (3D frame, ndf=6)</span>
+</span><span id="__span-24-54"><a id="__codelineno-24-54" name="__codelineno-24-54" href="#__codelineno-24-54"></a><span class="n">ops</span><span class="o">.</span><span class="n">timeSeries</span><span class="p">(</span><span class="s2">&quot;Constant&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-24-55"><a id="__codelineno-24-55" name="__codelineno-24-55" href="#__codelineno-24-55"></a><span class="n">ops</span><span class="o">.</span><span class="n">pattern</span><span class="p">(</span><span class="s2">&quot;Plain&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-24-56"><a id="__codelineno-24-56" name="__codelineno-24-56" href="#__codelineno-24-56"></a><span class="k">for</span> <span class="n">load</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">loads</span><span class="p">:</span>
+</span><span id="__span-24-57"><a id="__codelineno-24-57" name="__codelineno-24-57" href="#__codelineno-24-57"></a>    <span class="n">fx</span><span class="p">,</span> <span class="n">fy</span><span class="p">,</span> <span class="n">fz</span> <span class="o">=</span> <span class="n">load</span><span class="o">.</span><span class="n">force_xyz</span>  <span class="ow">or</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+</span><span id="__span-24-58"><a id="__codelineno-24-58" name="__codelineno-24-58" href="#__codelineno-24-58"></a>    <span class="n">mx</span><span class="p">,</span> <span class="n">my</span><span class="p">,</span> <span class="n">mz</span> <span class="o">=</span> <span class="n">load</span><span class="o">.</span><span class="n">moment_xyz</span> <span class="ow">or</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+</span><span id="__span-24-59"><a id="__codelineno-24-59" name="__codelineno-24-59" href="#__codelineno-24-59"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">load</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="n">fx</span><span class="p">,</span> <span class="n">fy</span><span class="p">,</span> <span class="n">fz</span><span class="p">,</span> <span class="n">mx</span><span class="p">,</span> <span class="n">my</span><span class="p">,</span> <span class="n">mz</span><span class="p">)</span>
+</span><span id="__span-24-60"><a id="__codelineno-24-60" name="__codelineno-24-60" href="#__codelineno-24-60"></a>
+</span><span id="__span-24-61"><a id="__codelineno-24-61" name="__codelineno-24-61" href="#__codelineno-24-61"></a><span class="c1"># 7. Masses</span>
+</span><span id="__span-24-62"><a id="__codelineno-24-62" name="__codelineno-24-62" href="#__codelineno-24-62"></a><span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="p">:</span>
+</span><span id="__span-24-63"><a id="__codelineno-24-63" name="__codelineno-24-63" href="#__codelineno-24-63"></a>    <span class="n">ops</span><span class="o">.</span><span class="n">mass</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">node_id</span><span class="p">,</span> <span class="o">*</span><span class="n">m</span><span class="o">.</span><span class="n">mass</span><span class="p">)</span>
+</span><span id="__span-24-64"><a id="__codelineno-24-64" name="__codelineno-24-64" href="#__codelineno-24-64"></a>
+</span><span id="__span-24-65"><a id="__codelineno-24-65" name="__codelineno-24-65" href="#__codelineno-24-65"></a><span class="c1"># Introspection</span>
+</span><span id="__span-24-66"><a id="__codelineno-24-66" name="__codelineno-24-66" href="#__codelineno-24-66"></a><span class="nb">print</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+</span><span id="__span-24-67"><a id="__codelineno-24-67" name="__codelineno-24-67" href="#__codelineno-24-67"></a><span class="nb">print</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">constraint_summary</span><span class="p">())</span>
+</span><span id="__span-24-68"><a id="__codelineno-24-68" name="__codelineno-24-68" href="#__codelineno-24-68"></a>
+</span><span id="__span-24-69"><a id="__codelineno-24-69" name="__codelineno-24-69" href="#__codelineno-24-69"></a><span class="n">g</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
 </span></code></pre></div>
 <h2 id="the-payoff">The payoff<a class="headerlink" href="#the-payoff" title="Permanent link">&para;</a></h2>
 <p>The broker is the one place in the pipeline where the mesh stops being a live Gmsh conversation and becomes plain data. It is organized by what you, the structural engineer, actually need: <strong>nodes</strong> and <strong>elements</strong>, with named selections and boundary conditions as sub-composites you can reach into. Kind constants prevent typos. Pair-iterating result objects give you clean one-liners plus array access and DataFrames. Introspection tells you not just what you have, but why.</p>

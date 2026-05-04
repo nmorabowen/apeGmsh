@@ -2160,6 +2160,8 @@
       
         
       
+        
+      
     
     
     
@@ -2385,6 +2387,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3853,6 +3883,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -4081,6 +4117,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4886,8 +5006,12 @@
 
 <h1 id="fem-broker-femdata">FEM Broker — <code>FEMData</code><a class="headerlink" href="#fem-broker-femdata" title="Permanent link">&para;</a></h1>
 <p>Solver-agnostic snapshot returned by <code>g.mesh.queries.get_fem_data(dim)</code>.
-Composite of <code>.nodes</code>, <code>.elements</code>, <code>.info</code>, <code>.physical</code>,
-<code>.mesh_selection</code>, <code>.loads</code>, <code>.masses</code>, <code>.constraints</code>.</p>
+Composite of <code>.nodes</code>, <code>.elements</code>, <code>.info</code>, <code>.inspect</code>, <code>.mesh_selection</code>.
+The <code>.physical</code>, <code>.loads</code>, <code>.masses</code>, <code>.constraints</code>, and <code>.sp</code> views
+are reached through <code>.nodes.*</code> / <code>.elements.*</code> rather than living
+directly on <code>FEMData</code>.</p>
+<p>Also surfaces <code>snapshot_id</code> plus <code>to_native_h5</code> / <code>from_native_h5</code> /
+<code>from_mpco_model</code> for binding and round-tripping with Results.</p>
 
 
 <div class="doc doc-object doc-module">

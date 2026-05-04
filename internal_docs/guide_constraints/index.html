@@ -2360,6 +2360,8 @@
       
         
       
+        
+      
     
     
     
@@ -2585,6 +2587,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3405,6 +3435,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3633,6 +3669,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -3994,8 +4114,13 @@ how constraints land in the broker and get consumed by a solver.</p>
 <p>Grounded in the current source:</p>
 <ul>
 <li><code>src/apeGmsh/core/ConstraintsComposite.py</code> — the user-facing composite</li>
-<li><code>src/apeGmsh/solvers/Constraints.py</code> — <code>ConstraintDef</code>, <code>ConstraintRecord</code>,
-  and <code>ConstraintResolver</code></li>
+<li><code>src/apeGmsh/solvers/_constraint_defs.py</code> — <code>ConstraintDef</code> subclasses</li>
+<li><code>src/apeGmsh/solvers/_constraint_records.py</code> — <code>ConstraintRecord</code> subclasses</li>
+<li><code>src/apeGmsh/solvers/_constraint_resolver.py</code> — <code>ConstraintResolver</code></li>
+<li><code>src/apeGmsh/solvers/_constraint_geom.py</code> — geometry helpers shared by the resolver</li>
+<li><code>src/apeGmsh/solvers/_kinds.py</code> — <code>ConstraintKind</code> (and <code>LoadKind</code>) constants</li>
+<li><code>src/apeGmsh/solvers/Constraints.py</code> — re-export shim that surfaces the names
+  above under the historical import path</li>
 <li><code>src/apeGmsh/mesh/_record_set.py</code> — <code>NodeConstraintSet</code>, <code>SurfaceConstraintSet</code></li>
 </ul>
 <p>All snippets assume an open session:</p>
@@ -4128,6 +4253,15 @@ creates phantom nodes:</p>
 </ol>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">node_to_surface</span><span class="p">(</span><span class="s2">&quot;frame_end&quot;</span><span class="p">,</span> <span class="s2">&quot;solid_face&quot;</span><span class="p">)</span>
 </span></code></pre></div>
+<p>When <code>master</code> is a string it is resolved via <code>resolve_to_tags(..., dim=0)</code> —
+i.e. the name must refer to a geometric <strong>point</strong> entity (a vertex), not a
+curve/surface/volume label. <code>slave</code>, in contrast, is resolved at <code>dim=2</code>
+(surface entities). See <code>ConstraintsComposite.py:837</code>.</p>
+<p>Note: <code>node_to_surface</code> (and <code>embedded</code>, below) bypass the strict
+<code>part-label</code> validation that other constraint factories run in
+<code>_add_def</code> — both definition types are allowed to carry bare entity
+tags / mixed labels because they are looked up later through their
+own resolvers (<code>ConstraintsComposite.py:236</code>).</p>
 <p>For <strong>pure BC application</strong> (force/moment or prescribed displacement on a
 face without a structural element at the reference), prefer
 <code>g.loads.face_load()</code> / <code>g.loads.face_sp()</code> instead — they distribute
@@ -4151,6 +4285,13 @@ elastic stiffness path and the matrix conditioning recovers.</p>
 <p>Pick <code>node_to_surface</code> when the master rotations are themselves
 constrained or carry no moment; pick <code>node_to_surface_spring</code> when the
 master is a free rotation node receiving moments.</p>
+<p><strong>Emission contrast.</strong> The plain <code>node_to_surface</code> variant emits its
+master→phantom links through <code>fem.nodes.constraints.phantom_nodes()</code>
+plus <code>pairs()</code> (kinematic <code>rigidLink('beam', ...)</code>). The spring
+variant routes the same topology through
+<code>fem.nodes.constraints.stiff_beam_groups()</code> instead — each group
+becomes one <code>elasticBeamColumn</code> element per master/phantom pair. The
+factory entry point lives at <code>ConstraintsComposite.py:906</code>.</p>
 <h3 id="level-3-surface-coupling">Level 3 — Surface coupling<a class="headerlink" href="#level-3-surface-coupling" title="Permanent link">&para;</a></h3>
 <p><strong><code>tie</code></strong> — surface tie via shape function interpolation. Slave nodes
 project onto the closest master face and their DOFs are interpolated
@@ -4171,6 +4312,12 @@ to a slave surface:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span><span class="s2">&quot;concrete_volume&quot;</span><span class="p">,</span> <span class="s2">&quot;rebar_lines&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Slave (embedded) nodes follow the displacement field of the host elements.</p>
+<p>Implemented end-to-end: at resolution time <code>_resolve_embedded</code>
+(<code>ConstraintsComposite.py:1218</code>) collects the host tet4/tri3 elements
+and the embedded-curve nodes, drops embedded nodes that coincide with
+a host corner (already rigidly attached via shared connectivity), and
+hands the remainder to <code>resolver.resolve_embedded</code> which lands real
+<code>InterpolationRecord</code>s on <code>fem.elements.constraints</code>.</p>
 <h3 id="level-4-surface-to-surface">Level 4 — Surface-to-surface<a class="headerlink" href="#level-4-surface-to-surface" title="Permanent link">&para;</a></h3>
 <p><strong><code>tied_contact</code></strong> — full surface-to-surface tie. Bidirectional check:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tied_contact</span><span class="p">(</span>

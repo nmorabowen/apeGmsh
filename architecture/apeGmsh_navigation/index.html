@@ -3591,6 +3591,8 @@
       
         
       
+        
+      
     
     
     
@@ -3816,6 +3818,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -4636,6 +4666,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -4864,6 +4900,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -7068,7 +7188,7 @@ for the full broker surface.</p>
 <tr>
 <td>open the results viewer</td>
 <td><code>g.mesh.results_viewer(...)</code> / <code>Results(...).viewer()</code></td>
-<td><code>results/Results.py</code></td>
+<td><code>results/Results.py</code> (in-process; not the external <code>apeGmshViewer</code> package)</td>
 </tr>
 <tr>
 <td>plot geometry / mesh in matplotlib</td>
@@ -7255,6 +7375,8 @@ and <code>Constraints</code> (the facade module).</p>
 <li><code>.cleanup(self)</code></li>
 <li><code>.save(self, file_path, *, fmt=None, write_anchors=True, _internal_autopersist=False)</code></li>
 <li><code>.has_file</code> <strong>[property]</strong></li>
+<li><code>.edit</code> <strong>[composite]</strong> — <code>PartEdit</code> (see <code>core/_part_edit.py</code>):
+    <code>.copy</code>, <code>.translate</code>, <code>.rotate</code>, pattern helpers.</li>
 <li><code>.__repr__(self)</code></li>
 </ul>
 <h4 id="corelabelspy"><code>core/Labels.py</code><a class="headerlink" href="#corelabelspy" title="Permanent link">&para;</a></h4>
@@ -7329,6 +7451,7 @@ tables.</p>
 <li><code>.__init__(self, parent)</code></li>
 <li><code>.pattern(self, name)</code> <strong>[contextmanager]</strong></li>
 <li><code>.point(self, target=None, *, pg=None, label=None, tag=None, force_xyz=None, moment_xyz=None, name=None)</code></li>
+<li><code>.point_closest(self, xyz, *, within=None, pg=None, label=None, tag=None, force_xyz=None, moment_xyz=None, tol=None, name=None)</code></li>
 <li><code>.line(self, target=None, *, pg=None, label=None, tag=None, magnitude=None, direction=None, q_xyz=None, reduction="tributary", target_form=None, name=None)</code></li>
 <li><code>.surface(self, target=None, *, pg=None, label=None, tag=None, magnitude=None, normal=None, direction=None, reduction="tributary", target_form=None, name=None)</code></li>
 <li><code>.gravity(self, target=None, *, pg=None, label=None, tag=None, g=(0,0,-9.81), density=None, reduction="tributary", target_form=None, name=None)</code></li>
@@ -7521,7 +7644,10 @@ tables.</p>
 <h4 id="core_parts_registrypy"><code>core/_parts_registry.py</code><a class="headerlink" href="#core_parts_registrypy" title="Permanent link">&para;</a></h4>
 <ul>
 <li><code>Instance</code> <strong>[record]</strong> — frozen dataclass, the output of importing a
-  <code>Part</code> into the session. Carries <code>name</code>, <code>entities</code>, <code>com_by_label</code>.</li>
+  <code>Part</code> into the session. Carries <code>name</code>, <code>entities</code>, <code>com_by_label</code>.
+  Also exposes <code>.edit: InstanceEdit</code> (attached on registry insert; see
+  <code>core/_instance_edit.py</code>) for placement transforms on the live
+  instance.</li>
 <li><code>.__post_init__(self)</code></li>
 <li><code>_InstanceLabels</code> <strong>[helper]</strong> — tab-completion shim exposing each
   label on an <code>Instance</code> as a prefixed attribute.</li>

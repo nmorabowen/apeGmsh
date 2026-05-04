@@ -13,6 +13,10 @@
         <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/Results_architecture/">
       
       
+        <link rel="prev" href="../../architecture/apeGmsh_results_obtaining/">
+      
+      
+        <link rel="next" href="../../architecture/gmsh_basics/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>Results — Architecture & Implementation Plan - apeGmsh</title>
+        <title>Results — Architecture - apeGmsh</title>
       
     
     
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Results — Architecture &amp; Implementation Plan
+              Results — Architecture
             
           </span>
         </div>
@@ -1838,8 +1842,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -1858,11 +1864,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
           <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
@@ -1883,7 +1889,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2137,8 +2143,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2156,17 +2164,19 @@
       
         
       
+        
+      
     
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" checked>
         
           
           <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
@@ -2187,7 +2197,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2389,6 +2399,839 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#part-i-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part I — Architecture
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Part I — Architecture">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#vision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Vision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#design-principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Design principles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#architecture-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture overview
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#layer-1-declarative-recorder-spec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 1 — Declarative recorder spec
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Layer 1 — Declarative recorder spec">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#categories-cover-everything-opensees-supports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Categories (cover everything OpenSees supports)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API conventions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#layer-2-execution-strategies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 2 — Execution strategies
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Layer 2 — Execution strategies">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#strategy-a1-tclpython-file-recorders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strategy A₁ — Tcl/Python file recorders
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strategy-a3-live-recorders-in-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strategy A₃ — Live recorders (in-process)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strategy-b-in-process-domain-capture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strategy B — In-process domain capture
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strategy-c1-stkompco-bridge-tcl-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strategy C₁ — STKO/MPCO bridge (Tcl export)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strategy-c2-live-mpco-in-process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strategy C₂ — Live MPCO (in-process)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#layer-3-native-hdf5-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 3 — Native HDF5 schema
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Layer 3 — Native HDF5 schema">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#top-level-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top-level layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema conventions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-layout-recorder-transcoder-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache layout (recorder transcoder only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#layer-4-reader-protocol" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 4 — Reader protocol
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#layer-5-composite-api-user-facing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Layer 5 — Composite API (user-facing)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#femdata-embedding-binding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FEMData embedding &amp; binding
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FEMData embedding &amp; binding">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#snapshot-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Snapshot identity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#native-hdf5-full-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native HDF5 — full snapshot
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mpco-partial-reconstruction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MPCO — partial reconstruction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bind-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bind semantics
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#canonical-naming-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Canonical naming vocabulary
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Canonical naming vocabulary">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodal-kinematics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Nodal kinematics
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodal-forces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Nodal forces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-element-nodal-resisting-forces" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-element nodal resisting forces
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#beam-line-diagrams-per-station" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Beam line diagrams (per station)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#continuum-stress-strain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Continuum stress / strain
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fiber" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fiber
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#material-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Material state
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mode-shapes-no-separate-names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mode shapes — no separate names
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validation-against-source-of-truth-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation against source-of-truth schemas
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Validation against source-of-truth schemas">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mpco-mpco-recorder-skill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MPCO (mpco-recorder skill)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opensees-recorders-opensees-expert-skill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenSees recorders (opensees-expert skill)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stko_to_python-stko-to-python-skill" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        STKO_to_python (stko-to-python skill)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replacing-the-existing-results-class" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replacing the existing Results class
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-ii-implementation-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part II — Implementation Plan
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Part II — Implementation Plan">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-order-rationale" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build order rationale
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#top-level-package-layout-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Top-level package layout (target)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-0-schema-lock-scaffolding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 0 — Schema lock + scaffolding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-native-writer-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1 — Native writer + reader
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-composite-api-bind" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2 — Composite API + bind
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-mpco-reader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3 — MPCO reader
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-recorder-spec-composite" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4 — Recorder spec composite
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-tcl-python-recorder-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5 — Tcl / Python recorder emission
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-6-recorder-transcoder-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6 — Recorder transcoder + cache
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-7-domain-capture-strategy-b" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 7 — Domain capture (Strategy B)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-8-mpco-bridge-in-spec-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 8 — MPCO bridge in spec emission
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-9-viewer-rebuild-deferred-separate-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 9 — Viewer rebuild (deferred — separate plan)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-10-vtu-pvd-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 10 — VTU / PVD export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-11-docs-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 11 — Docs + examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-phase-concerns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-phase concerns
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cross-phase concerns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-fixtures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test fixtures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance-benchmarks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance benchmarks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-versioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema versioning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dependencies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dependencies
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#decision-log-re-affirmed-in-this-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision log (re-affirmed in this plan)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#estimated-phase-footprint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Estimated phase footprint
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-ordering-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase ordering check
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-iii-open-questions-future-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Part III — Open questions / future work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3201,6 +4044,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3429,6 +4278,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -4428,12 +5361,14 @@ results through a <strong>single composite API</strong> that mirrors <code>FEMDa
 <li><strong>Composite API mirrors FEMData.</strong> Same <code>pg=</code>/<code>label=</code> selection
    vocabulary, same immutable-snapshot feel. A user who knows
    FEMData already knows Results.</li>
-<li><strong>Soft FEM coupling, hash-linked.</strong> Results can be built without
+<li><strong>Soft FEM coupling, hash-tagged.</strong> Results can be built without
    a FEMData (raw inspection works). PG/label resolution and viewer
    plotting require a bound FEM. Native HDF5 embeds the FEMData
    snapshot; MPCO files reconstruct a partial FEMData from their
-   <code>MODEL</code> group. Bind validation is a single hash comparison
-   (<code>snapshot_id</code>).</li>
+   <code>MODEL</code> group. The <code>snapshot_id</code> hash is computed and stored as
+   metadata, but bind never enforces equality — pairing a FEMData
+   with a results file from the same run is the user's
+   responsibility.</li>
 <li><strong>Verbose, human-readable component names.</strong> No abbreviations
    except universal mechanics tensor indices (<code>xx</code>, <code>xy</code>, …). Backend
    adapters translate to canonical names on the way in.</li>
@@ -5036,13 +5971,17 @@ membership. This hash is the contract that ties artifacts together:</p>
 <li>A <code>run.h5</code> file embeds the FEMData snapshot in <code>/model/</code>, including
   its <code>snapshot_id</code>.</li>
 <li>A resolved recorder spec carries the <code>snapshot_id</code> of the FEMData
-  it was resolved against.</li>
-<li><code>bind()</code> validates <code>snapshot_id</code> matches; the spec's emit/capture
-  paths refuse if the active FEMData's hash differs.</li>
+  it was resolved against (and it participates in the recorder
+  cache key).</li>
+<li><code>bind()</code> does <strong>not</strong> validate <code>snapshot_id</code>. The hash is computed
+  and stored as metadata, but bind never enforces equality —
+  pairing a FEMData with a results file from the same run is the
+  user's responsibility (see <code>_bind.py:8-10</code>).</li>
 </ul>
-<p>Re-meshing produces a new hash automatically. Old artifacts (specs,
-results files) refuse to bind to the new fem with a clear error,
-instead of silently producing wrong results.</p>
+<p>Re-meshing produces a new hash automatically, which keeps caches
+honest, but old artifacts will still bind silently against a new
+FEMData. The <code>BindError</code> symbol is retained for back-compat but is
+no longer raised.</p>
 <h4 id="native-hdf5-full-snapshot">Native HDF5 — full snapshot<a class="headerlink" href="#native-hdf5-full-snapshot" title="Permanent link">&para;</a></h4>
 <p><code>NativeWriter</code> snapshots the entire FEMData into <code>/model/</code> at
 write time, including <code>snapshot_id</code> as a root attribute. Storage
@@ -5075,18 +6014,18 @@ raise with a clear message.</p>
 </span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># fem in a fresh session and want to use its labels / loads / Parts</span>
 </span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="n">results</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">g_session_fem</span><span class="p">)</span>
 </span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1"># Drift detection — bind compares snapshot_id hashes</span>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">other_fem</span><span class="p">)</span>            <span class="c1"># raises: snapshot_id mismatch</span>
+</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1"># No drift detection — bind accepts any FEMData</span>
+</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="n">results</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">other_fem</span><span class="p">)</span>            <span class="c1"># accepted; no hash check</span>
 </span></code></pre></div>
-<p>Bind validation is a single hash comparison: the embedded
-<code>snapshot_id</code> (from results) vs. the candidate FEMData's
-<code>snapshot_id</code>. If they match, the candidate is byte-for-byte
-equivalent and the bind succeeds. If they differ, the bind fails
-loudly — the alternative is silently plotting on the wrong geometry.</p>
+<p>The <code>snapshot_id</code> hash is computed and stored as metadata, but bind
+never enforces equality — pairing a FEMData with a results file from
+the same run is the user's responsibility (see <code>_bind.py:8-10</code>). The
+<code>BindError</code> symbol is retained for back-compat but is no longer
+raised.</p>
 <p>For MPCO files (no native snapshot_id), the partial FEMData
-synthesized from <code>MODEL/</code> gets a hash computed on the fly. A
-session FEM whose hash matches that synthesized hash binds
-successfully.</p>
+synthesized from <code>MODEL/</code> gets a hash computed on the fly for
+metadata. Bind accepts any candidate regardless of how that hash
+compares.</p>
 <h3 id="canonical-naming-vocabulary">Canonical naming vocabulary<a class="headerlink" href="#canonical-naming-vocabulary" title="Permanent link">&para;</a></h3>
 <p>Verbose, lowercase, no abbreviations except mechanics tensor
 indices.</p>
@@ -5333,40 +6272,40 @@ the same path.</p>
 </span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>├── _composites.py           # NodeResultsComposite, ElementResultsComposite, etc.
 </span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>├── _slabs.py                # NodeSlab, GaussSlab, FiberSlab, LayerSlab dataclasses
 </span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>├── _vocabulary.py           # canonical component names + shorthand expansion
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>├── _stage.py                # StageInfo, time slicing helpers
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>├── _bind.py                 # bind() validation logic
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>│
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>├── schema/
-</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>│   ├── __init__.py
-</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>│   ├── _native.py           # native HDF5 schema constants + path builders
-</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>│   └── _versions.py         # schema_version, parser_version
-</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>│
-</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>├── readers/
-</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>│   ├── __init__.py
-</span><span id="__span-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>│   ├── _protocol.py         # ResultsReader Protocol, ResultLevel enum
-</span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>│   ├── _native.py           # NativeReader
-</span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>│   └── _mpco.py             # MPCOReader (+ STKO name → canonical translation)
-</span><span id="__span-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>│
-</span><span id="__span-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>├── writers/
-</span><span id="__span-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>│   ├── __init__.py
-</span><span id="__span-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>│   ├── _native.py           # NativeWriter (file-based, append + bulk)
-</span><span id="__span-13-24"><a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a>│   └── _cache.py            # cache key + manifest for transcoders
-</span><span id="__span-13-25"><a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a>│
-</span><span id="__span-13-26"><a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a>├── transcoders/
-</span><span id="__span-13-27"><a id="__codelineno-13-27" name="__codelineno-13-27" href="#__codelineno-13-27"></a>│   ├── __init__.py
-</span><span id="__span-13-28"><a id="__codelineno-13-28" name="__codelineno-13-28" href="#__codelineno-13-28"></a>│   ├── _txt.py              # OpenSees text recorder parser
-</span><span id="__span-13-29"><a id="__codelineno-13-29" name="__codelineno-13-29" href="#__codelineno-13-29"></a>│   ├── _xml.py              # OpenSees XML recorder parser
-</span><span id="__span-13-30"><a id="__codelineno-13-30" name="__codelineno-13-30" href="#__codelineno-13-30"></a>│   └── _recorder.py         # RecorderTranscoder (orchestrates)
-</span><span id="__span-13-31"><a id="__codelineno-13-31" name="__codelineno-13-31" href="#__codelineno-13-31"></a>│
-</span><span id="__span-13-32"><a id="__codelineno-13-32" name="__codelineno-13-32" href="#__codelineno-13-32"></a>├── capture/
-</span><span id="__span-13-33"><a id="__codelineno-13-33" name="__codelineno-13-33" href="#__codelineno-13-33"></a>│   ├── __init__.py
-</span><span id="__span-13-34"><a id="__codelineno-13-34" name="__codelineno-13-34" href="#__codelineno-13-34"></a>│   └── _domain.py           # DomainCapture context manager (Strategy B)
-</span><span id="__span-13-35"><a id="__codelineno-13-35" name="__codelineno-13-35" href="#__codelineno-13-35"></a>│
-</span><span id="__span-13-36"><a id="__codelineno-13-36" name="__codelineno-13-36" href="#__codelineno-13-36"></a>└── export/
-</span><span id="__span-13-37"><a id="__codelineno-13-37" name="__codelineno-13-37" href="#__codelineno-13-37"></a>    ├── __init__.py
-</span><span id="__span-13-38"><a id="__codelineno-13-38" name="__codelineno-13-38" href="#__codelineno-13-38"></a>    ├── _vtu.py              # results.export.vtu(...)
-</span><span id="__span-13-39"><a id="__codelineno-13-39" name="__codelineno-13-39" href="#__codelineno-13-39"></a>    └── _pvd.py              # results.export.pvd(...)
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>├── _bind.py                 # bind() resolution (lenient — no hash check)
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>│
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>├── schema/
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>│   ├── __init__.py
+</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>│   ├── _native.py           # native HDF5 schema constants + path builders
+</span><span id="__span-13-12"><a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>│   └── _versions.py         # schema_version, parser_version
+</span><span id="__span-13-13"><a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a>│
+</span><span id="__span-13-14"><a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a>├── readers/
+</span><span id="__span-13-15"><a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a>│   ├── __init__.py
+</span><span id="__span-13-16"><a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a>│   ├── _protocol.py         # ResultsReader Protocol, ResultLevel enum
+</span><span id="__span-13-17"><a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a>│   ├── _native.py           # NativeReader
+</span><span id="__span-13-18"><a id="__codelineno-13-18" name="__codelineno-13-18" href="#__codelineno-13-18"></a>│   └── _mpco.py             # MPCOReader (+ STKO name → canonical translation)
+</span><span id="__span-13-19"><a id="__codelineno-13-19" name="__codelineno-13-19" href="#__codelineno-13-19"></a>│
+</span><span id="__span-13-20"><a id="__codelineno-13-20" name="__codelineno-13-20" href="#__codelineno-13-20"></a>├── writers/
+</span><span id="__span-13-21"><a id="__codelineno-13-21" name="__codelineno-13-21" href="#__codelineno-13-21"></a>│   ├── __init__.py
+</span><span id="__span-13-22"><a id="__codelineno-13-22" name="__codelineno-13-22" href="#__codelineno-13-22"></a>│   ├── _native.py           # NativeWriter (file-based, append + bulk)
+</span><span id="__span-13-23"><a id="__codelineno-13-23" name="__codelineno-13-23" href="#__codelineno-13-23"></a>│   └── _cache.py            # cache key + manifest for transcoders
+</span><span id="__span-13-24"><a id="__codelineno-13-24" name="__codelineno-13-24" href="#__codelineno-13-24"></a>│
+</span><span id="__span-13-25"><a id="__codelineno-13-25" name="__codelineno-13-25" href="#__codelineno-13-25"></a>├── transcoders/
+</span><span id="__span-13-26"><a id="__codelineno-13-26" name="__codelineno-13-26" href="#__codelineno-13-26"></a>│   ├── __init__.py
+</span><span id="__span-13-27"><a id="__codelineno-13-27" name="__codelineno-13-27" href="#__codelineno-13-27"></a>│   ├── _txt.py              # OpenSees text recorder parser
+</span><span id="__span-13-28"><a id="__codelineno-13-28" name="__codelineno-13-28" href="#__codelineno-13-28"></a>│   ├── _xml.py              # OpenSees XML recorder parser
+</span><span id="__span-13-29"><a id="__codelineno-13-29" name="__codelineno-13-29" href="#__codelineno-13-29"></a>│   └── _recorder.py         # RecorderTranscoder (orchestrates)
+</span><span id="__span-13-30"><a id="__codelineno-13-30" name="__codelineno-13-30" href="#__codelineno-13-30"></a>│
+</span><span id="__span-13-31"><a id="__codelineno-13-31" name="__codelineno-13-31" href="#__codelineno-13-31"></a>└── capture/
+</span><span id="__span-13-32"><a id="__codelineno-13-32" name="__codelineno-13-32" href="#__codelineno-13-32"></a>    ├── __init__.py
+</span><span id="__span-13-33"><a id="__codelineno-13-33" name="__codelineno-13-33" href="#__codelineno-13-33"></a>    └── _domain.py           # DomainCapture context manager (Strategy B)
 </span></code></pre></div>
+<blockquote>
+<p><strong>Drift from the original plan.</strong> As shipped, <code>StageInfo</code> lives
+in <code>readers/_protocol.py</code> (no separate <code>_stage.py</code>), and the
+<code>export/</code> subpackage (<code>results.export.vtu/pvd</code>) was deferred —
+Phase 10 was not delivered.</p>
+</blockquote>
 <p>Recorder spec lives next to the existing OpenSees bridge:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>src/apeGmsh/solvers/
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>├── Recorders.py             # NEW — g.opensees.recorders composite
@@ -5469,8 +6408,9 @@ overwritten in this phase. No shims.</p>
   <code>label=</code>, <code>ids=</code>; component/time slicing; stage scoping
 - <code>tests/results/test_results_modes.py</code> — <code>results.modes</code> filters
   correctly; per-mode attrs accessible; mode shape is shape (1, N)
-- <code>tests/results/test_results_bind.py</code> — bind succeeds on matching
-  snapshot_id, raises on mismatch
+- <code>tests/test_results_bind.py</code> — auto-bind from embedded snapshot,
+  explicit bind with matching hash, and <code>test_bind_accepts_mismatched_fem</code>
+  (lenient contract — bind no longer raises on snapshot_id mismatch)
 - <code>tests/results/test_results_self_contained.py</code> — open <code>run.h5</code>
   without external FEM, FEMData reconstructed from <code>/model/</code>,
   PG queries work</p>
@@ -5738,9 +6678,10 @@ optional — used only when the viewer asks for labeled axes.</p>
   bound FEMData. Matches MPCO; correct under large deformation.</li>
 <li><strong>Group-by-(class_tag, int_rule).</strong> Rectangular per-group arrays;
   reader stitches across groups.</li>
-<li><strong>Soft FEM coupling, hash-linked.</strong> Bare construction works;
-  PG queries need bound FEM. <code>bind()</code> validates by <code>snapshot_id</code>
-  hash comparison. Re-meshing → new hash → old artifacts refuse.</li>
+<li><strong>Soft FEM coupling, hash-tagged.</strong> Bare construction works;
+  PG queries need bound FEM. The <code>snapshot_id</code> hash is computed and
+  stored as metadata, but <code>bind()</code> never enforces equality — pairing
+  is the user's responsibility (see <code>_bind.py:8-10</code>).</li>
 <li><strong>All recorders OpenSees gives us.</strong> <code>nodes</code>, <code>elements</code>,
   <code>line_stations</code>, <code>gauss</code>, <code>fibers</code>, <code>layers</code>, <code>modal</code>.</li>
 <li><strong>Both component shorthand and explicit.</strong> <code>"displacement"</code>

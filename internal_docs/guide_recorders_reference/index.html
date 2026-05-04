@@ -1285,6 +1285,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#disambiguation-hint-element_class_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disambiguation hint — element_class_name=
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#recordersnodes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1595,6 +1606,17 @@
     <span class="md-ellipsis">
       
         Validation timing
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#registry-inspection-and-reset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registry inspection and reset
       
     </span>
   </a>
@@ -2572,6 +2594,8 @@
       
         
       
+        
+      
     
     
     
@@ -2797,6 +2821,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3617,6 +3669,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3865,6 +3923,90 @@
   
   
     <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../plan_viewer_box_select/" class="md-nav__link">
         
   
@@ -4056,6 +4198,17 @@
     <span class="md-ellipsis">
       
         Cadence (the same on every method)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#disambiguation-hint-element_class_name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Disambiguation hint — element_class_name=
       
     </span>
   </a>
@@ -4380,6 +4533,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#registry-inspection-and-reset" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registry inspection and reset
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4558,6 +4722,15 @@ multiple names form a union.</p>
 </table>
 <p>Modal records honour <code>dt=</code> / <code>n_steps=</code> only at the file-format level
 (MPCO writes the modes once per cadence event).</p>
+<h2 id="disambiguation-hint-element_class_name">Disambiguation hint — <code>element_class_name=</code><a class="headerlink" href="#disambiguation-hint-element_class_name" title="Permanent link">&para;</a></h2>
+<p>Every method except <code>modal(...)</code> accepts an optional
+<code>element_class_name=</code> kwarg (verified at <code>Recorders.py:204, 256, 311,
+389, 452</code>). It is a hint for the <code>.out</code> transcoder when the same
+component name could come from more than one OpenSees element class
+sharing a selector — the transcoder uses the hint to pick the right
+element class without falling back to heuristics. Pass it when the
+out-file decoder warns about an ambiguous component, otherwise leave
+it <code>None</code>.</p>
 <hr />
 <h2 id="recordersnodes"><code>recorders.nodes(...)</code><a class="headerlink" href="#recordersnodes" title="Permanent link">&para;</a></h2>
 <p>Per-node values across the analysis.</p>
@@ -4939,14 +5112,29 @@ contains modal records.</p>
 that category — same data this page documents. So when in doubt:
 declare, call resolve, read the error.</p>
 <hr />
+<h2 id="registry-inspection-and-reset">Registry inspection and reset<a class="headerlink" href="#registry-inspection-and-reset" title="Permanent link">&para;</a></h2>
+<p>The <code>Recorders</code> registry supports the standard container protocols
+(<code>Recorders.py:886-895</code>):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">recs</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nb">len</span><span class="p">(</span><span class="n">recs</span><span class="p">)</span>          <span class="c1"># number of declared records</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="nb">list</span><span class="p">(</span><span class="n">recs</span><span class="p">)</span>         <span class="c1"># iterate -- yields RecorderRecord objects</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="n">recs</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>       <span class="c1"># drop all declarations and reset the auto-id counter</span>
+</span></code></pre></div>
+<p><code>clear()</code> is useful when re-running a parametric study in the same
+session — call it before re-declaring recorders so the auto-id
+counter starts back at zero.</p>
+<hr />
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../guide_obtaining_results/">Obtaining results</a> — five execution
   strategies.</li>
-<li><a href="../../architecture/apeGmsh_results_obtaining/">Architecture — Obtaining the database</a> —
-  the spec-as-seam pattern.</li>
-<li><a href="../../api/opensees/">API reference — OpenSees</a> — <code>Recorders</code> class
-  with auto-rendered method signatures.</li>
+<li>Architecture — <em>Obtaining the database</em> (<code>architecture/apeGmsh_results_obtaining.md</code>) —
+  the spec-as-seam pattern. (Lives outside <code>internal_docs/</code>; navigate
+  via the published site's <em>Architecture</em> section.)</li>
+<li>API reference — <em>OpenSees</em> (<code>docs/api/opensees.md</code>) — <code>Recorders</code>
+  class with auto-rendered method signatures. (Lives under
+  <code>docs_dir</code>; navigate via the published site's <em>API</em> section.)</li>
 </ul>
 
 
