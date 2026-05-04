@@ -137,13 +137,30 @@ class ResultsViewer:
         # ...) lands in the session log file. session.start is the
         # logger's own header; this line records *which* file we just
         # opened so the log is self-contained.
-        from ._log import log_action
+        from ._log import log_action, log_error
         results_path = getattr(self._results, "_path", None)  # noqa: SLF001
         log_action(
             "session", "open",
             file=str(results_path) if results_path else "<in-memory>",
         )
 
+        try:
+            return self._show_impl(maximized=maximized)
+        except BaseException as exc:
+            # Anything that escapes ``_show_impl`` — ResultsWindow init
+            # failures, VTK render-window pixel-format errors, restore
+            # path crashes, Qt resource exhaustion, KeyboardInterrupt —
+            # writes to the session log file with full traceback before
+            # propagating. The log is on disk by now (session.start
+            # flushed); even if the calling terminal closes the user
+            # can pull the file from ~/.apegmsh/viewer-logs/ to see
+            # what happened. Without this trap the trace went to
+            # stderr only and was easy to lose.
+            log_error("init", "ResultsViewer.show", exc)
+            raise
+
+    def _show_impl(self, *, maximized: bool = True):
+        """The actual show() body — see :meth:`show` for the trap wrapper."""
         # Lazy imports — keep ``apeGmsh.viewers`` importable in headless
         # environments. Qt / pyvistaqt only loaded when the user opens
         # an actual viewer.

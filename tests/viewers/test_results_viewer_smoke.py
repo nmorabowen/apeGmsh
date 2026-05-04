@@ -180,6 +180,42 @@ def test_subprocess_in_memory_raises_clearly(small_results):
 # ``QTimer.singleShot`` to keep CI-time bounded. We do not assert
 # anything visual — just that the full lifecycle exits cleanly.
 
+def test_show_traps_init_failure_into_session_log(
+    small_results, monkeypatch, tmp_path,
+):
+    """A crash inside ``_show_impl`` must land in the session log
+    file with full traceback before propagating, so silent VTK / Qt
+    init failures stop disappearing into a closed terminal.
+    """
+    from apeGmsh.viewers import _log
+
+    # Force a known exception in _show_impl by stubbing one of the
+    # early imports. ResultsDirector is constructed right after the
+    # imports, so swapping it for a raising fake hits the trap.
+    class _Boom(Exception):
+        pass
+
+    def _raise(*_a, **_kw):
+        raise _Boom("synthetic init failure")
+
+    monkeypatch.setattr(
+        "apeGmsh.viewers.diagrams._director.ResultsDirector",
+        _raise,
+    )
+
+    viewer = ResultsViewer(small_results)
+    with pytest.raises(_Boom):
+        viewer.show()
+
+    # The session log must exist and contain an init-error entry —
+    # this is the whole point of the trap.
+    log_path = _log.session_file()
+    assert log_path is not None
+    text = log_path.read_text(encoding="utf-8")
+    assert "init.ResultsViewer.show" in text
+    assert "_Boom" in text
+
+
 @pytest.mark.qt
 def test_results_viewer_show_close_lifecycle(small_results):
     pytest.importorskip("pytestqt", reason="needs pytest-qt")
