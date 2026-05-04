@@ -806,6 +806,13 @@ class DiagramSettingsTab:
             (k for k in self._ensure_catalog() if k.kind_id == kind_id), None,
         )
         component = data or ""
+        # SlabSelector requires a non-empty component string. Kinds
+        # whose creation form has no Data combo (reactions today) get
+        # a synthetic placeholder — the diagram reads its components
+        # off a fixed list, so the selector's component value is
+        # never consulted.
+        if not component and catalog_entry is not None and not catalog_entry.requires_data:
+            component = kind_id
         try:
             selector = normalize_selector(component=component)
         except Exception as exc:

@@ -12,6 +12,8 @@ from ._fiber_section import FiberSectionDiagram
 from ._gauss_marker import GaussPointDiagram
 from ._layer_stack import LayerStackDiagram
 from ._line_force import LineForceDiagram
+from ._loads import LoadsDiagram
+from ._reactions import ReactionsDiagram
 from ._registry import DiagramRegistry
 from ._selectors import SlabSelector, normalize as normalize_selector
 from ._spring_force import SpringForceDiagram
@@ -23,6 +25,8 @@ from ._styles import (
     GaussMarkerStyle,
     LayerStackStyle,
     LineForceStyle,
+    LoadsStyle,
+    ReactionsStyle,
     SpringForceStyle,
     VectorGlyphStyle,
 )
@@ -45,7 +49,11 @@ __all__ = [
     "LayerStackStyle",
     "LineForceDiagram",
     "LineForceStyle",
+    "LoadsDiagram",
+    "LoadsStyle",
     "NoDataError",
+    "ReactionsDiagram",
+    "ReactionsStyle",
     "ResultsDirector",
     "SlabSelector",
     "SpringForceDiagram",

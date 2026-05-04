@@ -11,8 +11,10 @@ records the data options the kind can render against this particular
 file — empty options means the kind has no recordings to draw, so the
 UI greys it out with a tooltip.
 
-Kinds with ``requires_data=False`` (Loads, Constraints, Gauss markers)
-have no Data dropdown — the UI skips that row in the creation form.
+Kinds with ``requires_data=False`` (e.g. Constraints) have no Data
+dropdown — the UI skips that row in the creation form. The Loads
+kind uses ``requires_data=True`` with the data combo bound to load
+pattern names rather than canonical components.
 
 Note: ``deformed_shape`` is intentionally absent. Deformation is now a
 global view modifier in the Session panel (``☐ Deform`` + scale
@@ -139,6 +141,41 @@ def _available_components(scoped: object, topology: str) -> list[str]:
     return []
 
 
+def _load_patterns_with_forces(director: "ResultsDirector") -> list[str]:
+    """Return load pattern names that have at least one non-zero force.
+
+    Patterns with only moments are excluded — the LoadsDiagram draws
+    forces only, so a moments-only pattern would attach to nothing.
+    Data source is ``director.fem.nodes.loads`` (FEM-side records),
+    not the Results composite.
+    """
+    fem = getattr(director, "fem", None)
+    if fem is None:
+        return []
+    try:
+        ns_loads = fem.nodes.loads
+    except Exception:
+        return []
+    out: list[str] = []
+    try:
+        patterns = list(ns_loads.patterns())
+    except Exception:
+        return []
+    for p in patterns:
+        try:
+            records = ns_loads.by_pattern(p)
+        except Exception:
+            continue
+        for r in records:
+            f = getattr(r, "force_xyz", None)
+            if f is None:
+                continue
+            if any(abs(float(v)) > 0.0 for v in f):
+                out.append(p)
+                break
+    return out
+
+
 def _union_across_stages(
     director: "ResultsDirector", topology: str,
 ) -> list[str]:
@@ -180,6 +217,17 @@ _KIND_DEFINITIONS: tuple[tuple[str, str, bool, str, Optional[str]], ...] = (
     # value driving the colormap), pulled from the gauss composite.
     ("gauss_marker",  "Gauss point markers",     True,  "gauss",  None),
     ("spring_force",  "Spring force",            True,  "springs", None),
+    # Applied loads — arrows for nodal force vectors, scoped per
+    # load pattern. Data combo is populated from
+    # ``fem.nodes.loads.patterns()`` rather than a Results composite,
+    # since loads live on FEM, not the recorder output.
+    ("loads",         "Applied loads",           True,  "loads", None),
+    # Reactions — recorded reaction forces and moments at constrained
+    # nodes, scaled per step. The kind is enabled iff the file
+    # actually carries ``reaction_force_*`` or ``reaction_moment_*``
+    # nodal recordings; no Data combo (force + moment families are
+    # both rendered when present).
+    ("reactions",     "Reactions",               False, "nodes", None),
 )
 
 
@@ -209,6 +257,12 @@ def build_catalog(director: "ResultsDirector") -> list[KindEntry]:
                 _union_across_stages(director, "nodes")
             ))
             topology_hint = "nodes"
+        elif kind_id == "loads":
+            # Pattern names that have at least one record with a
+            # non-zero force vector. Moments-only patterns are hidden
+            # since the diagram only renders forces today.
+            data_options = tuple(_load_patterns_with_forces(director))
+            topology_hint = None
         elif requires_data:
             # All other data-bound kinds use their primary topology
             # only — no fallback. Primary topology empty → kind
@@ -219,6 +273,30 @@ def build_catalog(director: "ResultsDirector") -> list[KindEntry]:
             )
             data_options = tuple(comps)
             topology_hint = None
+        elif kind_id == "reactions":
+            # Reactions kind has no Data combo — both force and
+            # moment families render together when present. Enabled
+            # iff the file actually carries any reaction recording.
+            nodal = set(_union_across_stages(director, "nodes"))
+            has_reaction = any(
+                comp in nodal for comp in (
+                    "reaction_force_x",
+                    "reaction_force_y",
+                    "reaction_force_z",
+                    "reaction_moment_x",
+                    "reaction_moment_y",
+                    "reaction_moment_z",
+                )
+            )
+            out.append(KindEntry(
+                kind_id=kind_id, label=label,
+                requires_data=False,
+                data_options=(),
+                default_data=None,
+                topology_hint=None,
+                enabled=has_reaction,
+            ))
+            continue
         else:
             # No-data kinds (gauss markers): "enabled" iff their
             # primary topology has *any* recordings (so we don't show

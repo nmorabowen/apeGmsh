@@ -177,6 +177,81 @@ class VectorGlyphStyle(DiagramStyle):
 
 
 @dataclass(frozen=True)
+class LoadsStyle(DiagramStyle):
+    """Render parameters for ``LoadsDiagram`` (applied nodal force arrows).
+
+    Constant-magnitude arrows — the broker carries reference force
+    magnitudes only (no timeSeries function), so the diagram does not
+    scale with steps. Auto-fit picks ``scale`` at attach so the
+    largest force arrow reaches ``auto_scale_fraction`` of the model
+    diagonal, matching the VectorGlyph convention.
+
+    Attributes
+    ----------
+    scale
+        Amplification factor — arrow length = ``scale * |force|``.
+        ``None`` selects auto-fit at attach.
+    auto_scale_fraction
+        Used when ``scale`` is ``None``.
+    color
+        Solid arrow color.
+    arrow_tip_fraction
+        Tip-cone length as a fraction of total arrow length.
+    """
+    scale: Optional[float] = None
+    auto_scale_fraction: float = 0.10
+    color: str = "#FF3030"
+    arrow_tip_fraction: float = 0.25
+
+
+@dataclass(frozen=True)
+class ReactionsStyle(DiagramStyle):
+    """Render parameters for ``ReactionsDiagram`` (recorded reactions).
+
+    Reactions are step-resolved (the recorder writes them per step),
+    so the arrows scale with the active time step. Forces and moments
+    are rendered as two separate actors with independent auto-fit
+    scales — they have different units (force vs torque), so coupling
+    them would skew one or the other.
+
+    Attributes
+    ----------
+    show_forces, show_moments
+        Toggle each glyph family. Both default ``True``; flip to
+        ``False`` to render only one.
+    force_scale, moment_scale
+        Amplification factors. ``None`` selects auto-fit at attach so
+        the largest arrow over the time-history reaches
+        ``auto_scale_fraction`` of the model diagonal.
+    auto_scale_fraction
+        Used when either ``*_scale`` is ``None``.
+    force_color, moment_color
+        Solid arrow colors. Defaults are visually distinct.
+    arrow_tip_fraction
+        Tip-cone length as a fraction of total straight-arrow length
+        (force glyph only).
+    moment_arc_degrees
+        Sweep of the moment glyph's curved tube. Larger sweeps read
+        more clearly as torques but crowd dense supports.
+    zero_tol
+        Auto-filter threshold for noise. Nodes whose reaction
+        magnitude max-over-time is below ``zero_tol × global_max``
+        are dropped (so free-interior nodes that the recorder writes
+        as effective zero don't pollute the scene).
+    """
+    show_forces: bool = True
+    show_moments: bool = True
+    force_scale: Optional[float] = None
+    moment_scale: Optional[float] = None
+    auto_scale_fraction: float = 0.10
+    force_color: str = "#1F8FFF"
+    moment_color: str = "#00C8B4"
+    arrow_tip_fraction: float = 0.25
+    moment_arc_degrees: float = 270.0
+    zero_tol: float = 1e-9
+
+
+@dataclass(frozen=True)
 class GaussMarkerStyle(DiagramStyle):
     """Render parameters for ``GaussPointDiagram``.
 

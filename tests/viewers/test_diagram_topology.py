@@ -28,6 +28,11 @@ _EXPECTED: dict[str, str] = {
     "layer_stack":    "layers",
     "gauss_marker":   "gauss",
     "spring_force":   "springs",
+    # Loads is special: the "topology" string is virtual — data
+    # comes from ``fem.nodes.loads`` rather than a Results composite.
+    "loads":          "loads",
+    # Reactions read from results.nodes (recorded), so topology="nodes".
+    "reactions":      "nodes",
 }
 
 

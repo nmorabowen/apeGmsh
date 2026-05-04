@@ -16,12 +16,14 @@ from ..diagrams._fiber_section import FiberSectionDiagram
 from ..diagrams._gauss_marker import GaussPointDiagram
 from ..diagrams._layer_stack import LayerStackDiagram
 from ..diagrams._line_force import LineForceDiagram
+from ..diagrams._loads import LoadsDiagram
+from ..diagrams._reactions import ReactionsDiagram
 from ..diagrams._selectors import normalize as normalize_selector
 from ..diagrams._spring_force import SpringForceDiagram
 from ..diagrams._styles import (
     ContourStyle, DeformedShapeStyle, FiberSectionStyle,
     GaussMarkerStyle, LayerStackStyle, LineForceStyle,
-    SpringForceStyle, VectorGlyphStyle,
+    LoadsStyle, ReactionsStyle, SpringForceStyle, VectorGlyphStyle,
 )
 from ..diagrams._vector_glyph import VectorGlyphDiagram
 
@@ -90,6 +92,14 @@ def _spring_default_style(_component: str) -> SpringForceStyle:
     return SpringForceStyle()
 
 
+def _loads_default_style(_component: str) -> LoadsStyle:
+    return LoadsStyle()
+
+
+def _reactions_default_style(_component: str) -> ReactionsStyle:
+    return ReactionsStyle()
+
+
 _KINDS: list[_KindEntry] = [
     _KindEntry(
         label="Contour",
@@ -138,6 +148,18 @@ _KINDS: list[_KindEntry] = [
         kind_id="spring_force",
         diagram_class=SpringForceDiagram,
         style_factory=_spring_default_style,
+    ),
+    _KindEntry(
+        label="Applied loads",
+        kind_id="loads",
+        diagram_class=LoadsDiagram,
+        style_factory=_loads_default_style,
+    ),
+    _KindEntry(
+        label="Reactions",
+        kind_id="reactions",
+        diagram_class=ReactionsDiagram,
+        style_factory=_reactions_default_style,
     ),
 ]
 
