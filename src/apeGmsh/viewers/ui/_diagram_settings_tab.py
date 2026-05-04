@@ -334,16 +334,44 @@ class DiagramSettingsTab:
         card_lay.setSpacing(4)
 
         # Swap the target layout so the existing builders write here.
+        # ``_pending_appliers`` is per-card: each panel builder appends
+        # zero-arg closures that read their numeric spinboxes and call
+        # the right setter on ``d``. After dispatch, the Apply button
+        # below fires them as a batch.
         saved = self._content_layout
+        saved_appliers = getattr(self, "_pending_appliers", None)
         self._content_layout = card_lay
+        self._pending_appliers = []
         try:
             self._build_reorder_row(d)
             self._build_data_swap_row(d)
             self._dispatch_kind_panel(d)
+            self._build_apply_button()
             self._build_delete_row(d)
         finally:
             self._content_layout = saved
+            self._pending_appliers = saved_appliers
         return card
+
+    def _build_apply_button(self) -> None:
+        """Bottom-of-card Apply button that commits all staged values.
+
+        Snapshots the per-card appliers list so future cards' edits
+        don't leak into this card's button.
+        """
+        QtWidgets, _ = _qt()
+        appliers = list(self._pending_appliers or [])
+        if not appliers:
+            return
+        btn = QtWidgets.QPushButton("Apply")
+        btn.setToolTip("Apply pending value edits in this layer")
+
+        def _commit() -> None:
+            for fn in appliers:
+                self._safe_call(fn)
+
+        btn.clicked.connect(_commit)
+        self._content_layout.addWidget(btn)
 
     def _build_reorder_row(self, d: "Diagram") -> None:
         """↑ / ↓ buttons that move ``d`` within the active composition.
@@ -802,13 +830,11 @@ class DiagramSettingsTab:
         hi_spin.setDecimals(6)
         hi_spin.setValue(float(hi_default))
 
-        def _commit_clim() -> None:
-            self._safe_call(
+        self._pending_appliers.append(
+            lambda: self._safe_call(
                 d.set_clim, float(lo_spin.value()), float(hi_spin.value()),
             )
-
-        lo_spin.editingFinished.connect(_commit_clim)
-        hi_spin.editingFinished.connect(_commit_clim)
+        )
         form.addRow("Clim min:", lo_spin)
         form.addRow("Clim max:", hi_spin)
 
@@ -858,7 +884,7 @@ class DiagramSettingsTab:
         scale_spin.setDecimals(4)
         scale_spin.setSingleStep(0.1)
         scale_spin.setValue(float(d.current_scale()))
-        scale_spin.editingFinished.connect(
+        self._pending_appliers.append(
             lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
         )
         form.addRow("Scale:", scale_spin)
@@ -886,13 +912,13 @@ class DiagramSettingsTab:
         form = QtWidgets.QFormLayout()
         self._content_layout.addLayout(form)
 
-        # Scale
+        # Scale — committed by the per-card Apply button.
         scale_spin = QtWidgets.QDoubleSpinBox()
         scale_spin.setRange(0.0, 1e9)
         scale_spin.setDecimals(6)
         scale_spin.setSingleStep(0.1)
         scale_spin.setValue(float(d.current_scale()))
-        scale_spin.editingFinished.connect(
+        self._pending_appliers.append(
             lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
         )
         form.addRow("Scale:", scale_spin)
@@ -951,7 +977,7 @@ class DiagramSettingsTab:
         scale_spin.setDecimals(6)
         scale_spin.setSingleStep(0.1)
         scale_spin.setValue(float(d.current_scale()))
-        scale_spin.editingFinished.connect(
+        self._pending_appliers.append(
             lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
         )
         form.addRow("Scale:", scale_spin)
@@ -973,7 +999,7 @@ class DiagramSettingsTab:
         scale_spin.setDecimals(6)
         scale_spin.setSingleStep(0.1)
         scale_spin.setValue(float(d.current_scale()))
-        scale_spin.editingFinished.connect(
+        self._pending_appliers.append(
             lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
         )
         form.addRow("Scale:", scale_spin)
@@ -996,8 +1022,8 @@ class DiagramSettingsTab:
             dir_row.addWidget(QtWidgets.QLabel(axis_label))
             dir_row.addWidget(sp)
 
-        def _commit_dir() -> None:
-            self._safe_call(
+        self._pending_appliers.append(
+            lambda: self._safe_call(
                 d.set_direction,
                 (
                     float(spins[0].value()),
@@ -1005,9 +1031,7 @@ class DiagramSettingsTab:
                     float(spins[2].value()),
                 ),
             )
-
-        for sp in spins:
-            sp.editingFinished.connect(_commit_dir)
+        )
         self._content_layout.addLayout(dir_row)
 
     # ------------------------------------------------------------------
@@ -1045,13 +1069,11 @@ class DiagramSettingsTab:
         hi_spin.setDecimals(6)
         hi_spin.setValue(float(hi_default))
 
-        def _commit() -> None:
-            self._safe_call(
+        self._pending_appliers.append(
+            lambda: self._safe_call(
                 d.set_clim, float(lo_spin.value()), float(hi_spin.value()),
             )
-
-        lo_spin.editingFinished.connect(_commit)
-        hi_spin.editingFinished.connect(_commit)
+        )
         form.addRow("Clim min:", lo_spin)
         form.addRow("Clim max:", hi_spin)
 
