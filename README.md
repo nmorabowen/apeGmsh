@@ -27,11 +27,11 @@ and CAD import.
 Not on PyPI yet — install directly from the repo:
 
 ```bash
-# Pinned to a release
-pip install "git+https://github.com/nmorabowen/apeGmsh.git@v1.5.0"
+# Latest from main
+pip install "git+https://github.com/nmorabowen/apeGmsh.git@main"
 
 # With all optional dependencies
-pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@v1.5.0"
+pip install "apeGmsh[all] @ git+https://github.com/nmorabowen/apeGmsh.git@main"
 ```
 
 Or clone for editable development:
