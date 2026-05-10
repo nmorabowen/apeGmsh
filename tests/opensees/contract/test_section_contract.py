@@ -26,12 +26,7 @@ from apeGmsh.opensees._internal.types import (
     UniaxialMaterial,
 )
 from apeGmsh.opensees.section.beam import ElasticSection
-from apeGmsh.opensees.section.fiber import (
-    Fiber,
-    FiberPoint,
-    RectPatch,
-    StraightLayer,
-)
+from apeGmsh.opensees.section.fiber import Fiber, RectPatch
 from apeGmsh.opensees.section.plate import (
     ElasticMembranePlateSection,
     LayeredShell,

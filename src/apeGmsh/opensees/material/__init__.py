@@ -1,1 +1,1 @@
-"""Typed primitives for OpenSees material commands."""
+"""Typed primitives for OpenSees ``uniaxialMaterial`` / ``nDMaterial``."""
