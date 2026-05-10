@@ -63,6 +63,7 @@ from ._opensees_elements import _Elements
 from ._opensees_ingest import _Ingest
 from ._opensees_inspect import _Inspect
 from ._opensees_export import _Export
+from . import _opensees_csys as csys
 
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _ApeGmshSession
@@ -88,6 +89,10 @@ class OpenSees(_HasLogging):
 
     _log_prefix = "OpenSees"
 
+    # Coordinate-system classes for frame orientation rules.  Surfaced
+    # at class level so users can reach them via ``g.opensees.csys``.
+    csys = csys
+
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
         self._ndm: int = 3
@@ -98,6 +103,10 @@ class OpenSees(_HasLogging):
         self._uni_materials: dict[str, dict] = {}
         self._sections     : dict[str, dict] = {}
         self._geom_transfs : dict[str, dict] = {}
+        # Post-build, expanded view of geom transforms (one entry per
+        # emitted ``geomTransf`` line; csys-based transforms may fan
+        # out into multiple entries).  Populated by ``run_build``.
+        self._geom_transfs_emit: dict[str, dict] = {}
 
         # ── element assignments ────────────────────────────────────────
         self._elem_assignments: dict[str, dict] = {}

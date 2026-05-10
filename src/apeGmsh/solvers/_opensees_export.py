@@ -109,8 +109,8 @@ class _Export:
                 f"section {s['section_type']}  {tag}  {params}  ;# {name}"
             )
 
-        hdr(f"GeomTransfs  ({len(ops._geom_transfs)})")
-        for name, t in ops._geom_transfs.items():
+        hdr(f"GeomTransfs  ({len(ops._geom_transfs_emit)})")
+        for name, t in ops._geom_transfs_emit.items():
             tag = ops._transf_tags[name]
             vecxz = t.get("vecxz")
             suffix = (
@@ -326,8 +326,8 @@ class _Export:
                 f"ops.section('{s['section_type']}', {tag}, {params})  # {name}"
             )
 
-        hdr(f"GeomTransfs  ({len(ops._geom_transfs)})")
-        for name, t in ops._geom_transfs.items():
+        hdr(f"GeomTransfs  ({len(ops._geom_transfs_emit)})")
+        for name, t in ops._geom_transfs_emit.items():
             tag = ops._transf_tags[name]
             vecxz = t.get("vecxz")
             suffix = (

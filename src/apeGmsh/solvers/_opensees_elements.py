@@ -121,34 +121,79 @@ class _Elements:
         transf_type: str,
         *,
         vecxz      : list[float] | None = None,
+        csys       : object | None = None,
+        roll_deg   : float = 0.0,
         **extra,
     ) -> "_Elements":
         """
         Register a geometric transformation for beam elements.
 
+        Two ways to specify the local-z orientation in 3-D:
+
+        * **Explicit** ``vecxz=[vx, vy, vz]`` — single Cartesian vector
+          shared by every beam under this transform.  Same as before.
+        * **Coordinate system** ``csys=<Cartesian|Cylindrical|Spherical>``
+          — orientation rule evaluated per element from the gmsh tangent
+          and the CS triad.  Curved members (ring beams, dome ribs) get a
+          per-element ``vecxz`` automatically; the build step emits one
+          ``geomTransf`` per distinct vecxz it observes.
+
+        ``vecxz`` and ``csys`` are mutually exclusive.  In 2-D both are
+        ignored.
+
         Parameters
         ----------
         name        : identifier referenced in :meth:`assign`
         transf_type : ``"Linear"``, ``"PDelta"``, or ``"Corotational"``
-        vecxz       : 3-D only — the local x-z plane vector ``[vx, vy, vz]``
-                      (the vector in the x-z plane, not the z-axis).
-                      Ignored for 2-D models.
+        vecxz       : 3-D only — local x-z plane vector ``[vx, vy, vz]``
+        csys        : 3-D only — :class:`Cartesian`, :class:`Cylindrical`,
+                      or :class:`Spherical` from
+                      :mod:`apeGmsh.solvers._opensees_csys`.
+        roll_deg    : 3-D only — additional section rotation about the
+                      beam tangent (right-hand rule), applied after the
+                      CS rule.  Only meaningful with ``csys=``.
 
         Example
         -------
         ::
 
-            # 2-D frame (no vecxz needed)
+            from apeGmsh.solvers import Cartesian, Cylindrical
+
+            # 2-D frame
             g.opensees.elements.add_geom_transf("Cols", "PDelta")
 
-            # 3-D frame
+            # 3-D frame, explicit vector
             g.opensees.elements.add_geom_transf(
                 "Cols", "Linear", vecxz=[0, 0, 1],
             )
+
+            # 3-D frame, "Z up" rule (default)
+            g.opensees.elements.add_geom_transf(
+                "Beams", "Linear", csys=Cartesian(),
+            )
+
+            # 3-D ring beam — radial strong axis
+            g.opensees.elements.add_geom_transf(
+                "RingBeam", "Linear",
+                csys=Cylindrical(origin=(0, 0, 0), axis=(0, 0, 1)),
+            )
         """
+        if vecxz is not None and csys is not None:
+            raise ValueError(
+                f"add_geom_transf({name!r}): pass either vecxz= or csys=, "
+                f"not both."
+            )
+        if roll_deg != 0.0 and csys is None:
+            raise ValueError(
+                f"add_geom_transf({name!r}): roll_deg is only meaningful "
+                f"with csys=; supply a csys or pre-rotate the explicit "
+                f"vecxz with elements.vecxz(..., roll_deg=...)."
+            )
         self._opensees._geom_transfs[name] = {
             "transf_type": transf_type,
             "vecxz"      : vecxz,
+            "csys"       : csys,
+            "roll_deg"   : float(roll_deg),
             **extra,
         }
         self._opensees._log(

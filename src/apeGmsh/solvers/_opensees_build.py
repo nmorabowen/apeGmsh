@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from ._element_specs import _ETYPE_INFO, _ELEM_REGISTRY
+from ._opensees_csys import resolve_vecxz
 
 if TYPE_CHECKING:
     from .OpenSees import OpenSees
@@ -65,7 +66,38 @@ def run_build(ops: "OpenSees") -> None:
     ops._nd_mat_tags  = {n: i for i, n in enumerate(ops._nd_materials,  start=1)}
     ops._uni_mat_tags = {n: i for i, n in enumerate(ops._uni_materials, start=1)}
     ops._sec_tags     = {n: i for i, n in enumerate(ops._sections,      start=1)}
-    ops._transf_tags  = {n: i for i, n in enumerate(ops._geom_transfs,  start=1)}
+
+    # ── 2a. Geometric transforms — split plain vs csys-based ─────────
+    # Plain transfs (explicit vecxz or 2-D) get one tag now.
+    # csys-based transfs are deferred to the per-element loop so we can
+    # compute one vecxz per element from the gmsh tangent and the CS.
+    ops._geom_transfs_emit: dict[str, dict] = {}
+    ops._transf_tags = {}                                # emit_name -> tag
+    _csys_specs: dict[str, dict]                = {}     # source -> spec
+    _csys_cache: dict[str, list[tuple]]         = {}     # source -> [(key, emit_name)]
+    _next_transf_tag = 1
+    for source_name, t in ops._geom_transfs.items():
+        if t.get("csys") is None:
+            ops._geom_transfs_emit[source_name] = {
+                "transf_type": t["transf_type"],
+                "vecxz"      : t.get("vecxz"),
+                "source"     : source_name,
+            }
+            ops._transf_tags[source_name] = _next_transf_tag
+            _next_transf_tag += 1
+        else:
+            if ops._ndm != 3:
+                raise ValueError(
+                    f"add_geom_transf({source_name!r}): csys= is only "
+                    f"valid for 3-D models. Drop csys= or call "
+                    f"set_model(ndm=3, ...)."
+                )
+            _csys_specs[source_name] = {
+                "csys"       : t["csys"],
+                "roll_deg"   : float(t.get("roll_deg", 0.0)),
+                "transf_type": t["transf_type"],
+            }
+            _csys_cache[source_name] = []
 
     # ── 3. Elements per assigned physical group ───────────────────────
     elem_rows: list[dict] = []
@@ -129,6 +161,7 @@ def run_build(ops: "OpenSees") -> None:
 
         # ── geomTransf check ──────────────────────────────────────────
         transf_tag = None
+        is_csys_transf = False
         if spec.needs_transf:
             if transf_name is None or transf_name not in ops._geom_transfs:
                 raise ValueError(
@@ -137,7 +170,10 @@ def run_build(ops: "OpenSees") -> None:
                     f"{transf_name!r} not found in elements.add_geom_transf registry. "
                     f"Available: {sorted(ops._geom_transfs)}"
                 )
-            transf_tag = ops._transf_tags[transf_name]
+            if transf_name in _csys_specs:
+                is_csys_transf = True   # tag chosen per element below
+            else:
+                transf_tag = ops._transf_tags[transf_name]
 
         # ── physical group lookup ─────────────────────────────────────
         expected_dim = hint_dim if hint_dim is not None else spec.expected_pg_dim
@@ -192,6 +228,55 @@ def run_build(ops: "OpenSees") -> None:
                     if len(ops_nodes) != n_corner:
                         continue  # unmapped node — skip silently
 
+                    # ── per-element transf_tag for csys-based transfs ──
+                    elem_transf_tag = transf_tag
+                    if is_csys_transf:
+                        spec_data = _csys_specs[transf_name]
+                        gn0 = int(corner_ns[0])
+                        gn1 = int(corner_ns[1])
+                        idx0 = ops._node_map[gn0] - 1
+                        idx1 = ops._node_map[gn1] - 1
+                        p0 = coords_arr[idx0]
+                        p1 = coords_arr[idx1]
+                        edge = p1 - p0
+                        length = float(np.linalg.norm(edge))
+                        if length < 1e-12:
+                            raise ValueError(
+                                f"build(): zero-length beam element in "
+                                f"PG {pg_name!r}"
+                            )
+                        tangent = edge / length
+                        midpoint = 0.5 * (p0 + p1)
+                        e1, e2, e3 = spec_data["csys"].triad_at(midpoint)
+                        try:
+                            vecxz_tup = resolve_vecxz(
+                                tangent, e1, e2, e3,
+                                roll_deg=spec_data["roll_deg"],
+                            )
+                        except ValueError as exc:
+                            raise ValueError(
+                                f"build(): could not resolve vecxz for "
+                                f"beam in PG {pg_name!r} "
+                                f"(transf {transf_name!r}): {exc}"
+                            ) from exc
+                        key = tuple(round(v, 9) for v in vecxz_tup)
+                        cache = _csys_cache[transf_name]
+                        emit_name = next(
+                            (n for kk, n in cache if kk == key),
+                            None,
+                        )
+                        if emit_name is None:
+                            emit_name = f"{transf_name}::{len(cache):03d}"
+                            cache.append((key, emit_name))
+                            ops._geom_transfs_emit[emit_name] = {
+                                "transf_type": spec_data["transf_type"],
+                                "vecxz"      : list(vecxz_tup),
+                                "source"     : transf_name,
+                            }
+                            ops._transf_tags[emit_name] = _next_transf_tag
+                            _next_transf_tag += 1
+                        elem_transf_tag = ops._transf_tags[emit_name]
+
                     elem_rows.append({
                         'ops_id'    : ops_elem_id,
                         'gmsh_id'   : int(elem_tags_arr[k]),
@@ -200,7 +285,7 @@ def run_build(ops: "OpenSees") -> None:
                         'mat_name'  : mat_name,
                         'mat_tag'   : mat_tag,
                         'sec_tag'   : sec_tag,
-                        'transf_tag': transf_tag,
+                        'transf_tag': elem_transf_tag,
                         'n_nodes'   : n_corner,
                         'nodes'     : ops_nodes,
                         'slots'     : slots,
