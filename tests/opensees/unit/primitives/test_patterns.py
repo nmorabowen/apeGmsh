@@ -359,8 +359,10 @@ class TestPatternNamespace:
         p = ops.pattern.Plain(series=ts)
         assert isinstance(p, Plain)
         assert p.series is ts
-        # Plain is the second registered primitive (after the series).
+        # The pattern tag-allocator counter is independent of the
+        # timeSeries counter, so Plain is tag 1 in its own kind.
         assert ops.tag_for(p) == 1
+        assert ops.tag_for(ts) == 1
 
     def test_uniform_excitation_namespace(self) -> None:
         ops = _make_ops()
