@@ -164,6 +164,22 @@ class TestFragment:
             f"2D fragment should split the surface into >=2 pieces, got {surfs}"
         )
 
+    def test_fragment_preserves_embedded_interior_surface(self, g):
+        """An embedded interior surface (no upward volume adjacency,
+        but lying inside the volume) must survive the cleanup_free
+        sweep so it remains addressable for crack/cohesive workflows.
+        """
+        g.model.geometry.add_box(-50, -50, -50, 100, 100, 100, label='box')
+        g.model.geometry.add_rectangle(-10, -10, 0, 20, 20, label='plane')
+        g.model.boolean.fragment(objects='box', tools='plane')
+        # 'plane' label must still resolve and point at a dim=2 entity
+        # that survives in the model.
+        plane_tags = g.labels.entities('plane', dim=2)
+        assert plane_tags, "embedded 'plane' surface was deleted by cleanup"
+        existing = {t for _, t in gmsh.model.getEntities(2)}
+        for t in plane_tags:
+            assert t in existing, f"label points at non-existent surface {t}"
+
     def test_fragment_cleanup_free_removes_orphan_surfaces(self, g):
         """With cleanup_free=True, no surface should be unbounded after fragment."""
         box = g.model.geometry.add_box(0, 0, 0, 2, 2, 2)

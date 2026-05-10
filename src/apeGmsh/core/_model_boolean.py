@@ -245,11 +245,28 @@ class _Boolean:
         # surface has no volume neighbour (there ARE no volumes), so
         # the sweep would destroy every surface in the model. Skip
         # the cleanup when no 3D entities exist.
+        # An embedded interior surface (e.g. a future crack plane) is
+        # also adjacency-free, so we keep any free surface whose
+        # centroid falls inside some volume's bounding box; only
+        # surfaces clearly outside every volume are deleted.
         if cleanup_free and gmsh.model.getEntities(3):
+            vol_bboxes = [
+                gmsh.model.getBoundingBox(3, vt)
+                for _, vt in gmsh.model.getEntities(3)
+            ]
             free: list[tuple[int, int]] = []
             for _, tag_s in gmsh.model.getEntities(2):
                 up, _ = gmsh.model.getAdjacencies(2, tag_s)
-                if len(up) == 0:
+                if len(up) != 0:
+                    continue
+                cx, cy, cz = gmsh.model.occ.getCenterOfMass(2, tag_s)
+                inside_any = any(
+                    xmin <= cx <= xmax
+                    and ymin <= cy <= ymax
+                    and zmin <= cz <= zmax
+                    for xmin, ymin, zmin, xmax, ymax, zmax in vol_bboxes
+                )
+                if not inside_any:
                     free.append((2, tag_s))
             if free:
                 gmsh.model.occ.remove(free, recursive=True)
