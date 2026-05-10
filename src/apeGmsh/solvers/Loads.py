@@ -518,6 +518,7 @@ class LoadResolver:
         self,
         defn: SurfaceLoadDef,
         faces: list[list[int]],
+        outwards: list[ndarray] | None = None,
     ) -> list[NodalLoadRecord]:
         """Distribute a surface load by tributary area.
 
@@ -525,14 +526,28 @@ class LoadResolver:
         For each face, total = ``magnitude * area`` and is split
         equally among the face's nodes.  ``normal=True`` projects
         along the face normal; otherwise the explicit direction vector.
+
+        ``outwards``, when given, supplies a per-face physical
+        outward unit normal that overrides the connectivity-derived
+        :meth:`face_normal`.  This is needed for embedded crack
+        faces (whose connectivity normal can disagree with physical
+        outward) and for tilted faces with unpredictable connectivity
+        orientation; the composite layer fills it in via
+        :meth:`LoadsComposite._face_outward_normals`.  When ``None``,
+        the connectivity normal is used (preserving backward compat
+        for direct callers that don't go through the composite).
         """
         accum: dict[int, ndarray] = {}
-        for face in faces:
+        for i, face in enumerate(faces):
             A = self.face_area(face)
             if A <= 0:
                 continue
             if defn.normal:
-                n = self.face_normal(face)
+                n = (
+                    np.asarray(outwards[i], dtype=float)
+                    if outwards is not None
+                    else self.face_normal(face)
+                )
                 # Convention: positive magnitude = pressure pushing into face
                 f3 = -defn.magnitude * A * n
             else:
@@ -799,6 +814,7 @@ class LoadResolver:
         defn: FaceLoadDef,
         face_node_ids: list[int],
         faces: list[list[int]] | None = None,
+        outwards: list[ndarray] | None = None,
     ) -> list[NodalLoadRecord]:
         """Distribute centroidal force/moment to face nodes.
 
@@ -809,6 +825,12 @@ class LoadResolver:
         derived from face geometry.  Requires ``faces`` (per-element
         node-id lists) when ``normal=True`` so the area-weighted
         average normal can be computed.
+
+        ``outwards``, when given, supplies a per-face physical outward
+        unit normal that overrides the connectivity-derived
+        :meth:`face_normal` in the area-weighted average.  See the
+        ``outwards=`` discussion on
+        :meth:`resolve_surface_tributary`.
         """
         N = len(face_node_ids)
         if N == 0:
@@ -826,11 +848,16 @@ class LoadResolver:
                     )
                 weighted = np.zeros(3)
                 total_area = 0.0
-                for face in faces:
+                for i, face in enumerate(faces):
                     A = self.face_area(face)
                     if A <= 0:
                         continue
-                    weighted += A * self.face_normal(face)
+                    n = (
+                        np.asarray(outwards[i], dtype=float)
+                        if outwards is not None
+                        else self.face_normal(face)
+                    )
+                    weighted += A * n
                     total_area += A
                 w_norm = float(np.linalg.norm(weighted))
                 if w_norm < 1e-30 or total_area <= 0:
@@ -925,6 +952,7 @@ class LoadResolver:
         defn: FaceSPDef,
         face_node_ids: list[int],
         faces: list[list[int]] | None = None,
+        outwards: list[ndarray] | None = None,
     ) -> list[SPRecord]:
         """Map centroidal rigid-body motion to per-node SP constraints.
 
@@ -936,6 +964,11 @@ class LoadResolver:
         translation contribution (along ``+n_avg`` for ``normal=True``,
         otherwise along the normalised ``direction``).  Requires
         ``faces`` when ``normal=True``.
+
+        ``outwards``, when given, supplies a per-face physical outward
+        unit normal that overrides the connectivity-derived
+        :meth:`face_normal`.  See
+        :meth:`resolve_surface_tributary`.
         """
         if not face_node_ids:
             return []
@@ -956,11 +989,16 @@ class LoadResolver:
                         "information; got empty `faces`."
                     )
                 weighted = np.zeros(3)
-                for face in faces:
+                for i, face in enumerate(faces):
                     A = self.face_area(face)
                     if A <= 0:
                         continue
-                    weighted += A * self.face_normal(face)
+                    n = (
+                        np.asarray(outwards[i], dtype=float)
+                        if outwards is not None
+                        else self.face_normal(face)
+                    )
+                    weighted += A * n
                 w_norm = float(np.linalg.norm(weighted))
                 if w_norm < 1e-30:
                     raise ValueError(
