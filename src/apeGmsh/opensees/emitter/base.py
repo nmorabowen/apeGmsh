@@ -66,6 +66,16 @@ class Emitter(Protocol):
     ) -> None: ...
     def layer(self, kind: str, *args: int | float) -> None: ...
 
+    # -- Beam integration rules ------------------------------------------
+    # Single-line; no block. References its constituent sections by tag,
+    # not by composition. Beam-column elements then reference this
+    # integration rule's tag rather than carrying ``section`` + ``n_ip``
+    # directly — this mirrors modern OpenSees and is what openseespy
+    # requires for ``forceBeamColumn`` / ``dispBeamColumn`` to parse.
+    def beamIntegration(
+        self, rule_type: str, tag: int, *args: int | float | str
+    ) -> None: ...
+
     # -- Topology --------------------------------------------------------
     def element(
         self, ele_type: str, tag: int, *args: int | float | str

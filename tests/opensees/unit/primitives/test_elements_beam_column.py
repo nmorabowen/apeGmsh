@@ -23,6 +23,7 @@ from apeGmsh.opensees._internal.tag_resolution import (
     set_tag_resolver,
 )
 from apeGmsh.opensees._internal.types import (
+    BeamIntegration,
     Primitive,
     Section,
     UniaxialMaterial,
@@ -35,6 +36,7 @@ from apeGmsh.opensees.element.beam_column import (
 )
 from apeGmsh.opensees.emitter.base import Emitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from apeGmsh.opensees.integration import Lobatto
 from apeGmsh.opensees.transform import Corotational, Linear, PDelta
 
 
@@ -293,52 +295,49 @@ class TestElasticBeamColumnEmit:
 # forceBeamColumn
 # ===========================================================================
 
+def _integ_from(sec: _FakeSection, n_ip: int = 5) -> Lobatto:
+    """Build a Lobatto integration rule composing the fake section."""
+    return Lobatto(section=sec, n_ip=n_ip)
+
+
 class TestForceBeamColumnConstruction:
     def test_construct_minimum(self) -> None:
         sec = _FakeSection(name="col_sec")
+        integ = _integ_from(sec)
         t = Corotational(vecxz=(0.0, 0.0, 1.0))
-        e = forceBeamColumn(
-            pg="Cols", section=sec, transf=t, n_ip=5,
-        )
-        assert e.section is sec
+        e = forceBeamColumn(pg="Cols", transf=t, integration=integ)
+        assert e.integration is integ
         assert e.transf is t
-        assert e.n_ip == 5
         assert e.mass is None
         assert e.max_iter is None
         assert e.tol is None
 
     def test_dependencies(self) -> None:
+        """forceBeamColumn returns (integration, transf) — sections are
+        composed into the integration rule, not the element."""
         sec = _FakeSection(name="col_sec")
+        integ = _integ_from(sec)
         t = Linear(vecxz=(0.0, 0.0, 1.0))
-        e = forceBeamColumn(pg="Cols", section=sec, transf=t, n_ip=5)
-        assert e.dependencies() == (sec, t)
+        e = forceBeamColumn(pg="Cols", transf=t, integration=integ)
+        assert e.dependencies() == (integ, t)
 
 
 class TestForceBeamColumnValidation:
-    def _sec(self) -> _FakeSection:
-        return _FakeSection(name="x")
+    def _integ(self) -> BeamIntegration:
+        return _integ_from(_FakeSection(name="x"))
 
     def _t(self) -> Linear:
         return Linear(vecxz=(0.0, 0.0, 1.0))
 
     def test_pg_empty_rejected(self) -> None:
         with pytest.raises(ValueError, match="pg must be a non-empty"):
-            forceBeamColumn(
-                pg="", section=self._sec(), transf=self._t(), n_ip=3,
-            )
-
-    @pytest.mark.parametrize("n", [0, -1])
-    def test_n_ip_must_be_positive(self, n: int) -> None:
-        with pytest.raises(ValueError, match="n_ip must be >= 1"):
-            forceBeamColumn(
-                pg="Cols", section=self._sec(), transf=self._t(), n_ip=n,
-            )
+            forceBeamColumn(pg="", transf=self._t(), integration=self._integ())
 
     def test_mass_negative_rejected(self) -> None:
         with pytest.raises(ValueError, match="mass must be >= 0"):
             forceBeamColumn(
-                pg="Cols", section=self._sec(), transf=self._t(),
-                n_ip=3, mass=-0.1,
+                pg="Cols", transf=self._t(), integration=self._integ(),
+                mass=-0.1,
             )
 
     def test_iter_partial_max_iter_only_rejected(self) -> None:
@@ -346,8 +345,8 @@ class TestForceBeamColumnValidation:
             ValueError, match="max_iter and tol must be supplied together"
         ):
             forceBeamColumn(
-                pg="Cols", section=self._sec(), transf=self._t(),
-                n_ip=3, max_iter=10,
+                pg="Cols", transf=self._t(), integration=self._integ(),
+                max_iter=10,
             )
 
     def test_iter_partial_tol_only_rejected(self) -> None:
@@ -355,38 +354,40 @@ class TestForceBeamColumnValidation:
             ValueError, match="max_iter and tol must be supplied together"
         ):
             forceBeamColumn(
-                pg="Cols", section=self._sec(), transf=self._t(),
-                n_ip=3, tol=1e-8,
+                pg="Cols", transf=self._t(), integration=self._integ(),
+                tol=1e-8,
             )
 
     def test_iter_negative_max_iter_rejected(self) -> None:
         with pytest.raises(ValueError, match="max_iter must be > 0"):
             forceBeamColumn(
-                pg="Cols", section=self._sec(), transf=self._t(),
-                n_ip=3, max_iter=0, tol=1e-8,
+                pg="Cols", transf=self._t(), integration=self._integ(),
+                max_iter=0, tol=1e-8,
             )
 
     def test_iter_negative_tol_rejected(self) -> None:
         with pytest.raises(ValueError, match="tol must be > 0"):
             forceBeamColumn(
-                pg="Cols", section=self._sec(), transf=self._t(),
-                n_ip=3, max_iter=10, tol=0.0,
+                pg="Cols", transf=self._t(), integration=self._integ(),
+                max_iter=10, tol=0.0,
             )
 
 
 class TestForceBeamColumnEmit:
     def _build(
         self,
-    ) -> tuple[forceBeamColumn, _FakeSection, Corotational]:
+    ) -> tuple[forceBeamColumn, BeamIntegration, Corotational]:
         sec = _FakeSection(name="col_sec")
+        integ = _integ_from(sec)
         t = Corotational(vecxz=(0.0, 0.0, 1.0))
-        spec = forceBeamColumn(pg="Cols", section=sec, transf=t, n_ip=5)
-        return spec, sec, t
+        spec = forceBeamColumn(pg="Cols", transf=t, integration=integ)
+        return spec, integ, t
 
     def test_emit_records_correct_call(self) -> None:
-        spec, sec, t = self._build()
+        """Modern shape: `element forceBeamColumn tag iNode jNode transfTag integrationTag`."""
+        spec, integ, t = self._build()
         rec = RecordingEmitter()
-        set_tag_resolver(rec, _resolver_from({id(sec): 1, id(t): 2}))
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
         set_element_nodes(rec, (10, 20))
 
         spec._emit(rec, tag=42)
@@ -394,89 +395,82 @@ class TestForceBeamColumnEmit:
         assert rec.calls == [
             (
                 "element",
-                (
-                    "forceBeamColumn", 42, 10, 20, 2,
-                    "-section", 1, 5,
-                ),
+                ("forceBeamColumn", 42, 10, 20, 2, 7),
                 {},
             )
         ]
 
     def test_emit_with_mass_flag(self) -> None:
-        spec_basic, sec, t = self._build()
-        # New spec with mass set.
+        spec_basic, integ, t = self._build()
         spec = forceBeamColumn(
-            pg=spec_basic.pg, section=sec, transf=t, n_ip=spec_basic.n_ip,
+            pg=spec_basic.pg, transf=t, integration=integ,
             mass=12.5,
         )
         rec = RecordingEmitter()
-        set_tag_resolver(rec, _resolver_from({id(sec): 1, id(t): 2}))
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
         set_element_nodes(rec, (10, 20))
 
         spec._emit(rec, tag=42)
 
         assert rec.calls[0][1] == (
-            "forceBeamColumn", 42, 10, 20, 2,
-            "-section", 1, 5,
+            "forceBeamColumn", 42, 10, 20, 2, 7,
             "-mass", 12.5,
         )
 
     def test_emit_with_iter_flag(self) -> None:
-        spec_basic, sec, t = self._build()
+        spec_basic, integ, t = self._build()
         spec = forceBeamColumn(
-            pg=spec_basic.pg, section=sec, transf=t, n_ip=spec_basic.n_ip,
+            pg=spec_basic.pg, transf=t, integration=integ,
             max_iter=20, tol=1e-9,
         )
         rec = RecordingEmitter()
-        set_tag_resolver(rec, _resolver_from({id(sec): 1, id(t): 2}))
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
         set_element_nodes(rec, (10, 20))
 
         spec._emit(rec, tag=42)
 
         assert rec.calls[0][1] == (
-            "forceBeamColumn", 42, 10, 20, 2,
-            "-section", 1, 5,
+            "forceBeamColumn", 42, 10, 20, 2, 7,
             "-iter", 20, 1e-9,
         )
 
     def test_emit_with_mass_and_iter(self) -> None:
-        spec_basic, sec, t = self._build()
+        spec_basic, integ, t = self._build()
         spec = forceBeamColumn(
-            pg=spec_basic.pg, section=sec, transf=t, n_ip=spec_basic.n_ip,
+            pg=spec_basic.pg, transf=t, integration=integ,
             mass=2.5, max_iter=20, tol=1e-9,
         )
         rec = RecordingEmitter()
-        set_tag_resolver(rec, _resolver_from({id(sec): 1, id(t): 2}))
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
         set_element_nodes(rec, (10, 20))
 
         spec._emit(rec, tag=42)
 
         # Order: -mass first, then -iter.
         assert rec.calls[0][1] == (
-            "forceBeamColumn", 42, 10, 20, 2,
-            "-section", 1, 5,
+            "forceBeamColumn", 42, 10, 20, 2, 7,
             "-mass", 2.5,
             "-iter", 20, 1e-9,
         )
 
     def test_emit_without_node_context_raises(self) -> None:
-        spec, sec, t = self._build()
+        spec, integ, t = self._build()
         rec = RecordingEmitter()
-        set_tag_resolver(rec, _resolver_from({id(sec): 1, id(t): 2}))
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
         with pytest.raises(RuntimeError, match="element"):
             spec._emit(rec, tag=1)
 
     def test_emit_without_resolver_raises(self) -> None:
-        spec, _sec, _t = self._build()
+        spec, _integ, _t = self._build()
         rec = RecordingEmitter()
         set_element_nodes(rec, (10, 20))
         with pytest.raises(RuntimeError, match="resolver"):
             spec._emit(rec, tag=1)
 
     def test_emit_with_one_node_rejected(self) -> None:
-        spec, sec, t = self._build()
+        spec, integ, t = self._build()
         rec = RecordingEmitter()
-        set_tag_resolver(rec, _resolver_from({id(sec): 1, id(t): 2}))
+        set_tag_resolver(rec, _resolver_from({id(integ): 7, id(t): 2}))
         set_element_nodes(rec, (10,))
         with pytest.raises(ValueError, match="expected 2 node tags"):
             spec._emit(rec, tag=1)
@@ -489,87 +483,80 @@ class TestForceBeamColumnEmit:
 class TestDispBeamColumnConstruction:
     def test_construct_minimum(self) -> None:
         sec = _FakeSection(name="x")
+        integ = _integ_from(sec, n_ip=4)
         t = Linear(vecxz=(0.0, 0.0, 1.0))
-        e = dispBeamColumn(pg="Cols", section=sec, transf=t, n_ip=4)
-        assert e.section is sec
+        e = dispBeamColumn(pg="Cols", transf=t, integration=integ)
+        assert e.integration is integ
         assert e.transf is t
-        assert e.n_ip == 4
         assert e.c_mass is False
         assert e.mass is None
 
     def test_dependencies(self) -> None:
         sec = _FakeSection(name="x")
+        integ = _integ_from(sec, n_ip=4)
         t = Linear(vecxz=(0.0, 0.0, 1.0))
-        e = dispBeamColumn(pg="Cols", section=sec, transf=t, n_ip=4)
-        assert e.dependencies() == (sec, t)
+        e = dispBeamColumn(pg="Cols", transf=t, integration=integ)
+        assert e.dependencies() == (integ, t)
 
 
 class TestDispBeamColumnValidation:
-    def _sec(self) -> _FakeSection:
-        return _FakeSection(name="x")
+    def _integ(self) -> BeamIntegration:
+        return _integ_from(_FakeSection(name="x"))
 
     def _t(self) -> Linear:
         return Linear(vecxz=(0.0, 0.0, 1.0))
 
     def test_pg_empty_rejected(self) -> None:
         with pytest.raises(ValueError, match="pg must be a non-empty"):
-            dispBeamColumn(
-                pg="", section=self._sec(), transf=self._t(), n_ip=3,
-            )
-
-    @pytest.mark.parametrize("n", [0, -2])
-    def test_n_ip_must_be_positive(self, n: int) -> None:
-        with pytest.raises(ValueError, match="n_ip must be >= 1"):
-            dispBeamColumn(
-                pg="Cols", section=self._sec(), transf=self._t(), n_ip=n,
-            )
+            dispBeamColumn(pg="", transf=self._t(), integration=self._integ())
 
     def test_mass_negative_rejected(self) -> None:
         with pytest.raises(ValueError, match="mass must be >= 0"):
             dispBeamColumn(
-                pg="Cols", section=self._sec(), transf=self._t(),
-                n_ip=3, mass=-1.0,
+                pg="Cols", transf=self._t(), integration=self._integ(),
+                mass=-1.0,
             )
 
 
 class TestDispBeamColumnEmit:
-    def _build(self) -> tuple[dispBeamColumn, _FakeSection, Linear]:
+    def _build(self) -> tuple[dispBeamColumn, BeamIntegration, Linear]:
         sec = _FakeSection(name="x")
+        integ = _integ_from(sec, n_ip=4)
         t = Linear(vecxz=(0.0, 0.0, 1.0))
-        spec = dispBeamColumn(pg="Cols", section=sec, transf=t, n_ip=4)
-        return spec, sec, t
+        spec = dispBeamColumn(pg="Cols", transf=t, integration=integ)
+        return spec, integ, t
 
     def test_emit_records_correct_call(self) -> None:
-        spec, sec, t = self._build()
+        """Modern shape: `element dispBeamColumn tag iNode jNode transfTag integrationTag`."""
+        spec, integ, t = self._build()
         rec = RecordingEmitter()
-        set_tag_resolver(rec, _resolver_from({id(sec): 11, id(t): 12}))
+        set_tag_resolver(rec, _resolver_from({id(integ): 11, id(t): 12}))
         set_element_nodes(rec, (3, 4))
 
         spec._emit(rec, tag=99)
 
-        # Tcl: tag iNode jNode numIntgrPts secTag transfTag
         assert rec.calls == [
             (
                 "element",
-                ("dispBeamColumn", 99, 3, 4, 4, 11, 12),
+                ("dispBeamColumn", 99, 3, 4, 12, 11),
                 {},
             )
         ]
 
     def test_emit_with_mass_and_c_mass(self) -> None:
-        spec_basic, sec, t = self._build()
+        spec_basic, integ, t = self._build()
         spec = dispBeamColumn(
-            pg=spec_basic.pg, section=sec, transf=t, n_ip=spec_basic.n_ip,
+            pg=spec_basic.pg, transf=t, integration=integ,
             mass=3.0, c_mass=True,
         )
         rec = RecordingEmitter()
-        set_tag_resolver(rec, _resolver_from({id(sec): 11, id(t): 12}))
+        set_tag_resolver(rec, _resolver_from({id(integ): 11, id(t): 12}))
         set_element_nodes(rec, (3, 4))
 
         spec._emit(rec, tag=1)
 
         assert rec.calls[0][1] == (
-            "dispBeamColumn", 1, 3, 4, 4, 11, 12,
+            "dispBeamColumn", 1, 3, 4, 12, 11,
             "-mass", 3.0, "-cMass",
         )
 
@@ -759,14 +746,16 @@ class TestBeamColumnRepr:
 
     def test_forceBeamColumn_repr(self) -> None:
         sec = _FakeSection(name="x")
+        integ = _integ_from(sec)
         t = Linear(vecxz=(0.0, 0.0, 1.0))
-        e = forceBeamColumn(pg="Cols", section=sec, transf=t, n_ip=5)
+        e = forceBeamColumn(pg="Cols", transf=t, integration=integ)
         assert "forceBeamColumn" in repr(e)
 
     def test_dispBeamColumn_repr(self) -> None:
         sec = _FakeSection(name="x")
+        integ = _integ_from(sec, n_ip=4)
         t = Linear(vecxz=(0.0, 0.0, 1.0))
-        e = dispBeamColumn(pg="Cols", section=sec, transf=t, n_ip=4)
+        e = dispBeamColumn(pg="Cols", transf=t, integration=integ)
         assert "dispBeamColumn" in repr(e)
 
     def test_ElasticTimoshenkoBeam_repr(self) -> None:

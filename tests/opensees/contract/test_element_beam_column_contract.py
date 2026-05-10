@@ -32,6 +32,7 @@ from apeGmsh.opensees.element.beam_column import (
 )
 from apeGmsh.opensees.emitter.base import Emitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
+from apeGmsh.opensees.integration import Lobatto
 
 
 ALL_BEAM_COLUMN_ELEMENTS: list[type[Element]] = [
@@ -70,6 +71,7 @@ class _FakeTransf(GeomTransf):
 
 _FAKE_SEC = _FakeSection(name="contract")
 _FAKE_TRANSF = _FakeTransf(name="contract")
+_FAKE_INTEG = Lobatto(section=_FAKE_SEC, n_ip=5)
 
 
 _MINIMAL_PARAMS: dict[type[Element], dict[str, Any]] = {
@@ -78,12 +80,10 @@ _MINIMAL_PARAMS: dict[type[Element], dict[str, Any]] = {
         "A": 0.01, "E": 200e9, "Iz": 1e-4,
     },
     forceBeamColumn: {
-        "pg": "c", "section": _FAKE_SEC, "transf": _FAKE_TRANSF,
-        "n_ip": 5,
+        "pg": "c", "transf": _FAKE_TRANSF, "integration": _FAKE_INTEG,
     },
     dispBeamColumn: {
-        "pg": "c", "section": _FAKE_SEC, "transf": _FAKE_TRANSF,
-        "n_ip": 3,
+        "pg": "c", "transf": _FAKE_TRANSF, "integration": _FAKE_INTEG,
     },
     ElasticTimoshenkoBeam: {
         "pg": "c", "transf": _FAKE_TRANSF,

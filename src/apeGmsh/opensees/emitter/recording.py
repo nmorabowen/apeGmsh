@@ -78,6 +78,12 @@ class RecordingEmitter:
     def layer(self, kind: str, *args: int | float) -> None:
         self.calls.append(("layer", (kind, *args), {}))
 
+    # -- Beam integration rules ------------------------------------------
+    def beamIntegration(
+        self, rule_type: str, tag: int, *args: int | float | str
+    ) -> None:
+        self.calls.append(("beamIntegration", (rule_type, tag, *args), {}))
+
     # -- Topology --------------------------------------------------------
     def element(
         self, ele_type: str, tag: int, *args: int | float | str

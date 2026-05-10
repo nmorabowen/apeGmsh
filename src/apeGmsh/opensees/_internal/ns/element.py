@@ -42,7 +42,7 @@ from ...section.plate import (
     LayeredShellFiberSection,
 )
 from ...transform import Corotational, Linear, PDelta
-from ..types import NDMaterial, Section, UniaxialMaterial
+from ..types import BeamIntegration, NDMaterial, Section, UniaxialMaterial
 from ._base import _BridgeNamespace
 
 
@@ -93,16 +93,20 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        section: Section,
         transf: _AnyTransf,
-        n_ip: int,
+        integration: BeamIntegration,
         mass: float | None = None,
         max_iter: int | None = None,
         tol: float | None = None,
     ) -> forceBeamColumn:
+        """``element forceBeamColumn`` — force-based distributed-plasticity.
+
+        Compose the integration rule first (e.g. ``ops.beamIntegration.Lobatto(
+        section=sec, n_ip=5)``) and pass it as ``integration=``.
+        """
         return self._bridge._register(
             forceBeamColumn(
-                pg=pg, section=section, transf=transf, n_ip=n_ip,
+                pg=pg, transf=transf, integration=integration,
                 mass=mass, max_iter=max_iter, tol=tol,
             )
         )
@@ -111,15 +115,15 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        section: Section,
         transf: _AnyTransf,
-        n_ip: int,
+        integration: BeamIntegration,
         mass: float | None = None,
         c_mass: bool = False,
     ) -> dispBeamColumn:
+        """``element dispBeamColumn`` — displacement-based distributed-plasticity."""
         return self._bridge._register(
             dispBeamColumn(
-                pg=pg, section=section, transf=transf, n_ip=n_ip,
+                pg=pg, transf=transf, integration=integration,
                 mass=mass, c_mass=c_mass,
             )
         )

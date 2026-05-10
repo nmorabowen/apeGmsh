@@ -32,6 +32,7 @@ __all__ = [
     "NDMaterial",
     "Section",
     "GeomTransf",
+    "BeamIntegration",
     "Element",
     "TimeSeries",
     "Pattern",
@@ -109,6 +110,27 @@ class GeomTransf(Primitive):
     ``opensees.transform``; coordinate-system helpers (Cartesian,
     Cylindrical, Spherical) are re-exported from
     :mod:`apeGmsh.solvers._opensees_csys` per ADR 0010.
+    """
+
+
+# ---------------------------------------------------------------------------
+# BeamIntegration
+# ---------------------------------------------------------------------------
+
+class BeamIntegration(Primitive):
+    """Abstract base for ``beamIntegration <Type>`` primitives.
+
+    BeamIntegration rules sit between sections and beam-column elements.
+    A rule (Lobatto, HingeRadau, etc.) composes one or more sections
+    and tells the force-/disp-based beam-column element how many
+    integration points to place and where. The element references the
+    rule by tag rather than carrying a ``section`` + ``n_ip`` pair
+    directly.
+
+    This split mirrors modern OpenSees (and is what openseespy requires
+    for ``forceBeamColumn`` / ``dispBeamColumn`` to parse). It also
+    makes concentrated-plasticity rules (Hinge*) and per-IP
+    heterogeneous sections (UserDefined / FixedLocation) first-class.
     """
 
 

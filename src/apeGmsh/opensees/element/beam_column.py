@@ -79,7 +79,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .._internal.tag_resolution import current_element_nodes, resolve_tag
-from .._internal.types import Element, Primitive, Section
+from .._internal.types import BeamIntegration, Element, Primitive
 from ..transform import Corotational, Linear, PDelta
 
 
@@ -262,21 +262,47 @@ class elasticBeamColumn(Element):
 class forceBeamColumn(Element):
     """``element forceBeamColumn`` — force-based distributed-plasticity beam.
 
-    Phase 2α ships the **single-section** integration form, equivalent
-    to ``-section secTag numIntgrPts``. Multi-section integration
-    (``-sections n s1 s2 ... sN``) is deferred — see module docstring.
+    Modern OpenSees command shape (the only form openseespy parses)::
+
+        element forceBeamColumn tag iNode jNode transfTag integrationTag
+                                [-mass m] [-iter maxIter tol]
+
+    The integration rule is a separate registered primitive (see
+    :mod:`apeGmsh.opensees.integration`). The user constructs it via
+    ``ops.beamIntegration.<Type>(...)`` and references it on the
+    element via ``integration=``.
+
+    For the common case of "single section, N Lobatto IPs" the user
+    can construct the rule inline:
+
+    .. code-block:: python
+
+        sec = ops.section.Fiber(...)
+        integ = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
+        ops.element.forceBeamColumn(
+            pg="Cols", transf=t, integration=integ,
+        )
+
+    For concentrated-plasticity:
+
+    .. code-block:: python
+
+        hinge = ops.beamIntegration.HingeRadau(
+            section_i=plastic_sec, lp_i=0.1,
+            section_j=plastic_sec, lp_j=0.1,
+            section_interior=elastic_sec,
+        )
+        ops.element.forceBeamColumn(pg="Cols", transf=t, integration=hinge)
 
     Parameters
     ----------
     pg
         Physical-group name the spec applies to.
-    section
-        Single :class:`Section` integrated over the element. Multi-section
-        per-IP heterogeneous sections is a follow-up.
     transf
         Geometric transform.
-    n_ip
-        Number of integration points. Must be >= 1.
+    integration
+        The :class:`BeamIntegration` rule that places IPs along the
+        element and composes sections.
     mass
         Optional ``-mass <m>`` per-unit-length mass.
     max_iter
@@ -292,9 +318,8 @@ class forceBeamColumn(Element):
     """
 
     pg: str
-    section: Section
     transf: _AnyTransf
-    n_ip: int
+    integration: BeamIntegration
     mass: float | None = None
     max_iter: int | None = None
     tol: float | None = None
@@ -302,10 +327,6 @@ class forceBeamColumn(Element):
     def __post_init__(self) -> None:
         if not self.pg:
             raise ValueError("forceBeamColumn: pg must be a non-empty name.")
-        if self.n_ip <= 0:
-            raise ValueError(
-                f"forceBeamColumn: n_ip must be >= 1, got {self.n_ip}."
-            )
         _check_optional_mass("forceBeamColumn", self.mass)
 
         if (self.max_iter is None) != (self.tol is None):
@@ -323,18 +344,17 @@ class forceBeamColumn(Element):
             )
 
     def dependencies(self) -> tuple[Primitive, ...]:
-        return (self.section, self.transf)
+        return (self.integration, self.transf)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
         _check_two_nodes("forceBeamColumn", nodes)
         i_node, j_node = nodes
-        sec_tag = resolve_tag(emitter, self.section)
         transf_tag = resolve_tag(emitter, self.transf)
+        integ_tag = resolve_tag(emitter, self.integration)
 
         args: list[int | float | str] = [
-            i_node, j_node, transf_tag,
-            "-section", sec_tag, self.n_ip,
+            i_node, j_node, transf_tag, integ_tag,
         ]
         if self.mass is not None:
             args.extend(["-mass", self.mass])
@@ -352,22 +372,23 @@ class forceBeamColumn(Element):
 class dispBeamColumn(Element):
     """``element dispBeamColumn`` — displacement-based beam-column.
 
-    Phase 2α ships the single-section form. The OpenSees Tcl signature
-    is::
+    Modern OpenSees command shape::
 
-        element dispBeamColumn $tag $iNode $jNode $numIntgrPts \
-            $secTag $transfTag [-mass $m] [-cMass]
+        element dispBeamColumn tag iNode jNode transfTag integrationTag
+                               [-mass m] [-cMass]
+
+    Like :class:`forceBeamColumn`, the integration rule is a separate
+    registered primitive — see :mod:`apeGmsh.opensees.integration`.
 
     Parameters
     ----------
     pg
         Physical-group name the spec applies to.
-    section
-        Single :class:`Section` integrated over the element.
     transf
         Geometric transform.
-    n_ip
-        Number of integration points (>= 1).
+    integration
+        The :class:`BeamIntegration` rule that places IPs along the
+        element and composes sections.
     mass
         Optional ``-mass <m>`` per-unit-length mass.
     c_mass
@@ -375,34 +396,28 @@ class dispBeamColumn(Element):
     """
 
     pg: str
-    section: Section
     transf: _AnyTransf
-    n_ip: int
+    integration: BeamIntegration
     mass: float | None = None
     c_mass: bool = False
 
     def __post_init__(self) -> None:
         if not self.pg:
             raise ValueError("dispBeamColumn: pg must be a non-empty name.")
-        if self.n_ip <= 0:
-            raise ValueError(
-                f"dispBeamColumn: n_ip must be >= 1, got {self.n_ip}."
-            )
         _check_optional_mass("dispBeamColumn", self.mass)
 
     def dependencies(self) -> tuple[Primitive, ...]:
-        return (self.section, self.transf)
+        return (self.integration, self.transf)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         nodes = current_element_nodes(emitter)
         _check_two_nodes("dispBeamColumn", nodes)
         i_node, j_node = nodes
-        sec_tag = resolve_tag(emitter, self.section)
         transf_tag = resolve_tag(emitter, self.transf)
+        integ_tag = resolve_tag(emitter, self.integration)
 
         args: list[int | float | str] = [
-            i_node, j_node,
-            self.n_ip, sec_tag, transf_tag,
+            i_node, j_node, transf_tag, integ_tag,
         ]
         if self.mass is not None:
             args.extend(["-mass", self.mass])
