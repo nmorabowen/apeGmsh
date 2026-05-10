@@ -141,6 +141,14 @@ class FaceLoadDef(LoadDef):
     via a least-norm distribution such that ``Sum(r_i x f_i) = M`` and
     ``Sum(f_i) = 0``.
 
+    A scalar ``magnitude`` (total Newtons, NOT pressure) can be combined
+    with either ``normal=True`` or an explicit ``direction`` to produce
+    the equivalent ``force_xyz`` without manually computing the face
+    normal.  Sign convention mirrors :class:`SurfaceLoadDef`: positive
+    ``magnitude`` with ``normal=True`` pushes **into** the face (i.e.
+    along ``-n_avg``).  Composes with ``moment_xyz``; combining with
+    ``force_xyz`` is an error.
+
     Use this instead of a reference node + coupling when you only need
     to apply a load to a face without structural coupling to another
     element.
@@ -148,6 +156,9 @@ class FaceLoadDef(LoadDef):
     kind: str = field(init=False, default="face_load")
     force_xyz: tuple[float, float, float] | None = None
     moment_xyz: tuple[float, float, float] | None = None
+    magnitude: float = 0.0
+    normal: bool = False
+    direction: tuple[float, float, float] | None = None
 
 
 @dataclass
@@ -767,19 +778,69 @@ class LoadResolver:
         self,
         defn: FaceLoadDef,
         face_node_ids: list[int],
+        faces: list[list[int]] | None = None,
     ) -> list[NodalLoadRecord]:
         """Distribute centroidal force/moment to face nodes.
 
         ``force_xyz``: equal share ``F / N`` per node.
         ``moment_xyz``: least-norm nodal forces satisfying
         ``Sum(f_i) = 0`` and ``Sum(r_i x f_i) = M``.
+        ``magnitude`` + ``normal``/``direction``: equivalent force_xyz
+        derived from face geometry.  Requires ``faces`` (per-element
+        node-id lists) when ``normal=True`` so the area-weighted
+        average normal can be computed.
         """
         N = len(face_node_ids)
         if N == 0:
             return []
         accum: dict[int, ndarray] = {}
 
-        # Force contribution: equal split
+        # Magnitude path: derive an equivalent force_xyz from
+        # face geometry, then equal-split like force_xyz.
+        if defn.magnitude != 0.0:
+            if defn.normal:
+                if not faces:
+                    raise ValueError(
+                        "face_load with normal=True requires face "
+                        "element information; got empty `faces`."
+                    )
+                weighted = np.zeros(3)
+                total_area = 0.0
+                for face in faces:
+                    A = self.face_area(face)
+                    if A <= 0:
+                        continue
+                    weighted += A * self.face_normal(face)
+                    total_area += A
+                w_norm = float(np.linalg.norm(weighted))
+                if w_norm < 1e-30 or total_area <= 0:
+                    raise ValueError(
+                        "face_load(normal=True): degenerate face "
+                        "geometry (zero area or null average normal)."
+                    )
+                # Sign convention matches SurfaceLoadDef: positive
+                # magnitude pushes into the face (opposite -n_avg).
+                f_total = -defn.magnitude * (weighted / w_norm)
+            else:
+                if defn.direction is None:
+                    raise ValueError(
+                        "face_load(magnitude=...) requires either "
+                        "normal=True or an explicit direction= vector."
+                    )
+                d = np.asarray(defn.direction, dtype=float)
+                d_norm = float(np.linalg.norm(d))
+                if d_norm < 1e-30:
+                    raise ValueError(
+                        "face_load(direction=...): null direction vector."
+                    )
+                f_total = defn.magnitude * (d / d_norm)
+            per_node = f_total / N
+            f6 = np.array([per_node[0], per_node[1], per_node[2],
+                           0.0, 0.0, 0.0])
+            for nid in face_node_ids:
+                _accumulate_nodal(accum, nid, f6)
+
+        # Explicit force_xyz: equal split
         if defn.force_xyz is not None:
             f_total = np.asarray(defn.force_xyz, dtype=float)
             per_node = f_total / N

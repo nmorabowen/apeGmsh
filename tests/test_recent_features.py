@@ -149,6 +149,88 @@ class TestResolveFaceLoad(unittest.TestCase):
         )
         self.assertEqual(recs, [])
 
+    def test_magnitude_normal_pushes_into_face(self):
+        """magnitude=F, normal=True -> total = -F * n_avg, equal split.
+
+        On a unit XY square (n_avg = +z) with F = 100, each of the 4
+        nodes should receive (0, 0, -25).
+        """
+        coords = _face_of_four()
+        r = _load_resolver(coords)
+        defn = FaceLoadDef(
+            target="f", magnitude=100.0, normal=True,
+        )
+        face = [1, 2, 3, 4]
+        records = r.resolve_face_load(defn, face_node_ids=face, faces=[face])
+        per_node_expected = (0.0, 0.0, -25.0)
+        for rec in records:
+            for i in range(3):
+                self.assertAlmostEqual(
+                    rec.force_xyz[i], per_node_expected[i], places=10,
+                )
+
+    def test_magnitude_direction_distributes_along_vector(self):
+        """magnitude=F, direction=(...) -> total = F * d_unit, equal split."""
+        r = _load_resolver(_face_of_four())
+        defn = FaceLoadDef(
+            target="f", magnitude=80.0, direction=(0.0, 3.0, 4.0),
+        )
+        records = r.resolve_face_load(defn, face_node_ids=[1, 2, 3, 4])
+        # |d| = 5; per-node = 80 * (0, 0.6, 0.8) / 4 = (0, 12, 16)
+        per_node_expected = (0.0, 12.0, 16.0)
+        for rec in records:
+            for i in range(3):
+                self.assertAlmostEqual(
+                    rec.force_xyz[i], per_node_expected[i], places=10,
+                )
+
+    def test_magnitude_normal_with_moment_compose(self):
+        """magnitude/normal and moment_xyz contributions superpose."""
+        coords = _face_of_four(side=2.0)
+        r = _load_resolver(coords)
+        face = [1, 2, 3, 4]
+
+        recs_F = r.resolve_face_load(
+            FaceLoadDef(target="f", magnitude=40.0, normal=True),
+            face_node_ids=face, faces=[face],
+        )
+        recs_M = r.resolve_face_load(
+            FaceLoadDef(target="f", moment_xyz=(0.0, 0.0, 9.0)),
+            face_node_ids=face,
+        )
+        recs_FM = r.resolve_face_load(
+            FaceLoadDef(
+                target="f", magnitude=40.0, normal=True,
+                moment_xyz=(0.0, 0.0, 9.0),
+            ),
+            face_node_ids=face, faces=[face],
+        )
+
+        def by_node(recs):
+            out: dict[int, np.ndarray] = {}
+            for rc in recs:
+                v = (np.asarray(rc.force_xyz, dtype=float)
+                     if rc.force_xyz is not None else np.zeros(3))
+                out[rc.node_id] = out.get(rc.node_id, np.zeros(3)) + v
+            return out
+
+        a, b, c = by_node(recs_F), by_node(recs_M), by_node(recs_FM)
+        for nid in face:
+            np.testing.assert_allclose(a[nid] + b[nid], c[nid], atol=1e-10)
+
+    def test_magnitude_normal_requires_faces(self):
+        """normal=True without face geometry raises."""
+        r = _load_resolver(_face_of_four())
+        defn = FaceLoadDef(target="f", magnitude=100.0, normal=True)
+        with self.assertRaises(ValueError):
+            r.resolve_face_load(defn, face_node_ids=[1, 2, 3, 4], faces=None)
+
+    def test_magnitude_without_normal_or_direction_raises(self):
+        r = _load_resolver(_face_of_four())
+        defn = FaceLoadDef(target="f", magnitude=100.0)
+        with self.assertRaises(ValueError):
+            r.resolve_face_load(defn, face_node_ids=[1, 2, 3, 4])
+
 
 # =====================================================================
 # resolve_face_sp

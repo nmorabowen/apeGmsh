@@ -660,12 +660,21 @@ class LoadsComposite:
 
     def face_load(self, target=None, *, pg=None, label=None, tag=None,
                   force_xyz=None, moment_xyz=None,
+                  magnitude=0.0, normal=False, direction=None,
                   name=None) -> FaceLoadDef:
         """Concentrated force/moment at face centroid, distributed to nodes.
 
         ``force_xyz`` is split equally among all face nodes.
         ``moment_xyz`` is converted to statically equivalent nodal
         forces via least-norm distribution.
+
+        ``magnitude`` (a scalar in **Newtons**, not pressure) combined
+        with ``normal=True`` or an explicit ``direction`` produces the
+        equivalent total force without manually computing the face
+        normal.  Sign convention mirrors :meth:`surface`: positive
+        ``magnitude`` with ``normal=True`` pushes **into** the face
+        (along ``-n_avg``).  Combining ``magnitude`` with ``force_xyz``
+        is an error; combining with ``moment_xyz`` is fine.
 
         Use this instead of a reference node when you only need to
         apply a load to a face without structural coupling.
@@ -678,14 +687,52 @@ class LoadsComposite:
             Concentrated force ``(Fx, Fy, Fz)`` at the face centroid.
         moment_xyz : tuple, optional
             Concentrated moment ``(Mx, My, Mz)`` about the face centroid.
+        magnitude : float, default 0.0
+            Total scalar force in Newtons.  Routed by ``normal``/
+            ``direction`` to produce the equivalent ``force_xyz``.
+        normal : bool, default False
+            When ``True``, the area-weighted average face normal
+            supplies the direction; positive ``magnitude`` pushes into
+            the face.
+        direction : (dx, dy, dz), optional
+            Explicit unit-direction override (auto-normalised) for the
+            ``magnitude`` path; mutually exclusive with ``normal=True``.
+
+        Examples
+        --------
+        Equal-and-opposite normal pulls on two coplanar faces (e.g. a
+        crack)::
+
+            with m.loads.pattern("Open"):
+                m.loads.face_load("Crack_normal",   magnitude=-1e3, normal=True)
+                m.loads.face_load("Crack_inverted", magnitude=+1e3, normal=True)
         """
-        if force_xyz is None and moment_xyz is None:
-            raise ValueError("face_load() requires force_xyz or moment_xyz.")
+        nothing_set = (
+            force_xyz is None and moment_xyz is None and magnitude == 0.0
+        )
+        if nothing_set:
+            raise ValueError(
+                "face_load() requires force_xyz, moment_xyz, or magnitude."
+            )
+        if force_xyz is not None and magnitude != 0.0:
+            raise ValueError(
+                "face_load(): pass either force_xyz or magnitude, not both."
+            )
+        if normal and direction is not None:
+            raise ValueError(
+                "face_load(): pass either normal=True or direction=, not both."
+            )
+        if magnitude != 0.0 and not normal and direction is None:
+            raise ValueError(
+                "face_load(magnitude=...) requires normal=True or "
+                "direction=(dx, dy, dz)."
+            )
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(FaceLoadDef(
             target=t, target_source=src,
             pattern=self._active_pattern, name=name,
             force_xyz=force_xyz, moment_xyz=moment_xyz,
+            magnitude=magnitude, normal=normal, direction=direction,
         ))
 
     def face_sp(self, target=None, *, pg=None, label=None, tag=None,
@@ -1318,7 +1365,13 @@ class LoadsComposite:
     def _resolve_face_load(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
         nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
-        return resolver.resolve_face_load(defn, sorted(nodes))
+        faces: list[list[int]] | None = None
+        if defn.magnitude != 0.0 and defn.normal:
+            # Only the normal-magnitude path needs per-element area
+            # and connectivity-derived normals; force_xyz / direction /
+            # moment_xyz are geometry-free.
+            faces = self._target_faces(defn.target, source=src)
+        return resolver.resolve_face_load(defn, sorted(nodes), faces=faces)
 
     def _resolve_face_sp(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
