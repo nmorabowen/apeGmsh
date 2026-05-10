@@ -87,6 +87,12 @@ reportPrivateImportUsage = false
 # ─────────────────────────────────────────────────────────────────────
 [tool.mypy]
 ignore_missing_imports = true
+# The rest of ``src/apeGmsh/`` (mesh, solvers, viewers, results, ...) is not
+# yet strict-clean; followed imports out of the strictly-checked
+# ``apeGmsh.opensees.*`` package would otherwise surface their pre-existing
+# errors. "silent" still resolves types from those modules so opensees code
+# is checked correctly — only the imported modules' own errors are hidden.
+follow_imports = "silent"
 
 [[tool.mypy.overrides]]
 module = "apeGmshViewer.*"
@@ -100,10 +106,19 @@ ignore_errors = true
 # ─────────────────────────────────────────────────────────────────────
 [[tool.mypy.overrides]]
 module = "apeGmsh.opensees.*"
-strict = true
+# Per-module strict-mode flags. Mypy's per-module overrides accept a subset
+# of strict's flags; warn_redundant_casts / strict_equality / extra_checks
+# are global-only and live elsewhere if needed.
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
+disallow_any_generics = true
+disallow_untyped_calls = true
+disallow_subclassing_any = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
 warn_unused_ignores = true
+warn_return_any = true
+no_implicit_reexport = true
 
 # ─────────────────────────────────────────────────────────────────────
 # ruff: the curriculum notebooks under ``examples/EOS Examples/`` use
