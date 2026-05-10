@@ -49,6 +49,19 @@ apeGmsh = ["py.typed"]
 # main checkout, so without this, pytest would silently test the wrong
 # source tree.
 pythonpath = ["src"]
+# importlib import mode keeps test package names independent of any
+# top-level Python module on the path. Required because
+# ``tests/opensees/`` collides with the ``opensees.pyd`` extension
+# shipped by the OpenSees binary install — without importlib mode,
+# pytest would try to import the test package as ``opensees.<module>``
+# and fail. importlib mode is also the modern pytest recommendation.
+addopts = ["--import-mode=importlib"]
+markers = [
+    "live: requires openseespy",
+    "subprocess: requires OPENSEES binary",
+    "h5: HDF5 tests",
+    "slow: > 1 second",
+]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -79,6 +92,18 @@ ignore_missing_imports = true
 module = "apeGmshViewer.*"
 follow_imports = "skip"
 ignore_errors = true
+
+# ─────────────────────────────────────────────────────────────────────
+# The new ``apeGmsh.opensees`` package is held to the strict bar per
+# charter P12. Older modules in apeGmsh.* keep the looser global
+# settings; this override scopes strict typing to the new code.
+# ─────────────────────────────────────────────────────────────────────
+[[tool.mypy.overrides]]
+module = "apeGmsh.opensees.*"
+strict = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_ignores = true
 
 # ─────────────────────────────────────────────────────────────────────
 # ruff: the curriculum notebooks under ``examples/EOS Examples/`` use

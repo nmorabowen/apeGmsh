@@ -1,18 +1,29 @@
 """
 apeGmsh.opensees — Pythonic, statically-typed wrapper around OpenSees.
 
-This package is the architectural successor to ``apeGmsh.solvers``. It
-is intentionally empty during the design phase: see
-``architecture/README.md`` for the design charter, decisions, and
-implementation roadmap.
+Public API: :class:`apeSees`. See ``architecture/README.md`` for the
+design charter, the 14 principles, and the per-phase implementation
+roadmap.
 
-Once skeletons land, the public surface will be:
+Example:
+
+.. code-block:: python
 
     from apeGmsh.opensees import apeSees
 
+    fem = g.mesh.queries.get_fem_data(dim=1)
     ops = apeSees(fem)
-    ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
+    ops.model(ndm=3, ndf=6)
+    steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
     ...
-    ops.tcl("model.tcl")
+    ops.tcl("frame.tcl")
     ops.run()
+
+The package coexists with the legacy :mod:`apeGmsh.solvers` during
+the migration period (ADR 0009 — no back-compat shim).
 """
+from __future__ import annotations
+
+from .apesees import apeSees
+
+__all__ = ["apeSees"]
