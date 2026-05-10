@@ -250,9 +250,9 @@ class Plain(Pattern):
                     "pipeline's job (Phase 4). Tests should use node= "
                     "records to exercise emit."
                 )
-        for rec in self._sps_:
-            if rec.target_kind == "node":
-                emitter.sp(int(rec.target), rec.dof, rec.value)
+        for sp in self._sps_:
+            if sp.target_kind == "node":
+                emitter.sp(int(sp.target), sp.dof, sp.value)
             else:
                 raise NotImplementedError(
                     "Plain._emit: pg= sp fan-out is the bridge build "
