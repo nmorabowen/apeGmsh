@@ -153,6 +153,53 @@ def test_apesees_analyze_raises_when_chain_incomplete() -> None:
 
 
 @pytest.mark.live
+def test_node_aggregator_drives_live_cantilever() -> None:
+    """End-to-end live run using the Phase-5A Node aggregator.
+
+    The model uses ``ops.nodes.get(...)``-style fixtures instead of
+    flat ``ops.fix(pg=...)`` / ``p.load(node=int)``. Same physical
+    cantilever as ``test_cantilever_static_displacement_matches_pl3_over_3ei``
+    — the tip displacement equals ``P L^3 / 3EI`` within rel=1e-3.
+    """
+    fem = make_two_node_beam()
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    E, A, Iz, L, P = 200e9, 0.01, 1e-4, 1.0, 1000.0
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=A, E=E, Iz=Iz, Iy=Iz, G=80e9, J=1e-4,
+    )
+
+    # Node-aggregator style: query base via PG, fix as a NodeSet.
+    ops.nodes.get(pg="Base").fix(dofs=(1, 1, 1, 1, 1, 1))
+
+    # Single tip Node passed into pattern.load.
+    tip = ops.nodes.get(tag=2)
+    ts = ops.timeSeries.Linear()
+    with ops.pattern.Plain(series=ts) as p:
+        p.load(node=tip, forces=(P, 0.0, 0.0, 0.0, 0.0, 0.0))
+
+    ops.constraints.Plain()
+    ops.numberer.Plain()
+    ops.system.BandGeneral()
+    ops.test.NormDispIncr(tol=1e-9, max_iter=10)
+    ops.algorithm.Linear()
+    ops.integrator.LoadControl(dlam=1.0)
+    ops.analysis.Static()
+
+    from apeGmsh.opensees.emitter.live import LiveOpsEmitter
+    emitter = LiveOpsEmitter(wipe=True)
+    ops.build().emit(emitter)
+    assert emitter.analyze(steps=1) == 0
+
+    tip_disp_x = emitter.ops.nodeDisp(2, 1)
+    expected = P * L**3 / (3.0 * E * Iz)
+    assert tip_disp_x == pytest.approx(expected, rel=1e-3)
+
+
+@pytest.mark.live
 def test_force_beam_with_hinge_radau_drives_openseespy() -> None:
     """Concentrated-plasticity beam-column driven through openseespy.
 

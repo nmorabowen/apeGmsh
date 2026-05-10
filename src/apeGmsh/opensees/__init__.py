@@ -25,5 +25,6 @@ the migration period (ADR 0009 — no back-compat shim).
 from __future__ import annotations
 
 from .apesees import apeSees
+from .node import Node, NodeSet
 
-__all__ = ["apeSees"]
+__all__ = ["apeSees", "Node", "NodeSet"]
