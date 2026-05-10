@@ -15,6 +15,11 @@ from apeGmsh.opensees._internal.types import Primitive
 
 # Family ALL_* lists. Add a new import + extend ALL_PRIMITIVES when a
 # new family lands.
+from .test_element_beam_column_contract import ALL_BEAM_COLUMN_ELEMENTS
+from .test_element_shell_contract import ALL_SHELL_ELEMENTS
+from .test_element_solid_contract import ALL_SOLID_ELEMENTS
+from .test_element_truss_contract import ALL_TRUSS_ELEMENTS
+from .test_element_zero_length_contract import ALL_ZERO_LENGTH_ELEMENTS
 from .test_geom_transf_contract import ALL_GEOM_TRANSF
 from .test_nd_material_contract import ALL_ND
 from .test_section_contract import ALL_SECTIONS
@@ -28,6 +33,11 @@ ALL_PRIMITIVES: list[type[Primitive]] = [
     *ALL_SECTIONS,
     *ALL_GEOM_TRANSF,
     *ALL_TIME_SERIES,
+    *ALL_BEAM_COLUMN_ELEMENTS,
+    *ALL_TRUSS_ELEMENTS,
+    *ALL_ZERO_LENGTH_ELEMENTS,
+    *ALL_SHELL_ELEMENTS,
+    *ALL_SOLID_ELEMENTS,
 ]
 
 

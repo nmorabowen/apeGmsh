@@ -32,11 +32,36 @@ the emitter.
 """
 from __future__ import annotations
 
+from .beam_column import (
+    ElasticTimoshenkoBeam,
+    dispBeamColumn,
+    elasticBeamColumn,
+    forceBeamColumn,
+)
+from .shell import (
+    ASDShellQ4,
+    ASDShellT3,
+    ShellDKGQ,
+    ShellMITC3,
+    ShellMITC4,
+)
+from .solid import (
+    FourNodeQuad,
+    FourNodeTetrahedron,
+    TenNodeTetrahedron,
+    Tri31,
+    stdBrick,
+)
 from .truss import CorotTruss, InertiaTruss, Truss
 from .zero_length import ZeroLength, ZeroLengthMatDir, ZeroLengthSection
 
 
 __all__ = [
+    # beam_column
+    "elasticBeamColumn",
+    "forceBeamColumn",
+    "dispBeamColumn",
+    "ElasticTimoshenkoBeam",
     # truss
     "Truss",
     "CorotTruss",
@@ -45,4 +70,16 @@ __all__ = [
     "ZeroLength",
     "ZeroLengthMatDir",
     "ZeroLengthSection",
+    # shell
+    "ShellMITC3",
+    "ShellMITC4",
+    "ShellDKGQ",
+    "ASDShellQ4",
+    "ASDShellT3",
+    # solid
+    "FourNodeTetrahedron",
+    "TenNodeTetrahedron",
+    "stdBrick",
+    "FourNodeQuad",
+    "Tri31",
 ]
