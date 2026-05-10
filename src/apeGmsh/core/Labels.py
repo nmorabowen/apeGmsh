@@ -135,6 +135,23 @@ class _PGPreserver:
 
 
 @contextmanager
+def pg_preserved_identity() -> Iterator[None]:
+    """Snapshot PGs on entry, recreate them on exit with the same tags.
+
+    For OCC operations that preserve entity tags but still wipe
+    physical-group membership on ``synchronize()`` — transforms
+    (translate, rotate, scale, mirror), ``copy``, and the sweep ops
+    (extrude, revolve) where the input entities survive unchanged.
+
+    Use :func:`pg_preserved` instead for boolean ops, which need
+    ``result_map``-driven remapping.
+    """
+    snap = snapshot_physical_groups()
+    yield
+    remap_physical_groups(snap, [], [])
+
+
+@contextmanager
 def pg_preserved() -> Iterator[_PGPreserver]:
     """Context manager that snapshots PGs on entry and remaps on exit.
 

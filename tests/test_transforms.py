@@ -219,3 +219,57 @@ class TestRevolve:
         # Volume should be positive (non-degenerate solid)
         vol = gmsh.model.occ.getMass(3, vol_tags[0])
         assert vol > 0
+
+
+# =====================================================================
+# Label survival across transforms
+# =====================================================================
+#
+# OCC transforms wipe physical-group membership on synchronize(), which
+# also drops the internal ``_label:*`` PGs that back ``g.labels``.  Each
+# transform method wraps its OCC call in ``pg_preserved_identity`` to
+# snapshot and restore those PGs.  These tests pin that contract.
+
+class TestLabelSurvival:
+
+    def test_translate_preserves_labels(self, g):
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='box')
+        g.model.transforms.translate('box', 5, 0, 0)
+        assert g.labels.has('box')
+
+    def test_rotate_preserves_label_on_rotated_2d(self, g):
+        """Original repro: rotated rectangle loses its label."""
+        g.model.geometry.add_box(-50, -50, -50, 100, 100, 100, label='box')
+        rect = g.model.geometry.add_rectangle(-10, -10, 0, 20, 20, label='plane')
+        g.model.transforms.rotate(
+            rect, math.radians(30.0),
+            ax=1.0, ay=0.0, az=0.0, dim=2,
+        )
+        assert g.labels.has('plane')
+        assert g.labels.has('box')
+
+    def test_scale_preserves_labels(self, g):
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='box')
+        g.model.transforms.scale('box', 2, 2, 2)
+        assert g.labels.has('box')
+
+    def test_mirror_preserves_labels(self, g):
+        box = g.model.geometry.add_box(1, 0, 0, 1, 1, 1, label='box')
+        g.model.transforms.mirror(box, 1, 0, 0, 0, dim=3)
+        assert g.labels.has('box')
+
+    def test_copy_preserves_source_label(self, g):
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='box')
+        g.model.transforms.copy('box', dim=3)
+        # Source label still resolves; copy is unlabeled by design.
+        assert g.labels.has('box')
+
+    def test_extrude_preserves_source_label(self, g):
+        rect = g.model.geometry.add_rectangle(0, 0, 0, 1, 1, label='base')
+        g.model.transforms.extrude(rect, 0, 0, 1, dim=2)
+        assert g.labels.has('base')
+
+    def test_revolve_preserves_source_label(self, g):
+        rect = g.model.geometry.add_rectangle(2, 0, 0, 1, 1, label='profile')
+        g.model.transforms.revolve(rect, 2 * math.pi, ay=1, dim=2)
+        assert g.labels.has('profile')

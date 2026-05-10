@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import gmsh
 
 from ._helpers import Tag, DimTag, resolve_to_dimtags
+from .Labels import pg_preserved_identity
 from apeGmsh._types import EntityRefs
 
 if TYPE_CHECKING:
@@ -54,9 +55,10 @@ class _Transforms:
             g.model.transforms.translate(box, 5, 0, 0)
             g.model.transforms.translate("col.body", 0, 0, 5)
         """
-        gmsh.model.occ.translate(self._resolve_dt(tags, dim), dx, dy, dz)
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            gmsh.model.occ.translate(self._resolve_dt(tags, dim), dx, dy, dz)
+            if sync:
+                gmsh.model.occ.synchronize()
         self._model._log(f"translate by ({dx}, {dy}, {dz})")
         return self
 
@@ -80,14 +82,15 @@ class _Transforms:
         -------
         ``g.model.transforms.rotate(box, math.pi / 4, az=1)``
         """
-        gmsh.model.occ.rotate(
-            self._resolve_dt(tags, dim),
-            cx, cy, cz,
-            ax, ay, az,
-            angle,
-        )
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            gmsh.model.occ.rotate(
+                self._resolve_dt(tags, dim),
+                cx, cy, cz,
+                ax, ay, az,
+                angle,
+            )
+            if sync:
+                gmsh.model.occ.synchronize()
         self._model._log(
             f"rotate {math.degrees(angle):.2f}\u00b0 about axis=({ax},{ay},{az}) "
             f"through ({cx},{cy},{cz})"
@@ -112,13 +115,14 @@ class _Transforms:
         -------
         ``g.model.transforms.scale(box, 2, 2, 2)``   # uniform double
         """
-        gmsh.model.occ.dilate(
-            self._resolve_dt(tags, dim),
-            cx, cy, cz,
-            sx, sy, sz,
-        )
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            gmsh.model.occ.dilate(
+                self._resolve_dt(tags, dim),
+                cx, cy, cz,
+                sx, sy, sz,
+            )
+            if sync:
+                gmsh.model.occ.synchronize()
         self._model._log(f"scale ({sx},{sy},{sz}) about ({cx},{cy},{cz})")
         return self
 
@@ -139,9 +143,10 @@ class _Transforms:
         -------
         ``g.model.transforms.mirror(box, 1, 0, 0, 0)``   # reflect through YZ plane
         """
-        gmsh.model.occ.mirror(self._resolve_dt(tags, dim), a, b, c, d)
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            gmsh.model.occ.mirror(self._resolve_dt(tags, dim), a, b, c, d)
+            if sync:
+                gmsh.model.occ.synchronize()
         self._model._log(f"mirror through plane {a}x + {b}y + {c}z + {d} = 0")
         return self
 
@@ -161,9 +166,10 @@ class _Transforms:
         -------
         ``copies = g.model.transforms.copy([box, sphere])``
         """
-        new_dimtags = gmsh.model.occ.copy(self._resolve_dt(tags, dim))
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            new_dimtags = gmsh.model.occ.copy(self._resolve_dt(tags, dim))
+            if sync:
+                gmsh.model.occ.synchronize()
         new_tags = [t for _, t in new_dimtags]
         self._model._log(f"copy -> new tags {new_tags}")
         return new_tags
@@ -220,14 +226,15 @@ class _Transforms:
         dt = self._resolve_dt(tags, dim)
         ne = num_elements if num_elements is not None else []
         ht = heights if heights is not None else []
-        result: list[tuple[int, int]] = gmsh.model.occ.extrude(
-            dt, dx, dy, dz,
-            numElements=ne,
-            heights=ht,
-            recombine=recombine,
-        )
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            result: list[tuple[int, int]] = gmsh.model.occ.extrude(
+                dt, dx, dy, dz,
+                numElements=ne,
+                heights=ht,
+                recombine=recombine,
+            )
+            if sync:
+                gmsh.model.occ.synchronize()
         for d, t in result:
             self._model._register(d, t, None, 'extrude')
         self._model._log(
@@ -276,14 +283,15 @@ class _Transforms:
         dt = self._resolve_dt(tags, dim)
         ne = num_elements if num_elements is not None else []
         ht = heights if heights is not None else []
-        result: list[tuple[int, int]] = gmsh.model.occ.revolve(
-            dt, x, y, z, ax, ay, az, angle,
-            numElements=ne,
-            heights=ht,
-            recombine=recombine,
-        )
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            result: list[tuple[int, int]] = gmsh.model.occ.revolve(
+                dt, x, y, z, ax, ay, az, angle,
+                numElements=ne,
+                heights=ht,
+                recombine=recombine,
+            )
+            if sync:
+                gmsh.model.occ.synchronize()
         for d, t in result:
             self._model._register(d, t, None, 'revolve')
         self._model._log(
@@ -357,11 +365,12 @@ class _Transforms:
             out     = g.model.transforms.sweep(section, path, label="curved_beam")
         """
         dt = self._resolve_dt(profiles, dim)
-        result: list[tuple[int, int]] = gmsh.model.occ.addPipe(
-            dt, int(path), trihedron=trihedron,
-        )
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            result: list[tuple[int, int]] = gmsh.model.occ.addPipe(
+                dt, int(path), trihedron=trihedron,
+            )
+            if sync:
+                gmsh.model.occ.synchronize()
 
         if result and label is not None:
             max_dim = max(d for d, _ in result)
@@ -454,17 +463,18 @@ class _Transforms:
                 "thru_sections requires at least two wires (got "
                 f"{len(wires)})."
             )
-        result: list[tuple[int, int]] = gmsh.model.occ.addThruSections(
-            list(wires),
-            makeSolid      = make_solid,
-            makeRuled      = make_ruled,
-            maxDegree      = max_degree,
-            continuity     = continuity,
-            parametrization= parametrization,
-            smoothing      = smoothing,
-        )
-        if sync:
-            gmsh.model.occ.synchronize()
+        with pg_preserved_identity():
+            result: list[tuple[int, int]] = gmsh.model.occ.addThruSections(
+                list(wires),
+                makeSolid      = make_solid,
+                makeRuled      = make_ruled,
+                maxDegree      = max_degree,
+                continuity     = continuity,
+                parametrization= parametrization,
+                smoothing      = smoothing,
+            )
+            if sync:
+                gmsh.model.occ.synchronize()
 
         if result and label is not None:
             max_dim = max(d for d, _ in result)
