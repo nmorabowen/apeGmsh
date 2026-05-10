@@ -22,6 +22,7 @@ from .test_element_truss_contract import ALL_TRUSS_ELEMENTS
 from .test_element_zero_length_contract import ALL_ZERO_LENGTH_ELEMENTS
 from .test_geom_transf_contract import ALL_GEOM_TRANSF
 from .test_nd_material_contract import ALL_ND
+from .test_recorder_contract import ALL_RECORDERS
 from .test_section_contract import ALL_SECTIONS
 from .test_time_series_contract import ALL_TIME_SERIES
 from .test_uniaxial_material_contract import ALL_UNIAXIAL
@@ -38,6 +39,7 @@ ALL_PRIMITIVES: list[type[Primitive]] = [
     *ALL_ZERO_LENGTH_ELEMENTS,
     *ALL_SHELL_ELEMENTS,
     *ALL_SOLID_ELEMENTS,
+    *ALL_RECORDERS,
 ]
 
 
