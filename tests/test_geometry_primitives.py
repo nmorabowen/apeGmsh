@@ -202,6 +202,58 @@ def test_add_rectangle(g):
     assert tag in g.labels.entities("plate")
 
 
+def test_add_rectangle_rotated_about_centre(g):
+    # 90 about X tips an XY rectangle into the XZ plane (dy -> dz),
+    # rotated about its own centre so the centre stays put.
+    tag = g.model.geometry.add_rectangle(
+        -2, -1.5, 0, 4.0, 3.0,
+        angles_deg=(90.0, 0.0, 0.0),
+    )
+    xmin, ymin, zmin, xmax, ymax, zmax = _bb(2, tag)
+    assert xmax - xmin == pytest.approx(4.0, abs=1e-6)
+    assert ymax - ymin == pytest.approx(0.0, abs=1e-6)
+    assert zmax - zmin == pytest.approx(3.0, abs=1e-6)
+    # centre preserved
+    assert (xmin + xmax) / 2 == pytest.approx(0.0, abs=1e-6)
+    assert (ymin + ymax) / 2 == pytest.approx(0.0, abs=1e-6)
+    assert (zmin + zmax) / 2 == pytest.approx(0.0, abs=1e-6)
+
+
+def test_add_rectangle_pivot_offset_from_centre(g):
+    # 90 about Z, pivot offset = (-dx/2, -dy/2, 0) places the pivot at
+    # the bottom-left corner.  After rotation the bottom-left corner
+    # must remain at the original (x, y, z).
+    tag = g.model.geometry.add_rectangle(
+        1.0, 2.0, 0.0, 4.0, 3.0,
+        angles_deg=(0.0, 0.0, 90.0),
+        pivot=(-2.0, -1.5, 0.0),
+    )
+    xmin, ymin, zmin, xmax, ymax, zmax = _bb(2, tag)
+    assert xmin == pytest.approx(1.0 - 3.0, abs=1e-6)
+    assert ymin == pytest.approx(2.0,        abs=1e-6)
+    assert xmax == pytest.approx(1.0,        abs=1e-6)
+    assert ymax == pytest.approx(2.0 + 4.0,  abs=1e-6)
+
+
+def test_add_rectangle_radians_matches_degrees(g):
+    deg = g.model.geometry.add_rectangle(
+        0, 0, 0, 2.0, 1.0, angles_deg=(0.0, 30.0, 0.0),
+    )
+    rad = g.model.geometry.add_rectangle(
+        0, 0, 0, 2.0, 1.0, angles_rad=(0.0, math.radians(30.0), 0.0),
+    )
+    assert _bb(2, deg) == pytest.approx(_bb(2, rad), abs=1e-9)
+
+
+def test_add_rectangle_rejects_both_angle_units(g):
+    with pytest.raises(ValueError, match="angles_deg or angles_rad"):
+        g.model.geometry.add_rectangle(
+            0, 0, 0, 1.0, 1.0,
+            angles_deg=(10.0, 0.0, 0.0),
+            angles_rad=(0.1, 0.0, 0.0),
+        )
+
+
 # =====================================================================
 # Box  (dim = 3)
 # =====================================================================

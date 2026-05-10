@@ -1018,6 +1018,9 @@ class _Geometry:
         x: float, y: float, z: float,
         dx: float, dy: float,
         *,
+        angles_deg: tuple[float, float, float] | None = None,
+        angles_rad: tuple[float, float, float] | None = None,
+        pivot     : tuple[float, float, float]        = (0.0, 0.0, 0.0),
         rounded_radius: float = 0.0,
         label: str | None = None,
         sync : bool       = True,
@@ -1026,8 +1029,11 @@ class _Geometry:
         Add a rectangular planar surface in the XY plane.
 
         The rectangle is created at **(x, y, z)** with extents **dx** along
-        X and **dy** along Y.  Combine with :meth:`rotate` and
-        :meth:`translate` to orient it arbitrarily.
+        X and **dy** along Y.  Optionally rotate it in place by passing
+        ``angles_deg`` or ``angles_rad`` — three angles applied as
+        successive rotations about world X, then Y, then Z, through a
+        pivot point measured **as an offset from the rectangle's
+        geometric centre** ``(x + dx/2, y + dy/2, z)``.
 
         Useful as a cutting tool for :meth:`fragment` — a 2D rectangle
         fragmented against a 3D solid splits the solid along the
@@ -1039,6 +1045,16 @@ class _Geometry:
             Corner of the rectangle.
         dx, dy : float
             Extents along X and Y.
+        angles_deg, angles_rad : (rx, ry, rz), optional
+            Rotation angles about world X, Y, Z, applied in that order
+            through ``pivot``.  Pass exactly one of the two — supplying
+            both raises ``ValueError``.  Either may be ``None`` (no
+            rotation).
+        pivot : (px, py, pz)
+            Pivot point expressed as an **offset from the rectangle's
+            centre**.  ``(0, 0, 0)`` (default) rotates about the centre;
+            ``(dx/2, dy/2, 0)`` would rotate about the bottom-left
+            corner, etc.  Ignored when no angles are given.
         rounded_radius : float
             If > 0, rounds the four corners with this radius.
         label : str, optional
@@ -1066,13 +1082,57 @@ class _Geometry:
                 (ymax - ymin) + 2*pad,
             )
             result = m1.model.boolean.fragment(objects=[1], tools=[rect], dim=3)
+
+            # Inclined crack plane: 30 about X through the centre
+            m.model.geometry.add_rectangle(
+                -10, -10, 0, 20, 20,
+                angles_deg=(30, 0, 0), label='plane',
+            )
         """
-        tag = gmsh.model.occ.addRectangle(x, y, z, dx, dy, roundedRadius=rounded_radius)
+        if angles_deg is not None and angles_rad is not None:
+            raise ValueError(
+                "add_rectangle: pass either angles_deg or angles_rad, "
+                "not both."
+            )
+        angles = angles_rad
+        if angles_deg is not None:
+            angles = tuple(math.radians(a) for a in angles_deg)
+
+        tag = gmsh.model.occ.addRectangle(
+            x, y, z, dx, dy, roundedRadius=rounded_radius,
+        )
+
+        if angles is not None:
+            cx = x + dx / 2.0 + pivot[0]
+            cy = y + dy / 2.0 + pivot[1]
+            cz = z + pivot[2]
+            rx, ry, rz = angles
+            if rx:
+                gmsh.model.occ.rotate(
+                    [(2, tag)], cx, cy, cz, 1, 0, 0, rx,
+                )
+            if ry:
+                gmsh.model.occ.rotate(
+                    [(2, tag)], cx, cy, cz, 0, 1, 0, ry,
+                )
+            if rz:
+                gmsh.model.occ.rotate(
+                    [(2, tag)], cx, cy, cz, 0, 0, 1, rz,
+                )
+
         if sync:
             gmsh.model.occ.synchronize()
+
+        rot_msg = ""
+        if angles is not None:
+            rot_msg = (
+                f", angles_rad=({angles[0]:.4f},{angles[1]:.4f},"
+                f"{angles[2]:.4f}), pivot_offset={pivot}"
+            )
         self._model._log(
             f"add_rectangle(origin=({x},{y},{z}), size=({dx},{dy})"
-            f"{f', r={rounded_radius}' if rounded_radius else ''}) -> tag {tag}"
+            f"{f', r={rounded_radius}' if rounded_radius else ''}"
+            f"{rot_msg}) -> tag {tag}"
         )
         return self._model._register(2, tag, label, 'rectangle')
 
