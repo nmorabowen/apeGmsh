@@ -671,10 +671,12 @@ class LoadsComposite:
         ``magnitude`` (a scalar in **Newtons**, not pressure) combined
         with ``normal=True`` or an explicit ``direction`` produces the
         equivalent total force without manually computing the face
-        normal.  Sign convention mirrors :meth:`surface`: positive
-        ``magnitude`` with ``normal=True`` pushes **into** the face
-        (along ``-n_avg``).  Combining ``magnitude`` with ``force_xyz``
-        is an error; combining with ``moment_xyz`` is fine.
+        normal.  Sign convention: total = ``magnitude * unit_direction``,
+        where ``unit_direction`` is ``+n_avg`` for ``normal=True`` or
+        the normalised ``direction`` vector otherwise.  Pass
+        ``magnitude=-F`` for an "into-face" (pressure-like) load.
+        Combining ``magnitude`` with ``force_xyz`` is an error;
+        combining with ``moment_xyz`` is fine.
 
         Use this instead of a reference node when you only need to
         apply a load to a face without structural coupling.
@@ -701,11 +703,12 @@ class LoadsComposite:
         Examples
         --------
         Equal-and-opposite normal pulls on two coplanar faces (e.g. a
-        crack)::
+        crack — the two entities share the same connectivity normal,
+        so opposite-sign magnitudes are required to open both sides)::
 
             with m.loads.pattern("Open"):
-                m.loads.face_load("Crack_normal",   magnitude=-1e3, normal=True)
-                m.loads.face_load("Crack_inverted", magnitude=+1e3, normal=True)
+                m.loads.face_load("Crack_normal",   magnitude=+1e3, normal=True)
+                m.loads.face_load("Crack_inverted", magnitude=-1e3, normal=True)
         """
         nothing_set = (
             force_xyz is None and moment_xyz is None and magnitude == 0.0
@@ -737,14 +740,25 @@ class LoadsComposite:
 
     def face_sp(self, target=None, *, pg=None, label=None, tag=None,
                 dofs=None, disp_xyz=None, rot_xyz=None,
+                magnitude=0.0, normal=False, direction=None,
                 name=None) -> FaceSPDef:
         """Prescribed displacement/rotation at face centroid, mapped to nodes.
 
         Each face node receives ``u_i = disp_xyz + rot_xyz x r_i``
         where ``r_i`` is the arm from the face centroid to node *i*.
 
-        When ``disp_xyz`` and ``rot_xyz`` are both ``None``, the result
-        is a homogeneous fix (equivalent to ``fix()``).
+        When ``disp_xyz``, ``rot_xyz``, and ``magnitude`` are all
+        zero / ``None``, the result is a homogeneous fix (equivalent
+        to ``fix()``).
+
+        ``magnitude`` (a scalar centroid translation, in mesh length
+        units) combined with ``normal=True`` or an explicit
+        ``direction`` produces the equivalent ``disp_xyz`` without
+        manually computing the face normal.  Sign convention matches
+        :meth:`face_load`: total = ``magnitude * unit_direction``,
+        along ``+n_avg`` for ``normal=True``.  Combining ``magnitude``
+        with ``disp_xyz`` is an error; combining with ``rot_xyz`` is
+        fine.
 
         Parameters
         ----------
@@ -757,13 +771,33 @@ class LoadsComposite:
             Prescribed translation ``(ux, uy, uz)`` at centroid.
         rot_xyz : tuple, optional
             Prescribed rotation ``(θx, θy, θz)`` about centroid.
+        magnitude : float, default 0.0
+            Scalar centroid translation routed by ``normal``/``direction``.
+        normal : bool, default False
+            When True, area-weighted face normal supplies the direction.
+        direction : (dx, dy, dz), optional
+            Explicit unit-direction override for the ``magnitude`` path.
         """
+        if disp_xyz is not None and magnitude != 0.0:
+            raise ValueError(
+                "face_sp(): pass either disp_xyz or magnitude, not both."
+            )
+        if normal and direction is not None:
+            raise ValueError(
+                "face_sp(): pass either normal=True or direction=, not both."
+            )
+        if magnitude != 0.0 and not normal and direction is None:
+            raise ValueError(
+                "face_sp(magnitude=...) requires normal=True or "
+                "direction=(dx, dy, dz)."
+            )
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(FaceSPDef(
             target=t, target_source=src,
             pattern=self._active_pattern, name=name,
             dofs=dofs or [1, 1, 1],
             disp_xyz=disp_xyz, rot_xyz=rot_xyz,
+            magnitude=magnitude, normal=normal, direction=direction,
         ))
 
     @staticmethod
@@ -1376,7 +1410,10 @@ class LoadsComposite:
     def _resolve_face_sp(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
         nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
-        return resolver.resolve_face_sp(defn, sorted(nodes))
+        faces: list[list[int]] | None = None
+        if defn.magnitude != 0.0 and defn.normal:
+            faces = self._target_faces(defn.target, source=src)
+        return resolver.resolve_face_sp(defn, sorted(nodes), faces=faces)
 
     # ------------------------------------------------------------------
     # Queries

@@ -149,11 +149,12 @@ class TestResolveFaceLoad(unittest.TestCase):
         )
         self.assertEqual(recs, [])
 
-    def test_magnitude_normal_pushes_into_face(self):
-        """magnitude=F, normal=True -> total = -F * n_avg, equal split.
+    def test_magnitude_normal_acts_along_avg_normal(self):
+        """magnitude=F, normal=True -> total = +F * n_avg, equal split.
 
         On a unit XY square (n_avg = +z) with F = 100, each of the 4
-        nodes should receive (0, 0, -25).
+        nodes should receive (0, 0, +25).  Negative F gives the
+        "into-face" (pressure-like) load.
         """
         coords = _face_of_four()
         r = _load_resolver(coords)
@@ -162,7 +163,7 @@ class TestResolveFaceLoad(unittest.TestCase):
         )
         face = [1, 2, 3, 4]
         records = r.resolve_face_load(defn, face_node_ids=face, faces=[face])
-        per_node_expected = (0.0, 0.0, -25.0)
+        per_node_expected = (0.0, 0.0, +25.0)
         for rec in records:
             for i in range(3):
                 self.assertAlmostEqual(
@@ -309,6 +310,89 @@ class TestResolveFaceSP(unittest.TestCase):
         for rc in recs:
             self.assertEqual(rc.value, 0.0)
             self.assertTrue(rc.is_homogeneous)
+
+    def test_magnitude_normal_translates_along_avg_normal(self):
+        """magnitude=u, normal=True -> uniform u * n_avg on all nodes."""
+        coords = _face_of_four()
+        r = _load_resolver(coords)
+        face = [1, 2, 3, 4]
+        defn = FaceSPDef(
+            target="f", dofs=[1, 1, 1],
+            magnitude=0.05, normal=True,
+        )
+        recs = r.resolve_face_sp(defn, face_node_ids=face, faces=[face])
+        # n_avg = +z, magnitude=0.05 -> u_i = (0, 0, 0.05) for every node
+        by_node: dict[int, dict[int, float]] = {}
+        for rc in recs:
+            by_node.setdefault(rc.node_id, {})[rc.dof] = rc.value
+        for nid in face:
+            self.assertAlmostEqual(by_node[nid][1], 0.0,  places=10)
+            self.assertAlmostEqual(by_node[nid][2], 0.0,  places=10)
+            self.assertAlmostEqual(by_node[nid][3], 0.05, places=10)
+
+    def test_magnitude_direction_translates_along_vector(self):
+        r = _load_resolver(_face_of_four())
+        defn = FaceSPDef(
+            target="f", dofs=[1, 1, 1],
+            magnitude=10.0, direction=(0.0, 3.0, 4.0),
+        )
+        recs = r.resolve_face_sp(defn, face_node_ids=[1, 2, 3, 4])
+        # |d|=5; u_i = 10 * (0, 0.6, 0.8) = (0, 6, 8)
+        by_node: dict[int, dict[int, float]] = {}
+        for rc in recs:
+            by_node.setdefault(rc.node_id, {})[rc.dof] = rc.value
+        for nid in (1, 2, 3, 4):
+            self.assertAlmostEqual(by_node[nid][1], 0.0, places=10)
+            self.assertAlmostEqual(by_node[nid][2], 6.0, places=10)
+            self.assertAlmostEqual(by_node[nid][3], 8.0, places=10)
+
+    def test_magnitude_normal_with_rotation_compose(self):
+        """magnitude/normal and rot_xyz contributions superpose."""
+        coords = _face_of_four(side=2.0)
+        r = _load_resolver(coords)
+        face = [1, 2, 3, 4]
+
+        recs_T = r.resolve_face_sp(
+            FaceSPDef(target="f", dofs=[1, 1, 1],
+                      magnitude=0.1, normal=True),
+            face_node_ids=face, faces=[face],
+        )
+        recs_R = r.resolve_face_sp(
+            FaceSPDef(target="f", dofs=[1, 1, 1],
+                      rot_xyz=(0.0, 0.0, 0.5)),
+            face_node_ids=face,
+        )
+        recs_TR = r.resolve_face_sp(
+            FaceSPDef(target="f", dofs=[1, 1, 1],
+                      magnitude=0.1, normal=True,
+                      rot_xyz=(0.0, 0.0, 0.5)),
+            face_node_ids=face, faces=[face],
+        )
+
+        def by_node(recs):
+            out: dict[tuple[int, int], float] = {}
+            for rc in recs:
+                out[(rc.node_id, rc.dof)] = rc.value
+            return out
+
+        a, b, c = by_node(recs_T), by_node(recs_R), by_node(recs_TR)
+        for nid in face:
+            for dof in (1, 2, 3):
+                self.assertAlmostEqual(
+                    a[(nid, dof)] + b[(nid, dof)],
+                    c[(nid, dof)], places=10,
+                )
+
+    def test_magnitude_normal_requires_faces(self):
+        r = _load_resolver(_face_of_four())
+        defn = FaceSPDef(
+            target="f", dofs=[1, 1, 1],
+            magnitude=0.1, normal=True,
+        )
+        with self.assertRaises(ValueError):
+            r.resolve_face_sp(
+                defn, face_node_ids=[1, 2, 3, 4], faces=None,
+            )
 
 
 # =====================================================================
