@@ -702,12 +702,14 @@ class LoadsComposite:
 
         Examples
         --------
-        Equal-and-opposite normal pulls on two coplanar faces (e.g. a
-        crack — the two entities share the same connectivity normal,
-        so opposite-sign magnitudes are required to open both sides)::
+        Symmetric pull on the two faces of an embedded crack —
+        ``normal=True`` resolves a per-face physical outward via
+        adjacent-tet centroids, so the **same** negative magnitude on
+        both coincident entities pulls each face away from its own
+        bonded body (opening the crack)::
 
             with m.loads.pattern("Open"):
-                m.loads.face_load("Crack_normal",   magnitude=+1e3, normal=True)
+                m.loads.face_load("Crack_normal",   magnitude=-1e3, normal=True)
                 m.loads.face_load("Crack_inverted", magnitude=-1e3, normal=True)
         """
         nothing_set = (
@@ -1071,6 +1073,144 @@ class LoadsComposite:
                     faces.append([int(n) for n in row])
         return faces
 
+    def _face_outward_normals(
+        self,
+        faces: list[list[int]],
+    ) -> list[np.ndarray] | None:
+        """Per-face physical outward unit normals.
+
+        For each face element (a list of node IDs), find an adjacent
+        3-D element — one sharing at least 3 of the face's nodes — and
+        return the unit vector pointing **from the volume centroid
+        toward the face centroid**, i.e. out of the bonded body.
+
+        This is the "physical outward" used by
+        :meth:`apeGmsh.mesh._mesh_editing._Editing._classify_face_side`
+        but evaluated per face element rather than per entity.  It
+        gives the right answer on:
+
+        * regular volume-boundary faces (matches connectivity normal),
+        * tilted rectangles (where connectivity orientation isn't
+          predictable),
+        * embedded crack faces produced by
+          :meth:`apeGmsh.mesh.editing.crack` (where the two crack
+          entities share the same connectivity normal but lie on
+          opposite sides of their bonded volumes — connectivity
+          disagrees with physical outward on one of them).
+
+        Returns
+        -------
+        list[ndarray] | None
+            Length-``len(faces)`` list of length-3 unit vectors, or
+            ``None`` when there are no 3-D elements in the model
+            (caller should fall back to the connectivity normal).
+            For any face whose adjacent volume can't be located the
+            connectivity normal is returned in that slot.
+        """
+        import gmsh
+
+        vol_ents = list(gmsh.model.getEntities(3))
+        if not vol_ents:
+            return None
+
+        # gmsh element-type → nodes per element for the 3-D types we
+        # know how to walk.  Higher-order (tet10/hex20) carry their
+        # corner nodes first; using the full list still produces the
+        # right centroid for adjacency, but we only need the first
+        # ``corners`` nodes for the "≥ 3 shared" test.
+        _NPE: dict[int, tuple[int, int]] = {
+            # gmsh_type: (npe, corner_count)
+            4:  (4, 4),    # tet4
+            5:  (8, 8),    # hex8
+            6:  (6, 6),    # prism6
+            11: (10, 4),   # tet10
+            17: (20, 8),   # hex20
+        }
+
+        node_coord_cache: dict[int, np.ndarray] = {}
+
+        def _coord(nid: int) -> np.ndarray:
+            v = node_coord_cache.get(nid)
+            if v is None:
+                v = np.asarray(
+                    gmsh.model.mesh.getNode(int(nid))[0],
+                    dtype=float,
+                )
+                node_coord_cache[nid] = v
+            return v
+
+        # node_id -> list of (centroid, corner_node_set)
+        adjacency: dict[int, list[tuple[np.ndarray, frozenset[int]]]] = {}
+        warned_types: set[int] = set()
+        for vd, vt in vol_ents:
+            try:
+                etypes, _, enodes_list = gmsh.model.mesh.getElements(vd, vt)
+            except Exception:
+                continue
+            for etype, enodes in zip(etypes, enodes_list):
+                etype_i = int(etype)
+                spec = _NPE.get(etype_i)
+                if spec is None:
+                    if etype_i not in warned_types:
+                        import warnings
+                        warnings.warn(
+                            f"_face_outward_normals: unsupported 3-D "
+                            f"element type {etype_i}; skipping for "
+                            f"adjacency.",
+                            stacklevel=3,
+                        )
+                        warned_types.add(etype_i)
+                    continue
+                npe, corners = spec
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                for row in arr:
+                    corner_ids = [int(n) for n in row[:corners]]
+                    pts = np.array([_coord(nid) for nid in corner_ids])
+                    centroid = pts.mean(axis=0)
+                    cset = frozenset(corner_ids)
+                    entry = (centroid, cset)
+                    for nid in corner_ids:
+                        adjacency.setdefault(nid, []).append(entry)
+
+        outwards: list[np.ndarray] = []
+        for face in faces:
+            face_nodes = [int(n) for n in face]
+            face_set = set(face_nodes)
+            face_pts = np.array([_coord(n) for n in face_nodes])
+            face_centroid = face_pts.mean(axis=0)
+            # Connectivity normal — fallback when adjacency is missing
+            # and reference for the sign-flip check below.
+            p0, p1, p2 = face_pts[0], face_pts[1], face_pts[2]
+            n_conn = np.cross(p1 - p0, p2 - p0)
+            nn = float(np.linalg.norm(n_conn))
+            n_conn = n_conn / nn if nn > 1e-12 else np.array([0.0, 0.0, 1.0])
+
+            outward = n_conn  # default
+            # Probe candidate volumes via any node of the face
+            seen: set[frozenset[int]] = set()
+            for nid in face_nodes:
+                for centroid, cset in adjacency.get(nid, []):
+                    if cset in seen:
+                        continue
+                    seen.add(cset)
+                    if len(cset & face_set) >= 3:
+                        d = face_centroid - centroid
+                        d_norm = float(np.linalg.norm(d))
+                        if d_norm < 1e-30:
+                            continue
+                        outward = (
+                            n_conn
+                            if float(np.dot(n_conn, d)) >= 0.0
+                            else -n_conn
+                        )
+                        break
+                else:
+                    continue
+                break
+            outwards.append(outward)
+
+        return outwards
+
     def _target_elements(self, target, source: str = "auto"):
         """Resolve target to (element_ids, connectivity_rows) for volume elements."""
         dts = self._resolve_target(target, source=source)
@@ -1348,7 +1488,12 @@ class LoadsComposite:
     def _resolve_surface_tributary(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
         faces = self._target_faces(defn.target, source=src)
-        return resolver.resolve_surface_tributary(defn, faces)
+        outwards = (
+            self._face_outward_normals(faces) if defn.normal else None
+        )
+        return resolver.resolve_surface_tributary(
+            defn, faces, outwards=outwards,
+        )
 
     def _resolve_surface_consistent(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
@@ -1400,20 +1545,28 @@ class LoadsComposite:
         src = getattr(defn, 'target_source', 'auto')
         nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
         faces: list[list[int]] | None = None
+        outwards: list[np.ndarray] | None = None
         if defn.magnitude != 0.0 and defn.normal:
             # Only the normal-magnitude path needs per-element area
             # and connectivity-derived normals; force_xyz / direction /
             # moment_xyz are geometry-free.
             faces = self._target_faces(defn.target, source=src)
-        return resolver.resolve_face_load(defn, sorted(nodes), faces=faces)
+            outwards = self._face_outward_normals(faces)
+        return resolver.resolve_face_load(
+            defn, sorted(nodes), faces=faces, outwards=outwards,
+        )
 
     def _resolve_face_sp(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
         nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
         faces: list[list[int]] | None = None
+        outwards: list[np.ndarray] | None = None
         if defn.magnitude != 0.0 and defn.normal:
             faces = self._target_faces(defn.target, source=src)
-        return resolver.resolve_face_sp(defn, sorted(nodes), faces=faces)
+            outwards = self._face_outward_normals(faces)
+        return resolver.resolve_face_sp(
+            defn, sorted(nodes), faces=faces, outwards=outwards,
+        )
 
     # ------------------------------------------------------------------
     # Queries
