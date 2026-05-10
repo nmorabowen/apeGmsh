@@ -37,15 +37,23 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "ATTR_ELEMENT_NODES",
     "ATTR_TAG_RESOLVER",
     "TagResolver",
+    "current_element_nodes",
     "resolve_tag",
+    "set_element_nodes",
     "set_tag_resolver",
 ]
 
 
 #: Name of the private attribute the bridge attaches to an emitter.
 ATTR_TAG_RESOLVER = "_tag_for_primitive"
+
+#: Name of the private attribute the bridge sets on an emitter just
+#: before an :class:`Element` primitive's ``_emit`` to pass the node
+#: tags for the current element of a fan-out.
+ATTR_ELEMENT_NODES = "_current_element_nodes"
 
 
 #: Maps a Primitive to its bridge-allocated tag.
@@ -82,3 +90,44 @@ def resolve_tag(emitter: "Emitter", primitive: Primitive) -> int:
         )
     tag: int = resolver(primitive)
     return tag
+
+
+def set_element_nodes(
+    emitter: object,
+    node_tags: tuple[int, ...],
+) -> None:
+    """Set the node tags for the current element of an element fan-out.
+
+    The bridge sets this just before driving an :class:`Element`
+    primitive's ``_emit`` so the typed class can read the node tags
+    via :func:`current_element_nodes` without breaking the frozen
+    Emitter Protocol.
+
+    Idempotent.
+    """
+    setattr(emitter, ATTR_ELEMENT_NODES, node_tags)
+
+
+def current_element_nodes(emitter: "Emitter") -> tuple[int, ...]:
+    """Return the node tags for the element currently being emitted.
+
+    Used inside :class:`Element` typed primitives' ``_emit``. The
+    bridge fans out the element's physical group at build time and
+    sets one set of node tags per call.
+
+    Raises
+    ------
+    RuntimeError
+        If no element-nodes context has been set. Tests that exercise
+        an element's ``_emit`` directly install the context via
+        :func:`set_element_nodes`.
+    """
+    nodes: tuple[int, ...] | None = getattr(emitter, ATTR_ELEMENT_NODES, None)
+    if nodes is None:
+        raise RuntimeError(
+            "Element ``_emit`` requires the bridge to set element-"
+            "nodes context first. Call "
+            "``apeGmsh.opensees._internal.tag_resolution.set_element_nodes"
+            "(emitter, node_tags)`` before driving emission."
+        )
+    return nodes
