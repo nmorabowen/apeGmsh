@@ -11,6 +11,7 @@ import math
 from typing import TYPE_CHECKING
 
 import gmsh
+import numpy as np
 
 if TYPE_CHECKING:
     from .Mesh import Mesh
@@ -300,6 +301,7 @@ class _Editing:
         dim          : int                              = 1,
         open_boundary: str | None                       = None,
         normal       : tuple[float, float, float] | None = None,
+        side_labels  : tuple[str, str] | bool           = True,
     ) -> "_Editing":
         """
         Duplicate mesh nodes along a physical group to create a crack.
@@ -343,6 +345,28 @@ class _Editing:
             two sides of the crack when topology alone is not enough.
             Almost never needed for clean transfinite or unstructured
             meshes.
+        side_labels : tuple[str, str] or bool, default True
+            Post-plugin, the crack is owned by **two** distinct face
+            entities (the original entity plus a new one created by the
+            plugin to host the duplicated side).  This argument
+            controls whether they get named physical groups attached:
+
+              * ``True`` (default) — auto-derive
+                ``f"{physical_group}_normal"`` and
+                ``f"{physical_group}_inverted"`` and add them as
+                physical groups, one per face entity.
+              * ``(normal_name, inverted_name)`` tuple — use these
+                explicit names instead.
+              * ``False`` — skip side labeling (legacy behaviour).
+
+            **Convention.**  ``<pg>_normal`` is the face entity whose
+            adjacent volume elements sit on the side the *original*
+            surface normal points toward; ``<pg>_inverted`` is the
+            face on the opposite side.  This is computed at runtime
+            from the signed distance between an adjacent tet's
+            centroid and the crack plane along that normal — it does
+            not assume the plugin's "original vs new" mapping is
+            stable.  Only supported for ``dim=2`` cracks in 3D meshes.
 
         Returns
         -------
@@ -387,6 +411,21 @@ class _Editing:
                     f"dimension lower than the crack itself."
                 )
 
+        # Snapshot pre-plugin state for side-labeling.
+        do_side_labels = (
+            side_labels is not False and dim == 2
+        )
+        pre_ents: set[int] = set()
+        src_ents: list[int] = []
+        if do_side_labels:
+            pre_ents = {
+                int(t) for d_, t in gmsh.model.getEntities(dim) if d_ == dim
+            }
+            src_ents = sorted(
+                int(e) for e in
+                gmsh.model.getEntitiesForPhysicalGroup(dim, crack_pg_tag)
+            )
+
         gmsh.plugin.setNumber("Crack", "Dimension", float(dim))
         gmsh.plugin.setNumber("Crack", "PhysicalGroup", float(crack_pg_tag))
         gmsh.plugin.setNumber(
@@ -400,6 +439,48 @@ class _Editing:
 
         gmsh.plugin.run("Crack")
 
+        if do_side_labels:
+            post_ents = {
+                int(t) for d_, t in gmsh.model.getEntities(dim) if d_ == dim
+            }
+            new_ents = sorted(post_ents - pre_ents)
+            if len(new_ents) != 1 or len(src_ents) < 1:
+                raise RuntimeError(
+                    f"crack: expected exactly 1 new face entity, got "
+                    f"{len(new_ents)} (src_ents={src_ents}).  "
+                    f"side_labels= cannot be applied unambiguously; pass "
+                    f"side_labels=False to skip auto-labeling."
+                )
+
+            normal_name, inverted_name = (
+                (f"{physical_group}_normal",
+                 f"{physical_group}_inverted")
+                if side_labels is True
+                else side_labels
+            )
+
+            new_tag  = new_ents[0]
+            orig_tag = src_ents[0]
+            new_side  = self._classify_face_side(dim, new_tag)
+            orig_side = self._classify_face_side(dim, orig_tag)
+            if new_side == orig_side:
+                raise RuntimeError(
+                    "crack: original and new face entities classified to "
+                    "the same side -- cannot disambiguate.  Pass an "
+                    "explicit normal= hint or side_labels=False."
+                )
+
+            normal_tag   = new_tag if new_side  > 0 else orig_tag
+            inverted_tag = new_tag if new_side  < 0 else orig_tag
+
+            physical.add_surface([normal_tag],   name=normal_name)
+            physical.add_surface([inverted_tag], name=inverted_name)
+
+            self._mesh._log(
+                f"crack: side labels {normal_name!r}->entity {normal_tag}, "
+                f"{inverted_name!r}->entity {inverted_tag}"
+            )
+
         self._mesh._log(
             f"crack(physical_group={physical_group!r}, dim={dim}, "
             f"open_boundary={open_boundary!r}) "
@@ -407,6 +488,63 @@ class _Editing:
             f"open_pg_tag={open_pg_tag}"
         )
         return self
+
+    @staticmethod
+    def _classify_face_side(dim: int, face_tag: int) -> int:
+        """
+        Classify which side of a face entity its adjacent volume tets
+        sit on, relative to the entity's own connectivity-derived
+        normal at a sample triangle.
+
+        Returns +1 if the adjacent-tet centroid lies on the +normal
+        half-space of the sample triangle, -1 otherwise.
+        """
+        etypes, _, enodes = gmsh.model.mesh.getElements(dim, face_tag)
+        sample_tri: np.ndarray | None = None
+        for etype, conn in zip(etypes, enodes):
+            if int(etype) != 2:           # gmsh elem type 2 = 3-node tri
+                continue
+            arr = np.asarray(conn, dtype=int).reshape(-1, 3)
+            if len(arr) > 0:
+                sample_tri = arr[0]
+                break
+        if sample_tri is None:
+            raise RuntimeError(
+                f"crack: face entity (dim={dim}, tag={face_tag}) has no "
+                f"3-node triangles; cannot classify side."
+            )
+
+        p = np.array([
+            gmsh.model.mesh.getNode(int(nid))[0] for nid in sample_tri
+        ])
+        n_vec = np.cross(p[1] - p[0], p[2] - p[0])
+        n_norm = float(np.linalg.norm(n_vec))
+        if n_norm < 1e-30:
+            raise RuntimeError("crack: degenerate sample triangle.")
+        n_vec = n_vec / n_norm
+        ref = p.mean(axis=0)
+        face_node_set = {int(x) for x in sample_tri}
+
+        for vd, vt in gmsh.model.getEntities(3):
+            etypes3, _, enodes3 = gmsh.model.mesh.getElements(vd, vt)
+            for etype3, conn3 in zip(etypes3, enodes3):
+                if int(etype3) != 4:      # gmsh elem type 4 = 4-node tet
+                    continue
+                tets = np.asarray(conn3, dtype=int).reshape(-1, 4)
+                for tet in tets:
+                    if sum(1 for n in tet if int(n) in face_node_set) == 3:
+                        pts = np.array([
+                            gmsh.model.mesh.getNode(int(nid))[0]
+                            for nid in tet
+                        ])
+                        centroid = pts.mean(axis=0)
+                        signed = float(np.dot(centroid - ref, n_vec))
+                        return 1 if signed > 0 else -1
+
+        raise RuntimeError(
+            f"crack: no adjacent volume tet found for face entity "
+            f"(dim={dim}, tag={face_tag})."
+        )
 
     def affine_transform(
         self,
