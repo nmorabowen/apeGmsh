@@ -47,8 +47,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .._internal.tag_resolution import resolve_tag
 from .._internal.types import Primitive, Section, UniaxialMaterial
-from ._tag_resolver import resolve_mat_tag
 
 if TYPE_CHECKING:
     from ..emitter.base import Emitter
@@ -243,7 +243,7 @@ class Fiber(Section):
             emitter.section_open("Fiber", tag)
 
         for patch in self.patches:
-            mat_tag = resolve_mat_tag(emitter, patch.material)
+            mat_tag = resolve_tag(emitter, patch.material)
             emitter.patch(
                 "rect",
                 mat_tag,
@@ -253,7 +253,7 @@ class Fiber(Section):
             )
 
         for layer in self.layers:
-            mat_tag = resolve_mat_tag(emitter, layer.material)
+            mat_tag = resolve_tag(emitter, layer.material)
             emitter.layer(
                 "straight",
                 mat_tag,
@@ -264,7 +264,7 @@ class Fiber(Section):
             )
 
         for fpt in self.fibers:
-            mat_tag = resolve_mat_tag(emitter, fpt.material)
+            mat_tag = resolve_tag(emitter, fpt.material)
             emitter.fiber(fpt.y, fpt.z, fpt.area, mat_tag)
 
         emitter.section_close()
