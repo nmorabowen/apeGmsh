@@ -75,6 +75,7 @@ from ._internal.types import (
     UniaxialMaterial,
 )
 from .emitter.base import Emitter
+from .node import Node, _NodeAccessor, _iter_tags
 
 if TYPE_CHECKING:
     # FEMData is the only mesh symbol the bridge depends on (P3, P9).
@@ -374,6 +375,9 @@ class apeSees:
         self.pattern          = _PatternNS(self)
         self.element          = _ElementNS(self)
         self.recorder         = _RecorderNS(self)
+
+        # FEM-aware aggregates (Phase 5A) — query-and-act over fem.nodes.
+        self.nodes            = _NodeAccessor(self)
         self.constraints      = _ConstraintsNS(self)
         self.numberer         = _NumbererNS(self)
         self.system           = _SystemNS(self)
@@ -398,20 +402,23 @@ class apeSees:
         self,
         *,
         pg: str | None = None,
-        nodes: Iterable[int] | None = None,
+        nodes: Iterable[int | Node] | None = None,
         dofs: tuple[int, ...],
     ) -> None:
         """Apply homogeneous SP constraints (``fix``).
 
-        Exactly one of ``pg`` / ``nodes`` must be supplied. The build
-        pipeline expands ``pg`` to a per-node fan-out at emit time.
+        Exactly one of ``pg`` / ``nodes`` must be supplied. ``nodes``
+        accepts a mix of plain integer tags and :class:`Node`
+        instances (from ``ops.nodes.get(...)``); both are normalized
+        to tags. The build pipeline expands ``pg`` to a per-node
+        fan-out at emit time.
         """
         if (pg is None) == (nodes is None):
             raise ValueError(
                 "apeSees.fix: supply exactly one of pg= or nodes= "
                 f"(got pg={pg!r}, nodes={nodes!r})."
             )
-        nodes_tuple = tuple(int(n) for n in nodes) if nodes is not None else None
+        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
         self._fix_records.append(
             FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
         )
@@ -420,19 +427,20 @@ class apeSees:
         self,
         *,
         pg: str | None = None,
-        nodes: Iterable[int] | None = None,
+        nodes: Iterable[int | Node] | None = None,
         values: tuple[float, ...],
     ) -> None:
         """Attach lumped nodal mass.
 
-        Exactly one of ``pg`` / ``nodes`` must be supplied.
+        Exactly one of ``pg`` / ``nodes`` must be supplied. ``nodes``
+        accepts plain integers or :class:`Node` instances.
         """
         if (pg is None) == (nodes is None):
             raise ValueError(
                 "apeSees.mass: supply exactly one of pg= or nodes= "
                 f"(got pg={pg!r}, nodes={nodes!r})."
             )
-        nodes_tuple = tuple(int(n) for n in nodes) if nodes is not None else None
+        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
         self._mass_records.append(
             MassRecord(pg=pg, nodes=nodes_tuple, values=tuple(values)),
         )

@@ -45,6 +45,24 @@ from .._internal.types import Pattern, Primitive, TimeSeries
 
 if TYPE_CHECKING:
     from ..emitter.base import Emitter
+    from ..node import Node
+
+
+def _node_to_tag(node: "int | Node") -> int:
+    """Coerce a :class:`Node` or plain int to its tag.
+
+    Duck-typing via ``int(node)`` (Node defines ``__int__``) would work
+    too, but explicit isinstance keeps the code searchable when we
+    later add other node-bearing primitives.
+    """
+    # Defer the Node import to call-time so module load order doesn't
+    # matter (pattern.py vs node.py — both eventually load when
+    # apesees.py is imported, but isinstance against an unimported
+    # class would always be False).
+    from ..node import Node as _N
+    if isinstance(node, _N):
+        return node.tag
+    return int(node)
 
 
 __all__ = [
@@ -169,14 +187,15 @@ class Plain(Pattern):
         self,
         *,
         pg: str | None = None,
-        node: int | None = None,
+        node: "int | Node | None" = None,
         forces: tuple[float, ...],
     ) -> None:
         """Record a nodal load inside this pattern.
 
         Exactly one of ``pg`` (physical-group name; the bridge fans the
         load across the group's nodes at build time) or ``node`` (an
-        explicit OpenSees node tag) must be supplied.
+        explicit OpenSees node tag or :class:`Node` instance returned
+        by ``ops.nodes.get(...)``) must be supplied.
         """
         if (pg is None) == (node is None):
             raise ValueError(
@@ -189,8 +208,9 @@ class Plain(Pattern):
             )
         else:
             assert node is not None  # validation above guarantees
+            node_tag = _node_to_tag(node)
             rec = _LoadRecord(
-                target_kind="node", target=str(node),
+                target_kind="node", target=str(node_tag),
                 forces=tuple(forces),
             )
         self._loads_.append(rec)
@@ -199,7 +219,7 @@ class Plain(Pattern):
         self,
         *,
         pg: str | None = None,
-        node: int | None = None,
+        node: "int | Node | None" = None,
         dof: int,
         value: float,
     ) -> None:
@@ -219,8 +239,9 @@ class Plain(Pattern):
             )
         else:
             assert node is not None  # validation above guarantees
+            node_tag = _node_to_tag(node)
             rec = _SPRecord(
-                target_kind="node", target=str(node),
+                target_kind="node", target=str(node_tag),
                 dof=dof, value=value,
             )
         self._sps_.append(rec)
