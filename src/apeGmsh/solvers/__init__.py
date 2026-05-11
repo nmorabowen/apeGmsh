@@ -1,5 +1,5 @@
 from .OpenSees import OpenSees
-from .Numberer import Numberer
+from apeGmsh.mesh._numberer import Numberer
 from ._opensees_csys import Cartesian, Cylindrical, Spherical
 
 __all__ = [
