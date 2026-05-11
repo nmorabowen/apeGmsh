@@ -147,6 +147,22 @@ def _set_attr(target: Any, key: str, value: Any) -> None:
     )
 
 
+def _scan_flag(
+    args: tuple[int | float | str, ...], flag: str,
+) -> str | None:
+    """Return the argument immediately after ``flag`` (as a string), or
+    ``None`` if the flag is not present.
+
+    Used for recorder ``-file`` extraction. Treats only string args as
+    flag candidates.
+    """
+    for i, v in enumerate(args[:-1]):
+        if isinstance(v, str) and v == flag:
+            nxt = args[i + 1]
+            return str(nxt)
+    return None
+
+
 def _write_param_array(
     target: Any, key: str, params: tuple[float | str | int, ...],
 ) -> None:
@@ -691,7 +707,8 @@ class H5Emitter:
             self._write_elements(f)
             self._write_time_series(f)
             self._write_patterns(f)
-            # Step 6 fills in /recorders, /analysis.
+            self._write_recorders(f)
+            self._write_analysis(f)
 
     # -- Per-group writers (split out so each step adds one) -------------
 
@@ -1250,6 +1267,36 @@ class H5Emitter:
         for i, r in enumerate(sps):
             rows[i] = ("node", str(r.target), r.dof, r.value)
         g.create_dataset("sps", data=rows)
+
+    # -- Recorders -------------------------------------------------------
+
+    def _write_recorders(self, f: Any) -> None:
+        if not self._recorders:
+            return
+        recorders = f.create_group("recorders")
+        for idx, rec in enumerate(self._recorders):
+            g = recorders.create_group(recorder_name(rec, idx))
+            _set_attr(g, "type", rec.kind)
+            # Surface the -file flag's value as an explicit attr; it's
+            # the most-used identifier across recorders.
+            file_path = _scan_flag(rec.args, "-file")
+            if file_path is not None:
+                _set_attr(g, "file", file_path)
+            _write_param_array(g, "params", rec.args)
+
+    # -- Analysis chain --------------------------------------------------
+
+    def _write_analysis(self, f: Any) -> None:
+        if not self._analysis_attrs and self._analyze_call is None:
+            return
+        analysis = f.create_group("analysis")
+        for key, value in self._analysis_attrs.items():
+            _set_attr(analysis, key, value)
+        if self._analyze_call is not None:
+            steps, dt = self._analyze_call
+            _set_attr(analysis, "analyze_steps", steps)
+            if dt is not None:
+                _set_attr(analysis, "analyze_dt", dt)
 
     def _write_pattern_ele_loads(
         self, g: Any, ele_loads: list[_EleLoadRecord],

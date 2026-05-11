@@ -459,3 +459,92 @@ def test_h5emitter_write_uniform_excitation_pattern(tmp_path) -> None:  # type: 
         assert g.attrs["series_ref"] == "/time_series/Path_5"
         # No /loads sub-dataset for single-line patterns.
         assert "loads" not in g
+
+
+def test_h5emitter_write_node_recorder(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import h5py
+    e = H5Emitter()
+    e.recorder("Node", "-file", "disp.out", "-node", 1, 2, "-dof", 1, 2, 3, "disp")
+    out = tmp_path / "rec.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        g = f["recorders/Node_0"]
+        assert g.attrs["type"] == "Node"
+        assert g.attrs["file"] == "disp.out"
+
+
+def test_h5emitter_write_analysis_chain(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import h5py
+    e = H5Emitter()
+    e.constraints("Transformation")
+    e.numberer("RCM")
+    e.system("BandGeneral")
+    e.test("NormDispIncr", 1.0e-6, 10)
+    e.algorithm("Newton")
+    e.integrator("LoadControl", 0.05)
+    e.analysis("Static")
+    e.analyze(steps=20, dt=0.1)
+    out = tmp_path / "ana.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        a = f["analysis"]
+        assert a.attrs["handler"] == "Transformation"
+        assert a.attrs["numberer"] == "RCM"
+        assert a.attrs["system"] == "BandGeneral"
+        assert a.attrs["algorithm"] == "Newton"
+        assert int(a.attrs["analyze_steps"]) == 20
+        assert float(a.attrs["analyze_dt"]) == 0.1
+
+
+def test_h5emitter_no_analysis_no_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import h5py
+    e = H5Emitter()
+    out = tmp_path / "no_ana.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        assert "analysis" not in f
+
+
+def test_h5emitter_round_trip_minimal_column(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """End-to-end smoke: build a minimal column model and verify every
+    expected group is present in the file."""
+    import h5py
+    e = H5Emitter(model_name="cantilever")
+    e.model(ndm=3, ndf=6)
+    e.node(1, 0.0, 0.0, 0.0)
+    e.node(2, 0.0, 0.0, 1.0)
+    e.fix(1, 1, 1, 1, 1, 1, 1)
+    e.uniaxialMaterial("Steel02", 1, 420.0e6, 200.0e9, 0.01, 20.0, 0.925, 0.15)
+    e.uniaxialMaterial("Concrete02", 2, -30.0e6, -0.002, -25.0e6, -0.006, 0.1, 2.5e6, 200.0e6)
+    e.section_open("Fiber", 1, "-GJ", 1.0e9)
+    e.patch("rect", 2, 8, 8, -0.2, -0.2, 0.2, 0.2)
+    e.section_close()
+    e.geomTransf("PDelta", 1, 1.0, 0.0, 0.0)
+    e.beamIntegration("Lobatto", 1, 1, 5)
+    set_element_nodes(e, (1, 2))
+    e.element("forceBeamColumn", 1, 1, 2, 1, 1)
+    e.timeSeries("Path", 1, "-dt", 0.01, "-filePath", "elcentro.txt")
+    e.pattern_open("UniformExcitation", 1, 1, "-accel", 1)
+    e.pattern_close()
+    out = tmp_path / "column.h5"
+    e.write(str(out))
+
+    with h5py.File(out, "r") as f:
+        # Required: /meta
+        assert int(f["meta"].attrs["ndm"]) == 3
+        # Constitutive
+        assert "materials/uniaxial/Steel02_1" in f
+        assert "materials/uniaxial/Concrete02_2" in f
+        # Section
+        assert "sections/Fiber_1" in f
+        assert f["sections/Fiber_1"]["patches"].shape == (1,)
+        # Transform + beamIntegration
+        assert "transforms/PDelta_1" in f
+        assert "beam_integration/Lobatto_1" in f
+        # Element
+        assert "elements/forceBeamColumn" in f
+        # BCs
+        assert "bcs/fix" in f
+        # Time series + pattern
+        assert "time_series/Path_1" in f
+        assert "patterns/UniformExcitation_1" in f
