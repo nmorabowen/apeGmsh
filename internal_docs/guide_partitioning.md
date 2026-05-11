@@ -121,7 +121,7 @@ should not be invoked directly.
 For renumbering a FEMData object without modifying the Gmsh model:
 
 ```python
-from apeGmsh.solvers import Numberer
+from apeGmsh import Numberer
 
 fem = g.mesh.queries.get_fem_data(dim=3)
 numb = Numberer(fem)

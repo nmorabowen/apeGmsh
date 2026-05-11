@@ -160,7 +160,9 @@ A new sub-package under mesh, where the broker lives:
 | `Masses.py` → def types | `core/masses/defs.py` | Same split |
 | `Masses.py` → `MassResolver` | `mesh/_mass_resolver.py` | Same split |
 | `Constraints.py` (the re-export module) | `mesh/records/__init__.py` | Becomes the canonical import path |
-| `_constraint_defs.py`, `_constraint_geom.py`, `_constraint_resolver.py` | `mesh/_constraint_resolver/...` | Broker-layer resolver internals |
+| `_constraint_defs.py` | `core/constraints/defs.py` | Pre-mesh user-facing intent, symmetric with Loads/Masses |
+| `_constraint_geom.py`, `_constraint_resolver.py` | `mesh/_constraint_resolver/_geom.py`, `mesh/_constraint_resolver/_resolver.py` | Broker-layer resolver internals |
+| `_consistent_quadrature.py` | `mesh/_consistent_quadrature.py` | FEM shape-fn quadrature; only ever consumed by `LoadResolver`, so it follows the resolver into mesh/ |
 | `Numberer.py` | `mesh/_numberer.py` | RCM numberer — Broker-side topology op |
 
 ### 4b. OpenSees emit helpers → `apeGmsh.opensees`
@@ -177,7 +179,6 @@ These are bridge-side concerns:
 | `_opensees_ingest.py` | DELETE | Tied-element ingest moved into bridge build pipeline |
 | `_opensees_inspect.py` | DELETE | Phase 5A NodeComposite + accessors replaced this |
 | `_opensees_materials.py` | DELETE | Phase 1 typed materials replaced this |
-| `_consistent_quadrature.py` | `opensees/integration/_quadrature.py` | Used by beam integration rules |
 | `_element_specs.py` | DELETE | Phase 2 typed elements replaced this |
 
 ### 4c. Recorder / response → owned by Bridge + Results jointly
@@ -215,12 +216,15 @@ Phase 8 cannot land as one PR. It splits into ordered sub-phases:
 ### Phase 8.0 — Plan (this doc)
 Single commit, no code.
 
-### Phase 8.1 — Record relocation (mechanical)
-Move `_kinds`, `_constraint_records`, `Loads` records, `Masses`
-records, the resolvers, `Numberer` to `mesh/records/` and
-`mesh/_*_resolver.py`. Update every caller. Ship the deprecation
-shim. Apps that do `from apeGmsh.solvers import X` keep working with
-a `DeprecationWarning`.
+### Phase 8.1 — Record relocation (mechanical) — landed in PR #119
+Moved `_kinds`, `_constraint_records`, `Loads` records, `Masses`
+records, all three resolvers (`LoadResolver`, `MassResolver`,
+`ConstraintResolver`), the constraint defs (now in
+`core/constraints/defs.py`), `_consistent_quadrature.py`, and
+`Numberer.py` to their new homes under `mesh/` and `core/`.
+Updated every caller. Shipped the deprecation shims. Apps that do
+`from apeGmsh.solvers import X` keep working with a
+`DeprecationWarning`.
 
 **Risk:** low. Mostly renames + re-imports. No behavior change.
 **Test gate:** every existing test still passes; deprecation warning
@@ -229,9 +233,8 @@ shows once per import path.
 ### Phase 8.2 — Bridge-side helper relocation
 Move `_opensees_csys` into `opensees/_csys.py`. Update
 `opensees/transform.py` + `opensees/_internal/build.py` to import
-locally. Delete `_consistent_quadrature.py`'s old home; move it under
-`opensees/integration/`. Delete files in 4b marked "DELETE" (after
-confirming no consumer outside solvers/ itself).
+locally. Delete files in 4b marked "DELETE" (after confirming no
+consumer outside solvers/ itself).
 
 **Risk:** low. Internal reorganization with no external surface
 change.

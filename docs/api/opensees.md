@@ -35,6 +35,6 @@ lifecycle methods.
 
 ## Numberer
 
-::: apeGmsh.solvers.Numberer.Numberer
+::: apeGmsh.mesh._numberer.Numberer
 
-::: apeGmsh.solvers.Numberer.NumberedMesh
+::: apeGmsh.mesh._numberer.NumberedMesh
