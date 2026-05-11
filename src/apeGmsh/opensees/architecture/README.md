@@ -46,6 +46,10 @@ consequences.
 For things we agreed to defer, see
 [_DEFERRED.md](_DEFERRED.md).
 
+For the Phase 8 plan (untangle `apeGmsh.solvers`, relocate records
+to the broker, make model.h5 the canonical model database), see
+[phase-8-untangle.md](phase-8-untangle.md).
+
 ## Status
 
 **Phase: design.** No primitive code, no `apeSees` class, no emitters

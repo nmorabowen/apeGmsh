@@ -329,10 +329,15 @@ they don't unlock other phases.
 | `IShape` | Sections |
 | `RC_Beam` | Materials + Sections |
 
-## Phase 8 — Migration cutover
+## Phase 8 — Untangle `apeGmsh.solvers`
 
-Out of scope for the parallel agent plan. Once `apeGmsh.opensees`
-is functionally complete, apps migrate from `apeGmsh.solvers`.
+Originally framed as "apps migrate" — too small a frame. The
+realized scope is broader: relocate records to the broker, move
+OpenSees emit helpers into the bridge, reshuffle model.h5 into
+zoned namespaces, and make the viewer a pure model.h5 consumer.
+
+See [phase-8-untangle.md](phase-8-untangle.md) for the full plan,
+sub-phase sequencing (8.0–8.8), and the relocation map.
 
 ## Sync points
 
