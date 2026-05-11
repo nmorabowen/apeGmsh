@@ -206,6 +206,73 @@ def test_auto_scale_uses_global_max(reactions_results, headless_plotter):
     assert abs(diagram.current_force_scale() - expected) < 1e-9
 
 
+def _axis_spec(component: str, style: ReactionsStyle | None = None) -> DiagramSpec:
+    return DiagramSpec(
+        kind="reactions",
+        selector=SlabSelector(component=component),
+        style=style or ReactionsStyle(),
+    )
+
+
+@pytest.mark.parametrize(
+    "component, axis, expected_step0",
+    [
+        ("reaction_x", 0, np.array([10.0, 0.0, 0.0])),
+        ("reaction_y", 1, np.array([0.0, -5.0, 0.0])),
+        ("reaction_z", 2, np.array([0.0, 0.0, 0.0])),
+    ],
+)
+def test_axis_mode_zeros_other_components(
+    reactions_results, headless_plotter, component, axis, expected_step0,
+):
+    """``reaction_x/y/z`` retain only the picked axis in ``_vec``."""
+    scene = build_fem_scene(reactions_results.fem)
+    diagram = ReactionsDiagram(_axis_spec(component), reactions_results)
+    diagram.attach(headless_plotter, reactions_results.fem, scene)
+    # Force layer drawn; node 0 is the only kept node (it's the only
+    # one with non-zero |reaction_force|).
+    assert diagram._force.source is not None
+    vecs = np.asarray(diagram._force.source.point_data["_vec"])
+    assert vecs.shape == (1, 3)
+    np.testing.assert_allclose(vecs[0], expected_step0)
+
+
+def test_axis_mode_silences_moment_layer(reactions_results, headless_plotter):
+    scene = build_fem_scene(reactions_results.fem)
+    diagram = ReactionsDiagram(_axis_spec("reaction_x"), reactions_results)
+    diagram.attach(headless_plotter, reactions_results.fem, scene)
+    assert diagram._force.source is not None
+    assert diagram._moment.source is None
+    assert len(diagram._actors) == 1
+
+
+def test_axis_mode_scale_matches_resultant(reactions_results, headless_plotter):
+    """``reaction_x`` and resultant share auto-fit scale → comparable arrows."""
+    scene = build_fem_scene(reactions_results.fem)
+    resultant = ReactionsDiagram(_spec(), reactions_results)
+    resultant.attach(headless_plotter, reactions_results.fem, scene)
+    pv2 = pv.Plotter(off_screen=True)
+    try:
+        axis_x = ReactionsDiagram(_axis_spec("reaction_x"), reactions_results)
+        axis_x.attach(pv2, reactions_results.fem, scene)
+        assert abs(
+            resultant.current_force_scale() - axis_x.current_force_scale()
+        ) < 1e-9
+    finally:
+        pv2.close()
+
+
+def test_axis_mode_step_update(reactions_results, headless_plotter):
+    """Per-step rescaling still hits only the picked axis."""
+    scene = build_fem_scene(reactions_results.fem)
+    diagram = ReactionsDiagram(_axis_spec("reaction_y"), reactions_results)
+    diagram.attach(headless_plotter, reactions_results.fem, scene)
+    diagram.update_to_step(3)
+    vecs = np.asarray(diagram._force.source.point_data["_vec"])
+    # step 3: Fy = -20, Fx and Fz zeroed.
+    np.testing.assert_allclose(vecs[0], np.array([0.0, -20.0, 0.0]))
+
+
 def test_detach_clears_state(reactions_results, headless_plotter):
     scene = build_fem_scene(reactions_results.fem)
     diagram = ReactionsDiagram(_spec(), reactions_results)

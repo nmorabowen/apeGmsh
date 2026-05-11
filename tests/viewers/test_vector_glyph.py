@@ -69,10 +69,15 @@ def headless_plotter():
     plotter.close()
 
 
-def _spec() -> DiagramSpec:
+def _spec(component: str = "displacement") -> DiagramSpec:
+    """Default selector picks the displacement *prefix* (resultant mode).
+
+    Per-axis tests pass ``displacement_x/y/z`` to drive the diagram
+    into axis-locked mode.
+    """
     return DiagramSpec(
         kind="vector_glyph",
-        selector=SlabSelector(component="displacement_x"),
+        selector=SlabSelector(component=component),
         style=VectorGlyphStyle(scale=1.0),
     )
 
@@ -85,7 +90,7 @@ def test_construction_requires_vector_style(vector_results):
     from apeGmsh.viewers.diagrams._styles import DiagramStyle
     bad = DiagramSpec(
         kind="vector_glyph",
-        selector=SlabSelector(component="displacement_x"),
+        selector=SlabSelector(component="displacement"),
         style=DiagramStyle(),
     )
     with pytest.raises(TypeError, match="VectorGlyphStyle"):
@@ -211,20 +216,20 @@ def test_detach_removes_scalar_bar(vector_results, headless_plotter):
         diagram.attach(headless_plotter, vector_results.fem, scene)
         diagram.detach()
     bars = getattr(headless_plotter, "scalar_bars", {}) or {}
-    assert "displacement_x" not in bars
+    assert "displacement" not in bars
 
 
 def test_set_show_scalar_bar_toggles_live(vector_results, headless_plotter):
     scene = build_fem_scene(vector_results.fem)
     diagram = VectorGlyphDiagram(_spec(), vector_results)
     diagram.attach(headless_plotter, vector_results.fem, scene)
-    assert "displacement_x" in headless_plotter.scalar_bars
+    assert "displacement" in headless_plotter.scalar_bars
 
     diagram.set_show_scalar_bar(False)
-    assert "displacement_x" not in headless_plotter.scalar_bars
+    assert "displacement" not in headless_plotter.scalar_bars
 
     diagram.set_show_scalar_bar(True)
-    assert "displacement_x" in headless_plotter.scalar_bars
+    assert "displacement" in headless_plotter.scalar_bars
 
 
 def test_set_fmt_updates_label_format_live(vector_results, headless_plotter):
@@ -232,4 +237,168 @@ def test_set_fmt_updates_label_format_live(vector_results, headless_plotter):
     diagram = VectorGlyphDiagram(_spec(), vector_results)
     diagram.attach(headless_plotter, vector_results.fem, scene)
     diagram.set_fmt("%.2e")
-    assert headless_plotter.scalar_bars["displacement_x"].GetLabelFormat() == "%.2e"
+    assert headless_plotter.scalar_bars["displacement"].GetLabelFormat() == "%.2e"
+
+
+# =====================================================================
+# Axis-locked mode (selector.component matches one of style.components)
+# =====================================================================
+
+@pytest.mark.parametrize(
+    "component, axis, step0_per_axis",
+    [
+        # Step 0: dx = nid + 0.0, dy = nid + 0.0, dz = nid + 0.0
+        ("displacement_x", 0, ("x", 0.0)),
+        ("displacement_y", 1, ("y", 0.0)),
+        ("displacement_z", 2, ("z", 0.0)),
+    ],
+)
+def test_axis_mode_zeros_other_components(
+    vector_results, headless_plotter, component, axis, step0_per_axis,
+):
+    """``displacement_x/y/z`` retain only the picked axis in ``_vec``."""
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec(component), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+    vecs = np.asarray(diagram._source.point_data["_vec"])
+    fem_ids = np.asarray(scene.node_ids).astype(np.float64)
+    # Selected axis carries the value, the other two are zero.
+    expected = fem_ids + step0_per_axis[1]
+    np.testing.assert_allclose(vecs[:, axis], expected)
+    for other in (0, 1, 2):
+        if other != axis:
+            np.testing.assert_allclose(vecs[:, other], 0.0)
+
+
+def test_axis_mode_step_update(vector_results, headless_plotter):
+    """Per-step rescaling still hits only the picked axis."""
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec("displacement_y"), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+    diagram.update_to_step(2)
+    vecs = np.asarray(diagram._source.point_data["_vec"])
+    fem_ids = np.asarray(scene.node_ids).astype(np.float64)
+    # Step 2: dy = nid + 0.4, dx and dz zeroed.
+    np.testing.assert_allclose(vecs[:, 1], fem_ids + 0.4)
+    np.testing.assert_allclose(vecs[:, 0], 0.0)
+    np.testing.assert_allclose(vecs[:, 2], 0.0)
+
+
+@pytest.mark.parametrize(
+    "selection, expected_prefix",
+    [
+        ("displacement",   "displacement"),
+        ("displacement_z", "displacement"),
+        ("velocity",       "velocity"),
+        ("velocity_y",     "velocity"),
+        ("acceleration_x", "acceleration"),
+        # Tensor suffix is not a vector axis — falls through unchanged.
+        ("stress_xx",      "stress_xx"),
+    ],
+)
+def test_resolve_vector_prefix(selection, expected_prefix):
+    from apeGmsh.viewers.diagrams._kind_catalog import resolve_vector_prefix
+    assert resolve_vector_prefix(selection) == expected_prefix
+
+
+@pytest.mark.parametrize(
+    "selection, expected_components",
+    [
+        ("displacement",
+            ("displacement_x", "displacement_y", "displacement_z")),
+        ("displacement_y",
+            ("displacement_x", "displacement_y", "displacement_z")),
+        ("velocity",
+            ("velocity_x", "velocity_y", "velocity_z")),
+        ("velocity_z",
+            ("velocity_x", "velocity_y", "velocity_z")),
+        ("acceleration_x",
+            ("acceleration_x", "acceleration_y", "acceleration_z")),
+    ],
+)
+def test_vector_default_style_derives_components(selection, expected_components):
+    """``_vector_default_style`` reads the right field for any prefix."""
+    from apeGmsh.viewers.ui._add_diagram_dialog import _vector_default_style
+    style = _vector_default_style(selection)
+    assert style.components == expected_components
+
+
+def test_partial_recording_resultant_works(g, tmp_path: Path, headless_plotter):
+    """Resultant prefix tolerates a file with only one axis recorded.
+
+    Catches the ≥1 (formerly ≥2) prefix-eligibility threshold: a file
+    with only ``displacement_x`` should still offer a usable
+    ``displacement`` resultant entry, and the diagram should render
+    arrows aligned with x.
+    """
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+    g.physical.add_volume("cube", name="Body")
+    g.mesh.sizing.set_global_size(2.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+
+    n_steps = 2
+    base = np.broadcast_to(node_ids.astype(np.float64), (n_steps, len(node_ids)))
+    components = {"displacement_x": base.copy()}
+
+    path = tmp_path / "vec_x_only.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name="dyn", kind="transient",
+            time=np.arange(n_steps, dtype=np.float64),
+        )
+        w.write_nodes(
+            sid, "partition_0",
+            node_ids=node_ids, components=components,
+        )
+        w.end_stage()
+    results = Results.from_native(path)
+
+    # Catalog should still offer a "displacement" prefix entry.
+    from apeGmsh.viewers.diagrams._kind_catalog import _vector_prefixes
+    assert "displacement" in _vector_prefixes(["displacement_x"])
+
+    # Diagram with prefix selection (resultant mode) renders fine.
+    spec = DiagramSpec(
+        kind="vector_glyph",
+        selector=SlabSelector(component="displacement"),
+        style=VectorGlyphStyle(scale=1.0),
+    )
+    scene = build_fem_scene(results.fem)
+    diagram = VectorGlyphDiagram(spec, results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    vecs = np.asarray(diagram._source.point_data["_vec"])
+    fem_ids = np.asarray(scene.node_ids).astype(np.float64)
+    # x populated from the slab; y and z stay zero.
+    np.testing.assert_allclose(vecs[:, 0], fem_ids)
+    np.testing.assert_allclose(vecs[:, 1], 0.0)
+    np.testing.assert_allclose(vecs[:, 2], 0.0)
+
+
+def test_axis_mode_scale_matches_resultant(vector_results, headless_plotter):
+    """``displacement_x`` and the prefix share auto-fit scale."""
+    scene = build_fem_scene(vector_results.fem)
+    # Build both with auto-fit (scale=None) so the global-norm path runs.
+    res_spec = DiagramSpec(
+        kind="vector_glyph",
+        selector=SlabSelector(component="displacement"),
+        style=VectorGlyphStyle(),
+    )
+    axis_spec = DiagramSpec(
+        kind="vector_glyph",
+        selector=SlabSelector(component="displacement_x"),
+        style=VectorGlyphStyle(),
+    )
+    resultant = VectorGlyphDiagram(res_spec, vector_results)
+    resultant.attach(headless_plotter, vector_results.fem, scene)
+    pv2 = pv.Plotter(off_screen=True)
+    try:
+        axis_x = VectorGlyphDiagram(axis_spec, vector_results)
+        axis_x.attach(pv2, vector_results.fem, scene)
+        assert abs(
+            resultant.current_scale() - axis_x.current_scale()
+        ) < 1e-9
+    finally:
+        pv2.close()
