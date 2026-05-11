@@ -640,9 +640,10 @@ class H5Emitter:
 
         with h5py.File(path, "w") as f:
             self._write_meta(f)
-            # Subsequent steps fill in /nodes, /bcs, /materials,
-            # /sections, /transforms, /beam_integration, /elements,
-            # /time_series, /patterns, /recorders, /analysis.
+            self._write_bcs(f)
+            # Subsequent steps fill in /materials, /sections,
+            # /transforms, /beam_integration, /elements, /time_series,
+            # /patterns, /recorders, /analysis.
 
     # -- Per-group writers (split out so each step adds one) -------------
 
@@ -651,6 +652,59 @@ class H5Emitter:
         meta = f.create_group("meta")
         for key, value in self._meta_attrs().items():
             _set_attr(meta, key, value)
+
+    def _write_bcs(self, f: Any) -> None:
+        """Write ``/bcs/fix`` and ``/bcs/mass`` compound datasets.
+
+        Both are emitted only if at least one record exists. The bridge's
+        ``fix`` / ``mass`` fan-out has already resolved any ``pg=``
+        targets into per-node calls, so every record's ``target_kind``
+        is ``"node"`` and ``target`` is the integer tag rendered as a
+        string (per the schema's compound-dataset convention).
+        """
+        if not self._fixes and not self._masses:
+            return
+        bcs = f.create_group("bcs")
+        if self._fixes:
+            self._write_bcs_fix(bcs)
+        if self._masses:
+            self._write_bcs_mass(bcs)
+
+    def _write_bcs_fix(self, bcs_group: Any) -> None:
+        import h5py
+        import numpy as np
+
+        ndf = max(int(self._ndf or 0), max(len(r.dofs) for r in self._fixes))
+        dt = np.dtype(
+            [
+                ("target_kind", h5py.string_dtype(encoding="utf-8")),
+                ("target", h5py.string_dtype(encoding="utf-8")),
+                ("dofs", np.int64, (ndf,)),
+            ]
+        )
+        rows = np.empty(len(self._fixes), dtype=dt)
+        for i, rec in enumerate(self._fixes):
+            padded = list(rec.dofs) + [0] * (ndf - len(rec.dofs))
+            rows[i] = ("node", str(rec.tag), tuple(padded))
+        bcs_group.create_dataset("fix", data=rows)
+
+    def _write_bcs_mass(self, bcs_group: Any) -> None:
+        import h5py
+        import numpy as np
+
+        ndf = max(int(self._ndf or 0), max(len(r.values) for r in self._masses))
+        dt = np.dtype(
+            [
+                ("target_kind", h5py.string_dtype(encoding="utf-8")),
+                ("target", h5py.string_dtype(encoding="utf-8")),
+                ("values", np.float64, (ndf,)),
+            ]
+        )
+        rows = np.empty(len(self._masses), dtype=dt)
+        for i, rec in enumerate(self._masses):
+            padded = list(rec.values) + [0.0] * (ndf - len(rec.values))
+            rows[i] = ("node", str(rec.tag), tuple(padded))
+        bcs_group.create_dataset("mass", data=rows)
 
     # =====================================================================
     # Helpers used by the writer (and by tests inspecting buffer state)

@@ -222,3 +222,54 @@ def test_h5emitter_write_meta_with_no_model_call(tmp_path) -> None:  # type: ign
     with h5py.File(out, "r") as f:
         assert int(f["meta"].attrs["ndm"]) == 0
         assert int(f["meta"].attrs["ndf"]) == 0
+
+
+def _s(v: object) -> str:
+    """Decode an h5py compound-field string (bytes or str) to str."""
+    if isinstance(v, bytes):
+        return v.decode("utf-8")
+    return str(v)
+
+
+def test_h5emitter_write_bcs_fix_compound_dataset(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """/bcs/fix is a compound dataset with target_kind / target / dofs."""
+    import h5py
+    e = H5Emitter()
+    e.model(ndm=3, ndf=6)
+    e.fix(1, 1, 1, 1, 1, 1, 1)
+    e.fix(2, 1, 1, 0, 0, 0, 0)
+    out = tmp_path / "bcs.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        ds = f["bcs/fix"]
+        assert ds.shape == (2,)
+        rows = ds[:]
+        assert _s(rows[0]["target_kind"]) == "node"
+        assert _s(rows[0]["target"]) == "1"
+        assert tuple(rows[0]["dofs"]) == (1, 1, 1, 1, 1, 1)
+        assert tuple(rows[1]["dofs"]) == (1, 1, 0, 0, 0, 0)
+
+
+def test_h5emitter_write_bcs_mass_compound_dataset(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import h5py
+    e = H5Emitter()
+    e.model(ndm=3, ndf=6)
+    e.mass(5, 100.0, 100.0, 100.0, 0.0, 0.0, 0.0)
+    out = tmp_path / "mass.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        ds = f["bcs/mass"]
+        rows = ds[:]
+        assert _s(rows[0]["target"]) == "5"
+        assert tuple(rows[0]["values"]) == (100.0, 100.0, 100.0, 0.0, 0.0, 0.0)
+
+
+def test_h5emitter_no_bcs_no_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """If no fix / mass calls, /bcs is not created at all."""
+    import h5py
+    e = H5Emitter()
+    e.model(ndm=2, ndf=3)
+    out = tmp_path / "no_bcs.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        assert "bcs" not in f
