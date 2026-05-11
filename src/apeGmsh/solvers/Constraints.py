@@ -40,7 +40,7 @@ from apeGmsh.core.constraints.defs import (
     TieDef,
     TiedContactDef,
 )
-from apeGmsh.mesh._constraint_resolver import (
+from apeGmsh.mesh._constraint_resolver import (  # noqa: F401  (intentional re-exports of private helpers that callers used to import from this umbrella pre-split)
     SHAPE_FUNCTIONS,
     ConstraintResolver,
     _is_inside_parametric,
