@@ -56,6 +56,18 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         self._runtime_clim: Optional[tuple[float, float]] = None
         self._init_scalar_bar_state()
 
+        # Axis-locked mode: when ``selector.component`` matches one of
+        # ``style.components``, render that axis only and zero the
+        # others. Auto-fit scale still uses the full ‖vec‖ across all
+        # steps (see _read_global_mag_max) so axis-x / axis-y /
+        # resultant diagrams compare at the same arrow length.
+        comp = getattr(spec.selector, "component", "") or ""
+        style: VectorGlyphStyle = spec.style    # type: ignore[assignment]
+        try:
+            self._axis: Optional[int] = list(style.components).index(comp)
+        except ValueError:
+            self._axis = None
+
     def _scalar_bar_is_enabled(self) -> bool:
         """VectorGlyph only paints a bar when colouring by magnitude."""
         style: VectorGlyphStyle = self.spec.style    # type: ignore[assignment]
@@ -337,6 +349,8 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         n = self._fem_ids_to_read.size
         out = np.zeros((n, 3), dtype=np.float64)
         for axis, comp in enumerate(style.components[:3]):
+            if self._axis is not None and axis != self._axis:
+                continue
             try:
                 slab = results.nodes.get(
                     ids=self._fem_ids_to_read,

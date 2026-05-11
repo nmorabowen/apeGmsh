@@ -95,10 +95,14 @@ def _component_sort_key(name: str) -> tuple[int, str]:
 
 
 def _vector_prefixes(components: Iterable[str]) -> list[str]:
-    """Return prefixes that have ≥ 2 axis components in the iterable.
+    """Return prefixes that have ≥ 1 axis component in the iterable.
 
-    Vector glyph needs x and y (and optionally z) together to draw
-    arrows; a prefix with only one axis recorded is not a vector.
+    A vector glyph reads x/y/z together but the diagram tolerates
+    missing axes (they stay zero in ``_vec``), so a prefix with even
+    one recorded axis is renderable. Per-axis catalog entries handle
+    the single-component case naturally — picking ``displacement_x``
+    on a file that only recorded x produces the same diagram as
+    picking the prefix.
     """
     by_prefix: dict[str, set[str]] = {}
     for name in components:
@@ -110,7 +114,22 @@ def _vector_prefixes(components: Iterable[str]) -> list[str]:
         if suf not in {"x", "y", "z"}:
             continue
         by_prefix.setdefault(prefix, set()).add(suf)
-    return sorted(p for p, axes in by_prefix.items() if len(axes) >= 2)
+    return sorted(by_prefix.keys())
+
+
+def resolve_vector_prefix(component: str) -> str:
+    """Return the prefix half of a vector-glyph data selection.
+
+    The selection is either a bare prefix (``"displacement"``) or one
+    of its canonical axes (``"displacement_z"``); either way, return
+    ``"displacement"``. Used to derive ``VectorGlyphStyle.components``
+    so the diagram reads the right field whether the user picked the
+    resultant or a single axis.
+    """
+    parts = split_canonical_component(component)
+    if parts is not None and parts[1] in {"x", "y", "z"}:
+        return parts[0]
+    return component
 
 
 # ---------------------------------------------------------------------
@@ -223,11 +242,11 @@ _KIND_DEFINITIONS: tuple[tuple[str, str, bool, str, Optional[str]], ...] = (
     # since loads live on FEM, not the recorder output.
     ("loads",         "Applied loads",           True,  "loads", None),
     # Reactions — recorded reaction forces and moments at constrained
-    # nodes, scaled per step. The kind is enabled iff the file
-    # actually carries ``reaction_force_*`` or ``reaction_moment_*``
-    # nodal recordings; no Data combo (force + moment families are
-    # both rendered when present).
-    ("reactions",     "Reactions",               False, "nodes", None),
+    # nodes, scaled per step. Data combo selects ``reactions``
+    # (resultant: forces + moments together) or one of
+    # ``reaction_x/y/z`` (single force axis, moments silenced). The
+    # data list is filtered to axes the file actually carries.
+    ("reactions",     "Reactions",               True,  "nodes", None),
 )
 
 
@@ -252,10 +271,23 @@ def build_catalog(director: "ResultsDirector") -> list[KindEntry]:
             data_options = tuple(comps)
             topology_hint = None
         elif kind_id == "vector_glyph":
-            # Prefixes with ≥ 2 axes recorded on nodes.
-            data_options = tuple(_vector_prefixes(
-                _union_across_stages(director, "nodes")
-            ))
+            # For every recorded vector prefix, expose the prefix
+            # (resultant) plus the per-axis canonical names that are
+            # actually recorded. The resultant entry tolerates
+            # partially-recorded vectors — missing axes stay zero in
+            # ``_vec`` — so a file with only ``displacement_x`` still
+            # offers a usable ``displacement`` resultant entry that
+            # renders an x-aligned arrow.
+            nodal = _union_across_stages(director, "nodes")
+            nodal_set = set(nodal)
+            opts: list[str] = []
+            for prefix in _vector_prefixes(nodal):
+                opts.append(prefix)
+                for axis in ("x", "y", "z"):
+                    comp = f"{prefix}_{axis}"
+                    if comp in nodal_set:
+                        opts.append(comp)
+            data_options = tuple(opts)
             topology_hint = "nodes"
         elif kind_id == "loads":
             # Pattern names that have at least one record with a
@@ -274,11 +306,13 @@ def build_catalog(director: "ResultsDirector") -> list[KindEntry]:
             data_options = tuple(comps)
             topology_hint = None
         elif kind_id == "reactions":
-            # Reactions kind has no Data combo — both force and
-            # moment families render together when present. Enabled
-            # iff the file actually carries any reaction recording.
+            # Reactions Data combo: ``reactions`` (resultant) is offered
+            # iff the file carries any reaction recording at all; the
+            # per-axis options are pruned to axes that actually have a
+            # ``reaction_force_<axis>`` slab. Moments contribute to the
+            # resultant entry but never to per-axis ones.
             nodal = set(_union_across_stages(director, "nodes"))
-            has_reaction = any(
+            any_reaction = any(
                 comp in nodal for comp in (
                     "reaction_force_x",
                     "reaction_force_y",
@@ -288,13 +322,23 @@ def build_catalog(director: "ResultsDirector") -> list[KindEntry]:
                     "reaction_moment_z",
                 )
             )
+            opts: list[str] = []
+            if any_reaction:
+                opts.append("reactions")
+            for option, force_comp in (
+                ("reaction_x", "reaction_force_x"),
+                ("reaction_y", "reaction_force_y"),
+                ("reaction_z", "reaction_force_z"),
+            ):
+                if force_comp in nodal:
+                    opts.append(option)
             out.append(KindEntry(
                 kind_id=kind_id, label=label,
-                requires_data=False,
-                data_options=(),
-                default_data=None,
+                requires_data=True,
+                data_options=tuple(opts),
+                default_data=opts[0] if opts else None,
                 topology_hint=None,
-                enabled=has_reaction,
+                enabled=bool(opts),
             ))
             continue
         else:

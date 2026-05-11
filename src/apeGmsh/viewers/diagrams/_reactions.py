@@ -49,6 +49,17 @@ _REACTION_MOMENT_COMPONENTS: tuple[str, str, str] = (
     "reaction_moment_z",
 )
 
+# selector.component → which axis to render. ``None`` keeps the
+# resultant 3-vector (combined force + moment families). An axis index
+# selects a single force component and silences moments — the user
+# wired this through the Data combo to compare force balance per axis.
+_AXIS_FROM_COMPONENT: dict[str, Optional[int]] = {
+    "reactions":   None,
+    "reaction_x":  0,
+    "reaction_y":  1,
+    "reaction_z":  2,
+}
+
 
 class _GlyphLayer:
     """Per-family render state (force or moment).
@@ -101,6 +112,8 @@ class ReactionsDiagram(Diagram):
         super().__init__(spec, results)
         self._force = _GlyphLayer()
         self._moment = _GlyphLayer()
+        comp = getattr(spec.selector, "component", "") or ""
+        self._axis: Optional[int] = _AXIS_FROM_COMPONENT.get(comp, None)
 
     # ------------------------------------------------------------------
     # Attach / detach / update
@@ -142,7 +155,9 @@ class ReactionsDiagram(Diagram):
                 scene=scene,
                 actor_suffix="force",
             )
-        if style.show_moments:
+        # Axis-locked modes show forces only — three curved-arrow
+        # glyphs alongside an axis-aligned force read as visual noise.
+        if style.show_moments and self._axis is None:
             self._build_layer(
                 self._moment,
                 node_ids,
@@ -352,7 +367,15 @@ class ReactionsDiagram(Diagram):
         components: tuple[str, str, str],
         step_index: int,
     ) -> Optional[ndarray]:
-        """Read one step of the (N, 3) reaction slab for ``fem_ids``."""
+        """Read one step of the (N, 3) reaction slab for ``fem_ids``.
+
+        In axis-locked modes (``self._axis is not None``) the off-axis
+        columns are zeroed *after* the read, so the glyph mapper sees
+        ``_mag = |component|`` and culls zero-length arrows. The full
+        slab is still read at attach time (via ``_read_vectors_all_steps``)
+        for auto-fit scaling, which keeps reaction_x / reaction_y / etc.
+        rendered at comparable lengths.
+        """
         if fem_ids is None or fem_ids.size == 0:
             return None
         results = self._scoped_results()
@@ -364,6 +387,8 @@ class ReactionsDiagram(Diagram):
         pos = np.full(max_id + 1, -1, dtype=np.int64)
         pos[fem_ids] = np.arange(n, dtype=np.int64)
         for axis, comp in enumerate(components):
+            if self._axis is not None and axis != self._axis:
+                continue
             try:
                 slab = results.nodes.get(
                     ids=fem_ids,

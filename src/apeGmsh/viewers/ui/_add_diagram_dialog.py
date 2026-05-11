@@ -80,8 +80,20 @@ def _layer_default_style(_component: str) -> LayerStackStyle:
     return LayerStackStyle()
 
 
-def _vector_default_style(_component: str) -> VectorGlyphStyle:
-    return VectorGlyphStyle()
+def _vector_default_style(component: str) -> VectorGlyphStyle:
+    """Build a default ``VectorGlyphStyle`` for the user's selection.
+
+    The catalog offers each vector prefix plus its per-axis options
+    (``displacement``, ``displacement_x``, ...). Either form names a
+    field; we resolve both back to the prefix so ``components`` reads
+    the *correct* x/y/z triple — picking ``velocity`` reads velocity,
+    not the hardcoded displacement default.
+    """
+    from ..diagrams._kind_catalog import resolve_vector_prefix
+    prefix = resolve_vector_prefix(component) if component else "displacement"
+    return VectorGlyphStyle(components=(
+        f"{prefix}_x", f"{prefix}_y", f"{prefix}_z",
+    ))
 
 
 def _gauss_default_style(_component: str) -> GaussMarkerStyle:
@@ -413,6 +425,15 @@ class AddDiagramDialog:
                         _components_for(scoped, "nodes")
                         or _components_for(scoped, "gauss")
                     )
+                elif entry.kind_id == "reactions":
+                    nodal = set(_components_for(scoped, "nodes"))
+                    found = any(
+                        c in nodal for c in (
+                            "reaction_force_x", "reaction_force_y",
+                            "reaction_force_z", "reaction_moment_x",
+                            "reaction_moment_y", "reaction_moment_z",
+                        )
+                    )
                 else:
                     found = _components_for(scoped, topology)
                 if found:
@@ -494,8 +515,28 @@ class AddDiagramDialog:
         except Exception:
             scoped = None
 
+        is_reactions = kind_entry.kind_id == "reactions"
         if scoped is not None:
-            if contour_topology in ("nodes", "gauss"):
+            if is_reactions:
+                # Reactions Data list: resultant + per-axis force
+                # options, filtered to axes the file actually records.
+                nodal = set(_components_for(scoped, "nodes"))
+                if any(
+                    c in nodal for c in (
+                        "reaction_force_x", "reaction_force_y",
+                        "reaction_force_z", "reaction_moment_x",
+                        "reaction_moment_y", "reaction_moment_z",
+                    )
+                ):
+                    components.append("reactions")
+                for opt, force_comp in (
+                    ("reaction_x", "reaction_force_x"),
+                    ("reaction_y", "reaction_force_y"),
+                    ("reaction_z", "reaction_force_z"),
+                ):
+                    if force_comp in nodal:
+                        components.append(opt)
+            elif contour_topology in ("nodes", "gauss"):
                 components = _components_for(scoped, contour_topology)
             elif topology is not None:
                 components = _components_for(scoped, topology)
@@ -510,8 +551,12 @@ class AddDiagramDialog:
         # everything else takes the first available. Contour with
         # explicit gauss topology falls into the "first available"
         # bucket since displacement_z isn't a gauss quantity.
+        # Reactions opts out — its first entry ("reactions" → resultant)
+        # is the desired default.
         prefers_disp_z = (
-            topology == "nodes" and contour_topology in (None, "nodes")
+            topology == "nodes"
+            and contour_topology in (None, "nodes")
+            and not is_reactions
         )
 
         self._component_combo.blockSignals(True)
