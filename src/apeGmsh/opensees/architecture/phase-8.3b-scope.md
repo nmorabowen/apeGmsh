@@ -1,7 +1,11 @@
 # Phase 8.3b — Recorder cluster relocation and `results/` rewire
 
-**Status:** Scoping (May 2026). Drafted at the close of PR γ (#130) of the
-Phase 8 bridge teardown.
+**Status:** Shipped as PR #134 (May 2026).  Originally drafted at the
+close of PR γ (#130) as a Flavor-1 scoping; preserved here as the
+historical record of the decision and sub-commit plan that landed.
+The remaining cleanup of straggler EOS notebooks (case-studies +
+archive + the curriculum entries that lacked the Phase-8.3b TODO
+comment) followed in PR #135.
 
 This document scopes the work that finishes the `apeGmsh.solvers`
 retirement. After PR γ, the only content left in `apeGmsh.solvers`
@@ -270,7 +274,9 @@ Same as previous Phase-8 PRs:
 - `pytest -m "not live and not subprocess"`
 
 Each commit's verification: no new errors / regressions relative to
-the post-PR-γ baseline (`1424 mypy / 219 ruff / 4456 passed`).
+the pre-PR baseline.  (At PR-#134 implementation time the measured
+post-#130 baseline was `1426 mypy / 223 ruff / 4543 passed`; future
+slices should re-measure rather than rely on these numbers.)
 
 Special check: `import apeGmsh` and `import apeGmsh.solvers` continue
 to emit zero DeprecationWarnings — every internal apeGmsh consumer

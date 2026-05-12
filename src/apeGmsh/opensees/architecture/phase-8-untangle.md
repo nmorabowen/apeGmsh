@@ -171,28 +171,29 @@ These are bridge-side concerns:
 
 | Solvers file | New home | Notes |
 |---|---|---|
-| `_opensees_csys.py` | `opensees/_csys.py` | `Cartesian` / `Cylindrical` / `Spherical` / `resolve_vecxz`. Already imported by `opensees/transform.py` + `opensees/_internal/build.py` |
-| `_opensees_build.py` | DELETE | Phase 4 rebuild superseded it |
-| `_opensees_constraints.py` | DELETE or fold into `opensees/_internal/build.py` | Bridge fan-out lives in build.py now |
-| `_opensees_elements.py` | DELETE | Phase 2 typed elements replaced this |
-| `_opensees_export.py` | DELETE | Phase 4 TclEmitter / PyEmitter replaced this |
-| `_opensees_ingest.py` | DELETE | Tied-element ingest moved into bridge build pipeline |
-| `_opensees_inspect.py` | DELETE | Phase 5A NodeComposite + accessors replaced this |
-| `_opensees_materials.py` | DELETE | Phase 1 typed materials replaced this |
-| `_element_specs.py` | DELETE | Phase 2 typed elements replaced this |
+| `_opensees_csys.py` | `opensees/_csys.py` | `Cartesian` / `Cylindrical` / `Spherical` / `resolve_vecxz`.  Landed in PR #121 (Phase 8.2). |
+| `_opensees_build.py` | DELETED | Phase 4 rebuild superseded it.  Removed in PR γ (#130). |
+| `_opensees_constraints.py` | DELETED | Bridge fan-out lives in `opensees/_internal/build.py` now.  Removed in PR γ (#130). |
+| `_opensees_elements.py` | DELETED | Phase 2 typed elements replaced this.  Removed in PR γ (#130). |
+| `_opensees_export.py` | DELETED | Phase 4 TclEmitter / PyEmitter replaced this.  Removed in PR γ (#130). |
+| `_opensees_ingest.py` | DELETED | Tied-element ingest moved into the bridge build pipeline.  Removed in PR γ (#130). |
+| `_opensees_inspect.py` | DELETED | Phase 5A NodeComposite + accessors replaced this.  Removed in PR γ (#130). |
+| `_opensees_materials.py` | DELETED | Phase 1 typed materials replaced this.  Removed in PR γ (#130). |
+| `_element_specs.py` | (see §4c) | Originally listed here as DELETE; the actual outcome was relocation to `opensees/_element_capabilities.py` in Phase 8.3b.  See §4c. |
 
 ### 4c. Recorder / response → owned by Bridge + Results jointly
 
 The trickiest. Today these live in `solvers/`; both bridge and
-results consume them. The cleanest split:
+results consume them.
 
 | Solvers file | New home | Notes |
 |---|---|---|
-| `_element_response.py` | `opensees/_response_catalog.py` | The catalog IS OpenSees-specific (it knows which response tokens each OpenSees element produces). Results imports it from the bridge package — that's a one-way dependency, fine |
-| `_recorder_emit.py` | DELETE | Phase 3 typed recorders + Phase 4 emitters replaced this. Any orphan functions move to `opensees/recorder.py` |
-| `_recorder_specs.py` | DELETE | Phase 3 typed recorders replaced this |
-| `Recorders.py` | DELETE | Phase 3 typed recorders replaced this |
-| `OpenSees.py` | DELETE | Phase 4 `apeSees` replaced this |
+| `_element_response.py` | `opensees/_response_catalog.py` | The catalog IS OpenSees-specific (it knows which response tokens each OpenSees element produces). Results imports it from the bridge package — that's a one-way dependency, fine.  Landed in PR #123 (Phase 8.3a). |
+| `_recorder_emit.py` | `results/spec/_emit.py` | Originally planned for deletion; the [Phase 8.3b scope](phase-8.3b-scope.md) reconsidered and chose Flavor 1 (relocate, don't unify with the typed primitives).  Landed in PR #134 (Phase 8.3b). |
+| `_recorder_specs.py` | `results/spec/_resolved.py` | Same — relocated, not deleted (PR #134). |
+| `Recorders.py` | `results/spec/declaration.py` | Same — relocated, not deleted (PR #134).  Re-exported as `apeGmsh.results.spec.Recorders`. |
+| `_element_specs.py` | `opensees/_element_capabilities.py` | Element-capability map; OpenSees-class metadata so it lives next to the response catalog (PR #134). |
+| `OpenSees.py` | DELETED | Phase 4 `apeSees` replaced this; deletion landed in PR γ (#130). |
 
 ### 4d. Top-level public API
 
@@ -230,26 +231,45 @@ Updated every caller. Shipped the deprecation shims. Apps that do
 **Test gate:** every existing test still passes; deprecation warning
 shows once per import path.
 
-### Phase 8.2 — Bridge-side helper relocation
-Move `_opensees_csys` into `opensees/_csys.py`. Update
+### Phase 8.2 — Bridge-side helper relocation — landed in PR #121
+Moved `_opensees_csys` into `opensees/_csys.py`.  Updated
 `opensees/transform.py` + `opensees/_internal/build.py` to import
-locally. Delete files in 4b marked "DELETE" (after confirming no
-consumer outside solvers/ itself).
+locally.  The §4b "DELETE" cluster (`_opensees_build`,
+`_opensees_constraints`, `_opensees_elements`, `_opensees_export`,
+`_opensees_ingest`, `_opensees_inspect`, `_opensees_materials`)
+ultimately landed as part of the multi-PR PR γ (#130) bridge
+teardown rather than this phase.
 
 **Risk:** low. Internal reorganization with no external surface
 change.
 **Test gate:** existing OpenSees tests still pass.
 
-### Phase 8.3 — Response catalog relocation
-Move `_element_response.py` to `opensees/_response_catalog.py`. The
-~10 `results/` files that import it switch to the new path. Delete
-`solvers/Recorders.py`, `_recorder_emit.py`, `_recorder_specs.py`
-(superseded by Phase 3/4).
+### Phase 8.3a — Response catalog relocation — landed in PR #123
+Moved `_element_response.py` to `opensees/_response_catalog.py`.
+The ~10 `results/` files that import it switched to the new path.
 
 **Risk:** medium — `results/` test suite is sensitive; the response
 catalog is a large vocabulary file.
 **Test gate:** every `results/` test still passes. MPCO read paths
 unchanged.
+
+### Phase 8.3b — Recorder cluster relocation — landed in PR #134
+Relocated `Recorders.py`, `_recorder_specs.py`, `_recorder_emit.py`,
+and `_element_specs.py` to canonical homes under
+`results/spec/` (`declaration.py`, `_resolved.py`, `_emit.py`)
+and `opensees/_element_capabilities.py`.  The original deletion
+plan was reconsidered in [phase-8.3b-scope.md](phase-8.3b-scope.md);
+Flavor 1 (pure relocation) shipped — the typed-primitives-as-
+declaration unification (Flavor 2) is deferred to a separate
+scoping conversation.  Updated 7 source consumers in `results/`,
+9 EOS curriculum notebooks (tagged with the Phase-8.3b TODO),
+22 straggler EOS notebooks, and 32 test files.
+
+**Risk:** medium — broad consumer rewire; mitigated by ``__getattr__``
+shims at the legacy paths so external code keeps working with a
+one-shot ``DeprecationWarning`` for one release cycle.
+**Test gate:** every `results/` test still passes; ``import apeGmsh``
++ ``import apeGmsh.solvers`` produce zero ``DeprecationWarning``s.
 
 ### Phase 8.4 — model.h5 zone reshuffle (BREAKING)
 Move bridge-written groups under `/opensees/` in the schema. Update
@@ -327,10 +347,13 @@ release-blocker app has migrated.
    the `solvers/` shim only catches direct `from apeGmsh.solvers
    import X`.
 
-4. **Recorder declaration consolidation.** Phase 3 already shipped
-   `opensees.recorder` typed primitives. Phase 8.3 deletes
-   `solvers.Recorders.Recorders` (the legacy declaration class).
-   Confirm no app relies on the legacy class before deletion.
+4. **Recorder declaration consolidation.** *Resolved in
+   [phase-8.3b-scope.md](phase-8.3b-scope.md):* Phase 8.3b shipped
+   Flavor 1 (relocate the legacy `Recorders` class to
+   `apeGmsh.results.spec.declaration` rather than delete it).  The
+   typed-primitives-as-declaration unification (Flavor 2) is
+   deferred to its own scoping conversation; both abstractions
+   coexist on `main` for now.
 
 5. **One ADR or several.** This doc proposes a chain-of-decisions
    that probably warrants 2–3 ADRs:
