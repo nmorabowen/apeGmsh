@@ -46,7 +46,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy import ndarray
 
-from ..results._vocabulary import (
+from .._vocabulary import (
     SHELL_GENERALIZED_STRAINS,
     SHELL_STRESS_RESULTANTS,
     STRAIN,

@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy import ndarray
 
-from .._vocabulary import MPCO_MATERIAL_SYMBOL_TO_CANONICAL_SUFFIX
+from ..._vocabulary import MPCO_MATERIAL_SYMBOL_TO_CANONICAL_SUFFIX
 from ...opensees._response_catalog import (
     RESPONSE_CATALOG,
     MPCOElementKey,
