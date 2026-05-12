@@ -205,6 +205,16 @@ class GaussPointDiagram(ScalarBarSupport, Diagram):
         )
         self._actor = actor
         self._actors = [actor]
+        # Phase 3.1 — register the GP actor on the scene's PickEngine
+        # inventory so the results pick controller (and Phase 3.2's
+        # mode router) can find it without walking every active diagram.
+        # ``scene.pick_engine`` is ``None`` in headless tests; skip
+        # registration in that case.
+        pick_engine = getattr(scene, "pick_engine", None)
+        if pick_engine is not None:
+            pick_engine.register_actor(
+                actor, "gp", self.resolve_picked_cell,
+            )
 
     def update_to_step(self, step_index: int) -> None:
         if (
@@ -282,6 +292,13 @@ class GaussPointDiagram(ScalarBarSupport, Diagram):
 
     def detach(self) -> None:
         self._remove_scalar_bar(self._scalar_bar_title())
+        # Phase 3.1 — drop the GP actor from the PickEngine inventory
+        # before clearing local state. Look up scene via ``self._scene``
+        # (set by :meth:`Diagram.attach`); skip when unavailable.
+        scene = getattr(self, "_scene", None)
+        pick_engine = getattr(scene, "pick_engine", None) if scene else None
+        if pick_engine is not None and self._actor is not None:
+            pick_engine.unregister_actor(self._actor)
         self._cloud = None
         self._glyphs = None
         self._actor = None

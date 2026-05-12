@@ -208,6 +208,17 @@ class ResultsViewer:
         assert fem is not None    # validated in __init__
         scene = build_fem_scene(fem)
         self._scene = scene
+        # PickEngine actor inventory — set on the scene before any
+        # diagram attaches so GaussPointDiagram (and future fiber/etc.)
+        # can register their actor in their own attach() instead of
+        # the picker having to walk every active diagram on every click.
+        from .core.results_pick_engine import PickEngine as _PickEngine
+        scene.pick_engine = _PickEngine()
+        # ElementVisibility — per-cell hide via the substrate
+        # ``vtkGhostType`` array. Box-pick consults the ghost mask,
+        # renderers / VTK pickers natively skip ghost-hidden cells.
+        from .core.element_visibility import ElementVisibility as _ElementVis
+        scene.element_visibility = _ElementVis(scene.grid)
 
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
@@ -280,6 +291,12 @@ class ResultsViewer:
         # ── Plotter — substrate mesh ────────────────────────────────
         plotter = win.plotter
         self._plotter = plotter
+        # OpacityController — per-actor SetOpacity + depth-peel
+        # auto-toggle. Constructed now (after the plotter exists) and
+        # stashed on the scene so callers that already hold a scene
+        # ref can route through it.
+        from .core.opacity_controller import OpacityController as _OpacityCtrl
+        scene.opacity_controller = _OpacityCtrl(plotter)
 
         prefs = _PREF.current
         # Substrate colors come from the active palette so the FEM mesh
@@ -769,6 +786,14 @@ class ResultsViewer:
         )
         director.dispatcher = dispatcher
         self._dispatcher = dispatcher
+        # Inject the dispatcher into the PickEngine so set_pick_mode
+        # can publish PICK_MODE_CHANGED through the event bus.
+        scene.pick_engine.dispatcher = dispatcher
+        # Same for ElementVisibility so hide/show fires ELEMENT_VISIBILITY_CHANGED.
+        scene.element_visibility.dispatcher = dispatcher
+        # And OpacityController for OPACITY_CHANGED.
+        if scene.opacity_controller is not None:
+            scene.opacity_controller.dispatcher = dispatcher
 
         # ── Observer wiring — every callback fires a dispatcher event.
         # Director's existing observers are preserved (the time scrubber

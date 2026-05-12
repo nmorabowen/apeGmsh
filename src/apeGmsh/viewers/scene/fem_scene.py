@@ -135,6 +135,22 @@ class FEMSceneData:
         viewer adds it to the plotter.
     node_tree
         scipy ``cKDTree`` over the node coordinates — built lazily.
+    pick_engine
+        :class:`PickEngine` actor inventory for 3-D diagram picking
+        (gauss markers, etc.). Set by :class:`ResultsViewer` at open;
+        ``None`` in headless / test contexts where no picker is wired.
+        Diagrams check for ``None`` before calling ``register_actor``.
+    element_visibility
+        :class:`ElementVisibility` controller for per-cell hiding via
+        the substrate's ``vtkGhostType`` array. Set by
+        :class:`ResultsViewer`; ``None`` in headless contexts. The
+        box-pick path (``results_pick._build_box_result``) reads the
+        underlying ghost array directly without going through this
+        attribute, so this field is for explicit hide/show callers.
+    opacity_controller
+        :class:`OpacityController` for per-actor opacity + depth-peel
+        auto-toggle. Set by :class:`ResultsViewer` after the plotter
+        exists; ``None`` in headless contexts.
     """
 
     grid: pv.UnstructuredGrid
@@ -145,7 +161,10 @@ class FEMSceneData:
     model_diagonal: float
     skipped_types: list[int] = field(default_factory=list)
     actor: Any = None
-    node_tree: Any = None      # scipy.spatial.cKDTree, lazy
+    node_tree: Any = None              # scipy.spatial.cKDTree, lazy
+    pick_engine: Any = None            # PickEngine (results_pick_engine)
+    element_visibility: Any = None     # ElementVisibility (element_visibility)
+    opacity_controller: Any = None     # OpacityController (opacity_controller)
 
     def ensure_node_tree(self):
         if self.node_tree is None:
