@@ -82,21 +82,41 @@ Orientation: TypeAlias = Cartesian | Cylindrical | Spherical
 # Shared validation helper
 # ---------------------------------------------------------------------------
 
-def _check_orientation_xor_vecxz(
+def _check_transform_args(
     type_name: str,
     orientation: Orientation | None,
     vecxz: tuple[float, float, float] | None,
+    roll_deg: float,
 ) -> None:
-    """Reject "both orientation and vecxz supplied"; "neither" is permitted.
+    """Validate transform construction arguments.
 
-    The "neither" case is the 2D-model construction path — the bridge
-    rejects it at build time when the model is 3D. We don't reject it
-    at construction because that would force users to pass a sentinel
-    in 2D.
+    Two rules:
+
+    1. **orientation XOR vecxz** — supply at most one. "Neither" is
+       permitted (the 2D-model construction path; the bridge rejects
+       it at build time when the model is 3D). Both at once is
+       ambiguous.
+
+    2. **roll_deg only with orientation** — ``roll_deg`` rotates the
+       per-element ``vecxz`` about the element's tangent (which varies
+       per element). With an explicit ``vecxz=``, the tangent is not
+       known at construction time and applying the same Rodrigues
+       rotation to a constant vector would silently produce a wrong
+       result. The orientation= path is the supported way to roll an
+       asymmetric section about each beam's tangent.
     """
     if orientation is not None and vecxz is not None:
         raise ValueError(
             f"{type_name}: supply either orientation= or vecxz=, not both."
+        )
+    if vecxz is not None and roll_deg != 0.0:
+        raise ValueError(
+            f"{type_name}: roll_deg= has no defined meaning with an "
+            "explicit vecxz= (the rotation axis is the element's "
+            "tangent, which varies per element; vecxz= is a single "
+            "constant). Use orientation= to roll asymmetric sections "
+            "about each beam's tangent, or set roll_deg=0 if vecxz= "
+            "is the correct constant direction."
         )
 
 
@@ -122,11 +142,19 @@ class Linear(GeomTransf):
         build time. Mutually exclusive with ``vecxz``.
     vecxz
         Explicit local-x-z vector (one 3-tuple). Mutually exclusive
-        with ``orientation``.
+        with ``orientation``. If the same prismatic frame produces
+        inconsistent vecxz signs in the deck (a tangent-direction
+        artifact of how gmsh ordered the element nodes), flip the
+        offending PG with ``g.mesh.editing.reverse(dim_tags="MyPG")``
+        before constructing the bridge.
     roll_deg
         Rotation about the element tangent applied AFTER the
         orientation rule produces a candidate ``vecxz``. Useful for
         asymmetric sections (channels, angles) on curved members.
+        **Only valid with** ``orientation=``: the rotation axis is the
+        element's per-element tangent, which only the orientation path
+        knows. Combined with an explicit ``vecxz=`` it raises
+        :class:`ValueError`.
     """
 
     orientation: Orientation | None = None
@@ -134,7 +162,7 @@ class Linear(GeomTransf):
     roll_deg: float = 0.0
 
     def __post_init__(self) -> None:
-        _check_orientation_xor_vecxz("Linear", self.orientation, self.vecxz)
+        _check_transform_args("Linear", self.orientation, self.vecxz, self.roll_deg)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         # Phase 1D scope: ``_emit`` requires an explicit ``vecxz``.
@@ -174,7 +202,7 @@ class PDelta(GeomTransf):
     roll_deg: float = 0.0
 
     def __post_init__(self) -> None:
-        _check_orientation_xor_vecxz("PDelta", self.orientation, self.vecxz)
+        _check_transform_args("PDelta", self.orientation, self.vecxz, self.roll_deg)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         if self.vecxz is None:
@@ -208,7 +236,7 @@ class Corotational(GeomTransf):
     roll_deg: float = 0.0
 
     def __post_init__(self) -> None:
-        _check_orientation_xor_vecxz("Corotational", self.orientation, self.vecxz)
+        _check_transform_args("Corotational", self.orientation, self.vecxz, self.roll_deg)
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         if self.vecxz is None:

@@ -61,7 +61,10 @@ class TestLinear:
             Linear(orientation=Cartesian(), vecxz=(0.0, 0.0, 1.0))
 
     def test_construction_with_roll_deg(self) -> None:
-        t = Linear(vecxz=(0.0, 0.0, 1.0), roll_deg=15.0)
+        # roll_deg is meaningful with orientation= (per-element tangent
+        # known); paired with explicit vecxz= it now raises (see
+        # TestRollDegRejection below).
+        t = Linear(orientation=Cartesian(), roll_deg=15.0)
         assert t.roll_deg == 15.0
 
     def test_emit_with_explicit_vecxz_records_correct_call(self) -> None:
@@ -106,6 +109,39 @@ class TestLinear:
         t = Linear(vecxz=(0.0, 0.0, 1.0))
         with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
             t.roll_deg = 90.0  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# roll_deg + vecxz= rejection (added when orientation rename landed)
+# ---------------------------------------------------------------------------
+
+class TestRollDegRejection:
+    """``roll_deg`` only composes with ``orientation=``. Paired with an
+    explicit ``vecxz=`` it raises ValueError — the rotation axis is the
+    element tangent, which only the orientation path knows."""
+
+    @pytest.mark.parametrize("cls", [Linear, PDelta, Corotational])
+    def test_roll_deg_with_vecxz_raises(self, cls: type) -> None:
+        with pytest.raises(ValueError, match="roll_deg= has no defined meaning"):
+            cls(vecxz=(0.0, 0.0, 1.0), roll_deg=15.0)
+
+    @pytest.mark.parametrize("cls", [Linear, PDelta, Corotational])
+    def test_roll_deg_with_orientation_is_ok(self, cls: type) -> None:
+        t = cls(orientation=Cartesian(), roll_deg=15.0)
+        assert t.roll_deg == 15.0
+
+    @pytest.mark.parametrize("cls", [Linear, PDelta, Corotational])
+    def test_roll_deg_zero_with_vecxz_is_ok(self, cls: type) -> None:
+        """Default roll_deg=0 with vecxz= is the prismatic-frame path."""
+        t = cls(vecxz=(0.0, 0.0, 1.0))  # roll_deg defaults to 0.0
+        assert t.roll_deg == 0.0
+        assert t.vecxz == (0.0, 0.0, 1.0)
+
+    @pytest.mark.parametrize("cls", [Linear, PDelta, Corotational])
+    def test_roll_deg_zero_explicit_with_vecxz_is_ok(self, cls: type) -> None:
+        """Explicit roll_deg=0 with vecxz= also passes (no-op rotation)."""
+        t = cls(vecxz=(0.0, 0.0, 1.0), roll_deg=0.0)
+        assert t.roll_deg == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +264,9 @@ class TestGeomTransfNamespace:
 
     def test_namespace_Corotational_returns_typed_instance(self) -> None:
         ops = _stub_bridge()
-        t = ops.geomTransf.Corotational(vecxz=(1.0, 0.0, 0.0), roll_deg=30.0)
+        # roll_deg is meaningful with orientation= (per-element tangent
+        # known); the old vecxz= + roll_deg= shape is now rejected.
+        t = ops.geomTransf.Corotational(orientation=Cartesian(), roll_deg=30.0)
         assert isinstance(t, Corotational)
         assert t.roll_deg == 30.0
 
