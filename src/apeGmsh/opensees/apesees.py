@@ -76,6 +76,7 @@ from ._internal.types import (
 )
 from .emitter.base import Emitter
 from .node import Node, _NodeAccessor, _iter_tags
+from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
     import h5py
@@ -89,6 +90,21 @@ if TYPE_CHECKING:
 
 
 __all__ = ["apeSees", "BuiltModel"]
+
+
+# Sentinel for "argument not supplied" on ``default_orientation``.
+# Using a sentinel (rather than ``None``) lets the user EXPLICITLY pass
+# ``None`` to disable the auto-default (typical for 2D models, where
+# vecxz is omitted at emit time and an orientation makes no sense),
+# while a missing argument still produces the convenience Z-up default
+# Cartesian orientation for 3D frame work.
+class _UnsetType:
+    """Sentinel type for unset constructor arguments."""
+    __slots__ = ()
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+_UNSET: "_UnsetType" = _UnsetType()
 
 
 # Bound to Primitive so namespace methods preserve the concrete type:
@@ -360,9 +376,29 @@ class apeSees:
 
     The bridge holds **declared** state. ``apeSees.build()`` returns a
     :class:`BuiltModel` (immutable) that emitters consume.
+
+    Parameters
+    ----------
+    fem
+        The FEM snapshot the bridge is built against.
+    default_orientation
+        Orientation field substituted on any
+        ``ops.geomTransf.<Type>()`` call where the user supplied
+        neither ``orientation=`` nor ``vecxz=``. Defaults to
+        ``Cartesian()`` (Z-up) which matches the prevailing structural
+        convention. Pass an explicit ``None`` for 2D models, where
+        vecxz is omitted at emit time and an orientation field makes
+        no sense. Pass a custom orientation (e.g.
+        ``Cartesian(reference_axis=(0,1,0))`` for a Y-up CAD import)
+        to set the model-wide default once.
     """
 
-    def __init__(self, fem: "FEMData") -> None:
+    def __init__(
+        self,
+        fem: "FEMData",
+        *,
+        default_orientation: Orientation | None | _UnsetType = _UNSET,
+    ) -> None:
         self._fem: "FEMData" = fem
         self._primitives: list[Primitive] = []
         self._tags = TagAllocator()
@@ -370,6 +406,12 @@ class apeSees:
         self._ndf: int | None = None
         self._fix_records: list[FixRecord] = []
         self._mass_records: list[MassRecord] = []
+        # Resolve the sentinel: unset → Cartesian() (Z-up). Explicit
+        # None disables the auto-default (2D models).
+        if isinstance(default_orientation, _UnsetType):
+            self._default_orientation: Orientation | None = Cartesian()
+        else:
+            self._default_orientation = default_orientation
 
         # Namespaces.
         self.uniaxialMaterial = _UniaxialMaterialNS(self)

@@ -55,6 +55,50 @@ def test_apesees_holds_fem_reference() -> None:
 
 
 # ---------------------------------------------------------------------------
+# default_orientation constructor argument
+# ---------------------------------------------------------------------------
+
+def test_default_orientation_defaults_to_cartesian_z_up() -> None:
+    """No-kwarg construction sets a Cartesian Z-up default."""
+    from apeGmsh.opensees.transform import Cartesian
+    ops = apeSees(cast("object", _stub_fem()))  # type: ignore[arg-type]
+    assert isinstance(ops._default_orientation, Cartesian)
+    # Z-up: reference axis is +Z
+    assert tuple(ops._default_orientation._e3) == (0.0, 0.0, 1.0)
+
+
+def test_default_orientation_explicit_none_disables_auto_default() -> None:
+    """Passing ``default_orientation=None`` opts out (typical 2D)."""
+    ops = apeSees(
+        cast("object", _stub_fem()),  # type: ignore[arg-type]
+        default_orientation=None,
+    )
+    assert ops._default_orientation is None
+
+
+def test_default_orientation_accepts_custom_cartesian_y_up() -> None:
+    """Y-up CAD convention via explicit override."""
+    from apeGmsh.opensees.transform import Cartesian
+    custom = Cartesian(reference_axis=(0, 1, 0))
+    ops = apeSees(
+        cast("object", _stub_fem()),  # type: ignore[arg-type]
+        default_orientation=custom,
+    )
+    assert ops._default_orientation is custom
+
+
+def test_default_orientation_accepts_cylindrical() -> None:
+    """Any orientation class is acceptable as the model-wide default."""
+    from apeGmsh.opensees.transform import Cylindrical
+    custom = Cylindrical(origin=(0, 0, 0), axis=(0, 0, 1))
+    ops = apeSees(
+        cast("object", _stub_fem()),  # type: ignore[arg-type]
+        default_orientation=custom,
+    )
+    assert ops._default_orientation is custom
+
+
+# ---------------------------------------------------------------------------
 # Namespaces
 # ---------------------------------------------------------------------------
 

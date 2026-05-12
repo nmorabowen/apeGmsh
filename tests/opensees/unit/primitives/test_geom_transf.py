@@ -240,3 +240,83 @@ class TestGeomTransfNamespace:
         assert ops.tag_for(t1) == 1
         assert ops.tag_for(t2) == 2
         assert ops.tag_for(t3) == 3
+
+
+# ---------------------------------------------------------------------------
+# Default-orientation substitution — _GeomTransfNS._resolve_orientation
+# ---------------------------------------------------------------------------
+
+class TestDefaultOrientationSubstitution:
+    """The namespace substitutes the bridge's default_orientation when
+    the user supplied neither ``orientation=`` nor ``vecxz=``, but only
+    for 3D models where vecxz is meaningful."""
+
+    def test_3d_neither_passed_inherits_bridge_default(self) -> None:
+        """3D model, no kwargs: transform inherits Cartesian() Z-up."""
+        ops = _stub_bridge()
+        ops.model(ndm=3, ndf=6)
+        t = ops.geomTransf.PDelta()
+        assert isinstance(t.orientation, Cartesian)
+        assert t.vecxz is None
+
+    def test_3d_user_orientation_overrides_default(self) -> None:
+        """3D model, user passes orientation: user's value wins."""
+        ops = _stub_bridge()
+        ops.model(ndm=3, ndf=6)
+        custom = Cylindrical(origin=(0, 0, 0), axis=(0, 0, 1))
+        t = ops.geomTransf.PDelta(orientation=custom)
+        assert t.orientation is custom
+
+    def test_3d_user_vecxz_skips_substitution(self) -> None:
+        """3D model, user passes vecxz: orientation stays None."""
+        ops = _stub_bridge()
+        ops.model(ndm=3, ndf=6)
+        t = ops.geomTransf.PDelta(vecxz=(0.0, 0.0, 1.0))
+        assert t.orientation is None
+        assert t.vecxz == (0.0, 0.0, 1.0)
+
+    def test_2d_no_substitution(self) -> None:
+        """2D model: no orientation substitution (vecxz omitted at emit)."""
+        ops = _stub_bridge()
+        ops.model(ndm=2, ndf=3)
+        t = ops.geomTransf.PDelta()
+        assert t.orientation is None
+        assert t.vecxz is None
+
+    def test_ndm_not_yet_set_no_substitution(self) -> None:
+        """Transform created before model(): no substitution.
+
+        Legacy test paths construct transforms before ``ndm`` is set.
+        We keep the existing behavior (neither field populated) rather
+        than guessing 3D and silently injecting a Z-up default.
+        """
+        ops = _stub_bridge()  # ndm not set
+        t = ops.geomTransf.PDelta()
+        assert t.orientation is None
+        assert t.vecxz is None
+
+    def test_explicit_none_default_disables_auto_substitution(self) -> None:
+        """`default_orientation=None` at ctor turns off auto-substitution."""
+        ops = apeSees(
+            cast("object", MagicMock(name="FEMData")),  # type: ignore[arg-type]
+            default_orientation=None,
+        )
+        ops.model(ndm=3, ndf=6)
+        t = ops.geomTransf.PDelta()
+        assert t.orientation is None
+        assert t.vecxz is None
+
+    def test_custom_default_orientation_inherited(self) -> None:
+        """Custom orientation set at ctor flows to every untouched transform."""
+        custom = Cartesian(reference_axis=(0, 1, 0))  # Y-up
+        ops = apeSees(
+            cast("object", MagicMock(name="FEMData")),  # type: ignore[arg-type]
+            default_orientation=custom,
+        )
+        ops.model(ndm=3, ndf=6)
+        t1 = ops.geomTransf.Linear()
+        t2 = ops.geomTransf.PDelta()
+        t3 = ops.geomTransf.Corotational()
+        assert t1.orientation is custom
+        assert t2.orientation is custom
+        assert t3.orientation is custom

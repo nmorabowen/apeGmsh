@@ -107,6 +107,37 @@ ops.py(path, *, run=False)
 ops.run(*, wipe=True)
 ```
 
+### Model-wide defaults at construction
+
+`apeSees(fem, *, default_orientation=Cartesian())` accepts a
+model-wide default `Orientation` used whenever the user constructs a
+`geomTransf` without supplying either `orientation=` or `vecxz=`. The
+default is the structural-engineering convention `Cartesian()`
+(Z-up); pass an explicit `None` for 2D models, or a custom orientation
+(e.g. `Cartesian(reference_axis=(0,1,0))` for a Y-up CAD import) to
+shift the whole model.
+
+```python
+# Standard 3D structural model — Z-up implicit
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=6)
+trans = ops.geomTransf.PDelta()             # inherits Cartesian(Z-up)
+
+# Y-up CAD import
+ops = apeSees(fem, default_orientation=Cartesian(reference_axis=(0,1,0)))
+
+# 2D model — no orientation needed (vecxz omitted at emit time)
+ops = apeSees(fem, default_orientation=None)
+ops.model(ndm=2, ndf=3)
+trans = ops.geomTransf.Linear()             # orientation stays None
+
+# Per-call override always wins
+trans = ops.geomTransf.PDelta(orientation=Cylindrical(...))
+```
+
+Substitution is skipped for 2D models and when `ndm` has not yet been
+set (e.g. tests that construct transforms before `model()`).
+
 ## Static typing — no `**kwargs` user-facing
 
 Every namespace method has an explicit, fully-typed signature. No
