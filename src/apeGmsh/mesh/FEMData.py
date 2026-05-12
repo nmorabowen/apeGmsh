@@ -1189,6 +1189,33 @@ class FEMData:
         from ._femdata_native_io import write_fem_to_h5
         write_fem_to_h5(self, group)
 
+    def to_h5(
+        self,
+        path: str,
+        *,
+        model_name: str = "",
+        apegmsh_version: str = "",
+        ndf: int = 0,
+    ) -> None:
+        """Write a fresh ``model.h5`` containing the neutral zone.
+
+        Phase 8.5 entry point: dumps everything the broker knows about
+        the model (nodes, elements per type, physical groups, labels,
+        constraints, loads, masses) into a root-level
+        ``model.h5``.  No ``/opensees/`` content is emitted — absent
+        enrichment is the right "no solver loaded" signal.
+
+        Use ``apeSees(fem).h5(path)`` instead to get a fully enriched
+        file (neutral zone + ``/opensees/...``).
+        """
+        from ._femdata_h5_io import write_fem_h5
+        write_fem_h5(
+            self, path,
+            model_name=model_name,
+            apegmsh_version=apegmsh_version,
+            ndf=ndf,
+        )
+
     @classmethod
     def from_native_h5(cls, group) -> "FEMData":
         """Reconstruct a FEMData from its embedded ``/model/`` group.
