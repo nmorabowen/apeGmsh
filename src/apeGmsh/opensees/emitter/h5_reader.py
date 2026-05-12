@@ -211,6 +211,29 @@ class H5Model:
             return None
         return _attrs_as_dict(a)
 
+    def element_meta(self) -> dict[str, dict[str, Any]]:
+        """Return ``{type_token: attrs}`` for ``/opensees/element_meta``.
+
+        Phase 8.5 added this OpenSees-specific element-metadata zone
+        (positional args, cross-references) alongside the broker's
+        neutral ``/elements/{gmsh_alias}`` group.  Companion to
+        :meth:`element_meta_arrays` for the actual datasets.
+        """
+        return self._group_attrs_map("opensees/element_meta")
+
+    def element_meta_arrays(self, type_token: str) -> dict[str, Any]:
+        """Return ``{ids, args, args_str?}`` for one element-meta group.
+
+        Raises ``KeyError`` if the type group is missing.
+        """
+        sub = self._f[f"opensees/element_meta/{type_token}"]
+        out: dict[str, Any] = {"ids": sub["ids"][:]}
+        if "args" in sub:
+            out["args"] = sub["args"][:]
+        if "args_str" in sub:
+            out["args_str"] = sub["args_str"][:]
+        return out
+
     # -- Neutral-zone reads (Phase 8.5) ---------------------------------
 
     def nodes(self) -> dict[str, Any]:

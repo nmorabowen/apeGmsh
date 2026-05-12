@@ -225,6 +225,7 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
         "expected_groups": [
             "meta", "opensees/materials/uniaxial", "opensees/sections",
             "opensees/transforms", "opensees/beam_integration",
+            "opensees/element_meta/forceBeamColumn",
             "opensees/time_series", "opensees/patterns",
             "opensees/bcs",
         ],
@@ -233,7 +234,7 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
         ],
         "material_count_uniaxial": 2,
         "section_count": 1,
-        "element_type_count": 0,
+        "element_meta_type_count": 1,
         "pattern_count": 1,
     },
     "frame_3d": {
@@ -241,13 +242,14 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
         "expected_groups": [
             "meta", "opensees/materials/uniaxial", "opensees/sections",
             "opensees/transforms", "opensees/beam_integration",
+            "opensees/element_meta/forceBeamColumn",
             "opensees/time_series", "opensees/patterns",
             "opensees/bcs", "opensees/recorders",
         ],
         "expected_absent_groups": ["elements"],
         "material_count_uniaxial": 2,
         "section_count": 2,
-        "element_type_count": 0,
+        "element_meta_type_count": 1,
         "pattern_count": 2,
         "recorder_count": 1,
     },
@@ -256,38 +258,42 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
         "expected_groups": [
             "meta", "opensees/transforms",
             "opensees/beam_integration",
+            "opensees/element_meta/forceBeamColumn",
         ],
         "expected_absent_groups": ["elements"],
         "transform_count": 6,
-        "element_type_count": 0,
+        "element_meta_type_count": 1,
     },
     "dome_spherical": {
         "should_validate": True,
         "expected_groups": [
             "meta", "opensees/transforms",
             "opensees/beam_integration",
+            "opensees/element_meta/forceBeamColumn",
         ],
         "expected_absent_groups": ["elements"],
         "transform_count": 8,
-        "element_type_count": 0,
+        "element_meta_type_count": 1,
     },
     "tank_cylindrical": {
         "should_validate": True,
         "expected_groups": [
             "meta", "opensees/transforms",
             "opensees/beam_integration",
+            "opensees/element_meta/forceBeamColumn",
         ],
         "expected_absent_groups": ["elements"],
         "transform_count": 3,
-        "element_type_count": 0,
+        "element_meta_type_count": 1,
     },
     "incomplete": {
         "should_validate": True,
-        "expected_groups": ["meta"],
-        # No bridge content beyond /meta → no /opensees, no /elements.
-        # The bridge fixture only calls `.element(...)` to buffer state;
-        # that no longer triggers a write.
-        "expected_absent_groups": ["opensees", "elements"],
+        "expected_groups": [
+            "meta", "opensees/element_meta/FourNodeTetrahedron",
+        ],
+        # No bridge content beyond /meta + element-meta → no broker
+        # zone, no /elements at root.
+        "expected_absent_groups": ["elements"],
     },
     "wrong_major": {
         "should_open": False,

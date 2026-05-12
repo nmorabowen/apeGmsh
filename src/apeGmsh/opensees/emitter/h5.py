@@ -751,6 +751,7 @@ class H5Emitter:
         self._write_sections(f)
         self._write_transforms(f)
         self._write_beam_integration(f)
+        self._write_element_meta(f)
         self._write_time_series(f)
         self._write_patterns(f)
         self._write_recorders(f)
@@ -1086,13 +1087,89 @@ class H5Emitter:
             _set_attr(g, "tag", rec.tag)
             _write_param_array(g, "params", rec.args)
 
-    # Note: ``/elements/{type}`` and its companion ``args`` / ``args_str``
-    # datasets are no longer written by the bridge.  Phase 8.5 moved
-    # ``/elements`` ownership to the broker (see
-    # :mod:`apeGmsh.mesh._femdata_h5_io`); OpenSees-specific element
-    # metadata (positional args, cross-references) is the subject of
-    # Phase 8.5 commit 5, which routes those into
-    # ``/opensees/element_meta/{type}``.
+    # -- Element metadata (OpenSees-specific args) ----------------------
+
+    def _write_element_meta(self, f: Any) -> None:
+        """Write ``/opensees/element_meta/{type_token}/`` groups.
+
+        Phase 8.5 split element data across two zones: the broker
+        owns the neutral ``/elements/{gmsh_alias}/`` group (ids +
+        connectivity), and the bridge owns the OpenSees-specific
+        parameter tail (positional args, string flags,
+        cross-references) under ``/opensees/element_meta/{type_token}/``.
+
+        For each OpenSees element type token (``forceBeamColumn``,
+        ``FourNodeTetrahedron``, …) seen during emit, this method
+        creates one group with:
+
+        * ``ids`` — int64 ``(N,)`` of OpenSees element tags.
+        * ``args`` — float64 ``(N, max_tail)`` of positional args
+          after the connectivity prefix; NaN in slots that hold a
+          string token.
+        * ``args_str`` — vlen-utf8 ``(N, max_tail)`` of string
+          tokens at the matching slot; empty string elsewhere.
+          Present only if at least one slot is a string.
+        """
+        if not self._elements:
+            return
+        import numpy as np
+
+        # Bin by type token; preserve per-type insertion order.
+        bins: dict[str, list[_ElementRecord]] = {}
+        for rec in self._elements:
+            bins.setdefault(rec.type_token, []).append(rec)
+
+        parent = self._ops_group(f).create_group("element_meta")
+        for type_token, recs in bins.items():
+            g = parent.create_group(element_group_name(type_token))
+            _set_attr(g, "type", type_token)
+            g.create_dataset(
+                "ids",
+                data=np.asarray([r.tag for r in recs], dtype=np.int64),
+            )
+            self._write_element_argstack(g, recs)
+
+    def _write_element_argstack(
+        self, g: Any, recs: list[_ElementRecord],
+    ) -> None:
+        """Write the element ``args`` / ``args_str`` array pair.
+
+        The first ``arity`` positional args of every element are the
+        node tags (already in the broker's
+        ``/elements/{gmsh_alias}/connectivity`` dataset); we drop them
+        and record only the tail (parameter / cross-reference payload).
+        """
+        import h5py
+        import numpy as np
+
+        arity = max(len(r.connectivity) for r in recs)
+        max_tail = max(len(r.args) - arity for r in recs)
+        if max_tail <= 0:
+            return
+
+        arg_nums = np.full((len(recs), max_tail), float("nan"), dtype=np.float64)
+        arg_strs: list[list[str]] = []
+        any_str = False
+        for i, r in enumerate(recs):
+            tail = r.args[arity:]
+            row_strs: list[str] = []
+            for j, v in enumerate(tail):
+                if isinstance(v, str):
+                    row_strs.append(v)
+                    any_str = True
+                else:
+                    arg_nums[i, j] = float(v)
+                    row_strs.append("")
+            row_strs.extend([""] * (max_tail - len(row_strs)))
+            arg_strs.append(row_strs)
+
+        g.create_dataset("args", data=arg_nums)
+        if any_str:
+            g.create_dataset(
+                "args_str",
+                data=np.asarray(arg_strs, dtype=object),
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            )
 
     # -- Time series -----------------------------------------------------
 

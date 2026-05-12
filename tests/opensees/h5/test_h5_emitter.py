@@ -403,6 +403,35 @@ def test_h5emitter_standalone_write_omits_elements_group(tmp_path) -> None:  # t
     e.write(str(out))
     with h5py.File(out, "r") as f:
         assert "elements" not in f
+        # The OpenSees-specific args + cross-references land in
+        # the bridge's `/opensees/element_meta/{type}` zone (Phase
+        # 8.5 commit 5).
+        assert "opensees/element_meta/forceBeamColumn" in f
+
+
+def test_h5emitter_writes_element_meta_with_args(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """`/opensees/element_meta/{type}` carries ids + args tail.
+
+    Connectivity is dropped from the args dataset (it's in the
+    broker's `/elements/{gmsh_alias}/connectivity`); the bridge stores
+    only the parameter / cross-reference suffix.
+    """
+    import h5py
+    import numpy as np
+    e = H5Emitter()
+    set_element_nodes(e, (1, 2))
+    e.element("forceBeamColumn", 10, 1, 2, 1, 1)
+    set_element_nodes(e, (2, 3))
+    e.element("forceBeamColumn", 11, 2, 3, 1, 1)
+    out = tmp_path / "em.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        g = f["opensees/element_meta/forceBeamColumn"]
+        assert g.attrs["type"] == "forceBeamColumn"
+        np.testing.assert_array_equal(g["ids"][:], [10, 11])
+        # After dropping the 2 connectivity ints, the tail is
+        # (transf_tag, integration_tag) = (1, 1).
+        np.testing.assert_array_equal(g["args"][:], [[1.0, 1.0], [1.0, 1.0]])
 
 
 def test_h5emitter_write_time_series(tmp_path) -> None:  # type: ignore[no-untyped-def]

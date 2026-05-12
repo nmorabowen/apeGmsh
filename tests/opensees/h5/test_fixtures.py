@@ -69,8 +69,11 @@ def test_fixture_builds_and_meets_expectations(
             assert len(model.sections()) == expected["section_count"]
         if "transform_count" in expected:
             assert len(model.transforms()) == expected["transform_count"]
-        if "element_type_count" in expected:
-            assert len(model.elements()) == expected["element_type_count"]
+        if "element_meta_type_count" in expected:
+            assert (
+                len(model.element_meta())
+                == expected["element_meta_type_count"]
+            )
         if "pattern_count" in expected:
             assert len(model.patterns()) == expected["pattern_count"]
         if "recorder_count" in expected:
