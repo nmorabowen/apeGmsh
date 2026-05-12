@@ -71,9 +71,13 @@ __all__ = [
 
 
 #: Schema version stamped by :func:`write_fem_h5` and the standalone
-#: ``FEMData.to_h5(path)`` flow.  Phase 8.5 added the neutral zone as
-#: an additive minor bump on top of Phase 8.4's ``2.0.0``.
-NEUTRAL_SCHEMA_VERSION: str = "2.1.0"
+#: ``FEMData.to_h5(path)`` flow.  Phase 8.5 added the neutral zone
+#: (`2.0.0 → 2.1.0`); Phase 8.6 added the ``fem_eids`` dataset under
+#: each ``/opensees/element_meta/{type_token}/`` group
+#: (`2.1.0 → 2.2.0`).  Broker-only files (no `/opensees/...`) still
+#: stamp the current minor — the field is additive and old readers
+#: tolerate its absence.
+NEUTRAL_SCHEMA_VERSION: str = "2.2.0"
 
 
 # ---------------------------------------------------------------------------

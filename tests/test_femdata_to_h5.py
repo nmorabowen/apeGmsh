@@ -151,7 +151,7 @@ def test_to_h5_writes_meta(tmp_path: Path) -> None:
     fem.to_h5(str(out), model_name="demo")
     with h5py.File(out, "r") as f:
         assert "meta" in f
-        assert f["meta"].attrs["schema_version"] == "2.1.0"
+        assert f["meta"].attrs["schema_version"] == "2.2.0"
         assert int(f["meta"].attrs["ndm"]) == 2  # max element dim
         assert f["meta"].attrs["model_name"] == "demo"
 

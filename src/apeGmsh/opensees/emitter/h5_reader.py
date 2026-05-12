@@ -222,12 +222,21 @@ class H5Model:
         return self._group_attrs_map("opensees/element_meta")
 
     def element_meta_arrays(self, type_token: str) -> dict[str, Any]:
-        """Return ``{ids, args, args_str?}`` for one element-meta group.
+        """Return ``{ids, fem_eids?, args?, args_str?}`` for one
+        element-meta group.
 
         Raises ``KeyError`` if the type group is missing.
+
+        ``fem_eids`` is the Phase 8.6 mapping that pairs each
+        OpenSees tag with the FEM element id it was fanned out from.
+        Sentinel value ``-1`` (matches
+        :data:`apeGmsh.opensees._internal.tag_resolution.MISSING_FEM_ELEMENT_ID`)
+        marks records emitted outside a bridge fan-out.
         """
         sub = self._f[f"opensees/element_meta/{type_token}"]
         out: dict[str, Any] = {"ids": sub["ids"][:]}
+        if "fem_eids" in sub:
+            out["fem_eids"] = sub["fem_eids"][:]
         if "args" in sub:
             out["args"] = sub["args"][:]
         if "args_str" in sub:
