@@ -800,6 +800,10 @@ class ResultsViewer:
         # The 6.86 ms/event omnibus storm on session restore collapses
         # to one rebuild per Qt tick per granular kind.
         outline.attach_dispatcher(dispatcher)
+        # Same migration for the DiagramSettingsTab (per-diagram
+        # styling panel) — its stack rebuild also fires on every
+        # geometry mutation; UI-lane coalesce collapses storms.
+        settings_tab.attach_dispatcher(dispatcher)
 
         # ── Observer wiring — every callback fires a dispatcher event.
         # Director's existing observers are preserved (the time scrubber

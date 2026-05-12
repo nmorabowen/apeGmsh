@@ -99,9 +99,12 @@ class DiagramSettingsTab:
         # Geometry events fire on any state change (geometry list,
         # active geometry, per-geometry composition list, active
         # composition, rename, layer membership) — one subscription
-        # rebuilds the stack when relevant.
-        self._unsub_compositions = director.geometries.subscribe(
-            self._on_compositions_changed,
+        # rebuilds the stack when relevant. ``attach_dispatcher``
+        # swaps this for the UI-lane coalesced dispatcher subscription
+        # once the viewer's event bus is constructed; the legacy path
+        # stays for headless tests that never wire a dispatcher.
+        self._unsub_compositions: Optional[Callable[[], None]] = (
+            director.geometries.subscribe(self._on_compositions_changed)
         )
 
     # ------------------------------------------------------------------
@@ -147,6 +150,53 @@ class DiagramSettingsTab:
         self._create_new = False
         self._selected = None
         self._rebuild()
+
+    def attach_dispatcher(self, dispatcher: Any) -> None:
+        """Migrate the geometry-changed subscription onto the dispatcher.
+
+        Called by :class:`ResultsViewer` once the :class:`Dispatcher`
+        is constructed (after this panel's ``__init__``). Replaces the
+        raw ``director.geometries.subscribe(self._on_compositions_changed)``
+        wiring with a UI-lane coalesced subscription over the granular
+        geometry kinds + the omnibus fallback.
+
+        Same `attach_dispatcher` pattern as :class:`OutlineTree`:
+        legacy unsub fires before the new subscribe, idempotent on
+        repeated calls, and a None dispatcher is a no-op so the
+        legacy path stays alive in headless / test contexts.
+        """
+        if dispatcher is None:
+            return
+        from ..diagrams._dispatch import (
+            COMPOSITION_CHANGED,
+            GEOMETRIES_CHANGED,
+            GEOMETRY_ACTIVE_CHANGED,
+            GEOMETRY_ADDED,
+            GEOMETRY_DEFORM_CHANGED,
+            GEOMETRY_REMOVED,
+            GEOMETRY_RENAMED,
+            Lane,
+        )
+        if self._unsub_compositions is not None:
+            try:
+                self._unsub_compositions()
+            except Exception:
+                pass
+            self._unsub_compositions = None
+        self._unsub_compositions = dispatcher.subscribe(
+            (
+                GEOMETRIES_CHANGED,
+                GEOMETRY_ACTIVE_CHANGED,
+                GEOMETRY_DEFORM_CHANGED,
+                GEOMETRY_ADDED,
+                GEOMETRY_REMOVED,
+                GEOMETRY_RENAMED,
+                COMPOSITION_CHANGED,
+            ),
+            lambda _kind, _payload: self._on_compositions_changed(),
+            lane=Lane.UI,
+            coalesce=True,
+        )
 
     def _on_add_layer_clicked(self) -> None:
         """+ Add layer → ensure a composition exists in the active
