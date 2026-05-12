@@ -299,12 +299,31 @@ dtype helper landed in `mesh/_record_h5.py`.  Schema bumped
 **Test gate:** `pytest tests/opensees/h5/ tests/test_record_h5_dtype.py
 tests/test_femdata_to_h5.py tests/test_h5_reader_neutral.py` → 91 passed.
 
-### Phase 8.6 — Bridge enrichment additions
-`/opensees/tag_map/`, plus a `set_current_fem_element_id` side
-channel in `_internal/build.py` parallel to `set_element_nodes`.
-Allows the H5Emitter to record (fem_eid, ops_tag) pairs.
+### Phase 8.6 — Bridge enrichment additions (landed)
+`set_current_fem_element_id` side channel landed in
+`_internal/tag_resolution.py` parallel to `set_element_nodes`; the
+bridge's element fan-out in `_internal/build.py` calls it right
+after `set_element_nodes`.  The H5Emitter captures the FEM element
+id on each `_ElementRecord` and writes a `fem_eids` int64 dataset
+under each `/opensees/element_meta/{type_token}/` group, parallel
+to `ids`.  Sentinel `-1` for records emitted outside a bridge
+fan-out.  Reader gains the `fem_eids` field in
+`element_meta_arrays(...)`.
+
+The on-disk mapping lives embedded under `/opensees/element_meta/`
+(scope §3 Choice 1, Flavor B) rather than as a standalone
+`/opensees/tag_map/` index — the per-type keying is the same, so
+folding the FEM id into the existing per-type group avoids a
+parallel index that would duplicate `ids`.  The master plan's
+`/opensees/tag_map/` path stays free for any future node-tag
+mapping if that ever becomes necessary.
+
+Schema bumped `2.1.0 → 2.2.0` (additive).
 
 **Risk:** low — additive.
+**Test gate:** `pytest tests/test_tag_resolution_fem_eid.py
+tests/opensees/h5/test_h5_end_to_end.py
+tests/opensees/h5/test_h5_emitter.py` → all green.
 
 ### Phase 8.7 — Viewer migration off FEMData / solvers
 Migrate `viewers/ui/*_tab.py`, `viewers/overlays/*.py` to read from
