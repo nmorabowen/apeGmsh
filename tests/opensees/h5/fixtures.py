@@ -190,8 +190,12 @@ def build_incomplete() -> H5Emitter:
 
 
 def build_wrong_major() -> H5Emitter:
-    """Schema major v2 — the reference reader MUST refuse this file."""
-    return H5Emitter(schema_version="2.0.0", model_name="wrong_major")
+    """Schema major v3 — the reference reader MUST refuse this file.
+
+    Phase 8.4 made `2.x.y` the accepted major; this fixture probes the
+    forward-major-mismatch path by stamping a v3 schema.
+    """
+    return H5Emitter(schema_version="3.0.0", model_name="wrong_major")
 
 
 #: Fixture name → builder function. The test bed iterates this map.
@@ -209,15 +213,22 @@ FIXTURE_BUILDERS: dict[str, Callable[[], H5Emitter]] = {
 #: For each fixture, the expected viewer-integration outcomes (panels
 #: populated, schema groups present, counts). Used as a contract test;
 #: the viewer team treats this as their integration spec.
+#:
+#: Group paths reflect the Phase 8.4 zone reshuffle: `/meta` and
+#: `/elements` are root-level; everything else the bridge writes lives
+#: under `/opensees/`.
 FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     "minimal": {
         "should_validate": True,
         "expected_groups": [
-            "meta", "materials/uniaxial", "sections", "transforms",
-            "beam_integration", "elements", "time_series", "patterns",
-            "bcs",
+            "meta", "opensees/materials/uniaxial", "opensees/sections",
+            "opensees/transforms", "opensees/beam_integration",
+            "elements", "opensees/time_series", "opensees/patterns",
+            "opensees/bcs",
         ],
-        "expected_absent_groups": ["analysis", "recorders"],
+        "expected_absent_groups": [
+            "opensees/analysis", "opensees/recorders",
+        ],
         "material_count_uniaxial": 2,
         "section_count": 1,
         "element_type_count": 1,
@@ -226,9 +237,10 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     "frame_3d": {
         "should_validate": True,
         "expected_groups": [
-            "meta", "materials/uniaxial", "sections", "transforms",
-            "beam_integration", "elements", "time_series", "patterns",
-            "bcs", "recorders",
+            "meta", "opensees/materials/uniaxial", "opensees/sections",
+            "opensees/transforms", "opensees/beam_integration",
+            "elements", "opensees/time_series", "opensees/patterns",
+            "opensees/bcs", "opensees/recorders",
         ],
         "material_count_uniaxial": 2,
         "section_count": 2,
@@ -239,7 +251,8 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     "arch_csys": {
         "should_validate": True,
         "expected_groups": [
-            "meta", "transforms", "elements", "beam_integration",
+            "meta", "opensees/transforms", "elements",
+            "opensees/beam_integration",
         ],
         "transform_count": 6,
         "element_type_count": 1,
@@ -247,7 +260,8 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     "dome_spherical": {
         "should_validate": True,
         "expected_groups": [
-            "meta", "transforms", "elements", "beam_integration",
+            "meta", "opensees/transforms", "elements",
+            "opensees/beam_integration",
         ],
         "transform_count": 8,
         "element_type_count": 1,
@@ -255,7 +269,8 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     "tank_cylindrical": {
         "should_validate": True,
         "expected_groups": [
-            "meta", "transforms", "elements", "beam_integration",
+            "meta", "opensees/transforms", "elements",
+            "opensees/beam_integration",
         ],
         "transform_count": 3,
         "element_type_count": 1,
@@ -263,14 +278,13 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     "incomplete": {
         "should_validate": True,
         "expected_groups": ["meta", "elements"],
-        "expected_absent_groups": [
-            "materials", "sections", "transforms", "patterns",
-            "bcs", "recorders", "analysis", "time_series",
-            "beam_integration",
-        ],
+        # No bridge content beyond /meta + /elements → /opensees is
+        # never created.  One absent assertion covers every relocated
+        # group at once.
+        "expected_absent_groups": ["opensees"],
     },
     "wrong_major": {
         "should_open": False,
-        "schema_version_starts_with": "2.",
+        "schema_version_starts_with": "3.",
     },
 }

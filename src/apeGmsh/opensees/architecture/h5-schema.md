@@ -2,9 +2,9 @@
 
 `apeSees.h5(path)` writes an HDF5 file that captures **everything the
 bridge knows about the model definition**: materials, sections,
-transforms with per-element vecxz, elements grouped by PG, time
-series with their values, patterns with their loads, BCs, recorders,
-and analysis settings.
+transforms with per-element vecxz, elements binned by type token,
+time series with their values, patterns with their loads, BCs,
+recorders, and analysis settings.
 
 This file is **the canonical model archive**. It carries information
 that is in *neither* the FEMData snapshot (geometry only) nor the
@@ -13,8 +13,8 @@ STKO/MPCO results (response only).
 ## Design principles
 
 1. **One file, navigable as a graph.** Cross-references are HDF5
-   paths (`/sections/Cols`), not numeric tags. Anyone with `h5py` or
-   `h5dump` can walk the model.
+   paths (`/opensees/sections/Fiber_1`), not numeric tags. Anyone
+   with `h5py` or `h5dump` can walk the model.
 2. **Structured groups, scalar attrs, array datasets.** No
    JSON-blob attributes. HDF5-native types throughout so introspection
    tools work.
@@ -27,35 +27,60 @@ STKO/MPCO results (response only).
    imply analysis was run. The H5 is a definition snapshot, not a
    results file.
 
+## Two zones
+
+Phase 8.4 (May 2026) partitioned `model.h5` into a **neutral zone**
+at the root and a **solver-specific zone** under `/opensees/`.
+
+The neutral zone holds anything that does not depend on the choice
+of solver — currently `/meta` and `/elements`.  The solver-specific
+zone holds anything the OpenSees bridge contributes (materials,
+sections, transforms, beam integration rules, time series, patterns,
+BCs, recorders, analysis settings).  A second producer (Code_Aster,
+Abaqus, …) would plug in at `/<solver>/` next to `/opensees/`
+without colliding.
+
+The reshuffle was a one-time `1.x.y → 2.0.0` schema bump: any
+external tool that read a pre-8.4 file by absolute path
+(`/materials/uniaxial/...`) sees a `SchemaVersionError` from the
+reference reader and must update to the new paths.
+
 ## Top-level layout
 
 ```
 model.h5
 ├── /meta                                  attrs only
-├── /materials
-│     ├── /uniaxial/{name}                 one group per material
-│     └── /nd/{name}
-├── /sections
-│     └── /{name}                          one group per section
-├── /transforms
-│     └── /{name}                          one group per geomTransf
-├── /elements
-│     └── /{pg_name}                       one group per assigned PG
-├── /time_series
-│     └── /{name}                          one group per series
-├── /patterns
-│     └── /{name}                          one group per pattern
-├── /bcs
-│     ├── /fix                             single dataset
-│     └── /mass                            single dataset
-├── /recorders
-│     └── /{name}                          one group per recorder
-└── /analysis                              attrs + sub-attrs (optional)
+├── /elements                              ──── neutral zone ────
+│     └── /{type}                          one group per element type token
+│
+└── /opensees/                             ──── OpenSees zone ────
+      ├── /materials
+      │     ├── /uniaxial/{name}           one group per material
+      │     └── /nd/{name}
+      ├── /sections
+      │     └── /{name}                    one group per section
+      ├── /transforms
+      │     └── /{name}                    one group per geomTransf
+      ├── /beam_integration
+      │     └── /{name}                    one group per beamIntegration
+      ├── /time_series
+      │     └── /{name}                    one group per series
+      ├── /patterns
+      │     └── /{name}                    one group per pattern
+      ├── /bcs
+      │     ├── /fix                       single dataset
+      │     └── /mass                      single dataset
+      ├── /recorders
+      │     └── /{name}                    one group per recorder
+      └── /analysis                        attrs + sub-attrs (optional)
 ```
 
 The user's PG names, material names, etc. are HDF5 group names — they
 must therefore avoid `/` characters. The bridge enforces this at
 declaration time.
+
+`/opensees` itself is created lazily: a file with no bridge content
+beyond `/meta` + `/elements` carries no `/opensees` group at all.
 
 ## `/meta`
 
@@ -63,7 +88,7 @@ Attributes only.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `schema_version` | string | semver, e.g. `"1.0.0"` |
+| `schema_version` | string | semver, e.g. `"2.0.0"` |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
@@ -72,13 +97,55 @@ Attributes only.
 | `model_name` | string | user-provided model name |
 
 Schema versioning is **strict on major**, **lax on minor/patch**. A
-reader written for `1.x.y` MUST refuse to read `2.x.y` files. Within
-`1.x.y`, additions are allowed without breaking readers.
+reader written for `2.x.y` MUST refuse to read `1.x.y` or `3.x.y`
+files. Within `2.x.y`, additions are allowed without breaking
+readers.
 
-## `/materials`
+## `/elements`
+
+Neutral-zone group at the root.  One group per element **type
+token** — every element of that OpenSees type lands in the same
+group, regardless of which PG the user assigned it to.  The
+streaming Protocol does not surface the PG (`spec.pg` is known only
+inside the bridge's element fan-out in `_internal/build.py`), so
+the H5 emitter bins by type.
 
 ```
-/materials/
+/elements/forceBeamColumn/
+├── attrs: type="forceBeamColumn",
+│         __deviation__="grouped by element type token"
+├── ids               int dataset (n_elements,)
+│                      OpenSees element tags
+├── connectivity      int dataset (n_elements, n_corners)
+│                      node tags per element
+├── args              float64 dataset (n_elements, max_tail)
+│                      per-element positional args after connectivity;
+│                      NaN in slots that carry a string token
+└── args_str          vlen-string dataset (n_elements, max_tail)
+                       string tokens at the matching slot; empty
+                       string where the slot is numeric. Present
+                       only if at least one slot is a string.
+
+/elements/FourNodeTetrahedron/
+├── attrs: type="FourNodeTetrahedron"
+├── ids
+└── connectivity      shape (n_elements, 4)
+```
+
+The args / args_str dataset pair encodes the element's positional
+parameter list (after the connectivity prefix) — a vocabulary-aware
+reader can recover refs (`transf_ref`, `section_ref`,
+`integration_ref`, …) by indexing into the element type's known
+signature.
+
+Phase 8.5 will hand `/elements` writing from the bridge to the
+broker so the neutral zone is self-contained even without OpenSees
+loaded.  The path stays at root throughout.
+
+## `/opensees/materials`
+
+```
+/opensees/materials/
 ├── /uniaxial/
 │   ├── /Steel_S420/                  group
 │   │   attrs: type="Steel02", tag=3, fy=420e6, E=200e9, b=0.01,
@@ -97,7 +164,7 @@ the `type` attribute.
 
 Optional: a `/comments` attribute (string) for user-supplied notes.
 
-## `/sections`
+## `/opensees/sections`
 
 Sections that aggregate (Fiber, LayeredShell) carry compound datasets
 for their components. Sections that don't (ElasticMembranePlateSection)
@@ -106,7 +173,7 @@ are attribute-only, like materials.
 ### Fiber section
 
 ```
-/sections/Cols/
+/opensees/sections/Cols/
 ├── attrs: type="Fiber", tag=1, GJ=1.0e9
 ├── /patches             compound dataset, shape (n_patches,)
 │     fields: kind (string), material_ref (string),
@@ -117,16 +184,17 @@ are attribute-only, like materials.
 │             material_ref (string)
 └── /layers              compound dataset, shape (n_layers,)
       fields: kind, material_ref, n_bars (int), area (float),
-              line (float[4])      ← (y1, z1, y2, z2)
+              line (float[6])      ← (y1, z1, y2, z2) for `straight`, padded with NaN to 6
 ```
 
-`material_ref` is an HDF5 path string like `"/materials/uniaxial/Steel_S420"`.
-Readers resolve by `f[material_ref]`.
+`material_ref` is an HDF5 path string like
+`"/opensees/materials/uniaxial/Steel_S420"`.  Readers resolve by
+`f[material_ref]`.
 
 ### Plate / shell section
 
 ```
-/sections/Slab/
+/opensees/sections/Slab/
 ├── attrs: type="ElasticMembranePlateSection", tag=2, E=30e9, nu=0.2,
 │          h=0.20, rho=2400.0
 └── (no sub-groups)
@@ -135,7 +203,7 @@ Readers resolve by `f[material_ref]`.
 ### Layered shell
 
 ```
-/sections/Composite/
+/opensees/sections/Composite/
 ├── attrs: type="LayeredShellFiberSection", tag=3
 └── /layers              compound dataset, shape (n_layers,)
       fields: material_ref (string), thickness (float), n_int_pts (int)
@@ -144,16 +212,16 @@ Readers resolve by `f[material_ref]`.
 ### Aggregator / Parallel
 
 ```
-/sections/Combined/
+/opensees/sections/Combined/
 ├── attrs: type="Aggregator", tag=4
 └── /components          compound dataset
       fields: section_ref (string), dof_ids (int[ndf])
 ```
 
-## `/transforms`
+## `/opensees/transforms`
 
 ```
-/transforms/Cols/
+/opensees/transforms/Cols/
 ├── attrs: type="PDelta", tag=5,
 │         csys_kind="Cylindrical",        ← optional, present if csys was used
 │         csys_origin=[0.0, 0.0, 0.0],
@@ -170,34 +238,25 @@ When the user supplied an explicit `vecxz=` (no csys), `per_element_vecxz`
 is still present — every row holds the same vector — so the viewer
 can read uniformly.
 
-## `/elements`
+## `/opensees/beam_integration`
 
-One group per PG that received an `assign(...)` call.
-
-```
-/elements/Cols/
-├── attrs: type="forceBeamColumn", n_ip=5,
-│         section_ref="/sections/Cols",
-│         transf_ref="/transforms/Cols"
-├── ids               int dataset (n_elements,)
-│                      OpenSees element tags
-└── connectivity      int dataset (n_elements, n_corners)
-                       node tags per element
-
-/elements/Body/
-├── attrs: type="FourNodeTetrahedron",
-│         material_ref="/materials/nd/Concrete_3D"
-├── ids
-└── connectivity      shape (n_elements, 4)
-```
-
-Element types that take additional scalar params (`A`, `E`, etc.
-on `elasticBeamColumn`) carry them as attributes alongside the refs.
-
-## `/time_series`
+One group per `beamIntegration` call.  Keyed by `{type}_{tag}`
+(e.g. `/opensees/beam_integration/Lobatto_1`).
 
 ```
-/time_series/elcentro/
+/opensees/beam_integration/Lobatto_1/
+└── attrs: type="Lobatto", tag=1,
+          params=[sec_tag, n_ip, ...]
+```
+
+Force / disp-based beam-column elements reference the integration
+rule by tag through their positional args; the rule's section
+reference is itself an OpenSees section tag inside `params`.
+
+## `/opensees/time_series`
+
+```
+/opensees/time_series/elcentro/
 ├── attrs: type="Path", factor=9.81, dt=0.01,
 │         file_path="elcentro.txt"        ← if loaded from file
 ├── time              float dataset (n_steps,)
@@ -216,11 +275,12 @@ time and stored verbatim.
 Compression: HDF5 gzip level 4 on `time` and `values`. Negligible cost,
 significant savings for ground motions.
 
-## `/patterns`
+## `/opensees/patterns`
 
 ```
-/patterns/Wind/
-├── attrs: type="Plain", tag=1, series_ref="/time_series/Linear_1"
+/opensees/patterns/Wind/
+├── attrs: type="Plain", tag=1,
+│         series_ref="/opensees/time_series/Linear_1"
 ├── /loads               compound dataset, shape (n_loads,)
 │     fields: target_kind (string),    ← "node" | "pg"
 │             target (string),         ← node tag (str) or PG name
@@ -232,52 +292,52 @@ significant savings for ground motions.
               params (float[6])         ← padded
 ```
 
-`/patterns/Earthquake_X/` for `UniformExcitation`:
+`/opensees/patterns/Earthquake_X/` for `UniformExcitation`:
 
 ```
-/patterns/Earthquake_X/
+/opensees/patterns/Earthquake_X/
 └── attrs: type="UniformExcitation", tag=2, direction=1,
-          series_ref="/time_series/elcentro"
+          series_ref="/opensees/time_series/elcentro"
 ```
 
 (no contained loads — uniform excitation IS the pattern's payload)
 
-## `/bcs`
+## `/opensees/bcs`
 
 ```
-/bcs/fix                  compound dataset, shape (n_fix_records,)
+/opensees/bcs/fix         compound dataset, shape (n_fix_records,)
    fields: target_kind (string), target (string), dofs (int[ndf])
 
-/bcs/mass                 compound dataset, shape (n_mass_records,)
+/opensees/bcs/mass        compound dataset, shape (n_mass_records,)
    fields: target_kind, target, values (float[ndf])
 ```
 
-## `/recorders`
+## `/opensees/recorders`
 
 ```
-/recorders/disp/
+/opensees/recorders/disp/
 ├── attrs: type="Node", file="disp.out", response="disp",
 │         dT=0.0
 ├── target_nodes      int dataset
 ├── target_dofs       int dataset
 └── time_format       string attr     ← "step" | "dt"
 
-/recorders/forces/
+/opensees/recorders/forces/
 ├── attrs: type="Element", file="forces.out", response="globalForce"
 └── target_elements   int dataset
 
-/recorders/main_mpco/
+/opensees/recorders/main_mpco/
 ├── attrs: type="MPCO", file="model.mpco"
 ├── nodal_responses   string dataset   ← ["displacement", "reactionForce"]
 └── elem_responses    string dataset   ← ["stresses", "section.force"]
 ```
 
-## `/analysis` (optional)
+## `/opensees/analysis` (optional)
 
 Present only if the user called the analysis primitives.
 
 ```
-/analysis/
+/opensees/analysis/
 └── attrs: handler="Transformation",
           numberer="RCM",
           system="BandGeneral",
@@ -298,10 +358,10 @@ Every reference uses an HDF5 path string. Examples:
 
 | Reference attribute | Example value |
 |---|---|
-| `material_ref` | `/materials/uniaxial/Steel_S420` |
-| `section_ref` | `/sections/Cols` |
-| `transf_ref` | `/transforms/Cols` |
-| `series_ref` | `/time_series/elcentro` |
+| `material_ref` | `/opensees/materials/uniaxial/Steel_S420` |
+| `section_ref` | `/opensees/sections/Cols` |
+| `transf_ref` | `/opensees/transforms/Cols` |
+| `series_ref` | `/opensees/time_series/elcentro` |
 
 Readers MUST resolve via `h5py.File["{ref}"]` and validate the
 returned group's `type` attribute matches expectations.
@@ -325,7 +385,18 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
   ignore unknown groups.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
 
-The current schema version is **`1.0.0`**.
+The current schema version is **`2.0.0`**.
+
+History:
+
+- `1.0.0` — Phase 6 initial release.
+- `1.1.0` — added `/beam_integration` group + widened fiber-layer
+  `line` field from float[4] to float[6].
+- `2.0.0` — Phase 8.4: bridge-written groups (materials, sections,
+  transforms, beam_integration, time_series, patterns, bcs, recorders,
+  analysis) moved under `/opensees/`.  `/meta` and `/elements` stay
+  at root.  Breaking — any tool reading pre-8.4 files by absolute
+  path needs to update.
 
 A reader skeleton:
 
@@ -336,10 +407,10 @@ def read_model_h5(path):
     with h5py.File(path, "r") as f:
         meta = f["/meta"]
         major = int(meta.attrs["schema_version"].split(".")[0])
-        if major != 1:
+        if major != 2:
             raise ValueError(
                 f"Unsupported model.h5 schema major version {major}; "
-                f"reader supports v1.x.y"
+                f"reader supports v2.x.y"
             )
         # Walk the file ...
 ```
@@ -352,38 +423,39 @@ no analysis settings:
 ```
 column.h5
 ├── /meta
-│   schema_version="1.0.0", ndm=3, ndf=6, snapshot_id="abc123"
-├── /materials/uniaxial/Steel/
-│   type="Steel02", tag=1, fy=420e6, E=200e9, b=0.01, R0=20.0,
-│   cR1=0.925, cR2=0.15
-├── /materials/uniaxial/Concrete/
-│   type="Concrete02", tag=2, fpc=-30e6, epsc0=-0.002,
-│   fpcu=-25e6, epsu=-0.006, lambda_val=0.1, ft=2.5e6, Ets=200e6
-├── /sections/Col/
-│   ├── attrs: type="Fiber", tag=1, GJ=1.0e9
-│   ├── /patches  → 1 row: kind="rect", material_ref="/materials/uniaxial/Concrete",
-│   │              ny=8, nz=8, coords=[-0.20,-0.20,0.20,0.20,nan,nan,nan,nan]
-│   └── /fibers   → 8 rows of (y, z, area, material_ref="/materials/uniaxial/Steel")
-├── /transforms/Col/
-│   ├── attrs: type="PDelta", tag=1, csys_kind="Cartesian",
-│   │          csys_origin=[0,0,0], csys_axis=[0,0,1], roll_deg=0.0
-│   ├── per_element_vecxz       (1, 3) = [[1, 0, 0]]
-│   └── per_element_emitted_tag (1,)   = [1]
-├── /elements/Col/
-│   ├── attrs: type="forceBeamColumn", n_ip=5,
-│   │          section_ref="/sections/Col",
-│   │          transf_ref="/transforms/Col"
+│   schema_version="2.0.0", ndm=3, ndf=6, snapshot_id="abc123"
+├── /elements/forceBeamColumn/
+│   ├── attrs: type="forceBeamColumn"
 │   ├── ids           [1]
 │   └── connectivity  [[1, 2]]
-├── /time_series/elcentro/
-│   ├── attrs: type="Path", factor=9.81, dt=0.01, file_path="elcentro.txt"
-│   ├── time       (n_steps,)  = [0.00, 0.01, 0.02, ...]
-│   └── values     (n_steps,)  = [0.001, 0.005, ..., -0.012, ...]
-├── /patterns/Quake/
-│   └── attrs: type="UniformExcitation", tag=1, direction=1,
-│              series_ref="/time_series/elcentro"
-└── /bcs/fix
-    target_kind=["pg"], target=["Base"], dofs=[[1,1,1,1,1,1]]
+└── /opensees/
+    ├── /materials/uniaxial/Steel/
+    │   type="Steel02", tag=1, fy=420e6, E=200e9, b=0.01, R0=20.0,
+    │   cR1=0.925, cR2=0.15
+    ├── /materials/uniaxial/Concrete/
+    │   type="Concrete02", tag=2, fpc=-30e6, epsc0=-0.002,
+    │   fpcu=-25e6, epsu=-0.006, lambda_val=0.1, ft=2.5e6, Ets=200e6
+    ├── /sections/Col/
+    │   ├── attrs: type="Fiber", tag=1, GJ=1.0e9
+    │   ├── /patches  → 1 row: kind="rect",
+    │   │              material_ref="/opensees/materials/uniaxial/Concrete",
+    │   │              ny=8, nz=8, coords=[-0.20,-0.20,0.20,0.20,nan,nan,nan,nan]
+    │   └── /fibers   → 8 rows of (y, z, area,
+    │                              material_ref="/opensees/materials/uniaxial/Steel")
+    ├── /transforms/Col/
+    │   ├── attrs: type="PDelta", tag=1, csys_kind="Cartesian",
+    │   │          csys_origin=[0,0,0], csys_axis=[0,0,1], roll_deg=0.0
+    │   ├── per_element_vecxz       (1, 3) = [[1, 0, 0]]
+    │   └── per_element_emitted_tag (1,)   = [1]
+    ├── /time_series/elcentro/
+    │   ├── attrs: type="Path", factor=9.81, dt=0.01, file_path="elcentro.txt"
+    │   ├── time       (n_steps,)  = [0.00, 0.01, 0.02, ...]
+    │   └── values     (n_steps,)  = [0.001, 0.005, ..., -0.012, ...]
+    ├── /patterns/Quake/
+    │   └── attrs: type="UniformExcitation", tag=1, direction=1,
+    │              series_ref="/opensees/time_series/elcentro"
+    └── /bcs/fix
+        target_kind=["pg"], target=["Base"], dofs=[[1,1,1,1,1,1]]
 ```
 
 This file is ~50 KB and tells the viewer everything it needs to

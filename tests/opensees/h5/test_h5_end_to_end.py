@@ -70,7 +70,7 @@ def test_apesees_h5_writes_valid_file(tmp_path: Path) -> None:
         patterns = model.patterns()
         assert patterns
         first_pattern = next(iter(patterns.values()))
-        assert first_pattern.get("series_ref", "").startswith("/time_series/")
+        assert first_pattern.get("series_ref", "").startswith("/opensees/time_series/")
         # /meta/snapshot_id is always present (may be empty for stub
         # FEM snapshots that don't compute one).
         meta = model.meta()

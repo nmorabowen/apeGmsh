@@ -232,7 +232,7 @@ def _s(v: object) -> str:
 
 
 def test_h5emitter_write_bcs_fix_compound_dataset(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """/bcs/fix is a compound dataset with target_kind / target / dofs."""
+    """/opensees/bcs/fix is a compound dataset with target_kind / target / dofs."""
     import h5py
     e = H5Emitter()
     e.model(ndm=3, ndf=6)
@@ -241,7 +241,7 @@ def test_h5emitter_write_bcs_fix_compound_dataset(tmp_path) -> None:  # type: ig
     out = tmp_path / "bcs.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        ds = f["bcs/fix"]
+        ds = f["opensees/bcs/fix"]
         assert ds.shape == (2,)
         rows = ds[:]
         assert _s(rows[0]["target_kind"]) == "node"
@@ -258,21 +258,24 @@ def test_h5emitter_write_bcs_mass_compound_dataset(tmp_path) -> None:  # type: i
     out = tmp_path / "mass.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        ds = f["bcs/mass"]
+        ds = f["opensees/bcs/mass"]
         rows = ds[:]
         assert _s(rows[0]["target"]) == "5"
         assert tuple(rows[0]["values"]) == (100.0, 100.0, 100.0, 0.0, 0.0, 0.0)
 
 
 def test_h5emitter_no_bcs_no_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    """If no fix / mass calls, /bcs is not created at all."""
+    """If no fix / mass calls, /opensees/bcs is not created at all.
+
+    With no other bridge content the parent /opensees group is also
+    skipped (lazy creation in H5Emitter._ops_group)."""
     import h5py
     e = H5Emitter()
     e.model(ndm=2, ndf=3)
     out = tmp_path / "no_bcs.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        assert "bcs" not in f
+        assert "opensees" not in f
 
 
 def test_h5emitter_write_uniaxial_material(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -284,7 +287,7 @@ def test_h5emitter_write_uniaxial_material(tmp_path) -> None:  # type: ignore[no
     out = tmp_path / "mat.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["materials/uniaxial/Steel02_1"]
+        g = f["opensees/materials/uniaxial/Steel02_1"]
         assert g.attrs["type"] == "Steel02"
         assert int(g.attrs["tag"]) == 1
         np.testing.assert_array_equal(
@@ -299,7 +302,7 @@ def test_h5emitter_write_nd_material(tmp_path) -> None:  # type: ignore[no-untyp
     out = tmp_path / "ndmat.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["materials/nd/ElasticIsotropic_5"]
+        g = f["opensees/materials/nd/ElasticIsotropic_5"]
         assert g.attrs["type"] == "ElasticIsotropic"
 
 
@@ -312,7 +315,7 @@ def test_h5emitter_write_simple_section(tmp_path) -> None:  # type: ignore[no-un
     out = tmp_path / "sec.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["sections/ElasticMembranePlateSection_2"]
+        g = f["opensees/sections/ElasticMembranePlateSection_2"]
         assert g.attrs["type"] == "ElasticMembranePlateSection"
 
 
@@ -329,18 +332,18 @@ def test_h5emitter_write_fiber_section_with_patches_fibers_layers(tmp_path) -> N
     out = tmp_path / "fiber.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["sections/Fiber_1"]
+        g = f["opensees/sections/Fiber_1"]
         # patches
         patches = g["patches"][:]
         assert len(patches) == 1
         assert _s(patches[0]["kind"]) == "rect"
-        assert _s(patches[0]["material_ref"]) == "/materials/uniaxial/Concrete02_1"
+        assert _s(patches[0]["material_ref"]) == "/opensees/materials/uniaxial/Concrete02_1"
         assert int(patches[0]["ny"]) == 8
         assert int(patches[0]["nz"]) == 8
         # fibers
         fibers = g["fibers"][:]
         assert len(fibers) == 1
-        assert _s(fibers[0]["material_ref"]) == "/materials/uniaxial/Steel02_2"
+        assert _s(fibers[0]["material_ref"]) == "/opensees/materials/uniaxial/Steel02_2"
         assert float(fibers[0]["area"]) == 0.001
         # layers
         layers = g["layers"][:]
@@ -358,12 +361,12 @@ def test_h5emitter_write_geomtransf_per_call_groups(tmp_path) -> None:  # type: 
     out = tmp_path / "tr.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g1 = f["transforms/Linear_1"]
+        g1 = f["opensees/transforms/Linear_1"]
         np.testing.assert_array_equal(
             g1["per_element_vecxz"][:], np.array([[0.0, 0.0, 1.0]]),
         )
         np.testing.assert_array_equal(g1["per_element_emitted_tag"][:], [1])
-        g2 = f["transforms/PDelta_2"]
+        g2 = f["opensees/transforms/PDelta_2"]
         np.testing.assert_array_equal(
             g2["per_element_vecxz"][:], np.array([[1.0, 0.0, 0.0]]),
         )
@@ -377,7 +380,7 @@ def test_h5emitter_write_beam_integration_group(tmp_path) -> None:  # type: igno
     out = tmp_path / "bi.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["beam_integration/Lobatto_1"]
+        g = f["opensees/beam_integration/Lobatto_1"]
         assert g.attrs["type"] == "Lobatto"
         np.testing.assert_array_equal(
             g.attrs["params"], np.array([5.0, 5.0]),
@@ -414,7 +417,7 @@ def test_h5emitter_write_time_series(tmp_path) -> None:  # type: ignore[no-untyp
     out = tmp_path / "ts.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["time_series/Linear_1"]
+        g = f["opensees/time_series/Linear_1"]
         assert g.attrs["type"] == "Linear"
         assert int(g.attrs["tag"]) == 1
 
@@ -431,9 +434,9 @@ def test_h5emitter_write_plain_pattern_with_loads_and_series_ref(tmp_path) -> No
     out = tmp_path / "pat.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["patterns/Plain_1"]
+        g = f["opensees/patterns/Plain_1"]
         assert g.attrs["type"] == "Plain"
-        assert g.attrs["series_ref"] == "/time_series/Linear_1"
+        assert g.attrs["series_ref"] == "/opensees/time_series/Linear_1"
         loads = g["loads"][:]
         assert len(loads) == 2
         assert _s(loads[0]["target"]) == "10"
@@ -453,10 +456,10 @@ def test_h5emitter_write_uniform_excitation_pattern(tmp_path) -> None:  # type: 
     out = tmp_path / "uniex.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["patterns/UniformExcitation_2"]
+        g = f["opensees/patterns/UniformExcitation_2"]
         assert g.attrs["type"] == "UniformExcitation"
         assert int(g.attrs["direction"]) == 1
-        assert g.attrs["series_ref"] == "/time_series/Path_5"
+        assert g.attrs["series_ref"] == "/opensees/time_series/Path_5"
         # No /loads sub-dataset for single-line patterns.
         assert "loads" not in g
 
@@ -468,7 +471,7 @@ def test_h5emitter_write_node_recorder(tmp_path) -> None:  # type: ignore[no-unt
     out = tmp_path / "rec.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        g = f["recorders/Node_0"]
+        g = f["opensees/recorders/Node_0"]
         assert g.attrs["type"] == "Node"
         assert g.attrs["file"] == "disp.out"
 
@@ -487,7 +490,7 @@ def test_h5emitter_write_analysis_chain(tmp_path) -> None:  # type: ignore[no-un
     out = tmp_path / "ana.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        a = f["analysis"]
+        a = f["opensees/analysis"]
         assert a.attrs["handler"] == "Transformation"
         assert a.attrs["numberer"] == "RCM"
         assert a.attrs["system"] == "BandGeneral"
@@ -497,12 +500,14 @@ def test_h5emitter_write_analysis_chain(tmp_path) -> None:  # type: ignore[no-un
 
 
 def test_h5emitter_no_analysis_no_group(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """No analysis chain → /opensees/analysis absent; with no other
+    bridge content the parent /opensees group is also absent."""
     import h5py
     e = H5Emitter()
     out = tmp_path / "no_ana.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        assert "analysis" not in f
+        assert "opensees" not in f
 
 
 def test_h5emitter_round_trip_minimal_column(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -533,18 +538,18 @@ def test_h5emitter_round_trip_minimal_column(tmp_path) -> None:  # type: ignore[
         # Required: /meta
         assert int(f["meta"].attrs["ndm"]) == 3
         # Constitutive
-        assert "materials/uniaxial/Steel02_1" in f
-        assert "materials/uniaxial/Concrete02_2" in f
+        assert "opensees/materials/uniaxial/Steel02_1" in f
+        assert "opensees/materials/uniaxial/Concrete02_2" in f
         # Section
-        assert "sections/Fiber_1" in f
-        assert f["sections/Fiber_1"]["patches"].shape == (1,)
+        assert "opensees/sections/Fiber_1" in f
+        assert f["opensees/sections/Fiber_1"]["patches"].shape == (1,)
         # Transform + beamIntegration
-        assert "transforms/PDelta_1" in f
-        assert "beam_integration/Lobatto_1" in f
-        # Element
+        assert "opensees/transforms/PDelta_1" in f
+        assert "opensees/beam_integration/Lobatto_1" in f
+        # Element (stays at root — neutral zone)
         assert "elements/forceBeamColumn" in f
         # BCs
-        assert "bcs/fix" in f
+        assert "opensees/bcs/fix" in f
         # Time series + pattern
-        assert "time_series/Path_1" in f
-        assert "patterns/UniformExcitation_1" in f
+        assert "opensees/time_series/Path_1" in f
+        assert "opensees/patterns/UniformExcitation_1" in f

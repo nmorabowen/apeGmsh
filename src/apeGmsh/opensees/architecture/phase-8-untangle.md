@@ -124,9 +124,10 @@ consumer of Phase-6 model.h5 files. The schema_version bump (1.1.0 →
 2.0.0) signals the break.
 
 **Symmetry contract.** Every "record set" group (`/constraints/{kind}`,
-`/loads/{kind}`, `/masses`, `/bcs/fix`, `/bcs/mass`,
-`/patterns/{name}/loads`) uses the same compound-dtype shape so the
-viewer has one reader:
+`/loads/{kind}`, `/masses` in the neutral zone; `/opensees/bcs/fix`,
+`/opensees/bcs/mass`, `/opensees/patterns/{name}/loads` in the
+OpenSees zone) uses the same compound-dtype shape so the viewer has
+one reader:
 
 ```
 target_kind  vlen utf-8   "node" | "element" | "pg"

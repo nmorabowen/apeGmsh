@@ -17,9 +17,11 @@ without an indirection layer.
 
 Schema-version compatibility:
 
-* The reader is written for **schema major 1** (current: 1.1.0).
+* The reader is written for **schema major 2** (current: 2.0.0; the
+  Phase 8.4 zone reshuffle moved bridge-written groups under
+  ``/opensees/`` and bumped the major).
 * It REFUSES files whose ``/meta/schema_version`` starts with anything
-  other than ``"1."`` and raises :class:`SchemaVersionError`.
+  other than ``"2."`` and raises :class:`SchemaVersionError`.
 * Minor / patch differences are tolerated — unknown groups are
   simply not surfaced by the typed accessors here but remain
   reachable through :attr:`H5Model.handle`.
@@ -43,8 +45,9 @@ __all__ = [
 
 
 #: Schema major version this reader supports. Bumped when a breaking
-#: schema change requires viewer / reader coordination.
-EXPECTED_SCHEMA_MAJOR: int = 1
+#: schema change requires viewer / reader coordination.  Phase 8.4
+#: bumped this to 2 alongside the ``/opensees/`` namespace move.
+EXPECTED_SCHEMA_MAJOR: int = 2
 
 
 class SchemaVersionError(ValueError):
@@ -115,7 +118,7 @@ class H5Model:
     >>> import apeGmsh.opensees.emitter.h5_reader as reader
     >>> m = reader.open("model.h5")
     >>> m.schema_version
-    '1.1.0'
+    '2.0.0'
     >>> m.meta()["ndm"]
     3
     >>> m.materials()                          # doctest: +SKIP
@@ -157,12 +160,12 @@ class H5Model:
     # -- Optional reads --------------------------------------------------
 
     def materials(self) -> dict[str, dict[str, dict[str, Any]]]:
-        """Return ``{family: {name: attrs}}`` for ``/materials/{family}``.
+        """Return ``{family: {name: attrs}}`` for ``/opensees/materials/{family}``.
 
-        Returns an empty dict if ``/materials`` is missing.
+        Returns an empty dict if ``/opensees/materials`` is missing.
         """
         out: dict[str, dict[str, dict[str, Any]]] = {}
-        materials = self._f.get("materials")
+        materials = self._f.get("opensees/materials")
         if materials is None:
             return out
         for family in materials:
@@ -178,32 +181,32 @@ class H5Model:
 
         Raises :class:`KeyError` if missing.
         """
-        return _attrs_as_dict(self._f[f"materials/{family}/{name}"])
+        return _attrs_as_dict(self._f[f"opensees/materials/{family}/{name}"])
 
     def sections(self) -> dict[str, dict[str, Any]]:
-        """Return ``{name: attrs}`` for ``/sections``."""
-        return self._group_attrs_map("sections")
+        """Return ``{name: attrs}`` for ``/opensees/sections``."""
+        return self._group_attrs_map("opensees/sections")
 
     def transforms(self) -> dict[str, dict[str, Any]]:
-        return self._group_attrs_map("transforms")
+        return self._group_attrs_map("opensees/transforms")
 
     def beam_integration(self) -> dict[str, dict[str, Any]]:
-        return self._group_attrs_map("beam_integration")
+        return self._group_attrs_map("opensees/beam_integration")
 
     def elements(self) -> dict[str, dict[str, Any]]:
         return self._group_attrs_map("elements")
 
     def time_series(self) -> dict[str, dict[str, Any]]:
-        return self._group_attrs_map("time_series")
+        return self._group_attrs_map("opensees/time_series")
 
     def patterns(self) -> dict[str, dict[str, Any]]:
-        return self._group_attrs_map("patterns")
+        return self._group_attrs_map("opensees/patterns")
 
     def recorders(self) -> dict[str, dict[str, Any]]:
-        return self._group_attrs_map("recorders")
+        return self._group_attrs_map("opensees/recorders")
 
     def analysis(self) -> dict[str, Any] | None:
-        a = self._f.get("analysis")
+        a = self._f.get("opensees/analysis")
         if a is None:
             return None
         return _attrs_as_dict(a)
@@ -257,7 +260,7 @@ class H5Model:
 
     def _validate_materials_naming(self) -> list[str]:
         out: list[str] = []
-        materials = self._f.get("materials")
+        materials = self._f.get("opensees/materials")
         if materials is None:
             return out
         for family in materials:
@@ -268,14 +271,14 @@ class H5Model:
                 expected_suffix = f"_{attr_tag}"
                 if not name.endswith(expected_suffix):
                     out.append(
-                        f"/materials/{family}/{name}: name does not "
+                        f"/opensees/materials/{family}/{name}: name does not "
                         f"end with _{attr_tag} (tag attr says {attr_tag})"
                     )
         return out
 
     def _validate_section_refs(self) -> list[str]:
         out: list[str] = []
-        sections = self._f.get("sections")
+        sections = self._f.get("opensees/sections")
         if sections is None:
             return out
         for name in sections:
@@ -286,7 +289,7 @@ class H5Model:
                     ref = _decode_bytes(row["material_ref"])
                     if ref and ref not in self._f:
                         out.append(
-                            f"/sections/{name}/patches: material_ref "
+                            f"/opensees/sections/{name}/patches: material_ref "
                             f"{ref!r} not found in file"
                         )
             fibers = sec.get("fibers")
@@ -295,14 +298,14 @@ class H5Model:
                     ref = _decode_bytes(row["material_ref"])
                     if ref and ref not in self._f:
                         out.append(
-                            f"/sections/{name}/fibers: material_ref "
+                            f"/opensees/sections/{name}/fibers: material_ref "
                             f"{ref!r} not found in file"
                         )
         return out
 
     def _validate_pattern_refs(self) -> list[str]:
         out: list[str] = []
-        patterns = self._f.get("patterns")
+        patterns = self._f.get("opensees/patterns")
         if patterns is None:
             return out
         for name in patterns:
@@ -312,7 +315,7 @@ class H5Model:
                 ref_str = ref if isinstance(ref, str) else str(ref)
                 if ref_str not in self._f:
                     out.append(
-                        f"/patterns/{name}: series_ref {ref_str!r} "
+                        f"/opensees/patterns/{name}: series_ref {ref_str!r} "
                         "not found in file"
                     )
         return out

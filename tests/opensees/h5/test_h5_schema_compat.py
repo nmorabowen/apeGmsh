@@ -1,10 +1,14 @@
-"""Schema-validation tests for the bridge model.h5 archive.
+"""Schema-compatibility tests for the bridge model.h5 archive.
 
-Each test builds a small model via :class:`H5Emitter`, writes it
-to disk, then re-opens it via :mod:`apeGmsh.opensees.emitter.h5_reader`
-and asserts schema invariants. The reader's :meth:`H5Model.validate`
-returns a list of violations — every passing test asserts that the
-list is empty.
+This file exercises the reference reader's forward-looking
+schema-major handling: accept the current major, refuse mismatched
+ones, refuse malformed files, and walk the post-write file via
+``validate()`` to confirm structural invariants hold.
+
+It is named for the *role* (schema-version compatibility), not for a
+specific major, so it does not need to rename every time the major
+bumps.  Phase 8.4 (the namespace reshuffle) renamed this from
+``test_h5_schema_v1.py``.
 """
 from __future__ import annotations
 
@@ -33,17 +37,17 @@ def test_reader_accepts_current_schema(tmp_path: Any) -> None:
     out = tmp_path / "ok.h5"
     e.write(str(out))
     with _open(str(out)) as m:
-        assert m.schema_version.startswith("1.")
+        assert m.schema_version.startswith("2.")
         assert m.meta()["ndm"] == 2
 
 
 def test_reader_refuses_wrong_major(tmp_path: Any) -> None:
-    e = H5Emitter(schema_version="2.0.0")
+    e = H5Emitter(schema_version="3.0.0")
     out = tmp_path / "wrong_major.h5"
     e.write(str(out))
     with pytest.raises(SchemaVersionError) as exc:
         _open(str(out))
-    assert "major 2" in str(exc.value) or "major" in str(exc.value)
+    assert "major 3" in str(exc.value) or "major" in str(exc.value)
 
 
 def test_reader_refuses_missing_meta(tmp_path: Any) -> None:
@@ -102,9 +106,9 @@ def test_reader_validate_detects_dangling_material_ref(tmp_path: Any) -> None:
     e.write(str(out))
     # ... then mutate the fiber's material_ref to a dangling path.
     with h5py.File(out, "a") as f:
-        ds = f["sections/Fiber_1/fibers"]
+        ds = f["opensees/sections/Fiber_1/fibers"]
         rows = ds[:]
-        rows[0]["material_ref"] = b"/materials/uniaxial/Nonexistent_99"
+        rows[0]["material_ref"] = b"/opensees/materials/uniaxial/Nonexistent_99"
         ds[...] = rows
     with _open(str(out)) as m:
         violations = m.validate()

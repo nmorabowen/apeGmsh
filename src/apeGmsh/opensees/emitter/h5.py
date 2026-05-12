@@ -5,9 +5,11 @@ HDF5 archive conforming to ``architecture/h5-schema.md``.
 Unlike the stream emitters (Tcl, Py, Live), this is a **structured**
 emitter: each Protocol method updates an in-memory buffer; the file is
 materialized at the end via :meth:`write`. The structured shape is
-required because the schema groups by name (``/materials/uniaxial/{name}``,
-``/sections/{name}``, ...), and aggregate sections / patterns need open /
-close bracketing while patches, fibers, loads, and sps land inside them.
+required because the schema groups by name
+(``/opensees/materials/uniaxial/{name}``,
+``/opensees/sections/{name}``, ...), and aggregate sections / patterns
+need open / close bracketing while patches, fibers, loads, and sps
+land inside them.
 
 Design notes
 ============
@@ -18,37 +20,50 @@ the file is generated from ``<type_token>_<tag>`` (e.g. ``Steel02_1``,
 ``Fiber_2``, ``forceBeamColumn_3``). Cross-references resolve via the
 generated names. No Protocol extension was required.
 
-**Schema deviations (documented).** Two places where the streaming
+**Schema layout.** Phase 8.4 partitioned ``model.h5`` into two zones
+(see ``architecture/h5-schema.md`` and
+``architecture/phase-8-untangle.md`` §3):
+
+* ``/meta`` and ``/elements`` stay at the file root.  ``/elements``
+  sits in the neutral zone because Phase 8.5 hands the writer from
+  the bridge to the broker; for now the bridge still emits it.
+* Everything else the bridge writes (materials, sections, transforms,
+  beam_integration, time_series, patterns, bcs, recorders, analysis)
+  lives under ``/opensees/`` so a future second solver can plug in at
+  the same level without colliding.
+
+The reshuffle is a breaking schema change — ``SCHEMA_VERSION`` jumps
+``1.1.0 → 2.0.0`` and the reference reader's
+``EXPECTED_SCHEMA_MAJOR`` jumps ``1 → 2``.
+
+**Schema deviation (documented).**  One place where the streaming
 Protocol cannot supply the spec-level grouping the schema asks for:
 
-* ``/transforms/{name}`` — the schema shows one group per user-declared
-  transform with a ``per_element_vecxz`` dataset of shape
-  ``(n_elements, 3)``. The csys-driven fan-out in the bridge's build
-  layer emits one ``geomTransf`` line per *distinct* vecxz; the H5
-  emitter sees these as N independent calls and cannot reverse-engineer
-  the spec boundary. We therefore emit one ``/transforms/{type}_{tag}/``
-  group per ``geomTransf`` call, each carrying a single-row
-  ``per_element_vecxz`` and ``per_element_emitted_tag``. The viewer's
-  vecxz overlay (which only needs ``element_id → vecxz``) still works:
-  it iterates all transform groups.
+* ``/opensees/transforms/{name}`` — the schema shows one group per
+  user-declared transform with a ``per_element_vecxz`` dataset of
+  shape ``(n_elements, 3)``.  The csys-driven fan-out in the bridge's
+  build layer emits one ``geomTransf`` line per *distinct* vecxz; the
+  H5 emitter sees these as N independent calls and cannot
+  reverse-engineer the spec boundary.  We therefore emit one
+  ``/opensees/transforms/{type}_{tag}/`` group per ``geomTransf``
+  call, each carrying a single-row ``per_element_vecxz`` and
+  ``per_element_emitted_tag``.  The viewer's vecxz overlay (which
+  only needs ``element_id → vecxz``) still works: it iterates all
+  transform groups.
 
-* ``/elements/{pg_name}`` — the schema groups elements by physical
-  group. The bridge's element fan-out in ``_internal/build.py`` knows
-  the PG (``spec.pg``) but the streaming Protocol does not surface it.
-  The H5 emitter therefore groups elements by **element-type token**
-  (``/elements/forceBeamColumn/``, ``/elements/FourNodeTetrahedron/``,
-  ...). Each group's ``ids`` and ``connectivity`` datasets stack every
-  element of that type across all PGs. Every group's attrs include the
-  cross-references (``section_ref``, ``transf_ref``, ...) shared by all
-  elements in that group; if elements of the same type carry different
-  refs, the first observed set wins and the rest are dropped (with a
-  WARN-level annotation under ``attrs``). This is a known schema
-  deviation; revisiting it requires either bridge cooperation (a
-  ``set_current_pg`` side channel, parallel to ``set_element_nodes``)
-  or a Protocol extension.
+**Elements binned by type token (design choice, not deviation).**  The
+schema groups elements by element-type token
+(``/elements/forceBeamColumn/``, ``/elements/FourNodeTetrahedron/``,
+...).  The streaming Protocol does not surface the PG (``spec.pg`` is
+known only inside ``_internal/build.py``'s element fan-out), so the
+H5 emitter bins by type.  Each group's ``ids`` and ``connectivity``
+datasets stack every element of that type across all PGs; the
+``args`` / ``args_str`` dataset pair encodes the element's positional
+arg list so a vocabulary-aware reader can recover refs.
 
-Both deviations are recorded as ``__deviation__`` attrs on the affected
-groups so a reader can detect them and degrade gracefully.
+Both the transform deviation and the elements-by-type choice are
+recorded as ``__deviation__`` attrs on the affected groups so a
+reader can detect them and degrade gracefully.
 
 **Lazy h5py import.** ``h5py`` is imported only inside :meth:`write` so
 constructing an :class:`H5Emitter` (or driving emit) does not pull
@@ -70,7 +85,16 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #: ``MAJOR`` only on a breaking change; ``MINOR`` for additive groups
 #: (such as the ``/beam_integration`` group introduced alongside the
 #: Protocol's ``beamIntegration`` method in Phase 4.5).
-SCHEMA_VERSION: str = "1.1.0"
+#:
+#: History:
+#:   * 1.0.0 — Phase 6 initial release.
+#:   * 1.1.0 — added ``/beam_integration`` group + widened fiber-layer
+#:     ``line`` field from float[4] to float[6].
+#:   * 2.0.0 — Phase 8.4: bridge-written groups (materials, sections,
+#:     transforms, beam_integration, time_series, patterns, bcs,
+#:     recorders, analysis) moved under ``/opensees/``.  ``/meta`` and
+#:     ``/elements`` stay at root.
+SCHEMA_VERSION: str = "2.0.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -712,6 +736,19 @@ class H5Emitter:
 
     # -- Per-group writers (split out so each step adds one) -------------
 
+    def _ops_group(self, f: Any) -> Any:
+        """Lazily get or create the ``/opensees/`` namespace group.
+
+        Bridge-written groups (materials, sections, transforms, ...)
+        live under ``/opensees/`` since Phase 8.4.  Created on first
+        use so the incomplete fixture — no bridge content beyond
+        ``/meta`` + ``/elements`` — never carries an empty
+        ``/opensees`` group.
+        """
+        if "opensees" not in f:
+            f.create_group("opensees")
+        return f["opensees"]
+
     def _write_meta(self, f: Any) -> None:
         """Create ``/meta`` and populate its attributes."""
         meta = f.create_group("meta")
@@ -719,7 +756,7 @@ class H5Emitter:
             _set_attr(meta, key, value)
 
     def _write_bcs(self, f: Any) -> None:
-        """Write ``/bcs/fix`` and ``/bcs/mass`` compound datasets.
+        """Write ``/opensees/bcs/fix`` and ``/opensees/bcs/mass`` compound datasets.
 
         Both are emitted only if at least one record exists. The bridge's
         ``fix`` / ``mass`` fan-out has already resolved any ``pg=``
@@ -729,7 +766,7 @@ class H5Emitter:
         """
         if not self._fixes and not self._masses:
             return
-        bcs = f.create_group("bcs")
+        bcs = self._ops_group(f).create_group("bcs")
         if self._fixes:
             self._write_bcs_fix(bcs)
         if self._masses:
@@ -776,7 +813,7 @@ class H5Emitter:
     def _write_materials(self, f: Any) -> None:
         if not self._uniaxial and not self._nd:
             return
-        materials = f.create_group("materials")
+        materials = self._ops_group(f).create_group("materials")
         if self._uniaxial:
             uni = materials.create_group("uniaxial")
             for rec in self._uniaxial:
@@ -799,7 +836,7 @@ class H5Emitter:
     def _write_sections(self, f: Any) -> None:
         if not self._sections_simple and not self._sections_complex:
             return
-        sections = f.create_group("sections")
+        sections = self._ops_group(f).create_group("sections")
         for rec_simple in self._sections_simple:
             self._write_section_simple(sections, rec_simple)
         for rec_complex in self._sections_complex:
@@ -970,7 +1007,7 @@ class H5Emitter:
         return (mat_tag, n_bars, area, tuple(padded[:6]))
 
     def _material_ref(self, mat_tag: int) -> str:
-        """Resolve a material tag to its ``/materials/...`` HDF5 path.
+        """Resolve a material tag to its ``/opensees/materials/...`` HDF5 path.
 
         Uniaxial tags shadow nd tags in the OpenSees domain (separate
         namespaces), so we check uniaxial first, then nd. Returns the
@@ -979,16 +1016,16 @@ class H5Emitter:
         """
         for rec in self._uniaxial:
             if rec.tag == mat_tag:
-                return f"/materials/uniaxial/{material_name(rec)}"
+                return f"/opensees/materials/uniaxial/{material_name(rec)}"
         for rec in self._nd:
             if rec.tag == mat_tag:
-                return f"/materials/nd/{material_name(rec)}"
+                return f"/opensees/materials/nd/{material_name(rec)}"
         return ""
 
     # -- Transforms ------------------------------------------------------
 
     def _write_transforms(self, f: Any) -> None:
-        """Write one ``/transforms/{type}_{tag}/`` group per geomTransf call.
+        """Write one ``/opensees/transforms/{type}_{tag}/`` group per geomTransf call.
 
         See module docstring for the schema deviation rationale: the
         H5 emitter sees one call per emitted ``geomTransf`` line — for
@@ -1001,7 +1038,7 @@ class H5Emitter:
             return
         import numpy as np
 
-        transforms = f.create_group("transforms")
+        transforms = self._ops_group(f).create_group("transforms")
         for rec in self._transforms:
             g = transforms.create_group(transform_name(rec))
             _set_attr(g, "type", rec.type_token)
@@ -1017,10 +1054,10 @@ class H5Emitter:
     # -- Beam integration -----------------------------------------------
 
     def _write_beam_integration(self, f: Any) -> None:
-        """Write ``/beam_integration/{type}_{tag}/`` groups (schema 1.1)."""
+        """Write ``/opensees/beam_integration/{type}_{tag}/`` groups."""
         if not self._beam_integrations:
             return
-        bi = f.create_group("beam_integration")
+        bi = self._ops_group(f).create_group("beam_integration")
         for rec in self._beam_integrations:
             g = bi.create_group(beam_integration_name(rec))
             _set_attr(g, "type", rec.type_token)
@@ -1148,7 +1185,7 @@ class H5Emitter:
     def _write_time_series(self, f: Any) -> None:
         if not self._time_series:
             return
-        ts = f.create_group("time_series")
+        ts = self._ops_group(f).create_group("time_series")
         for rec in self._time_series:
             g = ts.create_group(time_series_name(rec))
             _set_attr(g, "type", rec.type_token)
@@ -1169,7 +1206,7 @@ class H5Emitter:
             self._open_pattern = None
         if not self._patterns_complete:
             return
-        patterns = f.create_group("patterns")
+        patterns = self._ops_group(f).create_group("patterns")
         for rec in self._patterns_complete:
             g = patterns.create_group(pattern_name(rec))
             _set_attr(g, "type", rec.type_token)
@@ -1226,7 +1263,7 @@ class H5Emitter:
             return None
         for rec in self._time_series:
             if rec.tag == tag_int:
-                return f"/time_series/{time_series_name(rec)}"
+                return f"/opensees/time_series/{time_series_name(rec)}"
         return None
 
     def _write_pattern_loads(
@@ -1273,7 +1310,7 @@ class H5Emitter:
     def _write_recorders(self, f: Any) -> None:
         if not self._recorders:
             return
-        recorders = f.create_group("recorders")
+        recorders = self._ops_group(f).create_group("recorders")
         for idx, rec in enumerate(self._recorders):
             g = recorders.create_group(recorder_name(rec, idx))
             _set_attr(g, "type", rec.kind)
@@ -1289,7 +1326,7 @@ class H5Emitter:
     def _write_analysis(self, f: Any) -> None:
         if not self._analysis_attrs and self._analyze_call is None:
             return
-        analysis = f.create_group("analysis")
+        analysis = self._ops_group(f).create_group("analysis")
         for key, value in self._analysis_attrs.items():
             _set_attr(analysis, key, value)
         if self._analyze_call is not None:
