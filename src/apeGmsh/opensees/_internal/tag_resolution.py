@@ -37,11 +37,15 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "ATTR_CURRENT_FEM_ELEMENT_ID",
     "ATTR_ELEMENT_NODES",
     "ATTR_TAG_RESOLVER",
+    "MISSING_FEM_ELEMENT_ID",
     "TagResolver",
     "current_element_nodes",
+    "current_fem_element_id",
     "resolve_tag",
+    "set_current_fem_element_id",
     "set_element_nodes",
     "set_tag_resolver",
 ]
@@ -54,6 +58,20 @@ ATTR_TAG_RESOLVER = "_tag_for_primitive"
 #: before an :class:`Element` primitive's ``_emit`` to pass the node
 #: tags for the current element of a fan-out.
 ATTR_ELEMENT_NODES = "_current_element_nodes"
+
+#: Name of the private attribute the bridge sets on an emitter just
+#: before an :class:`Element` primitive's ``_emit`` to pass the FEM
+#: element ID (``fem.elements`` ``ids`` value) the current OpenSees
+#: tag was fanned out from.  Phase 8.6: lets the H5 emitter record
+#: the (fem_eid, ops_tag) mapping for round-trip lookup.
+ATTR_CURRENT_FEM_ELEMENT_ID = "_current_fem_element_id"
+
+#: Sentinel returned by :func:`current_fem_element_id` when no FEM
+#: element ID has been set on the emitter — e.g. tests that drive an
+#: :class:`Element` primitive's ``_emit`` directly without the bridge
+#: fan-out.  FEM element IDs are always positive 1-based ints, so
+#: ``-1`` is unambiguous.
+MISSING_FEM_ELEMENT_ID: int = -1
 
 
 #: Maps a Primitive to its bridge-allocated tag.
@@ -131,3 +149,32 @@ def current_element_nodes(emitter: "Emitter") -> tuple[int, ...]:
             "(emitter, node_tags)`` before driving emission."
         )
     return nodes
+
+
+def set_current_fem_element_id(emitter: object, fem_eid: int) -> None:
+    """Set the FEM element ID for the current element of a fan-out.
+
+    The bridge sets this in :mod:`apeGmsh.opensees._internal.build`
+    just before driving an :class:`Element` primitive's ``_emit`` so
+    the H5Emitter (Phase 8.6) can record the (fem_eid, ops_tag)
+    pair without breaking the frozen Emitter Protocol.
+
+    Idempotent.
+    """
+    setattr(emitter, ATTR_CURRENT_FEM_ELEMENT_ID, int(fem_eid))
+
+
+def current_fem_element_id(emitter: "Emitter") -> int:
+    """Return the FEM element ID currently being emitted, or the
+    :data:`MISSING_FEM_ELEMENT_ID` sentinel (``-1``) when no context
+    is set.
+
+    Unlike :func:`current_element_nodes`, this never raises — the
+    sentinel is the documented "no FEM context" signal so tests that
+    drive ``.element(...)`` directly without the bridge fan-out can
+    still produce a valid record.
+    """
+    eid: int | None = getattr(emitter, ATTR_CURRENT_FEM_ELEMENT_ID, None)
+    if eid is None:
+        return MISSING_FEM_ELEMENT_ID
+    return int(eid)
