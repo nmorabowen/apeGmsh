@@ -794,6 +794,12 @@ class ResultsViewer:
         # And OpacityController for OPACITY_CHANGED.
         if scene.opacity_controller is not None:
             scene.opacity_controller.dispatcher = dispatcher
+        # Migrate the outline tree's geometry subscription onto the
+        # UI-lane coalesced dispatcher path (replaces the raw
+        # ``director.geometries.subscribe`` wiring set in its __init__).
+        # The 6.86 ms/event omnibus storm on session restore collapses
+        # to one rebuild per Qt tick per granular kind.
+        outline.attach_dispatcher(dispatcher)
 
         # ── Observer wiring — every callback fires a dispatcher event.
         # Director's existing observers are preserved (the time scrubber

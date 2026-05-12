@@ -211,3 +211,181 @@ def test_outline_tree_full_rebuild_perf() -> None:
     # the current implementation easily blows past that on larger
     # session matrices because it tears the entire group every time.
     assert per_call < 200.0, f"refresh way too slow: {per_call:.1f} ms/call"
+
+
+# =====================================================================
+# Dispatcher migration — attach_dispatcher swaps the subscription
+# =====================================================================
+
+def _build_outline_with_director():
+    """Construct an OutlineTree against a real GeometryManager + stub
+    director. Returns (tree, director, geometries)."""
+    from qtpy import QtWidgets
+    _ = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    from apeGmsh.viewers.diagrams._geometries import GeometryManager
+
+    geometries = GeometryManager()
+
+    class _Director:
+        def __init__(self, geoms):
+            self.geometries = geoms
+            self.stage_id = None
+
+        def stages(self):
+            return []
+
+        def subscribe_stage(self, _cb):
+            return lambda: None
+
+        def subscribe_diagrams(self, _cb):
+            return lambda: None
+
+        @property
+        def registry(self):
+            class _R:
+                def diagrams(self_inner):
+                    return []
+            return _R()
+
+    director = _Director(geometries)
+    from apeGmsh.viewers.ui._outline_tree import OutlineTree
+    tree = OutlineTree(director)
+    return tree, director, geometries
+
+
+def test_attach_dispatcher_replaces_legacy_subscription() -> None:
+    """After ``attach_dispatcher``, a geometry mutation must NOT fire
+    the rebuild via the legacy ``director.geometries.subscribe`` path
+    (otherwise every mutation rebuilds twice — once legacy, once UI).
+
+    Verified via the tree's observable state: child count under the
+    Geometries group must change synchronously on legacy mutations,
+    and only after a UI-lane drain on dispatcher-attached mutations.
+    """
+    from apeGmsh.viewers.diagrams._dispatch import Dispatcher
+
+    tree, director, geometries = _build_outline_with_director()
+
+    initial = tree._group_diagrams.childCount()
+    assert initial >= 1, "OutlineTree should render the bootstrap geometry"
+
+    # Legacy path — synchronous rebuild on mutation.
+    geometries.add("X")
+    assert tree._group_diagrams.childCount() == initial + 1
+
+    # Attach a real dispatcher with a recorded defer (manual flush).
+    deferred = []
+    dispatcher = Dispatcher(
+        director=director,
+        pump_step=lambda _l: None,
+        pump_deform=lambda _l: None,
+        pump_gate=lambda: None,
+        pump_restack=lambda: None,
+        render=lambda: None,
+        defer_fn=deferred.append,
+    )
+    tree.attach_dispatcher(dispatcher)
+    # Bridge the manager's typed events to the dispatcher (ResultsViewer
+    # does this wiring in production; we replicate it for the test).
+    geometries.subscribe_typed(
+        lambda kind, payload: dispatcher.fire(kind, payload=payload),
+    )
+
+    before = tree._group_diagrams.childCount()
+    geometries.add("Y")    # fires GEOMETRY_ADDED via typed → dispatcher.
+
+    # Legacy path is gone → no synchronous rebuild.
+    assert tree._group_diagrams.childCount() == before, (
+        "Legacy subscription still firing — attach_dispatcher must "
+        "have dropped it"
+    )
+
+    # Drain UI lane → tree updates.
+    for fn in deferred:
+        fn()
+    assert tree._group_diagrams.childCount() == before + 1
+
+
+@pytest.mark.bench
+def test_storm_of_mutations_collapses_to_few_rebuilds() -> None:
+    """Phase 2.1 + outline migration: 200 geometry mutations in one Qt
+    tick should produce at most a handful of rebuilds (one per
+    granular kind), NOT 200.
+
+    We attach the dispatcher first so the rebuild path goes through
+    the late-binding lambda installed by ``attach_dispatcher`` —
+    ``lambda _k, _p: self._refresh_diagrams()`` — which DOES look up
+    the attribute at call time. That's how we install a rebuild counter
+    that the dispatcher path will use.
+    """
+    from apeGmsh.viewers.diagrams._dispatch import Dispatcher
+
+    tree, director, geometries = _build_outline_with_director()
+
+    deferred = []
+    dispatcher = Dispatcher(
+        director=director,
+        pump_step=lambda _l: None,
+        pump_deform=lambda _l: None,
+        pump_gate=lambda: None,
+        pump_restack=lambda: None,
+        render=lambda: None,
+        defer_fn=deferred.append,
+    )
+    tree.attach_dispatcher(dispatcher)
+    geometries.subscribe_typed(
+        lambda kind, payload: dispatcher.fire(kind, payload=payload),
+    )
+
+    rebuilds = [0]
+    original_refresh = tree._refresh_diagrams.__func__    # underlying fn
+
+    def _counting_refresh():
+        rebuilds[0] += 1
+        original_refresh(tree)
+
+    # The dispatcher subscription holds a lambda that resolves
+    # ``self._refresh_diagrams`` at call time — overriding the
+    # instance attribute makes the counter live.
+    tree._refresh_diagrams = _counting_refresh    # type: ignore[method-assign]
+
+    # 200 mutations of mixed granular kinds.
+    boot = geometries.geometries[0]
+    other = geometries.add("Other")
+    # Drain the GEOMETRY_ADDED from "Other" so the dispatcher's
+    # ``_ui_flush_scheduled`` flag resets — otherwise subsequent fires
+    # see "flush already scheduled" and the loop below never
+    # re-schedules one.
+    for fn in list(deferred):
+        fn()
+    deferred.clear()
+    rebuilds[0] = 0
+
+    for i in range(50):
+        geometries.set_active(boot.id)
+        geometries.set_active(other.id)
+        geometries.set_deformation(boot.id, scale=float(i))
+        geometries.rename(boot.id, f"G{i}")
+
+    # Nothing has flushed yet — all queued on UI lane.
+    assert rebuilds[0] == 0
+
+    # Drain — coalesce should fold the storm down dramatically.
+    for fn in list(deferred):
+        fn()
+
+    print(
+        f"\n[outline storm] 200 mutations (3 distinct granular kinds) -> "
+        f"{rebuilds[0]} rebuilds after coalesce flush"
+    )
+
+    # Coalesce contract: 3 distinct granular kinds fired in the loop
+    # (ACTIVE / DEFORM / RENAMED). Each coalesces to one handler call.
+    # Lower bound prevents a silent "no rebuild happened" regression;
+    # upper bound is 7 to absorb any cross-kind corner case while still
+    # proving the storm doesn't reach 200.
+    assert 1 <= rebuilds[0] <= 7, (
+        f"Coalesce expected 1..7 rebuilds; got {rebuilds[0]} for "
+        f"200 mutations"
+    )

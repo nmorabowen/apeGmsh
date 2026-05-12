@@ -69,6 +69,12 @@ class OutlineTree:
         ] = None
         self._plot_pane: Any = None
         self._unsub_plot_tabs: Optional[Callable[[], None]] = None
+        # Geometry-changed subscription. ``__init__`` wires the legacy
+        # ``director.geometries.subscribe`` path so headless / test
+        # contexts (which never see a dispatcher) keep working.
+        # :meth:`attach_dispatcher` swaps it out for a UI-lane coalesced
+        # dispatcher subscription once the viewer's event bus exists.
+        self._unsub_compositions: Optional[Callable[[], None]] = None
 
         # ── Outer container ─────────────────────────────────────────
         widget = QtWidgets.QWidget()
@@ -156,7 +162,10 @@ class OutlineTree:
         # GeometryManager re-fires on any geometry- or composition-
         # level change (add / remove / rename / set_active /
         # layer-membership), so one subscription rebuilds the whole
-        # Geometries tree.
+        # Geometries tree. ``attach_dispatcher`` swaps this for the
+        # UI-lane coalesced dispatcher subscription once the viewer's
+        # event bus is constructed; the legacy path stays for headless
+        # tests that never wire a dispatcher.
         self._unsub_compositions = director.geometries.subscribe(
             self._refresh_diagrams,
         )
@@ -216,6 +225,62 @@ class OutlineTree:
         composition routes to the layer stack as before.
         """
         self._on_geometry_selected = callback
+
+    def attach_dispatcher(self, dispatcher: Any) -> None:
+        """Migrate the geometry-changed subscription onto the dispatcher.
+
+        Called by :class:`ResultsViewer` once the :class:`Dispatcher`
+        is constructed (after this tree's ``__init__``). Replaces the
+        raw ``director.geometries.subscribe(self._refresh_diagrams)``
+        wiring with a UI-lane coalesced subscription over the granular
+        geometry kinds + the omnibus fallback.
+
+        The win: with the legacy wiring, every mutation in a session
+        restore fires one rebuild (≈6.86 ms on a 10×20 geometry matrix).
+        On the UI lane with ``coalesce=True``, a storm of N same-kind
+        mutations in one Qt tick collapses to one rebuild after the
+        ``QTimer.singleShot(0, _flush)`` callback. Across the seven
+        kinds wired here, at worst seven rebuilds per tick.
+
+        Idempotent — calling it twice rewires cleanly.
+        """
+        if dispatcher is None:
+            return
+        from ..diagrams._dispatch import (
+            COMPOSITION_CHANGED,
+            GEOMETRIES_CHANGED,
+            GEOMETRY_ACTIVE_CHANGED,
+            GEOMETRY_ADDED,
+            GEOMETRY_DEFORM_CHANGED,
+            GEOMETRY_REMOVED,
+            GEOMETRY_RENAMED,
+            Lane,
+        )
+        # Drop the legacy subscription before adding the new one so a
+        # single mutation doesn't trigger two rebuilds.
+        if self._unsub_compositions is not None:
+            try:
+                self._unsub_compositions()
+            except Exception:
+                pass
+            self._unsub_compositions = None
+        # Coalesce per ``(handler, kind, None)`` — payloads (geom_id,
+        # comp_id) are ignored because the rebuild is full-tree; we
+        # don't gain anything from per-id dedup.
+        self._unsub_compositions = dispatcher.subscribe(
+            (
+                GEOMETRIES_CHANGED,
+                GEOMETRY_ACTIVE_CHANGED,
+                GEOMETRY_DEFORM_CHANGED,
+                GEOMETRY_ADDED,
+                GEOMETRY_REMOVED,
+                GEOMETRY_RENAMED,
+                COMPOSITION_CHANGED,
+            ),
+            lambda _kind, _payload: self._refresh_diagrams(),
+            lane=Lane.UI,
+            coalesce=True,
+        )
 
 
     # ------------------------------------------------------------------
