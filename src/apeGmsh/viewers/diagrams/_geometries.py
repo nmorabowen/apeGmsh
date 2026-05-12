@@ -27,6 +27,14 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from ._compositions import CompositionManager
+from ._dispatch import (
+    COMPOSITION_CHANGED,
+    GEOMETRY_ACTIVE_CHANGED,
+    GEOMETRY_ADDED,
+    GEOMETRY_DEFORM_CHANGED,
+    GEOMETRY_REMOVED,
+    GEOMETRY_RENAMED,
+)
 
 
 @dataclass
@@ -86,6 +94,12 @@ class GeometryManager:
         self._geometries: list[Geometry] = []
         self._active_id: Optional[str] = None
         self._on_changed: list[Callable[[], None]] = []
+        # Typed observers — fired BEFORE the legacy omnibus chain so
+        # subscribers can dispatch the dedup-able granular event before
+        # the omnibus GEOMETRIES_CHANGED rolls through. Signature:
+        # ``callback(kind: str, payload: Optional[str])`` where kind is
+        # one of the granular constants from ``_dispatch.py``.
+        self._on_typed: list[Callable[[str, Optional[str]], None]] = []
         # Bootstrap: one geometry. Bridge its composition manager
         # events up so consumers only subscribe at the top level.
         boot = self._make_geometry("Geometry 1")
@@ -143,6 +157,7 @@ class GeometryManager:
         self._geometries.append(geom)
         if make_active:
             self._active_id = geom.id
+        self._fire_typed(GEOMETRY_ADDED, geom.id)
         self._notify()
         return geom
 
@@ -167,6 +182,7 @@ class GeometryManager:
         new_geom.display_opacity = src.display_opacity
         self._geometries.append(new_geom)
         self._active_id = new_geom.id
+        self._fire_typed(GEOMETRY_ADDED, new_geom.id)
         self._notify()
         return new_geom
 
@@ -187,6 +203,7 @@ class GeometryManager:
                         self._geometries[0].id
                         if self._geometries else None
                     )
+                self._fire_typed(GEOMETRY_REMOVED, geom_id)
                 self._notify()
                 return True
         return False
@@ -203,6 +220,7 @@ class GeometryManager:
         ):
             new_name = self._unique_name(new_name)
         geom.name = new_name
+        self._fire_typed(GEOMETRY_RENAMED, geom_id)
         self._notify()
         return True
 
@@ -213,6 +231,7 @@ class GeometryManager:
         if geom_id == self._active_id:
             return
         self._active_id = geom_id
+        self._fire_typed(GEOMETRY_ACTIVE_CHANGED, geom_id)
         self._notify()
 
     # ------------------------------------------------------------------
@@ -246,6 +265,7 @@ class GeometryManager:
             geom.deform_scale = float(scale)
             changed = True
         if changed:
+            self._fire_typed(GEOMETRY_DEFORM_CHANGED, geom_id)
             self._notify()
         return changed
 
@@ -302,13 +322,41 @@ class GeometryManager:
                 self._on_changed.remove(callback)
         return _unsub
 
+    def subscribe_typed(
+        self,
+        callback: Callable[[str, Optional[str]], None],
+    ) -> Callable[[], None]:
+        """Subscribe to typed mutation events.
+
+        ``callback(kind, payload)`` runs BEFORE the legacy omnibus
+        observer chain, so the viewer dispatcher can fire a granular
+        event (e.g., ``GEOMETRY_ACTIVE_CHANGED``) and the omnibus guard
+        will suppress the redundant ``GEOMETRIES_CHANGED`` that
+        follows.
+
+        ``kind`` is one of the granular constants in ``_dispatch``;
+        ``payload`` is the relevant ``geom_id`` / ``composition_id``
+        (``None`` for events without one).
+        """
+        self._on_typed.append(callback)
+
+        def _unsub() -> None:
+            if callback in self._on_typed:
+                self._on_typed.remove(callback)
+        return _unsub
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _make_geometry(self, name: str) -> Geometry:
         comp_mgr = CompositionManager()
-        comp_mgr.set_parent_notifier(self._notify)
+        comp_mgr.set_parent_notifier(
+            self._notify,
+            typed_callback=lambda comp_id: self._fire_typed(
+                COMPOSITION_CHANGED, comp_id,
+            ),
+        )
         return Geometry(id=str(uuid.uuid4()), name=name, compositions=comp_mgr)
 
     def _unique_name(self, base: str) -> str:
@@ -324,6 +372,16 @@ class GeometryManager:
         for cb in list(self._on_changed):
             try:
                 cb()
+            except Exception:
+                pass
+
+    def _fire_typed(self, kind: str, payload: Optional[str]) -> None:
+        """Fire all typed subscribers. Called BEFORE ``_notify`` by
+        each mutation so the granular kind reaches the dispatcher in
+        the same notification chain as the omnibus."""
+        for cb in list(self._on_typed):
+            try:
+                cb(kind, payload)
             except Exception:
                 pass
 

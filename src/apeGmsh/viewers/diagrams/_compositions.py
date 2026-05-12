@@ -83,6 +83,14 @@ class CompositionManager:
         self._active_id: Optional[str] = None
         self._on_changed: list[Callable[[], None]] = []
         self._parent_notify: Optional[Callable[[], None]] = None
+        # Bubbles typed COMPOSITION_CHANGED events up to the owning
+        # GeometryManager (which routes them to its typed observers).
+        # Wired by ``GeometryManager._make_geometry``. Receives just
+        # the composition id; the kind is COMPOSITION_CHANGED by
+        # construction.
+        self._parent_typed_notify: Optional[
+            Callable[[Optional[str]], None]
+        ] = None
 
     # ------------------------------------------------------------------
     # Iteration / lookup
@@ -129,7 +137,7 @@ class CompositionManager:
         self._compositions.append(comp)
         if make_active:
             self._active_id = comp.id
-        self._notify()
+        self._notify(comp.id)
         return comp
 
     def duplicate(self, comp_id: str) -> Optional[Composition]:
@@ -150,7 +158,7 @@ class CompositionManager:
         )
         self._compositions.append(new_comp)
         self._active_id = new_comp.id
-        self._notify()
+        self._notify(new_comp.id)
         return new_comp
 
     def remove(self, comp_id: str) -> bool:
@@ -168,7 +176,7 @@ class CompositionManager:
                         self._compositions[0].id
                         if self._compositions else None
                     )
-                self._notify()
+                self._notify(comp_id)
                 return True
         return False
 
@@ -187,7 +195,7 @@ class CompositionManager:
         ):
             new_name = self._unique_name(new_name)
         comp.name = new_name
-        self._notify()
+        self._notify(comp_id)
         return True
 
     def set_active(self, comp_id: Optional[str]) -> None:
@@ -197,7 +205,7 @@ class CompositionManager:
         if comp_id == self._active_id:
             return
         self._active_id = comp_id
-        self._notify()
+        self._notify(comp_id)
 
     def add_layer(self, comp_id: str, layer: "Diagram") -> None:
         """Tag ``layer`` with composition ``comp_id``.
@@ -210,7 +218,7 @@ class CompositionManager:
         if comp is None:
             return
         comp.layers.append(layer)
-        self._notify()
+        self._notify(comp_id)
 
     @property
     def active_accepts_layers(self) -> bool:
@@ -226,7 +234,7 @@ class CompositionManager:
         for c in self._compositions:
             if layer in c.layers:
                 c.layers.remove(layer)
-                self._notify()
+                self._notify(c.id)
                 return
 
     # ------------------------------------------------------------------
@@ -241,15 +249,25 @@ class CompositionManager:
         return _unsub
 
     def set_parent_notifier(
-        self, callback: Optional[Callable[[], None]],
+        self,
+        callback: Optional[Callable[[], None]],
+        *,
+        typed_callback: Optional[Callable[[Optional[str]], None]] = None,
     ) -> None:
         """Bridge composition events up to the owning Geometry's manager.
 
         :class:`GeometryManager` calls this on construction so its own
         ``subscribe()`` callbacks see every composition change without
         each subscriber having to attach to every per-Geometry manager.
+
+        ``typed_callback`` is the optional typed bridge — it fires
+        BEFORE the omnibus ``callback`` and carries the relevant
+        composition id, so the viewer dispatcher can dispatch a
+        granular ``COMPOSITION_CHANGED`` event before the omnibus
+        ``GEOMETRIES_CHANGED`` rolls through.
         """
         self._parent_notify = callback
+        self._parent_typed_notify = typed_callback
 
     # ------------------------------------------------------------------
     # Helpers
@@ -264,7 +282,19 @@ class CompositionManager:
             n += 1
         return f"{base} {n}"
 
-    def _notify(self) -> None:
+    def _notify(self, comp_id: Optional[str] = None) -> None:
+        """Fire local subscribers + bubble up to the parent Geometry.
+
+        When ``comp_id`` is provided, the typed bridge fires first so
+        the viewer dispatcher sees ``COMPOSITION_CHANGED`` ahead of the
+        omnibus ``GEOMETRIES_CHANGED`` — the dispatcher's same-tick
+        guard then suppresses the redundant omnibus pump.
+        """
+        if self._parent_typed_notify is not None and comp_id is not None:
+            try:
+                self._parent_typed_notify(comp_id)
+            except Exception:
+                pass
         for cb in list(self._on_changed):
             try:
                 cb()

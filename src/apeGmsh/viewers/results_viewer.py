@@ -783,10 +783,15 @@ class ResultsViewer:
         # Geometry-state covers: deform toggle/scale/field, active
         # geometry change, comp create/rename/delete, comp active,
         # layer membership, mesh/node/opacity display state. The
-        # compound GEOMETRIES_CHANGED event runs DEFORM + GATE —
-        # idempotent, so safe to over-fire. Routing through the
-        # dispatcher (instead of calling pumps directly) means the
-        # trace covers it.
+        # granular subscribe_typed wiring below fires the specific
+        # event kind (GEOMETRY_ACTIVE_CHANGED, GEOMETRY_DEFORM_CHANGED,
+        # …) BEFORE this omnibus runs; the dispatcher's same-tick guard
+        # then suppresses the redundant GEOMETRIES_CHANGED pump. Display
+        # state (show_mesh / show_nodes / display_opacity) doesn't have
+        # a typed kind, so it falls through to the omnibus on its own.
+        director.geometries.subscribe_typed(
+            lambda kind, payload: dispatcher.fire(kind, payload=payload),
+        )
         director.geometries.subscribe(
             lambda: dispatcher.fire(GEOMETRIES_CHANGED),
         )

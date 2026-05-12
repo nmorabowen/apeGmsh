@@ -38,6 +38,19 @@ Event matrix (mirrors the contract locked in PR review):
 | layer_visibility_changed    | -             |  -   |   -    |  ✓   |   ✓    |
 | layer_reordered             | -             |  -   |   -    |  ✓ + restack | ✓ |
 | pick_cleared                | -             |  -   |   -    |  -   |   ✓    |
+| geometries_changed          | (omnibus)     |  -   |   ✓    |  ✓   |   ✓    |
+| geometry_active_changed     | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
+| geometry_deform_changed     | payload geom  |  -   |   ✓    |  -   |   ✓    |
+| geometry_added              | payload geom  |  -   |   -    |  ✓   |   ✓    |
+| geometry_removed            | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
+| geometry_renamed            | payload geom  |  -   |   -    |  -   |   ✓    |
+| composition_changed         | payload comp  |  -   |   -    |  ✓   |   ✓    |
+
+The granular ``geometry_*`` / ``composition_changed`` rows fire from
+``GeometryManager.subscribe_typed`` / ``CompositionManager`` mutations
+with the relevant id as ``payload``. When one of them fires in the
+same notification chain as the omnibus ``geometries_changed``, the
+omnibus is suppressed — the granular row already runs the right pump.
 
 ``session_batch(...)`` is a context manager that suppresses every
 primitive in between, then runs one full pump on exit. Use it during
@@ -70,6 +83,30 @@ PICK_CLEARED = "pick_cleared"
 # when they fire first; this is the catch-all so the trace covers
 # every geometry observer fire.
 GEOMETRIES_CHANGED = "geometries_changed"
+
+# Granular geometry events — emitted by GeometryManager /
+# CompositionManager call sites that know exactly what changed. Each
+# carries the relevant ``geom_id`` or ``composition_id`` as ``payload``
+# so UI subscribers can coalesce on identity.
+# When a granular event fires in the same notification chain as the
+# omnibus GEOMETRIES_CHANGED, the omnibus is suppressed (one-tick
+# dedup) to keep the heavy pump from running twice for the same logical
+# change.
+GEOMETRY_ACTIVE_CHANGED = "geometry_active_changed"
+GEOMETRY_DEFORM_CHANGED = "geometry_deform_changed"
+GEOMETRY_ADDED = "geometry_added"
+GEOMETRY_REMOVED = "geometry_removed"
+GEOMETRY_RENAMED = "geometry_renamed"
+COMPOSITION_CHANGED = "composition_changed"
+
+_GRANULAR_GEOMETRY_KINDS = frozenset({
+    GEOMETRY_ACTIVE_CHANGED,
+    GEOMETRY_DEFORM_CHANGED,
+    GEOMETRY_ADDED,
+    GEOMETRY_REMOVED,
+    GEOMETRY_RENAMED,
+    COMPOSITION_CHANGED,
+})
 
 
 class Lane(str, Enum):
@@ -136,6 +173,11 @@ class Dispatcher:
         self._defer_fn = defer_fn or _default_defer
         self._suppress_depth: int = 0
         self._suppressed_kinds: set[str] = set()
+        # Set by any granular geometry fire; cleared by the next
+        # omnibus GEOMETRIES_CHANGED, which is then suppressed. Lets
+        # legacy call sites that wire both granular + omnibus skip the
+        # heavy redundant pump.
+        self._granular_geometry_seen: bool = False
 
         # Lane subscriber tables.
         # RENDER: kind -> list[handler]. Synchronous, no coalesce.
@@ -183,6 +225,20 @@ class Dispatcher:
             )
             return
 
+        # Omnibus guard — if a granular geometry kind already fired in
+        # the current notification chain (manager._notify runs typed
+        # subscribers before the legacy one), skip the redundant pump.
+        # Clears the flag so the *next* omnibus fires normally.
+        if kind == GEOMETRIES_CHANGED and self._granular_geometry_seen:
+            self._granular_geometry_seen = False
+            log_action(
+                "dispatch", "geometries_changed_suppressed",
+                _level="debug",
+            )
+            return
+        if kind in _GRANULAR_GEOMETRY_KINDS:
+            self._granular_geometry_seen = True
+
         t0 = time.perf_counter()
 
         if kind == STEP_CHANGED:
@@ -195,6 +251,31 @@ class Dispatcher:
             # AND composition active may have changed. Run both pumps;
             # they're idempotent.
             self._pump_deform(None)
+            self._pump_gate()
+        elif kind == GEOMETRY_ACTIVE_CHANGED:
+            # New active geometry → its deform state takes over the
+            # substrate, and its compositions decide visibility.
+            self._pump_deform(None)
+            self._pump_gate()
+        elif kind == GEOMETRY_DEFORM_CHANGED:
+            # Scale / field / toggle changed for one geometry —
+            # substrate recompute only.
+            self._pump_deform(None)
+        elif kind == GEOMETRY_ADDED:
+            # New geometry shell — visible layers don't change unless
+            # the new one is auto-activated; gate covers both cases.
+            self._pump_gate()
+        elif kind == GEOMETRY_REMOVED:
+            # Active may have switched if the removed geometry was it,
+            # so a new deform state may be in play. Match the omnibus.
+            self._pump_deform(None)
+            self._pump_gate()
+        elif kind == GEOMETRY_RENAMED:
+            pass    # label change only — render fires
+        elif kind == COMPOSITION_CHANGED:
+            # Add / rename / set_active / layer-membership on the
+            # active geometry — substrate is unchanged, visibility is
+            # the only thing that needs recomputing.
             self._pump_gate()
         elif kind == STAGE_CHANGED:
             # The director itself runs reattach_all + update_to_step
