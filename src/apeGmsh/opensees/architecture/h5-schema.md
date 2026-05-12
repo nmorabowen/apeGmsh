@@ -39,8 +39,10 @@ model.h5
 │     └── /{name}                          one group per section
 ├── /transforms
 │     └── /{name}                          one group per geomTransf
+├── /beam_integration
+│     └── /{name}                          one group per beamIntegration
 ├── /elements
-│     └── /{pg_name}                       one group per assigned PG
+│     └── /{type}                          one group per element type token
 ├── /time_series
 │     └── /{name}                          one group per series
 ├── /patterns
@@ -63,7 +65,7 @@ Attributes only.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `schema_version` | string | semver, e.g. `"1.0.0"` |
+| `schema_version` | string | semver, e.g. `"1.1.0"` |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
@@ -117,7 +119,7 @@ are attribute-only, like materials.
 │             material_ref (string)
 └── /layers              compound dataset, shape (n_layers,)
       fields: kind, material_ref, n_bars (int), area (float),
-              line (float[4])      ← (y1, z1, y2, z2)
+              line (float[6])      ← (y1, z1, y2, z2) for `straight`, padded with NaN to 6
 ```
 
 `material_ref` is an HDF5 path string like `"/materials/uniaxial/Steel_S420"`.
@@ -170,29 +172,56 @@ When the user supplied an explicit `vecxz=` (no csys), `per_element_vecxz`
 is still present — every row holds the same vector — so the viewer
 can read uniformly.
 
-## `/elements`
+## `/beam_integration`
 
-One group per PG that received an `assign(...)` call.
+One group per `beamIntegration` call.  Keyed by `{type}_{tag}`
+(e.g. `/beam_integration/Lobatto_1`).
 
 ```
-/elements/Cols/
-├── attrs: type="forceBeamColumn", n_ip=5,
-│         section_ref="/sections/Cols",
-│         transf_ref="/transforms/Cols"
+/beam_integration/Lobatto_1/
+└── attrs: type="Lobatto", tag=1,
+          params=[sec_tag, n_ip, ...]
+```
+
+Force / disp-based beam-column elements reference the integration
+rule by tag through their positional args; the rule's section
+reference is itself an OpenSees section tag inside `params`.
+
+## `/elements`
+
+One group per element **type token** — every element of that
+OpenSees type lands in the same group, regardless of which PG
+the user assigned it to.  The streaming Protocol does not surface
+the PG (`spec.pg` is known only inside the bridge's element
+fan-out in `_internal/build.py`), so the H5 emitter bins by type.
+
+```
+/elements/forceBeamColumn/
+├── attrs: type="forceBeamColumn",
+│         __deviation__="grouped by element type token"
 ├── ids               int dataset (n_elements,)
 │                      OpenSees element tags
-└── connectivity      int dataset (n_elements, n_corners)
-                       node tags per element
+├── connectivity      int dataset (n_elements, n_corners)
+│                      node tags per element
+├── args              float64 dataset (n_elements, max_tail)
+│                      per-element positional args after connectivity;
+│                      NaN in slots that carry a string token
+└── args_str          vlen-string dataset (n_elements, max_tail)
+                       string tokens at the matching slot; empty
+                       string where the slot is numeric. Present
+                       only if at least one slot is a string.
 
-/elements/Body/
-├── attrs: type="FourNodeTetrahedron",
-│         material_ref="/materials/nd/Concrete_3D"
+/elements/FourNodeTetrahedron/
+├── attrs: type="FourNodeTetrahedron"
 ├── ids
 └── connectivity      shape (n_elements, 4)
 ```
 
-Element types that take additional scalar params (`A`, `E`, etc.
-on `elasticBeamColumn`) carry them as attributes alongside the refs.
+The args / args_str dataset pair encodes the element's positional
+parameter list (after the connectivity prefix) — a vocabulary-aware
+reader can recover refs (`transf_ref`, `section_ref`,
+`integration_ref`, …) by indexing into the element type's known
+signature.
 
 ## `/time_series`
 
@@ -325,7 +354,9 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
   ignore unknown groups.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
 
-The current schema version is **`1.0.0`**.
+The current schema version is **`1.1.0`** (the `/beam_integration`
+group landed in the `1.0.0 → 1.1.0` minor bump alongside the
+Protocol's `beamIntegration` method).
 
 A reader skeleton:
 
@@ -352,7 +383,7 @@ no analysis settings:
 ```
 column.h5
 ├── /meta
-│   schema_version="1.0.0", ndm=3, ndf=6, snapshot_id="abc123"
+│   schema_version="1.1.0", ndm=3, ndf=6, snapshot_id="abc123"
 ├── /materials/uniaxial/Steel/
 │   type="Steel02", tag=1, fy=420e6, E=200e9, b=0.01, R0=20.0,
 │   cR1=0.925, cR2=0.15
