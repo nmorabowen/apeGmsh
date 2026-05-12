@@ -1,14 +1,22 @@
-# `model.h5` — schema for the bridge enrichment file
+# `model.h5` — canonical model archive
 
-`apeSees.h5(path)` writes an HDF5 file that captures **everything the
-bridge knows about the model definition**: materials, sections,
-transforms with per-element vecxz, elements binned by type token,
-time series with their values, patterns with their loads, BCs,
-recorders, and analysis settings.
+`fem.to_h5(path)` and `apeSees(fem).h5(path)` both write an HDF5 file
+that captures **the full model definition**:
 
-This file is **the canonical model archive**. It carries information
-that is in *neither* the FEMData snapshot (geometry only) nor the
-STKO/MPCO results (response only).
+* `fem.to_h5(path)` — broker-only.  Writes just the neutral zone:
+  nodes, elements, physical groups, labels, broker-side constraints,
+  loads, and masses.  Output is solver-agnostic and complete enough
+  for a viewer to render the mesh without OpenSees loaded.
+* `apeSees(fem).h5(path)` — composed.  Layers the OpenSees
+  enrichment (materials, sections, transforms, beam_integration,
+  time_series, patterns, bcs, recorders, analysis, and per-type
+  element metadata) under `/opensees/` on top of a broker neutral
+  zone.
+
+The result is **the canonical model archive** for an apeGmsh
+session.  It carries information that is in *neither* the FEMData
+snapshot in memory (geometry only) nor the STKO/MPCO results
+(response only).
 
 ## Design principles
 
@@ -29,31 +37,63 @@ STKO/MPCO results (response only).
 
 ## Two zones
 
-Phase 8.4 (May 2026) partitioned `model.h5` into a **neutral zone**
-at the root and a **solver-specific zone** under `/opensees/`.
+`model.h5` is partitioned into a **neutral zone** at the root and a
+**solver-specific zone** under `/opensees/`.
 
-The neutral zone holds anything that does not depend on the choice
-of solver — currently `/meta` and `/elements`.  The solver-specific
-zone holds anything the OpenSees bridge contributes (materials,
-sections, transforms, beam integration rules, time series, patterns,
-BCs, recorders, analysis settings).  A second producer (Code_Aster,
-Abaqus, …) would plug in at `/<solver>/` next to `/opensees/`
-without colliding.
+* The **neutral zone** (broker-owned, Phase 8.5) holds geometry and
+  pre-solver model declarations: `/meta`, `/nodes`,
+  `/elements/{type}`, `/physical_groups`, `/labels`,
+  `/constraints/{kind}`, `/loads/{kind}/{pattern}`, `/masses`.
+  These describe the model independent of which solver consumes it.
+* The **OpenSees zone** (bridge-owned, Phase 8.4) holds anything the
+  OpenSees adapter contributes: `/opensees/materials`,
+  `/opensees/sections`, `/opensees/transforms`,
+  `/opensees/beam_integration`, `/opensees/element_meta` (per-type
+  OpenSees args + cross-refs), `/opensees/time_series`,
+  `/opensees/patterns`, `/opensees/bcs`, `/opensees/recorders`,
+  `/opensees/analysis`.
 
-The reshuffle was a one-time `1.x.y → 2.0.0` schema bump: any
-external tool that read a pre-8.4 file by absolute path
-(`/materials/uniaxial/...`) sees a `SchemaVersionError` from the
-reference reader and must update to the new paths.
+A second producer (Code_Aster, Abaqus, …) would plug in at
+`/<solver>/` next to `/opensees/` without colliding.  The neutral
+zone is always present in a full file; the OpenSees zone is present
+only when `apeSees(fem).h5(...)` produced the file (or when the
+user explicitly drove an `H5Emitter`).  `fem.to_h5(path)` writes
+neutral-zone-only files.
+
+**Schema bumps.**
+* Phase 8.4 — bridge groups moved under `/opensees/`.  Breaking
+  (`1.x.y → 2.0.0`); any external tool that read a pre-8.4 file by
+  absolute path (`/materials/uniaxial/...`) sees a
+  `SchemaVersionError` from the reference reader.
+* Phase 8.5 — broker neutral zone added.  Additive (`2.0.0 →
+  2.1.0`); old v2.0.0 readers tolerate the absence of the new
+  groups and still parse pre-8.5 files unchanged.
 
 ## Top-level layout
 
 ```
 model.h5
 ├── /meta                                  attrs only
-├── /elements                              ──── neutral zone ────
-│     └── /{type}                          one group per element type token
 │
-└── /opensees/                             ──── OpenSees zone ────
+├── ── neutral zone (broker-owned) ──
+├── /nodes
+│     ├── ids                              (N,) int64
+│     └── coords                           (N, 3) float64
+├── /elements
+│     └── /{gmsh_alias}                    one group per element type (tet4, hex8, …)
+├── /physical_groups
+│     └── /{name}                          one group per Gmsh physical group
+├── /labels
+│     └── /{name}                          one group per apeGmsh label
+├── /constraints
+│     └── /{kind}                          one dataset per constraint kind
+├── /loads
+│     ├── /nodal/{pattern}                 one dataset per pattern
+│     ├── /element/{pattern}               one dataset per pattern
+│     └── /sp/default                      single-point constraints
+├── /masses                                single dataset
+│
+└── /opensees/                             ── OpenSees zone (bridge-owned) ──
       ├── /materials
       │     ├── /uniaxial/{name}           one group per material
       │     └── /nd/{name}
@@ -63,6 +103,8 @@ model.h5
       │     └── /{name}                    one group per geomTransf
       ├── /beam_integration
       │     └── /{name}                    one group per beamIntegration
+      ├── /element_meta
+      │     └── /{type_token}              one group per OpenSees element type
       ├── /time_series
       │     └── /{name}                    one group per series
       ├── /patterns
@@ -76,11 +118,22 @@ model.h5
 ```
 
 The user's PG names, material names, etc. are HDF5 group names — they
-must therefore avoid `/` characters. The bridge enforces this at
+must therefore avoid `/` characters. The producers enforce this at
 declaration time.
 
-`/opensees` itself is created lazily: a file with no bridge content
-beyond `/meta` + `/elements` carries no `/opensees` group at all.
+`/opensees` is created lazily: a file produced by `fem.to_h5(path)`
+contains no `/opensees` group at all (the broker doesn't know about
+OpenSees).  Conversely, the neutral zone is only present when a real
+:class:`FEMData` drove the writer; standalone `H5Emitter` test
+output contains just `/meta` + `/opensees/...`.
+
+`/elements/{gmsh_alias}` (broker) and `/opensees/element_meta/{type_token}`
+(bridge) are two different element keyings of the same underlying
+elements.  The broker key is a GMSH alias (`tet4`, `hex8`, `line2`);
+the bridge key is the OpenSees type token (`FourNodeTetrahedron`,
+`stdBrick`, `forceBeamColumn`).  Consumers cross-reference between
+them via the element tag (the `ids` dataset is shared in shape and
+content).
 
 ## `/meta`
 
@@ -88,7 +141,7 @@ Attributes only.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `schema_version` | string | semver, e.g. `"2.0.0"` |
+| `schema_version` | string | semver, e.g. `"2.1.0"` |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
@@ -101,46 +154,139 @@ reader written for `2.x.y` MUST refuse to read `1.x.y` or `3.x.y`
 files. Within `2.x.y`, additions are allowed without breaking
 readers.
 
+## `/nodes`
+
+Neutral-zone group at the root, broker-owned.
+
+```
+/nodes/
+├── ids               (N,) int64
+└── coords            (N, 3) float64
+```
+
+The viewer renders the mesh substrate from `/nodes/coords` keyed by
+`/nodes/ids`.  Bridge-side data that refers to nodes (loads,
+constraints, fix records) does so via the tag string in the
+`target` field of the symmetric record compound — see
+[Symmetric compound contract](#symmetric-compound-contract) below.
+
 ## `/elements`
 
-Neutral-zone group at the root.  One group per element **type
-token** — every element of that OpenSees type lands in the same
-group, regardless of which PG the user assigned it to.  The
-streaming Protocol does not surface the PG (`spec.pg` is known only
-inside the bridge's element fan-out in `_internal/build.py`), so
-the H5 emitter bins by type.
+Neutral-zone group at the root, broker-owned (Phase 8.5).  One
+sub-group per **GMSH element type alias** (`tet4`, `hex8`,
+`line2`, `triangle3`, …).  Each element of that type sits in the
+matching group regardless of which PG it belongs to.
 
 ```
-/elements/forceBeamColumn/
-├── attrs: type="forceBeamColumn",
-│         __deviation__="grouped by element type token"
-├── ids               int dataset (n_elements,)
-│                      OpenSees element tags
-├── connectivity      int dataset (n_elements, n_corners)
-│                      node tags per element
-├── args              float64 dataset (n_elements, max_tail)
-│                      per-element positional args after connectivity;
-│                      NaN in slots that carry a string token
-└── args_str          vlen-string dataset (n_elements, max_tail)
-                       string tokens at the matching slot; empty
-                       string where the slot is numeric. Present
-                       only if at least one slot is a string.
+/elements/tet4/
+├── attrs: code=4, gmsh_name="Tetrahedron 4", npe=4, dim=3, order=1
+├── ids               (E_t,) int64                — element tags
+└── connectivity      (E_t, 4) int64              — node tags per element
 
-/elements/FourNodeTetrahedron/
-├── attrs: type="FourNodeTetrahedron"
+/elements/line2/
+├── attrs: code=1, gmsh_name="Line 2", npe=2, dim=1, order=1
 ├── ids
-└── connectivity      shape (n_elements, 4)
+└── connectivity      (E_l, 2) int64
 ```
 
-The args / args_str dataset pair encodes the element's positional
-parameter list (after the connectivity prefix) — a vocabulary-aware
-reader can recover refs (`transf_ref`, `section_ref`,
-`integration_ref`, …) by indexing into the element type's known
-signature.
+OpenSees-specific element metadata (positional args, cross-references)
+lives under `/opensees/element_meta/{type_token}` — a parallel index
+keyed by OpenSees type name rather than GMSH alias.  See that section
+below for the cross-reference contract.
 
-Phase 8.5 will hand `/elements` writing from the bridge to the
-broker so the neutral zone is self-contained even without OpenSees
-loaded.  The path stays at root throughout.
+## `/physical_groups`
+
+Neutral-zone group at the root, broker-owned.  One sub-group per
+Gmsh physical group; combines node-side and element-side membership.
+
+```
+/physical_groups/Slab/
+├── attrs: dim=2, tag=100, name="Slab"
+├── node_ids          (Np,) int64
+├── node_coords       (Np, 3) float64
+└── element_ids       (Ep,) int64        — present for dim>=1
+```
+
+The combined-side shape matches the master plan's "top-level index for
+viewer discovery": one `physical_groups[name]` walk gives the viewer
+everything it needs to colour a PG.
+
+## `/labels`
+
+Same shape as `/physical_groups`, with apeGmsh-internal labels in
+place of Gmsh PG taxonomy.  Each label entry carries the same
+fields (`dim`, `tag`, `name`, `node_ids`, `node_coords`, optional
+`element_ids`).
+
+## `/constraints/{kind}`
+
+One dataset per constraint kind (`equal_dof`, `rigid_beam`,
+`rigid_diaphragm`, `tie`, `mortar`, `node_to_surface`, …).  Every
+dataset uses the symmetric outer compound (see below); the inner
+`payload` dtype is per-record-type:
+
+| Kind family | Payload fields |
+|---|---|
+| NodePair (`equal_dof`, `rigid_beam`, `rigid_rod`, `penalty`) | `master_node`, `slave_node`, `dofs` (vlen-int), `offset` (3,)f64, `penalty_stiffness` |
+| NodeGroup (`rigid_diaphragm`, `rigid_body`, `kinematic_coupling`) | `master_node`, `slave_nodes` (vlen-int), `dofs` (vlen-int), `offsets` (vlen-f64, flat `3*n_slaves`), `plane_normal` (3,)f64 |
+| Interpolation (`tie`, `distributing`, `embedded`) | `slave_node`, `master_nodes` (vlen-int), `weights` (vlen-f64), `dofs` (vlen-int), `projected_point` (3,)f64, `parametric_coords` (2,)f64 |
+| SurfaceCoupling (`tied_contact`, `mortar`) | `master_nodes`/`slave_nodes`/`dofs` (vlen-int), `mortar_operator_shape` (2,)i64, `mortar_operator` (vlen-f64, row-major) |
+| NodeToSurface (`node_to_surface`, `node_to_surface_spring`) | `master_node`, `slave_nodes`/`phantom_nodes` (vlen-int), `phantom_coords` (vlen-f64, flat `3*n`), `dofs` (vlen-int) |
+
+Per-record-type payload dtypes are defined in
+[`mesh/_record_h5.py`](../../mesh/_record_h5.py); the writer in
+[`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) bins
+records by `kind` and dispatches to the right dtype based on the
+record class.
+
+## `/loads/{kind}/{pattern}`
+
+Per-pattern, per-kind datasets sharing the symmetric outer compound.
+
+* `/loads/nodal/{pattern}` — `NodalLoadRecord` rows.  Payload:
+  `node_id`, `force_xyz` (3,)f64, `moment_xyz` (3,)f64.  Absent
+  force / moment components NaN-filled.
+* `/loads/element/{pattern}` — `ElementLoadRecord` rows.  Payload:
+  `element_id`, `load_type` (utf-8), `params_json` (utf-8 JSON
+  blob — element-load `*args` shape is too freeform for a fixed
+  typed compound).
+* `/loads/sp/default` — `SPRecord` rows (single-point constraints).
+  Payload: `node_id`, `dof`, `value`, `is_homogeneous` (int 0/1).
+
+`{pattern}` is the broker pattern name (e.g. `gravity`, `quake_x`)
+or `default` for records that didn't carry one.
+
+## `/masses`
+
+Single symmetric-compound dataset (no per-pattern partitioning —
+masses are model-time, not load-time).  Payload: `node_id`, `mass`
+(6,)f64 = `(mx, my, mz, Ixx, Iyy, Izz)`.
+
+## Symmetric compound contract
+
+Every record-set dataset (`/constraints/{kind}`,
+`/loads/{kind}/{pattern}`, `/masses`, `/opensees/bcs/fix`,
+`/opensees/bcs/mass`, `/opensees/patterns/{name}/loads`) uses the
+same outer 4-field compound so a viewer can dispatch with one
+reader and per-kind decoders:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `target_kind` | vlen utf-8 | `"node"` / `"element"` / `"pg"` |
+| `target` | vlen utf-8 | tag (str) or PG name |
+| `payload_kind` | vlen utf-8 | record subtype (e.g. `"rigid_beam"`) |
+| `payload` | compound | per-kind nested compound |
+
+The `payload` dtype varies by record kind; the outer three fields
+are uniform.  Readers dispatch on `payload_kind` and decode
+`payload` with the matching per-kind dtype.
+
+Helpers in [`mesh/_record_h5.py`](../../mesh/_record_h5.py):
+
+* `make_record_dtype(payload_dtype)` returns the outer compound.
+* Per-record-type factories (`node_pair_payload_dtype`,
+  `nodal_load_payload_dtype`, `mass_payload_dtype`, …) return the
+  inner payload dtypes.
 
 ## `/opensees/materials`
 
@@ -252,6 +398,33 @@ One group per `beamIntegration` call.  Keyed by `{type}_{tag}`
 Force / disp-based beam-column elements reference the integration
 rule by tag through their positional args; the rule's section
 reference is itself an OpenSees section tag inside `params`.
+
+## `/opensees/element_meta`
+
+OpenSees-specific element metadata, keyed by OpenSees type token
+(`forceBeamColumn`, `FourNodeTetrahedron`, `Truss`, …) — a parallel
+index to the broker's `/elements/{gmsh_alias}` keyed by GMSH alias.
+
+```
+/opensees/element_meta/forceBeamColumn/
+├── attrs: type="forceBeamColumn"
+├── ids               (N,) int64                  — OpenSees element tags
+├── args              (N, max_tail) float64       — parameter tail (NaN at string slots)
+└── args_str          (N, max_tail) vlen-utf-8    — string tokens (present only
+                                                    when any slot is a string)
+```
+
+`args` and `args_str` encode the element's positional `*args` list
+*after dropping the connectivity prefix*.  A vocabulary-aware reader
+recovers cross-references (`transf_ref`, `section_ref`,
+`integration_ref`, …) by indexing into the element type's known
+signature.
+
+Phase 8.5 split element storage across two zones (master plan §3):
+broker owns geometry (`/elements/{gmsh_alias}` with ids +
+connectivity); bridge owns OpenSees-specific args
+(`/opensees/element_meta/{type_token}`).  The two are linked by
+element tag — both groups' `ids` datasets contain the same tags.
 
 ## `/opensees/time_series`
 
@@ -385,7 +558,7 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
   ignore unknown groups.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
 
-The current schema version is **`2.0.0`**.
+The current schema version is **`2.1.0`**.
 
 History:
 
@@ -397,6 +570,13 @@ History:
   analysis) moved under `/opensees/`.  `/meta` and `/elements` stay
   at root.  Breaking — any tool reading pre-8.4 files by absolute
   path needs to update.
+- `2.1.0` — Phase 8.5: broker neutral zone added (`/nodes`,
+  `/elements/{gmsh_alias}`, `/physical_groups`, `/labels`,
+  `/constraints/{kind}`, `/loads/{kind}/{pattern}`, `/masses`).
+  OpenSees-specific element metadata moved from the old
+  `/elements/{type_token}` shape to `/opensees/element_meta/{type_token}`
+  so the broker can own root `/elements`.  Additive — old v2.0.0
+  readers tolerate the absence of the new groups.
 
 A reader skeleton:
 
@@ -423,9 +603,12 @@ no analysis settings:
 ```
 column.h5
 ├── /meta
-│   schema_version="2.0.0", ndm=3, ndf=6, snapshot_id="abc123"
-├── /elements/forceBeamColumn/
-│   ├── attrs: type="forceBeamColumn"
+│   schema_version="2.1.0", ndm=3, ndf=6, snapshot_id="abc123"
+├── /nodes
+│   ├── ids       [1, 2]
+│   └── coords    [[0,0,0], [0,0,1]]
+├── /elements/line2/                  ← broker keying (GMSH alias)
+│   ├── attrs: code=1, gmsh_name="Line 2", npe=2, dim=1, order=1
 │   ├── ids           [1]
 │   └── connectivity  [[1, 2]]
 └── /opensees/
@@ -447,6 +630,10 @@ column.h5
     │   │          csys_origin=[0,0,0], csys_axis=[0,0,1], roll_deg=0.0
     │   ├── per_element_vecxz       (1, 3) = [[1, 0, 0]]
     │   └── per_element_emitted_tag (1,)   = [1]
+    ├── /element_meta/forceBeamColumn/        ← bridge keying (OpenSees type)
+    │   ├── attrs: type="forceBeamColumn"
+    │   ├── ids       [1]
+    │   └── args      [[1, 1]]                 — (transf_tag, integration_tag)
     ├── /time_series/elcentro/
     │   ├── attrs: type="Path", factor=9.81, dt=0.01, file_path="elcentro.txt"
     │   ├── time       (n_steps,)  = [0.00, 0.01, 0.02, ...]

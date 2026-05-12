@@ -283,16 +283,21 @@ external tool reading Phase-6 model.h5 files breaks.
 schema; `validate()` still returns empty.
 
 ### Phase 8.5 — Broker-side groups in model.h5
-Implement the neutral-zone writers: `/nodes`, `/elements/{type}`
-(if not already at root by the time 8.4 lands), `/physical_groups`,
-`/labels`, `/constraints/{kind}`, `/loads/{kind}`, `/masses`.
-Implement `fem.to_h5(path)` on FEMData (writes neutral zone only).
-Implement the symmetric-record-compound-dtype helper so all record
-sets share one shape.
+Implemented the neutral-zone writers: `/nodes`,
+`/elements/{gmsh_alias}`, `/physical_groups`, `/labels`,
+`/constraints/{kind}`, `/loads/{kind}/{pattern}`, `/masses`.  Added
+`fem.to_h5(path)` on FEMData (writes neutral zone only).  Bridge's
+`apeSees(fem).h5(path)` now composes broker (neutral) + bridge
+(`/opensees/...`) into one file.  OpenSees-specific element
+metadata (args, cross-refs) moved from the old
+`/elements/{type_token}` shape to `/opensees/element_meta/{type_token}`
+so the broker can own root `/elements`.  Symmetric record-compound
+dtype helper landed in `mesh/_record_h5.py`.  Schema bumped
+`2.0.0 → 2.1.0` (additive).
 
-**Risk:** medium — adds the largest amount of new writer code.
-**Test gate:** new unit tests per writer; round-trip test from a
-real example model (plate_with_edge_crack).
+**Risk:** medium — largest amount of new writer code.
+**Test gate:** `pytest tests/opensees/h5/ tests/test_record_h5_dtype.py
+tests/test_femdata_to_h5.py tests/test_h5_reader_neutral.py` → 91 passed.
 
 ### Phase 8.6 — Bridge enrichment additions
 `/opensees/tag_map/`, plus a `set_current_fem_element_id` side

@@ -41,7 +41,16 @@ groups before attempting any enrichment:
 | Group | Required | Behavior if missing |
 |---|---|---|
 | `/meta` | yes | Refuse to load; surface schema-version mismatch clearly. |
-| `/elements/{type}` | yes (per element type rendered) | Skip enrichment for that element type. |
+| `/nodes` | yes | Refuse to load (mesh substrate is mandatory). |
+| `/elements/{gmsh_alias}` | yes (per element type rendered) | Skip enrichment for that element type. |
+
+Phase 8.5 made the broker the source-of-truth for `/nodes` and
+`/elements/{gmsh_alias}` (keys are GMSH aliases: `tet4`, `hex8`,
+`line2`, …).  OpenSees-specific per-type metadata lives in a
+parallel `/opensees/element_meta/{type_token}/` zone keyed by
+OpenSees type name (`forceBeamColumn`, `FourNodeTetrahedron`); the
+viewer joins the two via shared element tags when the user clicks
+into an element-detail panel.
 
 Schema version check (mandatory):
 
@@ -112,7 +121,36 @@ elements.
 
 **Read pattern:** at file-open time, read all
 `/opensees/transforms/*/per_element_vecxz` and the matching
-`/elements/*/ids`. Build an `element_id → vecxz` lookup table.
+`/elements/{gmsh_alias}/ids`. Build an `element_id → vecxz` lookup
+table.
+
+### `/physical_groups/*` / `/labels/*` — group inspector
+
+**Trigger:** "Groups" tab or click a group in the tree.
+**UI:** highlight member nodes / elements, list counts, allow
+toggling visibility.  Source data lives at the root level since
+Phase 8.5 (broker-owned); read attrs (`dim`, `tag`, `name`) and
+datasets (`node_ids`, `node_coords`, optional `element_ids`) per
+sub-group.
+
+### `/constraints/{kind}/*` and `/loads/{kind}/{pattern}/*` — record explorer
+
+**Trigger:** "Constraints" / "Loads" tab.
+**UI:** list per-kind rows; on click, walk the symmetric outer
+compound (`target_kind`, `target`, `payload_kind`, `payload`) and
+decode the payload using the per-kind dtype.  Helpers live in
+[`mesh/_record_h5.py`](../../mesh/_record_h5.py); the contract is
+documented in [`h5-schema.md`](h5-schema.md) under "Symmetric
+compound contract".
+
+### `/opensees/element_meta/{type_token}/*` — element-detail panel
+
+**Trigger:** user clicks an element in the mesh.
+**UI:** join the broker's `/elements/{gmsh_alias}/ids` index against
+the bridge's `/opensees/element_meta/{type_token}/ids` to find the
+matching row, then expose the parameter tail (`args` /
+`args_str`) plus cross-refs (`transf_ref`, `section_ref`,
+`integration_ref`) for the clicked element.
 
 **Note:** today the viewer already has CSys overlays through the
 diagram path (`viewers/diagrams/_beam_geometry.py`). This H5
@@ -262,15 +300,20 @@ is the viewer team's call.
 
 ## Versioning policy
 
-The bridge team owns the schema. Schema bumps follow semver:
+The bridge / broker teams own the schema jointly.  Schema bumps
+follow semver:
 
-- **Major** bump (2.x → 3.x): breaking. Coordinate with viewer team
-  ahead of time. Both teams ship paired releases.  (Phase 8.4 was
-  the most recent major: `1.x.y → 2.0.0`, introducing the
-  `/opensees/` namespace.)
+- **Major** bump (2.x → 3.x): breaking. Coordinate ahead of time.
+  Both teams ship paired releases.  (Phase 8.4 was the most recent
+  major: `1.x.y → 2.0.0`, introducing the `/opensees/` namespace.)
 - **Minor** bump (2.0 → 2.1): additive. Viewer team gets a heads-up
   but isn't required to update — old viewer reads new file with
-  reduced functionality (the new groups go unused).
+  reduced functionality (the new groups go unused).  Phase 8.5
+  was the most recent minor: `2.0.0 → 2.1.0`, adding the broker
+  neutral zone (`/nodes`, `/elements/{gmsh_alias}`,
+  `/physical_groups`, `/labels`, `/constraints/{kind}`,
+  `/loads/{kind}/{pattern}`, `/masses`).  Pre-8.5 v2.0.0 viewers
+  ignore the new groups and still see `/opensees/...`.
 - **Patch** bump (2.0.0 → 2.0.1): clarifications, doc-only. No
   reader changes.
 
