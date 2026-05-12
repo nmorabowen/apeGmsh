@@ -775,6 +775,9 @@ class ResultsViewer:
         )
         director.dispatcher = dispatcher
         self._dispatcher = dispatcher
+        # Inject the dispatcher into the PickEngine so set_pick_mode
+        # can publish PICK_MODE_CHANGED through the event bus.
+        scene.pick_engine.dispatcher = dispatcher
 
         # ── Observer wiring — every callback fires a dispatcher event.
         # Director's existing observers are preserved (the time scrubber

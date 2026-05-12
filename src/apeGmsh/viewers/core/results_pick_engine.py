@@ -15,13 +15,18 @@ Currently registered:
 substrate. Fiber selection happens through the 2-D side panel + the
 director's ``picked_gp`` channel.
 
-Phase 3.2 adds :class:`PickMode` and ``set_pick_mode`` here: that
-method walks the inventory and toggles ``SetPickable`` per the mode's
-allow-list.
+Mode routing (Phase 3.2): :func:`PickEngine.set_pick_mode` walks the
+inventory and flips each actor's ``SetPickable`` per the mode's
+allow-list. The pick controller then sees only the actors relevant to
+the current mode. ``Alt``-pick-through (a context manager on the
+engine) temporarily restores all pickability for one click so the
+user can reach back to the substrate without leaving GP/FIBER mode.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from contextlib import contextmanager
+from enum import Enum
+from typing import Any, Callable, Iterator, Optional
 
 
 # Reverse-map signature: ``cell_id -> (element_id, sub_index, *)`` or
@@ -29,6 +34,32 @@ from typing import Any, Callable, Optional
 # tail of the tuple is diagram-defined (e.g., world coords for GP); the
 # pick controller destructures by position.
 ReverseMapFn = Callable[[int], Optional[tuple]]
+
+
+class PickMode(str, Enum):
+    """What the user is currently clicking *for*.
+
+    Drives :meth:`PickEngine.set_pick_mode`, which restricts which
+    inventory actors stay pickable. Substrate pickability is independent
+    of this — the controller still runs ``vtkCellPicker.Pick`` on every
+    visible actor and routes by mode after the hit.
+    """
+    NODE = "node"
+    ELEMENT = "element"
+    GP = "gp"
+    FIBER = "fiber"
+
+
+# Mapping mode → set of inventory-actor kinds that stay pickable.
+# Empty allow-list means "no inventory actors are pickable" — the
+# user is targeting the substrate (node-snap or cell-resolve) and any
+# overlay glyphs (GP markers) should let the click pass through.
+_MODE_ALLOW: dict[PickMode, frozenset[str]] = {
+    PickMode.NODE: frozenset(),
+    PickMode.ELEMENT: frozenset(),
+    PickMode.GP: frozenset({"gp"}),
+    PickMode.FIBER: frozenset({"fiber"}),
+}
 
 
 class PickEngine:
@@ -44,10 +75,16 @@ class PickEngine:
     def __init__(self) -> None:
         # ``id(vtkProp)`` -> ``(kind, reverse_map_fn, actor)``.
         # Keying by ``id`` avoids vtkObject hashing surprises; we
-        # retain the actor reference so a future ``set_pick_mode``
-        # (Phase 3.2) can walk the inventory and call SetPickable on
-        # each one.
+        # retain the actor reference so ``set_pick_mode`` can walk the
+        # inventory and call SetPickable on each one.
         self._actors: dict[int, tuple[str, ReverseMapFn, Any]] = {}
+        # Currently active mode. ``set_pick_mode`` updates this and
+        # reapplies the allow-list to every registered actor.
+        self._mode: PickMode = PickMode.NODE
+        # Dispatcher used to publish PICK_MODE_CHANGED on transition.
+        # Wired by ResultsViewer (``engine.dispatcher = ...``); None
+        # in headless tests where no event bus exists.
+        self.dispatcher: Any = None
 
     def register_actor(
         self,
@@ -73,7 +110,12 @@ class PickEngine:
         """
         if actor is None:
             return
-        self._actors[id(actor)] = (str(kind), reverse_map_fn, actor)
+        kind_s = str(kind)
+        self._actors[id(actor)] = (kind_s, reverse_map_fn, actor)
+        # Apply the current mode immediately — a diagram that attaches
+        # while the viewer is already in GP mode should land pickable,
+        # not inherit the actor's default (True) regardless of mode.
+        self._set_actor_pickable(actor, kind_s in _MODE_ALLOW[self._mode])
 
     def unregister_actor(self, actor: Any) -> None:
         """Drop ``actor`` from the inventory. No-op when unregistered."""
@@ -117,5 +159,71 @@ class PickEngine:
     def __len__(self) -> int:
         return len(self._actors)
 
+    # ------------------------------------------------------------------
+    # Mode routing (Phase 3.2)
+    # ------------------------------------------------------------------
 
-__all__ = ["PickEngine", "ReverseMapFn"]
+    @property
+    def mode(self) -> PickMode:
+        return self._mode
+
+    def set_pick_mode(self, mode: PickMode) -> None:
+        """Switch the active pick mode + flip inventory pickability.
+
+        For each registered actor, sets ``actor.SetPickable(kind in
+        _MODE_ALLOW[mode])``. Fires ``PICK_MODE_CHANGED`` through the
+        injected dispatcher on transition (no-op on same-mode set so
+        the storm guard stays cheap).
+        """
+        if not isinstance(mode, PickMode):
+            mode = PickMode(mode)
+        if mode is self._mode:
+            return
+        self._mode = mode
+        allow = _MODE_ALLOW[mode]
+        for kind, _rev, actor in self._actors.values():
+            self._set_actor_pickable(actor, kind in allow)
+        if self.dispatcher is not None:
+            try:
+                from ..diagrams._dispatch import PICK_MODE_CHANGED
+                self.dispatcher.fire(PICK_MODE_CHANGED, payload=mode.value)
+            except Exception:
+                pass
+
+    @contextmanager
+    def with_pick_through(self) -> Iterator[None]:
+        """Temporarily make every inventory actor pickable.
+
+        Used by the pick controller for the ``Alt``-modifier
+        ``pick-through`` gesture: the user wants a single click to
+        ignore the current mode filter (e.g., reach back to the
+        substrate while in GP mode). On exit, the previous mode's
+        allow-list is reapplied.
+        """
+        # Snapshot current pickable state per actor so a nested
+        # with_pick_through restores to whatever was set when the
+        # outer block entered.
+        prior: dict[int, bool] = {}
+        for k, entry in self._actors.items():
+            _kind, _rev, actor = entry
+            try:
+                prior[k] = bool(actor.GetPickable())
+            except Exception:
+                prior[k] = True
+            self._set_actor_pickable(actor, True)
+        try:
+            yield
+        finally:
+            for k, entry in self._actors.items():
+                _kind, _rev, actor = entry
+                self._set_actor_pickable(actor, prior.get(k, True))
+
+    def _set_actor_pickable(self, actor: Any, pickable: bool) -> None:
+        """Best-effort SetPickable — swallow VTK errors silently."""
+        try:
+            actor.SetPickable(bool(pickable))
+        except Exception:
+            pass
+
+
+__all__ = ["PickEngine", "PickMode", "ReverseMapFn"]

@@ -19,6 +19,7 @@ the trackball's spin gesture untouched.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -527,10 +528,28 @@ def install_results_pick(
         _dragging[0] = False
         _abort(caller, _tags["lmb_release"])
         _hide_rubberband()
+
+        # Alt-pick-through: when the user holds Alt on release, the
+        # PickEngine flips every registered inventory actor to
+        # SetPickable(True) for the duration of this one pick so the
+        # filter set by ``set_pick_mode`` is bypassed. Useful in GP
+        # mode when the user wants to reach a fiber, or vice versa.
+        try:
+            is_alt = bool(caller.GetAltKey())
+        except Exception:
+            is_alt = False
+        engine = getattr(scene, "pick_engine", None)
+        pick_ctx = (
+            engine.with_pick_through()
+            if (is_alt and engine is not None)
+            else nullcontext()
+        )
+
         if was_drag:
             if on_box_pick is None:
                 return
-            box_result = _build_box_result(sx, sy, x, y)
+            with pick_ctx:
+                box_result = _build_box_result(sx, sy, x, y)
             if box_result is None:
                 return
             try:
@@ -542,7 +561,8 @@ def install_results_pick(
                     file=sys.stderr,
                 )
             return
-        result = _build_result(x, y)
+        with pick_ctx:
+            result = _build_result(x, y)
         if result is None:
             return
         try:

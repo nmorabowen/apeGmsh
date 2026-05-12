@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import pytest
 
-from apeGmsh.viewers.core.results_pick_engine import PickEngine
+from apeGmsh.viewers.core.results_pick_engine import PickEngine, PickMode
 
 
 class _StubActor:
@@ -229,6 +229,160 @@ def test_gauss_diagram_registers_on_attach_unregisters_on_detach(_gp_setup):
         assert len(pe) == 0
     finally:
         plotter.close()
+
+
+# ---------------------------------------------------------------------
+# 3.2 — PickMode enum + mode-routed SetPickable
+# ---------------------------------------------------------------------
+
+def test_default_mode_is_node():
+    pe = PickEngine()
+    assert pe.mode is PickMode.NODE
+
+
+def test_set_pick_mode_to_gp_makes_gp_actors_pickable():
+    pe = PickEngine()
+    gp_actor = _StubActor()
+    fiber_actor = _StubActor()
+    pe.register_actor(gp_actor, "gp", lambda _c: None)
+    pe.register_actor(fiber_actor, "fiber", lambda _c: None)
+
+    pe.set_pick_mode(PickMode.GP)
+    assert gp_actor.GetPickable() is True
+    assert fiber_actor.GetPickable() is False
+    assert pe.mode is PickMode.GP
+
+
+def test_set_pick_mode_to_fiber_makes_fiber_actors_pickable():
+    pe = PickEngine()
+    gp_actor = _StubActor()
+    fiber_actor = _StubActor()
+    pe.register_actor(gp_actor, "gp", lambda _c: None)
+    pe.register_actor(fiber_actor, "fiber", lambda _c: None)
+
+    pe.set_pick_mode(PickMode.FIBER)
+    assert gp_actor.GetPickable() is False
+    assert fiber_actor.GetPickable() is True
+
+
+def test_set_pick_mode_to_node_drops_all_inventory_pickability():
+    """NODE / ELEMENT modes target the substrate, not inventory."""
+    pe = PickEngine()
+    gp_actor = _StubActor()
+    pe.register_actor(gp_actor, "gp", lambda _c: None)
+    # GP-mode first so the actor is pickable.
+    pe.set_pick_mode(PickMode.GP)
+    assert gp_actor.GetPickable() is True
+    # Switch to NODE → GP actor should drop.
+    pe.set_pick_mode(PickMode.NODE)
+    assert gp_actor.GetPickable() is False
+    pe.set_pick_mode(PickMode.ELEMENT)
+    assert gp_actor.GetPickable() is False
+
+
+def test_set_pick_mode_accepts_string():
+    """Convenience: keyboard shortcuts may pass the string value."""
+    pe = PickEngine()
+    actor = _StubActor()
+    pe.register_actor(actor, "gp", lambda _c: None)
+    pe.set_pick_mode("gp")    # type: ignore[arg-type]
+    assert pe.mode is PickMode.GP
+    assert actor.GetPickable() is True
+
+
+def test_set_pick_mode_no_op_when_unchanged():
+    """Same-mode set should not fire PICK_MODE_CHANGED (avoid storms)."""
+    pe = PickEngine()
+    fires: list[tuple[str, Any]] = []
+
+    class _StubDispatcher:
+        def fire(self, kind: str, *, payload: Any = None) -> None:
+            fires.append((kind, payload))
+
+    pe.dispatcher = _StubDispatcher()
+    pe.set_pick_mode(PickMode.GP)
+    assert len(fires) == 1
+    pe.set_pick_mode(PickMode.GP)    # same mode — no event
+    assert len(fires) == 1
+
+
+def test_set_pick_mode_publishes_event():
+    """Dispatcher receives PICK_MODE_CHANGED with the mode value as payload."""
+    pe = PickEngine()
+    fires: list[tuple[str, Any]] = []
+
+    class _StubDispatcher:
+        def fire(self, kind: str, *, payload: Any = None) -> None:
+            fires.append((kind, payload))
+
+    pe.dispatcher = _StubDispatcher()
+    pe.set_pick_mode(PickMode.GP)
+    from apeGmsh.viewers.diagrams._dispatch import PICK_MODE_CHANGED
+    assert fires == [(PICK_MODE_CHANGED, "gp")]
+
+
+def test_register_actor_respects_current_mode():
+    """A diagram that attaches into GP-mode lands pickable; one that
+    attaches into NODE-mode lands NOT pickable. The engine applies
+    the current allow-list at registration time."""
+    pe = PickEngine()
+    pe.set_pick_mode(PickMode.GP)
+    actor = _StubActor()
+    pe.register_actor(actor, "gp", lambda _c: None)
+    assert actor.GetPickable() is True
+
+    pe.set_pick_mode(PickMode.NODE)
+    actor2 = _StubActor()
+    pe.register_actor(actor2, "gp", lambda _c: None)
+    assert actor2.GetPickable() is False
+
+
+def test_with_pick_through_temporarily_enables_all():
+    """Alt-modifier context manager flips every actor to pickable,
+    restores on exit."""
+    pe = PickEngine()
+    gp_actor = _StubActor()
+    fiber_actor = _StubActor()
+    pe.register_actor(gp_actor, "gp", lambda _c: None)
+    pe.register_actor(fiber_actor, "fiber", lambda _c: None)
+    pe.set_pick_mode(PickMode.GP)
+    assert gp_actor.GetPickable() is True
+    assert fiber_actor.GetPickable() is False
+
+    with pe.with_pick_through():
+        assert gp_actor.GetPickable() is True
+        assert fiber_actor.GetPickable() is True
+
+    # Restored to GP-mode state.
+    assert gp_actor.GetPickable() is True
+    assert fiber_actor.GetPickable() is False
+
+
+def test_with_pick_through_nested_restores_outer_state():
+    """Nested with_pick_through preserves whatever was set when the
+    outer block entered, not the very-original state."""
+    pe = PickEngine()
+    actor = _StubActor()
+    pe.register_actor(actor, "fiber", lambda _c: None)
+    pe.set_pick_mode(PickMode.NODE)    # actor not pickable
+
+    with pe.with_pick_through():
+        assert actor.GetPickable() is True
+        with pe.with_pick_through():
+            assert actor.GetPickable() is True
+        # Inner exit restores to "true" (outer state when it entered).
+        assert actor.GetPickable() is True
+    # Outer exit restores to "false" (the truly original state).
+    assert actor.GetPickable() is False
+
+
+def test_pickmode_string_values():
+    """PickMode enum values match the expected string keys used by
+    keyboard shortcuts."""
+    assert PickMode.NODE.value == "node"
+    assert PickMode.ELEMENT.value == "element"
+    assert PickMode.GP.value == "gp"
+    assert PickMode.FIBER.value == "fiber"
 
 
 def test_gauss_diagram_attach_with_no_pick_engine_is_noop(_gp_setup):
