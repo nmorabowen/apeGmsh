@@ -62,7 +62,7 @@ Usage
 -----
 ::
 
-    from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
+    from apeGmsh.results.spec.declaration import Recorders
     recorders = Recorders()
     recorders.nodes(components=["displacement"])
     spec = recorders.resolve(fem, ndm=3, ndf=6)
