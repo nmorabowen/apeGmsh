@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional
 import numpy as np
 from numpy import ndarray
 
-from .._vocabulary import (
+from ..._vocabulary import (
     DERIVED_SCALARS,
     FIBER,
     LINE_DIAGRAMS,
@@ -628,7 +628,7 @@ class Recorders:
             >>> Recorders.shorthands_for("gauss")["stress"][:3]
             ('stress_xx', 'stress_yy', 'stress_zz')
         """
-        from .. import _vocabulary as _voc
+        from ... import _vocabulary as _voc
 
         if category in ("modal",):
             return {}
@@ -693,7 +693,7 @@ class Recorders:
             A snapshot tied to ``fem.snapshot_id``. Re-meshing
             produces a new hash; the spec refuses to bind.
         """
-        from .._vocabulary import expand_many
+        from ..._vocabulary import expand_many
 
         resolved: list[ResolvedRecorderRecord] = []
         for rec in self._records:

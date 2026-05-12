@@ -18,18 +18,19 @@ contract suite picks it up automatically.
 from __future__ import annotations
 
 from dataclasses import fields, is_dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from apeGmsh.opensees._internal.types import Primitive, Recorder
-from apeGmsh.opensees.recorder import MPCO, Element, Node
+from apeGmsh.opensees.recorder import MPCO, Element, Node, RecorderDeclaration
 
 
 ALL_RECORDERS: list[type[Recorder]] = [
     Node,
     Element,
     MPCO,
+    RecorderDeclaration,
 ]
 
 
@@ -52,6 +53,9 @@ _MINIMAL_KWARGS: dict[type[Recorder], dict[str, Any]] = {
         "file": "run.mpco",
         "nodal_responses": ("displacement",),
     },
+    RecorderDeclaration: {
+        "records": (),
+    },
 }
 
 
@@ -69,7 +73,7 @@ class TestRecorderContract:
         self, cls: type[Recorder]
     ) -> None:
         assert is_dataclass(cls), f"{cls.__name__} is not a dataclass"
-        params: Any = cls.__dataclass_params__  # type: ignore[attr-defined]
+        params: Any = cast(Any, cls).__dataclass_params__
         assert params.frozen, f"{cls.__name__} dataclass is not frozen"
         assert params.kw_only, f"{cls.__name__} dataclass is not kw_only"
 
@@ -101,7 +105,7 @@ class TestRecorderContract:
     def test_fields_are_keyword_only(
         self, cls: type[Recorder]
     ) -> None:
-        for f in fields(cls):
+        for f in fields(cast(Any, cls)):
             assert f.kw_only is True, (
                 f"{cls.__name__}.{f.name} should be kw_only"
             )
@@ -109,7 +113,7 @@ class TestRecorderContract:
     def test_dataclass_has_at_least_one_field(
         self, cls: type[Recorder]
     ) -> None:
-        # Every Recorder we ship has at least the ``file`` field; an
-        # empty dataclass would suggest the class never made it past
-        # the stub stage.
-        assert len(fields(cls)) > 0
+        # Every Recorder ships with at least one field; Phase 3B
+        # typed primitives have ``file``; the Phase 9
+        # RecorderDeclaration has ``records``.
+        assert len(fields(cast(Any, cls))) > 0
