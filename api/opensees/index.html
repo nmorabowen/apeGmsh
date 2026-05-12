@@ -6963,7 +6963,7 @@ roll_deg    : 3-D only — additional section rotation about the
               CS rule.  Only meaningful with <code>csys=</code>.</p>
 <h5 id="apeGmsh.solvers._opensees_elements._Elements.add_geom_transf--example">Example<a class="headerlink" href="#apeGmsh.solvers._opensees_elements._Elements.add_geom_transf--example" title="Permanent link">&para;</a></h5>
 <p>::</p>
-<div class="language-text highlight"><pre><span></span><code>from apeGmsh.solvers import Cartesian, Cylindrical
+<div class="language-text highlight"><pre><span></span><code>from apeGmsh.opensees import Cartesian, Cylindrical
 
 # 2-D frame
 g.opensees.elements.add_geom_transf(&quot;Cols&quot;, &quot;PDelta&quot;)
@@ -7114,7 +7114,7 @@ g.opensees.elements.add_geom_transf(
 </span><span id="__span-0-157"><a id="__codelineno-0-157" name="__codelineno-0-157"></a><span class="sd">    -------</span>
 </span><span id="__span-0-158"><a id="__codelineno-0-158" name="__codelineno-0-158"></a><span class="sd">    ::</span>
 </span><span id="__span-0-159"><a id="__codelineno-0-159" name="__codelineno-0-159"></a>
-</span><span id="__span-0-160"><a id="__codelineno-0-160" name="__codelineno-0-160"></a><span class="sd">        from apeGmsh.solvers import Cartesian, Cylindrical</span>
+</span><span id="__span-0-160"><a id="__codelineno-0-160" name="__codelineno-0-160"></a><span class="sd">        from apeGmsh.opensees import Cartesian, Cylindrical</span>
 </span><span id="__span-0-161"><a id="__codelineno-0-161" name="__codelineno-0-161"></a>
 </span><span id="__span-0-162"><a id="__codelineno-0-162" name="__codelineno-0-162"></a><span class="sd">        # 2-D frame</span>
 </span><span id="__span-0-163"><a id="__codelineno-0-163" name="__codelineno-0-163"></a><span class="sd">        g.opensees.elements.add_geom_transf(&quot;Cols&quot;, &quot;PDelta&quot;)</span>
