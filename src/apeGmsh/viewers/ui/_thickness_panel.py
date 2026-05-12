@@ -5,7 +5,7 @@ Same lazy matplotlib-Qt pattern as ``FiberSectionPanel``.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import numpy as np
 
@@ -82,8 +82,13 @@ class LayerThicknessPanel:
         self._unsub_picked = director.subscribe_picked_gp(
             self._on_director_picked
         )
-        self._unsub_step = director.subscribe_step(
-            lambda _i: self.refresh()
+        # Step subscription. ``attach_dispatcher`` (called by
+        # ResultsViewer right after panel construction, when the
+        # dispatcher exists) swaps this for a UI-lane coalesced
+        # dispatcher sub so a rapid scrubber drag collapses to one
+        # profile redraw per Qt tick instead of one per slider tick.
+        self._unsub_step: Optional[Callable[[], None]] = (
+            director.subscribe_step(lambda _i: self.refresh())
         )
         self._unsub_diagrams = director.subscribe_diagrams(
             self._populate_gp_picker
@@ -102,10 +107,43 @@ class LayerThicknessPanel:
         for unsub in (
             self._unsub_picked, self._unsub_step, self._unsub_diagrams,
         ):
+            if unsub is None:
+                continue
             try:
                 unsub()
             except Exception:
                 pass
+
+    def attach_dispatcher(self, dispatcher: Any) -> None:
+        """Migrate the step subscription onto the dispatcher.
+
+        Called by :class:`ResultsViewer._sync_side_panels` once the
+        :class:`Dispatcher` is constructed (after this panel's
+        ``__init__``). Replaces the raw ``director.subscribe_step``
+        wiring with a UI-lane coalesced ``dispatcher.subscribe`` so a
+        rapid time-scrubber drag collapses to one profile redraw per
+        Qt tick instead of one per slider tick.
+
+        Same pattern as :class:`FiberSectionPanel` /
+        :class:`PickReadoutHUD` / :class:`TimeHistoryPanel`: legacy
+        unsub fires before the new subscribe, idempotent on repeated
+        calls, ``None`` dispatcher is a no-op for headless contexts.
+        """
+        if dispatcher is None:
+            return
+        from ..diagrams._dispatch import Lane, STEP_CHANGED
+        if self._unsub_step is not None:
+            try:
+                self._unsub_step()
+            except Exception:
+                pass
+            self._unsub_step = None
+        self._unsub_step = dispatcher.subscribe(
+            STEP_CHANGED,
+            lambda _kind, _payload: self.refresh(),
+            lane=Lane.UI,
+            coalesce=True,
+        )
 
     def refresh(self) -> None:
         picked = self._director.picked_gp
