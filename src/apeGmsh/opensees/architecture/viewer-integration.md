@@ -41,7 +41,7 @@ groups before attempting any enrichment:
 | Group | Required | Behavior if missing |
 |---|---|---|
 | `/meta` | yes | Refuse to load; surface schema-version mismatch clearly. |
-| `/elements/{pg}` | yes (per PG used in viewer) | Skip enrichment for that PG. |
+| `/elements/{type}` | yes (per element type rendered) | Skip enrichment for that element type. |
 
 Schema version check (mandatory):
 
@@ -60,7 +60,7 @@ For each group below, the viewer team implements the listed UI
 feature when the group is present. When the group is absent, the
 feature is hidden — no error, no warning.
 
-### `/materials/*` — Material inspector panel
+### `/opensees/materials/*` — Material inspector panel
 
 **Trigger:** user clicks an element OR the "Materials" tab.
 **UI:**
@@ -76,7 +76,7 @@ feature is hidden — no error, no warning.
 **Read pattern:** lazy. Don't load all params at file-open time;
 read group attributes when the panel is opened.
 
-### `/sections/*` — Section panel
+### `/opensees/sections/*` — Section panel
 
 **Trigger:** user clicks a beam-column or shell element.
 **UI:**
@@ -91,10 +91,10 @@ read group attributes when the panel is opened.
   thicknesses and material colors.
 
 **Read pattern:** when section panel is opened, read
-`/sections/{section_ref}/patches` and `/fibers`. Cache by section
-name; sections are reused across many elements.
+`/opensees/sections/{section_ref}/patches` and `/fibers`. Cache by
+section name; sections are reused across many elements.
 
-### `/transforms/*/per_element_vecxz` — Local-axis glyph overlay
+### `/opensees/transforms/*/per_element_vecxz` — Local-axis glyph overlay
 
 **Trigger:** user enables "Show local axes" overlay on beam-column
 elements.
@@ -110,9 +110,9 @@ elements.
   apeGmsh convention).
 - Glyph length proportional to local element length.
 
-**Read pattern:** at file-open time, read all `/transforms/*/per_element_vecxz`
-and the matching `/elements/*/ids`. Build an `element_id → vecxz`
-lookup table.
+**Read pattern:** at file-open time, read all
+`/opensees/transforms/*/per_element_vecxz` and the matching
+`/elements/*/ids`. Build an `element_id → vecxz` lookup table.
 
 **Note:** today the viewer already has CSys overlays through the
 diagram path (`viewers/diagrams/_beam_geometry.py`). This H5
@@ -120,7 +120,7 @@ read replaces the live-bridge dependency that overlay had — the
 viewer can show vecxz from a frozen H5 even after the bridge is
 gone.
 
-### `/time_series/*` — Time-series plot panel
+### `/opensees/time_series/*` — Time-series plot panel
 
 **Trigger:** user clicks a pattern OR opens the "Time series" tab.
 **UI:**
@@ -131,13 +131,13 @@ gone.
 - For ground-motion records: a 3-pane plot (acc / vel / disp via
   trapezoidal integration on the fly).
 - A legend showing which patterns reference this series
-  (cross-referenced from `/patterns/*/series_ref`).
+  (cross-referenced from `/opensees/patterns/*/series_ref`).
 
 **Read pattern:** lazy. Load `time` and `values` when the panel is
 opened. Compression in the H5 is gzip-4; expect ~30% file size for
 typical ground motions.
 
-### `/patterns/*` — Pattern explorer
+### `/opensees/patterns/*` — Pattern explorer
 
 **Trigger:** "Patterns" tab in the tree view.
 **UI:**
@@ -152,7 +152,7 @@ typical ground motions.
 **Read pattern:** read at file-open time (small data — even a 100-load
 pattern is < 10 KB).
 
-### `/recorders/*` — Recorder coverage map
+### `/opensees/recorders/*` — Recorder coverage map
 
 **Trigger:** "Recorders" tab.
 **UI:**
@@ -166,7 +166,7 @@ pattern is < 10 KB).
 
 **Read pattern:** read at file-open time.
 
-### `/analysis` — Analysis summary panel
+### `/opensees/analysis` — Analysis summary panel
 
 **Trigger:** "Analysis" tab.
 **UI:**
@@ -201,7 +201,7 @@ UI as an error dialog.
 **Missing required group (`/meta`):** raise `MalformedH5Error`.
 
 **Missing optional group:** silently skip the corresponding feature.
-Log at DEBUG level: "no /sections group; section panel disabled."
+Log at DEBUG level: "no /opensees/sections group; section panel disabled."
 
 **Type mismatch on cross-reference** (e.g. `material_ref` points at
 something that isn't a material group): log WARNING, skip the
@@ -219,10 +219,11 @@ specific record. Do not crash.
 - Variable-length string fields in compound datasets use
   `h5py.string_dtype(encoding="utf-8")`.
 - Compound dataset row ordering is meaningful where the matching
-  array (e.g. `/elements/{pg}/ids`) shares the same index.
-  Specifically: row `i` of `/transforms/{name}/per_element_vecxz`
-  corresponds to row `i` of `/elements/{pg}/ids` for the PG
-  referenced by `transf_ref`.
+  array (e.g. `/elements/{type}/ids`) shares the same index.
+  Specifically: row `i` of
+  `/opensees/transforms/{name}/per_element_vecxz` corresponds to
+  row `i` of `/elements/{type}/ids` for the element type that
+  references this transform.
 - All datasets that hold per-element data are 1-D or 2-D dense
   arrays. No ragged data.
 
@@ -239,7 +240,7 @@ The bridge team will ship the following fixture files under
 | `dome_spherical.h5` | Spherical CS on dome ribs |
 | `tank_cylindrical.h5` | Tank with ring beams + vertical stiffeners |
 | `incomplete.h5` | `/meta` + `/elements` only — viewer must show mesh, hide all enrichment panels |
-| `wrong_major.h5` | Schema major v2 — viewer must refuse |
+| `wrong_major.h5` | Schema major v3 — viewer must refuse |
 
 Each fixture has a sibling `.json` describing its expected viewer
 output (which panels populated, what counts) so the viewer team can
@@ -263,30 +264,33 @@ is the viewer team's call.
 
 The bridge team owns the schema. Schema bumps follow semver:
 
-- **Major** bump (1.x → 2.x): breaking. Coordinate with viewer team
-  ahead of time. Both teams ship paired releases.
-- **Minor** bump (1.0 → 1.1): additive. Viewer team gets a heads-up
+- **Major** bump (2.x → 3.x): breaking. Coordinate with viewer team
+  ahead of time. Both teams ship paired releases.  (Phase 8.4 was
+  the most recent major: `1.x.y → 2.0.0`, introducing the
+  `/opensees/` namespace.)
+- **Minor** bump (2.0 → 2.1): additive. Viewer team gets a heads-up
   but isn't required to update — old viewer reads new file with
   reduced functionality (the new groups go unused).
-- **Patch** bump (1.0.0 → 1.0.1): clarifications, doc-only. No
+- **Patch** bump (2.0.0 → 2.0.1): clarifications, doc-only. No
   reader changes.
 
-Schema additions over the v1.x lifetime that the viewer team should
+Schema additions over the v2.x lifetime that the viewer team should
 expect (each will land via minor bump, additive only):
 
-- `/recipes` — when the bridge supports recipes that produce more
-  than one primitive, recording the recipe used (so the viewer can
-  show "this section was generated by RectangularConfinedColumn(width=...)").
-- `/regions` — OpenSees regions (damping, recorders).
+- `/opensees/recipes` — when the bridge supports recipes that produce
+  more than one primitive, recording the recipe used (so the viewer
+  can show "this section was generated by
+  RectangularConfinedColumn(width=...)").
+- `/opensees/regions` — OpenSees regions (damping, recorders).
 - `/constraints/multi_point` — equal_dof, rigid_link records when the
   bridge promotes them from FEM-side records to first-class
-  primitives.
+  primitives.  Lives in the neutral zone (Phase 8.5).
 
 ## What the bridge team commits to
 
 1. Schema is authoritative — `h5-schema.md` is the spec; H5 files
    conform.
-2. Backward compatibility within v1.x.y.
+2. Backward compatibility within v2.x.y.
 3. Test fixtures will land before the viewer team starts work.
 4. Schema changes are announced via PRs that update both
    `h5-schema.md` and `viewer-integration.md` together.

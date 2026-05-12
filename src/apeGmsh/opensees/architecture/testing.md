@@ -237,23 +237,23 @@ Gated by `OPENSEES_BIN`. Skipped if not set.
 ## Layer 7 — H5 schema + viewer contract
 
 ```python
-# tests/opensees/h5/test_h5_schema_v1.py
+# tests/opensees/h5/test_h5_schema_compat.py
 def test_minimal_fixture_validates_against_schema():
     h5_path = _build_minimal()
-    _validate_schema_v1(h5_path)        # schema validator from bridge package
+    _validate_schema_compat(h5_path)    # schema validator from bridge package
 
 def test_viewer_required_groups_present():
     h5_path = _build_minimal()
     with h5py.File(h5_path) as f:
         assert "/meta" in f
-        assert int(f["/meta"].attrs["schema_version"].split(".")[0]) == 1
+        assert int(f["/meta"].attrs["schema_version"].split(".")[0]) == 2
 
 def test_viewer_optional_groups_handled_when_missing():
     h5_path = _build_incomplete()       # only /meta + /elements
     # Viewer SHOULD treat this as "show mesh, hide enrichment panels"
     # We test the producer side: bridge does not write missing groups
     with h5py.File(h5_path) as f:
-        assert "/sections" not in f
+        assert "/opensees/sections" not in f
 ```
 
 These are the test fixtures the viewer team will receive. They
