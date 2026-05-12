@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from .mesh.MeshSelectionSet import MeshSelectionSet
     from .mesh.Partition import Partition  # noqa: F401 (backward compat)
     from .mesh.View import View
-    from .solvers.OpenSees import OpenSees
     from .viz.Plot import Plot
 
 
@@ -50,7 +49,11 @@ class apeGmsh(_SessionBase):
         # ("partition",    ".mesh.Partition",             "Partition",             False),
         # ^ Removed: consolidated into g.mesh.partitioning
         ("view",            ".mesh.View",                  "View",                  False),
-        ("opensees",        ".solvers.OpenSees",           "OpenSees",              False),
+        # ("opensees", ".solvers.OpenSees", "OpenSees", False)
+        # ^ Removed in PR γ of the Phase-8 bridge teardown.  The
+        #   OpenSees deck is now constructed explicitly via
+        #   ``apeGmsh.opensees.apeSees(fem)``, where ``fem`` is the
+        #   FEMData snapshot from ``g.mesh.queries.get_fem_data(...)``.
         ("plot",            ".viz.Plot",                   "Plot",                  True),
     )
 
@@ -69,7 +72,7 @@ class apeGmsh(_SessionBase):
     mesh_selection: MeshSelectionSet
     # partition: Partition  # removed — use g.mesh.partitioning
     view: View
-    opensees: OpenSees
+    # opensees: removed in PR γ — use apeGmsh.opensees.apeSees(fem)
     plot: Plot
 
     def __init__(

@@ -1,35 +1,42 @@
-# OpenSees — `g.opensees`
+# OpenSees bridge
 
-OpenSees bridge composite. Six focused sub-composites + flat
-lifecycle methods.
+apeGmsh's OpenSees deck is constructed via the explicit-constructor
+pattern:
 
-## `g.opensees`
+```python
+fem = g.mesh.queries.get_fem_data(dim=3)
+from apeGmsh.opensees import apeSees
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=6)
+# … primitives, patterns, recorders, analysis chain …
+ops.tcl("model.tcl")     # or ops.py(...), ops.h5(...), ops.run()
+```
 
-::: apeGmsh.solvers.OpenSees.OpenSees
+The legacy ``g.opensees`` session attribute and its
+``OpenSees``-class sub-composites (``materials`` / ``elements`` /
+``ingest`` / ``inspect`` / ``export``) were removed in Phase 8 of
+the bridge teardown.  Migration patterns live in the EOS
+curriculum notebooks under ``examples/EOS Examples/curriculum/``.
 
-## Sub-composites
+## Public surface
 
-### `g.opensees.materials`
+::: apeGmsh.opensees.apeSees
 
-::: apeGmsh.solvers._opensees_materials._Materials
+## Coordinate-system helpers
 
-### `g.opensees.elements`
+Used as the ``csys=`` argument on the typed geom_transf primitives
+(``Linear`` / ``PDelta`` / ``Corotational``).
 
-::: apeGmsh.solvers._opensees_elements._Elements
+::: apeGmsh.opensees.Cartesian
 
-### `g.opensees.ingest`
+::: apeGmsh.opensees.Cylindrical
 
-::: apeGmsh.solvers._opensees_ingest._Ingest
+::: apeGmsh.opensees.Spherical
 
-### `g.opensees.inspect`
+## Recorders
 
-::: apeGmsh.solvers._opensees_inspect._Inspect
-
-### `g.opensees.export`
-
-::: apeGmsh.solvers._opensees_export._Export
-
-### `g.opensees.recorders`
+Standalone recorder declaration helper (canonical home moves in
+Phase 8.3b).
 
 ::: apeGmsh.solvers.Recorders.Recorders
 
