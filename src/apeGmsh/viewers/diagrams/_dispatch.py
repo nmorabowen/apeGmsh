@@ -45,12 +45,22 @@ Event matrix (mirrors the contract locked in PR review):
 | geometry_removed            | payload geom  |  -   |   ✓    |  ✓   |   ✓    |
 | geometry_renamed            | payload geom  |  -   |   -    |  -   |   ✓    |
 | composition_changed         | payload comp  |  -   |   -    |  ✓   |   ✓    |
+| element_visibility_changed  | payload pick  |  -   |   -    |  -   |   ✓    |
+| opacity_changed             | payload actor |  -   |   -    |  -   |   ✓    |
+| pick_mode_changed           | payload mode  |  -   |   -    |  -   |   -    |
 
 The granular ``geometry_*`` / ``composition_changed`` rows fire from
 ``GeometryManager.subscribe_typed`` / ``CompositionManager`` mutations
 with the relevant id as ``payload``. When one of them fires in the
 same notification chain as the omnibus ``geometries_changed``, the
 omnibus is suppressed — the granular row already runs the right pump.
+
+The Phase-3 ``element_visibility_changed`` / ``opacity_changed`` /
+``pick_mode_changed`` events run no pump. They exist to fan-out to
+RENDER-lane subscribers — cell-ghost flips, actor opacity updates,
+``SetPickable`` toggles. ``pick_mode_changed`` further skips the
+closing ``render()`` because pickability isn't visually observable
+(the next pick gesture sees the new flags).
 
 ``session_batch(...)`` is a context manager that suppresses every
 primitive in between, then runs one full pump on exit. Use it during
@@ -107,6 +117,18 @@ _GRANULAR_GEOMETRY_KINDS = frozenset({
     GEOMETRY_RENAMED,
     COMPOSITION_CHANGED,
 })
+
+# Lightweight events used by Phase 3 (interior-selection feature). The
+# matrix entries below run no pumps — these events exist solely to
+# fan-out to RENDER-lane subscribers (cell-ghost flips, actor opacity
+# updates, SetPickable toggles). PICK_MODE_CHANGED additionally skips
+# the closing render() because changing pickability isn't visually
+# observable; the next pick gesture sees the new flags.
+ELEMENT_VISIBILITY_CHANGED = "element_visibility_changed"
+OPACITY_CHANGED = "opacity_changed"
+PICK_MODE_CHANGED = "pick_mode_changed"
+
+_NO_RENDER_KINDS = frozenset({PICK_MODE_CHANGED})
 
 
 class Lane(str, Enum):
@@ -277,6 +299,12 @@ class Dispatcher:
             # active geometry — substrate is unchanged, visibility is
             # the only thing that needs recomputing.
             self._pump_gate()
+        elif kind == ELEMENT_VISIBILITY_CHANGED:
+            pass    # cell-ghost flip + render; no pump
+        elif kind == OPACITY_CHANGED:
+            pass    # actor opacity + render; no pump
+        elif kind == PICK_MODE_CHANGED:
+            pass    # SetPickable flip on RENDER lane; no render either
         elif kind == STAGE_CHANGED:
             # The director itself runs reattach_all + update_to_step
             # before firing this event; the dispatcher just refreshes
@@ -328,7 +356,8 @@ class Dispatcher:
             self._ui_flush_scheduled = True
             self._defer_fn(self._flush_ui_lane)
 
-        self._render()
+        if kind not in _NO_RENDER_KINDS:
+            self._render()
 
         dt_ms = (time.perf_counter() - t0) * 1000.0
         log_action(
