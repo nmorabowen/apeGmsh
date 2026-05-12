@@ -76,3 +76,8 @@ def test_apesees_h5_writes_valid_file(tmp_path: Path) -> None:
         # FEM snapshots that don't compute one).
         meta = model.meta()
         assert "snapshot_id" in meta
+        # Phase 8.6: bridge fan-out captured the FEM element id (=1 for
+        # the FEMStub's two-node beam) into
+        # /opensees/element_meta/forceBeamColumn/fem_eids.
+        em = model.element_meta_arrays("forceBeamColumn")
+        assert list(em["fem_eids"]) == [1]

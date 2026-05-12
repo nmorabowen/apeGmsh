@@ -414,7 +414,10 @@ def test_h5emitter_writes_element_meta_with_args(tmp_path) -> None:  # type: ign
 
     Connectivity is dropped from the args dataset (it's in the
     broker's `/elements/{gmsh_alias}/connectivity`); the bridge stores
-    only the parameter / cross-reference suffix.
+    only the parameter / cross-reference suffix.  Phase 8.6: also
+    verifies the `fem_eids` parallel array (here all sentinel `-1`
+    since the test drives `.element(...)` directly without a bridge
+    fan-out).
     """
     import h5py
     import numpy as np
@@ -429,9 +432,36 @@ def test_h5emitter_writes_element_meta_with_args(tmp_path) -> None:  # type: ign
         g = f["opensees/element_meta/forceBeamColumn"]
         assert g.attrs["type"] == "forceBeamColumn"
         np.testing.assert_array_equal(g["ids"][:], [10, 11])
+        # Phase 8.6: `fem_eids` parallel array.  No bridge fan-out
+        # set the side channel, so every entry is the sentinel.
+        np.testing.assert_array_equal(g["fem_eids"][:], [-1, -1])
         # After dropping the 2 connectivity ints, the tail is
         # (transf_tag, integration_tag) = (1, 1).
         np.testing.assert_array_equal(g["args"][:], [[1.0, 1.0], [1.0, 1.0]])
+
+
+def test_h5emitter_captures_fem_eid_from_side_channel(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """When the side channel is set, the writer stores the FEM id."""
+    import h5py
+    import numpy as np
+
+    from apeGmsh.opensees._internal.tag_resolution import (
+        set_current_fem_element_id,
+    )
+
+    e = H5Emitter()
+    set_element_nodes(e, (1, 2))
+    set_current_fem_element_id(e, 101)
+    e.element("forceBeamColumn", 10, 1, 2, 1, 1)
+    set_element_nodes(e, (2, 3))
+    set_current_fem_element_id(e, 102)
+    e.element("forceBeamColumn", 11, 2, 3, 1, 1)
+    out = tmp_path / "fem_eids.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        g = f["opensees/element_meta/forceBeamColumn"]
+        np.testing.assert_array_equal(g["ids"][:], [10, 11])
+        np.testing.assert_array_equal(g["fem_eids"][:], [101, 102])
 
 
 def test_h5emitter_write_time_series(tmp_path) -> None:  # type: ignore[no-untyped-def]

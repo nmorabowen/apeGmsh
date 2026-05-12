@@ -56,6 +56,7 @@ from ..transform import Corotational, Linear, PDelta
 from .tag_allocator import TagAllocator
 from .tag_resolution import (
     resolve_tag,
+    set_current_fem_element_id,
     set_element_nodes,
     set_tag_resolver,
 )
@@ -411,6 +412,10 @@ def emit_element_spec(
     for eid, node_tags in elements:
         ele_tag = tags.allocate("element")
         set_element_nodes(emitter, node_tags)
+        # Phase 8.6: pass the FEM element id through the side channel
+        # so the H5 emitter can record the (fem_eid, ops_tag) mapping
+        # under /opensees/element_meta/{type_token}/fem_eids.
+        set_current_fem_element_id(emitter, eid)
 
         if (
             transf_spec is not None

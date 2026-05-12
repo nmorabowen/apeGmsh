@@ -141,7 +141,7 @@ Attributes only.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `schema_version` | string | semver, e.g. `"2.1.0"` |
+| `schema_version` | string | semver, e.g. `"2.2.0"` |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
@@ -409,6 +409,9 @@ index to the broker's `/elements/{gmsh_alias}` keyed by GMSH alias.
 /opensees/element_meta/forceBeamColumn/
 ├── attrs: type="forceBeamColumn"
 ├── ids               (N,) int64                  — OpenSees element tags
+├── fem_eids          (N,) int64                  — FEM element ids (Phase 8.6;
+│                                                    -1 sentinel for records
+│                                                    emitted outside a bridge fan-out)
 ├── args              (N, max_tail) float64       — parameter tail (NaN at string slots)
 └── args_str          (N, max_tail) vlen-utf-8    — string tokens (present only
                                                     when any slot is a string)
@@ -425,6 +428,17 @@ broker owns geometry (`/elements/{gmsh_alias}` with ids +
 connectivity); bridge owns OpenSees-specific args
 (`/opensees/element_meta/{type_token}`).  The two are linked by
 element tag — both groups' `ids` datasets contain the same tags.
+
+Phase 8.6 added the `fem_eids` parallel array: the i-th entry is
+the FEM element id (`fem.elements.ids[i_fem]`) that the bridge's
+fan-out used to allocate the i-th OpenSees tag.  Together with the
+broker's `/elements/{gmsh_alias}/ids` this gives consumers a
+two-way mapping between FEM and OpenSees element identifiers — the
+"tag_map" the master plan placed under `/opensees/tag_map/`,
+embedded here next to the per-type metadata it concerns rather than
+duplicating the type-keying.  Records emitted outside a bridge
+fan-out (test scenarios that drive `.element(...)` directly) carry
+the sentinel `-1`.
 
 ## `/opensees/time_series`
 
@@ -558,7 +572,7 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
   ignore unknown groups.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
 
-The current schema version is **`2.1.0`**.
+The current schema version is **`2.2.0`**.
 
 History:
 
@@ -577,6 +591,14 @@ History:
   `/elements/{type_token}` shape to `/opensees/element_meta/{type_token}`
   so the broker can own root `/elements`.  Additive — old v2.0.0
   readers tolerate the absence of the new groups.
+- `2.2.0` — Phase 8.6: `fem_eids` int64 dataset added under each
+  `/opensees/element_meta/{type_token}/` group, parallel to `ids`.
+  Carries the FEM element id each OpenSees tag was fanned out from
+  (master plan §3 "tag_map", embedded with the per-type metadata
+  it concerns instead of duplicated under a standalone
+  `/opensees/tag_map/` index).  Sentinel `-1` marks records
+  emitted outside a bridge fan-out.  Additive — old v2.1.0 readers
+  ignore the new dataset.
 
 A reader skeleton:
 
@@ -603,7 +625,7 @@ no analysis settings:
 ```
 column.h5
 ├── /meta
-│   schema_version="2.1.0", ndm=3, ndf=6, snapshot_id="abc123"
+│   schema_version="2.2.0", ndm=3, ndf=6, snapshot_id="abc123"
 ├── /nodes
 │   ├── ids       [1, 2]
 │   └── coords    [[0,0,0], [0,0,1]]
@@ -632,8 +654,9 @@ column.h5
     │   └── per_element_emitted_tag (1,)   = [1]
     ├── /element_meta/forceBeamColumn/        ← bridge keying (OpenSees type)
     │   ├── attrs: type="forceBeamColumn"
-    │   ├── ids       [1]
-    │   └── args      [[1, 1]]                 — (transf_tag, integration_tag)
+    │   ├── ids        [1]
+    │   ├── fem_eids   [1]                      — Phase 8.6 mapping (broker's eid → ops_tag)
+    │   └── args       [[1, 1]]                 — (transf_tag, integration_tag)
     ├── /time_series/elcentro/
     │   ├── attrs: type="Path", factor=9.81, dt=0.01, file_path="elcentro.txt"
     │   ├── time       (n_steps,)  = [0.00, 0.01, 0.02, ...]

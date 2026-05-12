@@ -75,7 +75,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from .._internal.tag_resolution import ATTR_ELEMENT_NODES
+from .._internal.tag_resolution import (
+    ATTR_ELEMENT_NODES,
+    MISSING_FEM_ELEMENT_ID,
+    current_fem_element_id,
+)
 
 
 __all__ = ["H5Emitter", "SCHEMA_VERSION"]
@@ -100,7 +104,13 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     ``/masses``).  ``/elements`` writing handed from bridge to
 #:     broker; the bridge no longer emits this group.  Additive — old
 #:     v2.0.0 readers still work, they just don't see the new groups.
-SCHEMA_VERSION: str = "2.1.0"
+#:   * 2.2.0 — Phase 8.6: ``fem_eids`` int64 dataset added under each
+#:     ``/opensees/element_meta/{type_token}/`` group, parallel to
+#:     ``ids``.  Carries the FEM element id each OpenSees tag was
+#:     fanned out from (master plan §3 "tag_map").  Sentinel ``-1``
+#:     entries mark records emitted outside a bridge fan-out.
+#:     Additive — old v2.1.0 readers ignore the new dataset.
+SCHEMA_VERSION: str = "2.2.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -306,6 +316,7 @@ class _ElementRecord:
     tag: int
     args: tuple[int | float | str, ...]
     connectivity: tuple[int, ...]
+    fem_eid: int = MISSING_FEM_ELEMENT_ID
 
 
 @dataclass(slots=True)
@@ -595,11 +606,16 @@ class H5Emitter:
             # nodes). We don't try to be clever here; tests that need a
             # specific connectivity install set_element_nodes first.
             connectivity = tuple()
+        # Phase 8.6: capture the FEM element id from the side channel
+        # (sentinel ``-1`` when called outside a bridge fan-out — see
+        # `_internal/tag_resolution.MISSING_FEM_ELEMENT_ID`).
+        fem_eid = current_fem_element_id(self)
         self._elements.append(
             _ElementRecord(
                 type_token=ele_type, tag=int(tag),
                 args=tuple(args),
                 connectivity=tuple(int(c) for c in connectivity),
+                fem_eid=fem_eid,
             )
         )
 
@@ -1097,12 +1113,18 @@ class H5Emitter:
         connectivity), and the bridge owns the OpenSees-specific
         parameter tail (positional args, string flags,
         cross-references) under ``/opensees/element_meta/{type_token}/``.
+        Phase 8.6 added ``fem_eids`` parallel to ``ids`` so a consumer
+        can map an OpenSees tag back to its FEM element id.
 
         For each OpenSees element type token (``forceBeamColumn``,
         ``FourNodeTetrahedron``, …) seen during emit, this method
         creates one group with:
 
         * ``ids`` — int64 ``(N,)`` of OpenSees element tags.
+        * ``fem_eids`` — int64 ``(N,)`` of FEM element ids the
+          bridge fanned each OpenSees tag out from.  Entries are
+          ``-1`` (:data:`MISSING_FEM_ELEMENT_ID`) for records emitted
+          outside a bridge fan-out (test scenarios).
         * ``args`` — float64 ``(N, max_tail)`` of positional args
           after the connectivity prefix; NaN in slots that hold a
           string token.
@@ -1126,6 +1148,15 @@ class H5Emitter:
             g.create_dataset(
                 "ids",
                 data=np.asarray([r.tag for r in recs], dtype=np.int64),
+            )
+            # Phase 8.6: parallel array of FEM element ids — the
+            # (fem_eid, ops_tag) mapping the master plan put under
+            # `/opensees/tag_map/`.  Entries are
+            # `MISSING_FEM_ELEMENT_ID` (`-1`) for records emitted
+            # outside a bridge fan-out (e.g. standalone test calls).
+            g.create_dataset(
+                "fem_eids",
+                data=np.asarray([r.fem_eid for r in recs], dtype=np.int64),
             )
             self._write_element_argstack(g, recs)
 

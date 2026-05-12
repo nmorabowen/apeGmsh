@@ -152,6 +152,15 @@ matching row, then expose the parameter tail (`args` /
 `args_str`) plus cross-refs (`transf_ref`, `section_ref`,
 `integration_ref`) for the clicked element.
 
+Phase 8.6 added a `fem_eids` parallel array alongside `ids`: row
+`i`'s `fem_eids[i]` is the FEM element id (broker's `ids[i_fem]`)
+that the bridge fanned the OpenSees tag `ids[i]` out from.  This
+gives the viewer a round-trip: from an OpenSees tag in MPCO recorder
+output, look up the matching `fem_eid` and highlight the broker-side
+geometry without an external mapping table.  Sentinel value `-1`
+marks records emitted outside a bridge fan-out (rare; only happens
+in standalone H5Emitter test cases).
+
 **Note:** today the viewer already has CSys overlays through the
 diagram path (`viewers/diagrams/_beam_geometry.py`). This H5
 read replaces the live-bridge dependency that overlay had — the
@@ -308,12 +317,15 @@ follow semver:
   major: `1.x.y → 2.0.0`, introducing the `/opensees/` namespace.)
 - **Minor** bump (2.0 → 2.1): additive. Viewer team gets a heads-up
   but isn't required to update — old viewer reads new file with
-  reduced functionality (the new groups go unused).  Phase 8.5
-  was the most recent minor: `2.0.0 → 2.1.0`, adding the broker
-  neutral zone (`/nodes`, `/elements/{gmsh_alias}`,
-  `/physical_groups`, `/labels`, `/constraints/{kind}`,
-  `/loads/{kind}/{pattern}`, `/masses`).  Pre-8.5 v2.0.0 viewers
-  ignore the new groups and still see `/opensees/...`.
+  reduced functionality (the new groups go unused).  Recent minors:
+  - `2.0.0 → 2.1.0` (Phase 8.5) — broker neutral zone (`/nodes`,
+    `/elements/{gmsh_alias}`, `/physical_groups`, `/labels`,
+    `/constraints/{kind}`, `/loads/{kind}/{pattern}`, `/masses`).
+  - `2.1.0 → 2.2.0` (Phase 8.6) — `fem_eids` int64 dataset under
+    each `/opensees/element_meta/{type_token}/`, mapping each
+    OpenSees element tag to its source FEM element id.  Pre-8.6
+    viewers ignore the new dataset and lose only the round-trip
+    convenience.
 - **Patch** bump (2.0.0 → 2.0.1): clarifications, doc-only. No
   reader changes.
 
