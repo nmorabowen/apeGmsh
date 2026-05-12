@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING, Optional
 from ..spec._emit import emit_logical, to_ops_args
 
 if TYPE_CHECKING:
-    from ...solvers._recorder_specs import ResolvedRecorderSpec
+    from ..spec._resolved import ResolvedRecorderSpec
 
 
 # Categories the live recorder path can emit today.

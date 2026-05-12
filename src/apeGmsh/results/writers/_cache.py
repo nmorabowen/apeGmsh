@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
-    from ...solvers._recorder_specs import ResolvedRecorderSpec
+    from ..spec._resolved import ResolvedRecorderSpec
 
 
 _DEFAULT_CACHE_DIR_NAME = "results"

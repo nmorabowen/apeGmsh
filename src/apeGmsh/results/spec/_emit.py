@@ -41,7 +41,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from ...solvers._recorder_specs import ResolvedRecorderRecord
+from ._resolved import ResolvedRecorderRecord
 
 
 # =====================================================================

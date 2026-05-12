@@ -59,7 +59,7 @@ from ..results._vocabulary import (
     expand_many,
     is_canonical,
 )
-from ._recorder_specs import (
+from ..results.spec._resolved import (
     ALL_CATEGORIES,
     LayerSectionDef,
     LayerSectionMetadata,

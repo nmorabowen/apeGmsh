@@ -68,7 +68,7 @@ from . import _txt
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
-    from ...solvers._recorder_specs import (
+    from ..spec._resolved import (
         ResolvedRecorderRecord,
         ResolvedRecorderSpec,
     )
