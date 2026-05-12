@@ -1946,6 +1946,11 @@ class ResultsViewer:
         try:
             from .ui._time_history import TimeHistoryPanel
             panel = TimeHistoryPanel(self._director, node_id, component)
+            # Migrate the panel's step / stage subscriptions onto the
+            # dispatcher's UI lane so rapid scrubber drags collapse to
+            # one marker redraw per Qt tick.
+            if self._dispatcher is not None:
+                panel.attach_dispatcher(self._dispatcher)
         except Exception as exc:
             from ._failures import report
             report("ResultsViewer._open_time_history", exc)

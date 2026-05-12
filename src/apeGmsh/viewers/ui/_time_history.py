@@ -7,7 +7,7 @@ step" marker on the chart — the underlying data doesn't refetch.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import numpy as np
 
@@ -73,9 +73,16 @@ class TimeHistoryPanel:
         self._time: "Optional[ndarray]" = None
         self._values: "Optional[ndarray]" = None
 
-        self._unsub_step = director.subscribe_step(self._on_step)
-        self._unsub_stage = director.subscribe_stage(
-            lambda _id: self.refresh()
+        # Step / stage subscriptions. ``attach_dispatcher`` (called by
+        # ResultsViewer right after panel construction, when the
+        # dispatcher exists) swaps these for UI-lane coalesced
+        # dispatcher subs so a rapid scrubber drag fires one marker
+        # redraw per Qt tick instead of one per slider tick.
+        self._unsub_step: Optional[Callable[[], None]] = (
+            director.subscribe_step(self._on_step)
+        )
+        self._unsub_stage: Optional[Callable[[], None]] = (
+            director.subscribe_stage(lambda _id: self.refresh())
         )
 
         self.refresh()
@@ -90,10 +97,58 @@ class TimeHistoryPanel:
 
     def close(self) -> None:
         for unsub in (self._unsub_step, self._unsub_stage):
+            if unsub is None:
+                continue
             try:
                 unsub()
             except Exception:
                 pass
+
+    def attach_dispatcher(self, dispatcher: Any) -> None:
+        """Migrate the step + stage subscriptions onto the dispatcher.
+
+        Called by :class:`ResultsViewer._open_time_history` right after
+        the panel is constructed. Replaces the raw
+        ``director.subscribe_step`` / ``subscribe_stage`` wiring with
+        UI-lane coalesced ``dispatcher.subscribe`` calls so a rapid
+        time-scrubber drag collapses to one marker redraw + (at most
+        one) stage refresh per Qt tick.
+
+        Same pattern as :class:`OutlineTree` / :class:`PickReadoutHUD`:
+        legacy unsub fires before the new subscribe, idempotent on
+        repeated calls, None dispatcher is a no-op.
+        """
+        if dispatcher is None:
+            return
+        from ..diagrams._dispatch import (
+            Lane,
+            STAGE_CHANGED,
+            STEP_CHANGED,
+        )
+        if self._unsub_step is not None:
+            try:
+                self._unsub_step()
+            except Exception:
+                pass
+            self._unsub_step = None
+        if self._unsub_stage is not None:
+            try:
+                self._unsub_stage()
+            except Exception:
+                pass
+            self._unsub_stage = None
+        self._unsub_step = dispatcher.subscribe(
+            STEP_CHANGED,
+            lambda _kind, _payload: self._on_step(0),
+            lane=Lane.UI,
+            coalesce=True,
+        )
+        self._unsub_stage = dispatcher.subscribe(
+            STAGE_CHANGED,
+            lambda _kind, _payload: self.refresh(),
+            lane=Lane.UI,
+            coalesce=True,
+        )
 
     def refresh(self) -> None:
         """Re-fetch the history (e.g., after a stage change)."""
