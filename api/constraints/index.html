@@ -9336,11 +9336,11 @@ quad4, tri6, quad8 supported). This is what Abaqus
 <code>*TIE</code> does — it preserves displacement continuity across
 non-matching meshes.</p>
 <p>Resolution emits one
-:class:<code>~apeGmsh.solvers.Constraints.InterpolationRecord</code>
-per successfully projected slave node. apeGmsh emits these
-downstream as <code>ASDEmbeddedNodeElement</code> penalty elements
-(default K = 1e18; tunable via
-<code>g.opensees.ingest.constraints(fem, tie_penalty=…)</code>).</p>
+:class:<code>~apeGmsh.mesh.records.InterpolationRecord</code> per
+successfully projected slave node. Downstream the apeGmsh
+OpenSees bridge emits these as <code>ASDEmbeddedNodeElement</code>
+penalty elements (default K = 1e18; tunable on the bridge
+ingest API).</p>
 <h6 id="apeGmsh.core.ConstraintsComposite.ConstraintsComposite.tie--parameters">Parameters<a class="headerlink" href="#apeGmsh.core.ConstraintsComposite.ConstraintsComposite.tie--parameters" title="Permanent link">&para;</a></h6>
 <p>master_label : str
     Part label of the master surface (the side whose mesh
@@ -9503,11 +9503,11 @@ mortar : Higher-accuracy variant via Lagrange multipliers.</p>
 </span><span id="__span-0-632"><a id="__codelineno-0-632" name="__codelineno-0-632"></a><span class="sd">    non-matching meshes.</span>
 </span><span id="__span-0-633"><a id="__codelineno-0-633" name="__codelineno-0-633"></a>
 </span><span id="__span-0-634"><a id="__codelineno-0-634" name="__codelineno-0-634"></a><span class="sd">    Resolution emits one</span>
-</span><span id="__span-0-635"><a id="__codelineno-0-635" name="__codelineno-0-635"></a><span class="sd">    :class:`~apeGmsh.solvers.Constraints.InterpolationRecord`</span>
-</span><span id="__span-0-636"><a id="__codelineno-0-636" name="__codelineno-0-636"></a><span class="sd">    per successfully projected slave node. apeGmsh emits these</span>
-</span><span id="__span-0-637"><a id="__codelineno-0-637" name="__codelineno-0-637"></a><span class="sd">    downstream as ``ASDEmbeddedNodeElement`` penalty elements</span>
-</span><span id="__span-0-638"><a id="__codelineno-0-638" name="__codelineno-0-638"></a><span class="sd">    (default K = 1e18; tunable via</span>
-</span><span id="__span-0-639"><a id="__codelineno-0-639" name="__codelineno-0-639"></a><span class="sd">    ``g.opensees.ingest.constraints(fem, tie_penalty=…)``).</span>
+</span><span id="__span-0-635"><a id="__codelineno-0-635" name="__codelineno-0-635"></a><span class="sd">    :class:`~apeGmsh.mesh.records.InterpolationRecord` per</span>
+</span><span id="__span-0-636"><a id="__codelineno-0-636" name="__codelineno-0-636"></a><span class="sd">    successfully projected slave node. Downstream the apeGmsh</span>
+</span><span id="__span-0-637"><a id="__codelineno-0-637" name="__codelineno-0-637"></a><span class="sd">    OpenSees bridge emits these as ``ASDEmbeddedNodeElement``</span>
+</span><span id="__span-0-638"><a id="__codelineno-0-638" name="__codelineno-0-638"></a><span class="sd">    penalty elements (default K = 1e18; tunable on the bridge</span>
+</span><span id="__span-0-639"><a id="__codelineno-0-639" name="__codelineno-0-639"></a><span class="sd">    ingest API).</span>
 </span><span id="__span-0-640"><a id="__codelineno-0-640" name="__codelineno-0-640"></a>
 </span><span id="__span-0-641"><a id="__codelineno-0-641" name="__codelineno-0-641"></a><span class="sd">    Parameters</span>
 </span><span id="__span-0-642"><a id="__codelineno-0-642" name="__codelineno-0-642"></a><span class="sd">    ----------</span>
