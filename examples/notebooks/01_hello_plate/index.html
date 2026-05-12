@@ -4901,6 +4901,7 @@ $$</p>
 <span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.solvers.Recorders</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>   <span class="c1"># canonical home moves in Phase 8.3b</span>
 
 <span class="c1"># Geometry / loading (consistent units: m, Pa, N)</span>
 <span class="n">L</span>     <span class="o">=</span> <span class="mf">1.0</span>
@@ -4921,6 +4922,7 @@ import numpy as np
 import openseespy.opensees as ops
 
 from apeGmsh import apeGmsh, Results
+from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
 
 # Geometry / loading (consistent units: m, Pa, N)
 L     = 1.0
@@ -5243,9 +5245,9 @@ plot deformed shapes and post-filter by location.</li>
 <li><code>reaction_force</code> on <code>pg="left"</code> — targeted, because reactions only
 matter on the fixed boundary.</li>
 </ul>
-<p>Selectors mirror the rest of the library; <code>g.opensees.set_model(ndm, ndf)</code>
-is the apeGmsh-side parallel of <code>ops.model(...)</code> — it tells the resolver
-the DOF space.</p>
+<p>Selectors mirror the rest of the library; we instantiate a <code>Recorders()</code>
+directly and pass <code>ndm</code> / <code>ndf</code> straight to <code>resolve(...)</code> so the resolver
+knows the DOF space.</p>
 </div>
 </div>
 </div>
@@ -5268,28 +5270,28 @@ the DOF space.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">set_model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">recorders</span> <span class="o">=</span> <span class="n">Recorders</span><span class="p">()</span>
 
-<span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
+<span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
     <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">"u_all"</span><span class="p">,</span>   <span class="c1"># all nodes</span>
 <span class="p">)</span>
-<span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
+<span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
     <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"reaction_force"</span><span class="p">],</span> <span class="n">pg</span><span class="o">=</span><span class="s2">"left"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"R_left"</span><span class="p">,</span>
 <span class="p">)</span>
 
-<span class="n">spec</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">spec</span> <span class="o">=</span> <span class="n">recorders</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">g.opensees.set_model(ndm=2, ndf=2)
+<div class="clipboard-copy-txt" id="cell-6">recorders = Recorders()
 
-g.opensees.recorders.nodes(
+recorders.nodes(
     components=["displacement"], name="u_all",   # all nodes
 )
-g.opensees.recorders.nodes(
+recorders.nodes(
     components=["reaction_force"], pg="left", name="R_left",
 )
 
-spec = g.opensees.recorders.resolve(fem, ndm=2, ndf=2)
+spec = recorders.resolve(fem, ndm=2, ndf=2)
 print(spec)</div>
 </div>
 </div>

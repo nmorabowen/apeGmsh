@@ -4928,6 +4928,7 @@ more correct, and the discrepancy is the lesson (see Section 8.5).</li>
 <span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.solvers.Recorders</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>   <span class="c1"># canonical home moves in Phase 8.3b</span>
 
 <span class="c1"># Geometry / load (consistent units: m, Pa, N)</span>
 <span class="n">h</span> <span class="o">=</span> <span class="mf">3.0</span>          <span class="c1"># column height</span>
@@ -4958,6 +4959,7 @@ import numpy as np
 import openseespy.opensees as ops
 
 from apeGmsh import apeGmsh, Results
+from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
 
 # Geometry / load (consistent units: m, Pa, N)
 h = 3.0          # column height
@@ -5305,28 +5307,28 @@ for n in fem.nodes.get(target="top_left").ids:
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">set_model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">recorders</span> <span class="o">=</span> <span class="n">Recorders</span><span class="p">()</span>
 
-<span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
+<span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
     <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">"u_all"</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
+<span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
     <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"reaction"</span><span class="p">],</span> <span class="n">pg</span><span class="o">=</span><span class="s2">"bases"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"R_bases"</span><span class="p">,</span>
 <span class="p">)</span>
 
-<span class="n">spec</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
+<span class="n">spec</span> <span class="o">=</span> <span class="n">recorders</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-6">g.opensees.set_model(ndm=3, ndf=6)
+<div class="clipboard-copy-txt" id="cell-6">recorders = Recorders()
 
-g.opensees.recorders.nodes(
+recorders.nodes(
     components=["displacement"], name="u_all",
 )
-g.opensees.recorders.nodes(
+recorders.nodes(
     components=["reaction"], pg="bases", name="R_bases",
 )
 
-spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=6)
+spec = recorders.resolve(fem, ndm=3, ndf=6)
 print(spec)</div>
 </div>
 </div>
