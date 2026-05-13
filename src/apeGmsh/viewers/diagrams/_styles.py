@@ -408,6 +408,12 @@ class SectionCutStyle(DiagramStyle):
     show_edges: bool = True
     show_normal_arrow: bool = True
     normal_arrow_fraction: float = 0.05
+    # Filter-highlight controls — drawn as a separate cell-extracted
+    # overlay actor when ``show_filter_initially`` is True or
+    # ``SectionCutDiagram.set_show_filter(True)`` is called at runtime.
+    highlight_color: str = "#FFC107"      # amber
+    highlight_opacity: float = 0.85
+    show_filter_initially: bool = False
 
 
 @dataclass(frozen=True)

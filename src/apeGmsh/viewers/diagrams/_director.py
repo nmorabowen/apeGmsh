@@ -294,6 +294,9 @@ class ResultsDirector:
                 show_edges=style.show_edges,
                 show_normal_arrow=style.show_normal_arrow,
                 normal_arrow_fraction=style.normal_arrow_fraction,
+                highlight_color=style.highlight_color,
+                highlight_opacity=style.highlight_opacity,
+                show_filter_initially=style.show_filter_initially,
             )
 
         layer_label = label if label is not None else (cut.label or "section cut")

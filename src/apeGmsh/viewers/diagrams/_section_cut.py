@@ -78,9 +78,14 @@ class SectionCutDiagram(Diagram):
         self._quad_polydata: Optional[pv.PolyData] = None
         self._quad_actor: Any = None
         self._arrow_actor: Any = None
-        # FEM element ids the cut filter resolves to — cached for
-        # Phase 1b filter highlight. Not used by the quad itself.
+        # FEM element ids the cut filter resolves to — cached for the
+        # filter highlight overlay. Cached at attach so the toggle is
+        # a single extract_cells call.
         self._filter_fem_eids: "Optional[ndarray]" = None
+        self._filter_highlight_actor: Any = None
+        # Runtime state for the highlight toggle — bootstraps from
+        # ``style.show_filter_initially`` at attach.
+        self._show_filter: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -147,6 +152,12 @@ class SectionCutDiagram(Diagram):
             actors.append(self._arrow_actor)
         self._actors = actors
 
+        # Bootstrap the filter highlight from the style's initial flag.
+        # Done after the main actor list is populated so the toggle's
+        # add-actor call lands in a stable state.
+        if style.show_filter_initially:
+            self.set_show_filter(True)
+
     def update_to_step(self, step_index: int) -> None:
         # Cuts are static — no per-step refresh. Decision D6.
         return
@@ -161,11 +172,116 @@ class SectionCutDiagram(Diagram):
         return
 
     def detach(self) -> None:
+        self._remove_filter_highlight_actor()
         self._quad_polydata = None
         self._quad_actor = None
         self._arrow_actor = None
         self._filter_fem_eids = None
+        self._show_filter = False
         super().detach()
+
+    # ------------------------------------------------------------------
+    # Filter highlight (runtime toggle — Phase 1b)
+    # ------------------------------------------------------------------
+
+    def set_show_filter(self, show: bool) -> None:
+        """Toggle the filter-elements highlight overlay.
+
+        Builds a uniform-color actor over the substrate cells that the
+        cut's element filter resolves to, so the user can see which
+        elements the integration will sweep. Cheap to toggle — the
+        overlay reuses cached FEM eids resolved at attach.
+
+        No-op when called before attach or after detach.
+        """
+        new = bool(show)
+        if new == self._show_filter:
+            return
+        self._show_filter = new
+        if not self._attached:
+            return
+        if new:
+            self._add_filter_highlight_actor()
+        else:
+            self._remove_filter_highlight_actor()
+
+    @property
+    def show_filter(self) -> bool:
+        """Whether the filter-highlight overlay is currently visible."""
+        return self._show_filter
+
+    @property
+    def filter_highlight_actor(self) -> Any:
+        return self._filter_highlight_actor
+
+    def _add_filter_highlight_actor(self) -> None:
+        """Build and add the filter-highlight actor.
+
+        Walks ``scene.element_id_to_cell`` to translate cached FEM
+        eids into substrate cell indices, then extracts those cells
+        into a uniform-color submesh. Silent no-op if any required
+        state is missing — the toggle stays "on" so a later attach
+        cycle can pick it up.
+        """
+        if (
+            self._plotter is None
+            or self._scene is None
+            or self._filter_fem_eids is None
+            or self._filter_fem_eids.size == 0
+        ):
+            return
+        if self._filter_highlight_actor is not None:
+            return     # already present
+        scene = self._scene
+        cell_indices = np.fromiter(
+            (
+                scene.element_id_to_cell.get(int(e), -1)
+                for e in self._filter_fem_eids
+            ),
+            dtype=np.int64,
+            count=int(self._filter_fem_eids.size),
+        )
+        cell_indices = cell_indices[cell_indices >= 0]
+        if cell_indices.size == 0:
+            return
+        # pyvista's extract_cells stub wants Sequence[int] / int-dtyped
+        # ndarray; .tolist() keeps the type-checker happy across pyvista
+        # versions without changing runtime semantics.
+        submesh = scene.grid.extract_cells(cell_indices.tolist())
+        if submesh.n_cells == 0:
+            return
+        style: SectionCutStyle = self.spec.style    # type: ignore[assignment]
+        actor = self._plotter.add_mesh(
+            submesh,
+            color=style.highlight_color,
+            opacity=style.highlight_opacity,
+            show_edges=False,
+            name=self._highlight_actor_name(),
+            reset_camera=False,
+            pickable=False,
+            show_scalar_bar=False,
+            lighting=True,
+        )
+        self._filter_highlight_actor = actor
+        self._actors.append(actor)
+
+    def _remove_filter_highlight_actor(self) -> None:
+        if self._filter_highlight_actor is None:
+            return
+        actor = self._filter_highlight_actor
+        if self._plotter is not None:
+            try:
+                self._plotter.remove_actor(actor)
+            except Exception:
+                pass
+        try:
+            self._actors.remove(actor)
+        except ValueError:
+            pass
+        self._filter_highlight_actor = None
+
+    def _highlight_actor_name(self) -> str:
+        return f"diagram_section_cut_highlight_{id(self):x}"
 
     # ------------------------------------------------------------------
     # Introspection (used by Phase 1b filter highlight + tests)

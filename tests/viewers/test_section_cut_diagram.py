@@ -385,6 +385,127 @@ def test_director_add_section_cut_routes_to_active_geometry(cube_results):
     assert diagram in section_comp.layers
 
 
+# ---------------------------------------------------------------------
+# Phase 1b — filter highlight toggle
+# ---------------------------------------------------------------------
+
+def test_show_filter_default_off(cube_results, headless_plotter):
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.attach(headless_plotter, fem, scene)
+    assert diagram.show_filter is False
+    assert diagram.filter_highlight_actor is None
+
+
+def test_set_show_filter_on_adds_actor(cube_results, headless_plotter):
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.attach(headless_plotter, fem, scene)
+    diagram.set_show_filter(True)
+    assert diagram.show_filter is True
+    assert diagram.filter_highlight_actor is not None
+    # Actor is registered with the parent registry, so detach cleans it.
+    assert diagram.filter_highlight_actor in diagram._actors
+
+
+def test_set_show_filter_off_removes_actor(cube_results, headless_plotter):
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.attach(headless_plotter, fem, scene)
+    diagram.set_show_filter(True)
+    diagram.set_show_filter(False)
+    assert diagram.show_filter is False
+    assert diagram.filter_highlight_actor is None
+
+
+def test_set_show_filter_idempotent(cube_results, headless_plotter):
+    """Toggling on twice doesn't double up actors."""
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.attach(headless_plotter, fem, scene)
+    diagram.set_show_filter(True)
+    first_actor = diagram.filter_highlight_actor
+    diagram.set_show_filter(True)    # no-op
+    assert diagram.filter_highlight_actor is first_actor
+
+
+def test_show_filter_initially_bootstraps_at_attach(
+    cube_results, headless_plotter,
+):
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    cut = _make_cut(with_bounding=True)
+    style = SectionCutStyle(cut=cut, show_filter_initially=True)
+    spec = DiagramSpec(
+        kind="section_cut",
+        selector=SlabSelector(component="cube mid-cut"),
+        style=style,
+    )
+    diagram = SectionCutDiagram(spec, results, tag_map=tag_map)
+    diagram.attach(headless_plotter, fem, scene)
+    assert diagram.show_filter is True
+    assert diagram.filter_highlight_actor is not None
+
+
+def test_set_show_filter_before_attach_is_remembered(
+    cube_results, headless_plotter,
+):
+    """Toggle on before attach → flag persists; attach() doesn't act on
+    it (only ``show_filter_initially`` does), but a subsequent on/off
+    round-trip works."""
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.set_show_filter(True)
+    assert diagram.show_filter is True
+    assert diagram.filter_highlight_actor is None     # not attached yet
+    # Attach the diagram. The runtime flag stays True but the highlight
+    # is not auto-built from set_show_filter — only show_filter_initially
+    # bootstraps. The toggle still works after attach.
+    diagram.attach(headless_plotter, fem, scene)
+    diagram.set_show_filter(False)
+    diagram.set_show_filter(True)
+    assert diagram.filter_highlight_actor is not None
+
+
+def test_detach_clears_filter_highlight(cube_results, headless_plotter):
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    tag_map = FemToOpsTagMap.from_h5(h5)
+    diagram = SectionCutDiagram(
+        _spec(_make_cut(with_bounding=True)), results, tag_map=tag_map,
+    )
+    diagram.attach(headless_plotter, fem, scene)
+    diagram.set_show_filter(True)
+    diagram.detach()
+    assert diagram.filter_highlight_actor is None
+    assert diagram.show_filter is False
+
+
+# ---------------------------------------------------------------------
+# Director — sweep fan-out
+# ---------------------------------------------------------------------
+
 def test_director_add_section_cut_sweep_fans_out(cube_results):
     from apeGmsh.viewers.diagrams import ResultsDirector
     results, fem, h5, _ = cube_results
