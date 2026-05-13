@@ -28,7 +28,14 @@ from ..diagrams._styles import (
 from ..diagrams._vector_glyph import VectorGlyphDiagram
 
 if TYPE_CHECKING:
+    from apeGmsh.cuts import (
+        PreflightReport, SectionCutDef, SectionSweepDef,
+    )
+
     from ..diagrams._director import ResultsDirector
+
+
+SECTION_CUT_KIND_ID = "section_cut"
 
 
 def _qt():
@@ -173,6 +180,17 @@ _KINDS: list[_KindEntry] = [
         diagram_class=ReactionsDiagram,
         style_factory=_reactions_default_style,
     ),
+    # Section cuts are a different shape (no stage / component / selector
+    # / preset / topology — just a loaded def). The OK handler branches
+    # on this kind_id; ``diagram_class`` / ``style_factory`` are not used
+    # along that branch but kept non-None so iteration in
+    # ``_compute_kinds_without_data`` and elsewhere doesn't NPE.
+    _KindEntry(
+        label="Section cut",
+        kind_id=SECTION_CUT_KIND_ID,
+        diagram_class=object,
+        style_factory=lambda _c: None,
+    ),
 ]
 
 
@@ -184,9 +202,13 @@ def kinds_available() -> list[_KindEntry]:
 # Maps each diagram kind to the Results-composite path whose
 # ``available_components()`` should populate the Component combo.
 # Derived from the subclass-level ``topology`` attribute so the dialog
-# and the diagram cannot drift apart.
+# and the diagram cannot drift apart. Kinds without a ``topology``
+# attribute (e.g. ``section_cut`` — no Results-composite to enumerate)
+# are absent from the map and skipped by every consumer.
 _KIND_TO_TOPOLOGY: dict[str, str] = {
-    entry.kind_id: entry.diagram_class.topology for entry in _KINDS
+    entry.kind_id: getattr(entry.diagram_class, "topology")
+    for entry in _KINDS
+    if getattr(entry.diagram_class, "topology", None) is not None
 }
 
 
@@ -356,6 +378,73 @@ class AddDiagramDialog:
         self._selector_name.setPlaceholderText("(unused for All)")
         form.addRow("Selector name:", self._selector_name)
 
+        # ===== Section-cut rows (visible only when kind = section_cut) =====
+        # Loaded state — populated by the file picker / textChanged.
+        # ``_cut_loaded`` is either None, a ``SectionCutDef``, or a
+        # ``SectionSweepDef``; the OK handler branches on type.
+        self._cut_loaded: "SectionCutDef | SectionSweepDef | None" = None
+        self._cut_load_error: Optional[str] = None
+
+        self._cut_file_edit = QtWidgets.QLineEdit()
+        self._cut_file_edit.setPlaceholderText(
+            "/path/to/cut.pkl or .pkl.gz"
+        )
+        self._cut_file_edit.setToolTip(
+            "Pickled SectionCutDef or SectionSweepDef "
+            "(.pkl or .pkl.gz)."
+        )
+        self._cut_file_browse = QtWidgets.QPushButton("Browse…")
+        self._cut_file_browse.clicked.connect(self._on_cut_file_browse)
+        self._cut_file_edit.textChanged.connect(
+            self._on_cut_file_text_changed,
+        )
+        self._cut_file_row = self._make_path_row(
+            self._cut_file_edit, self._cut_file_browse,
+        )
+        form.addRow("File:", self._cut_file_row)
+
+        self._cut_model_h5_edit = QtWidgets.QLineEdit()
+        prefill = director.model_h5
+        if prefill is not None:
+            self._cut_model_h5_edit.setText(str(prefill))
+        self._cut_model_h5_edit.setPlaceholderText(
+            "/path/to/model.h5 (defaults to viewer's bound model.h5)"
+        )
+        self._cut_model_h5_edit.setToolTip(
+            "Phase 8.6+ model.h5 carrying the FEM↔OpenSees-tag bridge "
+            "the cut was built against."
+        )
+        self._cut_model_h5_browse = QtWidgets.QPushButton("Browse…")
+        self._cut_model_h5_browse.clicked.connect(
+            self._on_cut_model_h5_browse,
+        )
+        self._cut_model_h5_edit.textChanged.connect(
+            self._on_cut_model_h5_text_changed,
+        )
+        self._cut_model_h5_row = self._make_path_row(
+            self._cut_model_h5_edit, self._cut_model_h5_browse,
+        )
+        form.addRow("Model.h5:", self._cut_model_h5_row)
+
+        # Preflight status — colored dot + short label
+        self._cut_preflight_status = QtWidgets.QLabel(
+            "(load a file to preflight)"
+        )
+        self._cut_preflight_status.setTextFormat(QtCore.Qt.RichText)
+        form.addRow("Preflight:", self._cut_preflight_status)
+
+        # Preflight full report — multi-line, monospaced
+        self._cut_preflight_summary = QtWidgets.QPlainTextEdit()
+        self._cut_preflight_summary.setReadOnly(True)
+        self._cut_preflight_summary.setFixedHeight(130)
+        self._cut_preflight_summary.setStyleSheet(
+            "font-family: Consolas, 'Courier New', monospace; "
+            "font-size: 9pt;"
+        )
+        form.addRow("", self._cut_preflight_summary)
+        # Track the form for later row-show/hide via ``labelForField``.
+        self._form = form
+
         # Optional label override
         self._label_edit = QtWidgets.QLineEdit()
         self._label_edit.setPlaceholderText("(optional)")
@@ -369,6 +458,7 @@ class AddDiagramDialog:
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
         form.addRow(bb)
+        self._ok_button = bb.button(QtWidgets.QDialogButtonBox.Ok)
 
         # Pre-select the requested kind (used by the inline 2×4 picker
         # in OutlineTree which jumps straight from "click kind" to the
@@ -381,9 +471,11 @@ class AddDiagramDialog:
                     break
 
         # Initial visibility + component list for the default kind.
+        self._update_section_cut_visibility()
         self._update_topology_row_visibility()
         self._update_averaging_row_visibility()
         self._populate_components()
+        self._update_ok_enabled()
 
     # ------------------------------------------------------------------
     # Pre-flight: which kinds have no recorded data anywhere?
@@ -448,10 +540,12 @@ class AddDiagramDialog:
     # ------------------------------------------------------------------
 
     def _on_kind_changed(self, *_args: Any) -> None:
+        self._update_section_cut_visibility()
         self._update_topology_row_visibility()
         self._update_averaging_row_visibility()
         self._populate_components()
         self._populate_presets()
+        self._update_ok_enabled()
 
     def _populate_presets(self) -> None:
         """Refresh the Preset combo against the current kind.
@@ -622,6 +716,250 @@ class AddDiagramDialog:
             self._selector_name.setPlaceholderText("Label name")
 
     # ------------------------------------------------------------------
+    # Section-cut layout + handlers
+    # ------------------------------------------------------------------
+
+    def _make_path_row(self, line_edit: Any, browse_button: Any) -> Any:
+        """Pack a QLineEdit + Browse button into a horizontal container."""
+        QtWidgets, _ = _qt()
+        container = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(container)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(line_edit, 1)
+        h.addWidget(browse_button, 0)
+        return container
+
+    def _set_row_visible(self, field_widget: Any, visible: bool) -> None:
+        """Hide or show a QFormLayout row by toggling label + field."""
+        label = self._form.labelForField(field_widget)
+        if label is not None:
+            label.setVisible(visible)
+        field_widget.setVisible(visible)
+
+    def _is_section_cut_kind(self) -> bool:
+        entry = self._kind_combo.currentData()
+        return entry is not None and entry.kind_id == SECTION_CUT_KIND_ID
+
+    def _update_section_cut_visibility(self) -> None:
+        """Toggle rows between the Results-data flow and the section-cut flow."""
+        is_cut = self._is_section_cut_kind()
+        # Hide every Results-data row when section_cut is picked.
+        for field in (
+            self._stage_combo,
+            self._component_combo,
+            self._preset_combo,
+            self._selector_kind,
+            self._selector_name,
+        ):
+            self._set_row_visible(field, not is_cut)
+        # Topology / averaging have their own conditional visibility on
+        # the Results path; for section_cut they must be hidden regardless.
+        if is_cut:
+            self._topology_label.setVisible(False)
+            self._topology_combo.setVisible(False)
+            self._averaging_label.setVisible(False)
+            self._averaging_combo.setVisible(False)
+        # Show section-cut rows only when section_cut is picked.
+        for field in (
+            self._cut_file_row,
+            self._cut_model_h5_row,
+            self._cut_preflight_status,
+            self._cut_preflight_summary,
+        ):
+            self._set_row_visible(field, is_cut)
+
+    # ── File / model.h5 pickers ─────────────────────────────────────
+
+    def _on_cut_file_browse(self) -> None:
+        QtWidgets, _ = _qt()
+        path, _filter = QtWidgets.QFileDialog.getOpenFileName(
+            self._dlg,
+            "Select pickled section cut",
+            self._cut_file_edit.text() or "",
+            "Pickled cut (*.pkl *.pkl.gz);;All files (*.*)",
+        )
+        if path:
+            self._cut_file_edit.setText(path)
+
+    def _on_cut_model_h5_browse(self) -> None:
+        QtWidgets, _ = _qt()
+        path, _filter = QtWidgets.QFileDialog.getOpenFileName(
+            self._dlg,
+            "Select model.h5",
+            self._cut_model_h5_edit.text() or "",
+            "model.h5 (*.h5);;All files (*.*)",
+        )
+        if path:
+            self._cut_model_h5_edit.setText(path)
+
+    def _on_cut_file_text_changed(self, _text: str) -> None:
+        self._load_cut_from_path()
+        self._run_dialog_preflight()
+        self._update_ok_enabled()
+
+    def _on_cut_model_h5_text_changed(self, _text: str) -> None:
+        self._run_dialog_preflight()
+        self._update_ok_enabled()
+
+    # ── Load + preflight ────────────────────────────────────────────
+
+    def _load_cut_from_path(self) -> None:
+        """Attempt to load the pickle at the current path.
+
+        Accepts both ``SectionCutDef`` and ``SectionSweepDef`` pickles —
+        tries the cut loader first, falls back to the sweep loader on
+        a type-mismatch. Stores either the loaded object or a short
+        error string for the preflight panel to surface.
+        """
+        from pathlib import Path
+
+        from apeGmsh.cuts import SectionCutDef, SectionSweepDef
+
+        self._cut_loaded = None
+        self._cut_load_error = None
+        path_text = self._cut_file_edit.text().strip()
+        if not path_text:
+            return
+        path = Path(path_text)
+        if not path.exists():
+            self._cut_load_error = f"File not found: {path}"
+            return
+        try:
+            self._cut_loaded = SectionCutDef.load_pickle(path)
+            return
+        except TypeError:
+            pass
+        except Exception as exc:
+            self._cut_load_error = f"Failed to load pickle: {exc}"
+            return
+        try:
+            self._cut_loaded = SectionSweepDef.load_pickle(path)
+        except Exception as exc:
+            self._cut_load_error = (
+                f"Not a SectionCutDef or SectionSweepDef pickle: {exc}"
+            )
+
+    def _run_dialog_preflight(self) -> None:
+        """Run preflight against the current (cut, fem, model_h5).
+
+        Updates the colored status label and the multi-line summary
+        widget. Called from text-change signals on either path field
+        — debouncing isn't needed (load+preflight is microseconds for
+        typical cuts).
+        """
+        if self._cut_load_error is not None:
+            self._set_preflight_state(
+                "error",
+                self._cut_load_error,
+                "",
+            )
+            return
+        if self._cut_loaded is None:
+            self._set_preflight_state(
+                "neutral",
+                "(load a file to preflight)",
+                "",
+            )
+            return
+
+        fem = self._director.fem
+        if fem is None:
+            self._set_preflight_state(
+                "error",
+                "Director has no FEMData bound — cannot preflight.",
+                "",
+            )
+            return
+
+        model_h5_text = self._cut_model_h5_edit.text().strip() or None
+        try:
+            reports = self._preflight_dispatch(model_h5=model_h5_text)
+        except Exception as exc:
+            self._set_preflight_state(
+                "error",
+                f"Preflight failed: {exc}",
+                "",
+            )
+            return
+
+        if not reports:
+            self._set_preflight_state(
+                "error",
+                "Preflight returned no reports.",
+                "",
+            )
+            return
+
+        n_errs = sum(len(r.errors) for r in reports)
+        n_warns = sum(len(r.warnings) for r in reports)
+        n_cuts = len(reports)
+        summary = "\n\n".join(str(r) for r in reports)
+        if n_errs:
+            status_text = (
+                f"ERRORS ({n_errs})" if n_cuts == 1
+                else f"{n_cuts} cuts: "
+                     f"{n_cuts - sum(1 for r in reports if not r.ok)} with errors"
+            )
+            self._set_preflight_state("error", status_text, summary)
+        elif n_warns:
+            status_text = (
+                f"WARNINGS ({n_warns})" if n_cuts == 1
+                else f"{n_cuts} cuts: "
+                     f"{sum(1 for r in reports if r.warnings)} with warnings"
+            )
+            self._set_preflight_state("warning", status_text, summary)
+        else:
+            status_text = "OK" if n_cuts == 1 else f"{n_cuts} cuts: all ok"
+            self._set_preflight_state("ok", status_text, summary)
+
+    def _preflight_dispatch(
+        self, *, model_h5: Optional[str],
+    ) -> "tuple[PreflightReport, ...]":
+        """Run preflight on the loaded cut or sweep, returning a tuple."""
+        from apeGmsh.cuts import SectionSweepDef
+
+        cut = self._cut_loaded
+        assert cut is not None
+        fem = self._director.fem
+        # Caller (`_run_dialog_preflight`) already shows an error and
+        # returns when fem is None; the dispatch path only fires once
+        # that guard passes. Assert to make the narrowing visible to
+        # mypy.
+        assert fem is not None
+        if isinstance(cut, SectionSweepDef):
+            return cut.preflight(fem, model_h5=model_h5)
+        return (cut.preflight(fem, model_h5=model_h5),)
+
+    def _set_preflight_state(
+        self, severity: str, status_text: str, summary: str,
+    ) -> None:
+        """Apply colored dot + text to the status label and summary widget."""
+        dot = {
+            "ok":      "<span style='color:#3cb44b;'>●</span>",
+            "warning": "<span style='color:#f58231;'>●</span>",
+            "error":   "<span style='color:#e6194b;'>●</span>",
+            "neutral": "<span style='color:#888888;'>○</span>",
+        }.get(severity, "<span style='color:#888888;'>○</span>")
+        self._cut_preflight_status.setText(f"{dot}&nbsp;{status_text}")
+        self._cut_preflight_summary.setPlainText(summary)
+        self._cut_preflight_severity = severity
+
+    # ── OK gating ───────────────────────────────────────────────────
+
+    def _update_ok_enabled(self) -> None:
+        """Section-cut path: enable OK only when a clean preflight loaded."""
+        if not self._is_section_cut_kind():
+            self._ok_button.setEnabled(True)
+            return
+        ok = (
+            self._cut_loaded is not None
+            and self._cut_load_error is None
+            and getattr(self, "_cut_preflight_severity", "neutral")
+                in ("ok", "warning")
+        )
+        self._ok_button.setEnabled(ok)
+
+    # ------------------------------------------------------------------
     # Run
     # ------------------------------------------------------------------
 
@@ -632,6 +970,9 @@ class AddDiagramDialog:
             return False
 
         kind_entry: _KindEntry = self._kind_combo.currentData()
+        if kind_entry is not None and kind_entry.kind_id == SECTION_CUT_KIND_ID:
+            return self._run_section_cut()
+
         component = self._component_combo.currentText().strip()
         if not component:
             return False
@@ -716,6 +1057,52 @@ class AddDiagramDialog:
             return False
         except Exception as exc:
             self._show_error(f"Could not attach diagram: {exc}")
+            return False
+        return True
+
+    def _run_section_cut(self) -> bool:
+        """OK-handler branch for the section_cut kind.
+
+        Re-runs preflight as belt-and-braces (catches any user edit
+        between pick and click), then dispatches to
+        ``director.add_section_cut`` or ``add_section_cut_sweep``.
+        """
+        from apeGmsh.cuts import SectionSweepDef
+
+        if self._cut_loaded is None:
+            self._show_error("No cut loaded — pick a .pkl file first.")
+            return False
+
+        # Re-preflight; the file or model.h5 path may have been edited
+        # after the last text-change signal fired (paste, IME compose, …).
+        self._run_dialog_preflight()
+        if getattr(self, "_cut_preflight_severity", "neutral") not in (
+            "ok", "warning",
+        ):
+            self._show_error(
+                "Preflight reports errors — see the dialog summary. "
+                "Re-pickle from a fresh from_planar_pg(...) and retry."
+            )
+            return False
+
+        model_h5_text = self._cut_model_h5_edit.text().strip() or None
+        layer_label = self._label_edit.text().strip() or None
+
+        try:
+            if isinstance(self._cut_loaded, SectionSweepDef):
+                self._director.add_section_cut_sweep(
+                    self._cut_loaded,
+                    model_h5=model_h5_text,
+                    label_prefix=layer_label,
+                )
+            else:
+                self._director.add_section_cut(
+                    self._cut_loaded,
+                    model_h5=model_h5_text,
+                    label=layer_label,
+                )
+        except Exception as exc:
+            self._show_error(f"Could not add section cut: {exc}")
             return False
         return True
 

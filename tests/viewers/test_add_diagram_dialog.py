@@ -58,9 +58,10 @@ def test_dialog_constructs_with_director(qapp, director):
 def test_dialog_kind_combo_populated(qapp, director):
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
     dlg = AddDiagramDialog(director, parent=None)
-    # 10 kinds: contour / deformed / line force / fiber / layer /
-    # vector glyph / gauss marker / spring force / loads / reactions.
-    assert dlg._kind_combo.count() == 10
+    # 11 kinds: contour / deformed / line force / fiber / layer /
+    # vector glyph / gauss marker / spring force / loads / reactions /
+    # section_cut (file-picker path, no Results-data composite).
+    assert dlg._kind_combo.count() == 11
 
 
 def test_dialog_stage_combo_populated_from_director(qapp, director):
