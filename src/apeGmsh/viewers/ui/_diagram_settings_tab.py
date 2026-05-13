@@ -542,6 +542,8 @@ class DiagramSettingsTab:
             self._build_vector_panel(d)
         elif kind == "spring_force":
             self._build_spring_panel(d)
+        elif kind == "section_cut":
+            self._build_section_cut_panel(d)
         else:
             self._content_layout.addWidget(QtWidgets.QLabel(
                 f"No settings UI for kind {kind!r} yet."
@@ -1013,6 +1015,32 @@ class DiagramSettingsTab:
         chk.setChecked(bool(current))
         self._pending_appliers.append(
             lambda: self._safe_call(d.set_show_undeformed, bool(chk.isChecked()))
+        )
+        form.addRow("", chk)
+
+    # ------------------------------------------------------------------
+    # Section cut panel
+    # ------------------------------------------------------------------
+
+    def _build_section_cut_panel(self, d: Diagram) -> None:
+        """Section-cut layer settings — one checkbox driving the filter
+        highlight overlay.
+
+        The plane / side / filter PG are immutable in Phase 1 (the user
+        re-creates the cut to edit them — that's Phase 2). The only
+        per-card live control today is whether the filter-elements
+        overlay is visible. Staged via the per-card Apply button to
+        match every other panel.
+        """
+        QtWidgets, _ = _qt()
+        form = QtWidgets.QFormLayout()
+        self._content_layout.addLayout(form)
+
+        chk = QtWidgets.QCheckBox("Show filter elements")
+        current = bool(getattr(d, "show_filter", False))
+        chk.setChecked(current)
+        self._pending_appliers.append(
+            lambda: self._safe_call(d.set_show_filter, bool(chk.isChecked()))
         )
         form.addRow("", chk)
 
