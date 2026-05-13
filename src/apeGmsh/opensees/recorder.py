@@ -57,6 +57,7 @@ from .._vocabulary import (
     is_canonical,
 )
 from ._internal.types import Primitive, Recorder
+from ._recorders_builder import Recorders
 
 if TYPE_CHECKING:
     from .emitter.base import Emitter
@@ -71,6 +72,8 @@ __all__ = [
     "RecorderRecord",
     "RecorderDeclaration",
     "ALL_RECORDER_CATEGORIES",
+    # Transitional fluent helper (Phase 9 commit 4 relocation)
+    "Recorders",
 ]
 
 

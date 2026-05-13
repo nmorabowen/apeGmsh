@@ -57,8 +57,8 @@ _RELOCATED: dict[str, tuple[str, str]] = {
     "Cartesian":             ("apeGmsh.opensees", "Cartesian"),
     "Cylindrical":           ("apeGmsh.opensees", "Cylindrical"),
     "Spherical":             ("apeGmsh.opensees", "Spherical"),
-    # Phase 8.3b
-    "Recorders":             ("apeGmsh.results.spec", "Recorders"),
+    # Phase 8.3b (Recorders subsequently relocated again in Phase 9 commit 4)
+    "Recorders":             ("apeGmsh.opensees.recorder", "Recorders"),
     "ResolvedRecorderSpec":  ("apeGmsh.results.spec", "ResolvedRecorderSpec"),
     "ResolvedRecorderRecord":("apeGmsh.results.spec", "ResolvedRecorderRecord"),
 }

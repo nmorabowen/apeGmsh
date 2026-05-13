@@ -19,10 +19,10 @@ Usage
 -----
 ::
 
-    from apeGmsh.results.spec.declaration import Recorders
-    recorders = Recorders()
+    from apeGmsh.opensees.recorder import Recorders
+    recorders = Recorders(opensees=ops)
     recorders.nodes(components=["displacement"])
-    spec = recorders.resolve(fem, ndm=3, ndf=3)
+    spec = recorders.resolve(fem)
 
     with spec.emit_mpco("run.mpco"):
         for _ in range(n_steps):

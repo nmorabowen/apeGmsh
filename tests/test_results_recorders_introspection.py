@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from apeGmsh.results.spec.declaration import Recorders
+from apeGmsh.opensees.recorder import Recorders
 
 
 # =====================================================================
