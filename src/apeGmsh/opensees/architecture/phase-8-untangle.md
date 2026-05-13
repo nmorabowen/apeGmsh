@@ -329,12 +329,24 @@ tests/opensees/h5/test_h5_end_to_end.py
 tests/opensees/h5/test_h5_emitter.py` → all green.
 
 ### Phase 8.7 — Viewer migration off FEMData / solvers
-Migrate `viewers/ui/*_tab.py`, `viewers/overlays/*.py` to read from
-`model.h5` instead of from FEMData broker or solvers records.
-After this PR, `viewers/` has zero imports from `solvers/` or `mesh/`.
+Scope locked in [phase-8.7-scope.md](phase-8.7-scope.md);
+architectural decision recorded as
+[ADR 0014](decisions/0014-viewer-is-pure-h5-consumer.md).  Introduces
+an `apeGmsh.viewers.data.ViewerData` adapter with two builders
+(`from_fem(fem)` for the live path, `from_h5(path)` for the post-
+solve / fixture path); migrates `viewers/scene/fem_scene.py`, all
+diagrams under `viewers/diagrams/`, the constraint overlay under
+`viewers/overlays/`, and the three UI tabs under `viewers/ui/` to
+consume the adapter instead of `FEMData`.  Schema bump 2.3.0 → 2.4.0
+(additive) adds `/mesh_selections/` to the neutral zone so
+`selection=` selectors round-trip through `model.h5`.  After this
+phase, `viewers/` imports nothing from `mesh/` and only
+`opensees.emitter.h5_reader` from `opensees/` — enforced by an AST
+acceptance test.
 
 **Risk:** medium-high — UI changes are user-visible.
-**Test gate:** viewer integration tests pass against fixture .h5 files.
+**Test gate:** viewer integration tests pass against fixture .h5 files;
+AST acceptance test enforces the forbidden-import list.
 
 ### Phase 8.8 — Delete `solvers/` — landed
 After Phase 9 closed out the recorder deprecation envelope, no
@@ -405,15 +417,20 @@ release-blocker scan came back clean.
    `/opensees/recorders/` archive with a `kind=("typed"|"declared")`
    attr plus declaration metadata for declared records.
 
-5. **One ADR or several.** This doc proposes a chain-of-decisions
-   that probably warrants 2–3 ADRs:
+5. **One ADR or several.** *Resolved:* the chain-of-decisions
+   landed as three ADRs alongside their sub-phase PRs:
    - **ADR 0012** — model.h5 as canonical model database (zone
-     convention, symmetry contract).
+     convention, symmetry contract).  *(Consolidated into
+     [ADR 0011](decisions/0011-h5-as-fourth-emit-target.md);
+     the planned 0012 slot was reused by the subsequent
+     namespace-cleanup work and no standalone ADR shipped.)*
    - **ADR 0013** — record relocation: dataclasses live in
-     `mesh/records/`, not `solvers/`.
+     `mesh/records/`, not `solvers/`.  Landed with Phase 8.1 (PR
+     #119) as
+     [decisions/0013-records-in-mesh-not-solvers.md](decisions/0013-records-in-mesh-not-solvers.md).
    - **ADR 0014** — viewer is a pure model.h5 consumer (no FEMData
-     imports).
-   These land alongside the corresponding sub-phase PRs.
+     imports).  Landed with Phase 8.7 (commit 1) as
+     [decisions/0014-viewer-is-pure-h5-consumer.md](decisions/0014-viewer-is-pure-h5-consumer.md).
 
 ## 8. Out of scope
 
