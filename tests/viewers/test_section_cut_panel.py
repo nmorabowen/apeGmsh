@@ -62,16 +62,27 @@ def _build_settings_tab():
     return DiagramSettingsTab(director)
 
 
-def _stub_section_cut_diagram(*, initial: bool = False) -> SimpleNamespace:
+def _stub_section_cut_diagram(
+    *,
+    initial: bool = False,
+    side: str = "positive",
+    label: str = "story 3",
+) -> SimpleNamespace:
     """A fake diagram exposing only what the panel builder needs.
 
     The panel reads ``kind`` and ``show_filter``, calls
-    ``set_show_filter`` from the Apply lambda. Nothing else.
+    ``set_show_filter`` from the Apply lambda. Side and label come
+    from ``spec.style.cut`` via the panel's ``_section_cut_def``
+    helper — we mirror that surface with a frozen-like SimpleNamespace.
     """
+    cut = SimpleNamespace(side=side, label=label)
+    style = SimpleNamespace(cut=cut)
+    spec = SimpleNamespace(style=style, label=label)
     return SimpleNamespace(
         kind="section_cut",
         show_filter=initial,
         set_show_filter=MagicMock(),
+        spec=spec,
     )
 
 
@@ -152,3 +163,66 @@ def test_apply_propagates_unchecking_too() -> None:
     for applier in tab._pending_appliers:
         applier()
     stub.set_show_filter.assert_called_once_with(False)
+
+
+# ---------------------------------------------------------------------
+# Phase D — side + label live edit wiring
+# ---------------------------------------------------------------------
+
+def _find_combobox(tab):
+    from qtpy import QtWidgets
+    return tab._widget.findChild(QtWidgets.QComboBox)
+
+
+def _find_line_edit(tab):
+    from qtpy import QtWidgets
+    return tab._widget.findChild(QtWidgets.QLineEdit)
+
+
+def test_panel_renders_side_combobox() -> None:
+    tab = _build_settings_tab()
+    _dispatch_into_fresh_card(tab, _stub_section_cut_diagram())
+    combo = _find_combobox(tab)
+    assert combo is not None
+    items = [combo.itemText(i) for i in range(combo.count())]
+    assert items == ["positive", "negative"]
+
+
+def test_side_combobox_reflects_current_value() -> None:
+    tab = _build_settings_tab()
+    _dispatch_into_fresh_card(tab, _stub_section_cut_diagram(side="negative"))
+    combo = _find_combobox(tab)
+    assert combo.currentText() == "negative"
+
+
+def test_panel_renders_label_line_edit_with_current_label() -> None:
+    tab = _build_settings_tab()
+    _dispatch_into_fresh_card(
+        tab, _stub_section_cut_diagram(label="custom label"),
+    )
+    line = _find_line_edit(tab)
+    assert line is not None
+    assert line.text() == "custom label"
+
+
+def test_side_change_invokes_rebuild() -> None:
+    """Flipping the combobox fires ``_on_section_cut_rebuild(d, side=...)``."""
+    tab = _build_settings_tab()
+    stub = _stub_section_cut_diagram(side="positive")
+    tab._on_section_cut_rebuild = MagicMock()
+    _dispatch_into_fresh_card(tab, stub)
+    combo = _find_combobox(tab)
+    combo.setCurrentText("negative")
+    tab._on_section_cut_rebuild.assert_called_with(stub, side="negative")
+
+
+def test_label_edit_finished_invokes_rebuild() -> None:
+    """``editingFinished`` (Enter / focus loss) fires the rebuild path."""
+    tab = _build_settings_tab()
+    stub = _stub_section_cut_diagram(label="original")
+    tab._on_section_cut_rebuild = MagicMock()
+    _dispatch_into_fresh_card(tab, stub)
+    line = _find_line_edit(tab)
+    line.setText("renamed")
+    line.editingFinished.emit()
+    tab._on_section_cut_rebuild.assert_called_with(stub, label="renamed")

@@ -1023,19 +1023,51 @@ class DiagramSettingsTab:
     # ------------------------------------------------------------------
 
     def _build_section_cut_panel(self, d: Diagram) -> None:
-        """Section-cut layer settings — one checkbox driving the filter
-        highlight overlay.
+        """Section-cut layer settings — side, label, and filter-highlight
+        toggle.
 
-        The plane / side / filter PG are immutable in Phase 1 (the user
-        re-creates the cut to edit them — that's Phase 2). The only
-        per-card live control today is whether the filter-elements
-        overlay is visible. Staged via the per-card Apply button to
-        match every other panel.
+        Side and label are committed immediately via the rebuild-and-
+        replace path (same pattern as ``_on_data_swap``): a new
+        ``SectionCutDef`` + ``SectionCutDiagram`` is constructed and
+        swapped into the registry / composition. The plane geometry
+        and the element filter remain immutable in this phase — those
+        edits land in v2.3 once a clean preflight check exists.
+
+        Filter-highlight is the one staged Apply control because it
+        only mutates the runtime overlay (no rebuild required).
         """
         QtWidgets, _ = _qt()
         form = QtWidgets.QFormLayout()
         self._content_layout.addLayout(form)
 
+        cut = self._section_cut_def(d)
+        current_side = cut.side if cut is not None else "positive"
+        current_label = (
+            (cut.label if cut is not None else None)
+            or d.spec.label or ""
+        )
+
+        # Side combobox — fires on commit, rebuilds the diagram.
+        side_combo = QtWidgets.QComboBox()
+        side_combo.addItem("positive")
+        side_combo.addItem("negative")
+        side_combo.setCurrentText(current_side)
+        side_combo.currentTextChanged.connect(
+            lambda new_side: self._on_section_cut_rebuild(d, side=new_side)
+        )
+        form.addRow("Kept side:", side_combo)
+
+        # Label edit — commits on Enter / focus loss.
+        label_edit = QtWidgets.QLineEdit()
+        label_edit.setText(current_label)
+        label_edit.editingFinished.connect(
+            lambda: self._on_section_cut_rebuild(
+                d, label=label_edit.text(),
+            )
+        )
+        form.addRow("Label:", label_edit)
+
+        # Show-filter checkbox — staged via the per-card Apply button.
         chk = QtWidgets.QCheckBox("Show filter elements")
         current = bool(getattr(d, "show_filter", False))
         chk.setChecked(current)
@@ -1043,6 +1075,124 @@ class DiagramSettingsTab:
             lambda: self._safe_call(d.set_show_filter, bool(chk.isChecked()))
         )
         form.addRow("", chk)
+
+    @staticmethod
+    def _section_cut_def(d: "Diagram") -> Any:
+        """Pull the :class:`SectionCutDef` carried on a SectionCutStyle."""
+        style = getattr(d.spec, "style", None)
+        return getattr(style, "cut", None) if style is not None else None
+
+    def _on_section_cut_rebuild(
+        self,
+        old: "Diagram",
+        *,
+        side: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> None:
+        """Rebuild a SectionCutDiagram with an edited side or label and
+        swap it into the registry.
+
+        Mirrors :meth:`_on_data_swap` — preserves z-position by going
+        through ``registry.replace``; updates the owning composition's
+        layer list so the outline / settings panel re-bind to the new
+        instance.
+
+        Runtime state worth preserving across the swap:
+
+        * ``show_filter`` — the user's filter-highlight toggle. We thread
+          it into the new style as ``show_filter_initially`` so the new
+          diagram attaches with the overlay on.
+
+        No-op when nothing actually changed (avoids spurious rebuilds
+        on focus-loss with an unchanged label).
+        """
+        from dataclasses import replace as dc_replace
+        from ..diagrams._base import DiagramSpec
+        from ..diagrams._section_cut import SectionCutDiagram
+        from ..diagrams._selectors import SlabSelector
+        from ..diagrams._styles import SectionCutStyle
+        from .._failures import report
+
+        cut = self._section_cut_def(old)
+        old_style = getattr(old.spec, "style", None)
+        if cut is None or not isinstance(old_style, SectionCutStyle):
+            return
+
+        new_side = side if side is not None else cut.side
+        if side is not None and new_side not in ("positive", "negative"):
+            return
+        new_label_raw = (
+            label if label is not None
+            else (cut.label or "")
+        )
+        new_label: Optional[str] = (
+            (new_label_raw.strip() or None)
+            if isinstance(new_label_raw, str) else None
+        )
+
+        if new_side == cut.side and new_label == cut.label:
+            return     # no-op
+
+        try:
+            new_cut = dc_replace(cut, side=new_side, label=new_label)
+        except Exception as exc:
+            report("DiagramSettingsTab._on_section_cut_rebuild", exc)
+            return
+
+        carry_runtime = bool(getattr(old, "show_filter", False))
+        new_style = SectionCutStyle(
+            cut=new_cut,
+            kept_color=old_style.kept_color,
+            discarded_color=old_style.discarded_color,
+            quad_opacity=old_style.quad_opacity,
+            edge_color=old_style.edge_color,
+            show_edges=old_style.show_edges,
+            show_normal_arrow=old_style.show_normal_arrow,
+            normal_arrow_fraction=old_style.normal_arrow_fraction,
+            highlight_color=old_style.highlight_color,
+            highlight_opacity=old_style.highlight_opacity,
+            show_filter_initially=carry_runtime,
+        )
+        display_label = new_label or "section cut"
+        new_spec = DiagramSpec(
+            kind=old.spec.kind,
+            selector=SlabSelector(component=display_label),
+            style=new_style,
+            stage_id=old.spec.stage_id,
+            visible=old.spec.visible,
+            label=display_label,
+        )
+        tag_map = getattr(old, "_tag_map", None)
+        try:
+            new_diagram = SectionCutDiagram(
+                new_spec, old._results, tag_map=tag_map,  # noqa: SLF001
+            )
+        except Exception as exc:
+            report("DiagramSettingsTab._on_section_cut_rebuild", exc)
+            return
+
+        # Composition swap mirrors _on_data_swap.
+        comp_mgr = self._director.compositions
+        comp = (
+            comp_mgr.composition_for_layer(old) if comp_mgr is not None
+            else None
+        )
+        try:
+            self._director.registry.replace(old, new_diagram)
+        except Exception as exc:
+            report("DiagramSettingsTab._on_section_cut_rebuild", exc)
+            return
+        if comp is not None and comp_mgr is not None:
+            try:
+                idx = comp.layers.index(old)
+                comp.layers[idx] = new_diagram
+                comp_mgr._notify()    # noqa: SLF001
+            except ValueError:
+                pass
+
+        if self._selected is old:
+            self._selected = new_diagram
+        self._rebuild()
 
     # ------------------------------------------------------------------
     # Line force panel

@@ -6,10 +6,15 @@ tests fast (no Gmsh mesh generation) and deterministic.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import h5py
 import numpy as np
+
+# Force offscreen Qt for the Phase D rebuild tests at the bottom of the
+# file. Set early so any later qtpy import lands on the right platform.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pyvista as pv
 import pytest
 
@@ -535,3 +540,121 @@ def test_director_add_section_cut_sweep_fans_out(cube_results):
     assert [d.spec.label for d in diagrams] == [
         "story[0]", "story[1]", "story[2]",
     ]
+
+
+# ---------------------------------------------------------------------
+# Phase D — _on_section_cut_rebuild via DiagramSettingsTab
+# (QT_QPA_PLATFORM=offscreen is set at module import — see top of file.)
+# ---------------------------------------------------------------------
+
+
+def _build_settings_tab_against_director(director):
+    """Construct a DiagramSettingsTab bound to a real ResultsDirector."""
+    from qtpy import QtWidgets
+    _ = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from apeGmsh.viewers.ui._diagram_settings_tab import DiagramSettingsTab
+    return DiagramSettingsTab(director)
+
+
+def test_rebuild_with_side_flip_swaps_registry_entry(cube_results):
+    from apeGmsh.viewers.diagrams import ResultsDirector
+    results, _fem, h5, _ = cube_results
+    director = ResultsDirector(results)
+    cut = _make_cut(side="positive", with_bounding=True)
+    diagram = director.add_section_cut(cut, model_h5=h5)
+    tab = _build_settings_tab_against_director(director)
+
+    tab._on_section_cut_rebuild(diagram, side="negative")
+
+    # Registry now holds a different diagram.
+    registry = list(director.registry)
+    assert diagram not in registry
+    assert len(registry) == 1
+    new_diagram = registry[0]
+    # New diagram carries the flipped side.
+    assert new_diagram.spec.style.cut.side == "negative"
+    # Composition layer list updated too — outline / settings tab see
+    # the new instance.
+    geom = director.geometries.active
+    section_comp = next(
+        c for c in geom.compositions.compositions if c.name == "Section cuts"
+    )
+    assert section_comp.layers == [new_diagram]
+
+
+def test_rebuild_with_label_change_renames_cut(cube_results):
+    from apeGmsh.viewers.diagrams import ResultsDirector
+    results, _fem, h5, _ = cube_results
+    director = ResultsDirector(results)
+    cut = _make_cut(with_bounding=True)
+    diagram = director.add_section_cut(cut, model_h5=h5, label="original")
+    tab = _build_settings_tab_against_director(director)
+
+    tab._on_section_cut_rebuild(diagram, label="renamed cut")
+
+    registry = list(director.registry)
+    assert len(registry) == 1
+    new_diagram = registry[0]
+    assert new_diagram.spec.style.cut.label == "renamed cut"
+    assert new_diagram.spec.label == "renamed cut"
+
+
+def test_rebuild_preserves_show_filter_runtime_state(
+    cube_results, headless_plotter,
+):
+    """A toggled-on filter overlay survives the side flip — the user
+    shouldn't lose their highlight when editing the cut."""
+    from apeGmsh.viewers.diagrams import ResultsDirector
+    results, fem, h5, _ = cube_results
+    scene = build_fem_scene(fem)
+    director = ResultsDirector(results)
+    director.bind_plotter(headless_plotter, scene=scene)
+
+    cut = _make_cut(side="positive", with_bounding=True)
+    diagram = director.add_section_cut(cut, model_h5=h5)
+    diagram.set_show_filter(True)
+    assert diagram.show_filter is True
+
+    tab = _build_settings_tab_against_director(director)
+    tab._on_section_cut_rebuild(diagram, side="negative")
+
+    new_diagram = list(director.registry)[0]
+    assert new_diagram is not diagram
+    # The new diagram attached with show_filter_initially=True so the
+    # overlay is up immediately.
+    assert new_diagram.show_filter is True
+    assert new_diagram.filter_highlight_actor is not None
+
+
+def test_rebuild_noop_when_nothing_changes(cube_results):
+    """Calling rebuild with the same side / label is a no-op (no
+    spurious registry swap on focus-loss with unchanged label).
+
+    The panel renders ``cut.label`` first, falling back to
+    ``spec.label`` — so "unchanged" means "matches what the user
+    sees in the line edit", which is ``cut.label`` here.
+    """
+    from apeGmsh.viewers.diagrams import ResultsDirector
+    results, _fem, h5, _ = cube_results
+    director = ResultsDirector(results)
+    cut = _make_cut(side="positive", with_bounding=True)
+    diagram = director.add_section_cut(cut, model_h5=h5)
+    tab = _build_settings_tab_against_director(director)
+
+    tab._on_section_cut_rebuild(diagram, side="positive")
+    tab._on_section_cut_rebuild(diagram, label=cut.label)
+
+    # Same diagram instance still in the registry.
+    assert list(director.registry) == [diagram]
+
+
+def test_rebuild_rejects_invalid_side(cube_results):
+    from apeGmsh.viewers.diagrams import ResultsDirector
+    results, _fem, h5, _ = cube_results
+    director = ResultsDirector(results)
+    diagram = director.add_section_cut(
+        _make_cut(with_bounding=True), model_h5=h5,
+    )
+    tab = _build_settings_tab_against_director(director)
+    tab._on_section_cut_rebuild(diagram, side="upward")    # invalid
+    assert list(director.registry) == [diagram]
