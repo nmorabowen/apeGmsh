@@ -536,6 +536,21 @@ def emit_transform_specs(
             transf._emit(emitter, own_tag)
             continue
 
+        # FEM-aware orientations (e.g. AlongBeam) declare a bind_fem
+        # hook that materializes any FEM-derived state (reference-curve
+        # segments, tangents) into the orientation instance before
+        # per-element queries. The fixed-geometry orientations
+        # (Cartesian, Cylindrical, Spherical) don't declare it — the
+        # hasattr check makes the hook opt-in without polluting the
+        # simple cases with a no-op method.
+        # is_orientation_transform already narrowed `transf` to a
+        # Linear / PDelta / Corotational that has a non-None
+        # orientation, but the static GeomTransf base type doesn't
+        # advertise the attribute.
+        orient = transf.orientation  # type: ignore[attr-defined]
+        if hasattr(orient, "bind_fem"):
+            orient.bind_fem(fem)
+
         # orientation path: walk every element whose transf IS this
         # transform, compute per-element vecxz, dedupe.
         type_token = _TRANSF_TYPE_TOKEN[type(transf)]

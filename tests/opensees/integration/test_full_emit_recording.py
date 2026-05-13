@@ -333,6 +333,68 @@ def test_orientation_transform_fans_one_geomtransf_per_distinct_vecxz() -> None:
     assert len(distinct_vecxzs) == 3
 
 
+def test_alongbeam_orientation_is_bound_by_bridge_fan_out() -> None:
+    """AlongBeam declares a bind_fem hook; the bridge calls it before
+    per-element vecxz fan-out so triad_at(p) can query the cached
+    reference-curve tangents."""
+    from apeGmsh.opensees import AlongBeam
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub, _ElementGroupView, _ElementsStub, _NodesStub,
+    )
+    # FEM: two collinear PGs. "MainBar" is the reference curve along
+    # +X; "Stirrups" is a single short stirrup perpendicular to it.
+    nodes = _NodesStub(
+        ids=[1, 2, 3, 4, 5, 6],
+        coords=[
+            (0.0, 0.0, 0.0),   # MainBar node 1
+            (1.0, 0.0, 0.0),   # MainBar node 2 (also stirrup midpoint sits near here)
+            (2.0, 0.0, 0.0),   # MainBar node 3
+            (3.0, 0.0, 0.0),   # MainBar node 4
+            (1.5, -0.5, 0.0),  # Stirrup node 1
+            (1.5,  0.5, 0.0),  # Stirrup node 2
+        ],
+        node_pgs={"Base": [1]},
+    )
+    elements = _ElementsStub(
+        elem_pgs={
+            "MainBar": _ElementGroupView(
+                ids=(1, 2, 3),
+                connectivity=((1, 2), (2, 3), (3, 4)),
+            ),
+            "Stirrups": _ElementGroupView(
+                ids=(4,), connectivity=((5, 6),),
+            ),
+        },
+    )
+    fem = FEMStub(nodes=nodes, elements=elements)
+
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    orient = AlongBeam(reference_pg="MainBar")
+    # Before build, the orientation is unbound.
+    assert orient._p_a is None
+
+    transf = ops.geomTransf.Linear(orientation=orient)
+    ops.element.elasticBeamColumn(
+        pg="Stirrups",
+        transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+
+    bm = ops.build()
+    rec = RecordingEmitter()
+    bm.emit(rec)
+
+    # After emit, AlongBeam.bind_fem was called: segments are cached.
+    assert orient._p_a is not None
+    assert orient._p_a.shape == (3, 3)   # 3 reference segments
+
+    # One geomTransf line per distinct stirrup vecxz; with a single
+    # stirrup we expect exactly one.
+    geomtransf_calls = [c for c in rec.calls if c[0] == "geomTransf"]
+    assert len(geomtransf_calls) == 1
+
+
 def test_orientation_transform_collinear_elements_share_one_geomtransf() -> None:
     """When multiple elements share the same vecxz under an
     orientation, only one ``geomTransf`` line is emitted and reused

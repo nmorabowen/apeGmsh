@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
 from ._orientation import (
+    AlongBeam,
     Cartesian,
     Cylindrical,
     Spherical,
@@ -60,6 +61,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     # Orientation classes (ADR 0010)
+    "AlongBeam",
     "Cartesian",
     "Cylindrical",
     "Spherical",
@@ -74,8 +76,8 @@ __all__ = [
 
 # Union of orientation classes for typed kwargs. The orientation
 # classes are not part of the typed-primitive hierarchy (they're
-# standalone helpers); we accept any of the three or None.
-Orientation: TypeAlias = Cartesian | Cylindrical | Spherical
+# standalone helpers); we accept any of them or None.
+Orientation: TypeAlias = Cartesian | Cylindrical | Spherical | AlongBeam
 
 
 # ---------------------------------------------------------------------------

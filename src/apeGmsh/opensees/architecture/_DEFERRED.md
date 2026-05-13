@@ -41,24 +41,6 @@ Deferred capability:
 
 Lives in `_internal/build.py` once we get there.
 
-## Tangent-derived CS for stirrups along curved beams
-
-For stirrups (or transverse diaphragms) along a curved girder,
-each stirrup wants its `reference_axis` aligned with the local
-tangent of the girder. This is a fourth CS kind — derived from
-another mesh entity rather than from a fixed geometry.
-
-Sketch:
-
-```python
-orientation = AlongBeam(reference_curve_pg="MainGirder")
-ops.geomTransf.Linear(orientation=orientation)
-```
-
-Stirrups are usually circular rebar (rotation about local-x is
-moot), so this is cosmetic in practice. Implement when the first
-non-circular case appears.
-
 ## Custom convergence / retry recipes
 
 `apeSees` ships recipes for the common cases:

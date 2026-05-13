@@ -2,8 +2,9 @@
 import math
 
 import numpy as np
+import pytest
 
-from apeGmsh.opensees import Cartesian, Cylindrical, Spherical
+from apeGmsh.opensees import AlongBeam, Cartesian, Cylindrical, Spherical
 from apeGmsh.opensees._orientation import resolve_vecxz
 
 
@@ -191,6 +192,161 @@ class TestCylindricalRule:
         # Y = (0,1,0); -X = (-1,0,0)
         # cross = (1·0 - 0·0, 0·(-1) - 0·0, 0·0 - 1·(-1)) = (0, 0, 1)
         assert _close(v, (0, 0, 1))
+
+
+# ---------------------------------------------------------------------------
+# AlongBeam — tangent-derived orientation
+# ---------------------------------------------------------------------------
+
+def _straight_x_axis_fem(n_segments: int = 5):
+    """A FEM stub whose 'MainBar' PG is a chain of segments along +X.
+
+    Nodes 1..n_segments+1 at (0,0,0), (1,0,0), (2,0,0), ...
+    """
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub, _ElementGroupView, _ElementsStub, _NodesStub,
+    )
+    ids = list(range(1, n_segments + 2))
+    coords = [(float(i), 0.0, 0.0) for i in range(n_segments + 1)]
+    nodes = _NodesStub(ids=ids, coords=coords, node_pgs={})
+    elem_ids = tuple(range(1, n_segments + 1))
+    connectivity = tuple((i, i + 1) for i in range(1, n_segments + 1))
+    elements = _ElementsStub(
+        elem_pgs={
+            "MainBar": _ElementGroupView(ids=elem_ids, connectivity=connectivity),
+        }
+    )
+    return FEMStub(nodes=nodes, elements=elements)
+
+
+def _quarter_arc_fem(n_segments: int = 4):
+    """A FEM stub whose 'MainBar' PG is a quarter-arc in the X-Y plane.
+
+    Nodes evenly placed on the unit circle from (1,0,0) to (0,1,0).
+    """
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub, _ElementGroupView, _ElementsStub, _NodesStub,
+    )
+    angles = [math.pi * 0.5 * i / n_segments for i in range(n_segments + 1)]
+    ids = list(range(1, n_segments + 2))
+    coords = [(math.cos(a), math.sin(a), 0.0) for a in angles]
+    nodes = _NodesStub(ids=ids, coords=coords, node_pgs={})
+    elem_ids = tuple(range(1, n_segments + 1))
+    connectivity = tuple((i, i + 1) for i in range(1, n_segments + 1))
+    elements = _ElementsStub(
+        elem_pgs={
+            "MainBar": _ElementGroupView(ids=elem_ids, connectivity=connectivity),
+        }
+    )
+    return FEMStub(nodes=nodes, elements=elements)
+
+
+class TestAlongBeamConstruction:
+    def test_repr(self):
+        ab = AlongBeam(reference_pg="MainBar")
+        assert "MainBar" in repr(ab)
+        assert "AlongBeam" in repr(ab)
+
+    def test_reference_pg_attribute(self):
+        ab = AlongBeam(reference_pg="MainBar")
+        assert ab.reference_pg == "MainBar"
+
+    def test_triad_at_before_bind_raises(self):
+        ab = AlongBeam(reference_pg="MainBar")
+        with pytest.raises(RuntimeError, match="bind_fem"):
+            ab.triad_at((0.0, 0.0, 0.0))
+
+
+class TestAlongBeamBindFem:
+    def test_bind_fem_with_straight_reference(self):
+        fem = _straight_x_axis_fem(n_segments=3)
+        ab = AlongBeam(reference_pg="MainBar")
+        ab.bind_fem(fem)
+        # After bind, triad_at should work.
+        _, _, e3 = ab.triad_at((1.5, 0.0, 0.0))
+        assert _close(e3, (1, 0, 0))
+
+    def test_bind_fem_missing_pg_raises(self):
+        fem = _straight_x_axis_fem()
+        ab = AlongBeam(reference_pg="DoesNotExist")
+        with pytest.raises(ValueError, match="reference PG not found"):
+            ab.bind_fem(fem)
+
+    def test_bind_fem_is_idempotent(self):
+        fem = _straight_x_axis_fem()
+        ab = AlongBeam(reference_pg="MainBar")
+        ab.bind_fem(fem)
+        triad_1 = ab.triad_at((0.5, 0.0, 0.0))
+        ab.bind_fem(fem)   # rebind — should give the same answer
+        triad_2 = ab.triad_at((0.5, 0.0, 0.0))
+        for a, b in zip(triad_1, triad_2):
+            assert _close(a, b)
+
+
+class TestAlongBeamProjection:
+    def test_straight_bar_tangent_is_uniform(self):
+        """Any probe near a straight +X bar gets e3 = +X."""
+        fem = _straight_x_axis_fem(n_segments=5)
+        ab = AlongBeam(reference_pg="MainBar")
+        ab.bind_fem(fem)
+        for probe in [(0.5, 0.0, 0.0), (1.5, 0.0, 0.0), (4.5, 0.0, 0.0)]:
+            _, _, e3 = ab.triad_at(probe)
+            assert _close(e3, (1, 0, 0)), f"probe={probe} → e3={e3}"
+
+    def test_offset_probe_uses_projection_to_segment(self):
+        """A probe offset from the bar in +Y still gets the bar's tangent.
+
+        The projection algorithm finds the nearest point on the
+        segment, not the nearest segment midpoint, so axial offset
+        from a midpoint doesn't confuse it.
+        """
+        fem = _straight_x_axis_fem(n_segments=5)
+        ab = AlongBeam(reference_pg="MainBar")
+        ab.bind_fem(fem)
+        # Stirrup centered at x=2.5, offset 0.3 in +Y.
+        _, _, e3 = ab.triad_at((2.5, 0.3, 0.0))
+        assert _close(e3, (1, 0, 0))
+
+    def test_quarter_arc_tangent_varies_with_position(self):
+        """A curved reference bar produces different tangents at different
+        probe positions — the whole point of AlongBeam."""
+        fem = _quarter_arc_fem(n_segments=8)
+        ab = AlongBeam(reference_pg="MainBar")
+        ab.bind_fem(fem)
+
+        # Near (1, 0, 0) the tangent is along ~+Y (start of arc).
+        _, _, e3_start = ab.triad_at((1.0, 0.05, 0.0))
+        # Near (0, 1, 0) the tangent is along ~-X (end of arc).
+        _, _, e3_end = ab.triad_at((0.05, 1.0, 0.0))
+
+        # Sanity: tangents differ substantially between the two ends.
+        assert float(np.dot(e3_start, e3_end)) < 0.5
+
+    def test_probe_off_endpoint_clipped_to_segment(self):
+        """A probe beyond the bar's end clips to the last segment
+        (no extrapolation)."""
+        fem = _straight_x_axis_fem(n_segments=3)  # bar from x=0 to x=3
+        ab = AlongBeam(reference_pg="MainBar")
+        ab.bind_fem(fem)
+        # Probe well beyond the bar's end.
+        _, _, e3 = ab.triad_at((100.0, 0.0, 0.0))
+        # Tangent of the last segment is still +X — no NaN, no extrapolation.
+        assert _close(e3, (1, 0, 0))
+
+    def test_triad_is_orthonormal(self):
+        """The derived (e1, e2, e3) is always an orthonormal triad."""
+        fem = _quarter_arc_fem(n_segments=6)
+        ab = AlongBeam(reference_pg="MainBar")
+        ab.bind_fem(fem)
+        e1, e2, e3 = ab.triad_at((0.7, 0.7, 0.0))
+        # All unit-length
+        assert abs(float(np.linalg.norm(e1)) - 1.0) < 1e-9
+        assert abs(float(np.linalg.norm(e2)) - 1.0) < 1e-9
+        assert abs(float(np.linalg.norm(e3)) - 1.0) < 1e-9
+        # Mutually orthogonal
+        assert abs(float(np.dot(e1, e2))) < 1e-9
+        assert abs(float(np.dot(e2, e3))) < 1e-9
+        assert abs(float(np.dot(e3, e1))) < 1e-9
 
 
 # The legacy ``TestAddGeomTransfApi`` and ``TestBuildWithCsys`` classes

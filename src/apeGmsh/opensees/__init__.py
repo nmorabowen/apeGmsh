@@ -26,12 +26,13 @@ from __future__ import annotations
 
 from .apesees import apeSees
 from .node import Node, NodeSet
-from ._orientation import Cartesian, Cylindrical, Spherical
+from ._orientation import AlongBeam, Cartesian, Cylindrical, Spherical
 
 __all__ = [
     "apeSees",
     "Node",
     "NodeSet",
+    "AlongBeam",
     "Cartesian",
     "Cylindrical",
     "Spherical",
