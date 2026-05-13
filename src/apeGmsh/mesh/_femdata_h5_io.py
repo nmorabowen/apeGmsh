@@ -11,6 +11,7 @@ places at the root of ``model.h5``:
 * ``/elements/{type}``     — per-type ids + connectivity.
 * ``/physical_groups``     — top-level index for viewer discovery.
 * ``/labels``              — apeGmsh-internal labels.
+* ``/mesh_selections``     — post-mesh selection sets (Phase 8.7).
 * ``/constraints/{kind}``  — MP-style records, symmetric compound shape.
 * ``/loads/{kind}/{pattern}``  — per-pattern load records.
 * ``/masses``              — per-node mass vectors.
@@ -74,10 +75,13 @@ __all__ = [
 #: ``FEMData.to_h5(path)`` flow.  Phase 8.5 added the neutral zone
 #: (`2.0.0 → 2.1.0`); Phase 8.6 added the ``fem_eids`` dataset under
 #: each ``/opensees/element_meta/{type_token}/`` group
-#: (`2.1.0 → 2.2.0`).  Broker-only files (no `/opensees/...`) still
+#: (`2.1.0 → 2.2.0`).  Phase 8.7 commit 2 added the
+#: ``/mesh_selections/`` neutral-zone group, mirroring
+#: ``/physical_groups`` for post-mesh selection sets
+#: (`2.3.0 → 2.4.0`).  Broker-only files (no `/opensees/...`) still
 #: stamp the current minor — the field is additive and old readers
 #: tolerate its absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.2.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.4.0"
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +151,7 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_elements(fem, f)
     _write_physical_groups(fem, f)
     _write_labels(fem, f)
+    _write_mesh_selections(fem, f)
     _write_constraints(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
@@ -231,6 +236,71 @@ def _write_labels(fem: "FEMData", f: Any) -> None:
         node_side=getattr(fem.nodes, "labels", None),
         element_side=getattr(fem.elements, "labels", None),
     )
+
+
+def _write_mesh_selections(fem: "FEMData", f: Any) -> None:
+    """Write ``/mesh_selections/{name}/{node_ids, node_coords, element_ids}``.
+
+    Mirrors ``/physical_groups`` and ``/labels`` shape so the same
+    ``H5Reader._read_named_index`` helper handles all three.  Sourced
+    from :attr:`FEMData.mesh_selection` (a
+    :class:`apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore` captured
+    at ``get_fem_data()`` time).  Omitted entirely when the snapshot
+    has no selection store or the store is empty — absence is the
+    right "no selections" signal.
+
+    Added in Phase 8.7 commit 2 (schema 2.3.0 → 2.4.0, additive) so
+    the viewer's ``selection=`` selector round-trips through
+    ``model.h5``.
+    """
+    store = getattr(fem, "mesh_selection", None)
+    if store is None:
+        return
+    try:
+        keys = store.get_all()
+    except (AttributeError, TypeError):
+        return
+    if not keys:
+        return
+
+    parent = f.create_group("mesh_selections")
+    seen_safe: set[str] = set()
+    for dim, tag in keys:
+        d, t = int(dim), int(tag)
+        try:
+            name = store.get_name(d, t)
+        except (KeyError, ValueError, AttributeError):
+            name = ""
+        if not name:
+            name = f"_unnamed_{d}_{t}"
+        safe = name.replace("/", "_")
+        if safe in seen_safe:
+            safe = f"{safe}__{d}_{t}"
+        seen_safe.add(safe)
+
+        sub = parent.create_group(safe)
+        sub.attrs["dim"] = d
+        sub.attrs["tag"] = t
+        sub.attrs["name"] = name
+
+        try:
+            node_data = store.get_nodes(d, t)
+            nids = np.asarray(node_data["tags"], dtype=np.int64)
+            ncoords = np.asarray(node_data["coords"], dtype=np.float64)
+        except (KeyError, ValueError, AttributeError):
+            nids = np.array([], dtype=np.int64)
+            ncoords = np.zeros((0, 3), dtype=np.float64)
+        sub.create_dataset("node_ids", data=nids)
+        sub.create_dataset("node_coords", data=ncoords)
+
+        if d >= 1:
+            try:
+                elem_data = store.get_elements(d, t)
+                eids = np.asarray(elem_data["element_ids"], dtype=np.int64)
+            except (KeyError, ValueError, AttributeError):
+                eids = np.array([], dtype=np.int64)
+            if eids.size > 0:
+                sub.create_dataset("element_ids", data=eids)
 
 
 def _write_named_index_at_root(

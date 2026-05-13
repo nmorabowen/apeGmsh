@@ -162,6 +162,56 @@ def test_reader_masses_accessor(tmp_path: Path) -> None:
         )
 
 
+def test_reader_mesh_selections_accessor(tmp_path: Path) -> None:
+    """Phase 8.7 commit 2: ``/mesh_selections`` reader returns the same
+    shape as ``physical_groups()`` / ``labels()``."""
+    from apeGmsh.mesh.MeshSelectionSet import MeshSelectionStore
+
+    fem = _make_fem()
+    fem.mesh_selection = MeshSelectionStore({
+        (0, 1): {
+            "name": "anchor",
+            "node_ids": np.array([1, 2], dtype=np.int64),
+            "node_coords": np.array([
+                [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+            ], dtype=np.float64),
+        },
+        (1, 1): {
+            "name": "edge_picks",
+            "node_ids": np.array([1, 2], dtype=np.int64),
+            "node_coords": np.array([
+                [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+            ], dtype=np.float64),
+            "element_ids": np.array([10], dtype=np.int64),
+            "connectivity": np.array([[1, 2]], dtype=np.int64),
+        },
+    })
+    out = tmp_path / "selections.h5"
+    fem.to_h5(str(out))
+    with h5_reader.open(str(out)) as m:
+        ms = m.mesh_selections()
+        assert sorted(ms.keys()) == ["anchor", "edge_picks"]
+        anchor = ms["anchor"]
+        assert int(anchor["dim"]) == 0
+        np.testing.assert_array_equal(anchor["node_ids"], [1, 2])
+        # dim=0 → element_ids absent.
+        assert "element_ids" not in anchor
+        edge = ms["edge_picks"]
+        assert int(edge["dim"]) == 1
+        np.testing.assert_array_equal(edge["element_ids"], [10])
+
+
+def test_reader_mesh_selections_empty_when_absent(tmp_path: Path) -> None:
+    """Files without ``/mesh_selections`` (pre-2.4.0 or empty store)
+    return an empty dict — graceful degradation per the schema's
+    additive-bump policy."""
+    fem = _make_fem()
+    out = tmp_path / "no_selections.h5"
+    fem.to_h5(str(out))
+    with h5_reader.open(str(out)) as m:
+        assert m.mesh_selections() == {}
+
+
 def test_reader_returns_none_for_absent_masses(tmp_path: Path) -> None:
     """Empty broker → no /masses group → accessor returns None."""
     line_info = make_type_info(
@@ -187,3 +237,4 @@ def test_reader_returns_none_for_absent_masses(tmp_path: Path) -> None:
         assert m.loads() == {}
         assert m.physical_groups() == {}
         assert m.labels() == {}
+        assert m.mesh_selections() == {}

@@ -121,7 +121,15 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     ``ids``, ``dt``, ``n_steps``, ``file_root``.  Additive — old
 #:     v2.2.0 readers see ``kind="declared"`` records as well-formed
 #:     recorder groups (they just ignore the extra attrs).
-SCHEMA_VERSION: str = "2.3.0"
+#:   * 2.4.0 — Phase 8.7 commit 2: ``/mesh_selections/`` neutral-zone
+#:     group added, mirroring ``/physical_groups`` / ``/labels`` shape.
+#:     Carries post-mesh selection sets (``g.mesh_selection`` →
+#:     ``fem.mesh_selection``) so the viewer's ``selection=`` selector
+#:     round-trips through ``model.h5``.  Additive — old v2.3.0 readers
+#:     ignore the new group and lose only the ``selection=`` round-trip
+#:     convenience (live mesh_viewer sessions still consult the live
+#:     ``fem.mesh_selection`` directly).
+SCHEMA_VERSION: str = "2.4.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path

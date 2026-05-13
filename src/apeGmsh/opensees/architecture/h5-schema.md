@@ -85,6 +85,8 @@ model.h5
 │     └── /{name}                          one group per Gmsh physical group
 ├── /labels
 │     └── /{name}                          one group per apeGmsh label
+├── /mesh_selections
+│     └── /{name}                          one group per post-mesh selection set
 ├── /constraints
 │     └── /{kind}                          one dataset per constraint kind
 ├── /loads
@@ -141,7 +143,7 @@ Attributes only.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `schema_version` | string | semver, e.g. `"2.3.0"` |
+| `schema_version` | string | semver, e.g. `"2.4.0"` |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
@@ -217,6 +219,29 @@ Same shape as `/physical_groups`, with apeGmsh-internal labels in
 place of Gmsh PG taxonomy.  Each label entry carries the same
 fields (`dim`, `tag`, `name`, `node_ids`, `node_coords`, optional
 `element_ids`).
+
+## `/mesh_selections`
+
+Same shape as `/physical_groups` / `/labels`, with post-mesh
+selection sets in place of Gmsh-derived taxonomy.  Sourced from
+``fem.mesh_selection`` (a
+:class:`apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore` captured
+at ``get_fem_data()`` time when ``g.mesh_selection`` has entries).
+Each entry carries the same fields (`dim`, `tag`, `name`,
+`node_ids`, `node_coords`, optional `element_ids`).
+
+```
+/mesh_selections/base/
+├── attrs: dim=0, tag=1, name="base"
+├── node_ids          (Np,) int64
+└── node_coords       (Np, 3) float64
+```
+
+Schema 2.4.0 addition (Phase 8.7 commit 2).  Omitted entirely when
+the broker has no selection store or the store is empty.  Pre-2.4.0
+readers ignore the group and lose only the `selection=` selector's
+round-trip convenience — live mesh_viewer sessions still consult
+the live ``fem.mesh_selection`` directly.
 
 ## `/constraints/{kind}`
 
@@ -626,7 +651,7 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
   ignore unknown groups.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
 
-The current schema version is **`2.3.0`**.
+The current schema version is **`2.4.0`**.
 
 History:
 
@@ -665,6 +690,17 @@ History:
   recorder groups (they just ignore the extra attrs).  See
   [phase-9-recorder-unification.md](phase-9-recorder-unification.md)
   for the multi-commit phase that delivered this.
+- `2.4.0` — Phase 8.7 commit 2: `/mesh_selections/` neutral-zone
+  group added, mirroring `/physical_groups` / `/labels` shape.
+  Carries post-mesh selection sets (``g.mesh_selection`` →
+  ``fem.mesh_selection``) so the viewer's `selection=` selector
+  round-trips through `model.h5`.  Additive — old v2.3.0 readers
+  ignore the new group and lose only the `selection=` round-trip
+  convenience (live mesh_viewer sessions still consult the live
+  ``fem.mesh_selection`` directly).  See
+  [phase-8.7-scope.md](phase-8.7-scope.md) §1b for the rationale
+  and [ADR 0014](decisions/0014-viewer-is-pure-h5-consumer.md) for
+  the architectural decision.
 
 A reader skeleton:
 

@@ -302,6 +302,16 @@ class H5Model:
         """Return root-level ``/labels`` shape (same fields as :meth:`physical_groups`)."""
         return self._read_named_index("labels")
 
+    def mesh_selections(self) -> dict[str, dict[str, Any]]:
+        """Return root-level ``/mesh_selections`` shape.
+
+        Same fields as :meth:`physical_groups` / :meth:`labels` —
+        post-mesh selection sets (``fem.mesh_selection``) the broker
+        captures at ``get_fem_data()`` time.  Schema 2.4.0 addition
+        (Phase 8.7 commit 2); empty dict for pre-2.4.0 files.
+        """
+        return self._read_named_index("mesh_selections")
+
     def constraints(self) -> dict[str, Any]:
         """Return ``{kind: compound_array}`` for ``/constraints/{kind}``.
 

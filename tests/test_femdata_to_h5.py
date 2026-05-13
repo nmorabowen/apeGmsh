@@ -151,7 +151,7 @@ def test_to_h5_writes_meta(tmp_path: Path) -> None:
     fem.to_h5(str(out), model_name="demo")
     with h5py.File(out, "r") as f:
         assert "meta" in f
-        assert f["meta"].attrs["schema_version"] == "2.2.0"
+        assert f["meta"].attrs["schema_version"] == "2.4.0"
         assert int(f["meta"].attrs["ndm"]) == 2  # max element dim
         assert f["meta"].attrs["model_name"] == "demo"
 
@@ -315,6 +315,7 @@ def test_to_h5_omits_empty_groups(tmp_path: Path) -> None:
         assert "masses" not in f
         assert "physical_groups" not in f
         assert "labels" not in f
+        assert "mesh_selections" not in f
 
 
 def test_to_h5_snapshot_id_in_meta(tmp_path: Path) -> None:
@@ -324,3 +325,69 @@ def test_to_h5_snapshot_id_in_meta(tmp_path: Path) -> None:
     fem.to_h5(str(out))
     with h5py.File(out, "r") as f:
         assert f["meta"].attrs["snapshot_id"] == fem.snapshot_id
+
+
+# =====================================================================
+# Phase 8.7 commit 2 — /mesh_selections/ round-trip
+# =====================================================================
+
+
+def _attach_mesh_selection_store(fem: FEMData) -> FEMData:
+    """Attach a MeshSelectionStore with one node-only + one element-bearing set."""
+    from apeGmsh.mesh.MeshSelectionSet import MeshSelectionStore
+
+    sets = {
+        (0, 1): {
+            "name": "base_nodes",
+            "node_ids": np.array([1, 2], dtype=np.int64),
+            "node_coords": np.array([
+                [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+            ], dtype=np.float64),
+        },
+        (2, 1): {
+            "name": "slab_face",
+            "node_ids": np.array([2, 3, 5], dtype=np.int64),
+            "node_coords": np.array([
+                [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.5, 0.5, 1.0],
+            ], dtype=np.float64),
+            "element_ids": np.array([20], dtype=np.int64),
+            "connectivity": np.array([[2, 3, 5]], dtype=np.int64),
+        },
+    }
+    fem.mesh_selection = MeshSelectionStore(sets)
+    return fem
+
+
+def test_to_h5_writes_mesh_selections_at_root(tmp_path: Path) -> None:
+    """A FEMData with ``mesh_selection`` populates ``/mesh_selections``."""
+    fem = _attach_mesh_selection_store(_make_fem())
+    out = tmp_path / "selections.h5"
+    fem.to_h5(str(out))
+    with h5py.File(out, "r") as f:
+        assert "mesh_selections" in f
+        names = sorted(f["mesh_selections"].keys())
+        assert names == ["base_nodes", "slab_face"]
+
+        base = f["mesh_selections/base_nodes"]
+        assert int(base.attrs["dim"]) == 0
+        assert int(base.attrs["tag"]) == 1
+        assert base.attrs["name"] == "base_nodes"
+        np.testing.assert_array_equal(base["node_ids"][:], [1, 2])
+        # dim=0 → no element_ids dataset
+        assert "element_ids" not in base
+
+        slab = f["mesh_selections/slab_face"]
+        assert int(slab.attrs["dim"]) == 2
+        np.testing.assert_array_equal(slab["node_ids"][:], [2, 3, 5])
+        np.testing.assert_array_equal(slab["element_ids"][:], [20])
+
+
+def test_to_h5_omits_mesh_selections_when_absent(tmp_path: Path) -> None:
+    """No ``fem.mesh_selection`` → no ``/mesh_selections`` group."""
+    fem = _make_fem()
+    # _make_fem() does not attach a selection store.
+    assert getattr(fem, "mesh_selection", None) is None
+    out = tmp_path / "no_selections.h5"
+    fem.to_h5(str(out))
+    with h5py.File(out, "r") as f:
+        assert "mesh_selections" not in f
