@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence
 if TYPE_CHECKING:
     from apeGmsh.cuts import SectionCutDef
     from apeGmsh.results.Results import Results
-    from apeGmsh.mesh.FEMData import FEMData
     from .diagrams._director import ResultsDirector
     from .scene.fem_scene import FEMSceneData
     from .ui._diagram_settings_tab import DiagramSettingsTab
@@ -205,6 +204,7 @@ class ResultsViewer:
         # Lazy imports — keep ``apeGmsh.viewers`` importable in headless
         # environments. Qt / pyvistaqt only loaded when the user opens
         # an actual viewer.
+        from .data import ViewerData
         from .scene.fem_scene import build_fem_scene
         from .diagrams._director import ResultsDirector
         from .ui._results_window import ResultsWindow
@@ -218,7 +218,7 @@ class ResultsViewer:
         # ── FEM scene ───────────────────────────────────────────────
         fem = self._results.fem
         assert fem is not None    # validated in __init__
-        scene = build_fem_scene(fem)
+        scene = build_fem_scene(ViewerData.from_fem(fem))
         self._scene = scene
         # PickEngine actor inventory — set on the scene before any
         # diagram attaches so GaussPointDiagram (and future fiber/etc.)

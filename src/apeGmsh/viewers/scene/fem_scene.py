@@ -1,15 +1,24 @@
-"""FEM scene builder — substrate mesh from a FEMData snapshot.
+"""FEM scene builder — substrate mesh from a :class:`ViewerData` snapshot.
 
-Parallel to ``mesh_scene.py`` but reads from a ``FEMData`` instead of
-a live Gmsh session. Used by ``ResultsViewer``: a Results file embeds
-its own FEMData, so the viewer must be able to render without a live
-Gmsh model.
+Phase 8.7 commit 4 retargets this module: the input shape is now
+:class:`apeGmsh.viewers.data.ViewerData` rather than
+:class:`apeGmsh.mesh.FEMData`.  The two share the same read surface
+on the accessors this module exercises (``view.nodes.ids``,
+``view.nodes.coords``, iter of element groups with
+``element_type.{code,dim,npe}``, ``connectivity``, ``ids``), so a
+raw FEMData passed in still works at runtime — the type annotation
+just narrows the contract.  Callers should pass a ``ViewerData`` for
+clarity; ``ViewerData.from_fem(fem)`` is the canonical wrap.
+
+Used by ``ResultsViewer``: a Results file embeds its own model state
+(via the result reader's FEM synthesis, or a sidecar ``model.h5``),
+so the viewer must be able to render without a live Gmsh model.
 
 Builds:
 
 * One merged ``pyvista.UnstructuredGrid`` containing all elements
-  across all FEMData groups, with ``cell_data["element_id"]`` so
-  future picking can map a picked cell to a FEM element ID.
+  across all groups, with ``cell_data["element_id"]`` so future
+  picking can map a picked cell to a FEM element ID.
 * The node coordinate array, with ``point_data["node_id"]`` carrying
   raw FEM node IDs.
 * A scipy KD-tree over the nodes for node picking (later phases).
@@ -31,7 +40,7 @@ import pyvista as pv
 from numpy import ndarray
 
 if TYPE_CHECKING:
-    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.viewers.data import ViewerData
 
 
 # ======================================================================
@@ -181,16 +190,21 @@ class FEMSceneData:
 # ======================================================================
 
 def build_fem_scene(
-    fem: "FEMData",
+    view: "ViewerData",
     *,
     verbose: bool = False,
 ) -> FEMSceneData:
-    """Build the substrate mesh + identity maps from a ``FEMData``.
+    """Build the substrate mesh + identity maps from a :class:`ViewerData`.
 
     Parameters
     ----------
-    fem
-        The bound FEMData snapshot.
+    view
+        The viewer-facing structural snapshot.  Both
+        :meth:`ViewerData.from_fem` and :meth:`ViewerData.from_h5`
+        produce instances suitable as input.  A raw FEMData still
+        works at runtime via duck typing on
+        ``nodes.ids`` / ``nodes.coords`` / iter of element groups —
+        callers should wrap as ``ViewerData.from_fem(fem)`` for clarity.
     verbose
         Log the build summary.
 
@@ -200,16 +214,16 @@ def build_fem_scene(
         Substrate mesh and identity maps; not yet attached to a plotter.
     """
     # ── Nodes ────────────────────────────────────────────────────
-    raw_node_ids = np.asarray(list(fem.nodes.ids), dtype=np.int64)
-    raw_node_coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    raw_node_ids = np.asarray(list(view.nodes.ids), dtype=np.int64)
+    raw_node_coords = np.asarray(view.nodes.coords, dtype=np.float64)
     if raw_node_coords.ndim != 2 or raw_node_coords.shape[1] != 3:
         raise RuntimeError(
-            f"FEMData.nodes.coords must be (N, 3); got shape "
+            f"ViewerData.nodes.coords must be (N, 3); got shape "
             f"{raw_node_coords.shape}."
         )
     if raw_node_ids.shape[0] != raw_node_coords.shape[0]:
         raise RuntimeError(
-            f"FEMData node id / coord length mismatch: "
+            f"ViewerData node id / coord length mismatch: "
             f"ids={raw_node_ids.shape[0]} coords={raw_node_coords.shape[0]}."
         )
 
@@ -231,7 +245,7 @@ def build_fem_scene(
     element_ids: list[int] = []
     skipped: dict[int, int] = {}
 
-    for group in fem.elements:
+    for group in view.elements:
         etype = group.element_type
         code = int(etype.code)
         mapping = GMSH_LINEAR.get(code)
