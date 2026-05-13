@@ -1123,6 +1123,13 @@ class ResultsViewer:
         """Wire ``cuts=`` and ``model_h5=`` constructor arguments into the
         director immediately after the registry binds to a live plotter.
 
+        v4 of the apeGmsh.cuts roadmap adds an auto-load branch: when
+        ``cuts=`` was not supplied but ``model_h5=`` was, any cuts /
+        sweeps persisted under ``/opensees/cuts/`` and
+        ``/opensees/sweeps/`` are read and attached automatically.
+        Explicit ``cuts=`` wins over h5 persistence — that's the
+        kwarg-precedence contract from ARCHITECTURE.md H14.
+
         Failures here are logged but non-fatal — a malformed cut
         shouldn't prevent the rest of the viewer from opening. The user
         sees the error in the session log and can construct the cut by
@@ -1138,16 +1145,30 @@ class ResultsViewer:
                 self._director.set_model_h5(self._pending_model_h5)
             except Exception as exc:
                 log_error("init", "ResultsViewer.set_model_h5", exc)
-        for i, cut in enumerate(self._pending_cuts):
+        if self._pending_cuts:
+            for i, cut in enumerate(self._pending_cuts):
+                try:
+                    self._director.add_section_cut(cut)
+                except Exception as exc:
+                    log_action(
+                        "session", "section_cut_add_failed",
+                        index=i, label=str(getattr(cut, "label", "")),
+                        error=type(exc).__name__,
+                    )
+                    log_error("init", f"ResultsViewer.cut[{i}]", exc)
+        elif self._pending_model_h5 is not None:
+            # No explicit cuts kwarg — auto-load from /opensees/cuts/
+            # and /opensees/sweeps/ (empty result if the file is
+            # pre-v4 or carries no cuts).
             try:
-                self._director.add_section_cut(cut)
+                self._director.load_cuts_from_h5()
             except Exception as exc:
                 log_action(
-                    "session", "section_cut_add_failed",
-                    index=i, label=str(getattr(cut, "label", "")),
+                    "session", "section_cut_autoload_failed",
+                    model_h5=str(self._pending_model_h5),
                     error=type(exc).__name__,
                 )
-                log_error("init", f"ResultsViewer.cut[{i}]", exc)
+                log_error("init", "ResultsViewer.load_cuts_from_h5", exc)
         # Clear the queue so a future re-show (test contexts mainly)
         # doesn't double-add.
         self._pending_cuts = ()

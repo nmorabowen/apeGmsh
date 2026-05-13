@@ -379,11 +379,28 @@ class AddDiagramDialog:
         form.addRow("Selector name:", self._selector_name)
 
         # ===== Section-cut rows (visible only when kind = section_cut) =====
-        # Loaded state — populated by the file picker / textChanged.
-        # ``_cut_loaded`` is either None, a ``SectionCutDef``, or a
-        # ``SectionSweepDef``; the OK handler branches on type.
+        # Loaded state — populated by the file picker / textChanged, or
+        # by the h5 dropdown when Source=h5. ``_cut_loaded`` is either
+        # None, a ``SectionCutDef``, or a ``SectionSweepDef``; the OK
+        # handler branches on type.
         self._cut_loaded: "SectionCutDef | SectionSweepDef | None" = None
         self._cut_load_error: Optional[str] = None
+
+        # Source — v4: pick between the Phase-4 file picker and the new
+        # "browse cuts persisted in model.h5" dropdown. File picker is
+        # the default so the Phase-4 flow remains the dialog's first
+        # impression on existing users.
+        self._cut_source_combo = QtWidgets.QComboBox()
+        self._cut_source_combo.addItem("File (.pkl)", "file")
+        self._cut_source_combo.addItem("In model.h5", "h5")
+        self._cut_source_combo.setToolTip(
+            "Pick the cut's source: a pickled .pkl/.pkl.gz file, or a\n"
+            "cut/sweep persisted inside the model.h5 below."
+        )
+        self._cut_source_combo.currentIndexChanged.connect(
+            self._on_cut_source_changed,
+        )
+        form.addRow("Source:", self._cut_source_combo)
 
         self._cut_file_edit = QtWidgets.QLineEdit()
         self._cut_file_edit.setPlaceholderText(
@@ -402,6 +419,21 @@ class AddDiagramDialog:
             self._cut_file_edit, self._cut_file_browse,
         )
         form.addRow("File:", self._cut_file_row)
+
+        # h5-source dropdown — populated by ``_populate_h5_cut_dropdown``
+        # whenever model.h5 changes (or source switches to h5). Each
+        # entry's ``itemData`` carries the live ``SectionCutDef`` /
+        # ``SectionSweepDef`` instance, so dropdown selection alone is
+        # enough to populate ``_cut_loaded``.
+        self._cut_h5_dropdown = QtWidgets.QComboBox()
+        self._cut_h5_dropdown.setToolTip(
+            "Cut or sweep persisted under /opensees/cuts/ or\n"
+            "/opensees/sweeps/ in the model.h5 above."
+        )
+        self._cut_h5_dropdown.currentIndexChanged.connect(
+            self._on_cut_h5_dropdown_changed,
+        )
+        form.addRow("Cut:", self._cut_h5_dropdown)
 
         self._cut_model_h5_edit = QtWidgets.QLineEdit()
         prefill = director.model_h5
@@ -740,6 +772,13 @@ class AddDiagramDialog:
         entry = self._kind_combo.currentData()
         return entry is not None and entry.kind_id == SECTION_CUT_KIND_ID
 
+    def _is_h5_source(self) -> bool:
+        """True iff section_cut is the kind AND Source=h5."""
+        return (
+            self._is_section_cut_kind()
+            and self._cut_source_combo.currentData() == "h5"
+        )
+
     def _update_section_cut_visibility(self) -> None:
         """Toggle rows between the Results-data flow and the section-cut flow."""
         is_cut = self._is_section_cut_kind()
@@ -759,9 +798,16 @@ class AddDiagramDialog:
             self._topology_combo.setVisible(False)
             self._averaging_label.setVisible(False)
             self._averaging_combo.setVisible(False)
-        # Show section-cut rows only when section_cut is picked.
+        # Source combo visible whenever section_cut is picked.
+        self._set_row_visible(self._cut_source_combo, is_cut)
+        # File row vs h5 dropdown — mutually exclusive within the
+        # section-cut flow. _is_h5_source already guards on is_cut.
+        h5_mode = self._is_h5_source()
+        self._set_row_visible(self._cut_file_row, is_cut and not h5_mode)
+        self._set_row_visible(self._cut_h5_dropdown, h5_mode)
+        # Model.h5 + preflight always visible in the section-cut flow —
+        # they're needed for both load paths.
         for field in (
-            self._cut_file_row,
             self._cut_model_h5_row,
             self._cut_preflight_status,
             self._cut_preflight_summary,
@@ -798,8 +844,91 @@ class AddDiagramDialog:
         self._update_ok_enabled()
 
     def _on_cut_model_h5_text_changed(self, _text: str) -> None:
+        # When Source=h5, the dropdown is sourced from this path —
+        # re-enumerate /opensees/cuts/ + /opensees/sweeps/ whenever the
+        # path text changes. In file mode this is a no-op aside from
+        # the preflight rerun (the file picker drives _cut_loaded).
+        if self._is_h5_source():
+            self._populate_h5_cut_dropdown()
         self._run_dialog_preflight()
         self._update_ok_enabled()
+
+    # ── Source toggle / h5 dropdown ─────────────────────────────────
+
+    def _on_cut_source_changed(self, *_args: Any) -> None:
+        """Swap row visibility, reset loaded state, re-run preflight."""
+        # Switching sources invalidates whatever was loaded before —
+        # the new source must drive a fresh selection.
+        self._cut_loaded = None
+        self._cut_load_error = None
+        self._update_section_cut_visibility()
+        if self._is_h5_source():
+            self._populate_h5_cut_dropdown()
+        else:
+            # File mode — reload from the current path text (may be
+            # empty, in which case _load_cut_from_path is a no-op).
+            self._load_cut_from_path()
+        self._run_dialog_preflight()
+        self._update_ok_enabled()
+
+    def _on_cut_h5_dropdown_changed(self, *_args: Any) -> None:
+        """User picked a different entry in the h5 cut dropdown."""
+        if not self._is_h5_source():
+            return
+        data = self._cut_h5_dropdown.currentData()
+        self._cut_load_error = None
+        # ``data`` is either a SectionCutDef, a SectionSweepDef, or
+        # ``None`` (placeholder entry: "(no cuts in this h5)", "(set
+        # Model.h5 first)", or a load-failure marker).
+        self._cut_loaded = data if data is not None else None
+        self._run_dialog_preflight()
+        self._update_ok_enabled()
+
+    def _populate_h5_cut_dropdown(self) -> None:
+        """Re-enumerate /opensees/cuts/ + /opensees/sweeps/ from model_h5.
+
+        Blocks signals during the rebuild so per-item ``addItem`` calls
+        don't fire the change slot mid-populate. After the rebuild, we
+        explicitly call ``_on_cut_h5_dropdown_changed`` once so the
+        current selection's data lands in ``_cut_loaded``.
+        """
+        self._cut_h5_dropdown.blockSignals(True)
+        try:
+            self._cut_h5_dropdown.clear()
+            model_h5_text = self._cut_model_h5_edit.text().strip()
+            if not model_h5_text:
+                self._cut_h5_dropdown.addItem(
+                    "(set Model.h5 first)", None,
+                )
+                return
+            try:
+                from apeGmsh.cuts import read_cuts_and_sweeps
+                cuts, sweeps = read_cuts_and_sweeps(model_h5_text)
+            except Exception as exc:
+                self._cut_h5_dropdown.addItem(
+                    f"(load failed: {exc})", None,
+                )
+                return
+            if not cuts and not sweeps:
+                self._cut_h5_dropdown.addItem(
+                    "(no cuts persisted in this model.h5)", None,
+                )
+                return
+            for i, cut in enumerate(cuts):
+                cut_name = f"cut_{i}"
+                display_label = cut.label or cut_name
+                self._cut_h5_dropdown.addItem(
+                    f"{display_label} ({cut_name})", cut,
+                )
+            for i, sweep in enumerate(sweeps):
+                sweep_name = f"sweep_{i}"
+                self._cut_h5_dropdown.addItem(
+                    f"{sweep_name} (sweep, {len(sweep)} cuts)", sweep,
+                )
+        finally:
+            self._cut_h5_dropdown.blockSignals(False)
+        # Sync loaded state to whatever is now selected.
+        self._on_cut_h5_dropdown_changed()
 
     # ── Load + preflight ────────────────────────────────────────────
 

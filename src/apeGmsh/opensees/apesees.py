@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Iterable, TypeVar
+from typing import TYPE_CHECKING, Any, Iterable, Sequence, TypeVar
 
 from ._internal.build import (
     BridgeError,
@@ -88,6 +88,7 @@ if TYPE_CHECKING:
     # not transitively import gmsh during static analysis.
     # Use the fully-qualified module path to disambiguate from the
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
+    from apeGmsh.cuts import SectionCutDef, SectionSweepDef
     from apeGmsh.mesh.FEMData import FEMData
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
@@ -642,7 +643,14 @@ class apeSees:
         emitter = LiveOpsEmitter(wipe=wipe)
         bm.emit(emitter)
 
-    def h5(self, path: str, *, model_name: str | None = None) -> None:
+    def h5(
+        self,
+        path: str,
+        *,
+        model_name: str | None = None,
+        cuts: "Sequence[SectionCutDef]" = (),
+        sweeps: "Sequence[SectionSweepDef]" = (),
+    ) -> None:
         """Emit a model-definition HDF5 archive at ``path``.
 
         Phase 8.5 composes the file in two layers:
@@ -654,6 +662,10 @@ class apeSees:
            live in :mod:`apeGmsh.mesh._femdata_h5_io`.
         2. The **bridge** (an :class:`H5Emitter` driven through the
            :class:`BuiltModel`) appends ``/opensees/...`` enrichment.
+        3. apeGmsh.cuts v4: if ``cuts`` and / or ``sweeps`` are
+           supplied, they're persisted under ``/opensees/cuts/`` and
+           ``/opensees/sweeps/`` (writer in
+           :mod:`apeGmsh.cuts._h5_io`).
 
         If ``self._fem`` does not expose a real :class:`FEMData`
         surface (e.g. integration tests using a hand-rolled stub),
@@ -668,9 +680,20 @@ class apeSees:
         model_name
             Optional human-readable name written to ``/meta/model_name``.
             Defaults to the path's stem.
+        cuts
+            Optional sequence of :class:`apeGmsh.cuts.SectionCutDef`
+            to persist under ``/opensees/cuts/cut_{i}``.  Each cut
+            travels with the model definition; the viewer auto-loads
+            them on the next ``results.viewer(model_h5=path)``.
+        sweeps
+            Optional sequence of :class:`apeGmsh.cuts.SectionSweepDef`
+            to persist under ``/opensees/sweeps/sweep_{i}``.  Each
+            sweep group carries its own ``cuts/`` sub-group in sweep
+            order (see ``apeGmsh/cuts/ARCHITECTURE.md`` "## v4").
         """
         import h5py
 
+        from ..cuts._h5_io import write_cuts_into
         from ..mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
         from .emitter.h5 import SCHEMA_VERSION, H5Emitter
 
@@ -706,6 +729,10 @@ class apeSees:
                 emitter._write_meta(f)
                 _override_schema_version(f, SCHEMA_VERSION)
             emitter.write_opensees_into(f)
+            # Empty sequences are a no-op inside write_cuts_into —
+            # neither /opensees/cuts/ nor /opensees/sweeps/ is created
+            # when nothing was supplied.
+            write_cuts_into(f, cuts=cuts, sweeps=sweeps)
 
     # -- Registration -----------------------------------------------------
 

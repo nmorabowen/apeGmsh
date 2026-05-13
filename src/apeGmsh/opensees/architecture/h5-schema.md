@@ -116,6 +116,10 @@ model.h5
       │     └── /mass                      single dataset
       ├── /recorders
       │     └── /{name}                    one group per recorder
+      ├── /cuts                            (optional, v4)
+      │     └── /cut_{i}                   one group per persisted SectionCutDef
+      ├── /sweeps                          (optional, v4)
+      │     └── /sweep_{i}                 one group per persisted SectionSweepDef
       └── /analysis                        attrs + sub-attrs (optional)
 ```
 
@@ -598,6 +602,76 @@ Pre-2.3.0 archives wrote no `kind` attr. `H5Reader.recorders()`
 synthesizes `kind="typed"` for those records so callers can branch
 on `r["kind"]` uniformly without a version probe.
 
+## `/opensees/cuts` (optional, v4)
+
+Persisted `SectionCutDef` instances — post-process specs that travel
+with the model definition. Present only when the producer was given a
+non-empty `cuts=` kwarg (via `apeSees.h5(path, cuts=[...])`) or when
+`apeGmsh.cuts.persist_to_h5(path, cuts=[...])` was called against an
+existing file. Writer lives in
+[`apeGmsh.cuts._h5_io.write_cuts_into`](../../cuts/_h5_io.py); reader
+in `read_cuts_and_sweeps`. Full design rationale in
+[`apeGmsh/cuts/ARCHITECTURE.md`](../../cuts/ARCHITECTURE.md) — "## v4
+— Cuts persisted in `model.h5`".
+
+One sub-group per cut, named positionally (`cut_0`, `cut_1`, …) in
+writer order. Standalone cuts and sweep-member cuts use the same
+group shape — sweep cuts live under `/opensees/sweeps/sweep_{i}/cuts/`,
+described below.
+
+```
+/opensees/cuts/
+├── attrs: count=N
+└── /cut_0/, /cut_1/, ...
+    ├── attrs:
+    │   plane_point        (3,)  float64     — point on the cut plane
+    │   plane_normal       (3,)  float64     — unit-normalized; reader does not re-normalize
+    │   side               utf-8             — "positive" | "negative"
+    │   label              utf-8             — display label; "" when has_label=0
+    │   has_label          int8              — 0/1; distinguishes None from ""
+    │   has_bounding       int8              — 0/1
+    ├── element_ids        (Ne,) int64       — OpenSees element tags
+    └── bounding_polygon   (Mb, 3) float64   — present iff has_bounding=1
+```
+
+`element_ids` carries OpenSees tags, not FEM eids. The kernel-side
+consumer (`STKO_to_python`) ingests OpenSees tags directly; the
+apeGmsh viewer routes them back through
+`/opensees/element_meta/{type}/fem_eids` to reach the FEMData
+connectivity. The two `has_*` flags are the workaround for HDF5's
+lack of a native `None` — a missing label round-trips as `None`
+(not `""` or zero-length array).
+
+Standalone group iteration uses natural-integer sort on the `_N`
+suffix (so `cut_10` follows `cut_2`, not `cut_1`); the reader does
+not depend on alphabetic ordering.
+
+## `/opensees/sweeps` (optional, v4)
+
+Persisted `SectionSweepDef` instances — ordered sequences of cuts
+sharing one element filter, typically used for story-shear-vs-
+elevation profiles. Each sweep group owns its cuts: rather than
+cross-referencing into `/opensees/cuts/`, the sweep's members live
+under its own `cuts/` sub-group. This keeps each sweep
+self-contained and avoids dedup logic between the two layouts.
+
+```
+/opensees/sweeps/
+├── attrs: count=M
+└── /sweep_0/, /sweep_1/, ...
+    ├── attrs:
+    │   count=K
+    │   order               vlen utf-8       — ["cut_0", "cut_1", ...] in sweep order
+    └── /cuts/
+        └── /cut_0/, /cut_1/, ...             — same shape as /opensees/cuts/cut_N
+```
+
+The explicit `order` attribute drives reconstruction — HDF5's
+alphabetic group iteration would scramble sweeps containing more
+than 9 cuts (`cut_10` would land before `cut_2`). Writers
+populate `order` in declaration order; readers walk it to rebuild
+the `SectionSweepDef.cuts` tuple.
+
 ## `/opensees/analysis` (optional)
 
 Present only if the user called the analysis primitives.
@@ -651,7 +725,7 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
   ignore unknown groups.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
 
-The current schema version is **`2.4.0`**.
+The current schema version is **`2.5.0`**.
 
 History:
 
@@ -701,6 +775,15 @@ History:
   [phase-8.7-scope.md](phase-8.7-scope.md) §1b for the rationale
   and [ADR 0014](decisions/0014-viewer-is-pure-h5-consumer.md) for
   the architectural decision.
+- `2.5.0` — apeGmsh.cuts v4: `/opensees/cuts/` and
+  `/opensees/sweeps/` groups added carrying `SectionCutDef` /
+  `SectionSweepDef` persistence.  See
+  `src/apeGmsh/cuts/ARCHITECTURE.md` "## v4 — Cuts persisted in
+  `model.h5`" for the on-disk shape.  Writer lives in
+  `apeGmsh.cuts._h5_io.write_cuts_into`; reader in
+  `read_cuts_and_sweeps`.  Additive — pre-v4 readers (2.4.0 and
+  earlier) ignore the new groups; missing groups return empty
+  tuples.
 
 A reader skeleton:
 

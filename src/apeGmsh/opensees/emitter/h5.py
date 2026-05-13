@@ -129,7 +129,12 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     ignore the new group and lose only the ``selection=`` round-trip
 #:     convenience (live mesh_viewer sessions still consult the live
 #:     ``fem.mesh_selection`` directly).
-SCHEMA_VERSION: str = "2.4.0"
+#:   * 2.5.0 — apeGmsh.cuts v4: ``/opensees/cuts/`` and
+#:     ``/opensees/sweeps/`` groups added for SectionCutDef and
+#:     SectionSweepDef persistence (writer lives in
+#:     :mod:`apeGmsh.cuts._h5_io`).  Additive — pre-v4 readers ignore
+#:     the new groups.
+SCHEMA_VERSION: str = "2.5.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path

@@ -133,10 +133,13 @@ cut_def = SectionCutDef.from_plane_and_pg(
 | v2.3 | `SectionCutDef.preflight(fem)` validator — drift checks | **done** |
 | Phase 4 | Add-Diagram dialog file picker for pickled cuts / sweeps | **in progress** |
 | v5 | `DriftDef` / `DriftSweepDef` — node-pair drift carrier | **in progress** |
+| v4 | `model.h5` persistence — `/opensees/cuts/` writer/reader + viewer auto-load + dialog h5-source mode | **in progress** |
 
-v4 and beyond (`model.h5` persistence of cuts, live editing, drift
-specs, sweep templates) are described in the session that drafted this
-plan — out of scope for this directory until v2.3 is complete.
+v4 picks up `model.h5` persistence — see the
+`## v4 — Cuts persisted in `model.h5`` section below. Live edit of
+persisted cuts, drift persistence under `/opensees/drifts/`, and the
+`apeGmsh.outputs` reorganization remain out of scope until concrete
+call sites appear.
 
 ## v2.2 — Viewer overlay
 
@@ -592,9 +595,279 @@ restored = DriftDef.load_pickle("story3.pkl")
 - Viewer overlay — drift has no spatial extent; a "drift between these two nodes" decoration is a different design pass.
 - Renaming `apeGmsh.cuts` → `apeGmsh.outputs`. Revisit when v6 arrives.
 
+## v4 — Cuts persisted in `model.h5`
+
+Cuts shipped through v5 are picklable, share-by-file artifacts. They
+live on disk only when the user (or a script) explicitly calls
+`save_pickle(...)`, and they reach the viewer through either
+`results.viewer(cuts=[...])` (programmatic) or the Phase-4 file
+picker (GUI). Neither route ties the cuts to the model definition
+they were built against — they survive in their own `.pkl` files,
+which is great for sharing and bad for keeping the cut + model in
+lockstep.
+
+v4 makes `model.h5` the canonical store. A user who runs
+`ape.h5(path, cuts=[...], sweeps=[...])` writes cuts under
+`/opensees/cuts/` alongside the model definition; the next viewer
+session against that same file auto-loads them. Cuts and the model
+they were preflighted against now travel together; sharing the
+`.h5` shares the cuts.
+
+### Why `/opensees/cuts/`, not `/cuts/`
+
+`SectionCutDef.element_ids` are OpenSees tags. The whole preflight /
+`to_spec()` pipeline depends on `/opensees/element_meta/{type}/fem_eids`
+to map them back to FEM eids. Stashing cuts at the file root would
+suggest they're solver-neutral; in practice they are not. A future
+solver zone (`/aster/...`, `/abaqus/...`) carrying its own post-process
+specs would land under its own namespace and not collide.
+
+### Locked design decisions
+
+| # | Decision | Choice | Rationale |
+|---|----------|--------|-----------|
+| H1 | Where it lives | `/opensees/cuts/` and `/opensees/sweeps/`, nested in the OpenSees zone | `element_ids` are OpenSees tags; schema location matches the data dependency |
+| H2 | Sweep cuts layout | Nested — each sweep group owns its own `cuts/` subgroup | Self-contained; cleaner reader; the rare standalone-vs-sweep dedup isn't worth a cross-reference layer |
+| H3 | Cut and sweep naming | Positional: `cut_0`, `cut_1`, …; `sweep_0`, `sweep_1`, …, with an explicit `order` attr on each sweep | HDF5 group iteration is alphabetic (`cut_10` sorts before `cut_2`); the `order` attr survives padding choices and renames |
+| H4 | Cut group shape | Fixed-shape state in attrs; vlen fields (`element_ids`, `bounding_polygon`) as datasets | Mirrors `/opensees/sections/{name}/` — attrs + sub-datasets |
+| H5 | `None` vs `""` vs empty | Companion flags `has_label`, `has_bounding` (int 0/1) | HDF5 has no `None`; flags make the read deterministic so a missing label round-trips as `None`, not `""` |
+| H6 | Schema bump | `2.4.0 → 2.5.0` — additive, major unchanged (2.3.0 = Phase 9 commit 6 / unified recorders; 2.4.0 = Phase 8.7 commit 2 / `/mesh_selections/`) | New groups; existing readers ignore. `EXPECTED_SCHEMA_MAJOR` stays at 2 |
+| H7 | Writer primitive | `apeGmsh.cuts._h5_io.write_cuts_into(f, *, cuts, sweeps)` over an open `h5py.File` | One primitive, two ergonomic callers — mirrors `H5Emitter.write_opensees_into` |
+| H8 | Primary write path | `ape.h5(path, *, cuts=(), sweeps=())` — model + cuts in one shot | Symmetric with how the rest of the model is written; the user already has both at this point |
+| H9 | Append path | `apeGmsh.cuts.persist_to_h5(path, *, cuts=(), sweeps=())` — opens existing `model.h5` in `r+`, calls the primitive, bumps schema | Covers "wrote the model yesterday, building cuts today" without re-running `ape.h5(...)` |
+| H10 | Reader | `apeGmsh.cuts._h5_io.read_cuts_and_sweeps(path)` returning `(tuple[SectionCutDef], tuple[SectionSweepDef])` | Reconstructs through the public `__init__` so `__post_init__` validation runs on every read |
+| H11 | Missing groups | Reader returns `((), ())` when `/opensees/cuts/` is absent | Pre-v4 files (2.4.0 and earlier) keep working without a special case |
+| H12 | Director ingress | `ResultsDirector.load_cuts_from_h5() -> list[Diagram]` | Wraps the reader, dispatches to the existing `add_section_cut*` — no new wiring |
+| H13 | Viewer auto-load | `results.viewer(model_h5=p)` with no `cuts=` kwarg triggers `load_cuts_from_h5()` at boot | Persistence is invisible to the user unless they want to override |
+| H14 | Kwarg precedence | `cuts=[...]` kwarg overrides the h5 — when both are set, h5 is ignored | Caller's explicit intent is stronger than persisted state |
+| H15 | Editability | Read-only in v4; viewer never writes back. Live edit deferred to v4.1 | Keeps v4 to one design pass; the frozen-spec story still holds |
+| H16 | Dialog ingress | Add a "Source" mode toggle to `AddDiagramDialog`'s section-cut rows: `.pkl` file (Phase 4) OR pick-from-h5 (v4) | One dialog, two pick modes — no parallel UI |
+| H17 | Drift parallel | Out of scope for v4. `/opensees/drifts/` + `/opensees/drift_sweeps/` is v4.1 | One subject per design pass; v5 just landed and bundling them conflates two designs |
+
+### On-disk shape
+
+```
+/opensees/cuts/                              standalone cuts
+├── attrs: count=N
+└── /cut_0/, /cut_1/, ...
+    ├── attrs:
+    │   plane_point        (3,) f64
+    │   plane_normal       (3,) f64        — unit-normalized; reader does not re-normalize
+    │   side               utf-8           — "positive" | "negative"
+    │   label              utf-8           — "" when has_label=0
+    │   has_label          i8              — 0/1 (distinguishes None from "")
+    │   has_bounding       i8              — 0/1
+    ├── element_ids        (Ne,) i64       — OpenSees element tags
+    └── bounding_polygon   (Mb, 3) f64     — present iff has_bounding=1
+
+/opensees/sweeps/                            sweeps, each carrying its own cuts
+├── attrs: count=M
+└── /sweep_0/, /sweep_1/, ...
+    ├── attrs:
+    │   count=K
+    │   order              vlen utf-8      — ["cut_0", "cut_1", ...] in sweep order
+    └── /cuts/
+        └── /cut_0/, /cut_1/, ...           — same shape as standalone cut groups
+```
+
+The reader walks `order` to reconstruct the sweep's tuple in the right
+sequence rather than relying on alphabetic group iteration.
+
+### Public API
+
+```python
+from apeGmsh.cuts import (
+    SectionCutDef, SectionSweepDef, persist_to_h5,
+)
+from apeGmsh.cuts._h5_io import read_cuts_and_sweeps
+from apeGmsh.opensees import apeSees
+
+# Primary path — model + cuts in one shot
+ape = apeSees(fem)
+cut = SectionCutDef.from_planar_pg(
+    plane_pg="diaphragm-3", elements_pg="tower-cols",
+    fem=fem, model_h5="model.h5",
+)
+ape.h5("model.h5", cuts=[cut])
+
+# Append path — model.h5 already exists
+persist_to_h5("model.h5", cuts=[cut])              # appends /opensees/cuts/cut_0
+persist_to_h5("model.h5", sweeps=[sweep])          # appends /opensees/sweeps/sweep_0
+persist_to_h5("model.h5", cuts=[c1, c2], sweeps=[s1])  # both at once
+
+# Reading
+cuts, sweeps = read_cuts_and_sweeps("model.h5")    # ((), ()) on a pre-v4 file
+
+# Viewer auto-load
+results.viewer(model_h5="model.h5").show()         # /opensees/cuts/* attach as Layers
+
+# Kwarg-wins override
+results.viewer(model_h5="model.h5", cuts=[c_override]).show()  # h5 ignored
+```
+
+### Data flow
+
+**Writer (primary path):**
+
+```
+SectionCutDef / SectionSweepDef
+    │
+    │  ape.h5(path, cuts=..., sweeps=...)
+    ▼
+1. Broker writes /meta + neutral zone
+2. H5Emitter writes /opensees/... (materials, sections, ...)
+3. write_cuts_into(f, cuts=..., sweeps=...) appends:
+     - /opensees/cuts/cut_{i}/ for each standalone cut
+     - /opensees/sweeps/sweep_{i}/cuts/cut_{j}/ for sweep members
+4. /meta/schema_version set to "2.5.0"
+```
+
+**Writer (append path):**
+
+```
+SectionCutDef / SectionSweepDef
+    │
+    │  persist_to_h5(path, cuts=..., sweeps=...)
+    ▼
+1. Open path in r+ mode
+2. Schema-major check (must be 2.x.y)
+3. write_cuts_into(f, cuts=..., sweeps=...)
+4. Bump /meta/schema_version to "2.5.0" if lower
+```
+
+**Reader / viewer auto-load:**
+
+```
+ResultsViewer(model_h5=path)
+    │
+    │  show()
+    ▼
+1. Director created; set_model_h5(path) called
+2. If pending_cuts is empty:
+     director.load_cuts_from_h5()
+       └─ read_cuts_and_sweeps(path) → (cuts, sweeps)
+       └─ for cut in cuts:   self.add_section_cut(cut)
+       └─ for sweep in sweeps: self.add_section_cut_sweep(sweep)
+3. Else (kwarg-wins): apply pending_cuts; ignore /opensees/cuts/
+```
+
+### Dialog integration
+
+The Phase-4 section-cut rows get one new control — a **Source** combo
+above the file row that gates which load path is active:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Kind:           [ Section cut          ▼]               │
+│ Source:         [ File (.pkl)          ▼]               │  ← NEW
+│ File:           [ /path/to/story3.pkl  ] [Browse…]      │  ← visible when Source=File
+│   — OR —                                                │
+│ Source:         [ In model.h5          ▼]               │  ← NEW (alternate state)
+│ Cut:            [ Story 3 (cut_2)      ▼]               │  ← visible when Source=h5
+│                                                         │
+│ Model.h5:       [ /path/to/model.h5    ] [Browse…]      │
+│ Preflight:      [● OK]                                  │
+│                ┌────────────────────────────────────┐   │
+│                │ PreflightReport — Story 3 ...      │   │
+│                └────────────────────────────────────┘   │
+│ Display label:  [(optional)            ]                │
+│                                       [ OK ] [Cancel]   │
+└─────────────────────────────────────────────────────────┘
+```
+
+| # | Dialog decision | Choice | Rationale |
+|---|----------|--------|-----------|
+| D1 | Mode toggle | A "Source" combo with two entries: `"File (.pkl)"` and `"In model.h5"` | One control, two states; cleaner than radio buttons or a parallel tab |
+| D2 | h5 dropdown contents | `Cut: [combo]` listing `f"{label or cut_name} ({cut_name})"` for cuts and `f"{label or sweep_name} (sweep, {N} cuts)"` for sweeps | Display label first so users see what they tagged; group name as disambiguator |
+| D3 | Repopulation trigger | Re-enumerate the dropdown whenever model.h5 changes (`textChanged`) | Same pattern as the existing preflight rerun |
+| D4 | Preflight in h5 mode | Run on every dropdown selection change AND every model.h5 change | Mirrors the file-mode contract — preflight gates OK |
+| D5 | Empty-h5 fallback | Source=h5 with no `/opensees/cuts/` → dropdown placeholder "(no cuts persisted in this model.h5)"; OK disabled | Same UX shape as the empty-component-list path |
+| D6 | OK dispatch | Same as Phase 4 — branch on `isinstance(loaded, SectionSweepDef)`, call `director.add_section_cut*` | One OK handler; two pick paths feed the same loaded state |
+
+### Package layout additions
+
+```
+src/apeGmsh/cuts/
+├── _h5_io.py                            ← new: write_cuts_into, read_cuts_and_sweeps, persist_to_h5
+└── __init__.py                          ← re-export persist_to_h5 + read_cuts_and_sweeps
+
+src/apeGmsh/opensees/emitter/h5.py
+└── SCHEMA_VERSION 2.4.0 → 2.5.0; history note
+
+src/apeGmsh/opensees/architecture/h5-schema.md
+└── /opensees/cuts/ and /opensees/sweeps/ sections; 2.5.0 entry
+
+src/apeGmsh/opensees/apesees.py
+└── apeSees.h5(path, *, cuts=(), sweeps=())
+
+src/apeGmsh/viewers/diagrams/_director.py
+└── ResultsDirector.load_cuts_from_h5() -> list[Diagram]
+
+src/apeGmsh/viewers/results_viewer.py
+└── _apply_pending_cuts: auto-load branch when pending_cuts is empty and model_h5 is set
+
+src/apeGmsh/viewers/ui/_add_diagram_dialog.py
+└── Source combo + h5-cut dropdown + repopulate-on-h5-change wiring
+
+tests/cuts/test_h5_io.py                            ← new
+tests/viewers/test_results_viewer_h5_cuts.py        ← new
+tests/viewers/test_add_diagram_section_cut.py       ← extended with h5-source tests
+```
+
+### Test plan
+
+The byte-for-byte round-trip is the real check. One test file per layer:
+
+| Test | Validates |
+|------|-----------|
+| `test_roundtrip_full_shape_cut` | Write SectionCutDef with every field populated, read back, assert dataclass equality |
+| `test_roundtrip_minimal_cut` | `label=None`, `bounding_polygon=None` → reads as `None` (not `""` or empty array) |
+| `test_roundtrip_sweep_3` | Sweep of 3 cuts; `order` attr drives reader; sequence preserved |
+| `test_standalone_and_sweep_coexist` | 2 cuts + 1 sweep with 2 cuts; reader partitions correctly |
+| `test_schema_bump_on_append` | `persist_to_h5` against a pre-v4 file → `/meta/schema_version` becomes `"2.5.0"` |
+| `test_pre_v4_forward_compat` | Open existing pre-v4 model.h5 (no `/opensees/cuts/`); reader returns `((), ())` |
+| `test_append_after_ape_h5` | Full pipeline: `ape.h5(path)` then `persist_to_h5(path, cuts=...)`. File parses through `h5_reader.open` AND `FemToOpsTagMap.from_h5`; cuts read back |
+| `test_ape_h5_with_cuts_kwarg` | `ape.h5(path, cuts=...)` produces the same on-disk shape as `ape.h5(path)` + `persist_to_h5(path, cuts=...)` |
+| `test_director_load_cuts_from_h5` | After `set_model_h5` + `load_cuts_from_h5()`, registry has one Diagram per cut + one per sweep cut |
+| `test_viewer_autoload` | `results.viewer(model_h5=p)` with no `cuts=` kwarg auto-loads |
+| `test_viewer_kwarg_wins` | `results.viewer(model_h5=p, cuts=[c_override])` ignores `/opensees/cuts/`; only `c_override` attaches |
+| `test_dialog_source_h5_mode` | Source=h5, valid model.h5 with one cut → dropdown lists it, OK enabled |
+| `test_dialog_source_h5_empty` | Source=h5, model.h5 has no `/opensees/cuts/` → empty dropdown, OK disabled |
+
+Writer / reader tests run without Qt — `_h5_io` is pure h5py + the
+existing `apeGmsh.cuts` types. Viewer tests follow the existing
+`patch director.add_section_cut*` pattern rather than driving full
+attach.
+
+### Phase 4 roadmap
+
+| Phase | Deliverable | Status |
+|-------|-------------|--------|
+| v4-0  | This architecture section | **done** |
+| v4-1  | `_h5_io.py` writer primitive + reader + round-trip tests | **done** |
+| v4-2  | `ape.h5(path, cuts=, sweeps=)` integration + `SCHEMA_VERSION` bump + tests | **done** |
+| v4-3  | `persist_to_h5` append helper + in-place schema bump + tests | **done** |
+| v4-4  | `ResultsDirector.load_cuts_from_h5` + viewer auto-load + kwarg-wins tests | **done** |
+| v4-5  | Dialog Source toggle + h5-cut dropdown + tests | **done** |
+| v4-6  | `h5-schema.md` update — `/opensees/cuts/` + `/opensees/sweeps/` body + 2.5.0 entry | **done** |
+
+The `SCHEMA_VERSION` constant bump moved from v4-3 to v4-2 during
+implementation: v4-2 is the first producer of v4-shape content
+(via `ape.h5(path, cuts=...)`), so it owns the constant change.
+v4-3 keeps the in-place version-bump logic for append-mode files
+that started life at 2.4.0 or earlier.
+
+### Out of scope for v4
+
+- Drift persistence (`/opensees/drifts/`, `/opensees/drift_sweeps/`) — v4.1
+- Live edit of persisted cuts (rewriting `/opensees/cuts/` mid-session) — v4.1
+- A "force re-write" GUI button on the dialog — defer until a real call site appears
+- Cross-file cut import (read cuts from one model.h5, attach to a different model) — speculative; the FEM-eid bridge is per-file
+- Reorganizing `apeGmsh.cuts` → `apeGmsh.outputs` (still bound to the v6-trigger rule)
+
 ## Versioning
 
 apeGmsh follows pyproject `version` bumps. New optional subpackage =
 minor bump. Schema bump only at v4 of the roadmap (cuts persisted in
-`model.h5`, schema 2.2.0 → 2.3.0). v2.3, Phase 4, and v5 are pure
+`model.h5`, schema 2.4.0 → 2.5.0). v2.3, Phase 4, and v5 are pure
 additive surface — no schema impact.

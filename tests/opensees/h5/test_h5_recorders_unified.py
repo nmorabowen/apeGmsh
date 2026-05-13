@@ -41,16 +41,16 @@ from apeGmsh.opensees.emitter import h5_reader
 # ---------------------------------------------------------------------------
 
 
-def test_schema_version_is_2_4_0() -> None:
-    assert SCHEMA_VERSION == "2.4.0"
+def test_schema_version_is_2_5_0() -> None:
+    assert SCHEMA_VERSION == "2.5.0"
 
 
-def test_schema_2_4_0_writes_to_meta(tmp_path: Path) -> None:
+def test_schema_2_5_0_writes_to_meta(tmp_path: Path) -> None:
     e = H5Emitter()
     out = tmp_path / "x.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.4.0"
+        assert f["meta"].attrs["schema_version"] == "2.5.0"
 
 
 # ---------------------------------------------------------------------------

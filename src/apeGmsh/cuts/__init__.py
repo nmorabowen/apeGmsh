@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from ._defs import SectionCutDef
 from ._drift import DriftDef, DriftSweepDef
+from ._h5_io import persist_to_h5, read_cuts_and_sweeps
 from ._planes import (
     plane_from_coords,
     plane_from_physical_surface,
@@ -46,6 +47,8 @@ __all__ = [
     "PreflightError",
     "PreflightIssue",
     "PreflightReport",
+    "persist_to_h5",
+    "read_cuts_and_sweeps",
     "plane_horizontal",
     "plane_vertical",
     "plane_from_three_points",

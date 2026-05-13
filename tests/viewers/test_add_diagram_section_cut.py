@@ -319,3 +319,275 @@ def test_missing_file_marks_error(qapp, director, tmp_path):
     assert dlg._cut_load_error is not None
     assert "not found" in dlg._cut_load_error.lower()
     assert not dlg._ok_button.isEnabled()
+
+
+# =====================================================================
+# v4-5 — Source toggle (file vs h5) + h5-cut dropdown
+# =====================================================================
+
+def _make_minimal_h5(path, *, schema_version="2.5.0"):
+    import h5py
+    with h5py.File(path, "w") as f:
+        meta = f.create_group("meta")
+        meta.attrs.create(
+            "schema_version", schema_version,
+            dtype=h5py.string_dtype(encoding="utf-8"),
+        )
+
+
+def _set_source(dlg, source: str) -> None:
+    """Pick the section-cut Source combo entry by data key."""
+    for i in range(dlg._cut_source_combo.count()):
+        if dlg._cut_source_combo.itemData(i) == source:
+            dlg._cut_source_combo.setCurrentIndex(i)
+            return
+    raise AssertionError(f"source {source!r} not in combo")
+
+
+def test_source_combo_has_two_entries(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    keys = [
+        dlg._cut_source_combo.itemData(i)
+        for i in range(dlg._cut_source_combo.count())
+    ]
+    assert keys == ["file", "h5"]
+
+
+def test_default_source_is_file(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    assert dlg._cut_source_combo.currentData() == "file"
+
+
+def test_switching_to_h5_hides_file_shows_dropdown(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    # Default state — file visible, dropdown hidden.
+    assert not dlg._cut_file_row.isHidden()
+    assert dlg._cut_h5_dropdown.isHidden()
+
+    _set_source(dlg, "h5")
+    assert dlg._cut_file_row.isHidden()
+    assert not dlg._cut_h5_dropdown.isHidden()
+
+
+def test_switching_back_to_file_hides_dropdown(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    _set_source(dlg, "h5")
+    _set_source(dlg, "file")
+    assert not dlg._cut_file_row.isHidden()
+    assert dlg._cut_h5_dropdown.isHidden()
+
+
+def test_source_combo_hidden_when_kind_is_not_section_cut(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "contour")
+    assert dlg._cut_source_combo.isHidden()
+    _set_kind(dlg, "section_cut")
+    assert not dlg._cut_source_combo.isHidden()
+
+
+# --- Dropdown population --------------------------------------------------
+
+def test_dropdown_placeholder_when_no_model_h5(qapp, director):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    _set_source(dlg, "h5")
+    assert dlg._cut_h5_dropdown.count() == 1
+    assert "set Model.h5" in dlg._cut_h5_dropdown.itemText(0)
+    assert dlg._cut_h5_dropdown.itemData(0) is None
+
+
+def test_dropdown_populates_from_h5_with_cuts(qapp, director, tmp_path):
+    from apeGmsh.cuts import (
+        SectionCutDef, SectionSweepDef, persist_to_h5,
+    )
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+
+    cut_a = SectionCutDef(
+        plane_point=(0.0, 0.0, 1.0),
+        plane_normal=(0.0, 0.0, 1.0),
+        element_ids=(1,),
+        label="story 1",
+    )
+    cut_b = SectionCutDef(
+        plane_point=(0.0, 0.0, 2.0),
+        plane_normal=(0.0, 0.0, 1.0),
+        element_ids=(1,),
+        label="story 2",
+    )
+    sweep = SectionSweepDef(cuts=(cut_a, cut_b))
+    path = tmp_path / "model.h5"
+    _make_minimal_h5(path)
+    persist_to_h5(path, cuts=[cut_a, cut_b], sweeps=[sweep])
+
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    _set_source(dlg, "h5")
+    dlg._cut_model_h5_edit.setText(str(path))
+
+    # 2 standalone cuts + 1 sweep = 3 entries
+    assert dlg._cut_h5_dropdown.count() == 3
+    # Standalone cuts come first, in writer order, with labels.
+    assert "story 1" in dlg._cut_h5_dropdown.itemText(0)
+    assert "story 2" in dlg._cut_h5_dropdown.itemText(1)
+    # Sweep entry mentions the count.
+    assert "sweep" in dlg._cut_h5_dropdown.itemText(2).lower()
+    assert "2 cuts" in dlg._cut_h5_dropdown.itemText(2)
+
+
+def test_dropdown_empty_message_for_h5_without_cuts(
+    qapp, director, tmp_path,
+):
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+
+    path = tmp_path / "no_cuts.h5"
+    _make_minimal_h5(path)  # no /opensees/cuts/, no /opensees/sweeps/
+
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    _set_source(dlg, "h5")
+    dlg._cut_model_h5_edit.setText(str(path))
+
+    assert dlg._cut_h5_dropdown.count() == 1
+    assert "no cuts persisted" in dlg._cut_h5_dropdown.itemText(0)
+    assert dlg._cut_h5_dropdown.itemData(0) is None
+    assert dlg._cut_loaded is None
+
+
+# --- Dropdown selection drives loaded state -------------------------------
+
+def test_dropdown_selection_loads_cut(qapp, director, tmp_path):
+    from apeGmsh.cuts import SectionCutDef, persist_to_h5
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+
+    cut = SectionCutDef(
+        plane_point=(0.0, 0.0, 1.5),
+        plane_normal=(0.0, 0.0, 1.0),
+        element_ids=(7, 8),
+        label="picked",
+    )
+    path = tmp_path / "model.h5"
+    _make_minimal_h5(path)
+    persist_to_h5(path, cuts=[cut])
+
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    _set_source(dlg, "h5")
+    with patch.object(
+        SectionCutDef, "preflight", return_value=_clean_report(),
+    ):
+        dlg._cut_model_h5_edit.setText(str(path))
+    # Auto-selected first entry → _cut_loaded matches the persisted cut.
+    assert dlg._cut_loaded == cut
+    assert dlg._cut_load_error is None
+
+
+def test_h5_source_dispatches_to_add_section_cut(
+    qapp, director, tmp_path,
+):
+    """OK in h5 mode → director.add_section_cut(loaded_cut)."""
+    from apeGmsh.cuts import SectionCutDef, persist_to_h5
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+
+    cut = SectionCutDef(
+        plane_point=(0.0, 0.0, 0.5),
+        plane_normal=(0.0, 0.0, 1.0),
+        element_ids=(42,),
+        label="from h5",
+    )
+    path = tmp_path / "model.h5"
+    _make_minimal_h5(path)
+    persist_to_h5(path, cuts=[cut])
+
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    _set_source(dlg, "h5")
+    with patch.object(
+        SectionCutDef, "preflight", return_value=_clean_report(),
+    ):
+        dlg._cut_model_h5_edit.setText(str(path))
+
+    with patch.object(director, "add_section_cut") as add_cut, \
+         patch.object(SectionCutDef, "preflight", return_value=_clean_report()):
+        ok = dlg._run_section_cut()
+    assert ok
+    add_cut.assert_called_once()
+    call = add_cut.call_args
+    assert isinstance(call.args[0], SectionCutDef)
+
+
+def test_h5_source_dispatches_to_add_section_cut_sweep(
+    qapp, director, tmp_path,
+):
+    """OK in h5 mode with a sweep entry selected → add_section_cut_sweep."""
+    from apeGmsh.cuts import (
+        SectionCutDef, SectionSweepDef, persist_to_h5,
+    )
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+
+    cut0 = SectionCutDef(
+        plane_point=(0.0, 0.0, 1.0),
+        plane_normal=(0.0, 0.0, 1.0),
+        element_ids=(1,),
+        label="sweep cut 0",
+    )
+    cut1 = SectionCutDef(
+        plane_point=(0.0, 0.0, 2.0),
+        plane_normal=(0.0, 0.0, 1.0),
+        element_ids=(1,),
+        label="sweep cut 1",
+    )
+    sweep = SectionSweepDef(cuts=(cut0, cut1))
+    path = tmp_path / "model.h5"
+    _make_minimal_h5(path)
+    persist_to_h5(path, sweeps=[sweep])
+
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    _set_source(dlg, "h5")
+    with patch.object(
+        SectionSweepDef, "preflight",
+        return_value=(_clean_report("0"), _clean_report("1")),
+    ):
+        dlg._cut_model_h5_edit.setText(str(path))
+
+    # Only entry is the sweep — auto-selected.
+    with patch.object(
+        director, "add_section_cut_sweep",
+    ) as add_sweep, patch.object(
+        SectionSweepDef, "preflight",
+        return_value=(_clean_report("0"), _clean_report("1")),
+    ):
+        ok = dlg._run_section_cut()
+    assert ok
+    add_sweep.assert_called_once()
+    call = add_sweep.call_args
+    assert isinstance(call.args[0], SectionSweepDef)
+
+
+def test_switching_to_h5_resets_loaded_state(qapp, director, tmp_path):
+    """Source switch clears prior loaded state (file → h5 transition)."""
+    from apeGmsh.cuts import SectionCutDef
+    from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
+
+    pkl = tmp_path / "cut.pkl"
+    _stub_cut().save_pickle(pkl)
+
+    dlg = AddDiagramDialog(director, parent=None)
+    _set_kind(dlg, "section_cut")
+    # Load via file mode first.
+    with patch.object(
+        SectionCutDef, "preflight", return_value=_clean_report(),
+    ):
+        dlg._cut_file_edit.setText(str(pkl))
+    assert dlg._cut_loaded is not None
+    # Switch to h5 mode with no model.h5 path → loaded state cleared.
+    _set_source(dlg, "h5")
+    assert dlg._cut_loaded is None

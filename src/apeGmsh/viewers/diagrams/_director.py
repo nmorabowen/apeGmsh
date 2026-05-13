@@ -319,6 +319,36 @@ class ResultsDirector:
         target_geom.compositions.add_layer(target_comp.id, diagram)
         return diagram
 
+    def load_cuts_from_h5(self) -> "list[Diagram]":
+        """Read ``/opensees/cuts/`` and ``/opensees/sweeps/`` from
+        ``model_h5`` and attach each as a Diagram (Layer).
+
+        v4 of the apeGmsh.cuts roadmap — cuts persisted in ``model.h5``
+        flow back into the viewer through this hook. Returns the list
+        of attached diagrams (standalone cuts first in writer order,
+        followed by each sweep's fan-out flattened in sweep order).
+
+        Caller must set ``model_h5`` first (typically through
+        :meth:`set_model_h5` or by passing ``model_h5=`` to
+        :class:`ResultsViewer`). Pre-v4 files (no ``/opensees/cuts/``)
+        produce an empty result — read_cuts_and_sweeps returns
+        ``((), ())`` without raising.
+        """
+        if self._model_h5 is None:
+            raise RuntimeError(
+                "load_cuts_from_h5: no model.h5 bound. Call "
+                "director.set_model_h5(path) first, or pass "
+                "model_h5= to ResultsViewer(...)."
+            )
+        from apeGmsh.cuts import read_cuts_and_sweeps
+        cuts, sweeps = read_cuts_and_sweeps(self._model_h5)
+        attached: list = []
+        for cut in cuts:
+            attached.append(self.add_section_cut(cut))
+        for sweep in sweeps:
+            attached.extend(self.add_section_cut_sweep(sweep))
+        return attached
+
     def add_section_cut_sweep(
         self,
         sweep: "SectionSweepDef",
