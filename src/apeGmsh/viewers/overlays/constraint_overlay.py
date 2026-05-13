@@ -2,20 +2,37 @@
 constraint_overlay — Build PyVista actors for constraint visualization.
 ========================================================================
 
-Pure functions that take FEM data + visual parameters and return
-PyVista meshes ready for ``plotter.add_mesh()``.  No Qt, no plotter
-reference, no closures — testable in isolation.
+Pure functions that take a :class:`ViewerData` snapshot + visual
+parameters and return PyVista meshes ready for ``plotter.add_mesh()``.
+No Qt, no plotter reference, no closures — testable in isolation.
+
+Phase 8.7 commit 6 retargets the inputs from raw :class:`FEMData` /
+:class:`apeGmsh.mesh.records._constraints` types onto
+:class:`apeGmsh.viewers.data.ViewerData` plus the read-side row
+dataclasses.  Constraint ``kind`` values are plain strings; the
+``NODE_TO_SURFACE_KIND`` sentinel and the
+``NODE_PAIR_KINDS`` / ``SURFACE_KINDS`` classifier frozensets are
+re-exported from :mod:`apeGmsh.viewers.data` so consumers don't reach
+back into ``apeGmsh.mesh``.
 """
 
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pyvista as pv
 
-from apeGmsh.mesh._record_set import ConstraintKind
+from apeGmsh.viewers.data import (
+    NODE_TO_SURFACE_KIND,
+    NodePairRow,
+    NodeToSurfaceRow,
+)
+
+if TYPE_CHECKING:
+    from apeGmsh.viewers.data import ViewerData
 
 _log = logging.getLogger(__name__)
 
@@ -24,10 +41,12 @@ _log = logging.getLogger(__name__)
 # Coordinate helper
 # =====================================================================
 
-def _node_coords_shifted(fem, nid: int, origin: np.ndarray):
+def _node_coords_shifted(
+    view: "ViewerData", nid: int, origin: np.ndarray,
+) -> "np.ndarray | None":
     """Look up shifted coordinates for a node ID.  Returns None on miss."""
     try:
-        return fem.nodes.coords[fem.nodes.index(int(nid))] - origin
+        return view.nodes.coords[view.nodes.index(int(nid))] - origin
     except (KeyError, IndexError):
         return None
 
@@ -37,7 +56,7 @@ def _node_coords_shifted(fem, nid: int, origin: np.ndarray):
 # =====================================================================
 
 def build_node_pair_actors(
-    fem,
+    view: "ViewerData",
     active_kinds: set[str],
     origin: np.ndarray,
     marker_radius: float,
@@ -52,51 +71,49 @@ def build_node_pair_actors(
     Single pass over ``pairs()`` — records grouped by kind first,
     then geometry built per kind.
     """
-    from apeGmsh.mesh.records._constraints import (
-        NodePairRecord, NodeToSurfaceRecord,
-    )
-
-    # ── Collect node-pair records (expanded) ────────────────────
-    # NodeToSurfaceRecord.expand() yields sub-records with
-    # kind="rigid_beam" / "equal_dof", not "node_to_surface".
-    # We need to map those back so the checkbox filter works.
-    by_kind: dict[str, list] = defaultdict(list)
-    for rec in fem.nodes.constraints.pairs():
-        if rec.kind in active_kinds:
-            by_kind[rec.kind].append(rec)
+    # ── Collect node-pair rows (expanded) ───────────────────────
+    # NodeConstraintView.pairs() expands NodeGroup and NodeToSurface
+    # rows into per-slave NodePairRow instances — same emission order
+    # the FEMData side documented.
+    by_kind: dict[str, list[NodePairRow]] = defaultdict(list)
+    for row in view.nodes.constraints.pairs():
+        if row.kind in active_kinds:
+            by_kind[row.kind].append(row)
 
     # ── node_to_surface: draw master→slave lines directly ──────
-    # The expanded sub-records (rigid_beam, equal_dof) are for
-    # solvers; for visualisation we want the high-level topology.
-    if ConstraintKind.NODE_TO_SURFACE in active_kinds:
-        for raw in fem.nodes.constraints:
-            if isinstance(raw, NodeToSurfaceRecord):
+    # The expanded sub-rows (rigid_beam, equal_dof) are for solver
+    # emission; for visualisation we want the high-level topology.
+    if NODE_TO_SURFACE_KIND in active_kinds:
+        for raw in view.nodes.constraints:
+            if isinstance(raw, NodeToSurfaceRow):
                 for slave_tag in raw.slave_nodes:
-                    by_kind["node_to_surface"].append(
-                        NodePairRecord(
-                            kind="node_to_surface",
+                    by_kind[NODE_TO_SURFACE_KIND].append(
+                        NodePairRow(
+                            kind=NODE_TO_SURFACE_KIND,
                             master_node=raw.master_node,
                             slave_node=slave_tag,
-                        ))
+                            dofs=(),
+                        )
+                    )
 
     result: list[tuple] = []
 
-    for kind, records in by_kind.items():
+    for kind, rows in by_kind.items():
         line_pts = []
         line_cells = []
         master_positions: dict[int, np.ndarray] = {}
         idx = 0
 
-        for rec in records:
-            p1 = _node_coords_shifted(fem, rec.master_node, origin)
-            p2 = _node_coords_shifted(fem, rec.slave_node, origin)
+        for row in rows:
+            p1 = _node_coords_shifted(view, row.master_node, origin)
+            p2 = _node_coords_shifted(view, row.slave_node, origin)
             if p1 is None or p2 is None:
                 continue
             line_pts.extend([p1, p2])
             line_cells.extend([2, idx, idx + 1])
             idx += 2
-            if rec.master_node not in master_positions:
-                master_positions[rec.master_node] = p1
+            if row.master_node not in master_positions:
+                master_positions[row.master_node] = p1
 
         color = color_fn(kind)
 
@@ -137,7 +154,7 @@ def build_node_pair_actors(
 # =====================================================================
 
 def build_surface_actors(
-    fem,
+    view: "ViewerData",
     active_kinds: set[str],
     origin: np.ndarray,
     line_width: int,
@@ -149,29 +166,29 @@ def build_surface_actors(
     """
     # Single pass: group interpolations by kind
     by_kind: dict[str, list] = defaultdict(list)
-    for rec in fem.elements.constraints.interpolations():
-        if rec.kind in active_kinds:
-            by_kind[rec.kind].append(rec)
+    for row in view.elements.constraints.interpolations():
+        if row.kind in active_kinds:
+            by_kind[row.kind].append(row)
 
     result: list[tuple] = []
 
-    for kind, records in by_kind.items():
+    for kind, rows in by_kind.items():
         interp_pts = []
         interp_cells = []
         idx = 0
 
-        for rec in records:
-            slave_pt = _node_coords_shifted(fem, rec.slave_node, origin)
+        for row in rows:
+            slave_pt = _node_coords_shifted(view, row.slave_node, origin)
             if slave_pt is None:
                 continue
             master_pts = []
-            for mnid in rec.master_nodes:
-                mp = _node_coords_shifted(fem, mnid, origin)
+            for mnid in row.master_nodes:
+                mp = _node_coords_shifted(view, mnid, origin)
                 if mp is not None:
                     master_pts.append(mp)
             if not master_pts:
                 continue
-            weights = rec.weights
+            weights = row.weights
             if weights is not None and len(weights) == len(master_pts):
                 centroid = np.average(
                     master_pts, axis=0, weights=weights)
@@ -195,7 +212,7 @@ def build_surface_actors(
             )))
 
     # Surface coupling highlights
-    for coup in fem.elements.constraints.couplings():
+    for coup in view.elements.constraints.couplings():
         if coup.kind not in active_kinds:
             continue
         color = color_fn(coup.kind)
@@ -205,7 +222,7 @@ def build_surface_actors(
         ]:
             face_pts = []
             for nid in node_set:
-                pt = _node_coords_shifted(fem, nid, origin)
+                pt = _node_coords_shifted(view, nid, origin)
                 if pt is not None:
                     face_pts.append(pt)
             if len(face_pts) < 3:

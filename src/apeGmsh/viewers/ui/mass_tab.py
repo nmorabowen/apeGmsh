@@ -14,7 +14,7 @@ from typing import Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from apeGmsh.core.MassesComposite import MassesComposite
-    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.viewers.data import ViewerData
 
 
 def _qt():
@@ -28,14 +28,14 @@ class MassTabPanel:
     def __init__(
         self,
         mass_composite: "MassesComposite",
-        fem: "FEMData | None" = None,
+        view: "ViewerData | None" = None,
         *,
         on_overlay_changed: Callable[[bool], None] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
         self._mass = mass_composite
-        self._fem = fem
+        self._view = view
         self._on_overlay_changed = on_overlay_changed
 
         self.widget = QtWidgets.QWidget()
@@ -122,7 +122,7 @@ class MassTabPanel:
         self._tree.setVisible(has_defs)
         self._show_cb.setVisible(has_defs)
         self._stats_box.setVisible(has_defs)
-        self._fem_warning.setVisible(self._fem is None and has_defs)
+        self._fem_warning.setVisible(self._view is None and has_defs)
 
         n = len(defs)
         self._header.setText(
@@ -140,8 +140,8 @@ class MassTabPanel:
 
         self._tree.resizeColumnToContents(0)
 
-        # Stats from fem.nodes.masses (if resolved)
-        if self._fem is not None and self._fem.nodes.masses:
+        # Stats from view.nodes.masses (if resolved)
+        if self._view is not None and self._view.nodes.masses:
             self._update_stats()
         else:
             self._lbl_total.setText("—")
@@ -165,13 +165,15 @@ class MassTabPanel:
         return "(unknown)"
 
     def _update_stats(self) -> None:
-        if self._fem is None:
+        if self._view is None:
             return
-        ms = self._fem.nodes.masses
+        ms = self._view.nodes.masses
         records = list(ms)
         if not records:
             return
-        total = ms.total_mass()
+        # Sum of translational mass per record (mx component) — matches
+        # the legacy MassSet.total_mass() semantic.
+        total = float(sum(r.mass[0] for r in records))
         self._lbl_total.setText(f"{total:.4g} kg")
         self._lbl_n_nodes.setText(str(len(records)))
         # Max / min by translational mass (mx)
@@ -195,7 +197,7 @@ class MassTabPanel:
         if self._on_overlay_changed:
             self._on_overlay_changed(checked)
 
-    def set_fem(self, fem) -> None:
-        """Update the FEM reference (e.g. after re-meshing)."""
-        self._fem = fem
+    def set_view(self, view: "ViewerData | None") -> None:
+        """Update the :class:`ViewerData` reference (e.g. after re-meshing)."""
+        self._view = view
         self.refresh()

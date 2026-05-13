@@ -39,7 +39,6 @@ COMBINED_STAGE_NAME = "All stages"
 
 if TYPE_CHECKING:
     from apeGmsh.cuts import FemToOpsTagMap, SectionCutDef, SectionSweepDef
-    from apeGmsh.mesh.FEMData import FEMData
     from apeGmsh.results.Results import Results
     from apeGmsh.results.readers._protocol import StageInfo
     from apeGmsh.viewers.data import ViewerData
@@ -144,10 +143,6 @@ class ResultsDirector:
     @property
     def results(self) -> "Results":
         return self._results
-
-    @property
-    def fem(self) -> "Optional[FEMData]":
-        return self._results.fem
 
     @property
     def view(self) -> "Optional[ViewerData]":

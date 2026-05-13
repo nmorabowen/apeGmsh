@@ -991,7 +991,7 @@ class AddDiagramDialog:
             )
             return
 
-        fem = self._director.fem
+        fem = self._director.results.fem
         if fem is None:
             self._set_preflight_state(
                 "error",
@@ -1049,7 +1049,7 @@ class AddDiagramDialog:
 
         cut = self._cut_loaded
         assert cut is not None
-        fem = self._director.fem
+        fem = self._director.results.fem
         # Caller (`_run_dialog_preflight`) already shows an error and
         # returns when fem is None; the dispatch path only fires once
         # that guard passes. Assert to make the narrowing visible to

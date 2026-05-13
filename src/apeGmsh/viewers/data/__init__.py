@@ -34,6 +34,9 @@ from ._nodes import (
     ViewerNodes,
 )
 from ._records import (
+    NODE_PAIR_KINDS,
+    NODE_TO_SURFACE_KIND,
+    SURFACE_KINDS,
     ConstraintRow,
     ElementLoadRow,
     InterpolationRow,
@@ -49,6 +52,9 @@ from ._records import (
 from ._viewer_data import ViewerData
 
 __all__ = [
+    "NODE_PAIR_KINDS",
+    "NODE_TO_SURFACE_KIND",
+    "SURFACE_KINDS",
     "ConstraintRow",
     "ElementLoadRow",
     "ElementLoadView",

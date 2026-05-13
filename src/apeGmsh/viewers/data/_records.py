@@ -490,6 +490,30 @@ _NODE_TO_SURFACE_KINDS = frozenset({
 })
 
 
+#: Coarse classifier — every constraint kind that the viewer's overlay
+#: renders as master/slave node pairs (lines between two nodes).
+#: Mirrors :class:`apeGmsh.mesh.records._kinds.ConstraintKind.NODE_PAIR_KINDS`
+#: so consumers in ``viewers/`` get the same set without importing from
+#: ``apeGmsh.mesh``.  Phase 8.7 commit 6 introduced this re-export to
+#: cut the last ``viewers/`` → ``mesh/`` import in the overlay path.
+NODE_PAIR_KINDS: frozenset[str] = (
+    _NODE_PAIR_KINDS | _NODE_GROUP_KINDS | frozenset({"node_to_surface"})
+)
+
+
+#: Coarse classifier — surface-tying constraint kinds, rendered by
+#: the overlay as interpolation rays or surface highlights.
+SURFACE_KINDS: frozenset[str] = (
+    _INTERPOLATION_KINDS | _SURFACE_COUPLING_KINDS
+)
+
+
+#: Sentinel string for the ``node_to_surface`` constraint kind.
+#: Plain string (not an enum); the row dataclasses carry ``kind`` as
+#: ``str`` and consumers compare with ``==``.
+NODE_TO_SURFACE_KIND: str = "node_to_surface"
+
+
 def decode_constraint_row(row: Any) -> ConstraintRow:
     """Decode one outer compound row into the matching constraint row.
 

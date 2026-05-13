@@ -7,7 +7,8 @@ checkbox per pattern.  Toggling a checkbox triggers an
 hide the corresponding arrow glyphs in the 3-D viewport.
 
 This panel never modifies state — it reads from
-``g.loads.load_defs`` and (optionally) ``fem.loads`` for stats.
+``g.loads.load_defs`` and (optionally) the bound
+:class:`ViewerData`'s load rows for stats.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from apeGmsh.core.LoadsComposite import LoadsComposite
-    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.viewers.data import ViewerData
 
 
 def _qt():
@@ -48,7 +49,7 @@ class LoadsTabPanel:
     def __init__(
         self,
         loads_composite: "LoadsComposite",
-        fem: "FEMData | None" = None,
+        view: "ViewerData | None" = None,
         *,
         on_patterns_changed: Callable[[set[str]], None] | None = None,
         on_force_scale: Callable[[float], None] | None = None,
@@ -57,7 +58,7 @@ class LoadsTabPanel:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
         self._loads = loads_composite
-        self._fem = fem
+        self._view = view
         self._on_patterns_changed = on_patterns_changed
 
         self.widget = QtWidgets.QWidget()
@@ -171,7 +172,7 @@ class LoadsTabPanel:
         has_defs = bool(defs)
         self._empty_label.setVisible(not has_defs)
         self._tree.setVisible(has_defs)
-        self._fem_warning.setVisible(self._fem is None and has_defs)
+        self._fem_warning.setVisible(self._view is None and has_defs)
 
         n = len(defs)
         n_pats = len(self._loads.patterns())
@@ -282,11 +283,11 @@ class LoadsTabPanel:
         if self._on_patterns_changed:
             self._on_patterns_changed(self.active_patterns())
 
-    # ── External fem update ────────────────────────────────────
+    # ── External view update ───────────────────────────────────
 
-    def set_fem(self, fem) -> None:
-        """Update the FEM reference (e.g. after re-meshing)."""
-        self._fem = fem
+    def set_view(self, view: "ViewerData | None") -> None:
+        """Update the :class:`ViewerData` reference (e.g. after re-meshing)."""
+        self._view = view
         self._fem_warning.setVisible(
-            self._fem is None and bool(self._loads.load_defs)
+            self._view is None and bool(self._loads.load_defs)
         )

@@ -7,8 +7,9 @@ checkbox per kind.  Toggling a checkbox triggers an
 the corresponding line / glyph overlays in the 3-D viewport.
 
 This panel never modifies state — it reads from
-``g.constraints.constraint_defs`` and (optionally) ``fem.nodes.constraints``
-/ ``fem.elements.constraints`` for stats.
+``g.constraints.constraint_defs`` and (optionally) the
+``view.nodes.constraints`` / ``view.elements.constraints`` rows on a
+:class:`ViewerData` snapshot for stats.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from apeGmsh.core.ConstraintsComposite import ConstraintsComposite
-    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.viewers.data import ViewerData
 
 
 def _qt():
@@ -70,14 +71,14 @@ class ConstraintsTabPanel:
     def __init__(
         self,
         constraints_composite: "ConstraintsComposite",
-        fem: "FEMData | None" = None,
+        view: "ViewerData | None" = None,
         *,
         on_kinds_changed: Callable[[set[str]], None] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
         self._constraints = constraints_composite
-        self._fem = fem
+        self._view = view
         self._on_kinds_changed = on_kinds_changed
 
         self.widget = QtWidgets.QWidget()
@@ -173,7 +174,7 @@ class ConstraintsTabPanel:
         has_defs = bool(defs)
         self._empty_label.setVisible(not has_defs)
         self._tree.setVisible(has_defs)
-        self._fem_warning.setVisible(self._fem is None and has_defs)
+        self._fem_warning.setVisible(self._view is None and has_defs)
 
         # Group by resolved kind key
         by_kind: dict[str, list] = {}
@@ -230,8 +231,8 @@ class ConstraintsTabPanel:
         self._suppress_signal = False
 
     def _update_stats(self) -> None:
-        """Populate the stats box from resolved FEM data."""
-        if self._fem is None:
+        """Populate the stats box from the bound :class:`ViewerData`."""
+        if self._view is None:
             self._lbl_node_pairs.setText("—")
             self._lbl_interp.setText("—")
             self._lbl_phantoms.setText("—")
@@ -239,12 +240,14 @@ class ConstraintsTabPanel:
             return
 
         self._stats_box.setVisible(True)
-        nc = self._fem.nodes.constraints
-        sc = self._fem.elements.constraints
+        nc = self._view.nodes.constraints
+        sc = self._view.elements.constraints
 
         n_pairs = sum(1 for _ in nc.pairs())
         n_interp = sum(1 for _ in sc.interpolations())
-        n_phantom = len(nc.phantom_nodes())
+        # ViewerData's phantom_nodes() returns (ids, coords) arrays.
+        ids, _coords = nc.phantom_nodes()
+        n_phantom = int(ids.size)
 
         self._lbl_node_pairs.setText(str(n_pairs))
         self._lbl_interp.setText(str(n_interp))
@@ -320,13 +323,13 @@ class ConstraintsTabPanel:
         if self._on_kinds_changed:
             self._on_kinds_changed(self.active_kinds())
 
-    # ── External fem update ───────────────────────────────────
+    # ── External view update ──────────────────────────────────
 
-    def set_fem(self, fem) -> None:
-        """Update the FEM reference (e.g. after re-meshing)."""
-        self._fem = fem
+    def set_view(self, view: "ViewerData | None") -> None:
+        """Update the :class:`ViewerData` reference (e.g. after re-meshing)."""
+        self._view = view
         self._fem_warning.setVisible(
-            self._fem is None
+            self._view is None
             and bool(getattr(self._constraints, 'constraint_defs', None))
         )
         self._update_stats()

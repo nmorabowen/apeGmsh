@@ -24,7 +24,7 @@ from apeGmsh._types import DimTag
 
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _SessionBase
-    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.viewers.data import ViewerData
     from .core.color_manager import ColorManager
     from .core.color_mode_controller import ColorModeController
     from .core.entity_registry import EntityRegistry
@@ -40,9 +40,9 @@ class MeshViewer:
     """Interactive mesh viewer with element/node picking.
 
     Displays mesh elements and nodes with optional load, constraint,
-    and mass overlays.  Overlay data comes from a resolved ``FEMData``
-    snapshot — either passed explicitly or auto-resolved from the
-    session at show time.
+    and mass overlays.  Overlay data comes from a resolved
+    :class:`apeGmsh.viewers.data.ViewerData` snapshot — either passed
+    explicitly or auto-resolved from the session at show time.
 
     Parameters
     ----------
@@ -52,9 +52,11 @@ class MeshViewer:
         Which mesh dimensions to show (default: ``[1, 2, 3]``).
     point_size, line_width, surface_opacity, show_surface_edges
         Visual properties.
-    fem : FEMData, optional
-        Pre-resolved FEM snapshot.  If not provided, the viewer calls
-        ``get_fem_data()`` automatically when the window opens.
+    view : ViewerData, optional
+        Pre-resolved structural snapshot.  If not provided, the
+        viewer calls ``get_fem_data()`` automatically when the
+        window opens and wraps the resulting FEMData.  Phase 8.7
+        commit 6 renamed this kwarg from ``fem`` to ``view``.
     fast : bool
         Ignored (always fast). Kept for backward compatibility.
     """
@@ -70,7 +72,7 @@ class MeshViewer:
         show_surface_edges: bool | None = None,
         origin_markers: list[tuple[float, float, float]] | None = None,
         origin_marker_show_coords: bool | None = None,
-        fem: "FEMData | None" = None,
+        view: "ViewerData | None" = None,
         fast: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -111,7 +113,7 @@ class MeshViewer:
             origin_marker_show_coords if origin_marker_show_coords is not None
             else p.origin_marker_show_coords
         )
-        self._fem: "FEMData | None" = fem
+        self._view: "ViewerData | None" = view
 
         # Populated during show()
         self._selection_state: "SelectionState | None" = None
@@ -280,14 +282,17 @@ class MeshViewer:
         )
 
         # ── Resolve FEM snapshot for overlays ───────────────────────
-        fem = self._fem
-        if fem is None:
+        view = self._view
+        if view is None:
             try:
                 fem = self._parent.mesh.queries.get_fem_data(
                     dim=max(self._dims))
             except Exception:
                 fem = None
-        self._fem = fem
+            if fem is not None:
+                from .data import ViewerData
+                view = ViewerData.from_fem(fem)
+        self._view = view
 
         # ── Insert overlay tabs (loads/mass/constraints) ────────────
         self._build_overlay_tabs(win)
@@ -447,7 +452,7 @@ class MeshViewer:
         loads_comp = getattr(self._parent, 'loads', None)
         if loads_comp is not None:
             self._loads_tab = LoadsTabPanel(
-                loads_comp, fem=self._fem,
+                loads_comp, view=self._view,
                 on_patterns_changed=self._rebuild_loads_overlay,
                 on_force_scale=self._on_force_scale,
                 on_moment_scale=self._on_moment_scale,
@@ -457,7 +462,7 @@ class MeshViewer:
         mass_comp = getattr(self._parent, 'masses', None)
         if mass_comp is not None:
             self._mass_tab = MassTabPanel(
-                mass_comp, fem=self._fem,
+                mass_comp, view=self._view,
                 on_overlay_changed=self._rebuild_mass_overlay,
             )
             win.add_tab("Mass", self._mass_tab.widget)
@@ -465,7 +470,7 @@ class MeshViewer:
         constraints_comp = getattr(self._parent, 'constraints', None)
         if constraints_comp is not None:
             self._constraints_tab = ConstraintsTabPanel(
-                constraints_comp, fem=self._fem,
+                constraints_comp, view=self._view,
                 on_kinds_changed=self._rebuild_constraints_overlay,
             )
             win.add_tab("Constraints", self._constraints_tab.widget)
@@ -750,7 +755,7 @@ class MeshViewer:
 
         plotter = self._plotter
         registry = self._registry
-        fem = self._fem
+        view = self._view
         if plotter is None or registry is None:
             return
 
@@ -761,7 +766,7 @@ class MeshViewer:
                 pass
         self._load_actors.clear()
 
-        if not active_patterns or fem is None or not fem.nodes.loads:
+        if not active_patterns or view is None or not view.nodes.loads:
             plotter.render()
             return
 
@@ -771,7 +776,7 @@ class MeshViewer:
         origin = registry.origin_shift
 
         by_pat: dict[str, list] = {}
-        for r in fem.nodes.loads:
+        for r in view.nodes.loads:
             if r.pattern in active_patterns:
                 by_pat.setdefault(r.pattern, []).append(r)
 
@@ -781,8 +786,8 @@ class MeshViewer:
 
             for r in records:
                 try:
-                    xyz = fem.nodes.coords[
-                        fem.nodes.index(int(r.node_id))] - origin
+                    xyz = view.nodes.coords[
+                        view.nodes.index(int(r.node_id))] - origin
                 except Exception:
                     continue
 
@@ -859,7 +864,7 @@ class MeshViewer:
 
         plotter = self._plotter
         registry = self._registry
-        fem = self._fem
+        view = self._view
         if plotter is None or registry is None:
             return
 
@@ -874,17 +879,17 @@ class MeshViewer:
         except Exception:
             pass
 
-        if not show or fem is None or not fem.nodes.masses:
+        if not show or view is None or not view.nodes.masses:
             plotter.render()
             return
 
         positions = []
         masses = []
         origin = registry.origin_shift
-        for r in fem.nodes.masses:
+        for r in view.nodes.masses:
             try:
-                xyz = fem.nodes.coords[
-                    fem.nodes.index(int(r.node_id))] - origin
+                xyz = view.nodes.coords[
+                    view.nodes.index(int(r.node_id))] - origin
             except Exception:
                 continue
             m = float(r.mass[0])
@@ -926,11 +931,13 @@ class MeshViewer:
         from .overlays.constraint_overlay import (
             build_node_pair_actors, build_surface_actors,
         )
-        from apeGmsh.mesh._record_set import ConstraintKind
+        from .data import (
+            NODE_PAIR_KINDS, NODE_TO_SURFACE_KIND, SURFACE_KINDS,
+        )
 
         plotter = self._plotter
         registry = self._registry
-        fem = self._fem
+        view = self._view
         if plotter is None or registry is None:
             return
 
@@ -941,9 +948,9 @@ class MeshViewer:
                 pass
         self._constraint_actors.clear()
 
-        if (not active_kinds or fem is None
-                or (not fem.nodes.constraints
-                    and not fem.elements.constraints)):
+        if (not active_kinds or view is None
+                or (not view.nodes.constraints
+                    and not view.elements.constraints)):
             plotter.render()
             return
 
@@ -954,32 +961,32 @@ class MeshViewer:
         cst_lw = max(1, int(
             3 * self._overlay_scales['constraint_line']))
 
-        np_kinds = active_kinds & ConstraintKind.NODE_PAIR_KINDS
+        np_kinds = active_kinds & NODE_PAIR_KINDS
         if np_kinds:
             for mesh, kwargs in build_node_pair_actors(
-                fem, np_kinds, origin, marker_r, cst_lw,
+                view, np_kinds, origin, marker_r, cst_lw,
                 constraint_color,
             ):
                 actor = plotter.add_mesh(mesh, **kwargs)
                 self._constraint_actors.append(actor)
 
-        s_kinds = active_kinds & ConstraintKind.SURFACE_KINDS
+        s_kinds = active_kinds & SURFACE_KINDS
         if s_kinds:
             interp_lw = max(1, int(
                 2 * self._overlay_scales['constraint_line']))
             for mesh, kwargs in build_surface_actors(
-                fem, s_kinds, origin, interp_lw,
+                view, s_kinds, origin, interp_lw,
                 constraint_color,
             ):
                 actor = plotter.add_mesh(mesh, **kwargs)
                 self._constraint_actors.append(actor)
 
         # Phantom nodes (dark grey spheres)
-        if (ConstraintKind.NODE_TO_SURFACE in active_kinds
-                and fem.nodes.constraints):
-            pn = fem.nodes.constraints.phantom_nodes()
-            if len(pn) > 0:
-                pn_coords = pn.coords - origin
+        if (NODE_TO_SURFACE_KIND in active_kinds
+                and view.nodes.constraints):
+            pn_ids, pn_coords_raw = view.nodes.constraints.phantom_nodes()
+            if pn_ids.size > 0:
+                pn_coords = pn_coords_raw - origin
                 sphere = pv.Sphere(
                     radius=marker_r * 0.7,
                     theta_resolution=8, phi_resolution=8)
