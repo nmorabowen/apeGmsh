@@ -346,12 +346,16 @@ they don't unlock other phases.
 
 ## Phase 8 — Untangle `apeGmsh.solvers`
 
-✅ **Sub-phases 8.0 through 8.6 + 8.8 landed** (PRs [#119](https://github.com/nmorabowen/apeGmsh/pull/119), [#121](https://github.com/nmorabowen/apeGmsh/pull/121), [#123](https://github.com/nmorabowen/apeGmsh/pull/123), [#130](https://github.com/nmorabowen/apeGmsh/pull/130), [#134](https://github.com/nmorabowen/apeGmsh/pull/134), [#140](https://github.com/nmorabowen/apeGmsh/pull/140), [#141](https://github.com/nmorabowen/apeGmsh/pull/141), [#143](https://github.com/nmorabowen/apeGmsh/pull/143), plus the Phase 8.8 deletion). **8.7 (viewer migration off FEMData/solvers) is the last remaining piece** — but `apeGmsh.solvers/` itself is gone.
+✅ **All sub-phases landed** (PRs [#119](https://github.com/nmorabowen/apeGmsh/pull/119), [#121](https://github.com/nmorabowen/apeGmsh/pull/121), [#123](https://github.com/nmorabowen/apeGmsh/pull/123), [#130](https://github.com/nmorabowen/apeGmsh/pull/130), [#134](https://github.com/nmorabowen/apeGmsh/pull/134), [#140](https://github.com/nmorabowen/apeGmsh/pull/140), [#141](https://github.com/nmorabowen/apeGmsh/pull/141), [#143](https://github.com/nmorabowen/apeGmsh/pull/143) for 8.0–8.6, plus the Phase 8.8 deletion, plus Phase 8.7 PRs [#160](https://github.com/nmorabowen/apeGmsh/pull/160) / [#161](https://github.com/nmorabowen/apeGmsh/pull/161) / [#162](https://github.com/nmorabowen/apeGmsh/pull/162) / [#164](https://github.com/nmorabowen/apeGmsh/pull/164) / [#165](https://github.com/nmorabowen/apeGmsh/pull/165) / [#166](https://github.com/nmorabowen/apeGmsh/pull/166)).  `apeGmsh.solvers/` is deleted; the viewer consumes a single `ViewerData` adapter (`viewers/data/`) whose two builders (`from_fem` / `from_h5`) compose with `apeGmsh.opensees.emitter.h5_reader` and `apeGmsh.results` only.
 
 Originally framed as "apps migrate" — too small a frame. The
-realized scope is broader: relocate records to the broker, move
+realized scope was broader: relocate records to the broker, move
 OpenSees emit helpers into the bridge, reshuffle model.h5 into
 zoned namespaces, and make the viewer a pure model.h5 consumer.
+The "no `from apeGmsh.mesh` imports in `viewers/`" invariant is
+enforced going forward by the AST acceptance test at
+[`tests/test_viewers_pure_h5_consumer.py`](../../../../tests/test_viewers_pure_h5_consumer.py)
+(Phase 8.7 commit 7).
 
 See [phase-8-untangle.md](phase-8-untangle.md) for the full plan,
 sub-phase sequencing (8.0–8.8), and the relocation map.

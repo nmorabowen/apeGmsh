@@ -8,15 +8,34 @@ fixtures that will be provided.
 
 ## TL;DR for the viewer team
 
-You will be given **one new optional input** alongside the existing
-FEM scene: `model.h5`. When present, it tells you about materials,
-sections, transforms with per-element vecxz, time series, patterns,
-recorders, and analysis settings — none of which exist in the FEM or
-in MPCO results.
+After Phase 8.7 (May 2026 — see
+[ADR 0014](decisions/0014-viewer-is-pure-h5-consumer.md) and
+[phase-8.7-scope.md](phase-8.7-scope.md)) the viewer reads its
+structural input through one adapter:
 
-When absent, viewer behavior is unchanged. **Every feature below is
-opt-in**: the viewer continues to work without `model.h5`, and
-gracefully degrades when groups are missing within the file.
+```python
+from apeGmsh.viewers.data import ViewerData
+
+view = ViewerData.from_fem(fem)       # live g.mesh.viewer path
+view = ViewerData.from_h5("model.h5") # post-solve / fixture path
+```
+
+Both builders produce interchangeable instances; downstream code
+treats them uniformly.  `ViewerData.from_h5(...)` is what unlocks
+"render any test fixture with no FEMData in memory" — the property
+this document originally aspired to.
+
+The viewer package itself depends on exactly two upstream packages:
+
+1. `apeGmsh.results` — for result data (slabs, components, time
+   slices, the `Results` API).
+2. `apeGmsh.opensees.emitter.h5_reader` — for the *model* (the
+   neutral and `/opensees/` zones of `model.h5`).
+
+Everything else (materials, sections, transforms with per-element
+vecxz, time series, patterns, recorders, analysis settings) the
+viewer reads through the `/opensees/` zone of `model.h5` and remains
+opt-in.  When absent, those panels are hidden — no error, no warning.
 
 ## File discovery
 
@@ -313,17 +332,29 @@ write integration tests.
 
 ## Integration points in the existing viewer
 
-These are the files in `apeGmsh/viewers/` the viewer team will most
-likely touch. The bridge team flags them as references; final design
-is the viewer team's call.
+After Phase 8.7 the viewer's structural consumption is uniform —
+every diagram, overlay, and UI tab in `apeGmsh/viewers/` takes a
+:class:`~apeGmsh.viewers.data.ViewerData` (the parameter is named
+``view`` in every signature).  The `model.h5` enrichment side is
+layered on top via :func:`apeGmsh.opensees.emitter.h5_reader.open`
+when a sidecar file is found.
 
-| Concern | Existing module | Likely change |
+| Concern | Module | Status |
 |---|---|---|
-| Overlay system | `viewers/overlays/` | Add `model_h5_overlay.py` driving glyph overlays |
-| Side panels | `viewers/panels/` (or wherever the dock lives) | Add Material, Section, TimeSeries, Pattern, Recorder, Analysis panels |
-| Diagrams | `viewers/diagrams/_beam_geometry.py` | Replace live-bridge vecxz lookup with H5 read |
-| Scene | `viewers/scene/` | New "Compositions" entry: "Model definition (H5)" |
-| Discovery | viewer entry point | Add H5 sidecar discovery (see "File discovery" above) |
+| Substrate (nodes + elements) | `viewers/scene/fem_scene.py` | Consumes `ViewerData`.  Live path wraps via `ViewerData.from_fem(fem)`; results / fixture path uses `ViewerData.from_h5(path)`. |
+| Diagrams | `viewers/diagrams/*.py` (~15 files) | `attach(plotter, view, scene)` — same shape across the hierarchy. |
+| Overlays | `viewers/overlays/constraint_overlay.py` | Consumes `ViewerData`; iterates the read-side row dataclasses (`NodePairRow`, `InterpolationRow`, …) defined in `viewers/data/_records.py`. |
+| UI tabs | `viewers/ui/constraints_tab.py`, `loads_tab.py`, `mass_tab.py` | `view=` constructor kwarg; `set_view(view)` setter. |
+| Mesh viewer (live g.mesh) | `viewers/mesh_viewer.py` | `view=` constructor kwarg; the lazy fallback wraps `g.mesh.queries.get_fem_data()` → `ViewerData.from_fem(...)`. |
+| Director | `viewers/diagrams/_director.py` | `director.view` is the cached `ViewerData`.  The legacy `director.fem` property was retired in Phase 8.7 commit 6. |
+| Future model.h5 panels | `viewers/panels/` | Material, Section, TimeSeries, Pattern, Recorder, Analysis panels read from the `/opensees/` zone via `h5_reader.H5Model`. |
+| Sidecar discovery | viewer entry point | Add `.h5` discovery (see "File discovery" above) when implementing the enrichment panels. |
+
+The structural contract is locked by the AST acceptance test
+[tests/test_viewers_pure_h5_consumer.py](../../../../tests/test_viewers_pure_h5_consumer.py):
+`apeGmsh.viewers/*` may not import from `apeGmsh.mesh` and may only
+import from `apeGmsh.opensees.emitter.h5_reader` within
+`apeGmsh.opensees.*`.
 
 ## Versioning policy
 

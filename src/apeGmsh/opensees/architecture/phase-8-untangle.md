@@ -328,25 +328,34 @@ Schema bumped `2.1.0 → 2.2.0` (additive).
 tests/opensees/h5/test_h5_end_to_end.py
 tests/opensees/h5/test_h5_emitter.py` → all green.
 
-### Phase 8.7 — Viewer migration off FEMData / solvers
+### Phase 8.7 — Viewer migration off FEMData / solvers — landed
 Scope locked in [phase-8.7-scope.md](phase-8.7-scope.md);
 architectural decision recorded as
-[ADR 0014](decisions/0014-viewer-is-pure-h5-consumer.md).  Introduces
-an `apeGmsh.viewers.data.ViewerData` adapter with two builders
-(`from_fem(fem)` for the live path, `from_h5(path)` for the post-
-solve / fixture path); migrates `viewers/scene/fem_scene.py`, all
-diagrams under `viewers/diagrams/`, the constraint overlay under
-`viewers/overlays/`, and the three UI tabs under `viewers/ui/` to
-consume the adapter instead of `FEMData`.  Schema bump 2.3.0 → 2.4.0
-(additive) adds `/mesh_selections/` to the neutral zone so
-`selection=` selectors round-trip through `model.h5`.  After this
-phase, `viewers/` imports nothing from `mesh/` and only
-`opensees.emitter.h5_reader` from `opensees/` — enforced by an AST
-acceptance test.
+[ADR 0014](decisions/0014-viewer-is-pure-h5-consumer.md).  Shipped
+across seven PRs (May 2026):
 
-**Risk:** medium-high — UI changes are user-visible.
-**Test gate:** viewer integration tests pass against fixture .h5 files;
-AST acceptance test enforces the forbidden-import list.
+| Commit | Title | PR |
+|---|---|---|
+| 1 | scope doc + ADR 0014 | [#160](https://github.com/nmorabowen/apeGmsh/pull/160) |
+| 2 | `/mesh_selections/` round-trip in model.h5 (schema 2.4.0) | [#161](https://github.com/nmorabowen/apeGmsh/pull/161) |
+| 3 | `ViewerData` adapter (`viewers/data/`) | [#162](https://github.com/nmorabowen/apeGmsh/pull/162) |
+| 4 | `fem_scene.py` migrates to `ViewerData` | [#164](https://github.com/nmorabowen/apeGmsh/pull/164) |
+| 5 | Diagrams `attach(view, scene)` batch | [#165](https://github.com/nmorabowen/apeGmsh/pull/165) |
+| 6 | UI tabs + constraint overlay; `director.fem` retired | [#166](https://github.com/nmorabowen/apeGmsh/pull/166) |
+| 7 | AST acceptance test + docs sweep (this PR) | — |
+
+The migration introduced an `apeGmsh.viewers.data.ViewerData`
+adapter with two builders (`from_fem(fem)` for the live path,
+`from_h5(path)` for the post-solve / fixture path); all of
+`viewers/scene/fem_scene.py`, the ~15 diagrams under
+`viewers/diagrams/`, the constraint overlay under `viewers/overlays/`,
+and the three UI tabs under `viewers/ui/` consume the adapter rather
+than `FEMData`.  Schema bump `2.3.0 → 2.4.0` (additive) added
+`/mesh_selections/` to the neutral zone so `selection=` selectors
+round-trip through `model.h5`.  After this phase, `viewers/`
+imports nothing from `mesh/` and only `opensees.emitter.h5_reader`
+from `opensees/` — enforced by
+[`tests/test_viewers_pure_h5_consumer.py`](../../../../tests/test_viewers_pure_h5_consumer.py).
 
 ### Phase 8.8 — Delete `solvers/` — landed
 After Phase 9 closed out the recorder deprecation envelope, no
