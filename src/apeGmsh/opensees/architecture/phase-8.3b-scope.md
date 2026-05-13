@@ -156,6 +156,16 @@ the user's perspective; they just import from a new location.
 
 ### Flavor 2 — Architectural unification (heavier)
 
+> **Landed in Phase 9** — see
+> [phase-9-recorder-unification.md](phase-9-recorder-unification.md).
+> The recorder layer now has three declaration surfaces with no
+> shared resolved-spec scaffolding: typed primitives
+> (`ops.recorder.Node` / `.Element` / `.MPCO`),
+> `ops.recorder.declare(...)` for file emit (canonical), and
+> `DomainCaptureSpec` for in-process capture. The transitional
+> `Recorders` fluent helper that Phase 8.3b kept around is gone
+> (deleted in Phase 9 commit 5).
+
 Reshape the recorder layer so there's **one** API for both
 declaration and emission. The two abstractions become one.
 
@@ -314,7 +324,8 @@ introduces the shim.
 ## 7. Out of scope (defer to later phases)
 
 - **Architectural unification of `Recorders` with the typed primitives**
-  (Flavor 2 above). Worth its own scoping conversation after 8.3b.
+  (Flavor 2 above). ✅ Landed in Phase 9 — see
+  [phase-9-recorder-unification.md](phase-9-recorder-unification.md).
 - **model.h5 zone reshuffle (Phase 8.4)** — independent of the
   recorder cluster move. Can land before or after 8.3b.
 - **Viewer migration off `FEMData` / `solvers` (Phase 8.7)** —

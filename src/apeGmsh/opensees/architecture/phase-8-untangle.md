@@ -261,10 +261,13 @@ and `_element_specs.py` to canonical homes under
 and `opensees/_element_capabilities.py`.  The original deletion
 plan was reconsidered in [phase-8.3b-scope.md](phase-8.3b-scope.md);
 Flavor 1 (pure relocation) shipped — the typed-primitives-as-
-declaration unification (Flavor 2) is deferred to a separate
-scoping conversation.  Updated 7 source consumers in `results/`,
-9 EOS curriculum notebooks (tagged with the Phase-8.3b TODO),
-22 straggler EOS notebooks, and 32 test files.
+declaration unification (Flavor 2) was deferred to its own phase.
+**Flavor 2 subsequently landed in Phase 9** (see
+[phase-9-recorder-unification.md](phase-9-recorder-unification.md));
+the transitional `Recorders` fluent helper this phase relocated
+was deleted in Phase 9 commit 5.  Updated 7 source consumers in
+`results/`, 9 EOS curriculum notebooks (tagged with the Phase-8.3b
+TODO), 22 straggler EOS notebooks, and 32 test files.
 
 **Risk:** medium — broad consumer rewire; mitigated by ``__getattr__``
 shims at the legacy paths so external code keeps working with a
@@ -372,13 +375,18 @@ release-blocker app has migrated.
    the `solvers/` shim only catches direct `from apeGmsh.solvers
    import X`.
 
-4. **Recorder declaration consolidation.** *Resolved in
-   [phase-8.3b-scope.md](phase-8.3b-scope.md):* Phase 8.3b shipped
-   Flavor 1 (relocate the legacy `Recorders` class to
-   `apeGmsh.results.spec.declaration` rather than delete it).  The
-   typed-primitives-as-declaration unification (Flavor 2) is
-   deferred to its own scoping conversation; both abstractions
-   coexist on `main` for now.
+4. **Recorder declaration consolidation.** *Resolved across Phase
+   8.3b + Phase 9:* Phase 8.3b shipped Flavor 1 (relocate the
+   legacy `Recorders` class to `apeGmsh.results.spec.declaration`
+   rather than delete it). Phase 9 then shipped Flavor 2 — see
+   [phase-9-recorder-unification.md](phase-9-recorder-unification.md):
+   `Recorders` was deleted entirely; the recorder layer ended up
+   with three declaration surfaces (typed primitives,
+   `ops.recorder.declare(...)` for file emit,
+   `DomainCaptureSpec` for in-process capture) and no shared
+   resolved-spec scaffolding. `model.h5` schema 2.3.0 unified the
+   `/opensees/recorders/` archive with a `kind=("typed"|"declared")`
+   attr plus declaration metadata for declared records.
 
 5. **One ADR or several.** This doc proposes a chain-of-decisions
    that probably warrants 2–3 ADRs:

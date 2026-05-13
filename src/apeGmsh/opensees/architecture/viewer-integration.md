@@ -213,6 +213,24 @@ pattern is < 10 KB).
 
 **Read pattern:** read at file-open time.
 
+**Schema 2.3.0 enrichment (Phase 9):** every recorder group now
+carries a `kind` attr — `"typed"` (raw `Node` / `Element` / `MPCO`
+primitive) or `"declared"` (fan-out call from
+`ops.recorder.declare(...)`). Declared records additionally
+expose the original declaration metadata as attrs
+(`declaration_name`, `record_name`, `category`, `components`,
+`raw`, `pg`, `label`, `selection`, `ids`, `dt`, `n_steps`,
+`file_root`). The viewer can group records by `declaration_name`
+to show the user's high-level recorder intent rather than the raw
+fan-out — a 6-component nodes record fans out to multiple
+`Node_<n>` groups in the archive, but the viewer presents them as
+one row. Falls back to the per-group `type` attr when the
+`declaration_name` is absent (typed primitives, or legacy
+pre-2.3.0 archives where `H5Reader.recorders()` synthesizes
+`kind="typed"` for back-compat). See
+[h5-schema.md `/opensees/recorders`](h5-schema.md#opensees-recorders)
+for the full attr / dataset layout.
+
 ### `/opensees/analysis` — Analysis summary panel
 
 **Trigger:** "Analysis" tab.

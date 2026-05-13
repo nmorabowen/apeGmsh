@@ -1,14 +1,39 @@
 # Phase 9 — Recorder declaration unification
 
-**Status:** Scoping (May 2026). Implements the
+**Status:** ✅ Landed (May 2026). Implements the
 [Phase 8.3b Flavor 2](phase-8.3b-scope.md) deferred unification.
-Additive on `main` post-Phase-8.6; introduces a minor schema bump.
+Shipped across PRs
+[#146](https://github.com/nmorabowen/apeGmsh/pull/146),
+[#147](https://github.com/nmorabowen/apeGmsh/pull/147),
+[#150](https://github.com/nmorabowen/apeGmsh/pull/150),
+[#153](https://github.com/nmorabowen/apeGmsh/pull/153),
+[#155](https://github.com/nmorabowen/apeGmsh/pull/155),
+[#157](https://github.com/nmorabowen/apeGmsh/pull/157).
 
-This phase collapses the **two recorder declaration systems** that
-exist on `main` today into one bridge-side typed declaration. The
-file-based emit path consumes the new declaration directly. Domain
-capture (results-side) stays a separate system with its own
-declaration shape, decoupled from the bridge.
+**Outcome:** the recorder layer now has three declaration surfaces
+with no shared resolved-spec scaffolding:
+
+1. **Typed primitives** — `ops.recorder.Node` / `.Element` /
+   `.MPCO`. 1:1 with an OpenSees `recorder` command.
+2. **Declared file-emit** — `ops.recorder.declare(...)` produces a
+   typed `RecorderDeclaration`; the build pipeline fans it out to
+   one or more `recorder(...)` emit calls per (token, target_set)
+   group.
+3. **Declared in-process capture** — `DomainCaptureSpec` produces
+   a `ResolvedDomainCaptureSpec` consumed by `DomainCapture`,
+   paired with `ops.domain_capture(spec, path=...)` (live) and
+   `DomainCapture.from_h5(...)` (file). Per Phase 9 D8, `ndm` and
+   `ndf` ride on the resolved spec — no consumer ever types them.
+
+The legacy `Recorders` fluent helper was deleted entirely in
+commit 5; `ResolvedRecorderSpec` stays for the live recorder /
+MPCO / transcoder consumers but is no longer the single point of
+declaration. `model.h5` schema bumped 2.2.0 → 2.3.0 (commit 6) —
+`/opensees/recorders/` is now a unified archive: every record
+group carries a `kind=("typed"|"declared")` attr; declared
+records additionally carry the original declaration metadata.
+
+Original scoping notes (kept for archaeology) follow.
 
 ## 1. The problem
 

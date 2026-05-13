@@ -141,7 +141,7 @@ Attributes only.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `schema_version` | string | semver, e.g. `"2.2.0"` |
+| `schema_version` | string | semver, e.g. `"2.3.0"` |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
@@ -501,23 +501,77 @@ significant savings for ground motions.
 
 ## `/opensees/recorders`
 
-```
-/opensees/recorders/disp/
-├── attrs: type="Node", file="disp.out", response="disp",
-│         dT=0.0
-├── target_nodes      int dataset
-├── target_dofs       int dataset
-└── time_format       string attr     ← "step" | "dt"
+Schema 2.3.0 (Phase 9 commit 6) unifies both recorder declaration
+systems — typed primitives (`Node` / `Element` / `MPCO`) and
+fan-out records produced by `ops.recorder.declare(...)` — under one
+group shape. Every record carries a `kind` attr that distinguishes
+the two; declared records additionally carry the original
+declaration metadata as attrs.
 
-/opensees/recorders/forces/
-├── attrs: type="Element", file="forces.out", response="globalForce"
-└── target_elements   int dataset
+### Typed primitives (`kind="typed"`)
 
-/opensees/recorders/main_mpco/
-├── attrs: type="MPCO", file="model.mpco"
-├── nodal_responses   string dataset   ← ["displacement", "reactionForce"]
-└── elem_responses    string dataset   ← ["stresses", "section.force"]
+1:1 with an OpenSees `recorder` command. Same shape as schema 2.2.0
+with a new `kind` attr.
+
 ```
+/opensees/recorders/Node_0/
+├── attrs: kind="typed", type="Node", file="disp.out"
+└── params           string dataset   ← raw OpenSees args
+
+/opensees/recorders/Element_1/
+├── attrs: kind="typed", type="Element", file="forces.out"
+└── params           string dataset
+
+/opensees/recorders/mpco_2/
+├── attrs: kind="typed", type="mpco", file="model.mpco"
+└── params           string dataset
+```
+
+### Declared records (`kind="declared"`)
+
+Each fan-out call produced by `ops.recorder.declare(...)` lands as
+its own record group, tagged with the original declaration's
+metadata. One declaration may produce multiple groups when a
+record's components map to multiple OpenSees tokens (e.g. mixing
+`displacement` and `velocity` on one nodes record produces two
+`recorder Node ...` commands, each as a separate group sharing the
+same `declaration_name` / `record_name`).
+
+```
+/opensees/recorders/Node_3/
+├── attrs:
+│   kind="declared", type="Node", file="default__top__disp.out",
+│   declaration_name="default", record_name="top",
+│   category="nodes",
+│   components=["displacement_x","displacement_y","displacement_z"],
+│   raw=[],
+│   pg=["Top"], label=[], selection=[],
+│   ids absent ← name selectors used instead,
+│   dt=0.01, n_steps=null,
+│   file_root="results/"
+└── params           string dataset
+```
+
+The declaration-metadata attrs are:
+
+| Attr | Type | Notes |
+|---|---|---|
+| `declaration_name` | string | identifier of the `ops.recorder.declare(name=...)` call |
+| `record_name` | string or null | user-supplied per-record name (auto-generated if absent) |
+| `category` | string | `nodes` / `elements` / `line_stations` / `gauss` |
+| `components` | string[] | canonical names, already shorthand-expanded against the bridge's `ndm` / `ndf` at declaration time |
+| `raw` | string[] | raw OpenSees response tokens (`raw=` escape hatch) |
+| `pg` / `label` / `selection` | string[] | named selectors; combined as a union at resolve time |
+| `ids` | int[] | explicit IDs; present only when the user passed `ids=` |
+| `dt` | float or null | recording cadence (wall-clock) |
+| `n_steps` | int or null | recording cadence (step-count); at most one of dt / n_steps is set |
+| `file_root` | string | directory prefix; the actual emitted file path is `<file_root>/<declaration_name>__<record_name>__<token>.out` |
+
+### Legacy archives (schema 2.0.0 – 2.2.0)
+
+Pre-2.3.0 archives wrote no `kind` attr. `H5Reader.recorders()`
+synthesizes `kind="typed"` for those records so callers can branch
+on `r["kind"]` uniformly without a version probe.
 
 ## `/opensees/analysis` (optional)
 
@@ -572,7 +626,7 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
   ignore unknown groups.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
 
-The current schema version is **`2.2.0`**.
+The current schema version is **`2.3.0`**.
 
 History:
 
@@ -599,6 +653,18 @@ History:
   `/opensees/tag_map/` index).  Sentinel `-1` marks records
   emitted outside a bridge fan-out.  Additive — old v2.1.0 readers
   ignore the new dataset.
+- `2.3.0` — Phase 9 commit 6: unified `/opensees/recorders/`
+  archive.  Every record group gains a `kind` attr — `"typed"` for
+  Node / Element / MPCO primitives (1:1 with an OpenSees `recorder`
+  command), `"declared"` for fan-out calls produced by
+  `ops.recorder.declare(...)`.  Declared records additionally carry
+  the original declaration metadata as attrs: `declaration_name`,
+  `record_name`, `category`, `components`, `raw`, `pg`, `label`,
+  `selection`, `ids`, `dt`, `n_steps`, `file_root`.  Additive —
+  old v2.2.0 readers see `kind="declared"` records as well-formed
+  recorder groups (they just ignore the extra attrs).  See
+  [phase-9-recorder-unification.md](phase-9-recorder-unification.md)
+  for the multi-commit phase that delivered this.
 
 A reader skeleton:
 
@@ -625,7 +691,7 @@ no analysis settings:
 ```
 column.h5
 ├── /meta
-│   schema_version="2.2.0", ndm=3, ndf=6, snapshot_id="abc123"
+│   schema_version="2.3.0", ndm=3, ndf=6, snapshot_id="abc123"
 ├── /nodes
 │   ├── ids       [1, 2]
 │   └── coords    [[0,0,0], [0,0,1]]

@@ -356,6 +356,24 @@ zoned namespaces, and make the viewer a pure model.h5 consumer.
 See [phase-8-untangle.md](phase-8-untangle.md) for the full plan,
 sub-phase sequencing (8.0–8.8), and the relocation map.
 
+## Phase 9 — Recorder declaration unification
+
+✅ **Landed** across PRs [#146](https://github.com/nmorabowen/apeGmsh/pull/146), [#147](https://github.com/nmorabowen/apeGmsh/pull/147), [#150](https://github.com/nmorabowen/apeGmsh/pull/150), [#153](https://github.com/nmorabowen/apeGmsh/pull/153), [#155](https://github.com/nmorabowen/apeGmsh/pull/155), [#157](https://github.com/nmorabowen/apeGmsh/pull/157). Closes out the Phase 8.3b Flavor 2 deferral.
+
+Three declaration surfaces with no shared resolved-spec
+scaffolding: typed primitives (`ops.recorder.Node` / `.Element` /
+`.MPCO`), `ops.recorder.declare(...)` for file emit (canonical
+Phase 9 entry point), and `DomainCaptureSpec` for in-process
+capture (paired with `ops.domain_capture(...)` and
+`DomainCapture.from_h5(...)`). The transitional `Recorders` fluent
+helper was deleted entirely in commit 5. `model.h5` schema bumped
+2.2.0 → 2.3.0 (commit 6) — unified `/opensees/recorders/` group
+with `kind=("typed"|"declared")` attr plus declaration metadata
+(category, components, cadence, selectors) for declared records.
+
+See [phase-9-recorder-unification.md](phase-9-recorder-unification.md)
+for the full per-commit breakdown.
+
 ## Sync points
 
 The points where parallel work converges. Each one is a checkpoint
