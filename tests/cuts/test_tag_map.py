@@ -248,6 +248,71 @@ def test_wrong_schema_major_propagates(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------- #
+# Inverse lookup (OpenSees tags → FEM eids) — viewer integration uses
+# this to walk SectionCutDef.element_ids (OpenSees tags) back into FEM
+# eids for filter-highlight / connectivity queries.
+# --------------------------------------------------------------------- #
+def test_fem_eids_for_ops_tags_returns_tuple_in_order(tmp_path: Path) -> None:
+    h5 = tmp_path / "model.h5"
+    _write_minimal_h5(h5, groups={
+        "forceBeamColumn": {
+            "ids": np.array([10, 11, 12, 13]),
+            "fem_eids": np.array([101, 102, 103, 104]),
+        },
+    })
+
+    m = FemToOpsTagMap.from_h5(h5)
+    fem_eids = m.fem_eids_for_ops_tags([12, 10, 13])
+    assert fem_eids == (103, 101, 104)
+    assert isinstance(fem_eids, tuple)
+
+
+def test_fem_eids_for_ops_tags_accepts_ndarray(tmp_path: Path) -> None:
+    h5 = tmp_path / "model.h5"
+    _write_minimal_h5(h5, groups={
+        "forceBeamColumn": {
+            "ids": np.array([10, 11]),
+            "fem_eids": np.array([101, 102]),
+        },
+    })
+
+    m = FemToOpsTagMap.from_h5(h5)
+    fem_eids = m.fem_eids_for_ops_tags(np.array([10, 11]))
+    assert fem_eids == (101, 102)
+
+
+def test_fem_eids_for_ops_tags_missing_raises(tmp_path: Path) -> None:
+    h5 = tmp_path / "model.h5"
+    _write_minimal_h5(h5, groups={
+        "forceBeamColumn": {
+            "ids": np.array([10]),
+            "fem_eids": np.array([101]),
+        },
+    })
+
+    m = FemToOpsTagMap.from_h5(h5)
+    with pytest.raises(KeyError, match="not in tag map"):
+        m.fem_eids_for_ops_tags([10, 999])
+
+
+def test_fem_eids_for_ops_tags_multi_type(tmp_path: Path) -> None:
+    h5 = tmp_path / "model.h5"
+    _write_minimal_h5(h5, groups={
+        "forceBeamColumn": {
+            "ids": np.array([10, 11]),
+            "fem_eids": np.array([101, 102]),
+        },
+        "FourNodeTetrahedron": {
+            "ids": np.array([20]),
+            "fem_eids": np.array([201]),
+        },
+    })
+
+    m = FemToOpsTagMap.from_h5(h5)
+    assert m.fem_eids_for_ops_tags([20, 11]) == (201, 102)
+
+
+# --------------------------------------------------------------------- #
 # Repr (smoke)
 # --------------------------------------------------------------------- #
 def test_repr_smoke(tmp_path: Path) -> None:

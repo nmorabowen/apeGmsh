@@ -52,7 +52,7 @@ class FemToOpsTagMap:
     know loudly.
     """
 
-    __slots__ = ("_by_fem_eid", "_type_of_fem_eid", "_n_sentinel")
+    __slots__ = ("_by_fem_eid", "_type_of_fem_eid", "_n_sentinel", "_by_ops_tag")
 
     def __init__(
         self,
@@ -64,6 +64,10 @@ class FemToOpsTagMap:
         self._by_fem_eid: dict[int, int] = dict(by_fem_eid)
         self._type_of_fem_eid: dict[int, str] = dict(type_of_fem_eid)
         self._n_sentinel: int = int(n_sentinel)
+        # Inverse lookup, built lazily on first inverse query. The
+        # forward map is bijective by construction (collisions raise in
+        # :meth:`from_h5`), so the inverse is single-valued.
+        self._by_ops_tag: dict[int, int] | None = None
 
     # ------------------------------------------------------------------ #
     # Construction
@@ -174,6 +178,45 @@ class FemToOpsTagMap:
     def type_token_for(self, fem_eid: int) -> str:
         """Return the OpenSees element type token for one FEM eid."""
         return self._type_of_fem_eid[int(fem_eid)]
+
+    def fem_eids_for_ops_tags(
+        self,
+        ops_tags: Iterable[int] | np.ndarray,
+    ) -> tuple[int, ...]:
+        """Inverse lookup — OpenSees tags → FEM element ids.
+
+        Mirror of :meth:`ops_tags_for_fem_eids`. Returns a tuple in the
+        same order as the input. Raises ``KeyError`` listing every
+        missing OpenSees tag so the user sees the full failure set.
+
+        The viewer uses this to walk a :class:`apeGmsh.cuts.SectionCutDef`
+        (which carries OpenSees tags) back into FEM eids so it can pick
+        out the corresponding rows of the FEM connectivity / coords.
+        """
+        if self._by_ops_tag is None:
+            self._by_ops_tag = {
+                int(ops): int(fem)
+                for fem, ops in self._by_fem_eid.items()
+            }
+        arr = (
+            ops_tags if isinstance(ops_tags, np.ndarray)
+            else np.fromiter((int(x) for x in ops_tags), dtype=np.int64)
+        )
+        out: list[int] = []
+        missing: list[int] = []
+        for tag in arr:
+            tag_int = int(tag)
+            fid = self._by_ops_tag.get(tag_int)
+            if fid is None:
+                missing.append(tag_int)
+            else:
+                out.append(fid)
+        if missing:
+            raise KeyError(
+                f"{len(missing)} OpenSees tag(s) not in tag map: {missing[:10]}"
+                + ("…" if len(missing) > 10 else "")
+            )
+        return tuple(out)
 
     # ------------------------------------------------------------------ #
     # Introspection
