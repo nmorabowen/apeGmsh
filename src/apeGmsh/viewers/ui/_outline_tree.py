@@ -43,6 +43,9 @@ _ROLE_GROUP_KEY = 0x102
 _ROLE_PLOT_KEY = 0x103
 _ROLE_COMPOSITION_KEY = 0x104     # one Diagram = a stack of layers
 _ROLE_GEOMETRY_KEY = 0x105        # geometry container (deformation + N diagrams)
+# Re-export from _eye_icon_delegate. Stored here too so call sites
+# don't have to import from two modules when stamping items.
+from ._eye_icon_delegate import ROLE_VISIBLE as _ROLE_VISIBLE
 
 
 class OutlineTree:
@@ -130,6 +133,18 @@ class OutlineTree:
         tree.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(tree, stretch=1)
         self._tree = tree
+
+        # ── Plan 03 — eye-icon delegate ─────────────────────────────
+        # Paints a visibility eye in column 0 for rows that opt in via
+        # the ``ROLE_VISIBLE`` data role (Geometry + Composition rows
+        # today; Layer rows are a follow-up — outline doesn't render
+        # them yet). Clicking the icon toggles the underlying actors
+        # via :meth:`_on_eye_clicked`.
+        from ._eye_icon_delegate import resolve_delegate_class
+        delegate_cls = resolve_delegate_class()
+        self._eye_delegate = delegate_cls(tree)
+        self._eye_delegate.icon_clicked.connect(self._on_eye_clicked)
+        tree.setItemDelegateForColumn(0, self._eye_delegate)
 
         # ── Group items ────────────────────────────────────────────
         # Layers replaces the prior Catalog + Diagrams split: the
@@ -371,11 +386,18 @@ class OutlineTree:
                     font = geom_item.font(0)
                     font.setBold(True)
                     geom_item.setFont(0, font)
+                # Plan 03 — visibility eye on Geometry rows. Derived
+                # from the union of every child layer's is_visible:
+                # icon reads "on" if any layer under this geometry is
+                # visible, "off" only when every layer is hidden.
+                geom_visible = self._is_geometry_visible(geom)
+                geom_item.setData(0, _ROLE_VISIBLE, bool(geom_visible))
                 geom_item.setToolTip(
                     0,
-                    f"{geom.name} — deformation owner. "
-                    f"F2 / right-click to rename, duplicate, delete, "
-                    f"or add a diagram inside.",
+                    f"{geom.name} — click the eye to toggle every "
+                    f"layer in this geometry. F2 / right-click to "
+                    f"rename, duplicate, delete, or add a diagram "
+                    f"inside.",
                 )
                 self._group_diagrams.addChild(geom_item)
 
@@ -395,10 +417,16 @@ class OutlineTree:
                         font = comp_item.font(0)
                         font.setBold(True)
                         comp_item.setFont(0, font)
+                    # Plan 03 — visibility eye on Composition rows.
+                    # Same union semantics as Geometry: "on" when any
+                    # layer in this composition is visible.
+                    comp_visible = self._is_composition_visible(comp)
+                    comp_item.setData(0, _ROLE_VISIBLE, bool(comp_visible))
                     comp_item.setToolTip(
                         0,
-                        f"{comp.name} — F2 / right-click to rename, "
-                        f"duplicate, or delete.",
+                        f"{comp.name} — click the eye to toggle every "
+                        f"layer in this diagram. F2 / right-click to "
+                        f"rename, duplicate, or delete.",
                     )
                     geom_item.addChild(comp_item)
                 geom_item.setExpanded(True)
@@ -415,6 +443,103 @@ class OutlineTree:
                 f"{geom.deform_scale:g}"
             )
         return f"{geom.name}{suffix}"
+
+    # ------------------------------------------------------------------
+    # Plan 03 — derived visibility + click cascade
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_composition_visible(comp: Any) -> bool:
+        """A composition reads as visible when any of its layers are."""
+        layers = list(getattr(comp, "layers", []) or [])
+        if not layers:
+            # Empty composition: there's nothing to hide, but the row
+            # should still render an eye to invite "Add layer" — pick
+            # "on" so it doesn't look disabled.
+            return True
+        return any(getattr(layer, "is_visible", True) for layer in layers)
+
+    @staticmethod
+    def _is_geometry_visible(geom: Any) -> bool:
+        """A geometry reads as visible when any of its compositions are."""
+        comps = list(getattr(geom.compositions, "compositions", []) or [])
+        if not comps:
+            return True
+        return any(
+            OutlineTree._is_composition_visible(c) for c in comps
+        )
+
+    def _on_eye_clicked(self, item: Any) -> None:
+        """Handle a click on the eye column.
+
+        Dispatches by row type:
+
+        * Composition row → bulk-toggle every child layer's visibility.
+        * Geometry row → bulk-toggle every layer in every composition.
+
+        The new state is the *opposite* of the derived visibility: if
+        anything was visible, hide all; otherwise show all. This
+        matches the typical "toggle group" expectation and is simple
+        to reason about. No per-layer state is preserved across
+        toggles — v1 scope (see commit body).
+        """
+        if item is None:
+            return
+        from .._log import log_action
+        registry = self._director.registry
+        geom_mgr = self._director.geometries
+
+        comp_id = item.data(0, _ROLE_COMPOSITION_KEY)
+        if comp_id is not None:
+            owner = geom_mgr.geometry_for_composition(comp_id)
+            if owner is None:
+                return
+            comp = owner.compositions.find(comp_id)
+            if comp is None:
+                return
+            new_state = not self._is_composition_visible(comp)
+            log_action(
+                "ui.outline", "eye_toggled",
+                comp=comp_id, new_state=new_state,
+            )
+            for layer in list(getattr(comp, "layers", []) or []):
+                try:
+                    registry.set_visible(layer, bool(new_state))
+                except Exception:
+                    pass
+            self._fire_render()
+            self._refresh_diagrams()
+            return
+
+        geom_id = item.data(0, _ROLE_GEOMETRY_KEY)
+        if geom_id is not None:
+            geom = geom_mgr.find(geom_id)
+            if geom is None:
+                return
+            new_state = not self._is_geometry_visible(geom)
+            log_action(
+                "ui.outline", "eye_toggled",
+                geom=geom_id, new_state=new_state,
+            )
+            for comp in list(geom.compositions.compositions):
+                for layer in list(getattr(comp, "layers", []) or []):
+                    try:
+                        registry.set_visible(layer, bool(new_state))
+                    except Exception:
+                        pass
+            self._fire_render()
+            self._refresh_diagrams()
+            return
+
+    def _fire_render(self) -> None:
+        """Push a render through the Director's bound plotter so the
+        eye-click takes effect without waiting on a separate refresh."""
+        plotter = getattr(self._director.registry, "_plotter", None)
+        if plotter is not None:
+            try:
+                plotter.render()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Refresh — Probes / Plots placeholders
