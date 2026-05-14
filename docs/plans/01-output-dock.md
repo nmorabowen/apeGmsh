@@ -1,6 +1,8 @@
 # 01 — Output / Log Dock
 
-**Status:** pending  ·  **Cost:** ~2 days  ·  **Depends on:** none
+**Status:** ✅ **Landed** for `results.viewer` via [PR #168](https://github.com/nmorabowen/apeGmsh/pull/168) (2026-05-14).
+Mesh/model viewer rollout + VTK `vtkOutputWindow` capture deferred — see *Deferred from this implementation* below.
+**Cost:** ~2 days  ·  **Depends on:** none
 
 ## Goal
 
@@ -92,3 +94,15 @@ Severity → color mapping is hardcoded (red/yellow/gray). No user setting — k
 - Persisting log history across viewer launches — logs are session-scoped.
 - Routing logs from subprocess viewers back to the parent — separate problem.
 - Migrating existing `print()` calls in apeGmsh to `logging`.
+
+## Deferred from this implementation (PR #168)
+
+- **VTK `vtkOutputWindow` capture.** Python subclassing of VTK's wrapper is
+  version-fragile and the failure modes are silent. The three Python channels
+  (logging + excepthook + unraisablehook) cover the daily-pain case; re-evaluate
+  if VTK warnings become a real problem.
+- **Mesh / model viewer rollout.** Output dock + LogRouter exist for
+  `results.viewer` only. `ViewerWindow` doesn't yet have the extension-dock API
+  that `ResultsWindow` got in PR #168 — generalizing it is the prerequisite for
+  this rollout.
+- **Status-bar badge for mesh / model.** Same prereq.

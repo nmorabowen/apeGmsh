@@ -1,6 +1,14 @@
 # 05 — Apply / Reset / Auto-Apply on Diagram Settings
 
-**Status:** pending  ·  **Cost:** ~3 days  ·  **Depends on:** 04 (active-objects)
+**Status:** ✅ **Landed** via [PR #168](https://github.com/nmorabowen/apeGmsh/pull/168) (2026-05-14).
+Investigation revealed the Apply transaction was already implemented (the `_pending_appliers` list +
+per-card Apply button); the work narrowed to adding Reset, Auto-Apply toggle + persistence, debounce
+infrastructure, and migrating 4 representative widgets to the new `_stage_with_signal` helper. Other
+widgets still use the bare `_pending_appliers.append` idiom — both paths coexist and Apply works
+identically either way.
+**Cost:** ~3 days estimated → ~1 day actual (scope shrank after discovery).
+**Depends on:** none (no longer requires plan 04 — discovered the existing Apply pattern works
+standalone).
 
 ## Goal
 
@@ -104,3 +112,11 @@ debounce, ~150ms, to coalesce rapid edits like dragging a slider).
   live.
 - Apply on Geometry deformation toggles. Those are cheap and stay live (live preview is
   the whole point of the deform UI).
+
+## Deferred from this implementation (PR #168)
+
+- **Remaining widget migrations.** 4 of ~18 widget call sites now use
+  `_stage_with_signal` (Contour: cmap/clim-min/clim-max/opacity; Deformed: scale).
+  The other panels keep the bare `_pending_appliers.append` idiom — Auto-Apply
+  is a no-op for them until they're migrated. ~2 hours of mechanical work whenever
+  someone wants a particular widget to live-preview.

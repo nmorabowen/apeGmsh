@@ -1,6 +1,11 @@
 # 04 — ActiveObjects Singleton
 
-**Status:** pending  ·  **Cost:** ~4 days  ·  **Depends on:** none  ·  **Architectural prereq for: 05, 06, 07**
+**Status:** 🟡 **Steps 1 + 2 landed** via [PR #168](https://github.com/nmorabowen/apeGmsh/pull/168) (2026-05-14).
+Step 1: `ActiveObjects` standalone with 7 typed signals. Step 2: outline composition + geometry selection
+routed through it in `results.viewer`. Steps 3/4 (mesh/model migration) + more results-side signals
+(`activeLayerChanged` for the settings tab, `activeStageChanged`, `activeStepChanged`) still pending —
+see *Pending sub-tasks* below.
+**Cost:** ~4 days  ·  **Depends on:** none  ·  **Architectural prereq for: 05, 06, 07**
 
 ## Goal
 
@@ -123,3 +128,19 @@ the instance via `viewer_window.active`. This keeps tests parallelizable.
   We don't need this and it adds complexity.
 - Persisting active state across viewer launches.
 - Replacing the existing undo/redo system. `SelectionState`'s undo stack stays as-is.
+
+## Pending sub-tasks after PR #168
+
+- **Step 2 cont.** — route the remaining results.viewer callback sites through
+  `ActiveObjects`:
+  - `active_layer` — when user picks an individual layer; drives `set_selected` on
+    the settings tab.
+  - `active_stage` — Director's stage observer cascade.
+  - `active_step` — time scrubber → Director → diagram dispatch.
+- **Step 3** — migrate `mesh.viewer`. Consolidate the three pick modes
+  (brep/element/node) under a single `selection` payload + the
+  `activePickModeChanged` signal already defined in step 1.
+- **Step 4** — migrate `model.viewer`. Riskiest viewer: most complex existing
+  callback graph (`_rebuild_scene` closure-capture pattern; multi-panel selection
+  cascade). Per the original plan: migrate last so the API has been proven on
+  results + mesh first.

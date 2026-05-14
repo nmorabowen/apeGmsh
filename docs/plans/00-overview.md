@@ -3,6 +3,12 @@
 This directory holds the plan for porting widget-level patterns from ParaView into
 apeGmsh's three viewers (`model.viewer`, `mesh.viewer`, `results.viewer`).
 
+> **Status — 2026-05-14.** First wave merged to main via
+> [PR #168](https://github.com/nmorabowen/apeGmsh/pull/168) (8 commits, +93 net tests,
+> suite at 809 passed / 1 skipped). Plans **08, 01, 05** are substantially complete for
+> `results.viewer`; plan **04** has steps 1 + 2 done (state coordinator + outline-selection
+> migration). Plans 06, 02, 03, 07 are still pending. See per-plan status badges below.
+
 For *visual* reference of the ParaView flows we're adapting, open
 [`../paraview-flows/index.html`](../paraview-flows/index.html) — each plan doc links to the
 specific action it grounds.
@@ -39,27 +45,30 @@ The order below is calibrated to the pains above. Items higher up are either bug
 for current pain or architectural prerequisites for items below them. Items at the
 bottom are polish — they ship real value but won't fix what hurts today.
 
-| # | Plan doc | What it ships | Cost | Why this position |
+| # | Plan doc | Status | What it ships | Cost |
 |---|---|---|---|---|
-| 1 | [`08-dock-layout-persistence.md`](08-dock-layout-persistence.md) | Dock registry + `QSettings` save/restore + auto-populated View menu | 3–4d | Fixes layout pain directly. All future docks (including 01) benefit. |
-| 2 | [`04-active-objects.md`](04-active-objects.md) | `ActiveObjects` singleton + Qt-signal cascade | 4d | Fixes event-workflow bugs. Prereq for 05/06/07. |
-| 3 | [`01-output-dock.md`](01-output-dock.md) | Output / log dock with Python traceback + VTK warning capture | 2d | Standalone debug-velocity win. Uses 08's infrastructure. |
-| 4 | [`05-apply-autoapply.md`](05-apply-autoapply.md) | Apply / Reset / Auto-Apply on diagram settings | 3d | Fixes laggy scrubbing in `results.viewer`. Depends on 04. |
-| 5 | [`06-color-map-editor.md`](06-color-map-editor.md) | Shared color-map editor dock + LUT manager | 5d | Major `results.viewer` upgrade. Depends on 04. |
-| 6 | [`03-outline-eye-icon.md`](03-outline-eye-icon.md) | Clickable eye-icon visibility column on outline trees | 3d | Consistency polish across the three viewers. Needs 04. |
-| 7 | [`02-view-frame-chrome.md`](02-view-frame-chrome.md) | Per-viewport toolbar: reset, axis presets, screenshot | 2d | Discoverability polish. Standalone, no deps. |
-| 8 | [`07-property-descriptors-settings.md`](07-property-descriptors-settings.md) | `Property[T]` descriptors + unified Settings dialog | 1w | Investment for future extensibility. Only do if you plan to add many new diagram kinds or settings owners. |
+| 1 | [`08-dock-layout-persistence.md`](08-dock-layout-persistence.md) | ✅ **Landed** (results.viewer) — PR #168 | Dock registry + `QSettings` save/restore + auto-populated View menu | 3–4d |
+| 2 | [`04-active-objects.md`](04-active-objects.md) | 🟡 **Step 1 + 2 done** — PR #168; steps 3/4 pending | `ActiveObjects` singleton + Qt-signal cascade | 4d |
+| 3 | [`01-output-dock.md`](01-output-dock.md) | ✅ **Landed** (results.viewer) — PR #168; mesh/model + VTK deferred | Output / log dock with Python traceback + VTK warning capture | 2d |
+| 4 | [`05-apply-autoapply.md`](05-apply-autoapply.md) | ✅ **Landed** (4 widgets migrated) — PR #168 | Apply / Reset / Auto-Apply on diagram settings | 3d |
+| 5 | [`06-color-map-editor.md`](06-color-map-editor.md) | ⏸ Pending — biggest remaining `results.viewer` feature | Shared color-map editor dock + LUT manager | 5d |
+| 6 | [`03-outline-eye-icon.md`](03-outline-eye-icon.md) | ⏸ Pending | Clickable eye-icon visibility column on outline trees | 3d |
+| 7 | [`02-view-frame-chrome.md`](02-view-frame-chrome.md) | ⏸ Pending (downgraded — see plotting-comparison.md) | Per-viewport toolbar extensibility hook | 0.5d |
+| 8 | [`07-property-descriptors-settings.md`](07-property-descriptors-settings.md) | ⏸ Pending (speculative — no concrete trigger) | `Property[T]` descriptors + unified Settings dialog | 1w |
 
 ### What's "must-ship" vs "do if there's time"
 
 - **Must-ship** (fixes acknowledged pain): **08, 04, 01, 05, 06.** Roughly **17 days**.
+  After PR #168, **08 + 01 + 05 done; 04 half-done; 06 still pending** — the next
+  natural item.
 - **Polish** (real value, not painful today): **03, 02.** ~5 days.
 - **Speculative investment**: **07.** ~1 week. Only worth it if you commit to migrating
   more than one style class — otherwise it's infrastructure that doesn't pay off.
 
-Recommendation: ship the first five. Re-evaluate before doing 03 and 02 — by then the
-viewers will feel materially different and you'll know whether the polish is still
-worth the time. Defer 07 until you have a concrete second use case beyond `ContourStyle`.
+Recommendation: pick up plan 06 next (depends on the `activeLayerChanged` signal from
+plan 04 — already wired). Then finish plan 04 steps 3/4 (mesh/model migration) as
+opportunistic follow-ups. Re-evaluate 03/02 only after 06 lands. Defer 07 until you
+have a concrete second use case beyond `ContourStyle`.
 
 ## How to read a plan doc
 

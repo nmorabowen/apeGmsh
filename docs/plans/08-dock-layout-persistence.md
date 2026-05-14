@@ -1,6 +1,11 @@
 # 08 — Dock Registry + Layout State Persistence
 
-**Status:** pending  ·  **Cost:** ~3–4 days  ·  **Depends on:** none
+**Status:** ✅ **Landed** for `results.viewer` via [PR #168](https://github.com/nmorabowen/apeGmsh/pull/168) (2026-05-14).
+Step 1: `DockSpec`, `DockRegistry`, `LayoutPersistence`, plus module-level helpers `mount_dock_spec`,
+`build_view_menu`, `add_view_menu_toggle` (the testability extraction). Step 2: `ResultsWindow.extension_docks`
++ `add_extension_dock(spec)` + `DOCK_*` constants + auto-View-menu. Mesh/model viewer migration to the
+registry is a separate follow-up — see *Deferred* below.
+**Cost:** ~3–4 days  ·  **Depends on:** none
 
 ## Goal
 
@@ -165,3 +170,14 @@ def _build_docks(self) -> DockRegistry:
   the tabify group; users can rearrange via Qt's built-in drag, but we don't persist a
   custom order separately.
 - Layout templates shipped with the app. Defaults come from `DockSpec.default_*`.
+
+## Deferred from this implementation (PR #168)
+
+- **`ViewerWindow` dock-registry path.** `ResultsWindow` got the extension-dock API
+  + auto-View-menu, but `ViewerWindow` (used directly by mesh / model viewers) still
+  uses its legacy `tabs=` + `extra_docks=` parameters. Generalizing `ViewerWindow` so
+  mesh / model viewers can also register docks via `DockSpec` is the prerequisite for
+  plan 01's rollout to those viewers (and for plan 04 step 3 / 4 panel additions).
+- **`ResultsWindow` internals onto `DockRegistry`.** Its seven built-in docks are
+  hardcoded; only extension docks go through the registry. Full unification is
+  optional cleanup, not on the critical path.
