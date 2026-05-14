@@ -298,3 +298,113 @@ def test_detach_then_reattach_works(
     diagram.attach(headless_plotter, results_with_known_disp.fem, scene)
     assert diagram.is_attached
     assert diagram._submesh is not None
+
+
+# =====================================================================
+# LUT mirror (plan 06 step 2)
+# =====================================================================
+
+
+def test_lut_is_none_before_attach(results_with_known_disp):
+    diagram = ContourDiagram(_make_spec(), results_with_known_disp)
+    assert diagram.lut is None
+
+
+def test_attach_builds_lut_from_style_defaults(
+    results_with_known_disp, headless_plotter,
+):
+    scene = build_fem_scene(results_with_known_disp.fem)
+    spec = DiagramSpec(
+        kind="contour",
+        selector=SlabSelector(component="displacement_z"),
+        style=ContourStyle(cmap="plasma", clim=(-5.0, 5.0)),
+    )
+    diagram = ContourDiagram(spec, results_with_known_disp)
+    diagram.attach(headless_plotter, results_with_known_disp.fem, scene)
+
+    lut = diagram.lut
+    assert lut is not None
+    assert lut.array_name == "displacement_z"
+    assert lut.preset == "plasma"
+    assert lut.range == (-5.0, 5.0)
+
+
+def test_attach_lut_picks_up_autofit_clim(
+    results_with_known_disp, headless_plotter,
+):
+    """When the style leaves clim=None, the LUT should pick up the
+    auto-fitted range from step 0 (not the dummy (0, 1))."""
+    scene = build_fem_scene(results_with_known_disp.fem)
+    diagram = ContourDiagram(_make_spec(), results_with_known_disp)
+    diagram.attach(headless_plotter, results_with_known_disp.fem, scene)
+
+    lut = diagram.lut
+    clim = diagram.current_clim()
+    assert lut.range == clim
+
+
+def test_set_cmap_routes_through_lut(
+    results_with_known_disp, headless_plotter,
+):
+    scene = build_fem_scene(results_with_known_disp.fem)
+    diagram = ContourDiagram(_make_spec(), results_with_known_disp)
+    diagram.attach(headless_plotter, results_with_known_disp.fem, scene)
+
+    diagram.set_cmap("turbo")
+    assert diagram.lut.preset == "turbo"
+    # Runtime override mirrors so it survives a detach/re-attach round.
+    assert diagram._runtime_cmap == "turbo"
+
+
+def test_set_clim_routes_through_lut(
+    results_with_known_disp, headless_plotter,
+):
+    scene = build_fem_scene(results_with_known_disp.fem)
+    diagram = ContourDiagram(_make_spec(), results_with_known_disp)
+    diagram.attach(headless_plotter, results_with_known_disp.fem, scene)
+
+    diagram.set_clim(-2.0, 7.0)
+    assert diagram.lut.range == (-2.0, 7.0)
+    assert diagram.current_clim() == (-2.0, 7.0)
+
+
+def test_lut_change_updates_actor_mapper(
+    results_with_known_disp, headless_plotter,
+):
+    """Mutating the LUT directly should push state to the mapper."""
+    scene = build_fem_scene(results_with_known_disp.fem)
+    diagram = ContourDiagram(_make_spec(), results_with_known_disp)
+    diagram.attach(headless_plotter, results_with_known_disp.fem, scene)
+
+    diagram.lut.set_range(100.0, 200.0)
+    mapper = diagram._actor.GetMapper()
+    sr = mapper.GetScalarRange()
+    assert sr[0] == pytest.approx(100.0)
+    assert sr[1] == pytest.approx(200.0)
+
+
+def test_detach_clears_lut(
+    results_with_known_disp, headless_plotter,
+):
+    scene = build_fem_scene(results_with_known_disp.fem)
+    diagram = ContourDiagram(_make_spec(), results_with_known_disp)
+    diagram.attach(headless_plotter, results_with_known_disp.fem, scene)
+    assert diagram.lut is not None
+    diagram.detach()
+    assert diagram.lut is None
+
+
+def test_lut_changes_after_detach_are_noops(
+    results_with_known_disp, headless_plotter,
+):
+    """A LUT instance held externally must not raise after the diagram
+    has detached — the disconnect in detach() should prevent the
+    callback from firing on a torn-down actor."""
+    scene = build_fem_scene(results_with_known_disp.fem)
+    diagram = ContourDiagram(_make_spec(), results_with_known_disp)
+    diagram.attach(headless_plotter, results_with_known_disp.fem, scene)
+    held_lut = diagram.lut
+    diagram.detach()
+    # No assertion needed — this must simply not raise.
+    held_lut.set_preset("magma")
+    held_lut.set_range(0.0, 1.0)
