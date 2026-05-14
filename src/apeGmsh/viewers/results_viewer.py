@@ -93,6 +93,14 @@ class ResultsViewer:
         self._win: Any = None
         self._plotter: Any = None
         self._settings_tab: "DiagramSettingsTab | None" = None
+        # Output dock + log router. Constructed lazily in _show_impl
+        # so headless usage (Results.from_native + queries) doesn't
+        # pull Qt. Lifecycle:
+        # - router.install() before window construction
+        # - dock mounted via extension_docks=[spec]
+        # - router.uninstall() in _on_close
+        self._log_router: Any = None
+        self._output_dock: Any = None
         self._time_scrubber: Any = None
         self._substrate_actor: Any = None
         self._wireframe_actor: Any = None
@@ -232,9 +240,27 @@ class ResultsViewer:
         from .core.element_visibility import ElementVisibility as _ElementVis
         scene.element_visibility = _ElementVis(scene.grid)
 
+        # ── Output dock + log router (before the window so the
+        #    LogRouter can capture exceptions raised during window
+        #    construction itself — e.g. a Qt error inside
+        #    _build_layout). The dock is mounted as an extension dock
+        #    so it picks up the View menu toggle + layout persistence
+        #    machinery added by plan 08 step 2.
+        from .ui._log_router import LogRouter
+        from .ui._output_dock import make_output_dock
+        log_router = LogRouter()
+        log_router.install()
+        self._log_router = log_router
+        output_dock, output_spec = make_output_dock(log_router)
+        self._output_dock = output_dock
+
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
-        win = ResultsWindow(title=title, on_close=self._on_close)
+        win = ResultsWindow(
+            title=title,
+            on_close=self._on_close,
+            extension_docks=[output_spec],
+        )
         self._win = win
 
         # ProbeOverlay needs the plotter, which doesn't exist until
@@ -1183,6 +1209,20 @@ class ResultsViewer:
         # still hold their specs at this point.
         if self._save_session:
             self._save_session_to_disk()
+        # Tear down the log router BEFORE the director / plotter shut
+        # down, so any teardown-time exceptions get captured (or at
+        # least don't fire into a half-disconnected signal). Then sever
+        # the output dock's connection to the router.
+        if self._output_dock is not None:
+            try:
+                self._output_dock.close()
+            except Exception:
+                pass
+        if self._log_router is not None:
+            try:
+                self._log_router.uninstall()
+            except Exception:
+                pass
         if self._director is not None:
             try:
                 self._director.unbind_plotter()
