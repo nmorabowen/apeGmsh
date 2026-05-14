@@ -129,6 +129,15 @@ class ContourDiagram(ScalarBarSupport, Diagram):
         self._runtime_cmap: Optional[str] = None
         self._init_scalar_bar_state()
 
+        # Plan 06 step 2 — shared lookup-table object. Populated by
+        # ``_init_lut()`` at the tail of ``attach()`` so the LUT's
+        # initial state mirrors the style defaults + auto-fit clim.
+        # The ColorMapEditor binds to this LUT (via ``diagram.lut``)
+        # and mutates it; the LUT.changed callback re-applies preset
+        # / range to the actor's mapper.
+        self._lut: Any = None
+        self._lut_conn: Any = None    # signal connection handle for detach
+
     # ------------------------------------------------------------------
     # Attach / detach / update
     # ------------------------------------------------------------------
@@ -154,6 +163,11 @@ class ContourDiagram(ScalarBarSupport, Diagram):
         else:
             self._effective_topology = _EFFECTIVE_NODES
             self._attach_nodes(plotter, scene)
+
+        # Build the LUT mirror once the actor exists. Done after the
+        # dispatch (rather than inside each `_attach_*`) so all paths
+        # converge on the same initialization.
+        self._init_lut()
 
     def update_to_step(self, step_index: int) -> None:
         if self._submesh is None:
@@ -194,6 +208,17 @@ class ContourDiagram(ScalarBarSupport, Diagram):
         # plotter — every detach/re-attach cycle would otherwise leak
         # one bar onto the screen.
         self._remove_scalar_bar(self._scalar_bar_title())
+        # Disconnect the LUT signal first so a teardown-triggered
+        # changed.emit (rare, but possible if a subscriber clears state
+        # on the way down) doesn't poke a half-dismantled actor.
+        if self._lut is not None and self._lut_conn is not None:
+            try:
+                self._lut.changed.disconnect(self._lut_conn)
+            except (TypeError, RuntimeError):
+                # Connection already torn down or invalid — fine.
+                pass
+        self._lut = None
+        self._lut_conn = None
         self._submesh = None
         self._actor = None
         self._scalar_array = None
@@ -211,10 +236,30 @@ class ContourDiagram(ScalarBarSupport, Diagram):
     # Runtime style adjustments (used by the settings tab)
     # ------------------------------------------------------------------
 
+    @property
+    def lut(self) -> Any:
+        """The shared lookup-table mirror for this diagram.
+
+        ``None`` before :meth:`attach` and after :meth:`detach`. The
+        ColorMapEditor reads this to bind its widgets and writes to it
+        via the LUT's setters (``set_preset`` / ``set_range`` / …).
+        Mutations fire ``LUT.changed`` which the diagram re-applies to
+        its actor's mapper.
+        """
+        return self._lut
+
     def set_clim(self, vmin: float, vmax: float) -> None:
-        """Override the colormap range. Live update."""
+        """Override the colormap range. Live update.
+
+        Routes through the LUT when one exists so the editor and any
+        other subscribers stay in sync. Pre-attach calls fall back to
+        the runtime override (applied at attach time).
+        """
         if vmin == vmax:
             vmax = vmin + 1.0
+        if self._lut is not None:
+            self._lut.set_range(float(vmin), float(vmax))
+            return
         self._runtime_clim = (float(vmin), float(vmax))
         self._apply_clim()
 
@@ -247,13 +292,21 @@ class ContourDiagram(ScalarBarSupport, Diagram):
                 pass
 
     def set_cmap(self, cmap: str) -> None:
-        """Switch the colormap. Mutates the lookup table on the active actor."""
+        """Switch the colormap. Routes through the LUT when attached.
+
+        Mutating the LUT fires ``LUT.changed`` → :meth:`_on_lut_changed`
+        rebuilds a ``pv.LookupTable`` and assigns it to the actor's
+        mapper. Pre-attach calls record the runtime override which
+        :meth:`_init_lut` will fold into the LUT at attach time.
+        """
         self._runtime_cmap = cmap
+        if self._lut is not None:
+            self._lut.set_preset(cmap)
+            return
         if self._actor is None:
             return
-        # PyVista's add_mesh creates a vtkScalarsToColors — the cleanest
-        # way to swap cmap without re-adding the actor is to rebuild
-        # the lookup table via PyVista's helper.
+        # No LUT yet (early call between actor creation and _init_lut)
+        # — apply directly via PyVista's helper, same as before.
         try:
             import pyvista as pv
             lut = pv.LookupTable(cmap)
@@ -919,6 +972,64 @@ class ContourDiagram(ScalarBarSupport, Diagram):
         try:
             mapper = self._actor.GetMapper()
             mapper.SetScalarRange(*clim)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # LUT mirror (plan 06 step 2)
+    # ------------------------------------------------------------------
+
+    def _init_lut(self) -> None:
+        """Build the LUT object that mirrors the diagram's colour state.
+
+        Called from :meth:`attach` after the actor exists. Seeds the
+        LUT from style defaults + runtime overrides + the auto-fitted
+        ``_initial_clim`` so the LUT starts visually identical to the
+        actor's current state.
+        """
+        from ..core._lut_manager import LUT
+
+        style: ContourStyle = self.spec.style    # type: ignore[assignment]
+        preset = self._runtime_cmap or style.cmap or "viridis"
+        clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
+        try:
+            self._lut = LUT(
+                array_name=self.spec.selector.component,
+                preset=preset,
+                vmin=float(clim[0]),
+                vmax=float(clim[1]),
+                show_scalar_bar=self._effective_show_scalar_bar(),
+            )
+            # Hold the connection in a tuple so detach can disconnect.
+            self._lut_conn = self._lut.changed.connect(self._on_lut_changed)
+        except Exception:
+            # Qt unavailable / connection failed — diagram still works
+            # via the legacy runtime fields, just without the editor.
+            self._lut = None
+            self._lut_conn = None
+
+    def _on_lut_changed(self) -> None:
+        """LUT mutated (typically by the ColorMapEditor) — re-apply to
+        the actor's mapper. Runs in the same thread as the emit
+        (sync connection); no deferral needed for v1."""
+        if self._lut is None or self._actor is None:
+            return
+        # Mirror into runtime overrides so subsequent re-attaches
+        # (after detach + re-attach with same spec) inherit the user's
+        # edits.
+        self._runtime_cmap = self._lut.preset
+        self._runtime_clim = (self._lut.vmin, self._lut.vmax)
+        self._apply_lut_to_actor()
+
+    def _apply_lut_to_actor(self) -> None:
+        """Push the LUT's current state onto the actor's mapper."""
+        if self._actor is None or self._lut is None:
+            return
+        try:
+            table = self._lut.to_pyvista_lookup_table()
+            mapper = self._actor.GetMapper()
+            mapper.SetLookupTable(table)
+            mapper.SetScalarRange(self._lut.vmin, self._lut.vmax)
         except Exception:
             pass
 

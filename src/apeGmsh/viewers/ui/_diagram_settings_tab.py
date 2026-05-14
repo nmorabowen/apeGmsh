@@ -81,6 +81,19 @@ class DiagramSettingsTab:
         # change. Restarting before timeout coalesces rapid edits.
         self._auto_commit_timer: Any = None
 
+        # Plan 04 step 2 cont. — broadcast which layer card the user
+        # focused (clicked / tabbed into). Owners (ResultsViewer) wire
+        # this to ``ActiveObjects.set_active_layer`` so the Color Map
+        # Editor and any future panel that "follows the active layer"
+        # tracks card focus, not just composition selection.
+        self._layer_focus_callback: Optional[
+            Callable[[Optional[Diagram]], None]
+        ] = None
+        # Held references to per-card focus filters so they don't get
+        # garbage-collected while the cards are alive. Cleared at the
+        # start of every _rebuild().
+        self._card_focus_filters: list[Any] = []
+
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -187,6 +200,42 @@ class DiagramSettingsTab:
         self._selected = None
         self._rebuild()
 
+    # ------------------------------------------------------------------
+    # Plan 04 step 2 cont. — layer focus callback
+    # ------------------------------------------------------------------
+
+    def on_layer_focused(
+        self,
+        callback: Optional[Callable[[Optional[Diagram]], None]],
+    ) -> None:
+        """Register a callback fired when a layer card is focused.
+
+        The callback receives the underlying :class:`Diagram` (or
+        ``None`` if focus left a card). Fired on mouse-down anywhere
+        in a card's bounds — covers the title bar, body, and any
+        descendant widget. Idempotent on the same card (callback only
+        fires when the focused diagram actually changes).
+
+        Owners typically wire this to ``ActiveObjects.set_active_layer``
+        so the Color Map Editor (and future "follows the active layer"
+        panels) react to card-level navigation.
+        """
+        self._layer_focus_callback = callback
+
+    def _fire_layer_focused(self, diagram: Optional[Diagram]) -> None:
+        cb = self._layer_focus_callback
+        if cb is None:
+            return
+        try:
+            cb(diagram)
+        except Exception as exc:
+            # Listener failures must never propagate into the Qt event
+            # loop from inside an event filter — the filter's outer
+            # call would otherwise mark the event handled and freeze
+            # the click that triggered it.
+            from .._failures import report
+            report("DiagramSettingsTab._fire_layer_focused", exc)
+
     def attach_dispatcher(self, dispatcher: Any) -> None:
         """Migrate the geometry-changed subscription onto the dispatcher.
 
@@ -291,6 +340,10 @@ class DiagramSettingsTab:
         # Apply/Reset row is built. Stale closures would otherwise
         # reference orphaned widgets after Reset.
         self._card_commits = []
+        # Plan 04 step 2 cont. — drop per-card focus filters too. Each
+        # card's _build_layer_card re-installs a fresh filter on the
+        # rebuilt widget tree.
+        self._card_focus_filters = []
         # Cancel any pending debounce — outstanding flushes would
         # reference the (now-cleared) closures.
         if self._auto_commit_timer is not None:
@@ -457,7 +510,35 @@ class DiagramSettingsTab:
         finally:
             self._content_layout = saved
             self._pending_appliers = saved_appliers
+        # Plan 04 step 2 cont. — install a mouse-press filter on the
+        # card so any click inside it broadcasts ``d`` as the active
+        # layer. Done last (after all child widgets exist) so the
+        # filter covers the full subtree.
+        self._install_card_focus_filter(card, d)
         return card
+
+    # ------------------------------------------------------------------
+    # Card focus filter (plan 04 step 2 cont.)
+    # ------------------------------------------------------------------
+
+    def _install_card_focus_filter(
+        self, card: Any, diagram: "Diagram",
+    ) -> None:
+        """Install a mouse-press / focus-in filter on ``card`` and every
+        descendant widget so that any user interaction with this card
+        broadcasts ``diagram`` as the newly-focused layer."""
+        _, QtCore = _qt()
+        cls = _resolve_card_focus_filter_class()
+        filter_obj = cls(self, diagram)
+        self._card_focus_filters.append(filter_obj)
+        # Install on the card itself, then recursively on every widget
+        # inside it. Children consume their own mouse events, so the
+        # filter has to be present at every level.
+        for w in (card, *card.findChildren(QtCore.QObject)):
+            try:
+                w.installEventFilter(filter_obj)
+            except Exception:
+                pass
 
     def _build_apply_button(self, d: "Diagram") -> None:
         """Bottom-of-card Apply / Reset row.
@@ -1784,3 +1865,55 @@ class DiagramSettingsTab:
                 plotter.render()
             except Exception:
                 pass
+
+
+# =========================================================================
+# Card focus filter (plan 04 step 2 cont.)
+# =========================================================================
+
+
+def _make_card_focus_filter_class():
+    """Build the :class:`_CardFocusFilter` class on demand.
+
+    Lazy Qt import keeps the module body importable in headless
+    contexts (mirrors the pattern used by ``_qt()`` at the top).
+    """
+    from qtpy import QtCore
+
+    class _CardFocusFilter(QtCore.QObject):
+        """Event filter that broadcasts card focus on mouse-down.
+
+        Installed by :meth:`DiagramSettingsTab._install_card_focus_filter`
+        on every widget inside one layer card. When any descendant
+        widget receives ``QEvent.MouseButtonPress``, the filter notifies
+        the parent tab that this card's diagram should become the
+        active layer. The filter never consumes the event — it just
+        observes — so normal widget behaviour (spinbox focus, button
+        clicks, etc.) is unaffected.
+        """
+        def __init__(self, tab: Any, diagram: Any) -> None:
+            # Tab is not a QObject (composes one), so we can't parent
+            # to it directly. Lifetime is managed by the tab's
+            # ``_card_focus_filters`` list — clear that on rebuild and
+            # the filter goes away.
+            super().__init__(None)
+            self._tab = tab
+            self._diagram = diagram
+
+        def eventFilter(self, obj: Any, event: Any) -> bool:    # noqa: ARG002
+            if event.type() == QtCore.QEvent.MouseButtonPress:
+                self._tab._fire_layer_focused(self._diagram)
+            return False    # never consume
+
+    return _CardFocusFilter
+
+
+_CardFocusFilterClass: Any = None
+
+
+def _resolve_card_focus_filter_class() -> Any:
+    """Build the focus-filter class on first call; cache thereafter."""
+    global _CardFocusFilterClass
+    if _CardFocusFilterClass is None:
+        _CardFocusFilterClass = _make_card_focus_filter_class()
+    return _CardFocusFilterClass

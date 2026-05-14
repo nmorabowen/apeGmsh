@@ -176,6 +176,21 @@ class ViewerWindow:
                 self._qt_interactor.enable_anti_aliasing(_p.anti_aliasing)
             except Exception:
                 pass
+        # ── Plan 06 step 5 — Depth peeling ──────────────────────────
+        # Order-independent transparency. Without it, two overlapping
+        # semi-transparent diagrams composite incorrectly depending on
+        # camera angle (the rear actor can paint over the front).
+        # The renderer attribute exists on every VTK/PyVista build
+        # we ship; wrap in try/except to stay defensive against
+        # older / stripped builds. Costs ~0 when nothing in the scene
+        # is transparent.
+        try:
+            renderer = self._qt_interactor.renderer
+            renderer.SetUseDepthPeeling(True)
+            renderer.SetMaximumNumberOfPeels(4)
+            renderer.SetOcclusionRatio(0.0)
+        except Exception:
+            pass
         _axes_kwargs = dict(
             interactive=False,
             line_width=_p.axis_line_width,
