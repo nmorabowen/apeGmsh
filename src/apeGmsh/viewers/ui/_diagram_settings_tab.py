@@ -38,6 +38,17 @@ class DiagramSettingsTab:
     Diagrams tab when the user clicks a row.
     """
 
+    # ──────────────────────────────────────────────────────────────────
+    # Plan 05 — Auto-Apply / Reset
+    # ──────────────────────────────────────────────────────────────────
+    # ``_auto_apply_enabled`` is persisted at ``apeGmsh / ResultsViewer``
+    # under the key below so the toggle survives launches.
+    _AUTO_APPLY_SETTINGS_KEY = "settings_tab/auto_apply"
+    # Debounce interval (ms) for live commits when Auto-Apply is on —
+    # coalesces slider drags / rapid spinbox edits so we don't run
+    # update_to_step on every micro-change.
+    _AUTO_APPLY_DEBOUNCE_MS = 150
+
     def __init__(self, director: "ResultsDirector") -> None:
         QtWidgets, _ = _qt()
         self._director = director
@@ -56,6 +67,20 @@ class DiagramSettingsTab:
         # so safe to memoize.
         self._kind_catalog: Any = None
 
+        # ── Plan 05 state ───────────────────────────────────────────
+        # Auto-Apply toggle persisted across launches. Default OFF —
+        # the explicit Apply-button workflow is the baseline; users
+        # opt into live preview.
+        self._auto_apply_enabled: bool = self._load_auto_apply_pref()
+        # Per-rebuild list of {layer-commit closures} so the debounce
+        # timer can flush every card's pending edits in one shot.
+        # Reset at the start of every _rebuild().
+        self._card_commits: list[Any] = []
+        # Lazily-built single-shot QTimer that fires
+        # _AUTO_APPLY_DEBOUNCE_MS after the most recent staged widget
+        # change. Restarting before timeout coalesces rapid edits.
+        self._auto_commit_timer: Any = None
+
         widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(widget)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -69,6 +94,17 @@ class DiagramSettingsTab:
         self._title.setFont(font)
         title_row.addWidget(self._title)
         title_row.addStretch(1)
+        # Auto-Apply toggle — when on, widget edits live-commit after
+        # _AUTO_APPLY_DEBOUNCE_MS. When off (default), users hit the
+        # per-card Apply button. Persisted via QSettings.
+        self._auto_apply_cb = QtWidgets.QCheckBox("Auto-Apply")
+        self._auto_apply_cb.setToolTip(
+            "When on, edits live-commit after a short debounce.\n"
+            "When off (default), use the per-card Apply button."
+        )
+        self._auto_apply_cb.setChecked(self._auto_apply_enabled)
+        self._auto_apply_cb.toggled.connect(self._on_auto_apply_toggled)
+        title_row.addWidget(self._auto_apply_cb)
         self._btn_add_layer = QtWidgets.QPushButton("+ Add layer")
         self._btn_add_layer.setFlat(True)
         self._btn_add_layer.setToolTip("Add a new diagram layer")
@@ -250,6 +286,18 @@ class DiagramSettingsTab:
         # Clear content layout — recursive teardown so nested
         # QFormLayout / QHBoxLayout children don't leak across modes.
         self._clear_layout(self._content_layout)
+        # Plan 05 — clear card-commit closures captured by the
+        # previous render. Each card re-populates this list when its
+        # Apply/Reset row is built. Stale closures would otherwise
+        # reference orphaned widgets after Reset.
+        self._card_commits = []
+        # Cancel any pending debounce — outstanding flushes would
+        # reference the (now-cleared) closures.
+        if self._auto_commit_timer is not None:
+            try:
+                self._auto_commit_timer.stop()
+            except Exception:
+                pass
 
         # ── Stack mode (with optional pending creation card) ────────
         if self._show_stack:
@@ -412,21 +460,26 @@ class DiagramSettingsTab:
         return card
 
     def _build_apply_button(self, d: "Diagram") -> None:
-        """Bottom-of-card Apply button that commits all staged values.
+        """Bottom-of-card Apply / Reset row.
 
         Snapshots the per-card appliers list so future cards' edits
         don't leak into this card's button. After the setters fire,
         dispatches ``DIAGRAM_MODIFIED`` so RENDER coalesces and the
-        viewport actually paints — without this, scale changes mutate
-        the polydata in place but the user sees nothing until the
-        next unrelated event triggers a render.
+        viewport actually paints.
+
+        When Auto-Apply is on, the Apply button is shown disabled with
+        an "(auto)" suffix — changes are committed via the debounce
+        timer instead. Reset rebuilds the entire stack from current
+        diagram state (effectively discarding any staged widget values).
+
+        Records the card's commit closure in ``self._card_commits`` so
+        the debounce timer can flush every card's pending edits in one
+        shot when Auto-Apply is on.
         """
         QtWidgets, _ = _qt()
         appliers = list(self._pending_appliers or [])
         if not appliers:
             return
-        btn = QtWidgets.QPushButton("Apply")
-        btn.setToolTip("Apply pending value edits in this layer")
 
         def _commit() -> None:
             from .._log import log_action
@@ -441,8 +494,146 @@ class DiagramSettingsTab:
                 from ..diagrams._dispatch import DIAGRAM_MODIFIED
                 disp.fire(DIAGRAM_MODIFIED, layer=d)
 
-        btn.clicked.connect(_commit)
-        self._content_layout.addWidget(btn)
+        # Remember this card's commit closure for the debounce-timer
+        # flush when Auto-Apply is on. Cleared at the start of every
+        # _rebuild(), so stale closures from previous renders don't
+        # leak in.
+        self._card_commits.append(_commit)
+
+        # Apply + Reset row.
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+
+        apply_btn = QtWidgets.QPushButton("Apply")
+        if self._auto_apply_enabled:
+            apply_btn.setText("Apply (auto)")
+            apply_btn.setEnabled(False)
+            apply_btn.setToolTip(
+                "Auto-Apply is on — edits commit live with a short debounce."
+            )
+        else:
+            apply_btn.setToolTip(
+                "Apply staged value edits in this layer"
+            )
+        apply_btn.clicked.connect(_commit)
+        row.addWidget(apply_btn)
+
+        reset_btn = QtWidgets.QPushButton("Reset")
+        reset_btn.setToolTip(
+            "Discard staged edits — reload widget values from the "
+            "diagram's current state"
+        )
+        reset_btn.clicked.connect(self._rebuild)
+        row.addWidget(reset_btn)
+        row.addStretch(1)
+
+        self._content_layout.addLayout(row)
+
+    # ------------------------------------------------------------------
+    # Plan 05 — Auto-Apply machinery
+    # ------------------------------------------------------------------
+
+    def _load_auto_apply_pref(self) -> bool:
+        """Read the persisted Auto-Apply toggle state. Defaults to OFF."""
+        try:
+            from qtpy.QtCore import QSettings
+            settings = QSettings("apeGmsh", "ResultsViewer")
+            val = settings.value(self._AUTO_APPLY_SETTINGS_KEY)
+            if val is None:
+                return False
+            # QSettings returns a string under some bindings.
+            if isinstance(val, bool):
+                return val
+            return str(val).strip().lower() in ("true", "1", "yes")
+        except Exception:
+            return False
+
+    def _save_auto_apply_pref(self, enabled: bool) -> None:
+        try:
+            from qtpy.QtCore import QSettings
+            settings = QSettings("apeGmsh", "ResultsViewer")
+            settings.setValue(self._AUTO_APPLY_SETTINGS_KEY, bool(enabled))
+            settings.sync()
+        except Exception:
+            pass
+
+    def _on_auto_apply_toggled(self, checked: bool) -> None:
+        """Slot for the Auto-Apply checkbox."""
+        self._auto_apply_enabled = bool(checked)
+        self._save_auto_apply_pref(self._auto_apply_enabled)
+        # Rebuild the stack so every card's Apply button reflects the
+        # new mode (disabled "(auto)" when on, enabled otherwise).
+        # Also rewires the per-widget signals for live-commit.
+        self._rebuild()
+
+    def _ensure_auto_commit_timer(self) -> None:
+        """Lazily construct the single-shot debounce timer."""
+        if self._auto_commit_timer is not None:
+            return
+        from qtpy.QtCore import QTimer
+        timer = QTimer(self._widget)
+        timer.setSingleShot(True)
+        timer.setInterval(self._AUTO_APPLY_DEBOUNCE_MS)
+        timer.timeout.connect(self._flush_auto_commits)
+        self._auto_commit_timer = timer
+
+    def _kick_debounce(self) -> None:
+        """Called by staged-widget signals — restart the debounce timer.
+
+        No-op when Auto-Apply is off. When on, the timer fires
+        :meth:`_flush_auto_commits` after the configured debounce.
+        """
+        if not self._auto_apply_enabled:
+            return
+        self._ensure_auto_commit_timer()
+        # Restart — coalesces rapid widget signals into one commit.
+        self._auto_commit_timer.start()
+
+    def _flush_auto_commits(self) -> None:
+        """Run every visible card's pending commit closure.
+
+        Closures captured during card build (in
+        :meth:`_build_apply_button`) push widget values to their
+        diagrams + dispatch DIAGRAM_MODIFIED for render coalescing.
+        Running them all is safe — unchanged widgets push identical
+        values (no-op setters) and the dispatcher coalesces renders.
+        """
+        for commit_fn in list(self._card_commits):
+            self._safe_call(commit_fn)
+
+    def _stage_with_signal(
+        self,
+        widget: Any,
+        signal_name: str,
+        applier: Any,
+    ) -> None:
+        """Register an applier with the Apply button AND wire its
+        widget signal for live commits when Auto-Apply is on.
+
+        Drop-in replacement for the ``self._pending_appliers.append(...)``
+        idiom — adds the auto-commit wiring on top so the same call
+        site supports both modes.
+
+        ``signal_name`` is the widget signal to subscribe to
+        (e.g. ``"valueChanged"`` for QSpinBox, ``"currentTextChanged"``
+        for QComboBox). Connection silently no-ops if the signal
+        doesn't exist on the widget.
+        """
+        self._pending_appliers.append(applier)
+        if not self._auto_apply_enabled:
+            return
+        signal = getattr(widget, signal_name, None)
+        if signal is None:
+            return
+        # The slot ignores all signal args — we just want to know
+        # something changed.
+        def _on_widget_changed(*_args, **_kwargs) -> None:
+            self._kick_debounce()
+        try:
+            signal.connect(_on_widget_changed)
+        except Exception:
+            pass
 
     def _build_reorder_row(self, d: "Diagram") -> None:
         """↑ / ↓ buttons that move ``d`` within the active composition.
@@ -924,8 +1115,10 @@ class DiagramSettingsTab:
             cmap_combo.addItem(name)
         current_cmap = getattr(d, "_runtime_cmap", None) or d.spec.style.cmap
         cmap_combo.setCurrentText(current_cmap)
-        self._pending_appliers.append(
-            lambda: self._safe_call(d.set_cmap, cmap_combo.currentText())
+        self._stage_with_signal(
+            cmap_combo,
+            "currentTextChanged",
+            lambda: self._safe_call(d.set_cmap, cmap_combo.currentText()),
         )
         form.addRow("Colormap:", cmap_combo)
 
@@ -942,11 +1135,11 @@ class DiagramSettingsTab:
         hi_spin.setDecimals(6)
         hi_spin.setValue(float(hi_default))
 
-        self._pending_appliers.append(
-            lambda: self._safe_call(
-                d.set_clim, float(lo_spin.value()), float(hi_spin.value()),
-            )
+        _clim_applier = lambda: self._safe_call(
+            d.set_clim, float(lo_spin.value()), float(hi_spin.value()),
         )
+        self._stage_with_signal(lo_spin, "valueChanged", _clim_applier)
+        self._stage_with_signal(hi_spin, "valueChanged", _clim_applier)
         form.addRow("Clim min:", lo_spin)
         form.addRow("Clim max:", hi_spin)
 
@@ -973,8 +1166,10 @@ class DiagramSettingsTab:
             else d.spec.style.opacity
         )
         opacity_slider.setValue(int(round(float(current_opacity) * 100)))
-        self._pending_appliers.append(
-            lambda: self._safe_call(d.set_opacity, opacity_slider.value() / 100.0)
+        self._stage_with_signal(
+            opacity_slider,
+            "valueChanged",
+            lambda: self._safe_call(d.set_opacity, opacity_slider.value() / 100.0),
         )
         form.addRow("Opacity:", opacity_slider)
 
@@ -999,8 +1194,10 @@ class DiagramSettingsTab:
         scale_spin.setDecimals(4)
         scale_spin.setSingleStep(0.1)
         scale_spin.setValue(float(d.current_scale()))
-        self._pending_appliers.append(
-            lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
+        self._stage_with_signal(
+            scale_spin,
+            "valueChanged",
+            lambda: self._safe_call(d.set_scale, float(scale_spin.value())),
         )
         form.addRow("Scale:", scale_spin)
 
@@ -1209,8 +1406,10 @@ class DiagramSettingsTab:
         scale_spin.setDecimals(6)
         scale_spin.setSingleStep(0.1)
         scale_spin.setValue(float(d.current_scale()))
-        self._pending_appliers.append(
-            lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
+        self._stage_with_signal(
+            scale_spin,
+            "valueChanged",
+            lambda: self._safe_call(d.set_scale, float(scale_spin.value())),
         )
         form.addRow("Scale:", scale_spin)
 
@@ -1278,8 +1477,10 @@ class DiagramSettingsTab:
         scale_spin.setDecimals(6)
         scale_spin.setSingleStep(0.1)
         scale_spin.setValue(float(d.current_scale()))
-        self._pending_appliers.append(
-            lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
+        self._stage_with_signal(
+            scale_spin,
+            "valueChanged",
+            lambda: self._safe_call(d.set_scale, float(scale_spin.value())),
         )
         form.addRow("Scale:", scale_spin)
 
@@ -1300,8 +1501,10 @@ class DiagramSettingsTab:
         scale_spin.setDecimals(6)
         scale_spin.setSingleStep(0.1)
         scale_spin.setValue(float(d.current_scale()))
-        self._pending_appliers.append(
-            lambda: self._safe_call(d.set_scale, float(scale_spin.value()))
+        self._stage_with_signal(
+            scale_spin,
+            "valueChanged",
+            lambda: self._safe_call(d.set_scale, float(scale_spin.value())),
         )
         form.addRow("Scale:", scale_spin)
 
@@ -1354,8 +1557,10 @@ class DiagramSettingsTab:
             or getattr(d.spec.style, "cmap", "viridis")
         )
         cmap_combo.setCurrentText(current_cmap)
-        self._pending_appliers.append(
-            lambda: self._safe_call(d.set_cmap, cmap_combo.currentText())
+        self._stage_with_signal(
+            cmap_combo,
+            "currentTextChanged",
+            lambda: self._safe_call(d.set_cmap, cmap_combo.currentText()),
         )
         form.addRow("Colormap:", cmap_combo)
 
@@ -1370,11 +1575,11 @@ class DiagramSettingsTab:
         hi_spin.setDecimals(6)
         hi_spin.setValue(float(hi_default))
 
-        self._pending_appliers.append(
-            lambda: self._safe_call(
-                d.set_clim, float(lo_spin.value()), float(hi_spin.value()),
-            )
+        _clim_applier = lambda: self._safe_call(
+            d.set_clim, float(lo_spin.value()), float(hi_spin.value()),
         )
+        self._stage_with_signal(lo_spin, "valueChanged", _clim_applier)
+        self._stage_with_signal(hi_spin, "valueChanged", _clim_applier)
         form.addRow("Clim min:", lo_spin)
         form.addRow("Clim max:", hi_spin)
 

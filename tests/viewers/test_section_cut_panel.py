@@ -101,8 +101,17 @@ def _dispatch_into_fresh_card(tab, stub):
 
 
 def _find_checkbox(tab):
+    """Return the section-cut 'Show filter elements' checkbox.
+
+    Filters by text so the tab-level Auto-Apply checkbox (added in
+    plan 05) doesn't collide with this lookup — both are children
+    of ``tab._widget`` but only one belongs to the section-cut card.
+    """
     from qtpy import QtWidgets
-    return tab._widget.findChild(QtWidgets.QCheckBox)
+    for cb in tab._widget.findChildren(QtWidgets.QCheckBox):
+        if cb.text() == "Show filter elements":
+            return cb
+    return None
 
 
 def test_dispatch_kind_panel_recognizes_section_cut() -> None:
