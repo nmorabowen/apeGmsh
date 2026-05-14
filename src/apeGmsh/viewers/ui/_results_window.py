@@ -184,6 +184,33 @@ class ResultsWindow:
         """
         self._vw.on_theme_changed(callback)
 
+    def add_toolbar_action(
+        self,
+        tooltip: str,
+        icon_text: str,
+        callback,
+        *,
+        checkable: bool = False,
+        triggered_signal: str = "triggered",
+    ):
+        """Plan 02 — forward the toolbar extensibility hook.
+
+        Mirrors :meth:`ViewerWindow.add_toolbar_action` so diagrams /
+        overlays in ``results.viewer`` can register their own buttons
+        without reaching past ``ResultsWindow`` into the wrapped
+        ``ViewerWindow``. Returns the ``QAction`` for later removal
+        or checked-state updates.
+        """
+        return self._vw.add_toolbar_action(
+            tooltip, icon_text, callback,
+            checkable=checkable,
+            triggered_signal=triggered_signal,
+        )
+
+    def remove_toolbar_action(self, action) -> None:
+        """Remove a previously-added toolbar action (forwarded)."""
+        self._vw.remove_toolbar_action(action)
+
     def set_bottom_widget(self, widget) -> None:
         """Mount a widget in the bottom (time-scrubber) dock."""
         self._set_host_widget(self._bottom_host, widget)

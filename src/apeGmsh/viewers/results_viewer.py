@@ -93,6 +93,7 @@ class ResultsViewer:
         self._plotter: Any = None
         self._settings_tab: "DiagramSettingsTab | None" = None
         self._color_editor: Any = None
+        self._color_editor_action: Any = None
         self._registry_unsub: "Optional[Callable[[], None]]" = None
         self._step_unsub: "Optional[Callable[[], None]]" = None
         self._stage_unsub: "Optional[Callable[[], None]]" = None
@@ -305,6 +306,39 @@ class ResultsViewer:
             # Badge is purely peripheral — never let it block viewer
             # startup. The dock + log router work fine without it.
             self._output_badge = None
+
+        # ── Plan 02 — toolbar extensibility demo ────────────────────
+        # The color-map editor dock is hidden by default (its
+        # discoverability story was originally "find it in the View
+        # menu"). Plan 02's extensibility hook lets us add a
+        # discoverable toolbar button that toggles the dock open
+        # without modifying ``ViewerWindow``'s chrome class. This
+        # button is the canonical example of the new API; future
+        # diagrams / overlays follow the same registration pattern.
+        try:
+            color_dock_widget = win.extension_dock("dock_color_map_editor")
+        except Exception:
+            color_dock_widget = None
+        if color_dock_widget is not None:
+            self._color_editor_action = win.add_toolbar_action(
+                "Color map editor",
+                "▩",     # squared diagonal — close enough to "palette"
+                lambda checked: color_dock_widget.setVisible(bool(checked)),
+                checkable=True,
+                triggered_signal="toggled",
+            )
+            # Keep the button's checked state aligned with the dock —
+            # closing the dock via its own X must un-check the button.
+            try:
+                color_dock_widget.visibilityChanged.connect(
+                    lambda visible: self._color_editor_action.setChecked(
+                        bool(visible),
+                    ),
+                )
+            except Exception:
+                pass
+        else:
+            self._color_editor_action = None
 
         # ProbeOverlay needs the plotter, which doesn't exist until
         # ``win`` is constructed below. We initialise to None here so

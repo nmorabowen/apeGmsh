@@ -372,8 +372,84 @@ class ViewerWindow:
         self._window.splitDockWidget(self._tabs_dock, dock, QtCore.Qt.Vertical)
 
     def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
-        """Add a button to the toolbar (after construction)."""
-        self._add_toolbar_action(self._toolbar, icon_text, tooltip, callback)
+        """Add a button to the toolbar (after construction).
+
+        Legacy entry point — drops the returned QAction. New callers
+        should prefer :meth:`add_toolbar_action`, which returns the
+        QAction so it can be checked / toggled / removed later.
+        """
+        self.add_toolbar_action(tooltip, icon_text, callback)
+
+    def add_toolbar_action(
+        self,
+        tooltip: str,
+        icon_text: str,
+        callback,
+        *,
+        checkable: bool = False,
+        triggered_signal: str = "triggered",
+    ):
+        """Plan 02 — public extensibility hook for diagrams / overlays.
+
+        Adds a button to the viewer's toolbar at runtime and returns
+        the underlying ``QAction`` so the caller can:
+
+        * flip ``setChecked(bool)`` to drive a checkable toggle's
+          visual state from external events;
+        * call :meth:`remove_toolbar_action` to unregister it on
+          overlay teardown.
+
+        The action is registered with the theme-refresh list so its
+        icon recolors when the palette changes — same lifecycle as
+        the chrome's own buttons. Equivalent to ParaView's
+        ``pqViewFrame.addTitleBarAction``.
+
+        Parameters
+        ----------
+        tooltip
+            Tooltip text shown on hover. Include the shortcut hint
+            (e.g. ``"Reset view (R)"``) when one exists.
+        icon_text
+            Single-glyph icon. Unicode symbols (`U+2316`, etc.) keep
+            the chrome icon-file-free.
+        callback
+            Called when the action triggers (or toggles, when
+            ``checkable=True``).
+        checkable
+            If ``True``, the button becomes a two-state toggle and
+            ``triggered_signal`` defaults to ``"triggered"`` — pass
+            ``"toggled"`` when you want the new state as the callback
+            argument.
+        triggered_signal
+            QAction signal name to connect: usually ``"triggered"``
+            for momentary buttons, ``"toggled"`` for two-state
+            toggles wanting the bool payload.
+        """
+        return self._add_toolbar_action(
+            self._toolbar,
+            icon_text, tooltip, callback,
+            checkable=checkable,
+            triggered_signal=triggered_signal,
+        )
+
+    def remove_toolbar_action(self, action) -> None:
+        """Remove a toolbar action previously added via
+        :meth:`add_toolbar_action`.
+
+        Idempotent — calling twice on the same action, or on an
+        action that wasn't registered through this window, is a
+        silent no-op. Drops the action from the theme-refresh list so
+        a later palette change doesn't poke a destructed QAction.
+        """
+        if action is None:
+            return
+        try:
+            self._toolbar.removeAction(action)
+        except Exception:
+            pass
+        self._icon_actions = [
+            (a, t) for (a, t) in self._icon_actions if a is not action
+        ]
 
     def on_theme_changed(self, callback: Callable[[Any], None]) -> None:
         """Register a viewer-level callback for theme changes.
