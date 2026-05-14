@@ -157,6 +157,16 @@ class MeshViewer:
         self._prev_hover: list[DimTag | None] = [None]
         self._hover_label: Any = None
 
+        # Plan 04 step 3 — per-viewer ActiveObjects coordinator.
+        # Populated by ``show()`` once a QApplication exists. Same
+        # design as ``ResultsViewer._active``: a single source of
+        # truth for "what is currently selected / which pick mode" so
+        # panels subscribe instead of wiring direct callbacks.
+        self._active: Any = None
+        # Subscription handle for the SelectionState bridge; cleared
+        # in ``_on_close``-equivalent paths.
+        self._sel_bridge_unsub: Any = None
+
     # ==================================================================
     # Entry point
     # ==================================================================
@@ -189,6 +199,30 @@ class MeshViewer:
         default_title = f"MeshViewer — {self._parent.name}"
         win = ViewerWindow(title=title or default_title)
         self._win = win
+
+        # ── Plan 04 step 3 — ActiveObjects coordinator ──────────────
+        # One per viewer. Pick mode + selection get their canonical
+        # signal surface here; existing per-instance state (the
+        # ``_pick_mode[0]`` cache, ``sel.on_changed`` callbacks) stays
+        # in lockstep via two bridges installed below.
+        from .core._active_objects import ActiveObjects
+        self._active = ActiveObjects(parent=win.window)
+        # Pick mode bridge — subscribers update the legacy cache + the
+        # status bar. ``_set_pick_mode`` now flows through
+        # ``set_active_pick_mode``, so any future panel that wants to
+        # react to pick-mode flips can subscribe to
+        # ``activePickModeChanged`` without touching this file.
+        self._active.activePickModeChanged.connect(self._on_active_pick_mode)
+        # Seed the active pick mode with whatever the constructor /
+        # __init__ set on the legacy cache (default "brep"). This keeps
+        # ``self._active.active_pick_mode`` aligned with
+        # ``_pick_mode[0]`` from the start — code that subscribes to
+        # ``activePickModeChanged`` won't see a phantom "" state before
+        # the first user key-press.
+        try:
+            self._active.set_active_pick_mode(self._pick_mode[0])
+        except Exception:
+            pass
 
         # ── UI tabs (AFTER QApplication exists) ─────────────────────
         info_tab = MeshInfoTab()
@@ -359,6 +393,23 @@ class MeshViewer:
 
         # Selection changed -> recolor
         sel.on_changed.append(self._handle_sel_changed)
+        # Plan 04 step 3 — selection bridge into ActiveObjects.
+        # ``SelectionState`` keeps its legacy ``on_changed`` list (the
+        # plan doc marks it as a one-release compatibility shim); this
+        # bridge fans the same event out via ``selectionChanged``
+        # so new subscribers don't need to know about SelectionState's
+        # internal callback list. The payload is an immutable tuple of
+        # picks — fresh per emit, so ``ActiveObjects``' identity check
+        # doesn't suppress repeat fires when picks mutate in place,
+        # and downstream subscribers get a stable snapshot they can
+        # cache without worrying about later mutation. Subscribers
+        # needing more (centroid, parent shapes) reach for
+        # ``viewer._sel`` via the viewer reference.
+        def _sel_bridge() -> None:
+            if self._active is not None and self._sel is not None:
+                self._active.set_selection(tuple(self._sel.picks))
+        sel.on_changed.append(_sel_bridge)
+        self._sel_bridge_unsub = _sel_bridge
         vis_mgr.on_changed.append(lambda: plotter.render())
         # Repaint mesh idle colors when the theme palette changes
         win.on_theme_changed(lambda _p: self._handle_sel_changed())
@@ -1243,11 +1294,42 @@ class MeshViewer:
             self._win.set_status(f"Screenshot failed: {e}")
 
     def _set_pick_mode(self, m: str) -> None:
+        """Switch the active pick mode (``"brep"`` / ``"element"`` / ``"node"``).
+
+        Plan 04 step 3: routes through :class:`ActiveObjects` when one
+        is wired (the standard show() path). The subscriber installed
+        in show() keeps ``_pick_mode[0]`` and the status bar in sync —
+        existing reads of ``_pick_mode[0]`` in ``_handle_pick`` /
+        ``_handle_hover`` see the new value at the moment they fire.
+        Pre-show (no active wired yet) we mutate the cache directly so
+        constructor-time defaults still take effect.
+        """
+        if self._active is not None:
+            self._active.set_active_pick_mode(m)
+            return
+        # No ActiveObjects yet (constructor-time default): apply the
+        # legacy state directly.
         self._pick_mode[0] = m
         if self._hover_label is not None:
             self._hover_label.hide()
         if self._win is not None:
             self._win.set_status(f"Pick mode: {m.upper()}")
+
+    def _on_active_pick_mode(self, mode: str) -> None:
+        """Subscriber to ``ActiveObjects.activePickModeChanged``.
+
+        Keeps the legacy ``_pick_mode[0]`` cache and the status bar in
+        sync so existing reads — ``_handle_pick``, ``_handle_hover``,
+        ``_tooltip_text`` — pick up the new mode immediately.
+        """
+        self._pick_mode[0] = mode
+        if self._hover_label is not None:
+            try:
+                self._hover_label.hide()
+            except Exception:
+                pass
+        if self._win is not None:
+            self._win.set_status(f"Pick mode: {mode.upper()}")
 
     # ==================================================================
     # Public API
