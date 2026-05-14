@@ -12,7 +12,7 @@ Provides the same public API as the old ``SelectionPicker``:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import gmsh
 import numpy as np
@@ -97,6 +97,17 @@ class ModelViewer:
         self._selection_state: "SelectionState | None" = None
         self._registry: "EntityRegistry | None" = None
 
+        # Plan 04 step 4 — per-viewer ActiveObjects coordinator.
+        # Constructed once a QApplication / window exists (in show()).
+        # ModelViewer has no pick-mode concept — only the
+        # ``selectionChanged`` bridge is wired today. The legacy
+        # ``sel.on_changed`` cascade (recolor → tree → browser →
+        # parts_tree → commit_active_group) stays untouched per the
+        # plan doc's one-release compatibility shim policy; the bridge
+        # gives future panels a Qt-signal entry point without forcing
+        # them through ``SelectionState``'s internal callback list.
+        self._active: Any = None
+
     # ------------------------------------------------------------------
     # Show
     # ------------------------------------------------------------------
@@ -175,6 +186,16 @@ class ModelViewer:
             title=title or default_title,
             on_close=_on_close,
         )
+
+        # ── Plan 04 step 4 — ActiveObjects coordinator ──────────────
+        # One per viewer. Provides the ``selectionChanged`` signal that
+        # future panels subscribe to; the legacy ``sel.on_changed``
+        # cascade installed further below stays as the compatibility
+        # path per the plan doc. The bridge into ActiveObjects is
+        # registered alongside the cascade in the "Wire callbacks"
+        # section so all selection observers are co-located.
+        from .core._active_objects import ActiveObjects
+        self._active = ActiveObjects(parent=win.window)
 
         # ── UI tabs (created AFTER QApplication exists) ─────────────
         # NOTE: PreferencesTab is created AFTER scene build (needs registry).
@@ -876,6 +897,17 @@ class ModelViewer:
             )
         # Write active group to Gmsh on every pick change
         sel.on_changed.append(lambda: sel.commit_active_group())
+        # Plan 04 step 4 — selection bridge into ActiveObjects.
+        # Same pattern as mesh.viewer: emit a fresh tuple of picks on
+        # every mutation so ``ActiveObjects``' identity short-circuit
+        # doesn't suppress in-place changes. Subscribers reach for
+        # ``viewer._active.selection`` (a tuple snapshot) or, for
+        # richer state, hold a viewer reference and inspect
+        # ``viewer._selection_state``.
+        _active_ref = self._active
+        sel.on_changed.append(
+            lambda: _active_ref.set_selection(tuple(sel.picks)),
+        )
 
         # Visibility changed -> render
         vis_mgr.on_changed.append(lambda: plotter.render())
