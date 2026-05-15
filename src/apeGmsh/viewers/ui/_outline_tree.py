@@ -516,8 +516,7 @@ class OutlineTree:
                 "ui.outline", "eye_toggled",
                 geom=geom_id, new_state=new_state,
             )
-            for comp in list(geom.compositions.compositions):
-                self._apply_composition_visibility(comp, new_state)
+            self._apply_geometry_visibility(geom, new_state)
             self._fire_render()
             self._refresh_diagrams()
             return
@@ -560,6 +559,38 @@ class OutlineTree:
             except Exception:
                 pass
         comp.saved_visibility = None
+
+    def _apply_geometry_visibility(
+        self, geom: Any, new_state: bool,
+    ) -> None:
+        """Cascade visibility through a geometry's compositions.
+
+        ``new_state=False``: snapshot each composition's prior
+        visibility (derived from :meth:`_is_composition_visible`) onto
+        ``geom.saved_visibility``, then hide every composition (which
+        in turn snapshots each composition's layer states onto the
+        composition's own ``saved_visibility``).
+
+        ``new_state=True``: if a geometry-level snapshot exists,
+        restore only the compositions that were previously visible;
+        compositions absent from the snapshot (added since the hide)
+        default to shown, and stale snapshot keys are skipped.
+        Without a snapshot, every composition is shown.
+        """
+        comps = list(getattr(geom.compositions, "compositions", []) or [])
+        if not new_state:
+            if geom.saved_visibility is None:
+                geom.saved_visibility = {
+                    c.id: self._is_composition_visible(c) for c in comps
+                }
+            for comp in comps:
+                self._apply_composition_visibility(comp, False)
+            return
+        snap = geom.saved_visibility
+        for comp in comps:
+            target = True if snap is None else bool(snap.get(comp.id, True))
+            self._apply_composition_visibility(comp, target)
+        geom.saved_visibility = None
 
     def _fire_render(self) -> None:
         """Push a render through the Director's bound plotter so the
