@@ -69,6 +69,16 @@ class Geometry:
         substrate so on-top diagrams (contour, line force) read better.
     compositions
         Per-geometry composition manager. Always non-null.
+    saved_visibility
+        Plan 03 v2 — when the user hides this geometry via the outline
+        eye-icon, each composition's prior visibility (derived from
+        :meth:`OutlineTree._is_composition_visible`) is snapshotted
+        as ``{composition_id: was_visible}``. The next un-hide restores
+        only those compositions, then each restored composition's own
+        ``saved_visibility`` cascades down to its layers. ``None``
+        means "no snapshot active." We deliberately don't invalidate
+        on composition add/remove — the restore path tolerates missing
+        / extra keys (extras default visible, stale ids skipped).
     """
     id: str
     name: str
@@ -79,6 +89,9 @@ class Geometry:
     show_nodes: bool = True
     display_opacity: float = 1.0
     compositions: CompositionManager = field(default_factory=CompositionManager)
+    saved_visibility: Optional[dict] = field(
+        default=None, compare=False, repr=False,
+    )
 
 
 class GeometryManager:

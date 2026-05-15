@@ -1,7 +1,7 @@
 """Dock registry + helpers — decouple dock construction from per-viewer code.
 
-Replaces the inline ``add_right_bottom_dock`` / inline ``addDockWidget``
-pattern in :class:`ViewerWindow`. Each viewer builds a
+Replaces the inline ``addDockWidget`` pattern in :class:`ViewerWindow`
+and :class:`ResultsWindow`. Each viewer builds a
 :class:`DockRegistry` of :class:`DockSpec` entries; the window walks
 the registry once at mount time, creating ``QDockWidget`` instances
 with stable ``objectName`` values.

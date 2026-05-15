@@ -377,6 +377,109 @@ def test_partial_recording_resultant_works(g, tmp_path: Path, headless_plotter):
     np.testing.assert_allclose(vecs[:, 2], 0.0)
 
 
+# =====================================================================
+# LUT mirror (plan 06)
+# =====================================================================
+
+
+def test_vector_lut_is_none_before_attach(vector_results):
+    diagram = VectorGlyphDiagram(_spec(), vector_results)
+    assert diagram.lut is None
+
+
+def test_vector_attach_builds_lut(vector_results, headless_plotter):
+    """``use_magnitude_colors=True`` (default) → LUT is built."""
+    scene = build_fem_scene(vector_results.fem)
+    spec = DiagramSpec(
+        kind="vector_glyph",
+        selector=SlabSelector(component="displacement"),
+        style=VectorGlyphStyle(cmap="plasma", clim=(0.0, 10.0)),
+    )
+    diagram = VectorGlyphDiagram(spec, vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+
+    lut = diagram.lut
+    assert lut is not None
+    assert lut.array_name == "displacement"
+    assert lut.preset == "plasma"
+    assert lut.range == (0.0, 10.0)
+
+
+def test_vector_no_lut_when_magnitude_colors_disabled(
+    vector_results, headless_plotter,
+):
+    """``use_magnitude_colors=False`` → no LUT (nothing to drive)."""
+    scene = build_fem_scene(vector_results.fem)
+    spec = DiagramSpec(
+        kind="vector_glyph",
+        selector=SlabSelector(component="displacement"),
+        style=VectorGlyphStyle(use_magnitude_colors=False),
+    )
+    diagram = VectorGlyphDiagram(spec, vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+
+    assert diagram.lut is None
+
+
+def test_vector_set_cmap_routes_through_lut(
+    vector_results, headless_plotter,
+):
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec(), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+
+    diagram.set_cmap("turbo")
+    assert diagram.lut.preset == "turbo"
+    assert diagram._runtime_cmap == "turbo"
+
+
+def test_vector_set_clim_routes_through_lut(
+    vector_results, headless_plotter,
+):
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec(), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+
+    diagram.set_clim(-2.0, 7.0)
+    assert diagram.lut.range == (-2.0, 7.0)
+    assert diagram.current_clim() == (-2.0, 7.0)
+
+
+def test_vector_lut_change_updates_actor_mapper(
+    vector_results, headless_plotter,
+):
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec(), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+
+    diagram.lut.set_range(100.0, 200.0)
+    mapper = diagram._actor.GetMapper()
+    sr = mapper.GetScalarRange()
+    assert sr[0] == pytest.approx(100.0)
+    assert sr[1] == pytest.approx(200.0)
+
+
+def test_vector_detach_clears_lut(vector_results, headless_plotter):
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec(), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+    assert diagram.lut is not None
+    diagram.detach()
+    assert diagram.lut is None
+
+
+def test_vector_lut_changes_after_detach_are_noops(
+    vector_results, headless_plotter,
+):
+    scene = build_fem_scene(vector_results.fem)
+    diagram = VectorGlyphDiagram(_spec(), vector_results)
+    diagram.attach(headless_plotter, vector_results.fem, scene)
+    held_lut = diagram.lut
+    diagram.detach()
+    held_lut.set_preset("magma")
+    held_lut.set_range(0.0, 1.0)
+
+
 def test_axis_mode_scale_matches_resultant(vector_results, headless_plotter):
     """``displacement_x`` and the prefix share auto-fit scale."""
     scene = build_fem_scene(vector_results.fem)

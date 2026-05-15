@@ -59,11 +59,22 @@ class Composition:
         old code paths that read it don't break; the new model has no
         locked compositions (the locked-Geometry concept moved up to
         :class:`Geometry`).
+    saved_visibility
+        Plan 03 v2 — when the user hides this composition via the
+        outline eye-icon, the prior per-layer visibility states are
+        snapshotted here so that un-hiding restores each layer
+        individually. ``None`` means "no snapshot active" (composition
+        is in its normal shown state). Invalidated whenever the layer
+        membership changes (add / remove) — a stale snapshot would
+        carry the wrong layer keys after such a mutation.
     """
     id: str
     name: str
     layers: list = field(default_factory=list)
     locked: bool = False
+    saved_visibility: Optional[dict] = field(
+        default=None, compare=False, repr=False,
+    )
 
 
 # ---------------------------------------------------------------------
@@ -218,6 +229,8 @@ class CompositionManager:
         if comp is None:
             return
         comp.layers.append(layer)
+        # Plan 03 v2 — invalidate any saved-visibility snapshot.
+        comp.saved_visibility = None
         self._notify(comp_id)
 
     @property
@@ -234,6 +247,8 @@ class CompositionManager:
         for c in self._compositions:
             if layer in c.layers:
                 c.layers.remove(layer)
+                # Plan 03 v2 — invalidate any saved-visibility snapshot.
+                c.saved_visibility = None
                 self._notify(c.id)
                 return
 

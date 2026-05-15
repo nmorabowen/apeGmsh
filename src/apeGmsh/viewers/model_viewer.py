@@ -181,10 +181,13 @@ class ModelViewer:
                 print(f"[viewer] closed — {n} physical group(s) written, "
                       f"{len(sel.picks)} picks in working set")
 
-        # Create window FIRST so QApplication exists for Qt widgets
+        # Create window FIRST so QApplication exists for Qt widgets.
+        # ``window_key`` opts into layout persistence under
+        # ``QSettings("apeGmsh", "ModelViewer")`` (plan 08 follow-up).
         win = ViewerWindow(
             title=title or default_title,
             on_close=_on_close,
+            window_key="ModelViewer",
         )
 
         # ── Plan 04 step 4 — ActiveObjects coordinator ──────────────
@@ -509,8 +512,29 @@ class ModelViewer:
         win.add_tab("Browser", browser.widget)
         win.add_tab("View", view_tab.widget)
         win.add_tab("Filter", filter_tab.widget)
-        # Add selection tree as bottom dock
-        win.add_right_bottom_dock("Selection", sel_tree.widget)
+        # Plan 08 — Selection tree as a registry-driven extension dock.
+        # We still place it BELOW the tabs dock and keep it title-less +
+        # immobile to match the legacy ``add_right_bottom_dock`` look;
+        # gaining the auto View-menu toggle is the only intentional UX
+        # delta. ``tabify_with`` would side-by-side it with the tabs
+        # dock — wrong shape for this row, so we re-anchor with
+        # ``splitDockWidget`` after mount.
+        from .ui._dock_registry import DockSpec
+        from qtpy import QtCore, QtWidgets
+        sel_dock = win.add_extension_dock(DockSpec(
+            dock_id="dock_model_selection",
+            title="Selection",
+            factory=lambda _parent: sel_tree.widget,
+        ))
+        sel_dock.setTitleBarWidget(QtWidgets.QWidget())    # hide title bar
+        sel_dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
+        tabs_dock = win.window.findChild(
+            QtWidgets.QDockWidget, win.DOCK_TABS,
+        )
+        if tabs_dock is not None:
+            win.window.splitDockWidget(
+                tabs_dock, sel_dock, QtCore.Qt.Vertical,
+            )
 
         plotter = win.plotter
 

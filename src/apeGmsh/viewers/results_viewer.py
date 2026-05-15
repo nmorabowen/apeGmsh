@@ -404,6 +404,11 @@ class ResultsViewer:
         outline.on_geometry_selected(
             lambda gid: self._active.set_active_geometry(gid),
         )
+        # Plan 03 v2 — outline Layer-row selection drives active_layer
+        # alongside the existing settings-tab card-focus path.
+        outline.on_diagram_selected(
+            lambda layer: self._active.set_active_layer(layer),
+        )
         self._active.activeCompositionChanged.connect(
             self._on_active_composition_changed,
         )

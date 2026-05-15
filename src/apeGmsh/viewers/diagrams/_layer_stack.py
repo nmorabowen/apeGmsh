@@ -83,6 +83,10 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         self._runtime_cmap: Optional[str] = None
         self._init_scalar_bar_state()
 
+        # Plan 06 — LUT mirror built at the tail of attach().
+        self._lut: Any = None
+        self._lut_conn: Any = None
+
     # ------------------------------------------------------------------
     # Attach / detach / update
     # ------------------------------------------------------------------
@@ -233,6 +237,8 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
         self._actor = actor
         self._actors = [actor]
 
+        self._init_lut()
+
     def update_to_step(self, step_index: int) -> None:
         if self._submesh is None or self._scalar_array is None:
             return
@@ -256,6 +262,13 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
 
     def detach(self) -> None:
         self._remove_scalar_bar(self._scalar_bar_title())
+        if self._lut is not None and self._lut_conn is not None:
+            try:
+                self._lut.changed.disconnect(self._lut_conn)
+            except (TypeError, RuntimeError):
+                pass
+        self._lut = None
+        self._lut_conn = None
         self._submesh = None
         self._actor = None
         self._scalar_array = None
@@ -342,9 +355,17 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
     # Runtime style adjustments
     # ------------------------------------------------------------------
 
+    @property
+    def lut(self) -> Any:
+        """Shared lookup-table mirror; ``None`` outside attach."""
+        return self._lut
+
     def set_clim(self, vmin: float, vmax: float) -> None:
         if vmin == vmax:
             vmax = vmin + 1.0
+        if self._lut is not None:
+            self._lut.set_range(float(vmin), float(vmax))
+            return
         self._runtime_clim = (float(vmin), float(vmax))
         if self._actor is not None:
             try:
@@ -368,6 +389,9 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
 
     def set_cmap(self, cmap: str) -> None:
         self._runtime_cmap = cmap
+        if self._lut is not None:
+            self._lut.set_preset(cmap)
+            return
         if self._actor is None:
             return
         try:
@@ -382,6 +406,47 @@ class LayerStackDiagram(ScalarBarSupport, Diagram):
 
     def current_clim(self) -> Optional[tuple[float, float]]:
         return self._runtime_clim or self._initial_clim
+
+    # ------------------------------------------------------------------
+    # LUT mirror (plan 06)
+    # ------------------------------------------------------------------
+
+    def _init_lut(self) -> None:
+        from ..core._lut_manager import LUT
+
+        style: LayerStackStyle = self.spec.style    # type: ignore[assignment]
+        preset = self._runtime_cmap or style.cmap or "viridis"
+        clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
+        try:
+            self._lut = LUT(
+                array_name=self.spec.selector.component,
+                preset=preset,
+                vmin=float(clim[0]),
+                vmax=float(clim[1]),
+                show_scalar_bar=self._effective_show_scalar_bar(),
+            )
+            self._lut_conn = self._lut.changed.connect(self._on_lut_changed)
+        except Exception:
+            self._lut = None
+            self._lut_conn = None
+
+    def _on_lut_changed(self) -> None:
+        if self._lut is None or self._actor is None:
+            return
+        self._runtime_cmap = self._lut.preset
+        self._runtime_clim = (self._lut.vmin, self._lut.vmax)
+        self._apply_lut_to_actor()
+
+    def _apply_lut_to_actor(self) -> None:
+        if self._actor is None or self._lut is None:
+            return
+        try:
+            table = self._lut.to_pyvista_lookup_table()
+            mapper = self._actor.GetMapper()
+            mapper.SetLookupTable(table)
+            mapper.SetScalarRange(self._lut.vmin, self._lut.vmax)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Internal — aggregation

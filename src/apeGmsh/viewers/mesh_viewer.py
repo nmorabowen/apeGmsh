@@ -196,8 +196,12 @@ class MeshViewer:
         self._sel = sel
 
         # ── Window (creates QApplication) ───────────────────────────
+        # ``window_key`` opts into layout persistence under
+        # ``QSettings("apeGmsh", "MeshViewer")`` (plan 08 follow-up).
         default_title = f"MeshViewer — {self._parent.name}"
-        win = ViewerWindow(title=title or default_title)
+        win = ViewerWindow(
+            title=title or default_title, window_key="MeshViewer",
+        )
         self._win = win
 
         # ── Plan 04 step 3 — ActiveObjects coordinator ──────────────

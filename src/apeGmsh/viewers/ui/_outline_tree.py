@@ -38,7 +38,7 @@ def _qt():
 # use distinct subroles for the leaf kinds so iteration code can
 # tell them apart without inspecting the parent.
 _ROLE_STAGE_ID = 0x100
-_ROLE_DIAGRAM_OBJ = 0x101         # legacy — single-layer rows; unused after pivot
+_ROLE_DIAGRAM_OBJ = 0x101         # plan 03 v2 — layer rows (one per Diagram)
 _ROLE_GROUP_KEY = 0x102
 _ROLE_PLOT_KEY = 0x103
 _ROLE_COMPOSITION_KEY = 0x104     # one Diagram = a stack of layers
@@ -210,12 +210,13 @@ class OutlineTree:
     def on_diagram_selected(
         self, callback: Callable[[Optional[Diagram]], None],
     ) -> None:
-        """Register the callback fired when a Diagram row is selected.
+        """Register the callback fired when a Layer row is selected.
 
-        Legacy single-layer event — kept around so existing wiring
-        compiles. After the v2 pivot, the outline doesn't list
-        individual diagrams anymore (one ``Diagram 1`` row groups all
-        layers); use :meth:`on_composition_selected` instead.
+        Plan 03 v2 — the outline now renders one row per Diagram
+        (a.k.a. Layer) under each Composition. Selecting a Layer row
+        fires this callback; the viewer routes it to
+        :meth:`ActiveObjects.set_active_layer` so the Color Map Editor
+        and other subscribers rebind to that layer.
         """
         self._on_diagram_selected = callback
 
@@ -429,9 +430,51 @@ class OutlineTree:
                         f"rename, duplicate, or delete.",
                     )
                     geom_item.addChild(comp_item)
+                    # Plan 03 v2 — Layer rows under each Composition.
+                    self._populate_layer_rows(comp_item, comp)
+                    comp_item.setExpanded(True)
                 geom_item.setExpanded(True)
         finally:
             self._tree.blockSignals(False)
+
+    def _populate_layer_rows(self, comp_item: Any, comp: Any) -> None:
+        """Add one row per Diagram under a Composition row.
+
+        Each layer carries:
+
+        * label — :meth:`Diagram.display_label` (falls back to ``kind``).
+        * eye icon — bound to ``layer.is_visible`` via ``_ROLE_VISIBLE``.
+        * the Diagram reference stored on ``_ROLE_DIAGRAM_OBJ`` so the
+          click/selection slots can route to ``ActiveObjects``.
+        """
+        QtWidgets, QtCore = _qt()
+        layers = list(getattr(comp, "layers", []) or [])
+        for layer in layers:
+            label = self._layer_label(layer)
+            item = QtWidgets.QTreeWidgetItem([label])
+            # Layers participate in selection but are not editable
+            # (rename lives at composition / geometry level).
+            flags = item.flags() & ~QtCore.Qt.ItemIsEditable
+            item.setFlags(flags)
+            item.setData(0, _ROLE_DIAGRAM_OBJ, layer)
+            item.setData(
+                0, _ROLE_VISIBLE,
+                bool(getattr(layer, "is_visible", True)),
+            )
+            item.setToolTip(
+                0,
+                f"{label} — click the eye to toggle just this layer. "
+                f"Click the row to focus it in the details dock.",
+            )
+            comp_item.addChild(item)
+
+    @staticmethod
+    def _layer_label(layer: Any) -> str:
+        """Best-effort label for a Diagram row."""
+        try:
+            return str(layer.display_label())
+        except Exception:
+            return str(getattr(layer, "kind", "layer"))
 
     @staticmethod
     def _geometry_label(geom: Any) -> str:
@@ -474,20 +517,46 @@ class OutlineTree:
 
         Dispatches by row type:
 
+        * Layer row → toggle that single Diagram's visibility. The
+          owning composition's ``saved_visibility`` is cleared because
+          the user is taking manual control: a stale snapshot would
+          incorrectly revert this layer on the next composition show.
         * Composition row → bulk-toggle every child layer's visibility.
-        * Geometry row → bulk-toggle every layer in every composition.
-
-        The new state is the *opposite* of the derived visibility: if
-        anything was visible, hide all; otherwise show all. This
-        matches the typical "toggle group" expectation and is simple
-        to reason about. No per-layer state is preserved across
-        toggles — v1 scope (see commit body).
+          Hiding snapshots each layer's prior state onto
+          ``comp.saved_visibility``; un-hiding restores from that
+          snapshot (default True for any layer added in the meantime
+          — invalidation already nulls the snapshot on layer
+          add/remove, so this only kicks in for in-flight churn).
+        * Geometry row → cascade into each composition, reusing the
+          same snapshot/restore on each child composition.
         """
         if item is None:
             return
         from .._log import log_action
-        registry = self._director.registry
         geom_mgr = self._director.geometries
+
+        layer = item.data(0, _ROLE_DIAGRAM_OBJ)
+        if layer is not None:
+            new_state = not bool(getattr(layer, "is_visible", True))
+            log_action(
+                "ui.outline", "eye_toggled",
+                layer=type(layer).__name__, new_state=new_state,
+            )
+            try:
+                self._director.registry.set_visible(layer, bool(new_state))
+            except Exception:
+                pass
+            # Clear the owning composition's snapshot: a manual layer
+            # toggle invalidates any saved "restore me" state. Walk
+            # geometries since GeometryManager has no global lookup.
+            for g in geom_mgr.geometries:
+                owner_comp = g.compositions.composition_for_layer(layer)
+                if owner_comp is not None:
+                    owner_comp.saved_visibility = None
+                    break
+            self._fire_render()
+            self._refresh_diagrams()
+            return
 
         comp_id = item.data(0, _ROLE_COMPOSITION_KEY)
         if comp_id is not None:
@@ -502,11 +571,7 @@ class OutlineTree:
                 "ui.outline", "eye_toggled",
                 comp=comp_id, new_state=new_state,
             )
-            for layer in list(getattr(comp, "layers", []) or []):
-                try:
-                    registry.set_visible(layer, bool(new_state))
-                except Exception:
-                    pass
+            self._apply_composition_visibility(comp, new_state)
             self._fire_render()
             self._refresh_diagrams()
             return
@@ -521,15 +586,81 @@ class OutlineTree:
                 "ui.outline", "eye_toggled",
                 geom=geom_id, new_state=new_state,
             )
-            for comp in list(geom.compositions.compositions):
-                for layer in list(getattr(comp, "layers", []) or []):
-                    try:
-                        registry.set_visible(layer, bool(new_state))
-                    except Exception:
-                        pass
+            self._apply_geometry_visibility(geom, new_state)
             self._fire_render()
             self._refresh_diagrams()
             return
+
+    def _apply_composition_visibility(
+        self, comp: Any, new_state: bool,
+    ) -> None:
+        """Bulk-toggle a composition's layers with snapshot preservation.
+
+        ``new_state=False``: snapshot each layer's current
+        ``is_visible`` onto ``comp.saved_visibility`` (only if no
+        snapshot is already active — back-to-back hides shouldn't
+        overwrite a real prior state with an all-hidden one), then
+        flip every layer to hidden.
+
+        ``new_state=True``: if a snapshot is active, restore each
+        layer to its snapshotted state (layers not in the snapshot —
+        only possible if invalidation missed a churn — default to
+        visible). Otherwise show every layer. Clears the snapshot.
+        """
+        registry = self._director.registry
+        layers = list(getattr(comp, "layers", []) or [])
+        if not new_state:
+            if comp.saved_visibility is None:
+                comp.saved_visibility = {
+                    layer: bool(getattr(layer, "is_visible", True))
+                    for layer in layers
+                }
+            for layer in layers:
+                try:
+                    registry.set_visible(layer, False)
+                except Exception:
+                    pass
+            return
+        snap = comp.saved_visibility
+        for layer in layers:
+            target = True if snap is None else bool(snap.get(layer, True))
+            try:
+                registry.set_visible(layer, target)
+            except Exception:
+                pass
+        comp.saved_visibility = None
+
+    def _apply_geometry_visibility(
+        self, geom: Any, new_state: bool,
+    ) -> None:
+        """Cascade visibility through a geometry's compositions.
+
+        ``new_state=False``: snapshot each composition's prior
+        visibility (derived from :meth:`_is_composition_visible`) onto
+        ``geom.saved_visibility``, then hide every composition (which
+        in turn snapshots each composition's layer states onto the
+        composition's own ``saved_visibility``).
+
+        ``new_state=True``: if a geometry-level snapshot exists,
+        restore only the compositions that were previously visible;
+        compositions absent from the snapshot (added since the hide)
+        default to shown, and stale snapshot keys are skipped.
+        Without a snapshot, every composition is shown.
+        """
+        comps = list(getattr(geom.compositions, "compositions", []) or [])
+        if not new_state:
+            if geom.saved_visibility is None:
+                geom.saved_visibility = {
+                    c.id: self._is_composition_visible(c) for c in comps
+                }
+            for comp in comps:
+                self._apply_composition_visibility(comp, False)
+            return
+        snap = geom.saved_visibility
+        for comp in comps:
+            target = True if snap is None else bool(snap.get(comp.id, True))
+            self._apply_composition_visibility(comp, target)
+        geom.saved_visibility = None
 
     def _fire_render(self) -> None:
         """Push a render through the Director's bound plotter so the
@@ -779,6 +910,30 @@ class OutlineTree:
             # Fire only the composition callback (same reasoning).
             if self._on_composition_selected is not None:
                 self._on_composition_selected(comp_id)
+            return
+        # Plan 03 v2 — Layer rows fire the diagram-selected callback,
+        # which the viewer routes to ActiveObjects.set_active_layer.
+        # Also activate the layer's owning geometry + composition so
+        # the rest of the UI follows.
+        layer = current.data(0, _ROLE_DIAGRAM_OBJ)
+        if layer is not None:
+            from .._log import log_action
+            log_action(
+                "ui.outline", "layer_selected",
+                layer=type(layer).__name__,
+            )
+            for g in geom_mgr.geometries:
+                comp = g.compositions.composition_for_layer(layer)
+                if comp is None:
+                    continue
+                try:
+                    geom_mgr.set_active(g.id)
+                    g.compositions.set_active(comp.id)
+                except Exception:
+                    pass
+                break
+            if self._on_diagram_selected is not None:
+                self._on_diagram_selected(layer)
             return
         self._fire_idle()
 

@@ -32,8 +32,14 @@ Usage::
 from __future__ import annotations
 
 import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Sequence
 
+from ._dock_registry import (
+    DockSpec,
+    add_view_menu_toggle,
+    build_view_menu,
+    mount_dock_spec,
+)
 from .theme import THEME, build_stylesheet
 
 
@@ -90,14 +96,43 @@ class ViewerWindow:
     tabs : list of (name, QWidget)
         Tabs to add to the right-side dock.
     extra_docks : list of QDockWidget, optional
-        Additional dock widgets.
+        Additional dock widgets. **Legacy** path — prefer
+        ``extension_docks`` for new code.
     toolbar_actions : list of (tooltip, icon_text, callback), optional
         Buttons inserted before the camera controls.
     on_close : callable, optional
         Called when the window is closed (e.g. flush groups to Gmsh).
     show_console : bool
         Whether to include the collapsible console dock.
+    extension_docks : sequence of :class:`DockSpec`, optional
+        Registry-driven extension docks mounted alongside the built-in
+        tabs / console / extra_docks. Same machinery
+        :class:`ResultsWindow` uses (plan 08 step 2) — gives
+        ``mesh.viewer`` / ``model.viewer`` the same registry-driven
+        path. ``tabify_with`` may reference :attr:`DOCK_TABS` /
+        :attr:`DOCK_CONSOLE` (when present) or another extension
+        ``dock_id``.
+    window_key : str, optional
+        QSettings sub-key under ``"apeGmsh"`` used to persist dock
+        layout + window geometry across launches. When given, the
+        View menu gains an enabled "Reset Layout" entry. When ``None``
+        (default), the legacy non-persistent behaviour applies —
+        every launch starts at the in-code default arrangement and
+        "Reset Layout" is disabled.
     """
+
+    # objectName constants for the built-in docks — exposed so
+    # extension specs can ``tabify_with`` them by name. (Console only
+    # exists when ``show_console=True``; tabify_with that id otherwise
+    # will raise at mount time.)
+    DOCK_TABS = "dock_viewer_tabs"
+    DOCK_CONSOLE = "dock_viewer_console"
+
+    # Bumped whenever the built-in dock set changes (added / removed /
+    # renamed). Saved state from a different schema is ignored so a
+    # users' restored layout never half-applies to a structurally
+    # different window.
+    _LAYOUT_SCHEMA_VERSION = 1
 
     def __init__(
         self,
@@ -108,6 +143,8 @@ class ViewerWindow:
         toolbar_actions: list[tuple[str, str, Callable]] | None = None,
         on_close: Callable[[], None] | None = None,
         show_console: bool | None = None,
+        extension_docks: Optional[Sequence[DockSpec]] = None,
+        window_key: Optional[str] = None,
     ) -> None:
         QtWidgets, QtCore, QtGui, QtInteractor = _lazy_qt()
         if show_console is None:
@@ -118,6 +155,13 @@ class ViewerWindow:
         self._QtGui = QtGui
         self._title = title
         self._on_close = on_close
+        # Layout persistence state. ``_default_layout_state`` and
+        # ``_default_layout_geometry`` are captured after dock mount;
+        # ``reset_layout()`` restores them. Both ``None`` until the
+        # post-mount snapshot block runs.
+        self._window_key = window_key
+        self._default_layout_state: Any = None
+        self._default_layout_geometry: Any = None
 
         # ── QApplication ────────────────────────────────────────────
         app = QtWidgets.QApplication.instance()
@@ -131,6 +175,13 @@ class ViewerWindow:
 
         class _MainWindow(QtWidgets.QMainWindow):  # type: ignore[name-defined]  # Qt lazy-imported
             def closeEvent(self, event):
+                # Persist layout BEFORE on_close so a user callback
+                # that triggers teardown (e.g. flushes selection,
+                # closes resources) doesn't race with saveState.
+                try:
+                    ui_self._save_layout()
+                except Exception:
+                    pass
                 if ui_self._on_close is not None:
                     try:
                         ui_self._on_close()
@@ -224,6 +275,10 @@ class ViewerWindow:
             self._tab_widget.addTab(widget, name)
 
         tabs_dock = QtWidgets.QDockWidget()
+        # objectName lets extension docks tabify with it via DOCK_TABS,
+        # and survives Qt's saveState/restoreState if a layout-
+        # persistence layer is ever added here.
+        tabs_dock.setObjectName(self.DOCK_TABS)
         tabs_dock.setTitleBarWidget(QtWidgets.QWidget())  # hide title bar
         tabs_dock.setMinimumWidth(_p.dock_min_width)
         tabs_dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
@@ -244,6 +299,7 @@ class ViewerWindow:
             console.setFont(QtGui.QFont("Consolas", 9))
             self._console = console
             dock = QtWidgets.QDockWidget("Console")
+            dock.setObjectName(self.DOCK_CONSOLE)
             dock.setFeatures(
                 QtWidgets.QDockWidget.DockWidgetMovable
                 | QtWidgets.QDockWidget.DockWidgetFloatable
@@ -312,17 +368,56 @@ class ViewerWindow:
         self._toolbar = bar
         self._window.addToolBar(QtCore.Qt.LeftToolBarArea, bar)
 
-        # ── Menu bar (only if there are toggleable docks) ───────────
-        view_items = []
+        # ── Extension docks (plan 08 — registry-driven extras) ──────
+        # Mounted before the View menu so each extension's toggle
+        # appears alongside the console / extra_docks toggles in the
+        # initial menu population.
+        self._extension_specs: list[DockSpec] = (
+            list(extension_docks) if extension_docks else []
+        )
+        self._extension_docks: dict[str, Any] = {}
+        for spec in self._extension_specs:
+            self._mount_extension_dock_inner(spec)
+
+        # ── Menu bar (auto-populated toggles + Reset Layout) ────────
+        # Built once if there are toggleable docks OR layout persistence
+        # is enabled (so "Reset Layout" has somewhere to live). Stays
+        # absent in the legacy non-persistent + no-toggleable-docks
+        # case so we don't surface an empty View menu.
+        self._view_menu: Any = None
+        self._view_menu_reset_separator: Any = None
+        toggleable_docks: list[Any] = []
         if self._console_dock is not None:
-            view_items.append(self._console_dock.toggleViewAction())
-        for dock in (extra_docks or []):
-            view_items.append(dock.toggleViewAction())
-        if view_items:
+            toggleable_docks.append(self._console_dock)
+        toggleable_docks.extend(extra_docks or [])
+        for spec in self._extension_specs:
+            dock = self._extension_docks.get(spec.dock_id)
+            if dock is not None:
+                toggleable_docks.append(dock)
+        if toggleable_docks or self._window_key is not None:
             menu_bar = self._window.menuBar()
-            view_menu = menu_bar.addMenu("View")
-            for action in view_items:
-                view_menu.addAction(action)
+            on_reset = (
+                self.reset_layout if self._window_key is not None else None
+            )
+            self._view_menu, self._view_menu_reset_separator = build_view_menu(
+                menu_bar,
+                docks=toggleable_docks,
+                on_reset_layout=on_reset,
+            )
+
+        # ── Capture default layout, then restore prior user layout ──
+        # ``_save_layout`` (called from closeEvent) reads
+        # ``_window_key``; ``_restore_layout`` is a no-op when no key
+        # is set, so the legacy non-persistent path stays free of
+        # QSettings traffic.
+        if self._window_key is not None:
+            try:
+                self._default_layout_state = self._window.saveState()
+                self._default_layout_geometry = self._window.saveGeometry()
+            except Exception:
+                self._default_layout_state = None
+                self._default_layout_geometry = None
+            self._restore_layout()
 
         # ── Status bar ──────────────────────────────────────────────
         self._statusbar = self._window.statusBar()
@@ -360,16 +455,188 @@ class ViewerWindow:
         """Add a tab to the right-side panel (after construction)."""
         self._tab_widget.addTab(widget, name)
 
-    def add_right_bottom_dock(self, title: str, widget) -> None:
-        """Add a dock below the tabs dock on the right side."""
-        QtWidgets = self._QtWidgets
-        QtCore = self._QtCore
-        dock = QtWidgets.QDockWidget(title)
-        dock.setTitleBarWidget(QtWidgets.QWidget())  # hide title bar
-        dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
-        dock.setWidget(widget)
-        self._window.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
-        self._window.splitDockWidget(self._tabs_dock, dock, QtCore.Qt.Vertical)
+    # ------------------------------------------------------------------
+    # Extension docks (plan 08 — registry-driven extras)
+    # ------------------------------------------------------------------
+
+    _BUILTIN_DOCK_IDS = frozenset({DOCK_TABS, DOCK_CONSOLE})
+
+    def add_extension_dock(self, spec: DockSpec) -> Any:
+        """Register and mount an extension dock at runtime.
+
+        Mirrors :meth:`ResultsWindow.add_extension_dock` so mesh /
+        model viewers can add panels through the same registry-driven
+        path. Returns the mounted ``QDockWidget``. If the View menu
+        doesn't yet exist (no prior toggleable docks, no layout
+        persistence), it's created lazily so the new toggle has
+        somewhere to land. The toggle inserts above the Reset Layout
+        separator (when present) so Reset Layout stays pinned at the
+        bottom.
+
+        Raises
+        ------
+        ValueError
+            If ``spec.dock_id`` collides with a built-in dock or a
+            previously-registered extension, or ``spec.tabify_with``
+            doesn't resolve to a mounted ``QDockWidget``.
+        """
+        dock = self._mount_extension_dock_inner(spec)
+        self._extension_specs.append(spec)
+        self._ensure_view_menu()
+        add_view_menu_toggle(
+            self._view_menu,
+            self._view_menu_reset_separator,
+            dock,
+        )
+        return dock
+
+    def _mount_extension_dock_inner(self, spec: DockSpec) -> Any:
+        """Build a ``QDockWidget`` from ``spec`` and dock it on the window.
+
+        Internal helper shared by the constructor's extension-mount
+        loop and :meth:`add_extension_dock`. Validates collisions
+        against the built-in objectNames + previously-mounted
+        extensions, then delegates to :func:`mount_dock_spec`. Does
+        NOT touch ``_extension_specs`` or the View menu — callers
+        handle those.
+        """
+        reserved = self._BUILTIN_DOCK_IDS | set(self._extension_docks)
+        if spec.dock_id in self._BUILTIN_DOCK_IDS:
+            raise ValueError(
+                f"DockSpec.dock_id={spec.dock_id!r} collides with a "
+                f"built-in ViewerWindow dock — pick a different id"
+            )
+        dock = mount_dock_spec(
+            self._window, spec, reserved_ids=reserved,
+        )
+        self._extension_docks[spec.dock_id] = dock
+        return dock
+
+    def extension_dock(self, dock_id: str) -> Any:
+        """Return the ``QDockWidget`` for an extension ``dock_id``.
+
+        Raises ``KeyError`` if no extension is registered under that id.
+        """
+        return self._extension_docks[dock_id]
+
+    # ------------------------------------------------------------------
+    # Layout persistence (parallel to ResultsWindow's mechanism)
+    # ------------------------------------------------------------------
+
+    def _layout_settings(self):
+        """Return the QSettings handle for layout persistence.
+
+        Returns ``None`` when no ``window_key`` was supplied —
+        callers must guard. Lazy import keeps headless-test code paths
+        free of qtpy where the persistence layer isn't exercised.
+        """
+        if self._window_key is None:
+            return None
+        from qtpy.QtCore import QSettings
+        return QSettings("apeGmsh", self._window_key)
+
+    def _save_layout(self) -> None:
+        """Persist the current dock arrangement and window geometry.
+
+        No-op when ``window_key`` is ``None`` — the legacy
+        non-persistent path is preserved for callers (and tests) that
+        don't want QSettings traffic.
+        """
+        settings = self._layout_settings()
+        if settings is None:
+            return
+        try:
+            settings.setValue(
+                "layout/schema_version", self._LAYOUT_SCHEMA_VERSION,
+            )
+            settings.setValue("layout/geometry", self._window.saveGeometry())
+            settings.setValue("layout/state", self._window.saveState())
+        except Exception:
+            pass
+
+    def _restore_layout(self) -> None:
+        """Restore the prior dock arrangement, if any.
+
+        Skips restoration when the stored schema doesn't match the
+        current build — applying a v1 state to a v2 layout produces
+        half-broken arrangements (e.g. tabified docks getting
+        un-tabbed). Discarding the mismatched state silently falls
+        back to the captured defaults.
+        """
+        settings = self._layout_settings()
+        if settings is None:
+            return
+        stored = settings.value("layout/schema_version")
+        try:
+            stored_int = int(stored) if stored is not None else None
+        except (TypeError, ValueError):
+            stored_int = None
+        if stored_int != self._LAYOUT_SCHEMA_VERSION:
+            return
+
+        geom = settings.value("layout/geometry")
+        state = settings.value("layout/state")
+        if geom is not None:
+            try:
+                self._window.restoreGeometry(geom)
+            except Exception:
+                pass
+        if state is not None:
+            try:
+                self._window.restoreState(state)
+            except Exception:
+                pass
+
+    def reset_layout(self) -> None:
+        """Restore the default dock arrangement captured at startup.
+
+        Wired to the "Reset Layout" entry in the View menu when
+        ``window_key`` is set (the entry is disabled otherwise — same
+        contract :class:`ResultsWindow` uses). Re-shows every dock
+        that may have been closed by the user via its title-bar ×
+        button so the reset produces a recognizable arrangement.
+        """
+        if self._default_layout_state is not None:
+            try:
+                self._window.restoreState(self._default_layout_state)
+            except Exception:
+                pass
+        for dock in (
+            self._tabs_dock,
+            self._console_dock,
+            *self._extension_docks.values(),
+        ):
+            if dock is not None:
+                dock.setVisible(True)
+        try:
+            self.set_status("Layout reset to default", 3000)
+        except Exception:
+            pass
+
+    def _ensure_view_menu(self) -> Any:
+        """Lazily create the View menu on the window's menu bar.
+
+        ``__init__`` only builds the menu when there's at least one
+        toggleable dock or layout persistence is enabled;
+        :meth:`add_extension_dock` calls this to materialize the menu
+        the first time a runtime addition needs one. Uses
+        :func:`build_view_menu` so a Reset Layout entry is always
+        present (enabled iff ``window_key`` is set). Idempotent.
+        """
+        if self._view_menu is not None:
+            return self._view_menu
+        menu_bar = self._window.menuBar()
+        if menu_bar is None:
+            return None
+        on_reset = (
+            self.reset_layout if self._window_key is not None else None
+        )
+        self._view_menu, self._view_menu_reset_separator = build_view_menu(
+            menu_bar,
+            docks=[],
+            on_reset_layout=on_reset,
+        )
+        return self._view_menu
 
     def add_toolbar_button(self, tooltip: str, icon_text: str, callback) -> None:
         """Add a button to the toolbar (after construction).

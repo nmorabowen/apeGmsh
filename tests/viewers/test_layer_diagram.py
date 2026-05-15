@@ -362,3 +362,107 @@ def test_set_show_and_fmt_live(layer_results, headless_plotter):
 
     diagram.set_fmt("%.5f")
     assert headless_plotter.scalar_bars["stress_xx"].GetLabelFormat() == "%.5f"
+
+
+# =====================================================================
+# LUT mirror (plan 06)
+# =====================================================================
+
+
+def test_layer_lut_is_none_before_attach(layer_results):
+    results, *_ = layer_results
+    diagram = LayerStackDiagram(_spec(), results)
+    assert diagram.lut is None
+
+
+def test_layer_attach_builds_lut_from_style(layer_results, headless_plotter):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    spec = DiagramSpec(
+        kind="layer_stack",
+        selector=SlabSelector(component="stress_xx"),
+        style=LayerStackStyle(
+            aggregation="mid_layer", cmap="plasma", clim=(-5.0, 5.0),
+        ),
+    )
+    diagram = LayerStackDiagram(spec, results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    lut = diagram.lut
+    assert lut is not None
+    assert lut.array_name == "stress_xx"
+    assert lut.preset == "plasma"
+    assert lut.range == (-5.0, 5.0)
+
+
+def test_layer_attach_lut_picks_up_autofit_clim(
+    layer_results, headless_plotter,
+):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    lut = diagram.lut
+    clim = diagram.current_clim()
+    assert lut.range == clim
+
+
+def test_layer_set_cmap_routes_through_lut(layer_results, headless_plotter):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.set_cmap("turbo")
+    assert diagram.lut.preset == "turbo"
+    assert diagram._runtime_cmap == "turbo"
+
+
+def test_layer_set_clim_routes_through_lut(layer_results, headless_plotter):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.set_clim(-2.0, 7.0)
+    assert diagram.lut.range == (-2.0, 7.0)
+    assert diagram.current_clim() == (-2.0, 7.0)
+
+
+def test_layer_lut_change_updates_actor_mapper(
+    layer_results, headless_plotter,
+):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.lut.set_range(100.0, 200.0)
+    mapper = diagram._actor.GetMapper()
+    sr = mapper.GetScalarRange()
+    assert sr[0] == pytest.approx(100.0)
+    assert sr[1] == pytest.approx(200.0)
+
+
+def test_layer_detach_clears_lut(layer_results, headless_plotter):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    assert diagram.lut is not None
+    diagram.detach()
+    assert diagram.lut is None
+
+
+def test_layer_lut_changes_after_detach_are_noops(
+    layer_results, headless_plotter,
+):
+    results, *_ = layer_results
+    scene = build_fem_scene(results.fem)
+    diagram = LayerStackDiagram(_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    held_lut = diagram.lut
+    diagram.detach()
+    held_lut.set_preset("magma")
+    held_lut.set_range(0.0, 1.0)
