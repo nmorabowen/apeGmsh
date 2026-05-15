@@ -54,7 +54,13 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
 
         self._runtime_scale: Optional[float] = None
         self._runtime_clim: Optional[tuple[float, float]] = None
+        self._runtime_cmap: Optional[str] = None
         self._init_scalar_bar_state()
+
+        # Plan 06 — LUT mirror. Only built when ``use_magnitude_colors``
+        # is True (the no-color path doesn't draw a scalar bar / cmap).
+        self._lut: Any = None
+        self._lut_conn: Any = None
 
         # Axis-locked mode: when ``selector.component`` matches one of
         # ``style.components``, render that axis only and zero the
@@ -180,7 +186,7 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             bar_args = self._scalar_bar_args()
             kwargs.update(
                 scalars="_mag",
-                cmap=style.cmap,
+                cmap=self._runtime_cmap or style.cmap,
                 clim=self._runtime_clim or self._initial_clim,
                 show_scalar_bar=bar_args is not None,
                 scalar_bar_args=bar_args,
@@ -194,6 +200,12 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         actor = plotter.add_mesh(glyph, **kwargs)
         self._actor = actor
         self._actors = [actor]
+
+        # Build the LUT mirror only when the diagram is actually painting
+        # by magnitude — without a scalar mapping there's nothing for the
+        # Color Map Editor to drive.
+        if style.use_magnitude_colors:
+            self._init_lut()
 
     def update_to_step(self, step_index: int) -> None:
         if self._source is None or self._actor is None:
@@ -254,6 +266,13 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         # Drop the magnitude scalar bar before tearing the actor down
         # so it doesn't accumulate across attach/detach cycles.
         self._remove_scalar_bar(self._scalar_bar_title())
+        if self._lut is not None and self._lut_conn is not None:
+            try:
+                self._lut.changed.disconnect(self._lut_conn)
+            except (TypeError, RuntimeError):
+                pass
+        self._lut = None
+        self._lut_conn = None
         self._source = None
         self._actor = None
         self._fem_ids_to_read = None
@@ -277,9 +296,18 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             except Exception:
                 pass
 
+    @property
+    def lut(self) -> Any:
+        """Shared lookup-table mirror; ``None`` when not painting by
+        magnitude or outside attach."""
+        return self._lut
+
     def set_clim(self, vmin: float, vmax: float) -> None:
         if vmin == vmax:
             vmax = vmin + 1.0
+        if self._lut is not None:
+            self._lut.set_range(float(vmin), float(vmax))
+            return
         self._runtime_clim = (float(vmin), float(vmax))
         if self._actor is not None:
             try:
@@ -302,6 +330,10 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         return (lo, hi)
 
     def set_cmap(self, cmap: str) -> None:
+        self._runtime_cmap = cmap
+        if self._lut is not None:
+            self._lut.set_preset(cmap)
+            return
         if self._actor is None:
             return
         try:
@@ -311,6 +343,47 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             mapper = self._actor.GetMapper()
             mapper.SetLookupTable(lut)
             mapper.SetScalarRange(*clim)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # LUT mirror (plan 06)
+    # ------------------------------------------------------------------
+
+    def _init_lut(self) -> None:
+        from ..core._lut_manager import LUT
+
+        style: VectorGlyphStyle = self.spec.style    # type: ignore[assignment]
+        preset = self._runtime_cmap or style.cmap or "viridis"
+        clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
+        try:
+            self._lut = LUT(
+                array_name=self.spec.selector.component,
+                preset=preset,
+                vmin=float(clim[0]),
+                vmax=float(clim[1]),
+                show_scalar_bar=self._effective_show_scalar_bar(),
+            )
+            self._lut_conn = self._lut.changed.connect(self._on_lut_changed)
+        except Exception:
+            self._lut = None
+            self._lut_conn = None
+
+    def _on_lut_changed(self) -> None:
+        if self._lut is None or self._actor is None:
+            return
+        self._runtime_cmap = self._lut.preset
+        self._runtime_clim = (self._lut.vmin, self._lut.vmax)
+        self._apply_lut_to_actor()
+
+    def _apply_lut_to_actor(self) -> None:
+        if self._actor is None or self._lut is None:
+            return
+        try:
+            table = self._lut.to_pyvista_lookup_table()
+            mapper = self._actor.GetMapper()
+            mapper.SetLookupTable(table)
+            mapper.SetScalarRange(self._lut.vmin, self._lut.vmax)
         except Exception:
             pass
 
