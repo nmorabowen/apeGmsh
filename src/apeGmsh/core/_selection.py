@@ -7,6 +7,7 @@ through ``m.model.queries.select()``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterable
 
@@ -14,6 +15,12 @@ import numpy as np
 import gmsh
 
 DimTag = tuple[int, int]
+
+_AXIS_VECTORS = {
+    "x": np.array([1.0, 0.0, 0.0]),
+    "y": np.array([0.0, 1.0, 0.0]),
+    "z": np.array([0.0, 0.0, 1.0]),
+}
 
 if TYPE_CHECKING:
     from ._model_queries import _Queries
@@ -156,10 +163,15 @@ def _select_impl(dimtags: Iterable[DimTag], *, on=None, crossing=None,
              [('on', on), ('crossing', crossing),
               ('not_on', not_on), ('not_crossing', not_crossing)]
              if val is not None]
-    if len(given) != 1:
+    if len(given) > 1:
         raise ValueError(
-            "Pass exactly one of on=, crossing=, not_on=, not_crossing=."
+            "Pass at most one of on=, crossing=, not_on=, not_crossing=."
         )
+    if not given:
+        # No predicate — return the resolved entities unfiltered.  Lets
+        # callers use queries.select("name", dim=N) as a "resolve only"
+        # entry point that returns a chainable Selection.
+        return Selection(list(dimtags), _queries=_queries)
     label, spec = given[0]
     primitive   = _parse_primitive(spec)
     base_mode   = 'on' if 'on' in label else 'crossing'
@@ -177,6 +189,100 @@ def _select_impl(dimtags: Iterable[DimTag], *, on=None, crossing=None,
             result.append((d, t))
 
     return Selection(result, _queries=_queries)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Direction helpers — for Selection.parallel_to() and .normal_along()
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _parse_direction(d) -> np.ndarray:
+    """Resolve an axis alias or 3-vector to a unit vector."""
+    if isinstance(d, str):
+        key = d.lower()
+        if key not in _AXIS_VECTORS:
+            raise ValueError(
+                f"Unknown axis alias {d!r}. Use 'x', 'y', 'z', or a 3-vector."
+            )
+        return _AXIS_VECTORS[key].copy()
+    v = np.asarray(d, dtype=float).reshape(-1)
+    if v.shape != (3,):
+        raise ValueError(f"Direction must be a 3-vector; got shape {v.shape}.")
+    n = np.linalg.norm(v)
+    if n < 1e-12:
+        raise ValueError("Direction vector has zero magnitude.")
+    return v / n
+
+
+def _chord_direction(dt: DimTag) -> np.ndarray:
+    """Endpoint-to-endpoint unit vector for a curve (dim=1 entity)."""
+    bnd = gmsh.model.getBoundary([dt], oriented=False, recursive=False)
+    if len(bnd) < 2:
+        raise ValueError(
+            f"Curve {dt} has fewer than 2 endpoints (closed curve?); "
+            "cannot compute a chord direction."
+        )
+    p0 = np.array(gmsh.model.getValue(0, bnd[0][1], []), dtype=float)
+    p1 = np.array(gmsh.model.getValue(0, bnd[1][1], []), dtype=float)
+    v = p1 - p0
+    n = np.linalg.norm(v)
+    if n < 1e-12:
+        raise ValueError(f"Curve {dt} has coincident endpoints.")
+    return v / n
+
+
+def _face_normal(dt: DimTag) -> np.ndarray:
+    """Unit normal of a flat surface, computed from 3 boundary points.
+
+    Works for both the built-in and OCC kernels (no kernel-specific calls).
+    For a flat face this is exact.  For curved faces it returns the normal
+    of the chord plane through 3 sampled boundary points — a coarse
+    approximation; prefer ``on=`` predicates for curved surfaces.
+    """
+    # Collect every boundary point of the surface (boundary curves' endpoints).
+    bnd_curves = gmsh.model.getBoundary([dt], oriented=False, recursive=False)
+    pt_tags: list[int] = []
+    seen: set[int] = set()
+    for cd, ct in bnd_curves:
+        for pd, pt in gmsh.model.getBoundary(
+            [(cd, ct)], oriented=False, recursive=False,
+        ):
+            if pt not in seen:
+                seen.add(pt)
+                pt_tags.append(pt)
+    if len(pt_tags) < 3:
+        raise ValueError(
+            f"Surface {dt} has fewer than 3 boundary points; "
+            "cannot compute a normal."
+        )
+
+    coords = [np.array(gmsh.model.getValue(0, pt, []), dtype=float)
+              for pt in pt_tags]
+    p0 = coords[0]
+    v1 = coords[1] - p0
+    # Find a third point not collinear with p0, p1.
+    for p in coords[2:]:
+        v2 = p - p0
+        n = np.cross(v1, v2)
+        nlen = np.linalg.norm(n)
+        if nlen > 1e-12:
+            return n / nlen
+    raise ValueError(
+        f"Surface {dt}: boundary points are collinear; cannot compute normal."
+    )
+
+
+def _require_dim(sel: "Selection", expected_dim: int, *, method: str) -> None:
+    """Raise an educational error if ``sel`` contains entities of other dims."""
+    bad = [dt for dt in sel if dt[0] != expected_dim]
+    if bad:
+        preview = bad[:3] + (["..."] if len(bad) > 3 else [])
+        raise ValueError(
+            f"Selection.{method}() requires dim={expected_dim} entities, "
+            f"but got {len(bad)} entity(ies) of other dims: {preview}\n"
+            f"Either narrow your Selection first, e.g.\n"
+            f"    queries.select('your_target', dim={expected_dim}).{method}(...)\n"
+            f"or filter by dim before calling this method."
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -271,6 +377,89 @@ class Selection(list):
             tags = [t for dim, t in self if dim == d]
             session.physical.add(d, tags, name=name)
         return self
+
+    # ------------------------------------------------------------------
+    # Direction-based filters — dim-restricted
+    # ------------------------------------------------------------------
+
+    def parallel_to(
+        self,
+        direction: "str | tuple[float, float, float] | np.ndarray",
+        *,
+        angle_tol: float = 1.0,
+    ) -> "Selection":
+        """Keep curves whose endpoint chord is parallel to ``direction``.
+
+        Only meaningful for curves (dim=1).  Raises ``ValueError`` if the
+        Selection contains entities of any other dim.
+
+        Parameters
+        ----------
+        direction : str or 3-vector
+            ``"x"``, ``"y"``, ``"z"`` for axis aliases, or any non-zero
+            3-vector for an arbitrary direction.  Anti-parallel matches
+            count as parallel — a z-edge with reversed endpoint order is
+            still a z-edge.
+        angle_tol : float, default 1.0
+            Maximum angle (in degrees) between the curve's chord direction
+            and ``direction`` for the curve to be kept.
+
+        Returns
+        -------
+        Selection
+            New Selection of curves that match.
+
+        Example
+        -------
+        ::
+
+            edges = m.model.queries.select("layer_1", dim=1)
+            verticals = edges.parallel_to("z")
+            obliques  = edges.parallel_to((1, 1, 0), angle_tol=2.0)
+
+            m.mesh.structured.set_transfinite_curve(verticals.tags(), n=21)
+        """
+        _require_dim(self, 1, method="parallel_to")
+        target = _parse_direction(direction)
+        cos_tol = math.cos(math.radians(angle_tol))
+        kept = [
+            dt for dt in self
+            if abs(float(_chord_direction(dt) @ target)) >= cos_tol
+        ]
+        return Selection(kept, _queries=self._queries)
+
+    def normal_along(
+        self,
+        direction: "str | tuple[float, float, float] | np.ndarray",
+        *,
+        angle_tol: float = 1.0,
+    ) -> "Selection":
+        """Keep surfaces whose face normal is along ``direction``.
+
+        Only meaningful for surfaces (dim=2).  Raises ``ValueError`` if
+        the Selection contains entities of any other dim.
+
+        Same direction grammar and tolerance as :meth:`parallel_to`.  The
+        normal is computed from three boundary points — exact for flat
+        faces, an approximation for curved faces (prefer ``on=`` for those).
+        Anti-parallel matches count as parallel.
+
+        Example
+        -------
+        ::
+
+            faces = m.model.queries.select("layer_1", dim=2)
+            horizontals = faces.normal_along("z")
+            verticals   = faces.normal_along("x").select(...)
+        """
+        _require_dim(self, 2, method="normal_along")
+        target = _parse_direction(direction)
+        cos_tol = math.cos(math.radians(angle_tol))
+        kept = [
+            dt for dt in self
+            if abs(float(_face_normal(dt) @ target)) >= cos_tol
+        ]
+        return Selection(kept, _queries=self._queries)
 
     # ── Set operations ──────────────────────────────────────────────────────
 

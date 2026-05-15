@@ -79,6 +79,48 @@ Symmetric helpers exist for each dimension:
 `select_all_volumes()`. Use `select_all()` (no args) to get **every**
 entity across all dimensions.
 
+#### Direction-based filters — `parallel_to` and `normal_along`
+
+For dim-restricted filtering by *direction* (not position), Selection
+offers two methods:
+
+```python
+# Curves: keep only edges whose chord is along a direction
+edges = m.model.queries.select("box", dim=1)
+verticals = edges.parallel_to("z")                    # axis alias
+diagonals = edges.parallel_to((1, 1, 0), angle_tol=2) # arbitrary vector
+
+# Surfaces: keep only faces whose normal is along a direction
+faces = m.model.queries.select("box", dim=2)
+horizontals = faces.normal_along("z")
+```
+
+Both accept axis aliases (`"x"` / `"y"` / `"z"`) or any non-zero 3-vector
+(normalized internally; anti-parallel counts as parallel). Default
+`angle_tol` is 1.0°. The methods are **dim-restricted**: `parallel_to`
+raises if the Selection contains non-curve entities, `normal_along` raises
+for non-surface entities — with a fix-it suggestion in the error.
+
+They chain with the existing position predicates:
+
+```python
+# Vertical edges on the x = 0 wall
+(m.model.queries
+    .select("box", dim=1)
+    .parallel_to("z")
+    .select(on={"x": 0}))
+```
+
+#### Resolve-only `select(...)` — no predicate required
+
+`queries.select("name", dim=N)` with **no** geometric predicate returns
+the entities under that name as a chainable Selection — useful as an
+entry point into the method-style filters:
+
+```python
+m.model.queries.select("box", dim=1).parallel_to("z").to_physical("verticals")
+```
+
 ::: apeGmsh.core._selection.Selection
 
 ### Geometric primitives (internal)
