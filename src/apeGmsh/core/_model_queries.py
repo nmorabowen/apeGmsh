@@ -618,6 +618,25 @@ class _Queries:
     # Geometric selection
     # ------------------------------------------------------------------
 
+    def _select_all(self, dim: int) -> Selection:
+        return Selection(gmsh.model.getEntities(dim), _queries=self)
+
+    def select_all_points(self) -> Selection:
+        """Every point (dim=0) in the model, as a chainable Selection."""
+        return self._select_all(0)
+
+    def select_all_curves(self) -> Selection:
+        """Every curve (dim=1) in the model, as a chainable Selection."""
+        return self._select_all(1)
+
+    def select_all_surfaces(self) -> Selection:
+        """Every surface (dim=2) in the model, as a chainable Selection."""
+        return self._select_all(2)
+
+    def select_all_volumes(self) -> Selection:
+        """Every volume (dim=3) in the model, as a chainable Selection."""
+        return self._select_all(3)
+
     def select(
         self,
         tags: "TagsLike | Selection | str",

@@ -52,6 +52,32 @@ left_bottom = (m.model.queries
 m.mesh.structured.set_transfinite_curve(bottom.tags(), n=11)
 ```
 
+#### Starting from every entity of a dimension
+
+When parsing an imported `.geo` / STEP file with no labels yet, use the
+`select_all_*` shortcuts as your starting point:
+
+```python
+# Every volume in the model, as a chainable Selection
+m.model.queries.select_all_volumes().to_physical("solids")
+
+# Volumes the plane z = -15 slices through
+(m.model.queries
+    .select_all_volumes()
+    .select(crossing={"z": -15})
+    .to_physical("crossers"))
+
+# The floor (surfaces lying on z = 0)
+(m.model.queries
+    .select_all_surfaces()
+    .select(on={"z": 0})
+    .to_physical("base"))
+```
+
+Symmetric helpers exist for each dimension:
+`select_all_points()`, `select_all_curves()`, `select_all_surfaces()`,
+`select_all_volumes()`.
+
 ::: apeGmsh.core._selection.Selection
 
 ### Geometric primitives (internal)
