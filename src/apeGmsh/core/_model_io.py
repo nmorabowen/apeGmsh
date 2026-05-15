@@ -548,3 +548,54 @@ class _IO:
         dim_summary = {d: len(ts) for d, ts in result.items()}
         self._model._log(f"loaded MSH <- {file_path.name}  {dim_summary}")
         return result
+
+    def load_geo(
+        self,
+        file_path: Path | str,
+    ) -> dict[int, list[Tag]]:
+        """
+        Import a Gmsh ``.geo`` script using ``gmsh.merge``.
+
+        The script is executed in the active model, so any ``Mesh N;``
+        statements inside the file will run.  The CAD kernel used for
+        synchronization is auto-detected by scanning the file head for
+        ``SetFactory("OpenCASCADE")``:
+
+        - found  -> ``gmsh.model.occ.synchronize()``
+        - absent -> ``gmsh.model.geo.synchronize()``
+
+        Parameters
+        ----------
+        file_path : Path or str
+            Path to the ``.geo`` file.
+
+        Returns
+        -------
+        dict[int, list[Tag]]
+            ``{dim: [tag, ...]}`` of all entities after merge.
+        """
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"GEO file not found: {file_path}")
+
+        head = file_path.read_text(encoding="utf-8", errors="ignore")[:4096]
+        use_occ = "SetFactory(\"OpenCASCADE\")" in head
+
+        gmsh.merge(str(file_path))
+        if use_occ:
+            gmsh.model.occ.synchronize()
+            kernel = "occ"
+        else:
+            gmsh.model.geo.synchronize()
+            kernel = "geo"
+
+        result: dict[int, list[Tag]] = {}
+        for d in range(4):
+            for dim, tag in gmsh.model.getEntities(d):
+                result.setdefault(dim, []).append(tag)
+
+        dim_summary = {d: len(ts) for d, ts in result.items()}
+        self._model._log(
+            f"loaded GEO <- {file_path.name} [{kernel}]  {dim_summary}"
+        )
+        return result
