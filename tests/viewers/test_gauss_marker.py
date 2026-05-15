@@ -309,6 +309,121 @@ def test_resolve_picked_cell_maps_glyph_cell_to_gp(
     assert diagram.resolve_picked_cell(-1) is None
 
 
+# =====================================================================
+# LUT mirror (plan 06)
+# =====================================================================
+
+
+def _make_gauss_spec(**style_kwargs):
+    return DiagramSpec(
+        kind="gauss_marker",
+        selector=SlabSelector(component="stress_xx"),
+        style=GaussMarkerStyle(**style_kwargs),
+    )
+
+
+def test_gauss_lut_is_none_before_attach(gauss_results):
+    results, _ = gauss_results
+    diagram = GaussPointDiagram(_make_gauss_spec(), results)
+    assert diagram.lut is None
+
+
+def test_gauss_attach_builds_lut_from_style(
+    gauss_results, headless_plotter,
+):
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    spec = _make_gauss_spec(cmap="plasma", clim=(-5.0, 5.0))
+    diagram = GaussPointDiagram(spec, results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    lut = diagram.lut
+    assert lut is not None
+    assert lut.array_name == "stress_xx"
+    assert lut.preset == "plasma"
+    assert lut.range == (-5.0, 5.0)
+
+
+def test_gauss_attach_lut_picks_up_autofit_clim(
+    gauss_results, headless_plotter,
+):
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    diagram = GaussPointDiagram(_make_gauss_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    lut = diagram.lut
+    clim = diagram.current_clim()
+    assert lut.range == clim
+
+
+def test_gauss_set_cmap_routes_through_lut(
+    gauss_results, headless_plotter,
+):
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    diagram = GaussPointDiagram(_make_gauss_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.set_cmap("turbo")
+    assert diagram.lut.preset == "turbo"
+    assert diagram._runtime_cmap == "turbo"
+
+
+def test_gauss_set_clim_routes_through_lut(
+    gauss_results, headless_plotter,
+):
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    diagram = GaussPointDiagram(_make_gauss_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.set_clim(-2.0, 7.0)
+    assert diagram.lut.range == (-2.0, 7.0)
+    assert diagram.current_clim() == (-2.0, 7.0)
+
+
+def test_gauss_lut_change_updates_actor_mapper(
+    gauss_results, headless_plotter,
+):
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    diagram = GaussPointDiagram(_make_gauss_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+
+    diagram.lut.set_range(100.0, 200.0)
+    mapper = diagram._actor.GetMapper()
+    sr = mapper.GetScalarRange()
+    assert sr[0] == pytest.approx(100.0)
+    assert sr[1] == pytest.approx(200.0)
+
+
+def test_gauss_detach_clears_lut(
+    gauss_results, headless_plotter,
+):
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    diagram = GaussPointDiagram(_make_gauss_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    assert diagram.lut is not None
+    diagram.detach()
+    assert diagram.lut is None
+
+
+def test_gauss_lut_changes_after_detach_are_noops(
+    gauss_results, headless_plotter,
+):
+    results, _ = gauss_results
+    scene = build_fem_scene(results.fem)
+    diagram = GaussPointDiagram(_make_gauss_spec(), results)
+    diagram.attach(headless_plotter, results.fem, scene)
+    held_lut = diagram.lut
+    diagram.detach()
+    # Must not raise.
+    held_lut.set_preset("magma")
+    held_lut.set_range(0.0, 1.0)
+
+
 def test_set_show_and_fmt_live(gauss_results, headless_plotter):
     results, _ = gauss_results
     scene = build_fem_scene(results.fem)
