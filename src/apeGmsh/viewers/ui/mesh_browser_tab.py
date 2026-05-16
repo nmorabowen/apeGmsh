@@ -2,19 +2,27 @@
 MeshBrowserTab — Visibility filtering by physical group and element type.
 
 Two collapsible categories ("Physical Groups" and "Element Types"), each
-listing items with a checkbox and an element count. Unchecking an item
-hides every BRep entity that belongs to it.
+listing items with a ParaView-style eye icon and an element count.
+Clicking the eye toggles visibility for every BRep entity that belongs
+to that group / type.
 
 Group / type membership is computed entirely from ``MeshSceneData`` —
 no Gmsh round-trip. Hiding is delegated to ``VisibilityManager.set_hidden``,
 which recomputes the visible cells in one pass; the tab is responsible
 for computing the full unioned hidden set on each toggle.
+
+The pre-plan-03 implementation used a ``Qt.CheckState`` checkbox on
+each leaf row. Replaced 2026-05-16 with the shared
+:class:`EyeIconDelegate` so all three viewers (results / mesh /
+model) speak the same visibility-UI vocabulary.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
 from qtpy import QtWidgets, QtCore
+
+from ._eye_icon_delegate import ROLE_VISIBLE, resolve_delegate_class
 
 if TYPE_CHECKING:
     from apeGmsh._types import DimTag
@@ -35,7 +43,6 @@ class MeshBrowserTab:
     ) -> None:
         self._scene = scene
         self._on_hidden_changed = on_hidden_changed
-        self._suspend_signals = False
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -48,23 +55,26 @@ class MeshBrowserTab:
         self._tree.setRootIsDecorated(True)
         layout.addWidget(self._tree)
 
+        # Eye-icon delegate on column 0 — shared with results.viewer +
+        # model.viewer for visibility-UI consistency. Tap on the
+        # ``ROLE_VISIBLE`` cell to toggle the row.
+        delegate_cls = resolve_delegate_class()
+        self._eye_delegate = delegate_cls(self._tree)
+        self._eye_delegate.icon_clicked.connect(self._on_eye_clicked)
+        self._tree.setItemDelegateForColumn(0, self._eye_delegate)
+
         self._populate()
-        self._tree.itemChanged.connect(self._on_item_changed)
 
     # ------------------------------------------------------------------
     # Population
     # ------------------------------------------------------------------
 
     def _populate(self) -> None:
-        self._suspend_signals = True
-        try:
-            self._populate_groups()
-            self._populate_types()
-            self._tree.expandAll()
-            for col in range(self._tree.columnCount()):
-                self._tree.resizeColumnToContents(col)
-        finally:
-            self._suspend_signals = False
+        self._populate_groups()
+        self._populate_types()
+        self._tree.expandAll()
+        for col in range(self._tree.columnCount()):
+            self._tree.resizeColumnToContents(col)
 
     def _populate_groups(self) -> None:
         scene = self._scene
@@ -81,7 +91,7 @@ class MeshBrowserTab:
             item = QtWidgets.QTreeWidgetItem(root)
             item.setText(0, name)
             item.setText(1, f"{n_elems:,}")
-            item.setCheckState(0, QtCore.Qt.Checked)
+            item.setData(0, ROLE_VISIBLE, True)
             item.setData(0, _ROLE_DTS, tuple(breps))
 
     def _populate_types(self) -> None:
@@ -102,19 +112,24 @@ class MeshBrowserTab:
             item = QtWidgets.QTreeWidgetItem(root)
             item.setText(0, type_cat)
             item.setText(1, f"{n_elems:,}")
-            item.setCheckState(0, QtCore.Qt.Checked)
+            item.setData(0, ROLE_VISIBLE, True)
             item.setData(0, _ROLE_DTS, tuple(breps))
 
     # ------------------------------------------------------------------
     # Toggle handling
     # ------------------------------------------------------------------
 
-    def _on_item_changed(self, item, _column: int) -> None:
-        if self._suspend_signals:
+    def _on_eye_clicked(self, item) -> None:
+        """Flip the row's ``ROLE_VISIBLE`` and re-fire the hidden set."""
+        if item is None or item.data(0, _ROLE_DTS) is None:
             return
-        # Only leaf items carry DimTag data
-        if item.data(0, _ROLE_DTS) is None:
-            return
+        new_state = not bool(item.data(0, ROLE_VISIBLE))
+        item.setData(0, ROLE_VISIBLE, new_state)
+        # Force the delegate to repaint this row immediately.
+        try:
+            self._tree.viewport().update()
+        except Exception:
+            pass
         self._fire()
 
     def _fire(self) -> None:
@@ -123,7 +138,7 @@ class MeshBrowserTab:
             root = self._tree.topLevelItem(i)
             for j in range(root.childCount()):
                 child = root.child(j)
-                if child.checkState(0) == QtCore.Qt.Unchecked:
+                if not bool(child.data(0, ROLE_VISIBLE)):
                     dts = child.data(0, _ROLE_DTS)
                     if dts:
                         hidden.update(dts)

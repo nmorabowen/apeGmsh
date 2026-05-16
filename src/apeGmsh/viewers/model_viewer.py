@@ -218,6 +218,7 @@ class ModelViewer:
                 # Switch to the new group (loads picks from staged)
                 sel.set_active_group(n)
                 browser.refresh()
+                outline.refresh()
                 if current_picks:
                     win.set_status(
                         f"Group '{n}' created with {len(current_picks)} entities"
@@ -234,6 +235,7 @@ class ModelViewer:
             if ok and new_name.strip():
                 sel.rename_group(old_name, new_name.strip())
                 browser.refresh()
+                outline.refresh()
 
         def _on_delete_group(name: str):
             from qtpy import QtWidgets
@@ -249,11 +251,13 @@ class ModelViewer:
                 from .core.selection import _delete_group_by_name
                 _delete_group_by_name(name)
                 browser.refresh()
+                outline.refresh()
                 win.set_status(f"Deleted group: {name}")
 
         def _on_group_activated(name: str):
             sel.set_active_group(name)
             browser.refresh()
+            outline.refresh()
             n = len(sel.picks)
             win.set_status(f"Active group: {name} ({n} entities)")
 
@@ -739,13 +743,40 @@ class ModelViewer:
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
+        # Late-bind the eye-icon delegate on the Browser tab now that
+        # the visibility manager exists. (Browser is constructed early
+        # in show(); the manager needs the registry + plotter built
+        # below it.)
+        browser.bind_vis_mgr(vis_mgr)
         from .ui.preferences_manager import PREFERENCES as _PREF_DT
         pick_engine = PickEngine(
             plotter, registry, drag_threshold=_PREF_DT.current.drag_threshold,
         )
 
-        # ── Parts tree panel (needs registry) ──────────────────────
+        # ── Left-rail outline tree — primary navigation ────────────
+        # ParaView-style alternative to the right-side Browser tab.
+        # Lists Physical Groups + Parts with eye-icon visibility and
+        # ActiveObjects-aware row selection. The Browser tab still
+        # exists during this transition; users can compare and
+        # eventually we'll deprecate one.
         parts_reg = getattr(self._parent, 'parts', None)
+        from .ui._model_outline_tree import ModelOutlineTree
+        outline = ModelOutlineTree(
+            selection=sel,
+            vis_mgr=vis_mgr,
+            parts_registry=parts_reg,
+            on_group_activated=_on_group_activated,
+            on_entity_toggled=lambda dt: sel.toggle(dt),
+            on_new_group=_on_new_group,
+            on_rename_group=_on_rename_group,
+            on_delete_group=_on_delete_group,
+        )
+        win.add_extension_dock(DockSpec(
+            dock_id="dock_model_outline",
+            title="Outline",
+            factory=lambda _p: outline.widget,
+            default_area="left",
+        ))
         parts_tree = None
         if parts_reg is not None:
             def _parts_select_only(dts):
@@ -835,6 +866,7 @@ class ModelViewer:
                 if parts_tree is not None:
                     parts_tree.refresh()
                 browser.refresh()
+                outline.refresh()
                 sel_tree.update(sel.picks)
                 info_panel.refresh()
 
@@ -930,6 +962,7 @@ class ModelViewer:
         win.on_theme_changed(lambda _p: tn_overlay.refresh_theme())
         sel.on_changed.append(lambda: sel_tree.update(sel.picks))
         sel.on_changed.append(lambda: browser.update_active())
+        sel.on_changed.append(lambda: outline.update_active())
         if parts_tree is not None:
             sel.on_changed.append(
                 lambda: parts_tree.highlight_part_for_entity(sel.picks[-1])

@@ -12,8 +12,11 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import gmsh
 
+from ._eye_icon_delegate import ROLE_VISIBLE, resolve_delegate_class
+
 if TYPE_CHECKING:
     from ..core.selection import SelectionState
+    from ..core.visibility import VisibilityManager
 
 
 def _qt():
@@ -58,6 +61,12 @@ class BrowserTab:
         self._on_hide = on_hide
         self._on_isolate = on_isolate
         self._on_reveal_all = on_reveal_all
+        # ParaView-style eye-icon visibility. Wired by
+        # :meth:`bind_vis_mgr` after construction because the
+        # ``VisibilityManager`` is created later in
+        # ``ModelViewer.show()`` (it needs the registry + plotter).
+        self._vis_mgr: "VisibilityManager | None" = None
+        self._eye_delegate: Any = None
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -90,6 +99,26 @@ class BrowserTab:
 
         # Populate
         self.refresh()
+
+    def bind_vis_mgr(self, vis_mgr: "VisibilityManager") -> None:
+        """Late-binding hook — wires the eye-icon visibility column.
+
+        ``ModelViewer.show()`` creates the visibility manager AFTER
+        the BrowserTab (the manager needs the actor registry and
+        plotter, both of which are built later in the same method).
+        Calling this hook installs the eye-icon delegate, subscribes
+        the tab to the manager's ``on_changed`` chain, and stamps
+        ``ROLE_VISIBLE`` on every existing row.
+        """
+        if self._vis_mgr is not None:
+            return    # already bound — idempotent
+        self._vis_mgr = vis_mgr
+        delegate_cls = resolve_delegate_class()
+        self._eye_delegate = delegate_cls(self._tree)
+        self._eye_delegate.icon_clicked.connect(self._on_eye_clicked)
+        self._tree.setItemDelegateForColumn(0, self._eye_delegate)
+        vis_mgr.on_changed.append(self._refresh_eye_states)
+        self._refresh_eye_states()
 
     def refresh(self) -> None:
         """Full rebuild of the tree from Gmsh physical groups.
@@ -138,6 +167,8 @@ class BrowserTab:
             item.setText(0, name)
             item.setText(1, str(len(members)))
             item.setData(0, 0x0100, ("group", name))
+            if self._vis_mgr is not None:
+                item.setData(0, ROLE_VISIBLE, self._group_is_visible(members))
 
             if name == active:
                 item.setForeground(
@@ -156,6 +187,12 @@ class BrowserTab:
                 child = QtWidgets.QTreeWidgetItem(item)
                 child.setText(0, f"{dim_labels.get(dim, '?')} {tag}")
                 child.setData(0, 0x0100, ("entity", (dim, tag)))
+                if self._vis_mgr is not None:
+                    child.setData(
+                        0,
+                        ROLE_VISIBLE,
+                        not self._vis_mgr.is_hidden((dim, tag)),
+                    )
 
             self._group_items[name] = item
 
@@ -285,6 +322,91 @@ class BrowserTab:
         active = self._selection.active_group
         if active and self._on_delete_group:
             self._on_delete_group(active)
+
+    # ------------------------------------------------------------------
+    # Eye-icon visibility (ParaView-style — plan 03 v2 follow-up)
+    # ------------------------------------------------------------------
+
+    def _group_is_visible(self, members: list[tuple[int, int]]) -> bool:
+        """Return True if ANY member is currently visible. Matches the
+        union semantics ``results.viewer``'s outline uses for parent
+        rows. Empty groups read as visible so the eye doesn't look
+        disabled on a brand-new (empty) group."""
+        if not members or self._vis_mgr is None:
+            return True
+        return any(not self._vis_mgr.is_hidden(dt) for dt in members)
+
+    def _on_eye_clicked(self, item) -> None:
+        """Toggle visibility for the clicked row.
+
+        Group rows hide / unhide every member; entity rows toggle just
+        the one. The manager's ``set_hidden`` rebuild + ``on_changed``
+        fire trigger :meth:`_refresh_eye_states` to repaint the tree.
+        """
+        if item is None or self._vis_mgr is None:
+            return
+        data = item.data(0, 0x0100)
+        if not data:
+            return
+        kind = data[0]
+        current_hidden = set(self._vis_mgr.hidden)
+        if kind == "group":
+            members = []
+            for i in range(item.childCount()):
+                cd = item.child(i).data(0, 0x0100)
+                if cd and cd[0] == "entity":
+                    members.append(cd[1])
+            if not members:
+                return
+            visible_now = self._group_is_visible(members)
+            if visible_now:
+                current_hidden.update(members)
+            else:
+                current_hidden.difference_update(members)
+            self._vis_mgr.set_hidden(current_hidden)
+        elif kind == "entity":
+            dt = data[1]
+            if dt in current_hidden:
+                current_hidden.discard(dt)
+            else:
+                current_hidden.add(dt)
+            self._vis_mgr.set_hidden(current_hidden)
+
+    def _refresh_eye_states(self) -> None:
+        """Update every row's ``ROLE_VISIBLE`` from the manager.
+
+        Called via ``vis_mgr.on_changed`` — covers programmatic
+        visibility changes (Hide / Isolate / Reveal all from the
+        context menu) so the eye icons stay in sync without a full
+        tree rebuild.
+        """
+        if self._vis_mgr is None:
+            return
+        for i in range(self._tree.topLevelItemCount()):
+            item = self._tree.topLevelItem(i)
+            data = item.data(0, 0x0100)
+            if data and data[0] == "group":
+                members = []
+                for j in range(item.childCount()):
+                    cd = item.child(j).data(0, 0x0100)
+                    if cd and cd[0] == "entity":
+                        members.append(cd[1])
+                item.setData(
+                    0, ROLE_VISIBLE, self._group_is_visible(members),
+                )
+                for j in range(item.childCount()):
+                    child = item.child(j)
+                    cd = child.data(0, 0x0100)
+                    if cd and cd[0] == "entity":
+                        child.setData(
+                            0,
+                            ROLE_VISIBLE,
+                            not self._vis_mgr.is_hidden(cd[1]),
+                        )
+        try:
+            self._tree.viewport().update()
+        except Exception:
+            pass
 
 
 __all__ = ["BrowserTab"]
