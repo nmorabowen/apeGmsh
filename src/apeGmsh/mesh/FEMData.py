@@ -324,9 +324,9 @@ class NodeComposite:
             Partition ID (intersection filter).
         dim : int, optional
             Restrict *pg* / *label* / *target* lookup to a single
-            dimension. Useful when a name spans multiple dims
-            (e.g. a volume + its bounding faces) and you want only
-            one slice.
+            dimension. Useful for a multi-dim *label* (e.g. one
+            covering a volume + its bounding faces) when you want
+            only one slice; physical groups are single-dim already.
 
         Returns
         -------
@@ -408,16 +408,19 @@ class NodeComposite:
                 f"got {type(t).__name__}: {t!r}"
             )
         # String — try label, then PG, then part label (matches the
-        # LoadsComposite._resolve_target precedence chain).
+        # LoadsComposite._resolve_target precedence chain).  Catch only
+        # KeyError ("not found at this tier"): a string node lookup
+        # never raises ValueError, so a ValueError here is a real bug
+        # and must NOT silently shadow the tier with a same-named PG.
         try:
             return (self.labels.node_ids(t, dim=dim),
                     self.labels.node_coords(t, dim=dim))
-        except (KeyError, ValueError):
+        except KeyError:
             pass
         try:
             return (self.physical.node_ids(t, dim=dim),
                     self.physical.node_coords(t, dim=dim))
-        except (KeyError, ValueError):
+        except KeyError:
             pass
         # Part labels are not dim-scoped; only honour this branch when
         # the caller did not restrict by dim.
@@ -793,7 +796,12 @@ class ElementComposite:
                 f"target items must be strings or (dim, tag) tuples, "
                 f"got {type(t).__name__}: {t!r}"
             )
-        # String — label -> PG -> part, matching LoadsComposite
+        # String — label -> PG -> part, matching LoadsComposite.
+        # ValueError is intentionally tolerated here (unlike the node
+        # path): element_ids() raises ValueError for a dim-0 group
+        # ("no element data"), and a points-only label legitimately
+        # falling through to a same-named PG that *does* have elements
+        # is the desired behaviour.
         try:
             return {int(x) for x in self.labels.element_ids(t)}
         except (KeyError, ValueError):

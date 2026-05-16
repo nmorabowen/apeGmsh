@@ -860,6 +860,15 @@ class ConstraintsComposite:
         from ._helpers import resolve_to_tags
         m_tags = resolve_to_tags(master, dim=0, session=self._parent)
         s_tags = resolve_to_tags(slave,  dim=2, session=self._parent)
+        if len(m_tags) != 1:
+            raise ValueError(
+                f"node_to_surface master {master!r} resolved to "
+                f"{len(m_tags)} dim-0 entities {m_tags} — the master "
+                f"must identify exactly one reference point.")
+        if not s_tags:
+            raise ValueError(
+                f"node_to_surface slave {slave!r} resolved to no "
+                f"dim-2 surface entities.")
         master_tag = m_tags[0]
 
         if name is None:
@@ -928,6 +937,15 @@ class ConstraintsComposite:
         from ._helpers import resolve_to_tags
         m_tags = resolve_to_tags(master, dim=0, session=self._parent)
         s_tags = resolve_to_tags(slave,  dim=2, session=self._parent)
+        if len(m_tags) != 1:
+            raise ValueError(
+                f"node_to_surface_spring master {master!r} resolved "
+                f"to {len(m_tags)} dim-0 entities {m_tags} — the "
+                f"master must identify exactly one reference point.")
+        if not s_tags:
+            raise ValueError(
+                f"node_to_surface_spring slave {slave!r} resolved to "
+                f"no dim-2 surface entities.")
         master_tag = m_tags[0]
 
         if name is None:
@@ -1105,7 +1123,17 @@ class ConstraintsComposite:
     # Private dispatch
     # ------------------------------------------------------------------
     def _resolve_nodes(self, label, role, defn, node_map, all_nodes):
+        """Resolve a constraint role to its mesh-node set — fail loud.
+
+        Explicit ``{role}_entities`` are resolved strictly: a Gmsh
+        failure or a zero-node result raises (a stale/wrong-dim tag
+        must not be swallowed).  Otherwise the part ``label``'s node
+        set is taken from ``node_map``; a missing or empty entry
+        raises rather than silently binding every node in the model —
+        a constraint must bind a *known* node set.
+        """
         import gmsh
+        kind = type(defn).__name__
         selected = getattr(defn, f"{role}_entities", None)
         if selected:
             tags: set[int] = set()
@@ -1114,20 +1142,69 @@ class ConstraintsComposite:
                     nt, _, _ = gmsh.model.mesh.getNodes(
                         dim=int(dim), tag=int(tag),
                         includeBoundary=True, returnParametricCoord=False)
-                    tags.update(int(t) for t in nt)
-                except Exception:
-                    pass
-            if tags:
-                return tags
-        return node_map.get(label, all_nodes)
+                except Exception as exc:
+                    raise ValueError(
+                        f"{kind} {role}: cannot get mesh nodes for "
+                        f"entity (dim={dim}, tag={tag}) from "
+                        f"{role}_entities={selected!r}: {exc}") from exc
+                tags.update(int(t) for t in nt)
+            if not tags:
+                raise ValueError(
+                    f"{kind} {role}: {role}_entities={selected!r} "
+                    f"resolved to zero mesh nodes — check the entities "
+                    f"are meshed and of the intended dimension.")
+            return tags
+        nodes = node_map.get(label)
+        if not nodes:
+            raise ValueError(
+                f"{kind} {role}: part label {label!r} contributed no "
+                f"nodes to the constraint node map (is it meshed and "
+                f"registered in g.parts?). Refusing to fall back to "
+                f"all model nodes — a constraint must bind a known "
+                f"node set; pass {role}_entities= to scope explicitly.")
+        return nodes
 
     def _resolve_faces(self, label, role, defn, face_map):
+        """Resolve a face-constraint role to its surface connectivity
+        — fail loud.
+
+        A face constraint requires *surfaces*: ``{role}_entities`` may
+        be dim=2 (surfaces directly) or dim=3 (a volume — its boundary
+        surfaces are used).  dim 0/1 is a wrong-dimension reference and
+        raises.  An empty/missing result raises rather than letting the
+        caller silently drop the constraint with ``return []``.
+        """
+        kind = type(defn).__name__
         selected = getattr(defn, f"{role}_entities", None)
         if selected:
+            bad = [(int(d), int(t)) for d, t in selected
+                   if int(d) not in (2, 3)]
+            if bad:
+                raise ValueError(
+                    f"{kind} {role}: {role}_entities {selected!r} "
+                    f"contains non-surface entities {bad} — a face "
+                    f"constraint requires dim=2 surfaces (or dim=3 "
+                    f"volumes, whose boundary surfaces are used).")
             parts = getattr(self._parent, "parts", None)
-            if parts is not None:
-                return parts._collect_surface_faces(selected)
-        return face_map.get(label, np.empty((0, 0), dtype=int))
+            if parts is None:
+                raise ValueError(
+                    f"{kind} {role}: {role}_entities was given but "
+                    f"g.parts is unavailable to resolve surface faces.")
+            faces = parts._collect_surface_faces(selected)
+            if faces.size == 0:
+                raise ValueError(
+                    f"{kind} {role}: {role}_entities={selected!r} "
+                    f"produced no surface mesh faces — are the "
+                    f"entities meshed?")
+            return faces
+        faces = face_map.get(label)
+        if faces is None or faces.size == 0:
+            raise ValueError(
+                f"{kind} {role}: part label {label!r} has no surface "
+                f"faces in the face map (is its interface meshed and "
+                f"registered in g.parts?). Refusing to silently drop "
+                f"the constraint; pass {role}_entities= to scope it.")
+        return faces
 
     def _resolve_node_pair(self, resolver, defn, node_map, face_map, all_nodes):
         m = self._resolve_nodes(defn.master_label, "master", defn, node_map, all_nodes)
@@ -1149,8 +1226,6 @@ class ConstraintsComposite:
     def _resolve_face_slave(self, resolver, defn, node_map, face_map, all_nodes):
         m_faces = self._resolve_faces(defn.master_label, "master", defn, face_map)
         s_nodes = self._resolve_nodes(defn.slave_label, "slave", defn, node_map, all_nodes)
-        if m_faces.size == 0:
-            return []
         return resolver.resolve_tie(defn, m_faces, s_nodes)
 
     def _resolve_face_both(self, resolver, defn, node_map, face_map, all_nodes):
@@ -1158,8 +1233,6 @@ class ConstraintsComposite:
         s_faces = self._resolve_faces(defn.slave_label, "slave", defn, face_map)
         m_nodes = self._resolve_nodes(defn.master_label, "master", defn, node_map, all_nodes)
         s_nodes = self._resolve_nodes(defn.slave_label, "slave", defn, node_map, all_nodes)
-        if m_faces.size == 0 or s_faces.size == 0:
-            return []
         method = getattr(resolver, _RESOLVER_METHOD[type(defn)])
         return method(defn, m_faces, s_faces, m_nodes, s_nodes)
 
@@ -1236,13 +1309,12 @@ class ConstraintsComposite:
 
         host_elems = self._collect_host_elems(host_entities)
         if host_elems.size == 0:
-            import warnings
-            warnings.warn(
-                f"embedded: host label '{defn.master_label}' has no "
-                f"tet4 or tri3 elements; constraint skipped.",
-                stacklevel=2,
-            )
-            return []
+            raise ValueError(
+                f"embedded: host label {defn.master_label!r} resolved "
+                f"to entities but none carry tet4 (dim=3) or tri3 "
+                f"(dim=2) elements — ASDEmbeddedNodeElement supports "
+                f"only those host types. The constraint cannot be "
+                f"built; fix the host mesh rather than skipping it.")
 
         embedded_nodes: set[int] = set()
         for dim, tag in embedded_entities:
@@ -1250,17 +1322,18 @@ class ConstraintsComposite:
                 nt, _, _ = gmsh.model.mesh.getNodes(
                     dim=int(dim), tag=int(tag),
                     includeBoundary=True, returnParametricCoord=False)
-                embedded_nodes.update(int(t) for t in nt)
-            except Exception:
-                pass
+            except Exception as exc:
+                raise ValueError(
+                    f"embedded: cannot get mesh nodes for embedded "
+                    f"entity (dim={dim}, tag={tag}) of label "
+                    f"{defn.slave_label!r}: {exc}") from exc
+            embedded_nodes.update(int(t) for t in nt)
         if not embedded_nodes:
-            import warnings
-            warnings.warn(
-                f"embedded: embedded label '{defn.slave_label}' has no "
-                f"mesh nodes; constraint skipped.",
-                stacklevel=2,
-            )
-            return []
+            raise ValueError(
+                f"embedded: embedded label {defn.slave_label!r} "
+                f"resolved to entities but they carry no mesh nodes "
+                f"(is the embedded geometry meshed?). The constraint "
+                f"cannot be built; fix the mesh rather than skipping.")
 
         # Don't embed a node that coincides with a host corner — it's
         # already rigidly attached via shared connectivity.
@@ -1270,10 +1343,15 @@ class ConstraintsComposite:
         return resolver.resolve_embedded(defn, host_elems, embedded_nodes)
 
     def _entities_for_label(self, label: str) -> list[tuple[int, int]]:
-        """Look up geometric entities for *label*.
+        """Look up geometric entities for *label* — fail loud.
 
-        Tries, in order: a part instance in ``g.parts``, then a
-        physical group by name. Returns ``[]`` if neither matches.
+        Tries, in order: a part instance in ``g.parts`` (spans dims,
+        as a part legitimately does), then a physical group by name.
+        A physical group maps to a single dimension; a name carried
+        at several dims raises (multi-dimensional PGs are not
+        supported).  Raises ``KeyError`` if the name resolves to
+        neither — never returns ``[]`` (a silent empty would surface
+        downstream as a misleading "no host elements" skip).
         """
         import gmsh
         parts = getattr(self._parent, "parts", None)
@@ -1284,8 +1362,9 @@ class ConstraintsComposite:
                 for dim, tags in inst.entities.items()
                 for tag in tags
             ]
-        # Physical-group fallback.
+        # Physical-group fallback (single-dim by construction).
         ents: list[tuple[int, int]] = []
+        pg_dims: set[int] = set()
         for d, pg_tag in gmsh.model.getPhysicalGroups():
             try:
                 name = gmsh.model.getPhysicalName(int(d), int(pg_tag))
@@ -1293,9 +1372,21 @@ class ConstraintsComposite:
                 continue
             if name != label:
                 continue
+            pg_dims.add(int(d))
             for ent in gmsh.model.getEntitiesForPhysicalGroup(
                     int(d), int(pg_tag)):
                 ents.append((int(d), int(ent)))
+        if len(pg_dims) > 1:
+            raise ValueError(
+                f"Physical group {label!r} exists at multiple "
+                f"dimensions {sorted(pg_dims)}. Multi-dimensional "
+                f"physical groups are not supported; assign one "
+                f"dimension per group name.")
+        if not ents:
+            raise KeyError(
+                f"Constraint label {label!r} resolved to neither a "
+                f"g.parts instance nor a physical group. Register the "
+                f"part or create the physical group before resolving.")
         return ents
 
     @staticmethod
