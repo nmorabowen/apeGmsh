@@ -153,6 +153,45 @@ They chain with the existing position predicates:
     .select(on={"x": 0}))
 ```
 
+#### Combining selections — `|`, `&`, `-`
+
+Two Selections can be combined with set-algebra operators. Semantics are
+**set-like with deduplication** — a `(dim, tag)` pair never appears
+twice in the result, so downstream calls like `to_physical` register each
+entity once.
+
+Each operation has both an **operator** form (terse, for one-liners)
+and a **named-method** form (discoverable via autocomplete, keeps the
+chain fluent — important when you don't want to break out to a
+variable).
+
+| Operator | Method | Meaning | Example |
+|---|---|---|---|
+| `a \| b` | `a.union(b)` | entities in either | `sides = nx.union(ny)` |
+| `a & b` | `a.intersect(b)` | entities in both | `edge = top.intersect(front)` |
+| `a - b` | `a.difference(b)` | in `a`, not in `b` | `lateral = all.difference(horizontal)` |
+
+```python
+surf = m.model.queries.select_all_surfaces()
+
+# Three equivalent ways to grab the lateral sides of an axis-aligned box:
+(surf.normal_along("x") | surf.normal_along("y")).to_physical("sides")
+(surf - surf.normal_along("z")).to_physical("sides")
+surf.normal_along("x").union(surf.normal_along("y")).to_physical("sides")
+
+# Intersection — curves shared by two faces (the edge between them)
+top_edges   = m.model.queries.boundary("top",   dim=2, oriented=False)
+front_edges = m.model.queries.boundary("front", dim=2, oriented=False)
+shared_edge = top_edges.intersect(front_edges)
+```
+
+**Why `|` and not `+`?** `Selection` subclasses `list`, where `+`
+already means *concatenation with duplicates preserved*. The `|` family
+follows Python's `set` / `dict` convention for combining-with-dedup,
+which is the right semantics for selection sets — combining the xmin
+faces with the ymin faces should give each shared corner edge once, not
+twice.
+
 #### Resolve-only `select(...)` — no predicate required
 
 `queries.select("name", dim=N)` with **no** geometric predicate returns

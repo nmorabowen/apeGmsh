@@ -366,15 +366,70 @@ def _order_clusters_by_global_axis(
 class Selection(list):
     """
     A filtered list of ``(dim, tag)`` pairs returned by
-    ``m.model.queries.select()``.
+    ``m.model.queries.select()`` and the ``select_all_*`` entry points.
 
-    Chain ``.select()`` to narrow further::
+    A Selection is a ``list`` subclass, so it iterates as ``(dim, tag)``
+    pairs and supports indexing.  It is also chainable — every method
+    that narrows or combines returns a new Selection.
 
-        bottom_left = (m.model.queries
+    Refine (narrow what you have)
+    -----------------------------
+    ============================== ==========================================
+    ``.select(...)``               position predicates: ``on``, ``crossing``,
+                                   ``not_on``, ``not_crossing``
+    ``.parallel_to(direction)``    curves whose chord is along a direction
+    ``.normal_along(direction)``   surfaces whose normal is along a direction
+    ``.partition_by(axis=None)``   group entities by dominant BB axis
+    ============================== ==========================================
+
+    Combine (set algebra on two Selections)
+    ---------------------------------------
+    Set semantics with deduplication — appropriate for ``(dim, tag)``
+    pairs, where logical identity matters and duplicates would cause
+    downstream calls (e.g. ``to_physical``) to register the same
+    entity twice.
+
+    Each operation has both an **operator** form (terse, for one-liners)
+    and a **named-method** form (discoverable via autocomplete, keeps the
+    chain fluent).
+
+    ===================== ===================== ===================== ===========================
+    Operator              Method                Meaning               Example
+    ===================== ===================== ===================== ===========================
+    ``a | b``             ``a.union(b)``        union                 ``nx | ny``
+    ``a & b``             ``a.intersect(b)``    intersection          ``top & front``
+    ``a - b``             ``a.difference(b)``   set difference        ``all - horizontal``
+    ===================== ===================== ===================== ===========================
+
+    Why ``|`` and not ``+``: ``Selection`` subclasses ``list``, where
+    ``+`` is concatenation with duplicates preserved.  ``|`` follows
+    the ``set`` / ``dict`` convention for combining-with-dedup, and is
+    the right semantics for selection sets.
+
+    Consume (turn a Selection into something else)
+    ----------------------------------------------
+    ================================ ===========================================
+    ``.tags()``                      bare integer tags (drops dim)
+    ``.to_label(name)``              register entities as a label
+    ``.to_physical(name)``           register entities as a physical group
+    ================================ ===========================================
+
+    Example
+    -------
+    ::
+
+        surf = m.model.queries.select_all_surfaces()
+
+        # Lateral sides of an axis-aligned box — three equivalent forms:
+        (surf.normal_along("x") | surf.normal_along("y")).to_physical("sides")
+        (surf - surf.normal_along("z")).to_physical("sides")
+        surf.normal_along("x").union(surf.normal_along("y")).to_physical("sides")
+
+        # Chain refine → consume
+        (m.model.queries
             .select(curves, on={'z': 0})
-            .select(on={'x': 0}))
-
-    Iterate directly or call ``.tags()`` for bare integers.
+            .select(on={'x': 0})
+            .to_label("bottom_left_edge"))
     """
 
     def __init__(self, dimtags: Iterable[DimTag] = (), *,
@@ -538,22 +593,68 @@ class Selection(list):
     # ── Set operations ──────────────────────────────────────────────────────
 
     def __or__(self, other) -> "Selection":
-        """Union with deduplication.  Preserves order of *self* first."""
+        """Union with deduplication — ``a | b``.
+
+        Returns a Selection containing every ``(dim, tag)`` in *self*
+        or *other*, with duplicates removed.  Order of *self* is
+        preserved first, then new entries from *other* appended.
+
+        Example
+        -------
+        ::
+
+            sides = surf.normal_along("x") | surf.normal_along("y")
+        """
         seen   = set(self)
         merged = list(self) + [dt for dt in other if dt not in seen]
         return Selection(merged, _queries=self._queries)
 
     def __and__(self, other) -> "Selection":
-        """Intersection."""
+        """Intersection — ``a & b``.
+
+        Returns a Selection containing only ``(dim, tag)`` pairs that
+        appear in **both** *self* and *other*.
+
+        Example
+        -------
+        ::
+
+            # Curves shared by the top face and the front face (the top-front edge)
+            edge = top_face_curves & front_face_curves
+        """
         other_set = set(other)
         return Selection([dt for dt in self if dt in other_set],
                          _queries=self._queries)
 
     def __sub__(self, other) -> "Selection":
-        """Set difference — entities in *self* but not in *other*."""
+        """Set difference — ``a - b``.
+
+        Returns a Selection containing entities in *self* but not in
+        *other*.  Useful for "everything except…" patterns.
+
+        Example
+        -------
+        ::
+
+            # All faces except the horizontal ones (top, bottom, interfaces)
+            laterals = surf - surf.normal_along("z")
+        """
         other_set = set(other)
         return Selection([dt for dt in self if dt not in other_set],
                          _queries=self._queries)
+
+    # Named aliases — discoverable via autocomplete; operators stay for terse code.
+    def union(self, other) -> "Selection":
+        """Alias for ``self | other``.  See :meth:`__or__`."""
+        return self.__or__(other)
+
+    def intersect(self, other) -> "Selection":
+        """Alias for ``self & other``.  See :meth:`__and__`."""
+        return self.__and__(other)
+
+    def difference(self, other) -> "Selection":
+        """Alias for ``self - other``.  See :meth:`__sub__`."""
+        return self.__sub__(other)
 
     # ── Partitioning ────────────────────────────────────────────────────────
 
