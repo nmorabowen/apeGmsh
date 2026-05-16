@@ -83,6 +83,28 @@ def _quadrature_for(kind: str, n: int | None) -> tuple[np.ndarray, np.ndarray]:
     raise ValueError(f"Unknown quadrature kind {kind!r}")
 
 
+def reference_quadrature(gmsh_code: int) -> tuple[np.ndarray, np.ndarray]:
+    """``(points, weights)`` on the reference element for a Gmsh code.
+
+    Returns the same rule HRZ uses to integrate ``N_I²``.  Since
+    ``|J|`` (the isoparametric volume integrand) is of *lower*
+    polynomial degree than ``N_I²`` for every catalog element, this
+    rule is also exactly sufficient for element-volume integration —
+    no separate quadrature spec is needed.
+
+    Raises
+    ------
+    ValueError
+        If ``gmsh_code`` has no quadrature spec.
+    """
+    spec = _QUAD_SPEC.get(int(gmsh_code))
+    if spec is None:
+        raise ValueError(
+            f"No quadrature spec for Gmsh element code {gmsh_code}."
+        )
+    return _quadrature_for(*spec)
+
+
 @lru_cache(maxsize=None)
 def hrz_weights(gmsh_code: int) -> tuple[float, ...]:
     """Normalized per-node HRZ weights for a Gmsh element type.

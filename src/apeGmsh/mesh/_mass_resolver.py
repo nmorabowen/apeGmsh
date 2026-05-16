@@ -40,7 +40,16 @@ from apeGmsh.core.masses.defs import (
     SurfaceMassDef,
     VolumeMassDef,
 )
-from apeGmsh.fem._hrz import hrz_weights, surface_code, volume_code
+from apeGmsh.fem._hrz import (
+    hrz_weights,
+    reference_quadrature,
+    surface_code,
+    volume_code,
+)
+from apeGmsh.fem._shape_functions import (
+    compute_jacobian_dets,
+    get_shape_functions,
+)
 from apeGmsh.mesh.records._masses import MassRecord
 
 
@@ -144,6 +153,17 @@ class MassResolver:
         return area
 
     def element_volume(self, conn_row: ndarray) -> float:
+        """Volume of one solid element.
+
+        * ``n == 4`` (tet4): exact analytic scalar triple product.
+        * ``n == 8`` (hex8): exact 6-tetrahedron decomposition.
+        * any other catalog type (wedge6, tet10, hex20, hex27):
+          isoparametric ``V = ∫_{Ω_ref} |J(ξ)| dξ`` via the shared
+          shape-function Jacobian + reference quadrature — exact for
+          affine elements, the standard high-accuracy approximation
+          for curved higher-order ones.
+        * unknown element type: bounding-box last resort.
+        """
         n = len(conn_row)
         pts = np.array([self.coords_of(int(nid)) for nid in conn_row])
         if n == 4:
@@ -161,6 +181,17 @@ class MassResolver:
                     np.cross(pts[c] - pts[a], pts[d] - pts[a]),
                 )) / 6.0
             return float(tot)
+        code = volume_code(n)
+        if code is not None:
+            catalog = get_shape_functions(code)
+            if catalog is not None:
+                _, dN_fn, geom_kind, _ = catalog
+                qp, qw = reference_quadrature(code)
+                detJ = compute_jacobian_dets(
+                    qp, pts[None, :, :], dN_fn, geom_kind,
+                )[0]
+                return float(np.sum(qw * detJ))
+        # Unknown element type (pyramid, wedge15, …) — bbox last resort.
         mn, mx = pts.min(axis=0), pts.max(axis=0)
         return float(np.prod(mx - mn))
 
@@ -372,11 +403,11 @@ class MassResolver:
         construction; tet10/hex20/hex27 → higher-order nodes correctly
         weighted).  Honors ``defn.dofs`` and ``defn.rotational``.
 
-        The element volume still comes from :meth:`element_volume`,
-        which is exact for tet4 / hex8 and a bounding-box approximation
-        for higher-order types — proper isoparametric volume
-        integration is a separate follow-up.  The HRZ *distribution*
-        is correct regardless.
+        The element volume comes from :meth:`element_volume`, now
+        isoparametric (``∫|J|dξ``) for every catalog element type —
+        exact for tet4 / hex8 / affine higher-order, high-accuracy for
+        curved higher-order.  The HRZ *distribution* is correct
+        regardless.
         """
         rho = float(defn.density)
         dofs = defn.dofs
