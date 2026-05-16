@@ -11,16 +11,23 @@ Two reduction strategies are supported:
 * **lumped** — equal split per node on the translational DOFs listed
   in ``defn.dofs`` (default: 1, 2, 3) plus optional fixed rotational
   inertia from ``defn.rotational``.
-* **consistent** — *currently a no-op label* for surface and volume
-  defs (the line path emits the proper ``ρ_l L / 6 · [[2, 1], [1, 2]]``
-  diagonal-sum, which coincides with lumped for 2-node lines).  The
-  off-diagonal node coupling of a true consistent mass matrix has no
-  destination through ``ops.mass``, which is strictly diagonal — to
-  get true off-diagonal coupling, use the element's own ``-cMass``
+* **consistent** — HRZ (Hinton–Rock–Zienkiewicz) diagonal-scaling
+  lumping.  Each element's total mass is distributed in proportion to
+  ``∫ N_I² dΩ_ref`` (normalized), via :mod:`apeGmsh.fem._hrz`.  For
+  first-order elements (tet4, hex8, tri3, quad4, line2, wedge6) the
+  weights are all ``1/n`` so this is *bit-identical to lumped*; for
+  higher-order elements (tet10, hex20, hex27, tri6, quad8, quad9)
+  mid-edge / face / center nodes get their physically-correct larger
+  share instead of an incorrect equal split.
+
+  HRZ still emits a strictly *diagonal* nodal mass — it is the correct
+  diagonalized mass, not a true consistent matrix.  The off-diagonal
+  node coupling of a genuine consistent matrix has no destination
+  through ``ops.mass``; for that, use the element's own ``-cMass``
   flag at the OpenSees level and skip this composite for that region.
-  Higher-order-element HRZ row-sum lumping is a planned follow-up
-  that uses the shared shape function library at
-  :mod:`apeGmsh.fem._shape_functions`.
+  The HRZ weights are computed on the reference element (affine
+  Jacobian) — exact for parallelepiped/affine elements, a standard
+  approximation for curved higher-order ones.
 """
 from __future__ import annotations
 
@@ -33,6 +40,7 @@ from apeGmsh.core.masses.defs import (
     SurfaceMassDef,
     VolumeMassDef,
 )
+from apeGmsh.fem._hrz import hrz_weights, surface_code, volume_code
 from apeGmsh.mesh.records._masses import MassRecord
 
 
@@ -294,32 +302,95 @@ class MassResolver:
             _accumulate(accum, n2, vec)
         return _accum_to_records(accum, name=defn.name)
 
+    def _hrz_distribute(
+        self,
+        accum: dict[int, ndarray],
+        conn,
+        m_elem: float,
+        gmsh_code: "int | None",
+        dofs,
+        rot,
+    ) -> None:
+        """Spread one element's total mass to its nodes via HRZ weights.
+
+        HRZ (Hinton–Rock–Zienkiewicz) lumping distributes ``m_elem`` in
+        proportion to ``∫ N_I² dΩ_ref`` (normalized).  For first-order
+        elements every weight is ``1/n`` so this is bit-identical to
+        equal-share.  For higher-order elements mid-edge / face / center
+        nodes get their physically-correct larger share.
+
+        Falls back to equal-share if ``gmsh_code`` is unknown (an
+        element type not in the shape-function catalog).
+        """
+        n = len(conn)
+        if gmsh_code is None:
+            weights = [1.0 / n] * n
+        else:
+            weights = hrz_weights(gmsh_code)
+            if len(weights) != n:
+                # Connectivity node count disagrees with the catalog
+                # entry (unexpected ordering / partial element) — stay
+                # safe with equal-share rather than mis-weighting.
+                weights = [1.0 / n] * n
+        for w, nid in zip(weights, conn):
+            _accumulate(accum, int(nid), _build_vec6(m_elem * w, dofs, rot))
+
     def resolve_surface_consistent(
         self,
         defn: SurfaceMassDef,
         faces: list[list[int]],
     ) -> list[MassRecord]:
-        """Consistent surface mass.
+        """HRZ-lumped surface mass.
 
-        For tri3 / quad4 with constant areal density, the consistent
-        mass matrix has equal diagonal entries that sum (with off-diagonal
-        contributions) to ρₐ·A/n per node — same as lumped at the
-        diagonal level.  Higher-order types fall through to lumped.
+        Distributes ``ρ_a · A`` per face to its nodes using HRZ
+        weights keyed by node count (tri3/quad4 → equal-share by
+        construction; tri6/quad8/quad9 → mid-side nodes correctly
+        weighted).  Honors ``defn.dofs`` and ``defn.rotational``.
         """
-        return self.resolve_surface_lumped(defn, faces)
+        rho_a = float(defn.areal_density)
+        dofs = defn.dofs
+        rot = defn.rotational
+        accum: dict[int, ndarray] = {}
+        for face in faces:
+            A = self.face_area(face)
+            if A <= 0:
+                continue
+            self._hrz_distribute(
+                accum, face, rho_a * A, surface_code(len(face)), dofs, rot,
+            )
+        return _accum_to_records(accum, name=defn.name)
 
     def resolve_volume_consistent(
         self,
         defn: VolumeMassDef,
         elements: list[ndarray],
     ) -> list[MassRecord]:
-        """Consistent volume mass.
+        """HRZ-lumped volume mass.
 
-        For tet4 / hex8 with constant density, the consistent mass
-        matrix's diagonal entries sum to ρ·V/n per node — same as
-        lumped at the diagonal level.  Higher-order types fall through.
+        Distributes ``ρ · V`` per element to its nodes using HRZ
+        weights keyed by node count (tet4/hex8/wedge6 → equal-share by
+        construction; tet10/hex20/hex27 → higher-order nodes correctly
+        weighted).  Honors ``defn.dofs`` and ``defn.rotational``.
+
+        The element volume still comes from :meth:`element_volume`,
+        which is exact for tet4 / hex8 and a bounding-box approximation
+        for higher-order types — proper isoparametric volume
+        integration is a separate follow-up.  The HRZ *distribution*
+        is correct regardless.
         """
-        return self.resolve_volume_lumped(defn, elements)
+        rho = float(defn.density)
+        dofs = defn.dofs
+        rot = defn.rotational
+        accum: dict[int, ndarray] = {}
+        for conn_row in elements:
+            V = self.element_volume(conn_row)
+            if V <= 0:
+                continue
+            self._hrz_distribute(
+                accum, conn_row, rho * V,
+                volume_code(len(conn_row)), dofs, rot,
+            )
+        return _accum_to_records(accum, name=defn.name)
 
 
 __all__ = ["MassResolver"]
