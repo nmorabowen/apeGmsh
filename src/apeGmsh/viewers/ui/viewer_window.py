@@ -258,6 +258,68 @@ class ViewerWindow:
             _axes_kwargs.update(xlabel="", ylabel="", zlabel="")
         self._qt_interactor.add_axes(**_axes_kwargs)
 
+        # ── Dock area defaults — vertical tab strip on tabified docks ──
+        # When the user drags one dock onto another's title bar to
+        # tabify them, Qt creates a QTabBar implicitly. Default is a
+        # horizontal strip at the bottom; we override to a sidebar-
+        # style West strip with horizontal text via a proxy style.
+        # Mirrors :class:`ResultsWindow._build_layout`; lifted here so
+        # mesh / model viewers get the same tabified-dock UX.
+        self._window.setDockNestingEnabled(True)
+        self._window.setDockOptions(
+            QtWidgets.QMainWindow.DockOption.AnimatedDocks
+            | QtWidgets.QMainWindow.DockOption.AllowNestedDocks
+            | QtWidgets.QMainWindow.DockOption.AllowTabbedDocks
+        )
+        for area in (
+            QtCore.Qt.LeftDockWidgetArea,
+            QtCore.Qt.RightDockWidgetArea,
+            QtCore.Qt.TopDockWidgetArea,
+            QtCore.Qt.BottomDockWidgetArea,
+        ):
+            self._window.setTabPosition(
+                area, QtWidgets.QTabWidget.TabPosition.West,
+            )
+
+        # Horizontal-label proxy style applied to any QTabBar Qt
+        # creates for tabified docks. Parent it to the window so Qt's
+        # GC keeps it alive.
+        self._htab_style = _make_horizontal_tab_style()
+        self._htab_style.setParent(self._window)
+
+        def _apply_htab_style_to_tabbars() -> None:
+            for tb in self._window.findChildren(QtWidgets.QTabBar):
+                shape = tb.shape()
+                if shape in (
+                    QtWidgets.QTabBar.Shape.RoundedWest,
+                    QtWidgets.QTabBar.Shape.RoundedEast,
+                    QtWidgets.QTabBar.Shape.TriangularWest,
+                    QtWidgets.QTabBar.Shape.TriangularEast,
+                ):
+                    tb.setStyle(self._htab_style)
+
+        _apply_htab_style_to_tabbars()
+        QtCore.QTimer.singleShot(0, _apply_htab_style_to_tabbars)
+        self._apply_htab_style_to_tabbars = _apply_htab_style_to_tabbars
+
+        outer_self = self
+
+        class _TabBarChildFilter(QtCore.QObject):
+            def eventFilter(self, _obj, event):
+                if event.type() == QtCore.QEvent.Type.ChildAdded:
+                    child = event.child()
+                    if isinstance(child, QtWidgets.QTabBar):
+                        # Defer one tick — the tab bar's shape is set
+                        # *after* the ChildAdded event fires.
+                        QtCore.QTimer.singleShot(
+                            0,
+                            outer_self._apply_htab_style_to_tabbars,
+                        )
+                return False
+
+        self._tabbar_filter = _TabBarChildFilter(self._window)
+        self._window.installEventFilter(self._tabbar_filter)
+
         # ── Right dock: tabs (vertical labels, horizontal text) ─────
         _TAB_POS_MAP = {
             "left":   QtWidgets.QTabWidget.TabPosition.West,
