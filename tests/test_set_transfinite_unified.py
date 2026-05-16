@@ -24,6 +24,11 @@ def _curve_n_nodes(tag):
     return len(nodes) // 3
 
 
+# Gmsh element-type codes
+HEX_8 = 5
+TET_4 = 4
+
+
 # ---------------------------------------------------------------------------
 # Scalar n=  — uniform on any orientation
 # ---------------------------------------------------------------------------
@@ -216,3 +221,29 @@ def test_dict_missing_key_warns_and_skips(g):
     g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
     with pytest.warns(UserWarning, match="dict-form sizing missing key"):
         g.mesh.structured.set_transfinite("box", n={"x": 11, "y": 11})
+
+
+# ---------------------------------------------------------------------------
+# Element-type contract — locks the recombine= behavior
+# ---------------------------------------------------------------------------
+
+def test_default_produces_hex_elements(g):
+    """Default recombine=True on a transfinite box gives Hexahedron 8 elements."""
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
+    g.mesh.structured.set_transfinite("box", n=3)
+    _generate_or_skip(g)
+    types, _, _ = gmsh.model.mesh.getElements(dim=3)
+    type_list = list(types)
+    assert HEX_8 in type_list, f"expected Hexahedron 8, got types {type_list}"
+    assert TET_4 not in type_list, f"unexpected tets in output: {type_list}"
+
+
+def test_recombine_false_produces_tet_elements(g):
+    """recombine=False on a transfinite box gives Tetrahedron 4 elements."""
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
+    g.mesh.structured.set_transfinite("box", n=3, recombine=False)
+    _generate_or_skip(g)
+    types, _, _ = gmsh.model.mesh.getElements(dim=3)
+    type_list = list(types)
+    assert TET_4 in type_list, f"expected Tetrahedron 4, got types {type_list}"
+    assert HEX_8 not in type_list, f"unexpected hexes in output: {type_list}"
