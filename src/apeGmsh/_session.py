@@ -83,8 +83,24 @@ class _SessionBase:
         return self
 
     def end(self) -> None:
-        """Close the Gmsh session."""
+        """Close the Gmsh session.
+
+        If the subclass set a ``_save_to`` path (autosave configured at
+        construction), the broker snapshot is written before
+        ``gmsh.finalize()``.  Save failures are logged and swallowed —
+        the gmsh process must still finalize.
+        """
         if self._active:
+            save_to = getattr(self, "_save_to", None)
+            if save_to is not None:
+                try:
+                    self._do_save(save_to)
+                except Exception as exc:  # noqa: BLE001
+                    import warnings
+                    warnings.warn(
+                        f"autosave to {save_to} failed: {exc!r}",
+                        stacklevel=2,
+                    )
             gmsh.finalize()
             self._active = False
 

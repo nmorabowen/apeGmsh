@@ -35,6 +35,19 @@ Composition-based API with sub-composites for focused surfaces:
        g.mesh.generation.generate(dim=3)
        fem = g.mesh.queries.get_fem_data(dim=3)
        g.end()
+
+3. **Persisted session** (autosave + resume across scripts)::
+
+       from apeGmsh import apeGmsh, FEMData
+
+       # Build once and autosave on context-manager exit.
+       with apeGmsh(model_name="plate", save_to="plate.h5") as g:
+           g.model.geometry.add_box(0, 0, 0, 1, 1, 0.1, label="body")
+           g.physical.add_volume("body", name="body")
+           g.mesh.generation.generate(dim=3)
+
+       # Resume in a later script — symmetric load.
+       fem = FEMData.from_h5("plate.h5")
 """
 
 from apeGmsh._session import _SessionBase

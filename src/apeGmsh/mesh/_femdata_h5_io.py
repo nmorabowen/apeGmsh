@@ -65,6 +65,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "NEUTRAL_SCHEMA_VERSION",
+    "read_fem_h5",
     "write_fem_h5",
     "write_meta",
     "write_neutral_zone",
@@ -747,3 +748,548 @@ def _write_masses(fem: "FEMData", f: Any) -> None:
             (int(rec.node_id), mass_tuple),
         )
     f.create_dataset("masses", data=rows)
+
+
+# ===========================================================================
+# Reader (Phase session-save 2 — root-layout inverse of write_fem_h5)
+# ===========================================================================
+#
+# Mirrors the writer's seven neutral-zone groups plus ``/meta``.  Schema
+# major version is checked; minor differences are tolerated (additive).
+# Companion to :func:`write_fem_h5` — together they form the contract
+# that ``apeGmsh(save_to=...)`` round-trips through.
+
+
+def read_fem_h5(path: str) -> "FEMData":
+    """Reconstruct a :class:`FEMData` from a root-layout ``model.h5``.
+
+    Inverse of :func:`write_fem_h5`.  Reads the seven neutral-zone
+    groups (``/nodes``, ``/elements``, ``/physical_groups``,
+    ``/labels``, ``/mesh_selections``, ``/constraints``, ``/loads``,
+    ``/masses``) plus ``/meta``, and rebuilds a fully populated
+    ``FEMData`` snapshot.  Empty groups are skipped — absence is the
+    right "no records" signal on disk.
+
+    Parameters
+    ----------
+    path : str
+        Path to a model.h5 written by ``g.save()``,
+        ``apeGmsh(save_to=...)``, or :func:`write_fem_h5`.
+
+    Raises
+    ------
+    apeGmsh.opensees.emitter.h5_reader.SchemaVersionError
+        If ``/meta/schema_version`` major != 2.
+    apeGmsh.opensees.emitter.h5_reader.MalformedH5Error
+        If ``/meta`` is missing.
+    """
+    import h5py
+    from apeGmsh.opensees.emitter.h5_reader import (
+        MalformedH5Error,
+        SchemaVersionError,
+    )
+
+    from ._element_types import ElementGroup, ElementTypeInfo, make_type_info
+    from ._group_set import LabelSet, PhysicalGroupSet
+    from .FEMData import ElementComposite, FEMData, MeshInfo, NodeComposite
+
+    with h5py.File(path, "r") as f:
+        # -- meta + schema check --
+        if "meta" not in f:
+            raise MalformedH5Error(
+                f"{path}: missing /meta group; not an apeGmsh model.h5"
+            )
+        version = str(f["meta"].attrs.get("schema_version", ""))
+        if not version:
+            raise MalformedH5Error(
+                f"{path}: /meta/schema_version attribute is empty"
+            )
+        try:
+            major = int(version.split(".", 1)[0])
+        except ValueError as exc:
+            raise MalformedH5Error(
+                f"{path}: /meta/schema_version {version!r} is not "
+                "semver-shaped"
+            ) from exc
+        if major != 2:
+            raise SchemaVersionError(
+                f"{path}: schema_version={version} (major {major}) is "
+                "not supported by read_fem_h5 (expected major 2)"
+            )
+
+        # -- nodes --
+        nodes_grp = f["nodes"]
+        node_ids = np.asarray(nodes_grp["ids"][...], dtype=np.int64)
+        node_coords = np.asarray(nodes_grp["coords"][...], dtype=np.float64)
+
+        # -- elements (per-type subgroups) --
+        element_groups: dict[int, ElementGroup] = {}
+        types_meta: list[ElementTypeInfo] = []
+        elem_grp = f.get("elements")
+        if elem_grp is not None:
+            for type_name in sorted(elem_grp.keys()):
+                sub = elem_grp[type_name]
+                if not hasattr(sub, "keys"):
+                    continue
+                ids = np.asarray(sub["ids"][...], dtype=np.int64)
+                conn = np.asarray(sub["connectivity"][...], dtype=np.int64)
+                attrs = sub.attrs
+                npe = int(
+                    attrs.get("npe", conn.shape[1] if conn.ndim == 2 else 0)
+                )
+                info = make_type_info(
+                    code=int(attrs.get("code", 0)),
+                    gmsh_name=str(attrs.get("gmsh_name", type_name)),
+                    dim=int(attrs.get("dim", 0)),
+                    order=int(attrs.get("order", 1)),
+                    npe=npe,
+                    count=ids.shape[0],
+                )
+                types_meta.append(info)
+                element_groups[info.code] = ElementGroup(
+                    element_type=info, ids=ids, connectivity=conn,
+                )
+
+        # -- physical_groups + labels (root-level union of node + elem sides) --
+        node_pgs, elem_pgs = _read_named_index_at_root(f.get("physical_groups"))
+        node_labels, elem_labels = _read_named_index_at_root(f.get("labels"))
+
+        # -- mesh_selections --
+        mesh_selection = _read_mesh_selections(f.get("mesh_selections"))
+
+        # -- constraints (split node-side vs element-side by record type) --
+        node_constraints, elem_constraints = _read_constraints(
+            f.get("constraints")
+        )
+
+        # -- loads --
+        nodal_loads, element_loads, sp_records = _read_loads(f.get("loads"))
+
+        # -- masses --
+        mass_records = _read_masses(f.get("masses"))
+
+        # -- assemble composites --
+        nodes = NodeComposite(
+            node_ids=node_ids,
+            node_coords=node_coords,
+            physical=PhysicalGroupSet(node_pgs),
+            labels=LabelSet(node_labels),
+            constraints=node_constraints,
+            loads=nodal_loads,
+            sp=sp_records,
+            masses=mass_records,
+        )
+        elements = ElementComposite(
+            groups=element_groups,
+            physical=PhysicalGroupSet(elem_pgs),
+            labels=LabelSet(elem_labels),
+            constraints=elem_constraints,
+            loads=element_loads,
+        )
+        info = MeshInfo(
+            n_nodes=len(node_ids),
+            n_elems=sum(len(g) for g in element_groups.values()),
+            bandwidth=0,            # not round-tripped (writer doesn't store it)
+            types=types_meta,
+        )
+        return FEMData(
+            nodes=nodes, elements=elements, info=info,
+            mesh_selection=mesh_selection,
+        )
+
+
+def _read_named_index_at_root(
+    parent: Any,
+) -> tuple[dict[tuple[int, int], dict], dict[tuple[int, int], dict]]:
+    """Read a root ``/physical_groups`` or ``/labels`` index.
+
+    The writer combines node-side + element-side keys into one root
+    group per (dim, tag). Reading splits them back: every key lands in
+    both dicts (the node-side gets node_ids/coords; the element-side
+    additionally gets element_ids when the writer recorded any).
+    """
+    node_dict: dict[tuple[int, int], dict] = {}
+    elem_dict: dict[tuple[int, int], dict] = {}
+    if parent is None:
+        return node_dict, elem_dict
+
+    for safe_name in parent.keys():
+        sub = parent[safe_name]
+        if not hasattr(sub, "keys"):
+            continue
+        attrs = sub.attrs
+        dim = int(attrs.get("dim", 0))
+        tag = int(attrs.get("tag", 0))
+        name = str(attrs.get("name", safe_name))
+
+        nids = (
+            np.asarray(sub["node_ids"][...], dtype=np.int64)
+            if "node_ids" in sub
+            else np.array([], dtype=np.int64)
+        )
+        ncoords = (
+            np.asarray(sub["node_coords"][...], dtype=np.float64)
+            if "node_coords" in sub
+            else np.zeros((0, 3), dtype=np.float64)
+        )
+
+        node_dict[(dim, tag)] = {
+            "name": name,
+            "node_ids": nids,
+            "node_coords": ncoords,
+        }
+        elem_info: dict = {
+            "name": name,
+            "node_ids": nids,
+            "node_coords": ncoords,
+        }
+        if "element_ids" in sub:
+            elem_info["element_ids"] = np.asarray(
+                sub["element_ids"][...], dtype=np.int64,
+            )
+        elem_dict[(dim, tag)] = elem_info
+
+    return node_dict, elem_dict
+
+
+def _read_mesh_selections(parent: Any):
+    """Reconstruct a ``MeshSelectionStore`` from ``/mesh_selections``."""
+    if parent is None:
+        return None
+    from .MeshSelectionSet import MeshSelectionStore
+
+    sets: dict[tuple[int, int], dict] = {}
+    for safe_name in parent.keys():
+        sub = parent[safe_name]
+        if not hasattr(sub, "keys"):
+            continue
+        attrs = sub.attrs
+        dim = int(attrs.get("dim", 0))
+        tag = int(attrs.get("tag", 0))
+        info: dict = {"name": str(attrs.get("name", safe_name))}
+
+        if "node_ids" in sub:
+            info["node_ids"] = np.asarray(
+                sub["node_ids"][...], dtype=np.int64,
+            )
+            info["node_coords"] = np.asarray(
+                sub["node_coords"][...], dtype=np.float64,
+            )
+        if "element_ids" in sub:
+            info["element_ids"] = np.asarray(
+                sub["element_ids"][...], dtype=np.int64,
+            )
+
+        sets[(dim, tag)] = info
+
+    if not sets:
+        return None
+    return MeshSelectionStore(sets)
+
+
+# ---------------------------------------------------------------------------
+# Constraint decoders
+# ---------------------------------------------------------------------------
+
+
+def _read_constraints(
+    parent: Any,
+) -> tuple[list[Any], list[Any]]:
+    """Decode ``/constraints/{kind}`` datasets into node + element record lists.
+
+    Routing matches the writer:
+
+    * ``NodePair*``, ``NodeGroup*``, ``NodeToSurface*`` → node-side
+    * ``Interpolation*``, ``SurfaceCoupling*``         → element-side
+    """
+    from .records._constraints import (
+        InterpolationRecord,
+        NodeGroupRecord,
+        NodePairRecord,
+        NodeToSurfaceRecord,
+        SurfaceCouplingRecord,
+    )
+
+    node_records: list[Any] = []
+    elem_records: list[Any] = []
+    if parent is None:
+        return node_records, elem_records
+
+    # Maps payload-field signature → (decoder, target_list)
+    NODE_PAIR_FIELDS = {
+        "master_node", "slave_node", "dofs", "offset", "penalty_stiffness",
+    }
+    NODE_GROUP_FIELDS = {
+        "master_node", "slave_nodes", "dofs", "offsets", "plane_normal",
+    }
+    INTERPOLATION_FIELDS = {
+        "slave_node", "master_nodes", "weights", "dofs",
+        "projected_point", "parametric_coords",
+    }
+    SURFACE_COUPLING_FIELDS = {
+        "master_nodes", "slave_nodes", "dofs",
+        "mortar_operator_shape", "mortar_operator",
+    }
+    NODE_TO_SURFACE_FIELDS = {
+        "master_node", "slave_nodes", "phantom_nodes",
+        "phantom_coords", "dofs",
+    }
+
+    for kind_name in parent.keys():
+        ds = parent[kind_name]
+        if hasattr(ds, "keys"):
+            # Skipped/unknown record type was written as a group with
+            # __deviation__ attr — nothing to reconstruct.
+            continue
+
+        rows = ds[...]
+        if rows.shape == ():       # scalar → make 1-D
+            rows = np.array([rows])
+        if rows.size == 0:
+            continue
+
+        payload_fields = set(rows.dtype["payload"].names or ())
+
+        if payload_fields == NODE_PAIR_FIELDS:
+            for row in rows:
+                node_records.append(_decode_node_pair(row, NodePairRecord))
+        elif payload_fields == NODE_GROUP_FIELDS:
+            for row in rows:
+                node_records.append(_decode_node_group(row, NodeGroupRecord))
+        elif payload_fields == INTERPOLATION_FIELDS:
+            for row in rows:
+                elem_records.append(
+                    _decode_interpolation(row, InterpolationRecord)
+                )
+        elif payload_fields == SURFACE_COUPLING_FIELDS:
+            for row in rows:
+                elem_records.append(
+                    _decode_surface_coupling(row, SurfaceCouplingRecord)
+                )
+        elif payload_fields == NODE_TO_SURFACE_FIELDS:
+            for row in rows:
+                node_records.append(
+                    _decode_node_to_surface(row, NodeToSurfaceRecord)
+                )
+        # else: unknown payload schema — skip silently (forward-compat)
+
+    return node_records, elem_records
+
+
+def _kind(row: Any) -> str:
+    return _str(row["payload_kind"])
+
+
+def _str(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return str(value)
+
+
+def _opt_vec3(arr: np.ndarray) -> np.ndarray | None:
+    """Return arr if any component is finite, else None (NaN-sentinel decode)."""
+    a = np.asarray(arr, dtype=np.float64).reshape(-1)[:3]
+    if not np.any(np.isfinite(a)):
+        return None
+    return a
+
+
+def _opt_vec2(arr: np.ndarray) -> np.ndarray | None:
+    a = np.asarray(arr, dtype=np.float64).reshape(-1)[:2]
+    if not np.any(np.isfinite(a)):
+        return None
+    return a
+
+
+def _opt_scalar(value: float) -> float | None:
+    v = float(value)
+    if np.isnan(v):
+        return None
+    return v
+
+
+def _decode_node_pair(row: Any, cls: type) -> Any:
+    p = row["payload"]
+    return cls(
+        kind=_kind(row),
+        master_node=int(p["master_node"]),
+        slave_node=int(p["slave_node"]),
+        dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
+        offset=_opt_vec3(p["offset"]),
+        penalty_stiffness=_opt_scalar(p["penalty_stiffness"]),
+    )
+
+
+def _decode_node_group(row: Any, cls: type) -> Any:
+    p = row["payload"]
+    slaves = np.asarray(p["slave_nodes"], dtype=np.int64).reshape(-1)
+    offsets_flat = np.asarray(p["offsets"], dtype=np.float64).reshape(-1)
+    offsets = (
+        offsets_flat.reshape(-1, 3)
+        if offsets_flat.size and offsets_flat.size == 3 * len(slaves)
+        else None
+    )
+    return cls(
+        kind=_kind(row),
+        master_node=int(p["master_node"]),
+        slave_nodes=[int(x) for x in slaves],
+        dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
+        offsets=offsets,
+        plane_normal=_opt_vec3(p["plane_normal"]),
+    )
+
+
+def _decode_interpolation(row: Any, cls: type) -> Any:
+    p = row["payload"]
+    weights_flat = np.asarray(p["weights"], dtype=np.float64).reshape(-1)
+    weights = weights_flat if weights_flat.size > 0 else None
+    return cls(
+        kind=_kind(row),
+        slave_node=int(p["slave_node"]),
+        master_nodes=[
+            int(x) for x in np.asarray(p["master_nodes"]).reshape(-1)
+        ],
+        weights=weights,
+        dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
+        projected_point=_opt_vec3(p["projected_point"]),
+        parametric_coords=_opt_vec2(p["parametric_coords"]),
+    )
+
+
+def _decode_surface_coupling(row: Any, cls: type) -> Any:
+    p = row["payload"]
+    shape = tuple(int(x) for x in np.asarray(p["mortar_operator_shape"]))
+    flat = np.asarray(p["mortar_operator"], dtype=np.float64).reshape(-1)
+    if shape == (0, 0) or flat.size == 0:
+        operator = None
+    else:
+        operator = flat.reshape(shape)
+    return cls(
+        kind=_kind(row),
+        master_nodes=[
+            int(x) for x in np.asarray(p["master_nodes"]).reshape(-1)
+        ],
+        slave_nodes=[
+            int(x) for x in np.asarray(p["slave_nodes"]).reshape(-1)
+        ],
+        dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
+        mortar_operator=operator,
+    )
+
+
+def _decode_node_to_surface(row: Any, cls: type) -> Any:
+    p = row["payload"]
+    slaves = np.asarray(p["slave_nodes"], dtype=np.int64).reshape(-1)
+    coords_flat = np.asarray(p["phantom_coords"], dtype=np.float64).reshape(-1)
+    if coords_flat.size and coords_flat.size == 3 * len(slaves):
+        phantom_coords = coords_flat.reshape(-1, 3)
+    else:
+        phantom_coords = None
+    return cls(
+        kind=_kind(row),
+        master_node=int(p["master_node"]),
+        slave_nodes=[int(x) for x in slaves],
+        phantom_nodes=[
+            int(x) for x in np.asarray(p["phantom_nodes"]).reshape(-1)
+        ],
+        phantom_coords=phantom_coords,
+        dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Load decoders
+# ---------------------------------------------------------------------------
+
+
+def _read_loads(
+    parent: Any,
+) -> tuple[list[Any], list[Any], list[Any]]:
+    """Decode ``/loads/{nodal|element|sp}/{pattern}`` datasets."""
+    from .records._loads import ElementLoadRecord, NodalLoadRecord, SPRecord
+
+    nodal: list[Any] = []
+    element: list[Any] = []
+    sp: list[Any] = []
+    if parent is None:
+        return nodal, element, sp
+
+    nodal_grp = parent.get("nodal")
+    if nodal_grp is not None:
+        for pattern_safe in nodal_grp.keys():
+            ds = nodal_grp[pattern_safe]
+            rows = np.atleast_1d(ds[...])
+            for row in rows:
+                p = row["payload"]
+                force = tuple(
+                    float(x) for x in np.asarray(p["force_xyz"]).reshape(-1)[:3]
+                )
+                moment = tuple(
+                    float(x) for x in np.asarray(p["moment_xyz"]).reshape(-1)[:3]
+                )
+                nodal.append(NodalLoadRecord(
+                    pattern=_str(pattern_safe),
+                    node_id=int(p["node_id"]),
+                    force_xyz=force if any(np.isfinite(force)) else None,
+                    moment_xyz=moment if any(np.isfinite(moment)) else None,
+                ))
+
+    elem_grp = parent.get("element")
+    if elem_grp is not None:
+        for pattern_safe in elem_grp.keys():
+            ds = elem_grp[pattern_safe]
+            rows = np.atleast_1d(ds[...])
+            for row in rows:
+                p = row["payload"]
+                params_str = _str(p["params_json"])
+                params = json.loads(params_str) if params_str else {}
+                element.append(ElementLoadRecord(
+                    pattern=_str(pattern_safe),
+                    element_id=int(p["element_id"]),
+                    load_type=_str(p["load_type"]),
+                    params=params,
+                ))
+
+    sp_grp = parent.get("sp")
+    if sp_grp is not None:
+        for pattern_safe in sp_grp.keys():
+            ds = sp_grp[pattern_safe]
+            rows = np.atleast_1d(ds[...])
+            for row in rows:
+                p = row["payload"]
+                sp.append(SPRecord(
+                    pattern=_str(pattern_safe) if pattern_safe != "default" else "default",
+                    node_id=int(p["node_id"]),
+                    dof=int(p["dof"]),
+                    value=float(p["value"]),
+                    is_homogeneous=bool(int(p["is_homogeneous"])),
+                ))
+
+    return nodal, element, sp
+
+
+# ---------------------------------------------------------------------------
+# Mass decoder
+# ---------------------------------------------------------------------------
+
+
+def _read_masses(ds: Any) -> list[Any]:
+    """Decode the ``/masses`` dataset into ``MassRecord`` objects."""
+    from .records._masses import MassRecord
+
+    out: list[Any] = []
+    if ds is None:
+        return out
+    rows = np.atleast_1d(ds[...])
+    for row in rows:
+        p = row["payload"]
+        mass_arr = np.asarray(p["mass"], dtype=np.float64).reshape(-1)[:6]
+        if mass_arr.size < 6:
+            mass_arr = np.concatenate(
+                [mass_arr, np.zeros(6 - mass_arr.size, dtype=np.float64)]
+            )
+        out.append(MassRecord(
+            node_id=int(p["node_id"]),
+            mass=tuple(float(x) for x in mass_arr),
+        ))
+    return out
