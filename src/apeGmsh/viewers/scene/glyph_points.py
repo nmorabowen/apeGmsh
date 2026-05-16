@@ -24,6 +24,38 @@ import pyvista as pv
 from apeGmsh._types import DimTag
 
 
+def _auto_glyph_radius(
+    centers: np.ndarray,
+    point_size: float,
+    fallback_diag: float,
+) -> float:
+    """Auto-scale a sphere glyph radius from the centers' own extents.
+
+    The legacy ``0.003 * model_diagonal`` formula uses ``√(dx²+dy²+dz²)``
+    which is dominated by the longest axis. On elongated geometry
+    (long thin beam, large flat plate) the resulting glyphs are
+    bigger than the cross-section. Using the geometric mean of the
+    extents pulls the size toward the smaller dimensions while
+    matching the legacy size on roughly cubic models — the constant
+    ``0.0052`` is calibrated so ``0.0052 × side ≈ 0.003 × (√3 × side)``
+    when ``dx = dy = dz = side``.
+
+    Zero-extent dimensions (planar / line-shaped centers) are
+    substituted with the smallest non-zero extent so the geometric
+    mean doesn't collapse to 0.
+    """
+    scale = max(0.1, point_size / 10.0)
+    if len(centers) < 2:
+        return fallback_diag * 0.003 * scale
+    extents = centers.max(axis=0) - centers.min(axis=0)
+    nonzero = extents[extents > 0]
+    if nonzero.size == 0:
+        return fallback_diag * 0.003 * scale
+    safe = np.where(extents > 0, extents, nonzero.min())
+    gmean = float(np.prod(safe) ** (1.0 / safe.size))
+    return 0.0052 * gmean * scale
+
+
 def build_point_glyphs(
     plotter: pv.Plotter,
     centers: np.ndarray,
@@ -62,7 +94,7 @@ def build_point_glyphs(
         DimTag -> (3,) centroid coordinates.
     """
     cloud = pv.PolyData(centers)
-    base_r = model_diagonal * 0.003 * max(0.1, point_size / 10.0)
+    base_r = _auto_glyph_radius(centers, point_size, model_diagonal)
     sphere_src = pv.Sphere(
         radius=base_r,
         theta_resolution=8,
@@ -119,7 +151,7 @@ def build_node_cloud(
         from ..ui.theme import THEME
         color = THEME.current.node_accent
     cloud = pv.PolyData(node_coords)
-    glyph_r = 0.003 * model_diagonal * max(0.1, marker_size / 10.0)
+    glyph_r = _auto_glyph_radius(node_coords, marker_size, model_diagonal)
     sphere_src = pv.Sphere(
         radius=glyph_r,
         theta_resolution=8,
