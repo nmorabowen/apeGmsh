@@ -285,6 +285,80 @@ def _require_dim(sel: "Selection", expected_dim: int, *, method: str) -> None:
         )
 
 
+def _cluster_edge_directions(
+    curve_dimtags: list[DimTag],
+    *,
+    angle_tol_deg: float = 5.0,
+) -> list[tuple[np.ndarray, list[DimTag]]]:
+    """Group curves by chord direction (anti-parallel = same cluster).
+
+    Returns a list of ``(mean_direction, [curve_dimtags])`` tuples — one
+    per distinct principal direction.  A clean axis-aligned hex volume
+    yields exactly 3 clusters of 4 curves each.
+
+    The ``mean_direction`` of each cluster is sign-canonicalised so the
+    first non-zero component is positive — gives deterministic axis
+    ordering downstream.
+    """
+    import math
+    cos_tol = math.cos(math.radians(angle_tol_deg))
+    clusters: list[dict] = []
+    for dt in curve_dimtags:
+        d = _chord_direction(dt)
+        matched = False
+        for cluster in clusters:
+            if abs(float(d @ cluster["mean"])) >= cos_tol:
+                # Flip d to align with cluster mean before averaging.
+                d_aligned = d if float(d @ cluster["mean"]) >= 0 else -d
+                cluster["dts"].append(dt)
+                m = (cluster["mean"] * (len(cluster["dts"]) - 1) + d_aligned)
+                cluster["mean"] = m / np.linalg.norm(m)
+                matched = True
+                break
+        if not matched:
+            clusters.append({"mean": d.copy(), "dts": [dt]})
+
+    # Sign-canonicalise: first non-zero component positive.
+    result = []
+    for c in clusters:
+        m = c["mean"]
+        for v in m:
+            if abs(v) > 1e-9:
+                if v < 0:
+                    m = -m
+                break
+        result.append((m, c["dts"]))
+    return result
+
+
+def _order_clusters_by_global_axis(
+    clusters: list[tuple[np.ndarray, list[DimTag]]],
+) -> list[tuple[np.ndarray, list[DimTag]]]:
+    """Greedy-assign clusters to global axes (X, Y, Z) in that order.
+
+    For each of X, Y, Z (in order), picks the unclaimed cluster with the
+    largest ``|dot|`` against that global axis.  Tie-breaks by lex order
+    on the cluster mean direction.  Deterministic.
+
+    Returns clusters reordered so position 0 is the X-aligned cluster,
+    position 1 is Y-aligned, position 2 is Z-aligned (skipping unused
+    positions when there are fewer clusters than 3).
+    """
+    if not clusters:
+        return []
+    global_axes = [_AXIS_VECTORS["x"], _AXIS_VECTORS["y"], _AXIS_VECTORS["z"]]
+    remaining = list(clusters)
+    ordered: list[tuple[np.ndarray, list[DimTag]]] = []
+    for gax in global_axes:
+        if not remaining:
+            break
+        remaining.sort(
+            key=lambda c: (-abs(float(c[0] @ gax)), tuple(c[0].tolist())),
+        )
+        ordered.append(remaining.pop(0))
+    return ordered
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Selection — chainable result type
 # ─────────────────────────────────────────────────────────────────────────────

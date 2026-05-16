@@ -461,6 +461,352 @@ class _Structured:
         )
         return self
 
+    # ------------------------------------------------------------------
+    # Unified high-level entry point
+    # ------------------------------------------------------------------
+
+    def set_transfinite(
+        self,
+        target=None,
+        *,
+        n=None,
+        size=None,
+        recombine: bool = True,
+        dim: int | None = None,
+        angle_tol_deg: float = 5.0,
+    ) -> "_Structured":
+        """Apply transfinite (+ optional recombine) to one entity, many, or the whole model.
+
+        High-level dispatcher that infers the dim of the target and
+        applies the full cascade for that dim — curves of bounding
+        edges, surfaces, recombine, and (for volumes) the volume itself.
+
+        Parameters
+        ----------
+        target :
+            What to constrain.  Accepts:
+
+            - ``None``  → every volume in the model
+            - ``"name"`` (label or PG name) → all entities under that
+              name, any dim (each gets the cascade for its dim)
+            - a Selection — uses its dimtags
+            - a ``(dim, tag)`` dimtag, or list of them
+            - a bare int — must be paired with ``dim=``
+
+        n : int | tuple | dict | None
+            Node-count sizing.  Pass exactly one of ``n`` or ``size``.
+
+            - ``int`` — uniform on every edge of each entity, any
+              orientation
+            - ``dict`` — per-axis, keyed by ``"x"`` / ``"y"`` / ``"z"``.
+              Requires axis-aligned entities (raises otherwise — the
+              error reports the cluster directions so you can switch to
+              tuple form).
+            - ``tuple`` — per principal axis, in the order
+              ``(X-aligned, Y-aligned, Z-aligned)``.  Works on any
+              rotation; closest-global-axis assignment with lex
+              tie-break.  Length must match the entity's principal-axis
+              count (3 for volumes, 2 for surfaces, 1 for curves).
+        size : float | tuple | dict | None
+            Length-based sizing — node count per edge is
+            ``round(edge_length / size) + 1``.  Same grammar as ``n``.
+        recombine : bool, default True
+            Recombine to quads on each face and (for volumes) hex on
+            the volume.  Set ``False`` for a structured tet mesh.
+        dim : int | None, default None
+            Only used when ``target`` is a bare int.  Ignored otherwise.
+        angle_tol_deg : float, default 5.0
+            Tolerance for grouping edges into principal-axis clusters.
+            Raise if your geometry has nearly-parallel non-orthogonal
+            edges that you want kept separate.
+
+        Returns
+        -------
+        _Structured
+            ``self`` for chaining.
+
+        Behavior
+        --------
+        - Volumes are processed first so their bounding surfaces and
+          edges aren't reset by a later surface-level call.
+        - Entities whose edges don't cluster into the expected
+          principal-axis count (e.g. a face split by a boolean op into
+          a 5-sided patch) are **warned and skipped** rather than
+          failing the whole call.
+
+        Examples
+        --------
+        Whole-model, uniform sizing::
+
+            g.mesh.structured.set_transfinite(n=11)
+
+        Axis-aligned box, per-axis sizing::
+
+            g.mesh.structured.set_transfinite(
+                "layer_top", n={"x": 101, "y": 101, "z": 6},
+            )
+
+        Rotated box, per principal axis (tuple)::
+
+            g.mesh.structured.set_transfinite("rotated_box", n=(11, 11, 21))
+
+        Length-based sizing on a named surface::
+
+            g.mesh.structured.set_transfinite("base", size={"x": 100, "y": 100})
+
+        For per-edge bias (Progression/Bump/Beta) or explicit corner
+        lists, fall back to the granular methods —
+        :meth:`set_transfinite_curve`, :meth:`set_transfinite_surface`,
+        :meth:`set_transfinite_volume`.
+        """
+        from apeGmsh.core._helpers import resolve_to_dimtags
+        from apeGmsh.core._selection import (
+            _cluster_edge_directions,
+            _order_clusters_by_global_axis,
+            _AXIS_VECTORS,
+        )
+        import warnings
+
+        if (n is None) == (size is None):
+            raise ValueError(
+                "set_transfinite: pass exactly one of n= or size=."
+            )
+        spec_kind = "n" if n is not None else "size"
+        spec = n if n is not None else size
+
+        # Resolve target → list of dimtags
+        if target is None:
+            dts = [(3, t) for _, t in gmsh.model.getEntities(3)]
+        else:
+            dts = resolve_to_dimtags(
+                target, default_dim=dim or 3, session=self._mesh._parent,
+            )
+
+        # Group by dim — process volumes first
+        by_dim = {1: [], 2: [], 3: []}
+        for dt in dts:
+            if dt[0] in by_dim:
+                by_dim[dt[0]].append(dt)
+
+        for vol_dt in by_dim[3]:
+            self._cascade_volume(
+                vol_dt, spec, spec_kind, recombine, angle_tol_deg,
+            )
+        # Standalone surfaces (not part of any volume we just processed)
+        already_handled_faces = set()
+        for vol_dt in by_dim[3]:
+            for fdt in self._mesh._parent.model.queries.boundary(
+                vol_dt, oriented=False,
+            ):
+                already_handled_faces.add(tuple(fdt))
+        for face_dt in by_dim[2]:
+            if tuple(face_dt) in already_handled_faces:
+                continue
+            self._cascade_surface(
+                face_dt, spec, spec_kind, recombine, angle_tol_deg,
+            )
+        for curve_dt in by_dim[1]:
+            # Curves take only a scalar; reject dict/tuple at the curve level
+            if isinstance(spec, (dict, tuple, list)):
+                # Pull the matching value
+                count = self._extract_curve_count(curve_dt, spec, spec_kind,
+                                                   angle_tol_deg)
+            else:
+                count = self._spec_to_curve_count(curve_dt, spec, spec_kind)
+            self.set_transfinite_curve(curve_dt[1], n_nodes=count)
+
+        return self
+
+    # ------------------------------------------------------------------
+    # Cascade helpers used by set_transfinite()
+    # ------------------------------------------------------------------
+
+    def _cascade_volume(self, vol_dt, spec, spec_kind, recombine, angle_tol_deg):
+        """Run the full hex cascade on one volume — warn+skip if incompatible."""
+        from apeGmsh.core._selection import (
+            _cluster_edge_directions, _order_clusters_by_global_axis,
+        )
+        import warnings
+
+        edges = self._mesh._parent.model.queries.boundary_curves(vol_dt[1])
+        clusters = _cluster_edge_directions(edges, angle_tol_deg=angle_tol_deg)
+
+        if len(clusters) != 3:
+            warnings.warn(
+                f"set_transfinite: volume {vol_dt} has {len(clusters)} "
+                f"edge-direction cluster(s), not 3 — not hex-decomposable. "
+                f"Skipping. Use set_transfinite_automatic() if you want "
+                f"silent skipping with no warning.",
+                stacklevel=3,
+            )
+            return
+
+        clusters = _order_clusters_by_global_axis(clusters)
+        try:
+            counts = self._resolve_spec(spec, spec_kind, clusters, n_axes=3)
+        except ValueError as e:
+            warnings.warn(
+                f"set_transfinite: skipping volume {vol_dt}: {e}",
+                stacklevel=3,
+            )
+            return
+
+        for (_mean, dts), count in zip(clusters, counts):
+            for dt in dts:
+                self.set_transfinite_curve(dt[1], n_nodes=count)
+
+        faces = self._mesh._parent.model.queries.boundary(
+            vol_dt, oriented=False,
+        )
+        for fdt in faces:
+            self.set_transfinite_surface(fdt[1])
+            if recombine:
+                self.set_recombine(fdt[1], dim=2)
+        self.set_transfinite_volume(vol_dt[1])
+
+    def _cascade_surface(self, face_dt, spec, spec_kind, recombine, angle_tol_deg):
+        """Run the surface cascade on one face — warn+skip if incompatible."""
+        from apeGmsh.core._selection import (
+            _cluster_edge_directions, _order_clusters_by_global_axis,
+        )
+        import warnings
+
+        bnd = gmsh.model.getBoundary([face_dt], oriented=False, recursive=False)
+        edges = [b for b in bnd if b[0] == 1]
+        clusters = _cluster_edge_directions(edges, angle_tol_deg=angle_tol_deg)
+
+        if len(clusters) != 2:
+            warnings.warn(
+                f"set_transfinite: surface {face_dt} has {len(clusters)} "
+                f"edge-direction cluster(s), not 2 — not quad-decomposable. "
+                f"Skipping.",
+                stacklevel=3,
+            )
+            return
+
+        clusters = _order_clusters_by_global_axis(clusters)
+        try:
+            counts = self._resolve_spec(spec, spec_kind, clusters, n_axes=2)
+        except ValueError as e:
+            warnings.warn(
+                f"set_transfinite: skipping surface {face_dt}: {e}",
+                stacklevel=3,
+            )
+            return
+
+        for (_mean, dts), count in zip(clusters, counts):
+            for dt in dts:
+                self.set_transfinite_curve(dt[1], n_nodes=count)
+        self.set_transfinite_surface(face_dt[1])
+        if recombine:
+            self.set_recombine(face_dt[1], dim=2)
+
+    # ------------------------------------------------------------------
+    # Sizing-spec resolution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_spec(spec, spec_kind, ordered_clusters, *, n_axes):
+        """Convert a scalar/dict/tuple sizing spec into a count per cluster.
+
+        ``ordered_clusters`` is the global-axis-ordered cluster list.
+        Returns list of int (node counts), one per cluster.
+        """
+        from apeGmsh.core._selection import _AXIS_VECTORS
+        import math
+
+        def length_to_n(L, s):
+            return max(2, round(L / s) + 1)
+
+        def cluster_length(cluster):
+            mean, dts = cluster
+            # max edge length in the cluster — characteristic of axis
+            lens = []
+            for dt in dts:
+                bb = gmsh.model.getBoundingBox(*dt)
+                lens.append(math.sqrt(
+                    (bb[3]-bb[0])**2 + (bb[4]-bb[1])**2 + (bb[5]-bb[2])**2,
+                ))
+            return max(lens) if lens else 0.0
+
+        # Scalar
+        if isinstance(spec, (int, float)) and not isinstance(spec, bool):
+            if spec_kind == "n":
+                return [int(spec)] * n_axes
+            return [length_to_n(cluster_length(c), spec) for c in ordered_clusters]
+
+        # Tuple / list
+        if isinstance(spec, (tuple, list)):
+            if len(spec) != n_axes:
+                raise ValueError(
+                    f"tuple of length {n_axes} expected for this entity, "
+                    f"got length {len(spec)}"
+                )
+            if spec_kind == "n":
+                return [int(v) for v in spec]
+            return [
+                length_to_n(cluster_length(c), s)
+                for c, s in zip(ordered_clusters, spec)
+            ]
+
+        # Dict
+        if isinstance(spec, dict):
+            axis_names = ["x", "y", "z"][:n_axes]
+            # Verify each cluster is actually aligned with its assigned global axis.
+            # Order is X first, Y next, Z next — same as _order_clusters_by_global_axis.
+            global_vecs = [_AXIS_VECTORS["x"], _AXIS_VECTORS["y"], _AXIS_VECTORS["z"]]
+            counts = []
+            for i, (mean, _dts) in enumerate(ordered_clusters):
+                gax = global_vecs[i]
+                if abs(float(mean @ gax)) < math.cos(math.radians(2.0)):
+                    # Cluster doesn't align with global axis — dict form is invalid
+                    raise ValueError(
+                        f"dict-form sizing requires axis-aligned entity, but "
+                        f"a cluster's mean direction is {tuple(round(v, 3) for v in mean)} "
+                        f"— not parallel to any global axis. "
+                        f"Use tuple form (e.g. n=({', '.join(str(spec.get(k, 0)) for k in axis_names)})) "
+                        f"for rotated geometry."
+                    )
+                key = axis_names[i]
+                if key not in spec:
+                    raise ValueError(
+                        f"dict-form sizing missing key {key!r}; got keys "
+                        f"{sorted(spec)}"
+                    )
+                val = spec[key]
+                if spec_kind == "n":
+                    counts.append(int(val))
+                else:
+                    counts.append(length_to_n(cluster_length(ordered_clusters[i]), val))
+            return counts
+
+        raise ValueError(
+            f"unrecognised sizing spec type {type(spec).__name__}: {spec!r}"
+        )
+
+    def _extract_curve_count(self, curve_dt, spec, spec_kind, angle_tol_deg):
+        """For a standalone curve, pick the matching scalar from dict/tuple."""
+        from apeGmsh.core._selection import (
+            _cluster_edge_directions, _order_clusters_by_global_axis,
+        )
+        clusters = _order_clusters_by_global_axis(
+            _cluster_edge_directions([curve_dt], angle_tol_deg=angle_tol_deg)
+        )
+        counts = self._resolve_spec(spec, spec_kind, clusters, n_axes=1)
+        return counts[0]
+
+    @staticmethod
+    def _spec_to_curve_count(curve_dt, spec, spec_kind):
+        """Scalar sizing → node count for a single curve."""
+        import math
+        if spec_kind == "n":
+            return int(spec)
+        bb = gmsh.model.getBoundingBox(*curve_dt)
+        L = math.sqrt(
+            (bb[3]-bb[0])**2 + (bb[4]-bb[1])**2 + (bb[5]-bb[2])**2,
+        )
+        return max(2, round(L / spec) + 1)
+
     def set_transfinite_by_physical(
         self,
         name : str,
