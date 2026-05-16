@@ -57,6 +57,7 @@ from ._mesh_editing import _Editing
 from ._mesh_field import FieldHelper
 from ._mesh_generation import _Generation
 from ._mesh_partitioning import _Partitioning
+from ._mesh_options import _Options
 from ._mesh_queries import _Queries
 from ._mesh_sizing import _Sizing
 from ._mesh_structured import _Structured
@@ -113,6 +114,7 @@ class Mesh(_HasLogging):
         self.editing      = _Editing(self)
         self.queries      = _Queries(self)
         self.partitioning = _Partitioning(self)
+        self.options      = _Options(self)
 
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._mesh._*)

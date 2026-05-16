@@ -20,6 +20,37 @@ Meshing composite. Seven focused sub-composites.
 
 ::: apeGmsh.mesh._mesh_field.FieldHelper
 
+### `g.mesh.options`
+
+::: apeGmsh.mesh._mesh_options._Options
+
+#### Common recipes
+
+```python
+# All-hex output for an unstructured tet model
+g.mesh.options.set_subdivision_algorithm("all_hex")
+
+# Quadratic elements (8-node hex → 27-node hex, 4-node tet → 10-node tet)
+g.mesh.options.set_element_order(2)
+
+# HXT algorithm — much faster than Delaunay for large unstructured tet meshes
+g.mesh.options.set_algorithm_3d("hxt")
+
+# Highest-quality all-quad surface mesh
+g.mesh.options.set_recombination_algorithm("blossom_full")
+g.mesh.options.set_algorithm_2d("frontal_quads")
+
+# Fluent chaining — every setter returns self
+(g.mesh.options
+    .set_algorithm_3d("hxt")
+    .set_element_order(2)
+    .set_smoothing(iterations=3))
+```
+
+For options not wrapped here, drop to `gmsh.option.setNumber("Mesh.X", v)`
+directly. The wrapper covers the ~6 options users actually tune; Gmsh has
+~50+ `Mesh.*` options total.
+
 ### `g.mesh.structured`
 
 ::: apeGmsh.mesh._mesh_structured._Structured
