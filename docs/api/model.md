@@ -29,6 +29,48 @@ transforms, io, queries.
 
 ::: apeGmsh.core._model_queries._Queries
 
+### Geometric predicates — cheat sheet
+
+The full set of filters available on `queries.select(...)` and `Selection`:
+
+| Predicate | Where | Dim | Example | Keeps entities that… |
+|---|---|---|---|---|
+| `on=` | kwarg on `select()` | any | `on={"z": 0}` | lie **entirely on** the plane |
+| `crossing=` | kwarg on `select()` | any | `crossing={"z": 0}` | **straddle** the plane |
+| `not_on=` | kwarg on `select()` | any | `not_on={"z": 0}` | are **not entirely on** the plane |
+| `not_crossing=` | kwarg on `select()` | any | `not_crossing={"z": 0}` | lie **entirely on one side** |
+| `.parallel_to(...)` | method on `Selection` | 1 (curves) | `edges.parallel_to("z")` | are curves whose chord direction is **parallel** to it |
+| `.normal_along(...)` | method on `Selection` | 2 (surfaces) | `faces.normal_along("z")` | are surfaces whose **normal** is along it |
+
+#### Primitive formats accepted by `on=` / `crossing=` / `not_on=` / `not_crossing=`
+
+| Form | Meaning |
+|---|---|
+| `{"z": 0}` / `{"x": 5}` / `{"y": -3}` | Axis-aligned plane |
+| `[(x1,y1,z1), (x2,y2,z2)]` | Infinite line through 2 points (for curves in 2-D) |
+| `[(x1,y1,z1), (x2,y2,z2), (x3,y3,z3)]` | Infinite plane through 3 points (for surfaces / volumes) |
+| `m.model.queries.plane(...)` | `Plane` object — axis-aligned, 3-point, or `normal=`/`through=` |
+| `m.model.queries.line(p1, p2)` | `Line` object — explicit 2-point construction |
+
+#### Direction formats accepted by `.parallel_to(...)` / `.normal_along(...)`
+
+| Form | Meaning |
+|---|---|
+| `"x"`, `"y"`, `"z"` | Axis alias |
+| `(1, 0, 0)` / `(1, 1, 0)` | Any non-zero 3-vector (normalized internally) |
+| `angle_tol=2.0` | Tolerance in **degrees**; default `1.0`. Anti-parallel counts as parallel. |
+
+#### Entry-point methods on `queries` (build a Selection from scratch)
+
+| Method | Returns |
+|---|---|
+| `select_all()` | every entity, all dims |
+| `select_all_points()` | dim=0 |
+| `select_all_curves()` | dim=1 |
+| `select_all_surfaces()` | dim=2 |
+| `select_all_volumes()` | dim=3 |
+| `select(name_or_dimtags, dim=N)` | by PG / label name, or from an explicit set |
+
 ### Selection — result type for `select()`
 
 `select()` returns a `Selection` — a chainable list of `(dim, tag)` pairs.
