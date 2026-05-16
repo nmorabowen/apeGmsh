@@ -88,6 +88,7 @@ class ModelOutlineTree:
         on_rename_group: Optional[Callable[[str], None]] = None,
         on_delete_group: Optional[Callable[[str], None]] = None,
         on_new_group: Optional[Callable[[], None]] = None,
+        on_row_focused: Optional[Callable[[str, Any], None]] = None,
     ) -> None:
         QtCore, QtGui, QtWidgets = _qt()
         self._selection = selection
@@ -98,6 +99,10 @@ class ModelOutlineTree:
         self._on_rename_group = on_rename_group
         self._on_delete_group = on_delete_group
         self._on_new_group = on_new_group
+        # Generic row-focused signal — fires for every selectable row
+        # with ``(kind, payload)``. Viewers map kinds to tab names and
+        # call ``win.focus_tab(...)`` to reveal the property editor.
+        self._on_row_focused = on_row_focused
 
         # ── Outer container + header ────────────────────────────────
         widget = QtWidgets.QWidget()
@@ -356,10 +361,17 @@ class ModelOutlineTree:
         if item is None:
             return
         kind = item.data(0, _ROLE_KIND)
+        payload = item.data(0, _ROLE_PAYLOAD)
         if kind == "group" and self._on_group_activated is not None:
-            self._on_group_activated(item.data(0, _ROLE_PAYLOAD))
+            self._on_group_activated(payload)
         elif kind == "entity" and self._on_entity_toggled is not None:
-            self._on_entity_toggled(item.data(0, _ROLE_PAYLOAD))
+            self._on_entity_toggled(payload)
+        # Generic row-focus signal — fires for every kind so the
+        # viewer can raise the matching property tab. Header rows
+        # (``kind == "header"``) are non-selectable and never reach
+        # here, so no guard needed.
+        if kind in ("group", "entity", "part") and self._on_row_focused:
+            self._on_row_focused(kind, payload)
 
     # ------------------------------------------------------------------
     # Right-click context menu

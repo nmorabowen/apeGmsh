@@ -536,6 +536,42 @@ class ViewerWindow:
         if self._tabs_dock is not None and not self._tabs_dock.isVisible():
             self._tabs_dock.setVisible(True)
 
+    def focus_tab(self, identifier: str) -> bool:
+        """Bring a tab / extension dock to the front.
+
+        Handles both right-side panel patterns: the legacy
+        ``QTabWidget`` inside ``_tabs_dock`` (mesh.viewer today) and
+        the tabified extension-dock cluster (model.viewer post-plan-08).
+        Tries the extension-dock dictionary first (``identifier`` ==
+        ``dock_id``); falls back to a tab-text match on ``_tab_widget``.
+
+        Returns ``True`` if the identifier resolved to something
+        raisable, ``False`` otherwise — callers can use the bool to
+        log or no-op.
+        """
+        dock = self._extension_docks.get(identifier)
+        if dock is not None:
+            try:
+                dock.setVisible(True)
+                dock.raise_()
+                return True
+            except Exception:
+                return False
+        # Tab-text fallback for the legacy QTabWidget pattern.
+        tw = getattr(self, "_tab_widget", None)
+        if tw is not None:
+            for i in range(tw.count()):
+                if tw.tabText(i) == identifier:
+                    tw.setCurrentIndex(i)
+                    if self._tabs_dock is not None:
+                        self._tabs_dock.setVisible(True)
+                        try:
+                            self._tabs_dock.raise_()
+                        except Exception:
+                            pass
+                    return True
+        return False
+
     # ------------------------------------------------------------------
     # Extension docks (plan 08 — registry-driven extras)
     # ------------------------------------------------------------------

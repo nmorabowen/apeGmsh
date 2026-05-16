@@ -761,6 +761,22 @@ class ModelViewer:
         # eventually we'll deprecate one.
         parts_reg = getattr(self._parent, 'parts', None)
         from .ui._model_outline_tree import ModelOutlineTree
+
+        # Map outline row kinds to the extension-dock ids whose tabs
+        # serve as the property editor for that row type. ParaView
+        # pipeline-browser pattern: click a node → properties panel
+        # for that node comes forward.
+        _OUTLINE_TAB_MAP = {
+            "group":  "dock_model_browser",
+            "entity": "dock_model_browser",
+            "part":   "dock_model_browser",
+        }
+
+        def _on_outline_row_focused(kind: str, _payload) -> None:
+            tab_id = _OUTLINE_TAB_MAP.get(kind)
+            if tab_id is not None:
+                win.focus_tab(tab_id)
+
         outline = ModelOutlineTree(
             selection=sel,
             vis_mgr=vis_mgr,
@@ -770,6 +786,7 @@ class ModelViewer:
             on_new_group=_on_new_group,
             on_rename_group=_on_rename_group,
             on_delete_group=_on_delete_group,
+            on_row_focused=_on_outline_row_focused,
         )
         win.add_extension_dock(DockSpec(
             dock_id="dock_model_outline",

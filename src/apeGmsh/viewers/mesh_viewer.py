@@ -378,11 +378,29 @@ class MeshViewer:
         from .ui._mesh_outline_tree import MeshOutlineTree
         from .ui._dock_registry import DockSpec
         parts_reg = getattr(self._parent, 'parts', None)
+
+        # Map outline row kinds to the right-side tab names whose
+        # contents serve as the property editor for that row type.
+        # mesh.viewer's right side is the legacy ``QTabWidget`` (not
+        # tabified extension docks), so we identify tabs by their
+        # text label.
+        _OUTLINE_TAB_MAP = {
+            "group": "Browser",
+            "type":  "Browser",
+            "part":  "Browser",
+        }
+
+        def _on_outline_row_focused(kind: str, _payload) -> None:
+            tab_name = _OUTLINE_TAB_MAP.get(kind)
+            if tab_name is not None:
+                win.focus_tab(tab_name)
+
         self._outline_tree = MeshOutlineTree(
             scene=scene,
             selection=sel,
             vis_mgr=vis_mgr,
             parts_registry=parts_reg,
+            on_row_focused=_on_outline_row_focused,
         )
         win.add_extension_dock(DockSpec(
             dock_id="dock_mesh_outline",
