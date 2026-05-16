@@ -1178,6 +1178,28 @@ class FEMData:
         return _from_msh(cls, path=path, dim=dim,
                          remove_orphans=remove_orphans)
 
+    @classmethod
+    def from_h5(cls, path: str) -> "FEMData":
+        """Load a :class:`FEMData` snapshot from a root-layout ``model.h5``.
+
+        Inverse of :meth:`to_h5`.  Reads the seven neutral-zone groups
+        plus ``/meta`` and rebuilds nodes, elements (per type),
+        physical groups, labels, mesh selections, constraints, loads,
+        and masses — everything the writer round-trips.
+
+        Use this to resume a session-saved model in a later script::
+
+            # script 1 — build & save
+            with apeGmsh(model_name="m", save_to="m.h5") as g:
+                ...
+
+            # script 2 — analyse
+            fem = FEMData.from_h5("m.h5")
+            apeSees(fem).h5("m.h5")     # enrich with /opensees/...
+        """
+        from ._femdata_h5_io import read_fem_h5
+        return read_fem_h5(path)
+
     def to_native_h5(self, group) -> None:
         """Embed this FEMData into an open HDF5 group (``/model/``).
 
