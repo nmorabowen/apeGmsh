@@ -11,7 +11,11 @@ and every consumer fails loud (never silently truncates) if a legacy
 model nonetheless carries one PG name at several dims.
 
 Multi-dim *labels* (Tier 1, ``g.labels``) remain supported — that is a
-separate concept and is intentionally untouched here.
+separate concept.  Their resolution through loads/masses is dimension
+*scoped* (a face load takes only the label's dim-2 entities) and
+**fails loud** on a wrong-dimension reference — never silently
+truncates to whichever dim Gmsh yields first.  That contract is
+covered at the bottom of this file.
 """
 import gmsh
 import numpy as np
@@ -19,6 +23,7 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh.core._helpers import resolve_to_dimtags
+from apeGmsh.core.Labels import add_prefix
 from apeGmsh.viewers.core.selection import _write_group
 
 
@@ -93,7 +98,7 @@ def test_fem_single_dim_name_unchanged():
 
 
 # =====================================================================
-# Legacy / raw multi-dim PG (bypassing add()) — fail loud, not silent
+# Legacy / raw multi-dim PG (bypassing add()) — every consumer FAILS LOUD
 # =====================================================================
 
 @pytest.fixture
@@ -123,6 +128,17 @@ def test_resolve_to_dimtags_legacy_multi_dim_raises(g_legacy_multi_pg):
         )
 
 
+def test_loads_resolve_legacy_multi_dim_raises(g_legacy_multi_pg):
+    """Loads must fail loud — not silently bind to the first dim."""
+    with pytest.raises(ValueError, match="multiple dimensions|not supported"):
+        g_legacy_multi_pg.loads._resolve_target("Mixed", source="pg")
+
+
+def test_masses_resolve_legacy_multi_dim_raises(g_legacy_multi_pg):
+    with pytest.raises(ValueError, match="multiple dimensions|not supported"):
+        g_legacy_multi_pg.masses._resolve_target("Mixed", source="pg")
+
+
 # =====================================================================
 # ModelViewer GUI chokepoint — _write_group() invariant
 # =====================================================================
@@ -145,3 +161,77 @@ def test_write_group_rejection_preserves_existing_group():
             _write_group("Keep", [(3, 1), (2, 1)])  # rejected
         # The original single-dim group is still intact.
         assert g.physical.entities("Keep") == [1]
+
+
+# =====================================================================
+# Multi-dim LABEL resolution through loads/masses — dim-scoped, fail-loud
+# =====================================================================
+#
+# Labels (Tier 1) MAY span dims.  The hazard the PG ban does not cover:
+# a multi-dim label consumed by a load/mass must resolve to the
+# dimension that load semantically needs (surface load -> dim 2), and
+# must NOT silently truncate to whichever dim Gmsh enumerates first.
+
+@pytest.fixture
+def g_multi_dim_label():
+    """A box with a label 'region' covering volume 1 (dim 3) AND face
+    1 (dim 2) — a legitimate multi-dim Tier-1 label."""
+    with apeGmsh(model_name="multi_label", verbose=False) as g:
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        lp = add_prefix("region")
+        t3 = gmsh.model.addPhysicalGroup(3, [1])
+        gmsh.model.setPhysicalName(3, t3, lp)
+        t2 = gmsh.model.addPhysicalGroup(2, [1])
+        gmsh.model.setPhysicalName(2, t2, lp)
+        yield g
+
+
+def test_label_resolves_union_not_first_match(g_multi_dim_label):
+    """No expected_dim → full union of every dim, never first-match."""
+    dts = g_multi_dim_label.loads._resolve_target("region", source="label")
+    assert {d for d, _ in dts} == {2, 3}
+
+
+def test_label_scoped_to_expected_dim(g_multi_dim_label):
+    """A surface load (expected_dim=2) gets ONLY the dim-2 slice."""
+    s2 = g_multi_dim_label.loads._resolve_target(
+        "region", source="label", expected_dim=2)
+    assert {d for d, _ in s2} == {2}
+    s3 = g_multi_dim_label.loads._resolve_target(
+        "region", source="label", expected_dim=3)
+    assert {d for d, _ in s3} == {3}
+
+
+def test_label_wrong_dim_ref_raises_loud(g_multi_dim_label):
+    """Label doesn't cover dim 1 — a line load on it must fail loud,
+    not return empty silently."""
+    with pytest.raises(ValueError, match="requires dim=1|dimension"):
+        g_multi_dim_label.loads._resolve_target(
+            "region", source="label", expected_dim=1)
+
+
+def test_masses_label_resolution_symmetric(g_multi_dim_label):
+    """Masses resolve identically to loads (shared contract)."""
+    assert {d for d, _ in g_multi_dim_label.masses._resolve_target(
+        "region", source="label")} == {2, 3}
+    assert {d for d, _ in g_multi_dim_label.masses._resolve_target(
+        "region", source="label", expected_dim=3)} == {3}
+    with pytest.raises(ValueError, match="requires dim=1|dimension"):
+        g_multi_dim_label.masses._resolve_target(
+            "region", source="label", expected_dim=1)
+
+
+def test_wrong_dim_pg_ref_raises_loud():
+    """A single-dim PG handed to a load expecting another dim fails
+    loud (the 'catch wrong-dim refs' guarantee)."""
+    with apeGmsh(model_name="wrong_dim_pg", verbose=False) as g:
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        g.model.sync()
+        g.physical.add_surface([1], name="AFace")   # dim 2 only
+        # A volume/gravity load (expected_dim=3) on a dim-2 PG:
+        with pytest.raises(ValueError, match="requires dim=3|dimension"):
+            g.loads._resolve_target("AFace", source="pg", expected_dim=3)
+        # But correctly scoped when the dims agree.
+        ok = g.loads._resolve_target("AFace", source="pg", expected_dim=2)
+        assert {d for d, _ in ok} == {2}

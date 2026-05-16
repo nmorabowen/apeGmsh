@@ -586,7 +586,8 @@ class MassesComposite:
     # Target resolution (same lookup order as LoadsComposite)
     # ------------------------------------------------------------------
 
-    def _resolve_target(self, target, source: str = "auto") -> list[tuple]:
+    def _resolve_target(self, target, source: str = "auto", *,
+                        expected_dim: int | None = None) -> list[tuple]:
         """Resolve target -> list of ``(dim, tag)`` or mesh-selection sentinel.
 
         Lookup order (for ``source="auto"``):
@@ -595,6 +596,15 @@ class MassesComposite:
             3. Label name (Tier 1, ``_label:`` prefixed PG)
             4. Physical group name (Tier 2)
             5. Part label
+
+        A label may span several dimensions and a part owns entities
+        across dims; both are returned as the **union** of every
+        matching ``(dim, tag)`` — never the first dim only.
+        ``expected_dim`` — the dimension the calling mass needs
+        (1 line, 2 surface, 3 volume) — scopes a name-resolved
+        target to that dimension and **fails loud** if the name
+        resolved to entities but none at ``expected_dim``.  Raw
+        ``(dim, tag)`` lists and mesh selections bypass this scoping.
         """
         import gmsh
 
@@ -608,7 +618,7 @@ class MassesComposite:
                 f"got {type(target).__name__}"
             )
 
-        # Mesh selection name (auto only)
+        # Mesh selection name (auto only) — sentinel, bypasses scoping.
         if source == "auto":
             ms = getattr(self._parent, "mesh_selection", None)
             if ms is not None and hasattr(ms, "_sets"):
@@ -616,7 +626,10 @@ class MassesComposite:
                     if info.get("name") == target:
                         return [("__ms__", dim, tag)]
 
-        # Label name (Tier 1)
+        out: list[tuple[int, int]] = []
+
+        # Label name (Tier 1).  A label may span dims — collect the
+        # union of every matching dim, never just the first.
         if source in ("auto", "label"):
             try:
                 from apeGmsh.core.Labels import add_prefix
@@ -626,41 +639,72 @@ class MassesComposite:
                         if gmsh.model.getPhysicalName(pg_dim, pg_tag) == prefixed:
                             ents = gmsh.model.getEntitiesForPhysicalGroup(
                                 pg_dim, pg_tag)
-                            return [(pg_dim, int(t)) for t in ents]
+                            out.extend((pg_dim, int(t)) for t in ents)
                     except Exception:
                         pass
             except Exception:
                 pass
 
-        # Physical group name (Tier 2)
-        if source in ("auto", "pg"):
+        # Physical group name (Tier 2).  A PG name maps to a single
+        # dimension; fail loud if a legacy model carries the name at
+        # several dims rather than silently binding the mass to
+        # whichever dim is found first.
+        if not out and source in ("auto", "pg"):
+            pg_matches: list[tuple[int, int]] = []
             try:
                 for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
                     try:
                         if gmsh.model.getPhysicalName(pg_dim, pg_tag) == target:
-                            ents = gmsh.model.getEntitiesForPhysicalGroup(
-                                pg_dim, pg_tag)
-                            return [(pg_dim, int(t)) for t in ents]
+                            pg_matches.append((pg_dim, pg_tag))
                     except Exception:
                         pass
             except Exception:
                 pass
+            if pg_matches:
+                pg_dims = {d for d, _ in pg_matches}
+                if len(pg_dims) > 1:
+                    raise ValueError(
+                        f"Physical group {target!r} exists at multiple "
+                        f"dimensions {sorted(pg_dims)}. Multi-dimensional "
+                        f"physical groups are not supported; assign one "
+                        f"dimension per group name."
+                    )
+                pg_dim, pg_tag = pg_matches[0]
+                out.extend(
+                    (pg_dim, int(t))
+                    for t in gmsh.model.getEntitiesForPhysicalGroup(
+                        pg_dim, pg_tag)
+                )
 
-        # Part label
-        if source == "auto":
+        # Part label — a part owns entities across dims; union them.
+        if not out and source == "auto":
             parts = getattr(self._parent, "parts", None)
             if parts is not None and hasattr(parts, "_instances"):
                 inst = parts._instances.get(target)
                 if inst is not None:
-                    out: list = []
                     for d, ts in inst.entities.items():
                         out.extend((int(d), int(t)) for t in ts)
-                    return out
 
-        raise KeyError(
-            f"Mass target {target!r} not found as label, physical group, "
-            f"part label, or mesh selection."
-        )
+        if not out:
+            raise KeyError(
+                f"Mass target {target!r} not found as label, physical "
+                f"group, part label, or mesh selection."
+            )
+
+        if expected_dim is not None:
+            scoped = [(d, t) for d, t in out if d == expected_dim]
+            if not scoped:
+                found = sorted({d for d, _ in out})
+                raise ValueError(
+                    f"Target {target!r} resolved to dimension(s) "
+                    f"{found}, but this mass requires dim={expected_dim}. "
+                    f"Give it a target of the right dimension (a label "
+                    f"must cover dim={expected_dim}; multi-dimensional "
+                    f"physical groups are not supported)."
+                )
+            return scoped
+
+        return out
 
     def _target_nodes(self, target, node_map, all_nodes,
                       source: str = "auto") -> set[int]:
@@ -693,7 +737,7 @@ class MassesComposite:
         return nodes
 
     def _target_edges(self, target, source: str = "auto") -> list[tuple[int, int]]:
-        dts = self._resolve_target(target, source=source)
+        dts = self._resolve_target(target, source=source, expected_dim=1)
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
@@ -713,7 +757,7 @@ class MassesComposite:
         return edges
 
     def _target_faces(self, target, source: str = "auto") -> list[list[int]]:
-        dts = self._resolve_target(target, source=source)
+        dts = self._resolve_target(target, source=source, expected_dim=2)
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
@@ -737,7 +781,7 @@ class MassesComposite:
         return faces
 
     def _target_elements(self, target, source: str = "auto"):
-        dts = self._resolve_target(target, source=source)
+        dts = self._resolve_target(target, source=source, expected_dim=3)
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
