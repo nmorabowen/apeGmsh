@@ -628,13 +628,29 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     QMainWindow {{
         background-color: {p.base};
     }}
+    /* Compact, native-feeling menu bar. Setting any QMenuBar QSS
+       switches it off the native style onto the stylesheet box model,
+       whose default item metrics are much looser than a real menu bar
+       — so the item padding/height MUST be set explicitly or the bar
+       renders chunky. */
     QMenuBar {{
         background-color: {p.mantle};
         color: {p.text};
         border-bottom: 1px solid {p.surface0};
+        padding: 1px 4px;
+        font-size: 12px;
+    }}
+    QMenuBar::item {{
+        background: transparent;
+        padding: 3px 8px;
+        margin: 0;
+        border-radius: 4px;
     }}
     QMenuBar::item:selected {{
         background-color: {p.surface1};
+    }}
+    QMenuBar::item:pressed {{
+        background-color: {p.surface2};
     }}
     QMenu {{
         background-color: {p.base};
