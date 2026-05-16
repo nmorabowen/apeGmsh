@@ -47,12 +47,85 @@ class _Structured:
         mesh_type: str   = "Progression",
         coef     : float = 1.0,
     ) -> "_Structured":
-        """
-        Set a transfinite constraint on a curve.
+        """Force a curve to be meshed with a deterministic node count and distribution.
 
-        ``tag`` accepts an int, a label string, or a PG name.
-        If it resolves to multiple curves, the constraint is
-        applied to each.
+        A "transfinite" curve has its nodes placed by formula rather than by
+        the unstructured mesher.  This is the building block for structured
+        meshes: when every bounding curve of a surface is transfinite, the
+        surface itself can be made transfinite (a structured grid); same for
+        volumes built from transfinite surfaces.
+
+        Parameters
+        ----------
+        tag :
+            Curve identifier.  Accepts an int tag, a label string, a
+            physical-group name, a ``(1, tag)`` dimtag, or a list of any
+            of these (constraint applied to each).  Works with
+            :meth:`Selection.tags() <apeGmsh.core._selection.Selection.tags>`
+            output.
+        n_nodes : int
+            Number of nodes along the curve (≥ 2).  ``n_nodes - 1``
+            elements are produced.
+        mesh_type : str, default ``"Progression"``
+            Node distribution rule.  One of:
+
+            - ``"Progression"`` — geometric progression.  ``coef`` is
+              the ratio between successive intervals.
+              ``coef = 1`` ⇒ uniform; ``coef > 1`` clusters nodes
+              toward the curve's end point; ``coef < 1`` clusters
+              toward the start.
+            - ``"Bump"`` — symmetric biasing.  ``coef > 1`` clusters
+              toward the middle; ``coef < 1`` clusters toward both
+              ends; ``coef = 1`` ⇒ uniform.
+            - ``"Beta"`` — Beta-distribution biasing (Gmsh ≥ 4.10).
+        coef : float, default ``1.0``
+            Distribution parameter — meaning depends on ``mesh_type``
+            (see above).  Use ``1.0`` for a uniform distribution.
+
+        Returns
+        -------
+        _Structured
+            ``self`` for chaining.
+
+        Notes
+        -----
+        The constraint is only honored if the curve is part of a
+        transfinite surface (and the surface part of a transfinite volume,
+        for 3-D meshes).  A transfinite curve in isolation will simply
+        seed the unstructured mesher with that node count.
+
+        Curve **direction** matters for non-uniform distributions: which
+        end is "start" vs "end" follows the curve's intrinsic orientation
+        in Gmsh.  Reverse the orientation (or pass ``coef = 1/r`` instead
+        of ``r``) to flip the clustering.
+
+        Examples
+        --------
+        Uniform 11-node spacing on a single curve::
+
+            m.mesh.structured.set_transfinite_curve(curve_tag, n_nodes=11)
+
+        Geometric refinement toward the curve's end (boundary-layer style)::
+
+            m.mesh.structured.set_transfinite_curve(
+                curve_tag, n_nodes=21,
+                mesh_type="Progression", coef=1.1,
+            )
+
+        Symmetric refinement toward the middle (capture a feature at mid-span)::
+
+            m.mesh.structured.set_transfinite_curve(
+                curve_tag, n_nodes=21,
+                mesh_type="Bump", coef=0.25,
+            )
+
+        Pass a Selection's tags to constrain many curves at once::
+
+            edges = m.model.queries.select("box", dim=1)
+            m.mesh.structured.set_transfinite_curve(
+                edges.parallel_to("z").tags(),
+                n_nodes=21,
+            )
         """
         for t in self._resolve(tag, dim=1):
             gmsh.model.mesh.setTransfiniteCurve(t, n_nodes,
@@ -74,10 +147,70 @@ class _Structured:
         arrangement: str            = "Left",
         corners    : list[int] | None = None,
     ) -> "_Structured":
-        """
-        Set a transfinite constraint on a surface.
+        """Force a surface to be meshed as a structured grid.
 
-        ``tag`` accepts an int, a label string, or a PG name.
+        A transfinite surface has its interior nodes laid out by transfinite
+        interpolation between its bounding curves.  Combined with transfinite
+        curves on every bounding edge, this produces a fully structured
+        surface mesh (triangles by default, quads with
+        :meth:`set_recombine`).
+
+        Parameters
+        ----------
+        tag :
+            Surface identifier.  Accepts an int tag, label string,
+            physical-group name, ``(2, tag)`` dimtag, or list of any.
+        arrangement : str, default ``"Left"``
+            Diagonal direction for the structured triangles.  Ignored
+            once the surface is recombined to quads.  Values:
+
+            - ``"Left"``        all diagonals slant the same way
+            - ``"Right"``       all diagonals slant the other way
+            - ``"AlternateLeft"`` alternating pattern, starting Left
+            - ``"AlternateRight"`` alternating pattern, starting Right
+        corners : list[int] | None, default ``None``
+            Tags of the 3 or 4 corner points defining the structured
+            topology.  Required when the surface has **more than 4
+            bounding curves** (e.g. after a face split) or when Gmsh
+            can't auto-detect the corners.  Pass ``None`` for a clean
+            3- or 4-sided face.
+
+        Returns
+        -------
+        _Structured
+            ``self`` for chaining.
+
+        Prerequisites
+        -------------
+        Every bounding curve of the surface must already be transfinite
+        (see :meth:`set_transfinite_curve`).  Opposite edges must have
+        matching ``n_nodes`` (or the mesher will fail at generation time
+        with a "transfinite surface: inconsistent number of nodes" error).
+
+        Examples
+        --------
+        Clean rectangle::
+
+            m.mesh.structured.set_transfinite_surface(face_tag)
+
+        Surface with 5+ bounding curves — pick the 4 logical corners::
+
+            m.mesh.structured.set_transfinite_surface(
+                face_tag, corners=[p1, p2, p3, p4],
+            )
+
+        Apply to every horizontal face of a layer::
+
+            faces = m.model.queries.select("layer_1", dim=2)
+            m.mesh.structured.set_transfinite_surface(
+                faces.normal_along("z").tags(),
+            )
+
+        Notes
+        -----
+        For a quad/hex mesh, follow with :meth:`set_recombine` on the
+        same surface.  The all-in-one helper :meth:`set_transfinite_box`
+        does this automatically for clean hex volumes.
         """
         for t in self._resolve(tag, dim=2):
             gmsh.model.mesh.setTransfiniteSurface(t, arrangement=arrangement,
@@ -99,9 +232,46 @@ class _Structured:
         *,
         corners: list[int] | None = None,
     ) -> "_Structured":
-        """Set a transfinite constraint on a volume.
+        """Force a volume to be meshed as a structured grid.
 
-        ``tag`` accepts an int, a label string, or a PG name.
+        A transfinite volume has its interior nodes laid out by transfinite
+        interpolation between its bounding surfaces.  Combined with
+        :meth:`set_recombine` on each face, this produces a pure hex mesh.
+
+        Parameters
+        ----------
+        tag :
+            Volume identifier.  Accepts an int tag, label string,
+            physical-group name, ``(3, tag)`` dimtag, or list of any.
+        corners : list[int] | None, default ``None``
+            Tags of the 6 (prism) or 8 (hex) corner points that define
+            the structured topology.  Required when the volume has
+            irregular face counts or when Gmsh can't auto-detect the
+            corners.  Pass ``None`` for a clean 5- or 6-faced volume.
+
+        Returns
+        -------
+        _Structured
+            ``self`` for chaining.
+
+        Prerequisites
+        -------------
+        - Every bounding surface must already be transfinite
+          (:meth:`set_transfinite_surface`).
+        - Opposite surfaces must have matching node counts on their
+          shared edges.
+
+        Examples
+        --------
+        Single hex (after edges and faces are already transfinite)::
+
+            m.mesh.structured.set_transfinite_volume(vol_tag)
+
+        Notes
+        -----
+        For the common case of "transfinite + recombine + hex on every
+        face of a clean box," use :meth:`set_transfinite_box` instead —
+        it sets the constraints on edges, faces, and volume in one call.
         """
         for t in self._resolve(tag, dim=3):
             gmsh.model.mesh.setTransfiniteVolume(t, cornerTags=corners or [])
@@ -119,9 +289,53 @@ class _Structured:
         corner_angle: float = 2.35,
         recombine   : bool  = True,
     ) -> "_Structured":
-        """
-        Let gmsh automatically detect and set transfinite constraints
-        on compatible 3- and 4-sided surfaces/volumes.
+        """Auto-detect transfinite-compatible entities and constrain them.
+
+        Walks each surface and volume in ``dim_tags`` (or the entire model
+        if ``None``).  A face counts as "transfinite-compatible" if it
+        has 3 or 4 corners whose angles are within ``corner_angle`` of a
+        flat angle (π radians).  Compatible faces and the volumes built
+        from them get transfinite + (optionally) recombine constraints
+        applied automatically.
+
+        Useful as a fallback after boolean operations leave you with a
+        mix of clean and split faces — :meth:`set_transfinite_box`
+        would fail on the split faces, but ``automatic`` simply skips
+        them.
+
+        Parameters
+        ----------
+        dim_tags : list[(dim, tag)] | None, default ``None``
+            Restrict the search to these entities.  ``None`` ⇒ walk
+            every entity in the model.
+        corner_angle : float, default ``2.35``
+            Threshold angle in **radians** for the "is this a corner?"
+            test.  The default ≈ 135° is Gmsh's own — vertices whose
+            interior angle deviates from π (180°) by less than this
+            tolerance are not counted as corners.  Reduce for stricter
+            corner detection; raise to admit more rounded transitions.
+        recombine : bool, default ``True``
+            Recombine detected faces into quads (and volumes into hexes).
+            Set ``False`` for a transfinite tet mesh.
+
+        Returns
+        -------
+        _Structured
+            ``self`` for chaining.
+
+        Examples
+        --------
+        Mesh-everything-it-can fallback after a boolean op::
+
+            m.model.boolean.fragment("box_a", "box_b")
+            m.mesh.structured.set_transfinite_automatic()
+            m.mesh.generation.generate(dim=3)
+
+        Restrict to a subset (only the volumes you care about)::
+
+            m.mesh.structured.set_transfinite_automatic(
+                dim_tags=[(3, t) for t in vol_tags],
+            )
         """
         gmsh.model.mesh.setTransfiniteAutomatic(
             dimTags=dim_tags or [],
@@ -149,41 +363,71 @@ class _Structured:
         n   : int | None   = None,
         recombine: bool    = True,
     ) -> "_Structured":
-        """
-        Apply transfinite + recombine constraints to a clean 6-face hex
-        volume — captures the full unstructured-to-hex setup in one call.
+        """Apply transfinite + recombine constraints to a clean hex volume.
 
-        Walks the volume's bounding curves and assigns a node count
-        per edge, marks every bounding surface as transfinite (and
-        recombined to quads if ``recombine=True``), then marks the
-        volume as transfinite.
+        Captures the full "structured hex" setup in one call.  Walks the
+        volume's bounding curves, assigns a node count per edge, marks
+        every bounding surface as transfinite (and recombined to quads
+        when ``recombine=True``), then marks the volume itself as
+        transfinite.
 
         Parameters
         ----------
         vol :
-            int tag, label string, PG name, or ``(3, tag)`` tuple.
-        size :
-            Target element size — node count per edge is
-            ``round(length / size) + 1``.
-        n :
-            Uniform node count on every edge (overrides ``size``).
-        recombine :
-            Recombine each face to quads.  Default True (gives a hex mesh).
-            Set False for a transfinite tet mesh.
+            Volume identifier.  Accepts an int tag, a label string, a
+            physical-group name, or a ``(3, tag)`` dimtag.  If it
+            resolves to multiple volumes, all are constrained.
+        size : float, optional
+            Target element edge length.  Node count per edge is
+            ``round(edge_length / size) + 1`` (clamped to a minimum
+            of 2 nodes).  Provides isotropic sizing — each edge gets
+            its own ``n_nodes`` based on its length.
+        n : int, optional
+            Uniform node count on **every** edge of the volume.
+            Overrides per-edge length-based sizing.
+        recombine : bool, default ``True``
+            Recombine each face to quads (gives a hex mesh).  Set
+            ``False`` for a transfinite tet mesh.
 
-        Notes
-        -----
-        Requires the volume to be hex-decomposable — exactly 6 faces,
-        each a 4-sided patch.  After ``fragment()`` operations, volumes
-        may end up with split faces and stop being transfinite-compatible;
-        in that case use ``set_transfinite_automatic()`` instead.
-
-        Example
+        Returns
         -------
-        ::
+        _Structured
+            ``self`` for chaining.
 
-            m.mesh.structured.set_transfinite_box('box', size=0.5)
-            m.mesh.structured.set_transfinite_box(vol_tag, n=11)
+        Raises
+        ------
+        ValueError
+            If neither ``size`` nor ``n`` is given, or both are.
+
+        Requirements
+        ------------
+        The volume must be **hex-decomposable**: exactly 5 or 6 faces,
+        each a 3- or 4-sided patch.  After :meth:`boolean.fragment`
+        operations, volumes may end up with split faces and stop being
+        transfinite-compatible — in that case use
+        :meth:`set_transfinite_automatic` instead, which silently
+        skips incompatible faces.
+
+        Examples
+        --------
+        Uniform mesh — same ``n`` per edge regardless of edge length::
+
+            m.mesh.structured.set_transfinite_box("box", n=11)
+
+        Length-based sizing — denser mesh on longer edges::
+
+            m.mesh.structured.set_transfinite_box("box", size=0.5)
+
+        Per-axis control — use the lower-level methods instead::
+
+            edges = m.model.queries.select("box", dim=1)
+            m.mesh.structured.set_transfinite_curve(
+                edges.parallel_to("x").tags(), n_nodes=11)
+            m.mesh.structured.set_transfinite_curve(
+                edges.parallel_to("y").tags(), n_nodes=11)
+            m.mesh.structured.set_transfinite_curve(
+                edges.parallel_to("z").tags(), n_nodes=21)
+            # then surfaces + volume via set_transfinite_box(recombine=...)
         """
         if (size is None) == (n is None):
             raise ValueError("Pass exactly one of size= or n=.")
