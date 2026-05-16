@@ -82,11 +82,11 @@ def resolve_to_tags(
 
     Accepted inputs
     ---------------
-    * ``int`` — raw Gmsh entity tag, passed through after existence
-      check.
+    * ``int`` — raw Gmsh entity tag, passed through **verbatim**
+      (explicit user intent; not existence- or dim-validated).
     * ``str`` — resolved in order: label name (Tier 1, ``g.labels``),
-      then user physical-group name (Tier 2, ``g.physical``).  The
-      first match wins.
+      user physical-group name (Tier 2, ``g.physical``), then part
+      label (Tier 3, ``g.parts``).  The first match wins.
     * ``(dim, tag)`` — dimtag tuple, tag extracted.
     * ``list`` — each element resolved independently, results
       concatenated.
@@ -98,7 +98,8 @@ def resolve_to_tags(
         The reference(s) to resolve.
     dim : int, optional
         Expected entity dimension.  Used to scope the search for
-        string references and to validate int tags.  When ``None``,
+        string references (label scoped or unioned, PG single-dim).
+        Raw int tags are passed through unscoped.  When ``None``,
         all dimensions are searched.
     session : _SessionBase
         The owning session — used to access ``session.labels`` and
@@ -112,7 +113,7 @@ def resolve_to_tags(
     Raises
     ------
     KeyError
-        When a string reference is not found as a label or PG.
+        When a string reference is not found as a label, PG, or part.
     ValueError
         When ``ref`` is None but ``dim`` is not set.
 
@@ -171,10 +172,9 @@ def resolve_to_dimtags(
 
     Companion to :func:`resolve_to_tags` — returns dimtags instead of
     flat tags, which matches the shape every OCC boolean call expects.
-    Handles label / PG references that span multiple dimensions by
-    enumerating each dim and emitting one dimtag per (dim, tag) hit;
-    callers never have to coerce a single dim when the reference
-    naturally lives at several.
+    A *label* reference that spans multiple dimensions is enumerated
+    into one dimtag per (dim, tag) hit; physical groups map to a
+    single dimension.
 
     Accepted inputs (same shape as :func:`resolve_to_tags`)
     -------------------------------------------------------
@@ -235,13 +235,18 @@ def _resolve_string_to_dimtags(
     default_dim: int,
     session: "_SessionBase",
 ) -> list[DimTag]:
-    """Resolve a string ref to dimtags — label first, then user PG.
+    """Resolve a string ref to dimtags — label, then PG, then part.
 
-    Mirrors :func:`_resolve_string`'s order (label Tier 1, then PG
-    Tier 2) and emits ``(dim, tag)``.  Multi-dim *labels* are
-    enumerated across every dim they occupy; a physical group maps
-    to a single dimension and raises ``ValueError`` if a legacy
-    model carries one PG name at several dims.
+    Precedence ``label (Tier 1) → physical group (Tier 2) → part
+    label``, emitting ``(dim, tag)`` — the same geometry-entity
+    precedence loads/masses/FEMData use.  Multi-dim *labels* and
+    *parts* are enumerated across every dim they occupy; a physical
+    group maps to a single dimension and raises ``ValueError`` if a
+    legacy model carries one PG name at several dims.  Mesh
+    selections are intentionally **not** a tier here: they are a
+    post-mesh node concept, not a geometry entity, so a mesh-
+    selection name correctly raises ``KeyError`` (loads/masses
+    handle it via their own post-mesh path).
     """
     labels_comp = getattr(session, 'labels', None)
     if labels_comp is not None:
@@ -276,6 +281,18 @@ def _resolve_string_to_dimtags(
                 )
             return pg_hits
 
+    parts_comp = getattr(session, 'parts', None)
+    if parts_comp is not None:
+        inst = getattr(parts_comp, '_instances', {}).get(name)
+        if inst is not None:
+            part_hits = [
+                (int(d), int(t))
+                for d, tags in inst.entities.items()
+                for t in tags
+            ]
+            if part_hits:
+                return part_hits
+
     available_labels: list[str] = []
     available_pgs: list[str] = []
     if labels_comp is not None:
@@ -293,9 +310,10 @@ def _resolve_string_to_dimtags(
             pass
 
     raise KeyError(
-        f"Entity reference {name!r} not found as a label or physical "
-        f"group.  Pass a label name (Tier 1, g.labels) or a physical "
-        f"group name (Tier 2, g.physical)."
+        f"Entity reference {name!r} not found as a label, physical "
+        f"group, or part.  Pass a label name (Tier 1, g.labels), a "
+        f"physical group name (Tier 2, g.physical), or a part label "
+        f"(Tier 3, g.parts)."
         f"\n  Available labels: {available_labels}"
         f"\n  Available PGs: {available_pgs}"
     )
@@ -357,20 +375,44 @@ def _resolve_string(
     dim: int | None,
     session: "_SessionBase",
 ) -> list[int]:
-    """Resolve a string reference — label first, then user PG.
+    """Resolve a string reference — label, then PG, then part.
 
-    Resolution order:
-    1. ``session.labels.entities(name, dim=dim)`` — Tier 1 label
+    Resolution order (the geometry-entity precedence shared with
+    loads/masses/FEMData):
+    1. ``session.labels`` — Tier 1 label
     2. ``session.physical.entities(name, dim=dim)`` — Tier 2 PG
-    3. Raise ``KeyError`` with available names
+    3. ``session.parts`` instance — Tier 3 part label
+    4. Raise ``KeyError`` with available names
+
+    Mesh selections are intentionally not a tier: they are a
+    post-mesh node concept, not a geometry entity.
+
+    A label may legitimately span dimensions.  With an explicit
+    ``dim`` the label is scoped to it; with ``dim=None`` the entities
+    are **unioned across every dim the label occupies** (mirroring
+    :func:`_resolve_string_to_dimtags`, ``_group_set`` and FEMData) —
+    rather than raising the way :meth:`Labels.entities` does for a
+    bare multi-dim lookup.  A physical group stays single-dim: with
+    ``dim=None`` a multi-dim PG still raises (rule enforced by
+    :meth:`PhysicalGroups.entities`).
     """
-    # Try label
+    # Try label (union across dims when no explicit dim is given)
     labels_comp = getattr(session, 'labels', None)
     if labels_comp is not None:
-        try:
-            return labels_comp.entities(name, dim=dim)
-        except KeyError:
-            pass
+        if dim is not None:
+            try:
+                return labels_comp.entities(name, dim=dim)
+            except KeyError:
+                pass
+        else:
+            hits: list[int] = []
+            for d in range(4):
+                try:
+                    hits.extend(labels_comp.entities(name, dim=d))
+                except KeyError:
+                    continue
+            if hits:
+                return hits
 
     # Try user PG
     physical_comp = getattr(session, 'physical', None)
@@ -380,6 +422,22 @@ def _resolve_string(
             return result
         except (KeyError, TypeError):
             pass
+
+    # Try part label (Tier 3) — same precedence loads/FEMData use.
+    parts_comp = getattr(session, 'parts', None)
+    if parts_comp is not None:
+        inst = getattr(parts_comp, '_instances', {}).get(name)
+        if inst is not None:
+            if dim is not None:
+                part_tags = [int(t) for t in inst.entities.get(dim, [])]
+            else:
+                part_tags = [
+                    int(t)
+                    for tags in inst.entities.values()
+                    for t in tags
+                ]
+            if part_tags:
+                return part_tags
 
     # Build a helpful error message
     available_labels = []
@@ -399,8 +457,8 @@ def _resolve_string(
             pass
 
     raise KeyError(
-        f"Entity reference {name!r} not found as a label or "
-        f"physical group"
+        f"Entity reference {name!r} not found as a label, "
+        f"physical group, or part"
         + (f" at dim={dim}" if dim is not None else "")
         + f".\n  Available labels: {available_labels}"
         + f"\n  Available PGs: {available_pgs}"

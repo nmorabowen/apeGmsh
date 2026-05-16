@@ -270,13 +270,12 @@ def _from_gmsh(
         face_map = None
         if (parts_comp is not None
                 and getattr(parts_comp, "_instances", None)):
-            try:
-                node_map = parts_comp.build_node_map(
-                    node_ids, node_coords_all)
-                face_map = parts_comp.build_face_map(node_map)
-            except Exception:
-                node_map = None
-                face_map = None
+            # No broad swallow: a node/face-map build failure must
+            # surface with its real cause rather than degrade to
+            # None and resurface later as a vaguer constraint error.
+            node_map = parts_comp.build_node_map(
+                node_ids, node_coords_all)
+            face_map = parts_comp.build_face_map(node_map)
 
         # Build temp flat connectivity for resolver kwargs
         flat_conn = _flat_connectivity(groups)
@@ -287,39 +286,37 @@ def _from_gmsh(
             face_map=face_map,
         )
 
-        # Constraints
+        # Constraints / loads / masses.
+        #
+        # These resolve() calls are deliberately NOT wrapped in a
+        # broad ``except Exception: log.warning`` swallow.  The
+        # resolvers raise precise, actionable ValueError/KeyError when
+        # a reference is wrong-dimension, multi-dim, unresolved, or
+        # would otherwise silently bind the wrong node/face set.  A
+        # structural model that silently drops a tie / load / mass is
+        # worse than one that errors — get_fem_data() must fail loud
+        # so the user fixes the model, not discover it post-analysis.
         constraints_comp = getattr(session, "constraints", None)
         if (constraints_comp is not None
                 and getattr(constraints_comp, "constraint_defs", None)):
-            try:
-                all_constraints = constraints_comp.resolve(
-                    node_ids, node_coords_all, **resolve_kw)
-                node_constraints, surface_constraints = \
-                    _split_constraints(all_constraints)
-            except Exception as exc:
-                _log.warning("Constraint resolve failed: %s", exc)
+            all_constraints = constraints_comp.resolve(
+                node_ids, node_coords_all, **resolve_kw)
+            node_constraints, surface_constraints = \
+                _split_constraints(all_constraints)
 
-        # Loads
         loads_comp = getattr(session, "loads", None)
         if (loads_comp is not None
                 and getattr(loads_comp, "load_defs", None)):
-            try:
-                all_loads = loads_comp.resolve(
-                    node_ids, node_coords_all, **resolve_kw)
-                nodal_loads, element_loads, sp_records = _split_loads(all_loads)
-            except Exception as exc:
-                _log.warning("Load resolve failed: %s", exc)
+            all_loads = loads_comp.resolve(
+                node_ids, node_coords_all, **resolve_kw)
+            nodal_loads, element_loads, sp_records = _split_loads(all_loads)
 
-        # Masses
         masses_comp = getattr(session, "masses", None)
         if (masses_comp is not None
                 and getattr(masses_comp, "mass_defs", None)):
-            try:
-                mass_records = masses_comp.resolve(
-                    node_ids, node_coords_all,
-                    ndf=ndf, **resolve_kw)
-            except Exception as exc:
-                _log.warning("Mass resolve failed: %s", exc)
+            mass_records = masses_comp.resolve(
+                node_ids, node_coords_all,
+                ndf=ndf, **resolve_kw)
 
     # ── 3. Orphan filtering ───────────────────────────────────
     if remove_orphans:
