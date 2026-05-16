@@ -508,19 +508,35 @@ class ModelViewer:
             on_reveal_all=_tree_reveal_all,
         )
 
-        # Add tabs to window
-        win.add_tab("Browser", browser.widget)
-        win.add_tab("View", view_tab.widget)
-        win.add_tab("Filter", filter_tab.widget)
-        # Plan 08 — Selection tree as a registry-driven extension dock.
-        # We still place it BELOW the tabs dock and keep it title-less +
-        # immobile to match the legacy ``add_right_bottom_dock`` look;
-        # gaining the auto View-menu toggle is the only intentional UX
-        # delta. ``tabify_with`` would side-by-side it with the tabs
-        # dock — wrong shape for this row, so we re-anchor with
-        # ``splitDockWidget`` after mount.
+        # Plan 08 follow-up — every right-side panel is now its own
+        # ``QDockWidget`` tabified together by default. Users can drag
+        # any panel out, dock it elsewhere, close it from the title
+        # bar, and the arrangement persists via ``window_key``.
+        # ``_FIRST_DOCK`` anchors the tabify chain so subsequent calls
+        # land next to it instead of fanning out across dock areas.
         from .ui._dock_registry import DockSpec
         from qtpy import QtCore, QtWidgets
+        _FIRST_DOCK = "dock_model_browser"
+
+        def _add_panel(dock_id: str, title: str, widget) -> Any:
+            win.add_extension_dock(DockSpec(
+                dock_id=dock_id,
+                title=title,
+                factory=lambda _p: widget,
+                tabify_with=(
+                    None if dock_id == _FIRST_DOCK else _FIRST_DOCK
+                ),
+            ))
+
+        _add_panel(_FIRST_DOCK, "Browser", browser.widget)
+        _add_panel("dock_model_view", "View", view_tab.widget)
+        _add_panel("dock_model_filter", "Filter", filter_tab.widget)
+
+        # Selection tree stays a separate dock BELOW the tabified
+        # panel group (its persistent "list of picks" role makes
+        # tabifying it with the navigators awkward — users want to see
+        # picks while browsing). Anchor the split against the first
+        # tabified dock instead of the (now-hidden) tabs dock.
         sel_dock = win.add_extension_dock(DockSpec(
             dock_id="dock_model_selection",
             title="Selection",
@@ -528,12 +544,12 @@ class ModelViewer:
         ))
         sel_dock.setTitleBarWidget(QtWidgets.QWidget())    # hide title bar
         sel_dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
-        tabs_dock = win.window.findChild(
-            QtWidgets.QDockWidget, win.DOCK_TABS,
+        anchor = win.window.findChild(
+            QtWidgets.QDockWidget, _FIRST_DOCK,
         )
-        if tabs_dock is not None:
+        if anchor is not None:
             win.window.splitDockWidget(
-                tabs_dock, sel_dock, QtCore.Qt.Vertical,
+                anchor, sel_dock, QtCore.Qt.Vertical,
             )
 
         plotter = win.plotter
@@ -582,12 +598,12 @@ class ModelViewer:
             on_marker_removed=origin_overlay.remove,
             on_size_changed=origin_overlay.set_size,
         )
-        win.add_tab("Markers", origin_panel.widget)
+        _add_panel("dock_model_markers", "Markers", origin_panel.widget)
 
         # ── Model info panel (read-only diagnostics) ──────────────
         from .ui._model_info_panel import ModelInfoPanel
         info_panel = ModelInfoPanel(parts_registry=getattr(self._parent, 'parts', None))
-        win.add_tab("Info", info_panel.widget)
+        _add_panel("dock_model_info", "Info", info_panel.widget)
 
         # ── Section / clipping plane ────────────────────────────────
         from .overlays.clip_plane_overlay import ClipPlaneOverlay
@@ -603,7 +619,7 @@ class ModelViewer:
                 return (0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
 
         clip_panel = ClipPlanePanel(clip_overlay, world_bbox=_world_bbox())
-        win.add_tab("Section", clip_panel.widget)
+        _add_panel("dock_model_section", "Section", clip_panel.widget)
 
         # ── Measure tool (entity-centroid distance) ─────────────────
         from .overlays.measure_overlay import MeasureOverlay
@@ -638,7 +654,7 @@ class ModelViewer:
             on_active_changed=_on_measure_active,
             on_clear=_on_measure_clear,
         )
-        win.add_tab("Measure", measure_panel.widget)
+        _add_panel("dock_model_measure", "Measure", measure_panel.widget)
 
         # ── Tangent / normal overlay (geometry probes in View tab) ──
         from .overlays.tangent_normal_overlay import TangentNormalOverlay
@@ -710,7 +726,7 @@ class ModelViewer:
             lambda: open_theme_editor(win.window)
         )
         prefs.widget.layout().addWidget(_btn_theme)
-        win.add_tab("Session", prefs.widget)
+        _add_panel("dock_model_session", "Session", prefs.widget)
 
         # Set generous clipping range for shifted coords
         try:

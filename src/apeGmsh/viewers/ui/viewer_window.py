@@ -132,7 +132,12 @@ class ViewerWindow:
     # renamed). Saved state from a different schema is ignored so a
     # users' restored layout never half-applies to a structurally
     # different window.
-    _LAYOUT_SCHEMA_VERSION = 1
+    #
+    # v2 (2026-05-15): tabs_dock starts hidden when no tabs are
+    # supplied; model.viewer migrated all its add_tab calls to
+    # tabified extension docks, so v1 state for ModelViewer would
+    # surface an empty placeholder dock on restore.
+    _LAYOUT_SCHEMA_VERSION = 2
 
     def __init__(
         self,
@@ -285,6 +290,12 @@ class ViewerWindow:
         tabs_dock.setWidget(self._tab_widget)
         self._window.addDockWidget(QtCore.Qt.RightDockWidgetArea, tabs_dock)
         self._tabs_dock = tabs_dock
+        # Pre-populated tabs make the dock useful immediately; an
+        # otherwise-empty tabs_dock reserves dead space when callers
+        # route their panels through ``add_extension_dock`` exclusively.
+        # ``add_tab`` un-hides the dock on first call.
+        if not (tabs or []):
+            tabs_dock.setVisible(False)
 
         # ── Extra docks ─────────────────────────────────────────────
         for dock in (extra_docks or []):
@@ -452,8 +463,16 @@ class ViewerWindow:
         return self._window
 
     def add_tab(self, name: str, widget) -> None:
-        """Add a tab to the right-side panel (after construction)."""
+        """Add a tab to the right-side panel (after construction).
+
+        Un-hides the tabs dock so that callers who use ``add_tab``
+        exclusively get the legacy "tab strip on the right" UI. Mixed
+        callers (some tabs, some extension docks) also work — the
+        first ``add_tab`` flips visibility on.
+        """
         self._tab_widget.addTab(widget, name)
+        if self._tabs_dock is not None and not self._tabs_dock.isVisible():
+            self._tabs_dock.setVisible(True)
 
     # ------------------------------------------------------------------
     # Extension docks (plan 08 — registry-driven extras)
