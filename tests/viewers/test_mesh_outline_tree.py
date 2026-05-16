@@ -326,3 +326,204 @@ def test_type_click_does_not_fire_group_activated(qapp):
     type_item = outline._group_types.child(0)
     outline._on_item_clicked(type_item, 0)
     assert received == []
+
+
+# =====================================================================
+# FEM-input sections — Loads / Masses / Constraints
+# =====================================================================
+
+
+class _StubLoadsComposite:
+    def __init__(self, patterns: list[str]) -> None:
+        self._patterns = patterns
+
+    def patterns(self) -> list[str]:
+        return list(self._patterns)
+
+
+class _StubMassComposite:
+    """Presence-only sentinel — the outline only checks ``is not None``."""
+
+
+class _StubConstraintsComposite:
+    def __init__(self, kinds: list[str]) -> None:
+        # Build a list of dicts that look like constraint defs to
+        # ``_def_kind_key`` — only the ``kind`` attribute is checked
+        # for non-RigidLink branches.
+        from types import SimpleNamespace
+        self.constraint_defs = [
+            SimpleNamespace(kind=k) for k in kinds
+        ]
+
+
+def test_loads_section_renders_one_row_per_pattern(qapp):
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        loads_composite=_StubLoadsComposite(["self-weight", "wind-x"]),
+    )
+    assert outline._group_loads.isHidden() is False
+    assert outline._group_loads.childCount() == 2
+    names = [
+        outline._group_loads.child(i).text(0) for i in range(2)
+    ]
+    assert names == ["self-weight", "wind-x"]
+
+
+def test_loads_section_hidden_when_no_composite(qapp):
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        loads_composite=None,
+    )
+    assert outline._group_loads.isHidden() is True
+
+
+def test_loads_section_hidden_when_no_patterns(qapp):
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        loads_composite=_StubLoadsComposite([]),
+    )
+    assert outline._group_loads.isHidden() is True
+
+
+def test_load_pattern_eye_click_fires_active_patterns(qapp):
+    """Clicking a pattern row's eye toggles ROLE_VISIBLE and fires
+    ``on_load_patterns_changed`` with the currently-visible set."""
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_VISIBLE
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    captured: list[set[str]] = []
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        loads_composite=_StubLoadsComposite(["a", "b"]),
+        on_load_patterns_changed=captured.append,
+    )
+    # Hide "a" via its eye.
+    a_row = outline._group_loads.child(0)
+    assert a_row.data(0, ROLE_VISIBLE) is True
+    outline._on_eye_clicked(a_row)
+    assert a_row.data(0, ROLE_VISIBLE) is False
+    assert captured[-1] == {"b"}
+
+    # Hide "b" too → empty active set.
+    b_row = outline._group_loads.child(1)
+    outline._on_eye_clicked(b_row)
+    assert captured[-1] == set()
+
+    # Re-show "a".
+    outline._on_eye_clicked(a_row)
+    assert captured[-1] == {"a"}
+
+
+def test_masses_section_renders_single_row(qapp):
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        mass_composite=_StubMassComposite(),
+    )
+    assert outline._group_masses.isHidden() is False
+    assert outline._group_masses.childCount() == 1
+
+
+def test_masses_eye_click_fires_boolean(qapp):
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    captured: list[bool] = []
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        mass_composite=_StubMassComposite(),
+        on_mass_visibility_changed=captured.append,
+    )
+    row = outline._group_masses.child(0)
+    outline._on_eye_clicked(row)
+    assert captured == [False]
+    outline._on_eye_clicked(row)
+    assert captured == [False, True]
+
+
+def test_constraints_section_renders_one_row_per_kind(qapp):
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        constraints_composite=_StubConstraintsComposite(
+            ["equal_dof", "equal_dof", "tie"],
+        ),
+    )
+    # Two distinct kinds, sorted alphabetically.
+    assert outline._group_constraints.isHidden() is False
+    assert outline._group_constraints.childCount() == 2
+    names = [
+        outline._group_constraints.child(i).text(0) for i in range(2)
+    ]
+    assert names == ["equal_dof", "tie"]
+
+
+def test_constraint_kind_eye_click_fires_active_kinds(qapp):
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_VISIBLE
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    captured: list[set[str]] = []
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        constraints_composite=_StubConstraintsComposite(["equal_dof", "tie"]),
+        on_constraint_kinds_changed=captured.append,
+    )
+    eq_row = outline._group_constraints.child(0)
+    assert eq_row.data(0, ROLE_VISIBLE) is True
+    outline._on_eye_clicked(eq_row)
+    assert eq_row.data(0, ROLE_VISIBLE) is False
+    assert captured[-1] == {"tie"}
+
+
+def test_constraints_section_hidden_when_no_defs(qapp):
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=_StubVisManager(),
+        constraints_composite=_StubConstraintsComposite([]),
+    )
+    assert outline._group_constraints.isHidden() is True
+
+
+def test_load_eye_click_does_not_touch_vis_mgr(qapp):
+    """FEM-input rows have their own visibility state — they must not
+    add DimTags to the VisibilityManager (which would silently hide
+    mesh BReps)."""
+    from apeGmsh.viewers.ui._mesh_outline_tree import MeshOutlineTree
+
+    vis_mgr = _StubVisManager()
+    outline = MeshOutlineTree(
+        scene=_make_scene(),
+        selection=_StubSelection(),
+        vis_mgr=vis_mgr,
+        loads_composite=_StubLoadsComposite(["a"]),
+        on_load_patterns_changed=lambda _s: None,
+    )
+    initial_hidden = set(vis_mgr.hidden)
+    outline._on_eye_clicked(outline._group_loads.child(0))
+    assert set(vis_mgr.hidden) == initial_hidden
