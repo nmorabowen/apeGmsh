@@ -50,7 +50,8 @@ def _theme():
 # can coexist without subtle confusion if items ever move between
 # them.
 _ROLE_KIND = int(0x0210)       # "group" | "type" | "part" | "entity"
-_ROLE_PAYLOAD = int(0x0211)    # name (group/type/part) | DimTag (entity)
+                               # | "load_pattern" | "mass" | "constraint_kind"
+_ROLE_PAYLOAD = int(0x0211)    # name (group/type/part/pattern/kind) | DimTag
 
 
 class MeshOutlineTree:
@@ -70,9 +71,37 @@ class MeshOutlineTree:
     parts_registry
         Optional :class:`PartsRegistry` (``g.parts``). When ``None``,
         the Parts group is hidden.
+    loads_composite / mass_composite / constraints_composite
+        Optional FEM-input composites. When given, the outline surfaces
+        a top-level section per category with per-pattern (Loads),
+        per-kind (Constraints), or single-row (Masses) entries. Eye
+        click computes the new active set and fires the corresponding
+        rebuild callback.
     on_group_activated
-        Callback fired when a Physical Group row is clicked. Same
-        contract as :class:`ModelOutlineTree.on_group_activated`.
+        Callback fired when a Physical Group row is clicked.
+    on_load_patterns_changed
+        Callback fired with the set of currently-visible load pattern
+        names whenever a Loads row's eye is toggled. Mirrors the
+        existing :attr:`LoadsTabPanel.on_patterns_changed` contract;
+        wired in mesh.viewer to ``_rebuild_loads_overlay``.
+    on_mass_visibility_changed
+        Callback fired with ``bool`` (overlay shown / hidden) when the
+        Masses row's eye is toggled. Wired to ``_rebuild_mass_overlay``.
+    on_constraint_kinds_changed
+        Callback fired with the set of currently-visible constraint
+        kinds whenever a Constraints row's eye is toggled. Mirrors
+        :attr:`ConstraintsTabPanel.on_kinds_changed`; wired to
+        ``_rebuild_constraints_overlay``.
+
+    Known limitation (2026-05-16)
+    -----------------------------
+    The right-side ``LoadsTab`` / ``MassTab`` / ``ConstraintsTab``
+    keep their own visibility state. Toggling in only one surface
+    works; alternating between the outline eye and the tab checkbox
+    causes the overlay to flip to whichever surface fired last. State
+    unification (single source-of-truth across both surfaces) is a
+    deliberate follow-up — the design discussion lives in the PR
+    description.
     """
 
     def __init__(
@@ -82,14 +111,30 @@ class MeshOutlineTree:
         vis_mgr: "VisibilityManager",
         parts_registry: Any = None,
         *,
+        loads_composite: Any = None,
+        mass_composite: Any = None,
+        constraints_composite: Any = None,
         on_group_activated: Optional[Callable[[str], None]] = None,
+        on_load_patterns_changed: Optional[
+            Callable[[set[str]], None]
+        ] = None,
+        on_mass_visibility_changed: Optional[Callable[[bool], None]] = None,
+        on_constraint_kinds_changed: Optional[
+            Callable[[set[str]], None]
+        ] = None,
     ) -> None:
         QtCore, _, QtWidgets = _qt()
         self._scene = scene
         self._selection = selection
         self._vis_mgr = vis_mgr
         self._parts = parts_registry
+        self._loads = loads_composite
+        self._masses = mass_composite
+        self._constraints = constraints_composite
         self._on_group_activated = on_group_activated
+        self._on_load_patterns_changed = on_load_patterns_changed
+        self._on_mass_visibility_changed = on_mass_visibility_changed
+        self._on_constraint_kinds_changed = on_constraint_kinds_changed
 
         # ── Outer container + header ────────────────────────────────
         widget = QtWidgets.QWidget()
@@ -132,12 +177,15 @@ class MeshOutlineTree:
         self._group_groups = self._make_header_item("Physical Groups")
         self._group_types = self._make_header_item("Element Types")
         self._group_parts = self._make_header_item("Parts")
-        tree.addTopLevelItem(self._group_groups)
-        tree.addTopLevelItem(self._group_types)
-        tree.addTopLevelItem(self._group_parts)
-        self._group_groups.setExpanded(True)
-        self._group_types.setExpanded(True)
-        self._group_parts.setExpanded(True)
+        self._group_loads = self._make_header_item("Loads")
+        self._group_masses = self._make_header_item("Masses")
+        self._group_constraints = self._make_header_item("Constraints")
+        for header in (
+            self._group_groups, self._group_types, self._group_parts,
+            self._group_loads, self._group_masses, self._group_constraints,
+        ):
+            tree.addTopLevelItem(header)
+            header.setExpanded(True)
 
         self._widget = widget
 
@@ -158,6 +206,9 @@ class MeshOutlineTree:
         self._refresh_groups()
         self._refresh_types()
         self._refresh_parts()
+        self._refresh_loads()
+        self._refresh_masses()
+        self._refresh_constraints()
 
     def _refresh_groups(self) -> None:
         QtCore, QtGui, QtWidgets = _qt()
@@ -221,6 +272,115 @@ class MeshOutlineTree:
             item.setData(0, ROLE_VISIBLE, self._group_is_visible(flat))
 
     # ------------------------------------------------------------------
+    # FEM-input sections — Loads / Masses / Constraints
+    # ------------------------------------------------------------------
+
+    def _refresh_loads(self) -> None:
+        """One row per :class:`LoadPattern` in the composite.
+
+        Each row carries the pattern name as its payload; eye toggle
+        recomputes the active-patterns set and fires the rebuild
+        callback. All patterns start visible (matches the
+        ``LoadsTab.refresh()`` default).
+        """
+        _, _, QtWidgets = _qt()
+        self._group_loads.takeChildren()
+        if self._loads is None:
+            self._group_loads.setHidden(True)
+            return
+        try:
+            patterns = list(self._loads.patterns())
+        except Exception:
+            patterns = []
+        if not patterns:
+            self._group_loads.setHidden(True)
+            return
+        self._group_loads.setHidden(False)
+        for name in patterns:
+            item = QtWidgets.QTreeWidgetItem(self._group_loads)
+            item.setText(0, name)
+            item.setData(0, _ROLE_KIND, "load_pattern")
+            item.setData(0, _ROLE_PAYLOAD, name)
+            item.setData(0, ROLE_VISIBLE, True)
+
+    def _refresh_masses(self) -> None:
+        """Single row when the masses composite has any entries."""
+        _, _, QtWidgets = _qt()
+        self._group_masses.takeChildren()
+        if self._masses is None:
+            self._group_masses.setHidden(True)
+            return
+        # The composite doesn't expose a count cheaply; if the user
+        # gave us a composite at all, surface the row. The eye toggle
+        # is a boolean.
+        self._group_masses.setHidden(False)
+        item = QtWidgets.QTreeWidgetItem(self._group_masses)
+        item.setText(0, "Masses overlay")
+        item.setData(0, _ROLE_KIND, "mass")
+        item.setData(0, _ROLE_PAYLOAD, None)
+        item.setData(0, ROLE_VISIBLE, True)
+
+    def _refresh_constraints(self) -> None:
+        """One row per **distinct kind** present in ``constraint_defs``.
+
+        Kinds follow the same resolution rule as
+        :func:`apeGmsh.viewers.ui.constraints_tab._def_kind_key` —
+        ``RigidLinkDef`` resolves to ``rigid_beam`` / ``rigid_rod``
+        based on ``link_type`` so the outline rows match the
+        rebuild-callback filter.
+        """
+        _, _, QtWidgets = _qt()
+        self._group_constraints.takeChildren()
+        if self._constraints is None:
+            self._group_constraints.setHidden(True)
+            return
+        defs = getattr(self._constraints, "constraint_defs", None) or []
+        if not defs:
+            self._group_constraints.setHidden(True)
+            return
+        # Count defs per kind for the "Detail" column.
+        from .constraints_tab import _def_kind_key
+        counts: dict[str, int] = {}
+        for d in defs:
+            key = _def_kind_key(d)
+            counts[key] = counts.get(key, 0) + 1
+        self._group_constraints.setHidden(False)
+        for kind in sorted(counts.keys()):
+            item = QtWidgets.QTreeWidgetItem(self._group_constraints)
+            item.setText(0, kind)
+            item.setText(1, str(counts[kind]))
+            item.setData(0, _ROLE_KIND, "constraint_kind")
+            item.setData(0, _ROLE_PAYLOAD, kind)
+            item.setData(0, ROLE_VISIBLE, True)
+
+    def _active_load_patterns(self) -> set[str]:
+        """Pattern names whose eye is currently on."""
+        out: set[str] = set()
+        for i in range(self._group_loads.childCount()):
+            row = self._group_loads.child(i)
+            if (row.data(0, _ROLE_KIND) == "load_pattern"
+                    and bool(row.data(0, ROLE_VISIBLE))):
+                out.add(row.data(0, _ROLE_PAYLOAD))
+        return out
+
+    def _active_constraint_kinds(self) -> set[str]:
+        """Constraint kinds whose eye is currently on."""
+        out: set[str] = set()
+        for i in range(self._group_constraints.childCount()):
+            row = self._group_constraints.child(i)
+            if (row.data(0, _ROLE_KIND) == "constraint_kind"
+                    and bool(row.data(0, ROLE_VISIBLE))):
+                out.add(row.data(0, _ROLE_PAYLOAD))
+        return out
+
+    def _mass_overlay_visible(self) -> bool:
+        for i in range(self._group_masses.childCount()):
+            row = self._group_masses.child(i)
+            if row.data(0, _ROLE_KIND) == "mass":
+                return bool(row.data(0, ROLE_VISIBLE))
+        return False
+
+    # ------------------------------------------------------------------
     # Eye toggle
     # ------------------------------------------------------------------
 
@@ -254,6 +414,28 @@ class MeshOutlineTree:
     def _on_eye_clicked(self, item: Any) -> None:
         if item is None:
             return
+        kind = item.data(0, _ROLE_KIND)
+        # FEM-input rows don't have DimTags — they flip their own
+        # ROLE_VISIBLE and fire the matching rebuild callback.
+        if kind == "load_pattern":
+            self._toggle_simple_row(item)
+            if self._on_load_patterns_changed is not None:
+                self._on_load_patterns_changed(self._active_load_patterns())
+            return
+        if kind == "mass":
+            self._toggle_simple_row(item)
+            if self._on_mass_visibility_changed is not None:
+                self._on_mass_visibility_changed(self._mass_overlay_visible())
+            return
+        if kind == "constraint_kind":
+            self._toggle_simple_row(item)
+            if self._on_constraint_kinds_changed is not None:
+                self._on_constraint_kinds_changed(
+                    self._active_constraint_kinds(),
+                )
+            return
+
+        # Substrate-mesh rows route through the visibility manager.
         dts = self._resolve_dts(item)
         if not dts:
             return
@@ -263,6 +445,15 @@ class MeshOutlineTree:
         else:
             current_hidden.difference_update(dts)
         self._vis_mgr.set_hidden(current_hidden)
+
+    def _toggle_simple_row(self, item: Any) -> None:
+        """Flip ROLE_VISIBLE in place + repaint. Used by FEM-input rows
+        whose visibility is owned by the outline (not the vis_mgr)."""
+        item.setData(0, ROLE_VISIBLE, not bool(item.data(0, ROLE_VISIBLE)))
+        try:
+            self._tree.viewport().update()
+        except Exception:
+            pass
 
     def _refresh_eye_states(self) -> None:
         """Repaint every row's eye after a programmatic visibility change."""
