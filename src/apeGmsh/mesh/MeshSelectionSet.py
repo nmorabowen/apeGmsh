@@ -668,6 +668,96 @@ class MeshSelectionSet(_HasLogging):
         )
         return t
 
+    # ------------------------------------------------------------------
+    # Daisy-chainable selection (S3d — additive; pre-snapshot live mesh)
+    # ------------------------------------------------------------------
+
+    def select(
+        self,
+        *,
+        level: str = "node",
+        dim: int = 2,
+        ids=None,
+    ):
+        """Start a daisy-chainable selection over the **live** mesh.
+
+        Returns a
+        :class:`~apeGmsh.mesh._mesh_selection_chain.MeshSelectionChain`
+        (point family) — the fluent equivalent of the eager
+        :meth:`add_nodes` / :meth:`add_elements`::
+
+            g.mesh_selection.select().in_box(lo, hi).on_plane(p, n, tol=1e-6)
+            g.mesh_selection.select(level="element", dim=3).in_box(lo, hi)
+            g.mesh_selection.select(ids=a) | g.mesh_selection.select(ids=b)
+
+        The chain seeds its atoms and then the standard point-family
+        verbs (``in_box`` / ``on_plane`` / ``in_sphere`` /
+        ``nearest_to`` / ``where`` + ``| & - ^``) narrow it, operating
+        on the same live-mesh coordinates the eager API uses (node
+        coords for ``level="node"``, element centroids for
+        ``level="element"``) — so
+        ``select().in_box(b).on_plane(p, n, tol=t)`` selects the same
+        nodes/elements as ``add_nodes(in_box=b, on_plane=(...))``.
+
+        Parameters
+        ----------
+        level : ``"node"`` (default) — atoms are mesh node ids; or
+            ``"element"`` — atoms are element ids for ``dim``.
+        dim : element dimension (1/2/3) used when
+            ``level == "element"`` (ignored for the node level);
+            mirrors :meth:`add_elements`'s ``dim``.
+        ids : optional explicit id list to seed from.  Omitted →
+            the full live-mesh node universe (``level="node"``) or the
+            full live-mesh element universe of ``dim``
+            (``level="element"``), exactly the universe
+            :meth:`add_nodes` / :meth:`add_elements` start from before
+            their filters.
+
+        Notes
+        -----
+        ``.select()`` is **additive**: it does not register a set into
+        :attr:`_sets`, does not allocate a tag, and does not perturb
+        the eager API.  ``MeshSelectionChain`` is imported **deferred**
+        (mirrors ``mesh/_mesh_structured.py``); the chain module
+        imports only the package-root leaf ``apeGmsh._chain`` + numpy,
+        so this adds no eager cross-package edge
+        (``tests/test_import_dag_polarity.py`` baseline unchanged).
+
+        Name-based seeding (existing set name / gmsh PG / label) is a
+        tracked follow-on, deliberately *not* delivered here: it would
+        require re-implementing name→entity resolution, which the
+        unification contract forbids.  Persistence
+        (``.save_as(name)`` / round-trip as ``selection=``) is
+        likewise deferred and out of S3d scope.
+        """
+        from ._mesh_selection_chain import (  # deferred — see plan §3
+            MeshSelectionChain,
+            engine_for,
+        )
+
+        if level not in ("node", "element"):
+            raise ValueError(
+                f"select(level=) must be 'node' or 'element', "
+                f"got {level!r}."
+            )
+
+        if level == "node":
+            eng = engine_for(self, "node", 0)
+            if ids is not None:
+                atoms = [int(n) for n in ids]
+            else:
+                all_ids, _ = self._get_mesh_nodes()
+                atoms = [int(n) for n in all_ids]
+        else:
+            eng = engine_for(self, "element", int(dim))
+            if ids is not None:
+                atoms = [int(e) for e in ids]
+            else:
+                elem_ids, _ = self._get_mesh_elements(int(dim))
+                atoms = [int(e) for e in elem_ids]
+
+        return MeshSelectionChain(atoms, _engine=eng)
+
     def sort_set(
         self,
         dim: int,
