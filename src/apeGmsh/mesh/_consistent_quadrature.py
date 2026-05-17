@@ -260,6 +260,51 @@ def integrate_edge(coords: ndarray, n_nodes: int) -> ndarray:
     return (w * Jmag) @ N                 # (n_nodes,)
 
 
+def integrate_edge_scaled(
+    coords: ndarray,
+    n_nodes: int,
+    scalar_fn,
+) -> ndarray:
+    """Per-node weights ``∫ N_i(ξ) · f(x(ξ)) · |J| dξ`` over an edge.
+
+    Same Gauss rule and shape functions as :func:`integrate_edge`, but
+    the force-per-length density ``f`` is a **scalar field** sampled at
+    each Gauss point (in physical coordinates) rather than assumed
+    constant.  Multiply the returned per-node weights by a unit (or
+    scaling) direction vector to obtain the consistent nodal force
+    distribution of a spatially varying line load — this is the exact
+    integral to quadrature order, so it does not over/undershoot the
+    way a single midpoint sample does.
+
+    Parameters
+    ----------
+    coords : (n_nodes, 3) array of 3D physical coordinates.
+    n_nodes : 2 (line2) or 3 (line3).
+    scalar_fn : callable ``f(xyz) -> float`` evaluated at each physical
+        Gauss point ``x(ξ_g) = N(ξ_g) · coords``.
+    """
+    if n_nodes == 2:
+        xi, w = _gauss_1d_2()
+        N, dN = _line2(xi)
+    elif n_nodes == 3:
+        xi, w = _gauss_1d_3()
+        N, dN = _line3(xi)
+    else:
+        raise NotImplementedError(
+            f"Consistent line reduction for {n_nodes}-node edges is not "
+            f"implemented.  Supported node counts: {_SUPPORTED_EDGE_NODES}."
+        )
+    coords = np.asarray(coords, dtype=float).reshape(-1, 3)
+    dx = dN @ coords                          # (ng, 3)
+    Jmag = np.linalg.norm(dx, axis=1)         # (ng,)
+    xg = N @ coords                           # (ng, 3) physical Gauss pts
+    fg = np.array(
+        [float(scalar_fn(xg[g])) for g in range(xg.shape[0])],
+        dtype=float,
+    )                                         # (ng,)
+    return (w * Jmag * fg) @ N                 # (n_nodes,)
+
+
 def integrate_face(coords: ndarray, n_nodes: int
                    ) -> tuple[ndarray, ndarray]:
     """Return per-node scalar weights and pressure-normal integrals.
@@ -309,6 +354,7 @@ def integrate_face(coords: ndarray, n_nodes: int
 
 __all__ = [
     "integrate_edge",
+    "integrate_edge_scaled",
     "integrate_face",
     "_SUPPORTED_EDGE_NODES",
     "_SUPPORTED_FACE_NODES",

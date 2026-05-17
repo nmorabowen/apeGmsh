@@ -340,12 +340,25 @@ class LoadsComposite:
             array and returns the local force-per-length — for a
             spatially varying load such as a depth-dependent ground
             / convergence pressure, e.g.
-            ``magnitude=lambda p: gamma * (z_top - p[2])``. The
-            callable is sampled once per mesh edge at the edge
-            midpoint (constant per edge — refine the mesh where the
-            gradient is steep). Works with ``normal=True`` and with
-            ``direction=``, in every ``reduction`` / ``target_form``;
-            mutually exclusive with ``q_xyz``.
+            ``magnitude=lambda p: gamma * (z_top - p[2])``. Works
+            with ``normal=True`` and with ``direction=``, in every
+            ``target_form``; mutually exclusive with ``q_xyz``.
+
+            Accuracy of the varying field depends on ``reduction``:
+
+            * ``reduction="consistent"`` — the field is integrated
+              against the shape functions at the element **Gauss
+              points** (:func:`integrate_edge_scaled`), i.e. the
+              exact consistent load vector to quadrature order. No
+              over/undershoot of the resultant; mesh-converged even
+              on a coarse mesh.
+            * ``reduction="tributary"`` (default) — sampled once at
+              each edge **midpoint** and lumped (the tributary model
+              is itself a lumping approximation). This is the
+              midpoint rule: ``O(h^2)`` and exact for a linear field
+              on straight edges, but it can over/undershoot the true
+              ∫q on curved edges or steep gradients — pass
+              ``reduction="consistent"`` or refine the mesh.
         direction : tuple or {"x", "y", "z"}, default ``(0, 0, -1)``
             Unit direction for ``magnitude``. Ignored when
             ``q_xyz`` or ``normal=True`` is given.
@@ -1433,11 +1446,19 @@ class LoadsComposite:
 
     def _resolve_line_consistent(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
+        if callable(defn.magnitude) and defn.q_xyz is None:
+            # Gauss-accurate: integrate the varying field at the
+            # element Gauss points (no midpoint over/undershoot).
+            if defn.normal:
+                items = self._collect_line_normal_items(
+                    defn, src, resolver, full=True, varying=True)
+            else:
+                items = self._collect_line_vector_items(
+                    defn, src, resolver, full=True, varying=True)
+            return resolver.resolve_line_per_edge_consistent_varying(
+                defn, items)
         if defn.normal:
             items = self._collect_line_normal_items(defn, src, resolver, full=True)
-            return resolver.resolve_line_per_edge_consistent(defn, items)
-        if callable(defn.magnitude) and defn.q_xyz is None:
-            items = self._collect_line_vector_items(defn, src, resolver, full=True)
             return resolver.resolve_line_per_edge_consistent(defn, items)
         edges = self._target_edges_full(defn.target, source=src)
         return resolver.resolve_line_consistent(defn, edges)
@@ -1646,20 +1667,26 @@ class LoadsComposite:
                            resolver.coords_of(n_first),
                            resolver.coords_of(n_last), int(t))
 
-    def _collect_line_normal_items(self, defn, src, resolver, *, full: bool):
-        """Build per-edge ``(..., q_xyz)`` items for ``normal=True`` line loads.
+    def _collect_line_normal_items(self, defn, src, resolver, *,
+                                   full: bool, varying: bool = False):
+        """Build per-edge items for ``normal=True`` line loads.
 
-        ``full=False`` returns ``(n1, n2, q)`` tuples (tributary path).
-        ``full=True``  returns ``(node_seq, q)`` tuples (consistent path).
-        ``defn.magnitude`` may be a callable — it is sampled at each
-        edge midpoint (constant per edge; refine the mesh for steep
-        gradients).
+        * ``full=False`` → ``(n1, n2, q)``     tributary path.
+        * ``full=True``  → ``(node_seq, q)``   consistent path.
+        * ``varying=True`` (consistent only) → ``(node_seq, n_hat,
+          scalar_fn)``: the per-edge **unit** in-plane normal plus the
+          scalar magnitude callable, so the resolver can Gauss-sample
+          the field instead of using one midpoint value.
+
+        For the non-varying paths a callable ``defn.magnitude`` is
+        sampled once at the edge midpoint (constant per edge).
         """
         away = (np.asarray(defn.away_from, dtype=float)
                 if defn.away_from is not None else None)
         edges = list(self._iter_curve_edges(defn, src, resolver))
         if not edges:
             return []
+        mag_fn = (lambda p: self._eval_magnitude(defn.magnitude, p))
 
         # Plane normal.  away path → one fit over all loaded points
         # (falling back to include away_from when the curves are a
@@ -1685,6 +1712,12 @@ class LoadsComposite:
                 if ctag not in surf_cache:
                     surf_cache[ctag] = self._curve_inplane_frame(ctag)
                 sign, P = surf_cache[ctag]
+            if varying:
+                n_hat = self._edge_normal_q(1.0, p1, p2, P, sign, away)
+                if n_hat is None:
+                    continue
+                items.append(([int(n) for n in row], n_hat, mag_fn))
+                continue
             mag = self._eval_magnitude(
                 defn.magnitude, 0.5 * (p1 + p2))
             q = self._edge_normal_q(mag, p1, p2, P, sign, away)
@@ -1696,7 +1729,8 @@ class LoadsComposite:
                 items.append((n_first, n_last, q))
         return items
 
-    def _collect_line_vector_items(self, defn, src, resolver, *, full: bool):
+    def _collect_line_vector_items(self, defn, src, resolver, *,
+                                   full: bool, varying: bool = False):
         """Per-edge items for a non-``normal`` line load whose
         ``magnitude`` is a callable.
 
@@ -1704,12 +1738,20 @@ class LoadsComposite:
         used verbatim (axis name or vector), matching the uniform
         ``resolve_line_*`` path so a constant callable reproduces it
         exactly.
+
+        ``varying=True`` (consistent path only) instead yields
+        ``(node_seq, dvec, scalar_fn)`` so the resolver can Gauss-sample
+        the field rather than use a single midpoint value.
         """
         from ..mesh._load_resolver import _direction_vec
         dvec = _direction_vec(defn.direction)
+        mag_fn = (lambda p: self._eval_magnitude(defn.magnitude, p))
         items: list = []
         for _eid, row, n_first, n_last, p1, p2, _ctag in \
                 self._iter_curve_edges(defn, src, resolver):
+            if varying:
+                items.append(([int(n) for n in row], dvec, mag_fn))
+                continue
             mag = self._eval_magnitude(defn.magnitude, 0.5 * (p1 + p2))
             q = mag * dvec
             if full:

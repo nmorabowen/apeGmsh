@@ -174,3 +174,54 @@ def test_non_finite_callable_fails_loud(g):
     g.mesh.generation.generate(dim=1)
     with pytest.raises(ValueError, match="non-finite"):
         g.mesh.queries.get_fem_data(dim=1)
+
+
+def _column_total_fz(*, n_elems, reduction, qfun, H=6.0):
+    """Own-session straight vertical column of *n_elems* line2
+    elements; apply the callable along +z; return summed nodal Fz.
+
+    Spins its own apeGmsh session so it can be called repeatedly
+    (mesh-convergence sweep) without stacking geometry.
+    """
+    from apeGmsh import apeGmsh
+    lc = H / n_elems
+    with apeGmsh(model_name="col", verbose=False) as m:
+        geo = m.model.geometry
+        geo.add_point(0, 0, 0, mesh_size=lc, label="a")
+        geo.add_point(0, 0, H, mesh_size=lc, label="b")
+        geo.add_line("a", "b", label="col")
+        m.model.queries.select_all_curves().to_physical(name="c1")
+        with m.loads.pattern("p"):
+            m.loads.line(target="c1", magnitude=qfun,
+                          direction=(0, 0, 1), reduction=reduction)
+        m.mesh.generation.generate(dim=1)
+        fem = m.mesh.queries.get_fem_data(dim=1)
+        return sum(float((ld.force_xyz or (0, 0, 0))[2])
+                   for ld in fem.nodes.loads)
+
+
+def test_consistent_is_gauss_exact_for_nonlinear_field():
+    """``reduction='consistent'`` integrates the callable at the
+    element Gauss points, so a quadratic field is **exact** even on a
+    2-element mesh — it does not over/undershoot ∫q."""
+    H = 6.0
+    qfun = lambda p: p[2] ** 2          # noqa: E731
+    ref = H ** 3 / 3.0                  # ∫₀^H z² dz = 72
+    total = _column_total_fz(n_elems=2, reduction="consistent",
+                             qfun=qfun, H=H)
+    assert total == pytest.approx(ref, rel=1e-9)
+
+
+def test_tributary_midpoint_undershoots_then_converges():
+    """The (documented) flip side: ``reduction='tributary'`` is the
+    midpoint rule — it under/overshoots ∫q on a coarse mesh and
+    converges O(h²).  Locks the contrast with the consistent path."""
+    H = 6.0
+    qfun = lambda p: p[2] ** 2          # noqa: E731
+    ref = H ** 3 / 3.0
+    e2 = abs(_column_total_fz(n_elems=2, reduction="tributary",
+                              qfun=qfun, H=H) - ref)
+    e8 = abs(_column_total_fz(n_elems=8, reduction="tributary",
+                              qfun=qfun, H=H) - ref)
+    assert e2 / ref > 0.02              # ~6% off at 2 elements
+    assert e8 < 0.3 * e2                # converges as the mesh refines
