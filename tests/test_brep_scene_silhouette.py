@@ -45,8 +45,9 @@ def test_outline_matches_active_theme(gmsh_box):
         p = pv.Plotter(off_screen=True)
         try:
             registry = build_brep_scene(p, dims=[3])
-            kw = registry._add_mesh_kwargs.get(3, {})
-            sil = kw.get("silhouette", {})
+            # PR #199: silhouette moved off add_mesh(silhouette=) onto a
+            # tracked add_silhouette actor; kwargs live here now.
+            sil = registry.dim_silhouette_kwargs.get(3, {})
             assert sil.get("color") == "#000000"
             # Paper silhouette is heavier (3.0 px) than dark themes (2.5)
             assert sil.get("line_width") == pytest.approx(3.0)
