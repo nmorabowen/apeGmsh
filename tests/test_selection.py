@@ -534,13 +534,17 @@ class TestSetTransfiniteBox:
 
 class TestErrors:
 
-    def test_select_requires_exactly_one_predicate(self, g):
+    def test_select_rejects_multiple_predicates(self, g):
         surf = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
         curves = g.model.queries.boundary(surf, oriented=False)
 
-        with pytest.raises(ValueError, match="exactly one"):
-            g.model.queries.select(curves)
-        with pytest.raises(ValueError, match="exactly one"):
+        # No predicate is a valid "resolve only" call: it returns the
+        # entities unfiltered as a chainable Selection (see
+        # _select_impl's documented contract), not a ValueError.
+        unfiltered = g.model.queries.select(curves)
+        assert len(list(unfiltered)) == len(list(curves))
+        # More than one predicate is rejected ("at most one").
+        with pytest.raises(ValueError, match="at most one"):
             g.model.queries.select(curves, on={'x': 0}, crossing={'y': 0})
 
     def test_plane_at_requires_one_kwarg(self):

@@ -40,16 +40,24 @@ def _install_fake_gmsh() -> None:
 class LibraryContractTests(unittest.TestCase):
 
     def setUp(self) -> None:
+        # Snapshot the apeGmsh/gmsh modules BEFORE purging so tearDown
+        # can restore the exact same module (and therefore class/enum)
+        # objects. Leaving apeGmsh.* purged would make the next test
+        # re-import fresh class objects while the rest of the process
+        # still holds the old ones — identity-based dispatch (e.g. the
+        # constraint H5 serializer) then takes the wrong branch.
+        self._mod_snapshot = {
+            name: mod
+            for name, mod in sys.modules.items()
+            if name == "apeGmsh" or name.startswith("apeGmsh.") or name == "gmsh"
+        }
         _purge_apegmsh_modules()
-        self._saved_gmsh = sys.modules.get("gmsh")
         _install_fake_gmsh()
 
     def tearDown(self) -> None:
         _purge_apegmsh_modules()
-        if self._saved_gmsh is None:
-            sys.modules.pop("gmsh", None)
-        else:
-            sys.modules["gmsh"] = self._saved_gmsh
+        sys.modules.pop("gmsh", None)
+        sys.modules.update(self._mod_snapshot)
 
     # ------------------------------------------------------------------
     # Package-level API

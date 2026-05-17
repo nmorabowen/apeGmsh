@@ -45,6 +45,11 @@ include = ["apeGmsh*", "apeGmshViewer*"]
 apeGmsh = ["py.typed"]
 
 [tool.pytest.ini_options]
+# The real suite lives under tests/. Restrict collection there so a bare
+# ``pytest`` doesn't sweep in stray manual smoke scripts (e.g.
+# acad/test_dxf_import.py runs apeGmsh + asserts at module scope, which
+# would abort the whole collection).
+testpaths = ["tests"]
 # Prefer the in-tree source over any site-packages install. Matters when
 # running pytest from a git worktree: the editable install points at the
 # main checkout, so without this, pytest would silently test the wrong

@@ -75,8 +75,18 @@ class CollectEntityCellsEmptyArrayTests(unittest.TestCase):
     """The bug: ``if not elem_types`` with an empty ndarray → ValueError."""
 
     def setUp(self) -> None:
+        # Snapshot apeGmsh/gmsh/pyvista BEFORE stubbing so tearDown can
+        # restore the exact module (and class/enum) objects. Leaving
+        # apeGmsh.* purged or a fake pyvista resident would pollute
+        # every later test that relies on stable apeGmsh class identity
+        # or the real pyvista.
+        self._mod_snapshot = {
+            name: mod
+            for name, mod in sys.modules.items()
+            if name == "apeGmsh" or name.startswith("apeGmsh.")
+            or name == "gmsh" or name == "pyvista"
+        }
         _install_fake_pyvista()
-        self._saved_gmsh = sys.modules.get("gmsh")
         # Install a fake gmsh BEFORE importing mesh_scene so the
         # module-level ``import gmsh`` picks up the stub.
         sys.modules["gmsh"] = _fake_gmsh_with_elements({})
@@ -87,14 +97,12 @@ class CollectEntityCellsEmptyArrayTests(unittest.TestCase):
                 del sys.modules[mod_name]
 
     def tearDown(self) -> None:
-        # Purge all apeGmsh modules that may have cached the fake gmsh
         for mod_name in list(sys.modules):
             if mod_name.startswith("apeGmsh"):
                 del sys.modules[mod_name]
-        if self._saved_gmsh is None:
-            sys.modules.pop("gmsh", None)
-        else:
-            sys.modules["gmsh"] = self._saved_gmsh
+        sys.modules.pop("gmsh", None)
+        sys.modules.pop("pyvista", None)
+        sys.modules.update(self._mod_snapshot)
 
     def test_empty_ndarray_elem_types_returns_none_not_valueerror(self):
         """Unmeshed dim=3 volume: ``getElements`` returns empty ndarray.
