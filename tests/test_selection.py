@@ -538,13 +538,13 @@ class TestErrors:
         surf = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
         curves = g.model.queries.boundary(surf, oriented=False)
 
-        # No predicate is a valid "resolve only" call: it returns the
-        # entities unfiltered as a chainable Selection (see
-        # _select_impl's documented contract), not a ValueError.
-        unfiltered = g.model.queries.select(curves)
-        assert len(list(unfiltered)) == len(list(curves))
-        # More than one predicate is rejected ("at most one").
-        with pytest.raises(ValueError, match="at most one"):
+        # Concrete geometry (a dimtag list, not a name ref) must carry
+        # exactly one predicate.  The zero-predicate "resolve only" entry
+        # point is gated on name refs in _Queries.select(); it does not
+        # leak to raw dimtag lists (see commit b5a3dff).
+        with pytest.raises(ValueError, match="exactly one"):
+            g.model.queries.select(curves)
+        with pytest.raises(ValueError, match="exactly one"):
             g.model.queries.select(curves, on={'x': 0}, crossing={'y': 0})
 
     def test_plane_at_requires_one_kwarg(self):
