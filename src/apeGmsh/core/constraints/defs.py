@@ -226,11 +226,17 @@ class TieDef(ConstraintDef):
 @dataclass
 class DistributingCouplingDef(ConstraintDef):
     """
-    Distributing coupling: load at master is distributed to slave
-    surface as consistent nodal forces.
+    Distributing coupling (RBE3-style force distribution).
 
-    The slave surface deforms freely (not rigidly).  Weights are
-    computed so that force and moment equilibrium are preserved.
+    .. warning::
+
+       **Not implemented.**  ``g.constraints.distributing_coupling``
+       raises ``NotImplementedError``.  A correct RBE3 distributes a
+       master force/moment so that ``ΣF`` and ``Σr×F`` are preserved
+       while the surface deforms freely; the prior implementation was
+       a mislabelled *kinematic* mean (and its ``"area"`` weighting
+       was inverse-distance-from-centroid, not tributary area).  This
+       dataclass is retained for a future correct implementation.
 
     Parameters
     ----------
@@ -414,19 +420,18 @@ class TiedContactDef(ConstraintDef):
 @dataclass
 class MortarDef(ConstraintDef):
     """
-    Mortar coupling: Lagrange multiplier space on the interface.
+    Mortar coupling: Lagrange-multiplier space on the interface.
 
-    Mathematically rigorous surface-to-surface coupling that
-    satisfies the inf-sup condition.  More accurate than node-to-
-    surface tie for non-matching meshes.
+    .. warning::
 
-    The coupling operator B is computed by numerical integration
-    over the overlapping surface segments::
-
-        B_ij = ∫_Γ  ψ_i · N_j  dΓ
-
-    where ψ_i are the Lagrange multiplier basis functions (defined
-    on the slave side) and N_j are the master shape functions.
+       **Not implemented.**  ``g.constraints.mortar`` raises
+       ``NotImplementedError``.  A correct mortar operator is
+       ``Bᵢⱼ = ∫_Γ ψᵢ·Nⱼ dΓ`` (segment integration, dual basis,
+       inf-sup/LBB).  The prior implementation was a ``tied_contact``
+       collocation tie with a hardcoded unit-dependent
+       ``tolerance=10.0`` mislabelled ``MORTAR``.  This dataclass is
+       retained for a future correct implementation; use
+       ``tied_contact`` for a collocation-based non-matching tie.
 
     Parameters
     ----------

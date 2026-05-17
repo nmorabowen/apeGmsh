@@ -532,36 +532,19 @@ class ConstraintResolver:
         master_nodes: set[int],
         slave_nodes: set[int],
     ) -> InterpolationRecord:
+        """Not implemented — raises ``NotImplementedError``.
+
+        Defence-in-depth: the ``distributing_coupling`` factory
+        already refuses (see ConstraintsComposite).  This guards the
+        case where a ``DistributingCouplingDef`` is hand-constructed
+        and dispatched directly — it must not silently emit the old
+        mechanically-wrong kinematic-mean record.
         """
-        Resolve a distributing coupling.
-
-        Computes weights for each slave node based on weighting scheme.
-        """
-        dofs = defn.dofs or [1, 2, 3]
-        master_tag, _ = self._closest_node_in_set(defn.master_point, master_nodes)
-
-        slave_list = sorted(slave_nodes - {master_tag})
-        n = len(slave_list)
-
-        if defn.weighting == "uniform":
-            weights = np.ones(n) / n
-        else:
-            # Area weighting: approximate by Voronoi-like partition
-            # (simplified: weight by inverse distance from centroid)
-            coords = np.array([self._coords_of(t) for t in slave_list])
-            centroid = coords.mean(axis=0)
-            dists = np.linalg.norm(coords - centroid, axis=1)
-            dists = np.maximum(dists, 1e-12)
-            w = 1.0 / dists
-            weights = w / w.sum()
-
-        return InterpolationRecord(
-            kind=ConstraintKind.DISTRIBUTING,
-            name=defn.name,
-            slave_node=master_tag,        # "slave" is the ref point here
-            master_nodes=slave_list,       # "masters" are the surface nodes
-            weights=weights,
-            dofs=list(dofs),
+        raise NotImplementedError(
+            "resolve_distributing: RBE3 force distribution is not "
+            "implemented; the prior kinematic-mean implementation was "
+            "mechanically wrong.  Use kinematic_coupling / tie / a "
+            "distributed nodal load instead."
         )
 
     def resolve_tied_contact(
@@ -621,62 +604,19 @@ class ConstraintResolver:
         master_nodes: set[int],
         slave_nodes: set[int],
     ) -> SurfaceCouplingRecord:
+        """Not implemented — raises ``NotImplementedError``.
+
+        Defence-in-depth: the ``mortar`` factory already refuses (see
+        ConstraintsComposite).  This guards a hand-constructed
+        ``MortarDef`` dispatched directly — it must not silently emit
+        the old collocation-tie operator mislabelled ``MORTAR`` with a
+        unit-dependent hardcoded tolerance.
         """
-        Resolve a mortar coupling.
-
-        .. note::
-
-           The mortar operator requires numerical integration over
-           the overlapping surface segments -- a significant algorithm.
-           This implementation provides the *architecture* (the
-           SurfaceCouplingRecord with mortar_operator field) but uses
-           a **simplified** node-to-surface projection as a placeholder.
-
-           For production mortar coupling, implement the segment-based
-           integration following Puso & Laursen (2004) or
-           Popp et al. (2010).
-        """
-        dofs = defn.dofs or [1, 2, 3]
-
-        # Placeholder: use tied_contact projection as approximation
-        tied = TiedContactDef(
-            master_label=defn.master_label,
-            slave_label=defn.slave_label,
-            tolerance=10.0,   # generous for mortar
-            dofs=dofs,
-        )
-        tied_result = self.resolve_tied_contact(
-            tied,
-            master_face_conn, slave_face_conn,
-            master_nodes, slave_nodes,
-        )
-
-        # Build approximate mortar operator from interpolation records
-        m_list = sorted(master_nodes)
-        s_list = sorted(slave_nodes)
-        m_idx = {t: i for i, t in enumerate(m_list)}
-        s_idx = {t: i for i, t in enumerate(s_list)}
-        nd = len(dofs)
-
-        B = np.zeros((len(s_list) * nd, len(m_list) * nd))
-        for rec in tied_result.slave_records:
-            if rec.slave_node in s_idx:
-                si = s_idx[rec.slave_node]
-                w = rec.weights if rec.weights is not None else np.zeros(0)
-                for j, mn in enumerate(rec.master_nodes):
-                    if mn in m_idx:
-                        mi = m_idx[mn]
-                        for d in range(nd):
-                            B[si * nd + d, mi * nd + d] = w[j]
-
-        return SurfaceCouplingRecord(
-            kind=ConstraintKind.MORTAR,
-            name=defn.name,
-            slave_records=tied_result.slave_records,
-            mortar_operator=B,
-            master_nodes=m_list,
-            slave_nodes=s_list,
-            dofs=list(dofs),
+        raise NotImplementedError(
+            "resolve_mortar: ∫ ψ·N dΓ Lagrange-multiplier coupling is "
+            "not implemented; the prior implementation was a "
+            "collocation tie (hardcoded tolerance=10.0) mislabelled "
+            "MORTAR.  Use tied_contact instead."
         )
 
     def resolve_node_to_surface(

@@ -331,48 +331,23 @@ class TestResolveKinematicCoupling(unittest.TestCase):
 # =====================================================================
 
 class TestResolveDistributing(unittest.TestCase):
+    """resolve_distributing is fail-loud (RBE3 not implemented).
 
-    def test_uniform_weights_sum_to_one(self):
-        # 4 slave nodes, 1 master. Uniform weights = 1/4 each.
-        coords = {
-            1: (0.0, 0.0, 0.0),
-            2: (1.0, 0.0, 0.0),
-            3: (-1.0, 0.0, 0.0),
-            4: (0.0, 1.0, 0.0),
-            5: (0.0, -1.0, 0.0),
-        }
-        r = _make_resolver(coords)
+    The old tests only asserted ``Σw≈1`` — they locked a
+    mechanically-wrong kinematic-mean record (with a meaningless
+    'area' weighting) as 'expected'.  The contract is now: never
+    emit it; raise instead (defence-in-depth behind the factory).
+    """
+
+    def test_resolve_distributing_raises_not_implemented(self):
+        r = _make_resolver({1: (0., 0., 0.), 2: (1., 0., 0.),
+                            3: (-1., 0., 0.), 4: (0., 1., 0.)})
         defn = DistributingCouplingDef(
             master_label="ref", slave_label="surf",
-            master_point=(0, 0, 0),
-            weighting="uniform",
+            master_point=(0, 0, 0), weighting="uniform",
         )
-        rec = r.resolve_distributing(
-            defn, master_nodes={1}, slave_nodes={2, 3, 4, 5},
-        )
-        self.assertIsInstance(rec, InterpolationRecord)
-        self.assertEqual(rec.kind, "distributing")
-        self.assertEqual(rec.slave_node, 1)                  # ref point
-        self.assertEqual(sorted(rec.master_nodes), [2, 3, 4, 5])
-        np.testing.assert_allclose(rec.weights.sum(), 1.0)
-        np.testing.assert_allclose(rec.weights, np.full(4, 0.25))
-
-    def test_area_weights_sum_to_one(self):
-        coords = {
-            1: (0.0, 0.0, 0.0),
-            2: (1.0, 0.0, 0.0),
-            3: (-2.0, 0.0, 0.0),
-            4: (0.0, 3.0, 0.0),
-        }
-        r = _make_resolver(coords)
-        defn = DistributingCouplingDef(
-            master_label="ref", slave_label="surf",
-            master_point=(0, 0, 0),
-            weighting="area",
-        )
-        rec = r.resolve_distributing(defn, {1}, {2, 3, 4})
-        np.testing.assert_allclose(rec.weights.sum(), 1.0)
-        self.assertEqual(len(rec.weights), 3)
+        with self.assertRaises(NotImplementedError):
+            r.resolve_distributing(defn, {1}, {2, 3, 4})
 
 
 # =====================================================================

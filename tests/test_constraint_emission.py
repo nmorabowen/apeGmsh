@@ -13,10 +13,29 @@ surface.  Two silent-wrong defects are locked out here:
   with a hardcoded ``3``.
 """
 import numpy as np
+import pytest
 
+from apeGmsh import apeGmsh
 from apeGmsh.mesh._record_set import NodeConstraintSet
 from apeGmsh.mesh.records._constraints import NodeGroupRecord, NodePairRecord
 from apeGmsh.mesh.records._kinds import ConstraintKind as K
+
+
+# =====================================================================
+# distributing_coupling / mortar are fail-loud at the API (PR-C):
+# never silently emit a mechanically-wrong RBE3 / mortar record.
+# =====================================================================
+
+def test_distributing_coupling_factory_raises_not_implemented():
+    with apeGmsh(model_name="pc_distrib", verbose=False) as g:
+        with pytest.raises(NotImplementedError, match="RBE3|distributing"):
+            g.constraints.distributing_coupling("A", "B")
+
+
+def test_mortar_factory_raises_not_implemented():
+    with apeGmsh(model_name="pc_mortar", verbose=False) as g:
+        with pytest.raises(NotImplementedError, match="mortar|tied_contact"):
+            g.constraints.mortar("A", "B")
 
 
 def _diaphragm(master, slaves, normal):

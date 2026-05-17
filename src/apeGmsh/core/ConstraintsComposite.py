@@ -720,65 +720,45 @@ class ConstraintsComposite:
                               master_point=(0., 0., 0.), dofs=None,
                               weighting="uniform",
                               name=None) -> DistributingCouplingDef:
-        """Distribute a master-point load over a slave surface
-        without rigidising it.
+        """**Not implemented — raises ``NotImplementedError``.**
 
-        Unlike :meth:`rigid_body` or :meth:`tie`, the slave surface
-        is **not** kinematically constrained — it remains free to
-        deform. Forces and moments applied at the master are
-        distributed to the slave nodes as consistent nodal forces,
-        with weights chosen so that overall force and moment
-        equilibrium are preserved.
+        A true distributing coupling (RBE3) distributes a master
+        force/moment to the slave nodes so that ``Σ Fᵢ = F`` **and**
+        ``Σ rᵢ × Fᵢ = M`` while leaving the surface free to deform —
+        a *force* relation, not a kinematic one.
 
-        This is the right primitive for:
+        The previous implementation did **not** do this: it emitted a
+        *kinematic* mean constraint (``u_ref = Σ wᵢ u_surfᵢ``) and its
+        ``weighting="area"`` option was inverse-distance-from-centroid
+        (physically meaningless — the opposite of tributary area),
+        with no moment-equilibrium term.  It silently produced a
+        mechanically wrong model under a correct-looking API, so it is
+        refused rather than shipped.
 
-        * Applying a single concentrated load to a face without
-          introducing artificial stiffness.
-        * Connecting a beam reference node to a solid face when
-          the connection is statically equivalent but should not
-          enforce rigid kinematics.
+        Use instead, depending on intent:
 
-        Parameters
-        ----------
-        master_label : str
-            Part label that owns the reference node.
-        slave_label : str
-            Part label of the slave surface.
-        master_point : (x, y, z), default (0, 0, 0)
-            Coordinates of the reference (master) node.
-        dofs : list[int], optional
-            DOFs distributed from master to slave. ``None`` = all
-            translational DOFs.
-        weighting : ``"uniform"`` or ``"area"``, default ``"uniform"``
-            How nodal weights are computed:
-
-            * ``"uniform"`` — equal weights at every slave node.
-            * ``"area"`` — tributary-area weights (more physical
-              for non-uniform meshes).
-        name : str, optional
-            Friendly name.
-
-        Returns
-        -------
-        DistributingCouplingDef
+        * :meth:`kinematic_coupling` — a DOF-selective rigid coupling
+          of the surface to a reference node.
+        * :meth:`tie` — shape-function interpolation onto a master
+          face (compatible, non-rigid).
+        * a distributed nodal load (``g.loads``) — to introduce a
+          statically-equivalent load without any kinematic tie.
 
         Raises
         ------
-        KeyError
-            If either label is not in ``g.parts``.
-
-        See Also
-        --------
-        rigid_body : Kinematically rigid alternative (no
-            compliance, but no compatibility either).
-        node_to_surface : When the slave side is a 3-DOF solid and
-            you also want the master's rotational DOFs to drive
-            translations through a rigid arm.
+        NotImplementedError
+            Always.  Parameters are accepted only so the message is
+            actionable.
         """
-        return self._add_def(DistributingCouplingDef(
-            master_label=master_label, slave_label=slave_label,
-            master_point=master_point, dofs=dofs, weighting=weighting,
-            name=name))
+        raise NotImplementedError(
+            "distributing_coupling (RBE3 force distribution) is not "
+            "implemented.  The prior implementation silently emitted a "
+            "kinematic mean with a physically-meaningless 'area' "
+            "weighting and no moment equilibrium.  Use "
+            "kinematic_coupling (DOF-selective rigid coupling), tie "
+            "(shape-function interpolation), or a distributed nodal "
+            "load instead."
+        )
 
     def embedded(self, host_label, embedded_label, *, tolerance=1.0,
                  name=None) -> EmbeddedDef:
@@ -1033,58 +1013,38 @@ class ConstraintsComposite:
                master_entities=None, slave_entities=None,
                dofs=None, integration_order=2,
                name=None) -> MortarDef:
-        """Mortar surface coupling — Lagrange multipliers on the
-        interface.
+        """**Not implemented — raises ``NotImplementedError``.**
 
-        The most rigorous of the surface-coupling primitives.
-        Mortar methods introduce a Lagrange-multiplier space
-        ``ψ_i`` on the slave side and integrate the coupling
-        operator over the **overlapping** surface segments::
+        A true mortar method introduces a Lagrange-multiplier space
+        ``ψᵢ`` on the slave side and integrates the coupling operator
+        ``Bᵢⱼ = ∫_Γ ψᵢ·Nⱼ dΓ`` over the overlapping surface segments,
+        satisfying the inf-sup (LBB) condition.
 
-            B_ij = ∫_Γ ψ_i · N_j dΓ
+        The previous implementation did **none** of that: no segment
+        intersection, no surface integral, no dual basis — it scattered
+        ``tied_contact`` collocation weights onto a block-diagonal
+        ``B`` with a hardcoded ``tolerance=10.0`` (model-unit
+        dependent → mis-pairs on millimetre models), yet returned a
+        record labelled ``MORTAR`` that downstream could not
+        distinguish from a real one.  It is refused rather than
+        shipped as a plausible-but-wrong operator.
 
-        where ``N_j`` are master shape functions. This satisfies
-        the inf-sup (LBB) condition and produces an optimally
-        accurate non-matching coupling — preferable to
-        :meth:`tie` / :meth:`tied_contact` when accuracy at the
-        interface is important (mixed-dimension models, contact
-        mechanics, optimisation).
-
-        Parameters
-        ----------
-        master_label : str
-            Part label of the master surface.
-        slave_label : str
-            Part label of the slave surface (Lagrange multipliers
-            live here).
-        master_entities, slave_entities : list of (dim, tag), optional
-            Restrict each side to specific Gmsh entities.
-        dofs : list[int], optional
-            DOFs to couple.
-        integration_order : int, default 2
-            Gauss quadrature order for the coupling integral.
-            Increase for curved interfaces or higher-order
-            elements.
-        name : str, optional
-            Friendly name.
-
-        Returns
-        -------
-        MortarDef
+        Use :meth:`tied_contact` for a collocation-based non-matching
+        tie (the honest version of what the old code actually did).
 
         Raises
         ------
-        KeyError
-            If either label is not in ``g.parts``.
-
-        See Also
-        --------
-        tied_contact : Cheaper non-matching alternative.
+        NotImplementedError
+            Always.  Parameters are accepted only so the message is
+            actionable.
         """
-        return self._add_def(MortarDef(
-            master_label=master_label, slave_label=slave_label,
-            master_entities=master_entities, slave_entities=slave_entities,
-            dofs=dofs, integration_order=integration_order, name=name))
+        raise NotImplementedError(
+            "mortar (∫ ψ·N dΓ Lagrange-multiplier coupling) is not "
+            "implemented.  The prior implementation was a collocation "
+            "tie with a unit-dependent hardcoded tolerance mislabelled "
+            "as MORTAR.  Use tied_contact for a non-matching "
+            "collocation tie."
+        )
 
     def validate_pre_mesh(self) -> None:
         """No-op: constraints validate targets eagerly at ``_add_def``.

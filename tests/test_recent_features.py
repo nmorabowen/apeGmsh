@@ -461,9 +461,14 @@ class TestResolveTiedContact(unittest.TestCase):
 # =====================================================================
 
 class TestResolveMortar(unittest.TestCase):
+    """resolve_mortar is fail-loud (true mortar not implemented).
 
-    def test_operator_matrix_has_correct_shape(self):
-        """B should be (n_slave * nd) x (n_master * nd)."""
+    The old test only checked the operator *shape* — it locked a
+    collocation tie (hardcoded tolerance=10.0) mislabelled MORTAR as
+    'expected'.  Contract is now: never emit it; raise.
+    """
+
+    def test_resolve_mortar_raises_not_implemented(self):
         coords = {
             1:  (0.0, 0.0, 0.0),  2:  (1.0, 0.0, 0.0),
             3:  (1.0, 1.0, 0.0),  4:  (0.0, 1.0, 0.0),
@@ -472,18 +477,14 @@ class TestResolveMortar(unittest.TestCase):
         }
         r = _constraint_resolver(coords)
         defn = MortarDef(master_label="A", slave_label="B")
-        rec = r.resolve_mortar(
-            defn,
-            np.array([[1, 2, 3, 4]], dtype=int),
-            np.array([[11, 12, 13, 14]], dtype=int),
-            master_nodes={1, 2, 3, 4},
-            slave_nodes={11, 12, 13, 14},
-        )
-        self.assertIsInstance(rec, SurfaceCouplingRecord)
-        self.assertEqual(rec.kind, ConstraintKind.MORTAR)
-        self.assertIsNotNone(rec.mortar_operator)
-        n_s, n_m, nd = 4, 4, 3
-        self.assertEqual(rec.mortar_operator.shape, (n_s * nd, n_m * nd))
+        with self.assertRaises(NotImplementedError):
+            r.resolve_mortar(
+                defn,
+                np.array([[1, 2, 3, 4]], dtype=int),
+                np.array([[11, 12, 13, 14]], dtype=int),
+                master_nodes={1, 2, 3, 4},
+                slave_nodes={11, 12, 13, 14},
+            )
 
 
 # =====================================================================
