@@ -24,6 +24,23 @@ def _qt():
     return QtWidgets, QtCore, QtGui
 
 
+def _fmt_magnitude(m) -> str:
+    """Format a load magnitude for the read-only detail column.
+
+    ``LineLoadDef.magnitude`` may be a constant float **or** a
+    callable ``q(xyz) -> float`` (spatially varying line load). A
+    callable has no single value to print, so show its name (or
+    ``q(xyz)`` for a lambda) instead of crashing on ``:.4g``.
+    """
+    if callable(m):
+        name = getattr(m, "__name__", "")
+        return f"{name}(xyz)" if name and name != "<lambda>" else "q(xyz)"
+    try:
+        return f"{m:.4g}"
+    except (TypeError, ValueError):
+        return str(m)
+
+
 # Catppuccin Mocha palette — same as PartsTreePanel
 _PATTERN_PALETTE = [
     "#a6e3a1",  # green
@@ -235,10 +252,10 @@ class LoadsTabPanel:
         if isinstance(d, LineLoadDef):
             if d.q_xyz is not None:
                 return f"q={tuple(d.q_xyz)} N/m"
-            return f"{d.magnitude:.4g} N/m, dir={d.direction}"
+            return f"{_fmt_magnitude(d.magnitude)} N/m, dir={d.direction}"
         if isinstance(d, SurfaceLoadDef):
             kind = "pressure" if d.normal else "traction"
-            return f"{d.magnitude:.4g} Pa ({kind})"
+            return f"{_fmt_magnitude(d.magnitude)} Pa ({kind})"
         if isinstance(d, GravityLoadDef):
             rho = f", ρ={d.density}" if d.density else ""
             return f"g={tuple(d.g)}{rho}"

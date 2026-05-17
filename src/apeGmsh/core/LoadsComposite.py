@@ -331,9 +331,34 @@ class LoadsComposite:
             Curve(s) to load.
         pg, label, tag :
             Explicit-source overrides. See class docstring.
-        magnitude : float, optional
+        magnitude : float or callable, optional
             Scalar force per unit length. Required if ``q_xyz`` is
             ``None``. Required when ``normal=True``.
+
+            May also be a **callable** ``q(xyz) -> float`` that
+            receives the ``(x, y, z)`` coordinate as a length-3
+            array and returns the local force-per-length — for a
+            spatially varying load such as a depth-dependent ground
+            / convergence pressure, e.g.
+            ``magnitude=lambda p: gamma * (z_top - p[2])``. Works
+            with ``normal=True`` and with ``direction=``, in every
+            ``target_form``; mutually exclusive with ``q_xyz``.
+
+            Accuracy of the varying field depends on ``reduction``:
+
+            * ``reduction="consistent"`` — the field is integrated
+              against the shape functions at the element **Gauss
+              points** (:func:`integrate_edge_scaled`), i.e. the
+              exact consistent load vector to quadrature order. No
+              over/undershoot of the resultant; mesh-converged even
+              on a coarse mesh.
+            * ``reduction="tributary"`` (default) — sampled once at
+              each edge **midpoint** and lumped (the tributary model
+              is itself a lumping approximation). This is the
+              midpoint rule: ``O(h^2)`` and exact for a linear field
+              on straight edges, but it can over/undershoot the true
+              ∫q on curved edges or steep gradients — pass
+              ``reduction="consistent"`` or refine the mesh.
         direction : tuple or {"x", "y", "z"}, default ``(0, 0, -1)``
             Unit direction for ``magnitude``. Ignored when
             ``q_xyz`` or ``normal=True`` is given.
@@ -402,6 +427,12 @@ class LoadsComposite:
             raise ValueError("line() requires either magnitude or q_xyz.")
         if normal and magnitude is None:
             raise ValueError("line(normal=True) requires magnitude=.")
+        if callable(magnitude) and q_xyz is not None:
+            raise ValueError(
+                "line(): a callable magnitude and q_xyz= are mutually "
+                "exclusive — q_xyz is a fixed vector. Use the callable "
+                "magnitude with normal=True or direction=."
+            )
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(LineLoadDef(
             target=t, target_source=src,
@@ -1407,11 +1438,25 @@ class LoadsComposite:
         if defn.normal:
             items = self._collect_line_normal_items(defn, src, resolver, full=False)
             return resolver.resolve_line_per_edge_tributary(defn, items)
+        if callable(defn.magnitude) and defn.q_xyz is None:
+            items = self._collect_line_vector_items(defn, src, resolver, full=False)
+            return resolver.resolve_line_per_edge_tributary(defn, items)
         edges = self._target_edges(defn.target, source=src)
         return resolver.resolve_line_tributary(defn, edges)
 
     def _resolve_line_consistent(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
+        if callable(defn.magnitude) and defn.q_xyz is None:
+            # Gauss-accurate: integrate the varying field at the
+            # element Gauss points (no midpoint over/undershoot).
+            if defn.normal:
+                items = self._collect_line_normal_items(
+                    defn, src, resolver, full=True, varying=True)
+            else:
+                items = self._collect_line_vector_items(
+                    defn, src, resolver, full=True, varying=True)
+            return resolver.resolve_line_per_edge_consistent_varying(
+                defn, items)
         if defn.normal:
             items = self._collect_line_normal_items(defn, src, resolver, full=True)
             return resolver.resolve_line_per_edge_consistent(defn, items)
@@ -1561,44 +1606,87 @@ class LoadsComposite:
             return None
         return float(magnitude) * (n / ln)
 
-    def _collect_line_normal_items(self, defn, src, resolver, *, full: bool):
-        """Build per-edge ``(..., q_xyz)`` items for ``normal=True`` line loads.
+    @staticmethod
+    def _eval_magnitude(magnitude, xyz) -> float:
+        """Scalar force-per-length at *xyz*.
 
-        ``full=False`` returns ``(n1, n2, q)`` tuples (tributary path).
-        ``full=True``  returns ``(node_seq, q)`` tuples (consistent path).
+        ``magnitude`` is a constant float, or a callable receiving the
+        ``(x, y, z)`` coordinate as a length-3 NumPy array and returning
+        a scalar — used for spatially varying line loads (e.g. a
+        depth-dependent ground / convergence pressure). The callable is
+        sampled once per edge, at the edge midpoint.
+        """
+        if not callable(magnitude):
+            return float(magnitude)
+        p = np.asarray(xyz, dtype=float)
+        try:
+            val = float(magnitude(p))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"line(): the magnitude callable must accept a length-3 "
+                f"coordinate and return a scalar; it failed at point "
+                f"{tuple(p)} ({exc})."
+            ) from exc
+        if not np.isfinite(val):
+            raise ValueError(
+                f"line(): the magnitude callable returned a non-finite "
+                f"value ({val}) at point {tuple(p)}."
+            )
+        return val
+
+    def _iter_curve_edges(self, defn, src, resolver):
+        """Yield ``(etag, node_row, n_first, n_last, p1, p2, curve_tag)``
+        for every 1-D mesh element on the load's resolved target curves.
+
+        Shared by the per-edge line-load collectors (normal pressure,
+        spatially varying magnitude, element form) so the Gmsh element
+        walk lives in one place.
         """
         import gmsh
-        away = (np.asarray(defn.away_from, dtype=float)
-                if defn.away_from is not None else None)
         dts = self._resolve_target(defn.target, source=src, expected_dim=1)
         if dts and dts[0] and dts[0][0] == "__ms__":
-            return []
-
-        # Pass 1 — gather every edge once (and its endpoints).
-        edges: list = []
-        pts: list = []
+            return
         for d, t in dts:
             if d != 1:
                 continue
             try:
-                etypes, _, enodes_list = gmsh.model.mesh.getElements(d, t)
+                etypes, etags_list, enodes_list = \
+                    gmsh.model.mesh.getElements(d, t)
             except Exception:
                 continue
-            for etype, enodes in zip(etypes, enodes_list):
-                etype = int(etype)
-                npe = {1: 2, 8: 3}.get(etype)
+            for etype, etags, enodes in zip(
+                    etypes, etags_list, enodes_list):
+                npe = {1: 2, 8: 3}.get(int(etype))
                 if npe is None:
                     continue
                 arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
-                for row in arr:
+                tags = np.asarray(etags, dtype=np.int64)
+                for eid, row in zip(tags, arr):
                     n_first, n_last = int(row[0]), int(row[-1])
-                    p1 = resolver.coords_of(n_first)
-                    p2 = resolver.coords_of(n_last)
-                    edges.append((row, n_first, n_last, p1, p2, int(t)))
-                    pts.append(p1)
-                    pts.append(p2)
+                    yield (int(eid), row, n_first, n_last,
+                           resolver.coords_of(n_first),
+                           resolver.coords_of(n_last), int(t))
+
+    def _collect_line_normal_items(self, defn, src, resolver, *,
+                                   full: bool, varying: bool = False):
+        """Build per-edge items for ``normal=True`` line loads.
+
+        * ``full=False`` → ``(n1, n2, q)``     tributary path.
+        * ``full=True``  → ``(node_seq, q)``   consistent path.
+        * ``varying=True`` (consistent only) → ``(node_seq, n_hat,
+          scalar_fn)``: the per-edge **unit** in-plane normal plus the
+          scalar magnitude callable, so the resolver can Gauss-sample
+          the field instead of using one midpoint value.
+
+        For the non-varying paths a callable ``defn.magnitude`` is
+        sampled once at the edge midpoint (constant per edge).
+        """
+        away = (np.asarray(defn.away_from, dtype=float)
+                if defn.away_from is not None else None)
+        edges = list(self._iter_curve_edges(defn, src, resolver))
         if not edges:
             return []
+        mag_fn = (lambda p: self._eval_magnitude(defn.magnitude, p))
 
         # Plane normal.  away path → one fit over all loaded points
         # (falling back to include away_from when the curves are a
@@ -1607,6 +1695,8 @@ class LoadsComposite:
         plane_global = None
         surf_cache: dict[int, tuple[int, np.ndarray]] = {}
         if away is not None:
+            pts = [p for _e, _r, _nf, _nl, p1, p2, _c in edges
+                   for p in (p1, p2)]
             fit_pts = np.asarray(pts, dtype=float)
             try:
                 plane_global = self._fit_plane_normal(fit_pts)
@@ -1615,15 +1705,22 @@ class LoadsComposite:
                     np.vstack([fit_pts, away.reshape(1, 3)]))
 
         items: list = []
-        for row, n_first, n_last, p1, p2, ctag in edges:
+        for _eid, row, n_first, n_last, p1, p2, ctag in edges:
             if away is not None:
                 P, sign = plane_global, None
             else:
                 if ctag not in surf_cache:
                     surf_cache[ctag] = self._curve_inplane_frame(ctag)
                 sign, P = surf_cache[ctag]
-            q = self._edge_normal_q(
-                defn.magnitude, p1, p2, P, sign, away)
+            if varying:
+                n_hat = self._edge_normal_q(1.0, p1, p2, P, sign, away)
+                if n_hat is None:
+                    continue
+                items.append(([int(n) for n in row], n_hat, mag_fn))
+                continue
+            mag = self._eval_magnitude(
+                defn.magnitude, 0.5 * (p1 + p2))
+            q = self._edge_normal_q(mag, p1, p2, P, sign, away)
             if q is None:
                 continue
             if full:
@@ -1632,8 +1729,51 @@ class LoadsComposite:
                 items.append((n_first, n_last, q))
         return items
 
+    def _collect_line_vector_items(self, defn, src, resolver, *,
+                                   full: bool, varying: bool = False):
+        """Per-edge items for a non-``normal`` line load whose
+        ``magnitude`` is a callable.
+
+        ``q = magnitude(edge_midpoint) * direction`` — the direction is
+        used verbatim (axis name or vector), matching the uniform
+        ``resolve_line_*`` path so a constant callable reproduces it
+        exactly.
+
+        ``varying=True`` (consistent path only) instead yields
+        ``(node_seq, dvec, scalar_fn)`` so the resolver can Gauss-sample
+        the field rather than use a single midpoint value.
+        """
+        from ..mesh._load_resolver import _direction_vec
+        dvec = _direction_vec(defn.direction)
+        mag_fn = (lambda p: self._eval_magnitude(defn.magnitude, p))
+        items: list = []
+        for _eid, row, n_first, n_last, p1, p2, _ctag in \
+                self._iter_curve_edges(defn, src, resolver):
+            if varying:
+                items.append(([int(n) for n in row], dvec, mag_fn))
+                continue
+            mag = self._eval_magnitude(defn.magnitude, 0.5 * (p1 + p2))
+            q = mag * dvec
+            if full:
+                items.append(([int(n) for n in row], q))
+            else:
+                items.append((n_first, n_last, q))
+        return items
+
     def _resolve_line_element(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
+        if callable(defn.magnitude) and defn.q_xyz is None:
+            from ..mesh._load_resolver import _direction_vec
+            dvec = _direction_vec(defn.direction)
+            items: list = []
+            for eid, _row, _nf, _nl, p1, p2, _ct in \
+                    self._iter_curve_edges(defn, src, resolver):
+                mag = self._eval_magnitude(
+                    defn.magnitude, 0.5 * (p1 + p2))
+                q = mag * dvec
+                items.append(
+                    (eid, (float(q[0]), float(q[1]), float(q[2]))))
+            return resolver.resolve_line_element_varying(defn, items)
         dts = self._resolve_target(defn.target, source=src, expected_dim=1)
         import gmsh
         eids: list[int] = []

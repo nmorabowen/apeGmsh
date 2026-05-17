@@ -452,6 +452,38 @@ class LoadResolver:
                 _accumulate_nodal(accum, int(nid), f6)
         return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
 
+    def resolve_line_per_edge_consistent_varying(
+        self,
+        defn: LineLoadDef,
+        items: list,
+    ) -> list[NodalLoadRecord]:
+        """Consistent reduction of a **spatially varying** line load.
+
+        *items* is a list of ``(node_seq, dir_vec, scalar_fn)`` tuples.
+        For each edge the scalar force-per-length ``scalar_fn(xyz)`` is
+        integrated against the shape functions at the element's Gauss
+        points (:func:`integrate_edge_scaled`) and applied along the
+        per-edge ``dir_vec`` (the in-plane normal for ``normal=True``,
+        or the direction vector otherwise).  This is the exact
+        consistent load vector to quadrature order, so a varying
+        magnitude does not over/undershoot the way a single midpoint
+        sample does.
+        """
+        from ._consistent_quadrature import integrate_edge_scaled
+
+        accum: dict[int, ndarray] = {}
+        for edge, dir_vec, scalar_fn in items:
+            edge = list(edge)
+            coords = np.array([self.coords_of(n) for n in edge])
+            weights = integrate_edge_scaled(
+                coords, len(edge), scalar_fn)
+            d = np.asarray(dir_vec, dtype=float)
+            for i, nid in enumerate(edge):
+                f3 = d * float(weights[i])
+                f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
+                _accumulate_nodal(accum, int(nid), f6)
+        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
+
     def resolve_surface_consistent(
         self,
         defn: SurfaceLoadDef,
@@ -524,6 +556,30 @@ class LoadResolver:
                 element_id=int(eid),
                 load_type="beamUniform",
                 params={"wx": qx, "wy": qy, "wz": qz},
+            ))
+        return out
+
+    def resolve_line_element_varying(
+        self,
+        defn: LineLoadDef,
+        items: list[tuple[int, tuple[float, float, float]]],
+    ) -> list[ElementLoadRecord]:
+        """Per-element ``beamUniform`` for a spatially varying line load.
+
+        *items* is a list of ``(element_id, (wx, wy, wz))`` pairs — the
+        composite has already sampled the callable ``magnitude`` at each
+        element's midpoint, so each element gets its own constant
+        ``beamUniform`` (the only thing OpenSees ``eleLoad`` supports).
+        """
+        out: list[ElementLoadRecord] = []
+        for eid, (wx, wy, wz) in items:
+            out.append(ElementLoadRecord(
+                pattern=defn.pattern,
+                name=defn.name,
+                element_id=int(eid),
+                load_type="beamUniform",
+                params={"wx": float(wx), "wy": float(wy),
+                        "wz": float(wz)},
             ))
         return out
 
