@@ -573,38 +573,32 @@ class ConstraintResolver:
         master_nodes: set[int],
         slave_nodes: set[int],
     ) -> SurfaceCouplingRecord:
-        """
-        Resolve a full surface-to-surface tie.
+        """Resolve a surface-to-surface tie — **one-directional**.
 
-        Projects slave nodes onto master faces AND master nodes onto
-        slave faces (bidirectional), then keeps the best projection
-        for each node.
+        Slave-surface nodes are interpolated onto the master faces
+        (the standard tied-contact / Abaqus ``*TIE`` convention: the
+        slave conforms to the master, which is the reference).
+
+        The previous implementation also projected master nodes onto
+        slave faces and concatenated both directions — a node could
+        then be a slave in one direction and a master-face node in
+        the other, producing cyclic / over-determined MPCs the
+        constraint handler cannot satisfy.  ``slave_face_conn`` is
+        accepted for dispatch-signature stability but unused.
         """
         dofs = defn.dofs or [1, 2, 3]
 
-        # Forward: slave nodes -> master faces
+        # Slave nodes -> master faces (slave conforms to master).
         tie_fwd = TieDef(
             master_label=defn.master_label,
             slave_label=defn.slave_label,
             tolerance=defn.tolerance,
             dofs=dofs,
         )
-        fwd_records = self.resolve_tie(
+        all_records = self.resolve_tie(
             tie_fwd, master_face_conn, slave_nodes,
         )
 
-        # Backward: master nodes -> slave faces
-        tie_bwd = TieDef(
-            master_label=defn.slave_label,
-            slave_label=defn.master_label,
-            tolerance=defn.tolerance,
-            dofs=dofs,
-        )
-        bwd_records = self.resolve_tie(
-            tie_bwd, slave_face_conn, master_nodes,
-        )
-
-        all_records = fwd_records + bwd_records
         return SurfaceCouplingRecord(
             kind=ConstraintKind.TIED_CONTACT,
             name=defn.name,

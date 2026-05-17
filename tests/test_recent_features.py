@@ -398,12 +398,13 @@ class TestResolveFaceSP(unittest.TestCase):
 
 class TestResolveTiedContact(unittest.TestCase):
 
-    def test_bidirectional_produces_slave_records_from_both_sides(self):
-        """Coincident master/slave faces -> both forward and backward
-        projections land inside the other face, yielding 8 records."""
-        # Master and slave are the same unit square z=0 with different
-        # node tags. Forward: slave nodes 11..14 project to master face.
-        # Backward: master nodes 1..4 project to slave face.
+    def test_one_directional_slave_to_master_only(self):
+        """Tied contact is one-directional (PR-E / D8): the slave
+        surface conforms to the master.  The old bidirectional
+        concatenation produced cyclic/over-determined MPCs (a node
+        both slave and master) — 8 records here; the correct
+        behaviour is 4 (slaves 11..14 → master face) and NO master
+        node ever appears as a slave_node."""
         coords = {
             1:  (0.0, 0.0, 0.0),
             2:  (1.0, 0.0, 0.0),
@@ -430,9 +431,12 @@ class TestResolveTiedContact(unittest.TestCase):
         )
         self.assertIsInstance(rec, SurfaceCouplingRecord)
         self.assertEqual(rec.kind, ConstraintKind.TIED_CONTACT)
-        # 4 slave-to-master projections + 4 master-to-slave projections
-        self.assertEqual(len(rec.slave_records), 8)
-        # Sanity: weights from Q4 shape functions sum to 1
+        # One-directional: 4 slave→master records only.
+        self.assertEqual(len(rec.slave_records), 4)
+        slave_sn = {ir.slave_node for ir in rec.slave_records}
+        self.assertEqual(slave_sn, {11, 12, 13, 14})
+        # No master node is tied as a slave → no cyclic MPC.
+        self.assertEqual(slave_sn & {1, 2, 3, 4}, set())
         for ir in rec.slave_records:
             self.assertAlmostEqual(float(np.sum(ir.weights)), 1.0, places=8)
 
