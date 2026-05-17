@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .._internal.tag_resolution import resolve_tag
 from .._internal.types import Primitive, UniaxialMaterial
 from ..emitter.base import Emitter
 
@@ -23,6 +24,7 @@ from ..emitter.base import Emitter
 __all__ = [
     "Steel01",
     "Steel02",
+    "ASDSteel1D",
     "Concrete01",
     "Concrete02",
     "Hysteretic",
@@ -150,6 +152,148 @@ class Steel02(UniaxialMaterial):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ASDSteel1D(UniaxialMaterial):
+    """``uniaxialMaterial ASDSteel1D`` — ASDEA plastic-damage steel.
+
+    Unified plastic-damage steel-bar model (fracture, bond-slip and
+    buckling via multiscale homogenization), by A. Casalucci,
+    M. Petracca, G. Camata — ASDEA Software Technology.
+
+    OpenSees command::
+
+        uniaxialMaterial ASDSteel1D $tag $E $sy $su $eu
+            <-implex> <-implexControl $errTol $timeRedLimit>
+            <-auto_regularization>
+            <-buckling $lch <$r>> <-fracture <$r>> <-slip $matTag <$r>>
+            <-K_alpha $K_alpha> <-max_iter $max_iter>
+            <-tolU $tolU> <-tolR $tolR>
+
+    The Chaboche two-term hardening backbone is **derived internally**
+    by the material from ``(E, sy, su, eu)`` so the initial slope is
+    close to ``E`` and the stress approaches ``su`` at strain ``eu``;
+    those hardening constants are not user inputs.
+
+    The optional bar ``radius`` is shared by the ``-buckling`` /
+    ``-fracture`` / ``-slip`` RVE features — supply it once. It is
+    emitted on the first active feature in the order buckling →
+    fracture → slip (the C++ parser cross-checks consistency).
+
+    Parameters
+    ----------
+    E
+        Young's modulus (strictly positive).
+    sy
+        Yield stress (strictly positive).
+    su
+        Ultimate stress (strictly positive, must exceed ``sy``).
+    eu
+        Ultimate strain — strain at which the stress reaches ``su``
+        (strictly positive).
+    implex
+        Emit ``-implex`` (IMPL-EX integration).
+    implex_control
+        ``(errorTolerance, timeReductionLimit)`` for
+        ``-implexControl``; ``None`` omits the flag.
+    auto_regularization
+        Emit ``-auto_regularization``.
+    buckling_lch
+        Buckling characteristic length ``$lch`` (emits ``-buckling
+        $lch``); ``None`` disables buckling.
+    fracture
+        Emit ``-fracture`` (ductile-fracture homogenization).
+    slip_material
+        Bond-slip :class:`UniaxialMaterial` (emits ``-slip $matTag``);
+        ``None`` disables bond-slip. This is the only dependency.
+    radius
+        Shared bar radius ``$r`` for the active RVE feature(s).
+    K_alpha, max_iter, tolU, tolR
+        RVE micro-solver controls; ``None`` leaves the OpenSees
+        defaults.
+    """
+
+    E:  float
+    sy: float
+    su: float
+    eu: float
+    implex: bool = False
+    implex_control: tuple[float, float] | None = None
+    auto_regularization: bool = False
+    buckling_lch: float | None = None
+    fracture: bool = False
+    slip_material: UniaxialMaterial | None = None
+    radius: float | None = None
+    K_alpha:  float | None = None
+    max_iter: int | None = None
+    tolU: float | None = None
+    tolR: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.E <= 0:
+            raise ValueError(f"ASDSteel1D: E must be > 0, got {self.E!r}")
+        if self.sy <= 0:
+            raise ValueError(f"ASDSteel1D: sy must be > 0, got {self.sy!r}")
+        if self.su <= 0:
+            raise ValueError(f"ASDSteel1D: su must be > 0, got {self.su!r}")
+        if self.eu <= 0:
+            raise ValueError(f"ASDSteel1D: eu must be > 0, got {self.eu!r}")
+        if self.su <= self.sy:
+            raise ValueError(
+                f"ASDSteel1D: su must be > sy, got su={self.su!r}, "
+                f"sy={self.sy!r}"
+            )
+        if self.buckling_lch is not None and self.buckling_lch <= 0:
+            raise ValueError(
+                f"ASDSteel1D: buckling_lch must be > 0 if supplied, "
+                f"got {self.buckling_lch!r}"
+            )
+        if self.radius is not None and self.radius <= 0:
+            raise ValueError(
+                f"ASDSteel1D: radius must be > 0 if supplied, got "
+                f"{self.radius!r}"
+            )
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        if self.slip_material is not None:
+            return (self.slip_material,)
+        return ()
+
+    def _emit(self, emitter: Emitter, tag: int) -> None:
+        params: list[float | str] = [self.E, self.sy, self.su, self.eu]
+        if self.implex:
+            params.append("-implex")
+        if self.implex_control is not None:
+            params += ["-implexControl", *self.implex_control]
+        if self.auto_regularization:
+            params.append("-auto_regularization")
+        # The shared bar radius rides on the first active RVE feature.
+        radius_used = False
+
+        def _radius_tail() -> list[float | str]:
+            nonlocal radius_used
+            if self.radius is not None and not radius_used:
+                radius_used = True
+                return [self.radius]
+            return []
+
+        if self.buckling_lch is not None:
+            params += ["-buckling", self.buckling_lch, *_radius_tail()]
+        if self.fracture:
+            params += ["-fracture", *_radius_tail()]
+        if self.slip_material is not None:
+            slip_tag = resolve_tag(emitter, self.slip_material)
+            params += ["-slip", slip_tag, *_radius_tail()]
+        if self.K_alpha is not None:
+            params += ["-K_alpha", self.K_alpha]
+        if self.max_iter is not None:
+            params += ["-max_iter", self.max_iter]
+        if self.tolU is not None:
+            params += ["-tolU", self.tolU]
+        if self.tolR is not None:
+            params += ["-tolR", self.tolR]
+        emitter.uniaxialMaterial("ASDSteel1D", tag, *params)
 
 
 # ---------------------------------------------------------------------------

@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import pytest
 
+from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.uniaxial import (
     ENT,
+    ASDSteel1D,
     Concrete01,
     Concrete02,
     ElasticMaterial,
@@ -151,6 +153,123 @@ class TestSteel02:
         rec = RecordingEmitter()
         m._emit(rec, tag=1)
         assert rec.calls[0][1][-1] == 2.5
+
+
+# ---------------------------------------------------------------------------
+# ASDSteel1D
+# ---------------------------------------------------------------------------
+
+class TestASDSteel1D:
+    def test_construction(self) -> None:
+        m = ASDSteel1D(E=200e9, sy=375e6, su=480e6, eu=0.20)
+        assert m.E == 200e9
+        assert m.sy == 375e6
+        assert m.su == 480e6
+        assert m.eu == 0.20
+        assert m.fracture is False
+
+    def test_emit_minimal_records_correct_call(self) -> None:
+        m = ASDSteel1D(E=200e9, sy=375e6, su=480e6, eu=0.20)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=4)
+        assert rec.calls == [
+            ("uniaxialMaterial",
+             ("ASDSteel1D", 4, 200e9, 375e6, 480e6, 0.20),
+             {}),
+        ]
+
+    def test_emit_with_fracture_flag(self) -> None:
+        m = ASDSteel1D(E=200e9, sy=375e6, su=480e6, eu=0.20, fracture=True)
+        rec = RecordingEmitter()
+        m._emit(rec, tag=1)
+        assert rec.calls[0][1] == (
+            "ASDSteel1D", 1, 200e9, 375e6, 480e6, 0.20, "-fracture",
+        )
+
+    def test_shared_radius_rides_first_active_feature(self) -> None:
+        # buckling has priority over fracture for the shared radius;
+        # fracture then carries no radius.
+        m = ASDSteel1D(
+            E=200e9, sy=375e6, su=480e6, eu=0.20,
+            buckling_lch=0.1, fracture=True, radius=0.008,
+        )
+        rec = RecordingEmitter()
+        m._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "ASDSteel1D", 2, 200e9, 375e6, 480e6, 0.20,
+            "-buckling", 0.1, 0.008, "-fracture",
+        )
+
+    def test_emit_implex_and_controls_tail(self) -> None:
+        m = ASDSteel1D(
+            E=200e9, sy=375e6, su=480e6, eu=0.20,
+            implex=True, implex_control=(0.05, 0.01),
+            auto_regularization=True,
+            K_alpha=0.5, max_iter=120, tolU=1e-6, tolR=1e-6,
+        )
+        rec = RecordingEmitter()
+        m._emit(rec, tag=3)
+        assert rec.calls[0][1] == (
+            "ASDSteel1D", 3, 200e9, 375e6, 480e6, 0.20,
+            "-implex", "-implexControl", 0.05, 0.01,
+            "-auto_regularization",
+            "-K_alpha", 0.5, "-max_iter", 120, "-tolU", 1e-6,
+            "-tolR", 1e-6,
+        )
+
+    def test_dependencies_empty_without_slip(self) -> None:
+        m = ASDSteel1D(E=200e9, sy=375e6, su=480e6, eu=0.20)
+        assert m.dependencies() == ()
+
+    def test_slip_material_is_the_only_dependency(self) -> None:
+        bond = Steel01(fy=250e6, E=200e9, b=0.01)
+        m = ASDSteel1D(
+            E=200e9, sy=375e6, su=480e6, eu=0.20, slip_material=bond,
+        )
+        assert m.dependencies() == (bond,)
+
+    def test_slip_emit_resolves_material_tag(self) -> None:
+        bond = Steel01(fy=250e6, E=200e9, b=0.01)
+        m = ASDSteel1D(
+            E=200e9, sy=375e6, su=480e6, eu=0.20,
+            slip_material=bond, radius=0.008,
+        )
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 7 if p is bond else 0)
+        m._emit(rec, tag=5)
+        assert rec.calls[0][1] == (
+            "ASDSteel1D", 5, 200e9, 375e6, 480e6, 0.20,
+            "-slip", 7, 0.008,
+        )
+
+    def test_repr_includes_type_token(self) -> None:
+        m = ASDSteel1D(E=200e9, sy=375e6, su=480e6, eu=0.20)
+        assert "ASDSteel1D" in repr(m)
+
+    def test_validation_rejects_nonpositive_E(self) -> None:
+        with pytest.raises(ValueError, match="E"):
+            ASDSteel1D(E=0.0, sy=375e6, su=480e6, eu=0.20)
+
+    def test_validation_rejects_nonpositive_eu(self) -> None:
+        with pytest.raises(ValueError, match="eu"):
+            ASDSteel1D(E=200e9, sy=375e6, su=480e6, eu=0.0)
+
+    def test_validation_rejects_su_not_above_sy(self) -> None:
+        with pytest.raises(ValueError, match="su"):
+            ASDSteel1D(E=200e9, sy=480e6, su=480e6, eu=0.20)
+
+    def test_validation_rejects_nonpositive_radius(self) -> None:
+        with pytest.raises(ValueError, match="radius"):
+            ASDSteel1D(
+                E=200e9, sy=375e6, su=480e6, eu=0.20,
+                fracture=True, radius=0.0,
+            )
+
+    def test_validation_rejects_nonpositive_buckling_lch(self) -> None:
+        with pytest.raises(ValueError, match="buckling_lch"):
+            ASDSteel1D(
+                E=200e9, sy=375e6, su=480e6, eu=0.20, buckling_lch=-1.0,
+            )
 
 
 # ---------------------------------------------------------------------------

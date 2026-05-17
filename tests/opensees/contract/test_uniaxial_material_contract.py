@@ -26,6 +26,7 @@ from apeGmsh.opensees._internal.types import Primitive, UniaxialMaterial
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.uniaxial import (
     ENT,
+    ASDSteel1D,
     Concrete01,
     Concrete02,
     ElasticMaterial,
@@ -38,6 +39,7 @@ from apeGmsh.opensees.material.uniaxial import (
 ALL_UNIAXIAL: list[type[UniaxialMaterial]] = [
     Steel01,
     Steel02,
+    ASDSteel1D,
     Concrete01,
     Concrete02,
     Hysteretic,
@@ -49,6 +51,7 @@ ALL_UNIAXIAL: list[type[UniaxialMaterial]] = [
 _MINIMAL_PARAMS: dict[type[UniaxialMaterial], dict[str, Any]] = {
     Steel01: {"fy": 420e6, "E": 200e9, "b": 0.01},
     Steel02: {"fy": 420e6, "E": 200e9, "b": 0.01},
+    ASDSteel1D: {"E": 200e9, "sy": 375e6, "su": 480e6, "eu": 0.20},
     Concrete01: {
         "fpc": -30e6, "epsc0": -0.002,
         "fpcu": -25e6, "epsU": -0.006,

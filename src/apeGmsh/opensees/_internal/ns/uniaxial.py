@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from ...material.uniaxial import (
     ENT,
+    ASDSteel1D,
     Concrete01,
     Concrete02,
     ElasticMaterial,
@@ -18,6 +19,7 @@ from ...material.uniaxial import (
     Steel01,
     Steel02,
 )
+from ..types import UniaxialMaterial
 from ._base import _BridgeNamespace
 
 
@@ -61,6 +63,46 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 R0=R0, cR1=cR1, cR2=cR2,
                 a1=a1, a2=a2, a3=a3, a4=a4,
                 sig_init=sig_init,
+            )
+        )
+
+    def ASDSteel1D(
+        self, *,
+        E:  float,
+        sy: float,
+        su: float,
+        eu: float,
+        implex: bool = False,
+        implex_control: tuple[float, float] | None = None,
+        auto_regularization: bool = False,
+        buckling_lch: float | None = None,
+        fracture: bool = False,
+        slip_material: UniaxialMaterial | None = None,
+        radius: float | None = None,
+        K_alpha:  float | None = None,
+        max_iter: int | None = None,
+        tolU: float | None = None,
+        tolR: float | None = None,
+    ) -> ASDSteel1D:
+        """``uniaxialMaterial ASDSteel1D`` — ASDEA plastic-damage steel.
+
+        Backbone hardening is derived internally from ``(E, sy, su,
+        eu)``. See :class:`ASDSteel1D` for the full contract.
+        """
+        return self._bridge._register(
+            ASDSteel1D(
+                E=E, sy=sy, su=su, eu=eu,
+                implex=implex,
+                implex_control=implex_control,
+                auto_regularization=auto_regularization,
+                buckling_lch=buckling_lch,
+                fracture=fracture,
+                slip_material=slip_material,
+                radius=radius,
+                K_alpha=K_alpha,
+                max_iter=max_iter,
+                tolU=tolU,
+                tolR=tolR,
             )
         )
 
