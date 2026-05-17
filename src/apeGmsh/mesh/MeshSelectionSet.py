@@ -207,6 +207,7 @@ class MeshSelectionSet(_HasLogging):
         closest_to: tuple | None = None,
         count: int = 1,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
+        inclusive: bool = False,
     ) -> int:
         """Create a node set (dim=0) from spatial queries.
 
@@ -215,11 +216,15 @@ class MeshSelectionSet(_HasLogging):
         name : label for the set
         tag : explicit tag (-1 = auto)
         on_plane : (axis, value, atol) — e.g. ("z", 0.0, 1e-3)
-        in_box : (xmin, ymin, zmin, xmax, ymax, zmax)
+        in_box : (xmin, ymin, zmin, xmax, ymax, zmax). Half-open on the
+            upper side by default (a node exactly on an upper face is
+            excluded, matching results-side box semantics).
         in_sphere : (cx, cy, cz, radius)
         closest_to : (x, y, z) — use *count* to select N nearest
         count : number of nearest nodes (used with closest_to)
         predicate : fn(coords(N,3)) -> bool mask(N,)
+        inclusive : if True, ``in_box`` uses a closed upper bound
+            (restores the pre-S2 closed-closed behavior).
 
         Returns
         -------
@@ -234,7 +239,7 @@ class MeshSelectionSet(_HasLogging):
             mask &= _flt.nodes_on_plane(all_coords, axis, value, atol)
 
         if in_box is not None:
-            mask &= _flt.nodes_in_box(all_coords, in_box)
+            mask &= _flt.nodes_in_box(all_coords, in_box, inclusive=inclusive)
 
         if in_sphere is not None:
             cx, cy, cz, r = in_sphere
@@ -260,6 +265,7 @@ class MeshSelectionSet(_HasLogging):
         in_box: tuple | list | None = None,
         on_plane: tuple | None = None,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
+        inclusive: bool = False,
     ) -> int:
         """Create an element set from spatial queries.
 
@@ -268,9 +274,13 @@ class MeshSelectionSet(_HasLogging):
         dim : element dimension (1, 2, or 3)
         name : label
         tag : explicit tag (-1 = auto)
-        in_box : select elements whose centroid is inside box
+        in_box : select elements whose centroid is inside box. Half-open
+            on the upper side by default (a centroid exactly on an upper
+            face is excluded, matching results-side box semantics).
         on_plane : select elements with all nodes on plane
         predicate : fn(centroids(E,3)) -> bool mask(E,)
+        inclusive : if True, ``in_box`` uses a closed upper bound
+            (restores the pre-S2 closed-closed behavior).
 
         Returns
         -------
@@ -296,7 +306,7 @@ class MeshSelectionSet(_HasLogging):
 
         if in_box is not None:
             centroids = _flt.element_centroids(conn, id_to_idx, all_coords)
-            mask &= _flt.elements_in_box(centroids, in_box)
+            mask &= _flt.elements_in_box(centroids, in_box, inclusive=inclusive)
 
         if on_plane is not None:
             axis, value = on_plane[0], on_plane[1]
@@ -585,6 +595,7 @@ class MeshSelectionSet(_HasLogging):
         closest_to: tuple | None = None,
         count: int = 1,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
+        inclusive: bool = False,
     ) -> int:
         """Refine an existing set with spatial filters -> create a new set.
 
@@ -597,7 +608,10 @@ class MeshSelectionSet(_HasLogging):
         dim, tag : source set identifier
         name, new_tag : identifier for the resulting set
         on_plane, in_box, in_sphere, closest_to, predicate :
-            same semantics as :meth:`add_nodes`
+            same semantics as :meth:`add_nodes` (``in_box`` is half-open
+            on the upper side by default)
+        inclusive : if True, ``in_box`` uses a closed upper bound
+            (restores the pre-S2 closed-closed behavior).
 
         Returns
         -------
@@ -628,7 +642,7 @@ class MeshSelectionSet(_HasLogging):
             atol = on_plane[2] if len(on_plane) > 2 else 1e-6
             mask &= _flt.nodes_on_plane(coords, axis, value, atol)
         if in_box is not None:
-            mask &= _flt.nodes_in_box(coords, in_box)
+            mask &= _flt.nodes_in_box(coords, in_box, inclusive=inclusive)
         if in_sphere is not None:
             cx, cy, cz, r = in_sphere
             mask &= _flt.nodes_in_sphere(coords, (cx, cy, cz), r)
@@ -653,6 +667,171 @@ class MeshSelectionSet(_HasLogging):
             f"{int(mask.sum())}/{len(mask)} kept"
         )
         return t
+
+    # ------------------------------------------------------------------
+    # Daisy-chainable selection (S3d additive + name-seed follow-on;
+    # pre-snapshot live mesh)
+    # ------------------------------------------------------------------
+
+    def _seed_ids_by_name(self, dim: int, name: str) -> np.ndarray:
+        """Seed ids for an **existing** mesh-selection set ``name``.
+
+        Pure delegation to the surfaces ``MeshSelectionSet`` already
+        exposes — :meth:`get_tag` (the ``_sets`` name→tag lookup) plus
+        :meth:`get_nodes` / :meth:`get_elements`.  It introduces **no
+        new resolver** and **never writes** :attr:`_sets`.
+
+        Fails loud (``KeyError``) when no set of dimension ``dim``
+        carries ``name`` — never a silent empty / full-universe seed
+        (resolution-contract Rule 6, ``tests/test_resolution_contract``).
+        The message names the existing register-then-select route for
+        the two name kinds that have **no** non-registering resolution
+        surface on ``MeshSelectionSet`` (a gmsh physical group →
+        :meth:`from_physical`; a label / geometry selection →
+        :meth:`from_geometric`), so the contract that a mesh-selection
+        name is *not* a geometry-resolver tier
+        (``test_meshselection_name_is_not_a_helpers_tier``) is upheld.
+        """
+        tag = self.get_tag(dim, name)
+        if tag is None:
+            avail = sorted(
+                nm for (d, t) in self.get_all(dim)
+                if (nm := self.get_name(d, t))
+            )
+            where = "node" if dim == 0 else f"element dim={dim}"
+            raise KeyError(
+                f"No mesh-selection set named {name!r} at the {where} "
+                f"level. select(name=) resolves an EXISTING "
+                f"g.mesh_selection set via the get_tag/_sets surface; "
+                f"to seed from a gmsh physical group call "
+                f"from_physical(...) first, or from a label / geometry "
+                f"selection call from_geometric(...) first, then "
+                f"select(name=...). Available {where} sets: {avail}"
+            )
+        if dim == 0:
+            return self.get_nodes(0, tag)["tags"]
+        return self.get_elements(dim, tag)["element_ids"]
+
+    def select(
+        self,
+        *,
+        level: str = "node",
+        dim: int = 2,
+        ids=None,
+        name=None,
+    ):
+        """Start a daisy-chainable selection over the **live** mesh.
+
+        Returns a
+        :class:`~apeGmsh.mesh._mesh_selection_chain.MeshSelectionChain`
+        (point family) — the fluent equivalent of the eager
+        :meth:`add_nodes` / :meth:`add_elements`::
+
+            g.mesh_selection.select().in_box(lo, hi).on_plane(p, n, tol=1e-6)
+            g.mesh_selection.select(level="element", dim=3).in_box(lo, hi)
+            g.mesh_selection.select(ids=a) | g.mesh_selection.select(ids=b)
+            g.mesh_selection.select(name="base").in_sphere(c, r)
+
+        The chain seeds its atoms and then the standard point-family
+        verbs (``in_box`` / ``on_plane`` / ``in_sphere`` /
+        ``nearest_to`` / ``where`` + ``| & - ^``) narrow it, operating
+        on the same live-mesh coordinates the eager API uses (node
+        coords for ``level="node"``, element centroids for
+        ``level="element"``) — so
+        ``select().in_box(b).on_plane(p, n, tol=t)`` selects the same
+        nodes/elements as ``add_nodes(in_box=b, on_plane=(...))``.
+
+        Parameters
+        ----------
+        level : ``"node"`` (default) — atoms are mesh node ids; or
+            ``"element"`` — atoms are element ids for ``dim``.
+        dim : element dimension (1/2/3) used when
+            ``level == "element"`` (ignored for the node level);
+            mirrors :meth:`add_elements`'s ``dim``.
+        ids : optional explicit id list to seed from.  Omitted (and
+            no ``name``) → the full live-mesh node universe
+            (``level="node"``) or the full live-mesh element universe
+            of ``dim`` (``level="element"``), exactly the universe
+            :meth:`add_nodes` / :meth:`add_elements` start from before
+            their filters.
+        name : optional name of an **existing** ``g.mesh_selection``
+            set to seed from (its node ids for ``level="node"``, its
+            element ids for ``level="element"``), so
+            ``select(name=N).<spatial>`` is the id-for-id fluent
+            equivalent of :meth:`filter_set` over that set.  Mutually
+            exclusive with ``ids=``.  Resolution **delegates verbatim**
+            to the existing :meth:`get_tag` / :meth:`get_nodes` /
+            :meth:`get_elements` surface (no new resolver); an unknown
+            name fails loud.
+
+        Notes
+        -----
+        ``.select()`` is **additive**: it does not register a set into
+        :attr:`_sets`, does not allocate a tag, and does not perturb
+        the eager API (``name=`` only *reads* :attr:`_sets`).
+        ``MeshSelectionChain`` is imported **deferred** (mirrors
+        ``mesh/_mesh_structured.py``); the chain module imports only
+        the package-root leaf ``apeGmsh._chain`` + numpy, so this adds
+        no eager cross-package edge
+        (``tests/test_import_dag_polarity.py`` baseline unchanged).
+
+        ``name=`` seeds from an **already-registered** mesh-selection
+        set only.  Seeding *directly* from a raw gmsh physical-group
+        name or an apeGmsh label is **not** a ``select()`` parameter:
+        ``MeshSelectionSet`` has no non-registering, non-reimplementing
+        resolver for those — its only PG bridge,
+        :meth:`from_physical`, *registers* a set + allocates a tag
+        (which ``select()`` must not do) and is node-only; label /
+        geometry resolution lives off ``MeshSelectionSet`` entirely,
+        and a mesh-selection name is deliberately *not* a
+        geometry-resolver tier (see
+        ``docs/plans/selection-unification.md`` §9 and
+        ``tests/test_resolution_contract.py``).  The supported,
+        existing-surface route is the documented two step
+        ``from_physical(dim, "PG", ms_name="foo")`` /
+        ``from_geometric(sel, name="foo")`` **then**
+        ``select(name="foo")``.  Persistence (``.save_as(name)`` /
+        round-trip as ``selection=``) remains deferred and out of
+        S3d scope.
+        """
+        from ._mesh_selection_chain import (  # deferred — see plan §3
+            MeshSelectionChain,
+            engine_for,
+        )
+
+        if level not in ("node", "element"):
+            raise ValueError(
+                f"select(level=) must be 'node' or 'element', "
+                f"got {level!r}."
+            )
+        if ids is not None and name is not None:
+            raise ValueError(
+                "select(ids=, name=) are mutually exclusive — pass an "
+                "explicit id list OR an existing selection-set name, "
+                "not both."
+            )
+
+        if level == "node":
+            eng = engine_for(self, "node", 0)
+            if ids is not None:
+                atoms = [int(n) for n in ids]
+            elif name is not None:
+                atoms = [int(n) for n in self._seed_ids_by_name(0, name)]
+            else:
+                all_ids, _ = self._get_mesh_nodes()
+                atoms = [int(n) for n in all_ids]
+        else:
+            d = int(dim)
+            eng = engine_for(self, "element", d)
+            if ids is not None:
+                atoms = [int(e) for e in ids]
+            elif name is not None:
+                atoms = [int(e) for e in self._seed_ids_by_name(d, name)]
+            else:
+                elem_ids, _ = self._get_mesh_elements(d)
+                atoms = [int(e) for e in elem_ids]
+
+        return MeshSelectionChain(atoms, _engine=eng)
 
     def sort_set(
         self,

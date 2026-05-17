@@ -297,6 +297,68 @@ class NodeComposite:
 
     # ── Selection API ───────────────────────────────────────
 
+    def select(
+        self,
+        target=None,
+        *,
+        pg=None,
+        label=None,
+        tag=None,
+        partition: int | None = None,
+        dim: int | None = None,
+        ids=None,
+    ):
+        """Start a daisy-chainable node selection.
+
+        Returns a :class:`~apeGmsh.mesh._node_chain.NodeChain` (point
+        family) that composes fluently::
+
+            fem.nodes.select(pg="Base").in_box(lo, hi).on_plane(p, n, tol=1e-6)
+            fem.nodes.select(ids=a) | fem.nodes.select(ids=b)
+
+        Accepts the **same selectors** as :meth:`get`
+        (``target`` / ``pg`` / ``label`` / ``tag`` / ``partition`` /
+        ``dim``) plus ``ids=`` (explicit id list); no-arg seeds every
+        domain node.  Name resolution is **not** re-implemented here:
+        the ``target``/``pg``/``label``/``tag``/``dim`` seed is obtained
+        by delegating verbatim to :meth:`_resolve_nodes` — the exact
+        method :meth:`get` uses, preserving its documented node-path
+        ``KeyError``-only swallow asymmetry (FP-4) by reuse — and the
+        optional ``partition`` filter reuses :meth:`_intersect_partition`
+        exactly as :meth:`get` does, so ``select(...).result()`` is
+        id-for-id the same selection as ``get(...)`` (no extra scoping
+        or boundary walk).
+
+        ``NodeChain`` is imported **deferred** (mirrors
+        ``mesh/_mesh_structured.py``): ``_node_chain`` imports only the
+        package-root leaf ``apeGmsh._chain``, so this adds no eager
+        cross-package edge (``tests/test_import_dag_polarity.py`` stays
+        green with the baseline unchanged).
+        """
+        from ._node_chain import NodeChain  # deferred — see plan §3 idiom
+
+        if ids is not None:
+            atoms = [int(n) for n in ids]
+        elif (
+            target is None
+            and pg is None
+            and label is None
+            and tag is None
+            and partition is None
+            and dim is None
+        ):
+            atoms = [int(n) for n in self._ids]
+        else:
+            seed_ids, seed_coords = self._resolve_nodes(
+                target, pg=pg, label=label, tag=tag, dim=dim
+            )
+            if partition is not None:
+                seed_ids, seed_coords = self._intersect_partition(
+                    seed_ids, seed_coords, partition
+                )
+            atoms = [int(n) for n in seed_ids]
+        return NodeChain(atoms, _engine=self)
+
     def get(
         self,
         target=None,
@@ -870,6 +932,87 @@ class ElementComposite:
             partition=partition,
         ).resolve()
 
+    def select(
+        self,
+        target=None,
+        *,
+        pg=None,
+        label=None,
+        tag=None,
+        dim: int | None = None,
+        element_type: str | int | None = None,
+        partition: int | None = None,
+        ids=None,
+    ):
+        """Start a daisy-chainable element selection.
+
+        Returns an :class:`~apeGmsh.mesh._elem_chain.ElementChain`
+        (point family — atoms are element ids, spatial verbs operate on
+        element centroids) that composes fluently::
+
+            fem.elements.select(pg="Body").in_box(lo, hi).on_plane(p, n, tol=1e-6)
+            fem.elements.select(ids=a) | fem.elements.select(ids=b)
+
+        Accepts the **same selectors** as :meth:`get`
+        (``target`` / ``pg`` / ``label`` / ``tag`` / ``dim`` /
+        ``element_type`` / ``partition``) plus ``ids=`` (explicit id
+        list); no-arg seeds every element.  Name resolution is **not**
+        re-implemented here: the ``target``/``pg``/``label``/``tag``
+        seed is obtained by delegating verbatim to
+        :meth:`_resolve_elem_ids` — the exact method :meth:`get` uses,
+        preserving its documented element-path ``(KeyError, ValueError)``
+        swallow (FP-4) by reuse.  The auxiliary
+        ``dim``/``element_type``/``partition`` filters are applied by
+        reusing :meth:`get` verbatim (no filter logic re-implemented),
+        so ``select(...).result()`` is id-for-id the same selection as
+        ``get(...)`` / ``resolve(...)``.
+
+        ``ElementChain`` is imported **deferred** (mirrors
+        ``mesh/_mesh_structured.py``): ``_elem_chain`` imports only the
+        package-root leaf ``apeGmsh._chain``, so this adds no eager
+        cross-package edge (``tests/test_import_dag_polarity.py`` stays
+        green with the baseline unchanged).
+        """
+        from ._elem_chain import ElementChain  # deferred — see plan §3
+
+        if ids is not None:
+            atoms = [int(e) for e in ids]
+        elif (
+            target is None
+            and pg is None
+            and label is None
+            and tag is None
+            and dim is None
+            and element_type is None
+            and partition is None
+        ):
+            atoms = [int(e) for e in self.ids]
+        elif dim is None and element_type is None and partition is None:
+            # Pure name/target seed — delegate to the exact resolver
+            # `.get()` uses (FP-4 element-path swallow preserved by
+            # reuse).  `None` means "all" (no PG/label/tag/target).
+            id_set = self._resolve_elem_ids(
+                target, pg=pg, label=label, tag=tag
+            )
+            atoms = (
+                [int(e) for e in self.ids]
+                if id_set is None
+                else [int(e) for e in id_set]
+            )
+        else:
+            # Auxiliary dim/element_type/partition filter present —
+            # reuse `.get()` verbatim (which itself delegates name
+            # resolution to `_resolve_elem_ids`); no filter logic is
+            # re-implemented, guaranteeing select(...) == get(...).
+            atoms = [
+                int(e)
+                for e in self.get(
+                    target, pg=pg, label=label, tag=tag, dim=dim,
+                    element_type=element_type, partition=partition,
+                ).ids
+            ]
+        return ElementChain(atoms, _engine=self)
+
     # ── Lookups ─────────────────────────────────────────────
 
     def index(self, eid: int) -> int:
@@ -1123,6 +1266,15 @@ class FEMData:
         self.info     = info
         self.mesh_selection = mesh_selection
         self.inspect  = InspectComposite(self)
+        # Wire the sibling NodeComposite onto the ElementComposite so
+        # ElementChain (fem.elements.select(...)) can compute element
+        # centroids in-memory (no live Gmsh session needed — works for
+        # import-origin FEMData too). Every construction path funnels
+        # through this __init__, so one wiring line covers from_gmsh /
+        # from_msh / from_h5 / from_native / from_mpco / direct. The
+        # attribute name is the contract shared with
+        # mesh/_elem_chain.NODES_REF_ATTR.
+        elements._apegmsh_nodes_ref = nodes
 
     @property
     def partitions(self) -> list[int]:

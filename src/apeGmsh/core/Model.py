@@ -147,6 +147,95 @@ class Model(_HasLogging):
         return self
 
     # ------------------------------------------------------------------
+    # Unified fluent selection (entity family) — additive
+    # ------------------------------------------------------------------
+
+    def select(self, target=None, *, dim: int | None = None):
+        """Start a fluent, daisy-chainable CAD-entity selection.
+
+        This is the **geometry entry** of the unified selection family
+        (``docs/plans/selection-unification.md``).  It is *additive* and
+        does not replace the existing entry points:
+
+        * ``g.model.queries.select(tags, on=/crossing=...)`` — the
+          legacy geometric-predicate selector (unchanged); and
+        * ``g.model.selection.select_*`` — the legacy entity-query
+          composite (unchanged).
+
+        ``select()`` returns a :class:`~apeGmsh.core._selection.GeometryChain`
+        (entity family) whose verbs (``in_box``, ``in_sphere``,
+        ``on_plane``, ``nearest_to``, ``where``, ``|`` ``&`` ``-``
+        ``^``) compose, and whose ``.result()`` yields the **legacy**
+        ``Selection`` — so ``.to_label()`` / ``.to_physical()`` /
+        ``.tags()`` keep working through the byte-unchanged terminal.
+
+        Name resolution is delegated **verbatim** to the existing,
+        contract-locked geometry resolver
+        (:func:`apeGmsh.core._helpers.resolve_to_dimtags`): a string is
+        resolved label (Tier 1) -> physical group (Tier 2) -> part
+        (Tier 3); ``(dim, tag)`` / ``int`` / lists pass through with the
+        same semantics as everywhere else.  This method re-implements
+        none of that tier logic, and adds **no** scoping or
+        boundary-walk behaviour of its own — what
+        ``resolve_to_dimtags`` returns is exactly what seeds the chain
+        (no silent truncation).  To narrow to a specific dimension,
+        seed with a dimension-appropriate label / PG, or refine with a
+        spatial verb (``.in_box`` / ``.on_plane`` / ...).
+
+        Parameters
+        ----------
+        target :
+            What to seed the chain with.  Any reference
+            ``resolve_to_dimtags`` accepts — a label / PG / part name
+            string, a bare int tag, a ``(dim, tag)`` pair, or a list
+            thereof.  ``None`` selects every entity at ``dim`` (which
+            then must be given), via ``resolve_to_dimtags(None,
+            default_dim=dim)``.
+        dim :
+            The ``default_dim`` forwarded to ``resolve_to_dimtags`` —
+            i.e. the dimension used for bare int tags and for
+            ``target=None``.  It is **not** a post-filter (that would be
+            a silent truncation the resolution contract forbids); a
+            multi-dim label still enumerates every dim it occupies, per
+            the locked contract.  Defaults to ``3`` (the resolver's own
+            default) when not given.
+
+        Returns
+        -------
+        GeometryChain
+
+        Example
+        -------
+        ::
+
+            # seed with a face physical group, then refine spatially
+            (g.model.select("BottomFaces")
+                .in_box((0, 0, 0), (1, 1, 0.5))
+                .result()
+                .to_physical("lower_faces"))
+        """
+        # Deferred import — the established idiom (mirrors
+        # mesh/_mesh_structured.py).  ``_selection`` is same-package and
+        # ``_chain`` is the package-root leaf, so this adds no eager
+        # cross-package edge (tests/test_import_dag_polarity.py stays
+        # green with the baseline unchanged).
+        from ._helpers import resolve_to_dimtags
+        from ._selection import GeometryChain
+
+        if target is None and dim is None:
+            raise ValueError(
+                "model.select(): pass a target (label / PG / part / "
+                "(dim, tag) / int / list) or a dim= to select every "
+                "entity at that dimension."
+            )
+        dimtags = resolve_to_dimtags(
+            target,
+            default_dim=3 if dim is None else dim,
+            session=self._parent,
+        )
+        return GeometryChain(dimtags, _engine=self.queries)
+
+    # ------------------------------------------------------------------
     # Visualisation
     # ------------------------------------------------------------------
 

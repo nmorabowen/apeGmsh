@@ -46,23 +46,40 @@ def nodes_on_plane(
 def nodes_in_box(
     coords: np.ndarray,
     bbox: tuple | list,
+    *,
+    inclusive: bool = False,
 ) -> np.ndarray:
     """Return boolean mask for nodes inside an axis-aligned bounding box.
+
+    The box is **half-open on the upper side** by default
+    (``xmin <= xyz < xmax`` per axis), matching
+    :func:`apeGmsh.results._composites._node_ids_in_box`. A coordinate
+    exactly equal to an upper bound is excluded so adjacent boxes do
+    not double-count a shared face.
 
     Parameters
     ----------
     coords : ndarray (N, 3)
     bbox : (xmin, ymin, zmin, xmax, ymax, zmax)
+    inclusive : if True, the upper bound is closed (``<=``), restoring
+        the pre-S2 closed-closed behavior for callers that need an
+        on-face point to be included.
 
     Returns
     -------
     ndarray (N,) bool
     """
     xmin, ymin, zmin, xmax, ymax, zmax = bbox
+    if inclusive:
+        return (
+            (coords[:, 0] >= xmin) & (coords[:, 0] <= xmax)
+            & (coords[:, 1] >= ymin) & (coords[:, 1] <= ymax)
+            & (coords[:, 2] >= zmin) & (coords[:, 2] <= zmax)
+        )
     return (
-        (coords[:, 0] >= xmin) & (coords[:, 0] <= xmax)
-        & (coords[:, 1] >= ymin) & (coords[:, 1] <= ymax)
-        & (coords[:, 2] >= zmin) & (coords[:, 2] <= zmax)
+        (coords[:, 0] >= xmin) & (coords[:, 0] < xmax)
+        & (coords[:, 1] >= ymin) & (coords[:, 1] < ymax)
+        & (coords[:, 2] >= zmin) & (coords[:, 2] < zmax)
     )
 
 
@@ -148,19 +165,25 @@ def element_centroids(
 def elements_in_box(
     centroids: np.ndarray,
     bbox: tuple | list,
+    *,
+    inclusive: bool = False,
 ) -> np.ndarray:
     """Return boolean mask for elements whose centroid is inside a box.
+
+    Delegates to :func:`nodes_in_box` on the centroids, so it inherits
+    the half-open-by-default semantics (and the ``inclusive=`` escape).
 
     Parameters
     ----------
     centroids : ndarray (E, 3)
     bbox : (xmin, ymin, zmin, xmax, ymax, zmax)
+    inclusive : if True, closed upper bound (pre-S2 behavior).
 
     Returns
     -------
     ndarray (E,) bool
     """
-    return nodes_in_box(centroids, bbox)
+    return nodes_in_box(centroids, bbox, inclusive=inclusive)
 
 
 def elements_on_plane(
