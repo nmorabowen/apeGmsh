@@ -38,6 +38,18 @@ def test_mortar_factory_raises_not_implemented():
             g.constraints.mortar("A", "B")
 
 
+def test_embedded_factory_accepts_entity_scoping():
+    """PR-D: host_entities/embedded_entities are now settable (the
+    resolver already honoured them; the factory dropped them)."""
+    with apeGmsh(model_name="pd_embed", verbose=False) as g:
+        d = g.constraints.embedded(
+            "concrete", "rebar",
+            host_entities=[(3, 1)], embedded_entities=[(1, 7)],
+        )
+        assert d.host_entities == [(3, 1)]
+        assert d.embedded_entities == [(1, 7)]
+
+
 def _diaphragm(master, slaves, normal):
     return NodeGroupRecord(
         kind=K.RIGID_DIAPHRAGM, master_node=master, slave_nodes=slaves,

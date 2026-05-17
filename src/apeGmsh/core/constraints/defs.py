@@ -76,11 +76,15 @@ class RigidLinkDef(ConstraintDef):
     ----------
     link_type : ``"beam"`` or ``"rod"``
     master_point : (x,y,z) or None
-        Explicit master node location.  If None, found by proximity.
+        If given, the master is the *nearest* node in the master set
+        to this point.  If ``None``, the master is the node nearest
+        the master set's centroid.
     slave_entities : list of (dim, tag), optional
         Geometric entities whose nodes become slaves.
     tolerance : float
-        For auto-detecting master node by proximity.
+        Reserved.  **Not currently enforced** for master selection
+        (the nearest node is taken unconditionally); kept for API
+        stability and a future proximity-gated check.
     """
     kind: str = field(init=False, default="rigid_link")
     link_type: str = "beam"
@@ -268,12 +272,18 @@ class EmbeddedDef(ConstraintDef):
 
     Parameters
     ----------
-    host_entities : list of (dim, tag)
-        Host volume/surface entities.
-    embedded_entities : list of (dim, tag)
-        Embedded line/surface entities.
+    host_entities : list of (dim, tag), optional
+        Host volume/surface entities.  Settable via
+        ``g.constraints.embedded(..., host_entities=...)``; when
+        omitted the whole ``host_label`` is used.
+    embedded_entities : list of (dim, tag), optional
+        Embedded line/surface entities.  Settable via
+        ``embedded(..., embedded_entities=...)``; when omitted the
+        whole ``embedded_label`` is used.
     tolerance : float
-        Search tolerance for finding the host element.
+        Reserved.  **Not currently enforced** — the resolver accepts
+        any located host record (barycentric gating uses a fixed
+        internal tolerance).  Kept for API stability.
     """
     kind: str = field(init=False, default="embedded")
     host_entities: list[tuple[int, int]] | None = None
@@ -318,13 +328,16 @@ class NodeToSurfaceDef(ConstraintDef):
 
     Parameters
     ----------
-    master_point : (x, y, z) or None
-        Explicit master node location.  If None, the node tag in
-        ``master_label`` is used directly.
     dofs : list[int] or None
         Translational DOFs coupled to the solid.  Default [1, 2, 3].
+    master_point : (x, y, z) or None
+        **Ignored.**  The master is taken directly from the
+        ``master_label`` node tag (this def uses bare tags, see
+        above); there is no proximity master-detection.  Retained
+        only for dataclass/API stability.
     tolerance : float
-        For auto-detecting master node by proximity.
+        **Ignored** for the same reason.  Retained for API
+        stability.
     """
     kind: str = field(init=False, default="node_to_surface")
     master_point: tuple[float, float, float] | None = None

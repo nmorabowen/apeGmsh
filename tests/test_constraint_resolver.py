@@ -510,5 +510,29 @@ class TestResolveEmbedded(unittest.TestCase):
         self.assertTrue((records[0].weights >= -1e-12).all())
 
 
+class TestColocatedPairingFailLoud(unittest.TestCase):
+    """Many-to-one co-located matching is degenerate (redundant /
+    conflicting MPCs) — must fail loud, not silently emit (PR-D)."""
+
+    def test_master_matched_by_multiple_slaves_raises(self):
+        # master 1 and slaves 2,3 all coincide → 2 & 3 both match 1.
+        r = _make_resolver({
+            1: (0.0, 0.0, 0.0),
+            2: (0.0, 0.0, 0.0),
+            3: (0.0, 0.0, 0.0),
+        })
+        with self.assertRaises(ValueError):
+            r._match_node_pairs({1}, {2, 3}, tolerance=1e-3)
+
+    def test_clean_one_to_one_still_pairs(self):
+        # Distinct co-located pairs (1↔3, 2↔4) — no ambiguity.
+        r = _make_resolver({
+            1: (0.0, 0.0, 0.0), 3: (0.0, 0.0, 0.0),
+            2: (1.0, 0.0, 0.0), 4: (1.0, 0.0, 0.0),
+        })
+        pairs = r._match_node_pairs({1, 2}, {3, 4}, tolerance=1e-6)
+        self.assertEqual(sorted(pairs), [(1, 3), (2, 4)])
+
+
 if __name__ == "__main__":
     unittest.main()

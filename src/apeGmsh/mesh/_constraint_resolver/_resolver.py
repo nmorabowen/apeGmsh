@@ -234,6 +234,7 @@ class ConstraintResolver:
         master_tree = _SpatialIndex(master_coords)
 
         pairs = []
+        claimed: dict[int, list[int]] = {}
         for st in sorted(slave_tags):
             sc = self._coords_of(st)
             dist, idx = master_tree.query(sc)
@@ -241,6 +242,23 @@ class ConstraintResolver:
                 mt = master_list[idx]
                 if mt != st:     # don't pair a node with itself
                     pairs.append((mt, st))
+                    claimed.setdefault(mt, []).append(st)
+
+        # Many-to-one is a degenerate, over-constraining match (the
+        # same master co-located with several slaves within
+        # tolerance): emitting all of them produces redundant /
+        # conflicting MPCs the solver would silently choke on.  Fail
+        # loud instead of shipping a quietly-wrong constraint.
+        multi = {m: s for m, s in claimed.items() if len(s) > 1}
+        if multi:
+            raise ValueError(
+                f"co-located pairing is ambiguous: master node(s) "
+                f"{sorted(multi)} each matched >1 slave within "
+                f"tolerance={tolerance} ({multi}).  The interface is "
+                f"not cleanly co-located — tighten the tolerance, "
+                f"deduplicate coincident nodes, or use tie (shape-"
+                f"function interpolation) for a non-matching mesh."
+            )
 
         return pairs
 

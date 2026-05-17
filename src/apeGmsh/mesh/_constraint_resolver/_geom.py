@@ -170,20 +170,16 @@ def _project_point_to_face(
         dx_dxi  = N_xi  @ face_coords       # (3,)
         dx_deta = N_eta @ face_coords        # (3,)
 
-        # 2×2 system:  J^T J  [dξ, dη]^T = -J^T r
+        # Gauss–Newton step solved as a least-squares problem on J
+        # directly (SVD-based).  Forming JᵀJ squares the condition
+        # number (κ(JᵀJ)=κ(J)²), degrading the projection on sliver /
+        # high-aspect faces well before any det≈0 guard would trip;
+        # lstsq on the (3×2) J is robust there.
         J = np.column_stack([dx_dxi, dx_deta])   # (3, 2)
-        JtJ = J.T @ J                             # (2, 2)
-        Jtr = J.T @ residual                       # (2,)
-
-        det = JtJ[0, 0] * JtJ[1, 1] - JtJ[0, 1] * JtJ[1, 0]
-        if abs(det) < 1e-30:
+        try:
+            delta, *_ = np.linalg.lstsq(J, -residual, rcond=None)
+        except np.linalg.LinAlgError:
             break
-        inv = np.array([
-            [ JtJ[1, 1], -JtJ[0, 1]],
-            [-JtJ[1, 0],  JtJ[0, 0]],
-        ]) / det
-
-        delta = -inv @ Jtr
         xi  += delta[0]
         eta += delta[1]
 

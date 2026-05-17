@@ -761,6 +761,7 @@ class ConstraintsComposite:
         )
 
     def embedded(self, host_label, embedded_label, *, tolerance=1.0,
+                 host_entities=None, embedded_entities=None,
                  name=None) -> EmbeddedDef:
         """Embed lower-dimensional elements inside a host volume or
         surface.
@@ -794,8 +795,11 @@ class ConstraintsComposite:
             ``EmbeddedDef`` — these labels may also be physical
             group names if no part registry is in use.)
         tolerance : float, default 1.0
-            Search tolerance for locating each embedded node
-            inside a host element. **Unit-sensitive.**
+            Reserved; not currently enforced (the resolver accepts
+            any located host record).  Retained for API stability.
+        host_entities, embedded_entities : list of (dim, tag), optional
+            Restrict the host / embedded sides to specific Gmsh
+            entities.  When omitted the whole label is used.
         name : str, optional
             Friendly name.
 
@@ -823,7 +827,8 @@ class ConstraintsComposite:
         """
         return self._add_def(EmbeddedDef(
             master_label=host_label, slave_label=embedded_label,
-            tolerance=tolerance, name=name))
+            tolerance=tolerance, host_entities=host_entities,
+            embedded_entities=embedded_entities, name=name))
 
     # Level 2b
     def node_to_surface(self, master, slave, *,
