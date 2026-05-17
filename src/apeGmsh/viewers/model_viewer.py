@@ -1177,9 +1177,22 @@ class ModelViewer:
             list_records=_masses_records,
         )
 
-        _add_panel("dock_model_loads", "Loads", _loads_panel.widget)
+        # Wrap in scroll areas so the wide-range vec3 spin boxes never
+        # force their (~1000px) minimum width onto the shared right-side
+        # tab group — same guard the Session panel uses for its height.
+        def _scrollable(w):
+            sc = _QtW.QScrollArea()
+            sc.setWidgetResizable(True)
+            sc.setFrameShape(_QtW.QFrame.NoFrame)
+            sc.setWidget(w)
+            return sc
+
         _add_panel(
-            "dock_model_masses", "Masses", _masses_panel.widget
+            "dock_model_loads", "Loads", _scrollable(_loads_panel.widget)
+        )
+        _add_panel(
+            "dock_model_masses", "Masses",
+            _scrollable(_masses_panel.widget),
         )
 
         # Scene rebuild after any geometry mutation (parts fuse,
