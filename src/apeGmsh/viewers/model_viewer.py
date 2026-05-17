@@ -863,6 +863,14 @@ class ModelViewer:
         parts_reg = getattr(self._parent, 'parts', None)
         from .ui._model_outline_tree import ModelOutlineTree
 
+        # Outline PG/Label click → declaration target for the
+        # Loads / Masses panels (captured by name + kind).
+        self._decl_target = None
+
+        def _on_outline_focus(kind, payload) -> None:
+            if kind in ("group", "label"):
+                self._decl_target = (kind, str(payload))
+
         outline = ModelOutlineTree(
             selection=sel,
             vis_mgr=vis_mgr,
@@ -875,6 +883,7 @@ class ModelViewer:
             on_delete_label=_on_delete_label,
             on_rename_group=_on_rename_group,
             on_delete_group=_on_delete_group,
+            on_row_focused=_on_outline_focus,
         )
         outline_dock = win.add_extension_dock(DockSpec(
             dock_id="dock_model_outline",
@@ -1000,6 +1009,178 @@ class ModelViewer:
             _mb.insertMenu(_mb_acts[0], _file_menu)   # File leftmost
         else:
             _mb.addMenu(_file_menu)
+
+        # ── Loads / Masses declaration panels (pre-mesh) ────────────
+        # Declared against the outline's selected PG / Label. The
+        # library call happens here (pattern-wrapped for loads).
+        # model.viewer has no mesh, so no arrows — the declarations
+        # render later in g.mesh.viewer(fem=fem). Target dim is
+        # validated like PG creation. No _rebuild_scene (no geometry
+        # change).
+        from .ui._loads_panel import LoadsPanel, LOAD_TYPES
+        from .ui._masses_panel import MassesPanel, MASS_TYPES
+        from qtpy import QtWidgets as _QtW_decl
+        _LOAD_DIM = dict(LOAD_TYPES)
+        _MASS_DIM = dict(MASS_TYPES)
+
+        def _decl_target():
+            return self._decl_target
+
+        def _target_dims(kind, name):
+            from apeGmsh.core.Labels import add_prefix
+            pgname = add_prefix(name) if kind == "label" else name
+            dims = set()
+            for d, t in gmsh.model.getPhysicalGroups():
+                try:
+                    if gmsh.model.getPhysicalName(d, t) == pgname:
+                        dims.add(int(d))
+                except Exception:
+                    pass
+            return dims
+
+        def _kw_for(kind, name, params):
+            kw = {"label": name} if kind == "label" else {"pg": name}
+            kw.update(params)
+            return kw
+
+        def _rec_view(r, with_pattern):
+            t = (getattr(r, "load_type", None)
+                 or getattr(r, "mass_type", None)
+                 or getattr(r, "kind", None)
+                 or getattr(r, "type", None)
+                 or type(r).__name__)
+            tgt = (getattr(r, "pg", None) or getattr(r, "label", None)
+                   or getattr(r, "target", None) or "")
+            ttuple = None
+            if getattr(r, "pg", None):
+                ttuple = ("group", r.pg)
+            elif getattr(r, "label", None):
+                ttuple = ("label", r.label)
+            params = {}
+            for a in dir(r):
+                if a.startswith("_"):
+                    continue
+                try:
+                    v = getattr(r, a)
+                except Exception:
+                    continue
+                if callable(v):
+                    continue
+                if isinstance(v, (int, float, bool, str, list, tuple)):
+                    params[a] = v
+            d = {"key": id(r), "type": str(t), "target": str(tgt),
+                 "target_tuple": ttuple,
+                 "name": getattr(r, "name", None), "params": params}
+            if with_pattern:
+                d["pattern"] = getattr(r, "pattern", "default")
+            return d
+
+        def _loads_records():
+            recs = getattr(self._parent.loads, "load_defs", []) or []
+            return [_rec_view(r, True) for r in recs]
+
+        def _loads_remove(key):
+            recs = getattr(self._parent.loads, "load_defs", None)
+            if recs is not None:
+                recs[:] = [r for r in recs if id(r) != key]
+            _loads_panel.refresh_list()
+
+        def _loads_apply(load_type, pattern, target, params):
+            kind, name = target
+            need = _LOAD_DIM.get(load_type)
+            dims = _target_dims(kind, name)
+            if need is not None and dims and need not in dims:
+                _QtW_decl.QMessageBox.warning(
+                    win.window, f"Loads: {load_type}",
+                    f"{load_type} needs a "
+                    f"{_DIM_NAMES.get(need, need)} target; '{name}' is "
+                    + ", ".join(
+                        _DIM_NAMES.get(x, str(x)) for x in sorted(dims)
+                    ) + ".",
+                )
+                _loads_panel.set_hint(f"{load_type}: wrong target dim.")
+                return
+            try:
+                with self._parent.loads.pattern(pattern):
+                    getattr(self._parent.loads, load_type)(
+                        **_kw_for(kind, name, params)
+                    )
+            except Exception as exc:
+                _QtW_decl.QMessageBox.warning(
+                    win.window, f"Loads: {load_type}", str(exc)
+                )
+                _loads_panel.set_hint(f"{load_type} failed: {exc}")
+                return
+            _loads_panel.refresh_patterns()
+            _loads_panel.refresh_list()
+            _loads_panel.set_hint(
+                f"Declared {load_type} on {name} "
+                f"(pattern '{pattern}')."
+            )
+            win.set_status(f"Load declared: {load_type} → {name}")
+
+        _loads_panel = LoadsPanel(
+            get_target=_decl_target,
+            get_patterns=lambda: list(
+                getattr(self._parent.loads, "patterns", lambda: [])()
+            ),
+            on_apply=_loads_apply,
+            on_remove=_loads_remove,
+            list_records=_loads_records,
+        )
+
+        def _masses_records():
+            recs = getattr(self._parent.masses, "mass_defs", []) or []
+            return [_rec_view(r, False) for r in recs]
+
+        def _masses_remove(key):
+            recs = getattr(self._parent.masses, "mass_defs", None)
+            if recs is not None:
+                recs[:] = [r for r in recs if id(r) != key]
+            _masses_panel.refresh_list()
+
+        def _masses_apply(mass_type, target, params):
+            kind, name = target
+            need = _MASS_DIM.get(mass_type)
+            dims = _target_dims(kind, name)
+            if need is not None and dims and need not in dims:
+                _QtW_decl.QMessageBox.warning(
+                    win.window, f"Masses: {mass_type}",
+                    f"{mass_type} mass needs a "
+                    f"{_DIM_NAMES.get(need, need)} target; '{name}' is "
+                    + ", ".join(
+                        _DIM_NAMES.get(x, str(x)) for x in sorted(dims)
+                    ) + ".",
+                )
+                _masses_panel.set_hint(f"{mass_type}: wrong target dim.")
+                return
+            try:
+                getattr(self._parent.masses, mass_type)(
+                    **_kw_for(kind, name, params)
+                )
+            except Exception as exc:
+                _QtW_decl.QMessageBox.warning(
+                    win.window, f"Masses: {mass_type}", str(exc)
+                )
+                _masses_panel.set_hint(f"{mass_type} failed: {exc}")
+                return
+            _masses_panel.refresh_list()
+            _masses_panel.set_hint(
+                f"Declared {mass_type} mass on {name}."
+            )
+            win.set_status(f"Mass declared: {mass_type} → {name}")
+
+        _masses_panel = MassesPanel(
+            get_target=_decl_target,
+            on_apply=_masses_apply,
+            on_remove=_masses_remove,
+            list_records=_masses_records,
+        )
+
+        _add_panel("dock_model_loads", "Loads", _loads_panel.widget)
+        _add_panel(
+            "dock_model_masses", "Masses", _masses_panel.widget
+        )
 
         # Scene rebuild after any geometry mutation (parts fuse,
         # boolean ops, transforms). Hoisted to show() scope so it
