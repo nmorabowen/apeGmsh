@@ -526,6 +526,55 @@ class NodeResultsComposite(_SelectionMixin):
     def __init__(self, results: "Results") -> None:
         self._r = results
 
+    def select(
+        self,
+        *,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+    ):
+        """Start a daisy-chainable node-result selection.
+
+        Returns a :class:`~apeGmsh.results._result_chain.ResultChain`
+        (point family, node level) that composes fluently and is then
+        read with a terminal ``.get(component=...)``::
+
+            (results.nodes.select(pg="Base")
+                 .in_box(lo, hi)
+                 .on_plane(p, n, tol=1e-6)
+                 .get(component="displacement_x"))
+            results.nodes.select(ids=a) | results.nodes.select(ids=b)
+
+        Accepts the **same selectors** as :meth:`get`
+        (``pg`` / ``label`` / ``selection`` / ``ids``); no selector
+        seeds every domain node.  Name resolution is **not**
+        re-implemented here: the seed ids are obtained by delegating
+        verbatim to :meth:`_SelectionMixin._resolve_node_ids` — the
+        exact method :meth:`get` / :meth:`in_box` / :meth:`nearest_to`
+        already use — so ``select(...).get(component=)`` is id-for-id the
+        same selection as ``get(...)`` (no extra scoping).  The spatial
+        verbs narrow the chain *before* the terminal read.
+
+        ``ResultChain`` is imported **deferred** (mirrors
+        ``mesh/_node_chain.py``): it imports only the package-root leaf
+        ``apeGmsh._chain`` + numpy, so this adds no eager cross-package
+        edge and ``results`` stays runtime-clean of ``core``/``mesh``
+        (``tests/test_import_dag_polarity.py`` baseline unchanged).
+        """
+        from ._result_chain import ResultChain, engine_for
+
+        seed = self._resolve_node_ids(
+            pg=pg, label=label, selection=selection, ids=ids,
+        )
+        if seed is None:                 # no selector → every domain node
+            fem = _require_fem(self._r, "results.nodes.select(...)")
+            atoms = [int(n) for n in np.asarray(fem.nodes.ids)]
+        else:
+            atoms = [int(n) for n in np.asarray(seed)]
+        engine = engine_for(self._r, self, "node")
+        return ResultChain(atoms, _engine=engine)
+
     def get(
         self,
         *,
@@ -684,6 +733,60 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         self.layers = LayersResultsComposite(results)
         self.line_stations = LineStationsResultsComposite(results)
         self.springs = SpringsResultsComposite(results)
+
+    def select(
+        self,
+        *,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        element_type: str | None = None,
+    ):
+        """Start a daisy-chainable element-result selection.
+
+        Returns a :class:`~apeGmsh.results._result_chain.ResultChain`
+        (point family, element level; spatial verbs operate on element
+        **centroids**) read with a terminal ``.get(component=...)``::
+
+            (results.elements.select(pg="Beams")
+                 .in_box(lo, hi)
+                 .get(component="globalForce"))
+
+        Accepts the **same selectors** as :meth:`get` plus
+        ``element_type=`` (the same additive narrowing
+        :meth:`_ElementGeometryMixin.in_box` / :meth:`nearest_to`
+        accept).  No selector seeds every domain element.  Resolution
+        is **not** re-implemented: the seed ids are obtained by
+        delegating verbatim to
+        :meth:`_ElementGeometryMixin._combine_candidates` (which itself
+        calls the existing :meth:`_resolve_element_ids`) — the exact
+        path the element geometry helpers use — so
+        ``select(...).get(component=)`` is id-for-id the same selection
+        as ``get(...)``.
+
+        ``ResultChain`` is imported **deferred** (mirrors
+        ``mesh/_elem_chain.py``): only the package-root leaf
+        ``apeGmsh._chain`` + numpy, so ``results`` stays runtime-clean
+        of ``core``/``mesh`` and the
+        ``tests/test_import_dag_polarity.py`` baseline is unchanged.
+        Element centroids are computed **fail-loud** in ``ResultChain``
+        (an unknown node id raises; never the ``np.clip`` silent
+        substitution ``_element_centroids`` does).
+        """
+        from ._result_chain import ResultChain, engine_for
+
+        seed = self._combine_candidates(
+            pg=pg, label=label, selection=selection, ids=ids,
+            element_type=element_type,
+        )
+        if seed is None:                 # no selector → every domain element
+            fem = _require_fem(self._r, "results.elements.select(...)")
+            atoms = [int(e) for e in np.asarray(fem.elements.ids)]
+        else:
+            atoms = [int(e) for e in np.asarray(seed)]
+        engine = engine_for(self._r, self, "element")
+        return ResultChain(atoms, _engine=engine)
 
     def get(
         self,
