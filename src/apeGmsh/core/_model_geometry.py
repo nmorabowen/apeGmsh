@@ -746,8 +746,9 @@ class _Geometry:
         center: EntityRef,
         end   : EntityRef,
         *,
-        label : str | None = None,
-        sync  : bool       = True,
+        through_point: bool       = False,
+        label        : str | None = None,
+        sync         : bool       = True,
     ) -> Tag:
         """
         Add a circular arc defined by three existing points.
@@ -755,25 +756,42 @@ class _Geometry:
         Parameters
         ----------
         start  : point reference — start of the arc
-        center : point reference — centre of the circle (not on the arc)
-        end    : point reference — end of the arc
+        center : point reference — interpretation depends on
+            ``through_point``:
 
-        Each accepts a raw tag, label name, physical group, part label,
-        or ``(dim, tag)`` and must resolve to exactly one point.
+            * ``through_point=False`` (default) — the **centre of the
+              circle** (not on the arc).  All three points must be
+              equidistant from this centre.
+            * ``through_point=True`` — a point the arc **passes
+              through** (e.g. the apex of an arch).  The circle is
+              fitted through ``start``, this point, and ``end``.
+
+        end    : point reference — end of the arc
+        through_point : bool
+            Switches the meaning of ``center`` as above.  Use
+            ``True`` for the common "arc through 3 points" case —
+            ``add_arc(left, apex, right, through_point=True)`` — where
+            you know a point on the arc but not the circle centre.
+
+        Each point accepts a raw tag, label name, physical group, part
+        label, or ``(dim, tag)`` and must resolve to exactly one point.
 
         Note
         ----
-        All three points must be equidistant from the implied circle centre.
-        The arc is the *shorter* of the two possible arcs unless you reverse
-        the start/end order.
+        With ``through_point=False`` the arc is the *shorter* of the
+        two possible arcs unless you reverse the start/end order.
         """
         start  = self._resolve_entity_tag(start,  dim=0, what="point")
         center = self._resolve_entity_tag(center, dim=0, what="point")
         end    = self._resolve_entity_tag(end,    dim=0, what="point")
-        tag = gmsh.model.occ.addCircleArc(start, center, end)
+        tag = gmsh.model.occ.addCircleArc(
+            start, center, end, center=not through_point)
         if sync:
             gmsh.model.occ.synchronize()
-        self._model._log(f"add_arc(start={start}, centre={center}, end={end}) -> tag {tag}")
+        mid_role = "through" if through_point else "centre"
+        self._model._log(
+            f"add_arc(start={start}, {mid_role}={center}, "
+            f"end={end}) -> tag {tag}")
         return self._model._register(1, tag, label, 'arc')
 
     def add_circle(

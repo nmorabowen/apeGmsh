@@ -92,6 +92,28 @@ def test_add_arc(g):
     assert g.model._metadata[(1, tag)]['kind'] == 'arc'
 
 
+def test_add_arc_through_point_vs_center(g):
+    """through_point=True fits the circle *through* the middle point
+    (arch apex up); the default treats it as the circle centre (sag)."""
+    gm = g.model.geometry
+    L, H1, H2 = 10.0, 4.0, 2.0          # apex at z = H1 + H2 = 6
+    gm.add_point(0,   0, H1,      label="sl")   # springline left
+    gm.add_point(L/2, 0, H1 + H2, label="apex")
+    gm.add_point(L,   0, H1,      label="sr")   # springline right
+
+    # through_point=True: apex lies ON the arc -> bbox reaches z≈6
+    arch = gm.add_arc("sl", "apex", "sr", through_point=True)
+    _, _, z0, _, _, z1 = _bb(1, arch)
+    assert z1 == pytest.approx(H1 + H2, abs=1e-6)   # apex up
+    assert z0 == pytest.approx(H1,      abs=1e-6)
+
+    # default (centre-of-circle): apex is the centre -> arc sags below
+    sag = gm.add_arc("sl", "apex", "sr")
+    _, _, sz0, _, _, sz1 = _bb(1, sag)
+    assert sz1 == pytest.approx(H1, abs=1e-6)        # never rises above
+    assert sz0 < H1                                  # dips down
+
+
 # =====================================================================
 # Circle  (dim = 1)
 # =====================================================================
