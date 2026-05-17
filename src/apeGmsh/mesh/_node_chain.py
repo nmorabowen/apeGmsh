@@ -76,10 +76,26 @@ class NodeChain(SelectionChain):
         return tuple(a for a, k in zip(atoms, dist <= t) if k)
 
     # ── terminal ────────────────────────────────────────────
-    def _materialize(self) -> np.ndarray:
-        """Spike terminal: the selected node-id array.
+    def _materialize(self) -> "NodeResult":
+        """The selected nodes as the **existing** ``NodeResult``.
 
-        S3 will return the existing ``NodeResult`` here; for the S0a
-        import-safety spike a plain id array is sufficient.
+        Identical type/shape to what ``fem.nodes.get(...)`` returns
+        today (object-dtype ids + ``(N, 3)`` float64 coords), built from
+        the chain's selected node ids and their coordinates (reusing
+        :meth:`_coords_of`, which maps atoms -> engine coord rows).
+
+        ``NodeResult`` is imported **deferred** (inside this method, not
+        at module top): ``mesh/FEMData.py`` defines ``NodeResult`` *and*
+        ``NodeComposite`` (which imports this module via a function-body
+        deferred import), so a module-level import here would close a
+        load-time ``_node_chain`` <-> ``FEMData`` cycle.  This module
+        therefore keeps importing only the package-root leaf
+        ``apeGmsh._chain`` + numpy at load time (see
+        ``tests/test_import_dag_polarity.py``).
         """
-        return np.asarray(self._items, dtype=np.int64)
+        from .FEMData import NodeResult  # deferred — avoids load cycle
+
+        atoms = self._items
+        ids = np.asarray(atoms, dtype=np.int64)
+        coords = self._coords_of(atoms)
+        return NodeResult(ids, coords)
