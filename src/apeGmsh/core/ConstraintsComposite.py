@@ -24,7 +24,6 @@ Usage::
 """
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
@@ -231,8 +230,21 @@ class ConstraintsComposite:
         self.constraint_records: list[ConstraintRecord] = []
 
     def _add_def(self, defn: _ConstraintT) -> _ConstraintT:
-        """Validate labels and store a constraint definition.
-        Label validation is skipped for NodeToSurfaceDef (bare tags)."""
+        """Validate dispatch + labels and store a constraint definition.
+
+        A def whose type has no ``_DISPATCH`` entry cannot be resolved
+        and would be silently dropped at :meth:`resolve` — reject it at
+        declaration instead, mirroring
+        ``LoadsComposite``/``MassesComposite._add_def``.  Label
+        validation is skipped for NodeToSurfaceDef / EmbeddedDef
+        (bare tags)."""
+        if type(defn) not in _DISPATCH:
+            raise TypeError(
+                f"{type(defn).__name__} has no _DISPATCH entry — it "
+                f"cannot be resolved and would be silently dropped. "
+                f"Register it in _DISPATCH (and _RESOLVER_METHOD) "
+                f"before use."
+            )
         if not isinstance(defn, (NodeToSurfaceDef, EmbeddedDef)):
             parts = getattr(self._parent, "parts", None)
             if parts is not None and hasattr(parts, "_instances"):
@@ -1105,10 +1117,12 @@ class ConstraintsComposite:
         for defn in self.constraint_defs:
             dispatch = _DISPATCH.get(type(defn))
             if dispatch is None:
-                warnings.warn(
-                    f"No dispatch for {type(defn).__name__}, skipping.",
-                    stacklevel=2)
-                continue
+                raise TypeError(
+                    f"No _DISPATCH entry for constraint type "
+                    f"{type(defn).__name__}; refusing to silently drop "
+                    f"the constraint (defs are normally gated by "
+                    f"_add_def)."
+                )
             result = getattr(self, dispatch)(
                 resolver, defn, node_map or {}, face_map or {}, all_nodes)
             if isinstance(result, list):
