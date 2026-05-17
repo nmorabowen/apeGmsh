@@ -137,7 +137,13 @@ class ViewerWindow:
     # supplied; model.viewer migrated all its add_tab calls to
     # tabified extension docks, so v1 state for ModelViewer would
     # surface an empty placeholder dock on restore.
-    _LAYOUT_SCHEMA_VERSION = 2
+    # v3 (2026-05-16): mesh.viewer's outline dock shipped collapsed in
+    # 34e3b3b, so early MeshViewer launches persisted a degenerate
+    # ~143-byte state; restoring it re-collapses the outline to an
+    # un-interactable corner square every launch. Discard v2 once so
+    # the healthy default layout (same path model.viewer uses) is
+    # captured and re-saved.
+    _LAYOUT_SCHEMA_VERSION = 3
 
     def __init__(
         self,
