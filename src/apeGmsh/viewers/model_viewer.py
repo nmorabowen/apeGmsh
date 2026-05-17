@@ -921,6 +921,86 @@ class ModelViewer:
         _act_model_info = _info_menu.addAction("Model info…")
         _act_model_info.triggered.connect(_open_model_info)
 
+        # ── File menu — CAD geometry import / export ────────────────
+        # Import is additive: g.model.io.load_step / load_dxf add to
+        # the current model, then the scene rebuilds. Export writes
+        # the current model to STEP. Errors surface in a dialog (same
+        # as the Boolean / Transform panels). Inserted leftmost so it
+        # reads as a conventional File menu.
+        from qtpy import QtWidgets as _QtW_file
+
+        def _import_step() -> None:
+            path, _f = _QtW_file.QFileDialog.getOpenFileName(
+                win.window, "Import STEP", "",
+                "STEP (*.step *.stp);;All files (*)",
+            )
+            if not path:
+                return
+            try:
+                imported = self._model.io.load_step(path)
+            except Exception as exc:
+                _QtW_file.QMessageBox.warning(
+                    win.window, "Import STEP", str(exc)
+                )
+                return
+            n = sum(len(v) for v in (imported or {}).values())
+            _rebuild_scene()
+            win.set_status(
+                f"Imported STEP — {n} entit"
+                f"{'y' if n == 1 else 'ies'}"
+            )
+
+        def _import_dxf() -> None:
+            path, _f = _QtW_file.QFileDialog.getOpenFileName(
+                win.window, "Import DXF", "",
+                "DXF (*.dxf);;All files (*)",
+            )
+            if not path:
+                return
+            try:
+                self._model.io.load_dxf(path)
+            except Exception as exc:
+                _QtW_file.QMessageBox.warning(
+                    win.window, "Import DXF", str(exc)
+                )
+                return
+            _rebuild_scene()
+            win.set_status("Imported DXF")
+
+        def _export_step() -> None:
+            path, _f = _QtW_file.QFileDialog.getSaveFileName(
+                win.window, "Export STEP", "",
+                "STEP (*.step);;All files (*)",
+            )
+            if not path:
+                return
+            try:
+                self._model.io.save_step(path)
+            except Exception as exc:
+                _QtW_file.QMessageBox.warning(
+                    win.window, "Export STEP", str(exc)
+                )
+                return
+            win.set_status("Exported STEP")
+
+        _file_menu = _QtW_file.QMenu("File", win.window)
+        _file_menu.addAction("Import STEP…").triggered.connect(
+            _import_step
+        )
+        _file_menu.addAction("Import DXF…").triggered.connect(
+            _import_dxf
+        )
+        _file_menu.addSeparator()
+        _file_menu.addAction("Export STEP…").triggered.connect(
+            _export_step
+        )
+        _mb = win.window.menuBar()
+        _mb_acts = _mb.actions()
+        if _mb_acts:
+            _mb.insertMenu(_mb_acts[0], _file_menu)   # File leftmost
+        else:
+            _mb.addMenu(_file_menu)
+
         # Scene rebuild after any geometry mutation (parts fuse,
         # boolean ops, transforms). Hoisted to show() scope so it
         # exists even without a parts registry.
