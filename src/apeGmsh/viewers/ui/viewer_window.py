@@ -250,7 +250,14 @@ class ViewerWindow:
         _axes_kwargs = dict(
             interactive=False,
             line_width=_p.axis_line_width,
-            color="white",
+            color="white",            # label text
+            # Shaft colors match the local-axes overlay convention
+            # (x=red, y=green, z=blue) so the corner gnomon reads as a
+            # world reference for sanity-checking element orientation
+            # against the per-element triads.
+            x_color="#FF4136",
+            y_color="#2ECC40",
+            z_color="#0074D9",
         )
         if _p.axis_labels_visible:
             _axes_kwargs.update(xlabel="X", ylabel="Y", zlabel="Z")
