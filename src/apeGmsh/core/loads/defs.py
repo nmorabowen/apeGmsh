@@ -71,13 +71,18 @@ class LineLoadDef(LoadDef):
       ``"z"``).
     * ``q_xyz`` — explicit ``(qx, qy, qz)`` force-per-length vector.
     * ``normal=True`` + ``away_from=(x0, y0, z0)`` — pressure
-      perpendicular to each edge in the xy-plane.  The in-plane normal
-      ``(t_y, -t_x, 0)`` is sign-flipped per edge so it points away
-      from ``away_from``; ``magnitude`` is then force per unit length
-      along that normal.
+      perpendicular to each edge, in the plane of the loaded curves
+      (any plane; fitted from the geometry).  The in-plane normal is
+      sign-flipped per edge so it points away from ``away_from``;
+      ``magnitude`` is then force per unit length along that normal.
+
+    ``magnitude`` may be a constant float **or** a callable
+    ``q(xyz) -> float`` evaluated per edge midpoint (spatially varying
+    line load); the resolver in :mod:`apeGmsh.mesh._load_resolver`
+    handles both.
     """
     kind: str = field(init=False, default="line")
-    magnitude: float = 0.0
+    magnitude: object = 0.0                 # float | Callable[[xyz], float]
     direction: object = (0.0, 0.0, -1.0)   # tuple or "x"/"y"/"z"
     q_xyz: tuple[float, float, float] | None = None
     normal: bool = False
