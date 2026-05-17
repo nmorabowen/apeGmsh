@@ -18,8 +18,14 @@ default — global Z for non-vertical beams, global X for vertical.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Iterator
+
 import numpy as np
 from numpy import ndarray
+
+if TYPE_CHECKING:
+    from ..data import ViewerData
 
 
 _VERTICAL_TOL = 0.99      # |dot(x_local, +Z)| above this -> beam is vertical
@@ -255,3 +261,90 @@ def normalize_fill_axis_spec(spec: "FillAxisSpec") -> "FillAxisSpec":
             f"Custom fill axis must have 3 components (got {arr.size})."
         )
     return (float(arr[0]), float(arr[1]), float(arr[2]))
+
+
+# ======================================================================
+# Per-element local frame — the reusable orientation seam
+# ======================================================================
+#
+# ``LocalFrame`` is the single resolved orientation record for one beam
+# element: its midpoint, the orthonormal triad in OpenSees geomTransf
+# convention, and its length.  Today it feeds the local-axis overlay and
+# (with the real ``vecxz``) the line-force fill direction.  It is also
+# the deliberate seam for *frame section extrusion*: once the bridge
+# carries section profiles, an extruder sweeps the section polygon —
+# expressed in the local (y, z) plane — along ``x`` between the element
+# ends, reusing exactly this triad.  Keep it solver-agnostic and free
+# of Qt / PyVista so both the overlay and a future extruder can consume
+# it unchanged.
+
+
+@dataclass(frozen=True)
+class LocalFrame:
+    """Resolved local coordinate frame for one beam element.
+
+    ``x`` is the element axis (node i → node j); ``y``/``z`` complete
+    the right-handed triad per the OpenSees ``vecxz`` convention (see
+    :func:`compute_local_axes`).  ``origin`` is the element midpoint —
+    the natural glyph anchor and the centroid an extruded section is
+    swept about.
+    """
+    element_id: int
+    origin: ndarray      # (3,)
+    x: ndarray           # (3,) unit
+    y: ndarray           # (3,) unit
+    z: ndarray           # (3,) unit
+    length: float
+
+
+def iter_local_frames(
+    view: "ViewerData",
+    node_coord: Callable[[int], "ndarray | None"],
+) -> Iterator[LocalFrame]:
+    """Yield a :class:`LocalFrame` for every 1-D (line) element.
+
+    Parameters
+    ----------
+    view
+        The viewer's structural snapshot.  ``view.elements`` supplies
+        connectivity; ``view.elements.vecxz_for(eid)`` supplies the
+        real geomTransf reference vector when the source carried
+        OpenSees enrichment (h5 path).  When it returns ``None`` the
+        frame falls back to :func:`default_vecxz` — same behaviour as a
+        model with no explicit orientation.
+    node_coord
+        Maps a FEM node id to its current ``(3,)`` coordinate, or
+        ``None`` if absent.  Pass a lookup over the *deformed* substrate
+        points to make the frames follow a deformed shape; pass a
+        reference-coordinate lookup for the undeformed frame.
+
+    Degenerate elements (coincident endpoints, missing nodes) are
+    skipped silently — a single bad element never aborts the sweep.
+    """
+    for group in view.elements:
+        if group.element_type.dim != 1:
+            continue
+        for eid, conn in group:
+            if len(conn) < 2:
+                continue
+            ci = node_coord(int(conn[0]))
+            cj = node_coord(int(conn[1]))
+            if ci is None or cj is None:
+                continue
+            vecxz = view.elements.vecxz_for(int(eid))
+            try:
+                x_local, y_local, z_local, length = compute_local_axes(
+                    ci, cj, vecxz,
+                )
+            except ValueError:
+                continue
+            origin = 0.5 * (
+                np.asarray(ci, dtype=np.float64)
+                + np.asarray(cj, dtype=np.float64)
+            )
+            yield LocalFrame(
+                element_id=int(eid),
+                origin=origin,
+                x=x_local, y=y_local, z=z_local,
+                length=float(length),
+            )

@@ -75,6 +75,10 @@ class LineForceDiagram(Diagram):
         # ``scene.grid.points``. Cached at attach.
         self._endpoint_subs_idx: dict[int, tuple[int, int]] = {}
 
+        # eid -> geomTransf vecxz (3,) or None. Cached at attach from
+        # ViewerData; drives the real fill orientation.
+        self._element_vecxz: dict[int, "ndarray | None"] = {}
+
         # Mutable runtime overrides
         self._runtime_scale: Optional[float] = None
         # Forces full re-attach. ``None`` means "fall through to
@@ -150,6 +154,17 @@ class LineForceDiagram(Diagram):
         )
         self._endpoint_subs_idx = endpoint_subs
 
+        # Real per-element geomTransf vecxz (h5 path). ``vecxz_for`` is a
+        # ViewerData accessor; ``view`` may also be a raw FEMData (the
+        # duck-typed legacy path used in tests) which lacks it — probe
+        # defensively. Absent vecxz → None → compute_local_axes falls
+        # back to the structural default, preserving prior behaviour.
+        _vecxz_for = getattr(view.elements, "vecxz_for", None)
+        self._element_vecxz = {
+            int(e): (_vecxz_for(int(e)) if _vecxz_for is not None else None)
+            for e in unique_eids
+        }
+
         # ── Build per-beam geometry ─────────────────────────────────
         n_total = slab_eids.size
         base_points = np.zeros((n_total, 3), dtype=np.float64)
@@ -171,7 +186,9 @@ class LineForceDiagram(Diagram):
                 continue
             ci, cj = endpoints[eid_int]
             try:
-                x_local, y_local, z_local, _ = compute_local_axes(ci, cj)
+                x_local, y_local, z_local, _ = compute_local_axes(
+                    ci, cj, self._element_vecxz.get(eid_int),
+                )
             except ValueError:
                 continue
 
@@ -335,7 +352,9 @@ class LineForceDiagram(Diagram):
             ci = target_pts[si]
             cj = target_pts[sj]
             try:
-                x_local, y_local, z_local, _ = compute_local_axes(ci, cj)
+                x_local, y_local, z_local, _ = compute_local_axes(
+                    ci, cj, self._element_vecxz.get(int(eid)),
+                )
             except ValueError:
                 continue
             fill_dir = resolve_fill_direction(
@@ -368,6 +387,7 @@ class LineForceDiagram(Diagram):
         self._station_eid = None
         self._station_xi = None
         self._endpoint_subs_idx = {}
+        self._element_vecxz = {}
         super().detach()
 
     # ------------------------------------------------------------------

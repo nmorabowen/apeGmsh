@@ -346,6 +346,24 @@ class ResultsViewer:
         # built after ``bind_plotter`` and feeds the viewport HUD.
         self._probe_overlay: Any = None
 
+        # Local-axes overlay: built after ``bind_plotter`` (needs the
+        # plotter + scene). Wire the toolbar toggle now; its lambda
+        # guards on the None until the real overlay exists.
+        self._local_axes_overlay: Any = None
+        try:
+            self._local_axes_action = win.add_toolbar_action(
+                "Local axes",
+                "⌖",
+                lambda checked: (
+                    self._local_axes_overlay.set_visible(bool(checked))
+                    if self._local_axes_overlay is not None else None
+                ),
+                checkable=True,
+                triggered_signal="toggled",
+            )
+        except Exception:
+            self._local_axes_action = None
+
         # ── Diagram-settings panel (re-hosted by DetailsPanel) ──────
         # InspectorTab and the right-side QTabWidget dock retired in
         # B5: the only surviving widget from the legacy tab set is
@@ -1051,6 +1069,18 @@ class ResultsViewer:
         from .ui._pick_readout_hud import PickReadoutHUD
         from .ui._shortcut_help_hud import ShortcutHelpHUD
         self._probe_overlay = ProbeOverlay(plotter, scene, director)
+
+        # Local-axes overlay (beam-element geomTransf triads). Built
+        # here so it sees the bound plotter + substrate; honours a
+        # pre-checked toolbar toggle (e.g. restored session state).
+        from .overlays.local_axes_overlay import LocalAxesOverlay
+        self._local_axes_overlay = LocalAxesOverlay(plotter, scene, director)
+        if getattr(self, "_local_axes_action", None) is not None:
+            try:
+                if self._local_axes_action.isChecked():
+                    self._local_axes_overlay.set_visible(True)
+            except Exception:
+                pass
         self._probe_hud = ProbePaletteHUD(
             plotter.interactor,
             self._probe_overlay,

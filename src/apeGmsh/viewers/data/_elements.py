@@ -165,6 +165,7 @@ class ViewerElements:
     __slots__ = (
         "_groups",
         "_types",
+        "_vecxz_by_eid",
         "physical",
         "labels",
         "selection",
@@ -181,14 +182,34 @@ class ViewerElements:
         selection: _NamedNodeSelection,
         loads: ElementLoadView,
         constraints: SurfaceConstraintView,
+        vecxz: dict[int, ndarray] | None = None,
     ) -> None:
         self._groups = list(groups)
         self._types = [g.element_type for g in self._groups]
+        # FEM element id -> geomTransf vecxz (3,). Populated only on the
+        # h5 path (OpenSees enrichment); empty for from_fem (FEMData is
+        # the solver-agnostic neutral zone and has no geomTransf).
+        self._vecxz_by_eid: dict[int, ndarray] = {
+            int(k): np.asarray(v, dtype=np.float64).reshape(3)
+            for k, v in (vecxz or {}).items()
+        }
         self.physical = physical
         self.labels = labels
         self.selection = selection
         self.loads = loads
         self.constraints = constraints
+
+    def vecxz_for(self, element_id: int) -> "ndarray | None":
+        """Return the geomTransf ``vecxz`` (3,) for a beam element, or
+        ``None`` when unknown (non-beam, or no OpenSees enrichment in
+        the source — e.g. the live ``from_fem`` path)."""
+        return self._vecxz_by_eid.get(int(element_id))
+
+    @property
+    def has_vecxz(self) -> bool:
+        """True when per-element orientation is available (h5 path with
+        a ``/opensees/transforms`` zone)."""
+        return bool(self._vecxz_by_eid)
 
     def __iter__(self) -> Iterator[ViewerElementGroup]:
         return iter(self._groups)

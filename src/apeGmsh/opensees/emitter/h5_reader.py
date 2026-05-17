@@ -190,6 +190,25 @@ class H5Model:
     def transforms(self) -> dict[str, dict[str, Any]]:
         return self._group_attrs_map("opensees/transforms")
 
+    def transform_arrays(self, name: str) -> dict[str, Any]:
+        """Return ``{per_element_vecxz?, per_element_emitted_tag?}`` for
+        one ``/opensees/transforms/{name}`` group.
+
+        Companion to :meth:`transforms` (which exposes only attrs).
+        Raises ``KeyError`` if the transform group is missing.  The H5
+        emitter writes one group per ``geomTransf`` call (documented
+        schema deviation), so both datasets are single-row — one for an
+        explicit-``vecxz`` transform, one per distinct vecxz for an
+        orientation-driven fan-out.
+        """
+        sub = self._f[f"opensees/transforms/{name}"]
+        out: dict[str, Any] = {}
+        if "per_element_vecxz" in sub:
+            out["per_element_vecxz"] = sub["per_element_vecxz"][:]
+        if "per_element_emitted_tag" in sub:
+            out["per_element_emitted_tag"] = sub["per_element_emitted_tag"][:]
+        return out
+
     def beam_integration(self) -> dict[str, dict[str, Any]]:
         return self._group_attrs_map("opensees/beam_integration")
 
@@ -260,6 +279,87 @@ class H5Model:
             out["args"] = sub["args"][:]
         if "args_str" in sub:
             out["args_str"] = sub["args_str"][:]
+        return out
+
+    def element_local_axes_vecxz(self) -> dict[int, Any]:
+        """Return ``{fem_element_id: vecxz}`` for every beam-column element.
+
+        Joins three zones the archive keeps separate:
+
+        * ``/opensees/transforms/*`` — each group carries the geomTransf
+          ``tag`` (``per_element_emitted_tag``) and its ``vecxz``
+          reference vector (``per_element_vecxz``).
+        * ``/opensees/element_meta/{type_token}`` — each element's
+          positional ``args`` tail (one slot is the geomTransf tag) and
+          ``fem_eids`` mapping the row back to the broker FEM element id.
+        * The OpenSees element vocabulary
+          (:mod:`apeGmsh.opensees._element_capabilities`) — tells us
+          *which* ``args`` slot holds the transf tag, per element type.
+
+        Keyed by FEM element id so a viewer (which speaks the broker's
+        ``/elements/{gmsh_alias}`` ids) can look up the orientation of
+        any line element without knowing OpenSees tags.
+
+        Returns an empty dict when the file carries no transforms or no
+        element-meta (mesh-only / pre-bridge archives) — never raises
+        for a well-formed but enrichment-light file.
+        """
+        import numpy as np
+
+        transforms_grp = self._f.get("opensees/transforms")
+        meta_grp = self._f.get("opensees/element_meta")
+        if transforms_grp is None or meta_grp is None:
+            return {}
+
+        # emitted geomTransf tag -> vecxz (3,)
+        tag_to_vecxz: dict[int, Any] = {}
+        for tname in transforms_grp:
+            arr = self.transform_arrays(tname)
+            vec = arr.get("per_element_vecxz")
+            tags = arr.get("per_element_emitted_tag")
+            if vec is None or tags is None:
+                continue
+            vec = np.asarray(vec, dtype=np.float64).reshape(-1, 3)
+            tags = np.asarray(tags).reshape(-1)
+            for row in range(min(len(tags), len(vec))):
+                tag_to_vecxz[int(tags[row])] = vec[row].copy()
+        if not tag_to_vecxz:
+            return {}
+
+        ndm = int(self.meta().get("ndm", 3) or 3)
+
+        # h5_reader lives in opensees.emitter, so it may consult the
+        # element vocabulary directly (the viewer cannot — that's why
+        # this join lives here; see ADR 0014 / viewer-integration.md).
+        from apeGmsh.opensees._element_capabilities import _ELEM_REGISTRY
+
+        out: dict[int, Any] = {}
+        for type_token in meta_grp:
+            idx = _transf_arg_tail_index(type_token, ndm, _ELEM_REGISTRY)
+            if idx is None:
+                continue
+            try:
+                arrays = self.element_meta_arrays(type_token)
+            except KeyError:
+                continue
+            args = arrays.get("args")
+            fem_eids = arrays.get("fem_eids")
+            if args is None or fem_eids is None:
+                continue
+            args = np.asarray(args, dtype=np.float64)
+            fem_eids = np.asarray(fem_eids).reshape(-1)
+            if args.ndim != 2 or idx >= args.shape[1]:
+                continue
+            for row in range(min(args.shape[0], len(fem_eids))):
+                fem_eid = int(fem_eids[row])
+                if fem_eid < 0:        # -1: emitted outside a bridge fan-out
+                    continue
+                raw = args[row, idx]
+                if not np.isfinite(raw):
+                    continue
+                vec = tag_to_vecxz.get(int(round(float(raw))))
+                if vec is not None:
+                    out[fem_eid] = vec
         return out
 
     # -- Neutral-zone reads (Phase 8.5) ---------------------------------
@@ -509,6 +609,50 @@ def _decode_bytes(v: Any) -> Any:
     except ImportError:  # pragma: no cover  - numpy is a hard dep
         pass
     return v
+
+
+#: Beam-column element types whose geomTransf tag is the first
+#: positional arg after connectivity (``args`` tail index 0).  These
+#: are absent from
+#: :data:`apeGmsh.opensees._element_capabilities._ELEM_REGISTRY`
+#: (which only carries the scalar-property beam forms); the position is
+#: a stable OpenSees convention:
+#: ``element forceBeamColumn $ele $iN $jN $transfTag $integrationTag``.
+_FORCE_DISP_BEAMS: frozenset = frozenset({"forceBeamColumn", "dispBeamColumn"})
+
+
+def _transf_arg_tail_index(
+    type_token: str, ndm: int, registry: dict,
+) -> "int | None":
+    """Return the ``args``-tail index of the geomTransf tag, or ``None``.
+
+    ``args`` is the element's positional list *after* the connectivity
+    prefix is dropped (h5-schema.md ``/opensees/element_meta``).  In the
+    vocabulary the connectivity prefix is the leading ``"nodes"`` slot,
+    so the tail index is ``slots.index("transfTag") - 1``.  ``None``
+    means "this element type carries no geomTransf" (solids, trusses,
+    shells) — the caller skips it.
+    """
+    if type_token in _FORCE_DISP_BEAMS:
+        return 0
+    spec = registry.get(type_token)
+    if spec is None:
+        return None
+    if ndm == 2:
+        slots = getattr(spec, "slots_2d", None)
+    elif ndm == 3:
+        slots = getattr(spec, "slots_3d", None)
+    else:
+        slots = None
+    if slots is None:
+        slots = (
+            getattr(spec, "slots_3d", None)
+            or getattr(spec, "slots_2d", None)
+            or getattr(spec, "slots", None)
+        )
+    if not slots or "transfTag" not in slots:
+        return None
+    return slots.index("transfTag") - 1
 
 
 # Re-export under the builtin name shadow so users can write

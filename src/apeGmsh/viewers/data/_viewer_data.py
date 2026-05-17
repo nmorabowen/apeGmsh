@@ -206,12 +206,22 @@ class ViewerData:
             constraints=NodeConstraintView(node_cs_rows),
         )
 
+        # Per-element geomTransf vecxz — the schema-aware transforms ↔
+        # element_meta ↔ vocabulary join lives in h5_reader (the one
+        # apeGmsh.opensees module viewers may import). Absent for
+        # mesh-only / pre-bridge archives → empty dict, no error.
+        try:
+            vecxz = model.element_local_axes_vecxz()
+        except Exception:
+            vecxz = {}
+
         elements = ViewerElements(
             groups=_decode_element_groups(model),
             physical=elem_physical, labels=elem_labels,
             selection=elem_selection,
             loads=ElementLoadView(_decode_element_loads(model.loads())),
             constraints=SurfaceConstraintView(elem_cs_rows),
+            vecxz=vecxz,
         )
 
         return cls(
