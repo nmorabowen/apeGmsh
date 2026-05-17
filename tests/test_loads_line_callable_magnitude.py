@@ -225,3 +225,24 @@ def test_tributary_midpoint_undershoots_then_converges():
                               qfun=qfun, H=H) - ref)
     assert e2 / ref > 0.02              # ~6% off at 2 elements
     assert e8 < 0.3 * e2                # converges as the mesh refines
+
+
+def test_mesh_viewer_loads_panel_formats_callable_magnitude():
+    """The mesh-viewer loads panel must not crash on a callable
+    magnitude — ``f"{m:.4g}"`` raises ``TypeError`` on a function, so
+    the detail column routes through ``_fmt_magnitude``.
+
+    Pure-function test (no Qt / GPU): exercises the exact formatter
+    the panel uses.
+    """
+    from apeGmsh.viewers.ui.loads_tab import _fmt_magnitude
+
+    def ground_pressure(p):
+        return 1.0
+
+    assert _fmt_magnitude(-15000.0) == "-1.5e+04"      # float unchanged
+    assert _fmt_magnitude(0.0) == "0"
+    assert _fmt_magnitude(lambda p: -18e3 * p[2]) == "q(xyz)"
+    assert _fmt_magnitude(ground_pressure) == "ground_pressure(xyz)"
+    # never raises, even on something exotic
+    assert isinstance(_fmt_magnitude(object()), str)
