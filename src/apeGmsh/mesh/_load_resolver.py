@@ -527,6 +527,30 @@ class LoadResolver:
             ))
         return out
 
+    def resolve_line_element_varying(
+        self,
+        defn: LineLoadDef,
+        items: list[tuple[int, tuple[float, float, float]]],
+    ) -> list[ElementLoadRecord]:
+        """Per-element ``beamUniform`` for a spatially varying line load.
+
+        *items* is a list of ``(element_id, (wx, wy, wz))`` pairs — the
+        composite has already sampled the callable ``magnitude`` at each
+        element's midpoint, so each element gets its own constant
+        ``beamUniform`` (the only thing OpenSees ``eleLoad`` supports).
+        """
+        out: list[ElementLoadRecord] = []
+        for eid, (wx, wy, wz) in items:
+            out.append(ElementLoadRecord(
+                pattern=defn.pattern,
+                name=defn.name,
+                element_id=int(eid),
+                load_type="beamUniform",
+                params={"wx": float(wx), "wy": float(wy),
+                        "wz": float(wz)},
+            ))
+        return out
+
     def resolve_surface_element(
         self,
         defn: SurfaceLoadDef,
