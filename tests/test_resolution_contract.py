@@ -197,3 +197,49 @@ def test_tie_wrong_dim_master_entities_fails_loud():
         g.mesh.generation.generate(3)
         with pytest.raises(ValueError, match="non-surface|requires dim=2|surface"):
             g.mesh.queries.get_fem_data(dim=3)
+
+
+# =====================================================================
+# Rule 6 (contributor-facing) — an undispatched constraint type must
+# fail loud, never warn-and-skip (a silently dropped constraint is the
+# cardinal sin). Mirrors LoadsComposite/MassesComposite._add_def.
+# =====================================================================
+
+def test_undispatched_constraintdef_rejected_at_add_def():
+    """Declaration-time gate: a ConstraintDef whose type has no
+    _DISPATCH entry is rejected at the factory/_add_def call, not
+    silently dropped later at resolve()."""
+    from dataclasses import dataclass
+    from apeGmsh.core.constraints.defs import ConstraintDef
+
+    @dataclass
+    class _UndispatchedDef(ConstraintDef):
+        pass
+
+    with apeGmsh(model_name="contract_dispatch_add", verbose=False) as g:
+        with pytest.raises(TypeError,
+                           match="no _DISPATCH entry|silently dropped"):
+            g.constraints._add_def(
+                _UndispatchedDef(kind="dummy",
+                                 master_label="A", slave_label="B"))
+
+
+def test_undispatched_constraintdef_resolve_defense():
+    """Defense-in-depth: even if a def reaches constraint_defs
+    bypassing _add_def, resolve() raises rather than warn-and-skip."""
+    from dataclasses import dataclass
+    import numpy as np
+    from apeGmsh.core.constraints.defs import ConstraintDef
+
+    @dataclass
+    class _UndispatchedDef(ConstraintDef):
+        pass
+
+    with apeGmsh(model_name="contract_dispatch_resolve", verbose=False) as g:
+        g.constraints.constraint_defs.append(
+            _UndispatchedDef(kind="dummy",
+                             master_label="A", slave_label="B"))
+        with pytest.raises(TypeError, match="No _DISPATCH entry"):
+            g.constraints.resolve(
+                node_tags=np.array([1], dtype=np.int64),
+                node_coords=np.zeros((1, 3), dtype=float))
