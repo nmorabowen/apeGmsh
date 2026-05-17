@@ -297,6 +297,29 @@ class NodeComposite:
 
     # ── Selection API ───────────────────────────────────────
 
+    def select(self, *, ids=None):
+        """Start a daisy-chainable node selection.
+
+        Returns a :class:`~apeGmsh.mesh._node_chain.NodeChain` that
+        composes fluently::
+
+            fem.nodes.select().in_box(lo, hi).on_plane(p, n, tol=1e-6)
+            fem.nodes.select(ids=a) | fem.nodes.select(ids=b)
+
+        S0a spike scope: ``ids=`` (explicit id list) or no-arg (all
+        domain nodes).  Name resolution (``pg=``/``label=``/``target=``)
+        is wired in phase S3 — until then those are intentionally
+        absent rather than silently empty (fail-loud doctrine).
+        """
+        from ._node_chain import NodeChain  # deferred — see plan §3 idiom
+
+        atoms = (
+            [int(n) for n in self._ids]
+            if ids is None
+            else [int(n) for n in ids]
+        )
+        return NodeChain(atoms, _engine=self)
+
     def get(
         self,
         target=None,
