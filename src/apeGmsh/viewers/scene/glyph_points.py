@@ -144,11 +144,17 @@ def build_node_cloud(
 ) -> tuple[pv.PolyData, Any]:
     """Build a node-cloud overlay (not pickable).
 
-    Renders each node as a GPU point-sprite via
-    ``vtkProperty::SetRenderPointsAsSpheres``. No glyph geometry is
-    generated — the mapper rasterises a shaded sphere per pixel from
-    the vertex array. Mirrors ParaView's "Render Points As Spheres"
-    actor flag.
+    Renders each node as a flat GL point (``style="points"``) — no
+    glyph geometry is generated, so cold start / per-frame cost stays
+    O(0) in triangles even at 600k+ nodes.
+
+    ``render_points_as_spheres`` is deliberately **off**: the shaded
+    point-sprite path needs a GL sphere-impostor shader that is absent
+    on software / remote / older-driver GL stacks, where it silently
+    rasterises nothing (nodes vanish while line/surface actors still
+    draw). Plain ``GL_POINTS`` is the most universally supported
+    primitive and always renders. See the same rationale in
+    ``diagrams/_gauss_marker.py``.
 
     ``marker_size`` is screen pixels (constant under zoom). The
     legacy sphere-mesh path scaled with ``model_diagonal``; that arg
@@ -165,7 +171,7 @@ def build_node_cloud(
         color=color,
         style="points",
         point_size=float(marker_size),
-        render_points_as_spheres=True,
+        render_points_as_spheres=False,
         pickable=False,
         opacity=1.0,
         reset_camera=False,
