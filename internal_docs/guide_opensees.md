@@ -1,43 +1,66 @@
 # The OpenSees Bridge
 
-apeGmsh ships with a first-class bridge to OpenSees. The bridge takes geometry
-and mesh from an apeGmsh session, combines them with material definitions,
-element assignments, loads, and boundary conditions, and produces ready-to-run
-Tcl or openseespy scripts. You never touch raw node numbering or element
-connectivity -- the bridge builds the entire model from physical groups and
-FEMData snapshots you have already defined.
+apeGmsh ships with a first-class bridge to OpenSees. The bridge takes a
+`FEMData` snapshot from an apeGmsh session, combines it with material
+definitions, element assignments, boundary conditions, and explicitly
+re-declared loads/masses, and produces ready-to-run Tcl or openseespy
+scripts. You never touch raw node numbering or element connectivity --
+the bridge resolves physical groups against the snapshot.
 
-The bridge lives on every session as `g.opensees`, a composition container with
-six sub-composites and two lifecycle entry points:
-
-| Sub-composite         | Purpose                                      |
-|-----------------------|----------------------------------------------|
-| `g.opensees.materials`| nDMaterial, uniaxialMaterial, section         |
-| `g.opensees.elements` | element assignment, geomTransf, fix           |
-| `g.opensees.ingest`   | pull resolved loads/masses/constraints from FEMData |
-| `g.opensees.inspect`  | post-build node/element tables and summary    |
-| `g.opensees.export`   | Tcl and openseespy script emission            |
-| `g.opensees.recorders`| recorder declarations (mounted from `Recorders`); see `guide_recorders_reference.md` |
-
-Plus two lifecycle methods on the bridge itself: `g.opensees.set_model(ndm, ndf)`
-and `g.opensees.build()`.
-
-Every declaration method returns `self` for fluent chaining. The bridge validates
-nothing until `build()`, so you can declare materials, element types, and boundary
-conditions in any order. The overall pipeline is:
-
-```
-geometry --> mesh --> materials & assignments --> FEMData snapshot
-    --> ingest loads/masses/constraints --> build() --> export
-```
-
-
-## 1. Model Dimensions -- `set_model`
-
-Tell the bridge how many spatial dimensions and DOFs per node your model has:
+The legacy in-session `g.opensees.*` composite (and the `apeGmsh.solvers`
+package) was **removed** in the Phase-8 teardown (ADR 0009 -- no
+back-compat shim). The OpenSees surface is now a single class,
+`apeSees`, constructed **after** the session from a `FEMData` snapshot:
 
 ```python
-g.opensees.set_model(ndm=3, ndf=3)
+from apeGmsh.opensees import apeSees
+
+fem = g.mesh.queries.get_fem_data(dim=3)
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+```
+
+`apeSees` exposes typed namespaces and explicit declaration verbs:
+
+| Namespace / verb                                  | Purpose                                          |
+|---------------------------------------------------|--------------------------------------------------|
+| `ops.nDMaterial`, `ops.uniaxialMaterial`, `ops.section` | typed material / section primitives        |
+| `ops.geomTransf`, `ops.beamIntegration`           | beam local frame + integration                   |
+| `ops.element.<Type>(pg=…)`                        | element assignment by physical group             |
+| `ops.fix`, `ops.mass`                             | homogeneous SP + lumped mass (explicit)          |
+| `ops.timeSeries`, `ops.pattern`                   | load patterns + prescribed SP (explicit)         |
+| `ops.recorder.<Type>`                             | recorder declarations                            |
+| `ops.tcl / .py / .h5 / .run / .analyze`           | emit / run                                       |
+
+Plus the lifecycle entry points: `ops.model(ndm=, ndf=)` (first) and
+`ops.build()` (usually implicit -- each emit builds internally).
+
+> **The big behavioural change: no ingest.** The old bridge had an
+> `ingest` step that pulled session-declared `g.loads` / `g.masses` /
+> `g.constraints` into the deck. **`apeSees` has no ingest and no
+> auto-resolution.** It reads the `fem` snapshot *only* to resolve
+> `pg=` / `label=` selectors to node/element tags and to get
+> coordinates/connectivity. Loads, masses and SPs you want in OpenSees
+> must be **re-declared explicitly** on `ops` (§4). Session declarations
+> still flow into the **`model.h5` neutral zone** for the **viewer /
+> `Results`** -- they are just not in the runnable Tcl/Py/Live deck.
+
+The overall pipeline is:
+
+```
+geometry --> mesh --> FEMData snapshot
+    --> apeSees(fem) --> typed materials/elements
+    --> explicit fix/mass/patterns --> emit (tcl/py/h5/run)
+```
+
+
+## 1. Model Dimensions -- `ops.model`
+
+Tell the bridge how many spatial dimensions and DOFs per node your model
+has:
+
+```python
+ops.model(ndm=3, ndf=3)
 ```
 
 Both arguments are keyword-only. Typical combinations:
@@ -49,138 +72,148 @@ Both arguments are keyword-only. Typical combinations:
 | 3     | 3     | 3-D solid (ux, uy, uz)                     |
 | 3     | 6     | 3-D frame or shell (ux, uy, uz, rx, ry, rz)|
 
-The default is `ndm=3, ndf=3`. `build()` raises `ValueError` if any assigned
-element type is incompatible with the declared `ndm`/`ndf`.
+**`ops.model(...)` must be the first call** -- materials, elements,
+fix, mass, and patterns all depend on it. `ndf` sets the required
+length of the tuples you pass to `ops.fix(dofs=…)`,
+`ops.mass(values=…)`, and `p.load(forces=…)`. `build()` raises early
+if any assigned element type is incompatible with the declared
+`ndm`/`ndf`.
+
+`apeSees(fem, default_orientation=Cartesian())` sets a model-wide
+`geomTransf` orientation default (Z-up). Pass `None` for 2-D models;
+pass a custom `Orientation` for a Y-up CAD import.
 
 
 ## 2. Materials
 
-The materials sub-composite (`g.opensees.materials`) holds three registries
-mirroring how OpenSees organises material-like objects. Each method takes a
-user-chosen name, the OpenSees type string, and keyword arguments forwarded
-verbatim in declaration order.
+Three typed namespaces mirror how OpenSees organises material-like
+objects. Every method has an explicit, fully-typed signature (no
+`**kwargs`) and **returns a handle** -- there are no string names and
+no registry. Capture the handle in a variable and pass it by reference
+to the element constructor; handles auto-register on the bridge.
 
 ### 2.1 nDMaterial -- continuum solids
 
-Use `add_nd_material` for any element that takes an `nDMaterial` in OpenSees:
-tetrahedra, bricks, quads, and triangles.
+Use `ops.nDMaterial.<Type>` for any element that takes an `nDMaterial`
+in OpenSees: tetrahedra, bricks, quads, and triangles.
 
 ```python
-g.opensees.materials.add_nd_material(
-    "Concrete", "ElasticIsotropic",
-    E=30e9, nu=0.2, rho=2400,
-)
+conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
 ```
 
-The `name` is referenced later in `elements.assign(... material="Concrete")`.
-The `ops_type` must match an OpenSees nDMaterial type exactly --
-`"ElasticIsotropic"`, `"J2Plasticity"`, `"DruckerPrager"`, etc. Keyword
-arguments are written to the exported script in the order you pass them.
+The returned `conc` handle is passed later as
+`ops.element.FourNodeTetrahedron(..., material=conc)`. The method name
+*is* the OpenSees nDMaterial type -- `ElasticIsotropic`,
+`J2Plasticity`, `DruckerPrager`, etc.
 
 ### 2.2 uniaxialMaterial -- trusses and springs
 
-Use `add_uni_material` for trusses, corotational trusses, and zeroLength springs.
+Use `ops.uniaxialMaterial.<Type>` for trusses, corotational trusses,
+zeroLength springs, and fiber-section beams.
 
 ```python
-g.opensees.materials.add_uni_material(
-    "Steel", "Steel01",
-    Fy=250e6, E=200e9, b=0.01,
-)
+steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
 ```
 
-### 2.3 Section -- shells
+Steel02-family uses `fy=` (the legacy `Fy=` is gone).
 
-Use `add_section` for shell elements. The most common is
-`ElasticMembranePlateSection`, combining membrane and bending behaviour.
+### 2.3 Section -- shells and fiber sections
+
+Use `ops.section.<Type>` for shell elements and fiber sections for
+beams. The most common shell section is `ElasticMembranePlateSection`,
+combining membrane and bending behaviour.
 
 ```python
-g.opensees.materials.add_section(
-    "Slab", "ElasticMembranePlateSection",
+slab = ops.section.ElasticMembranePlateSection(
     E=30e9, nu=0.2, h=0.2, rho=2400,
 )
+
+from apeGmsh.opensees.section.fiber import FiberPoint
+sec = ops.section.Fiber(
+    fibers=(FiberPoint(material=steel, y=0.0, z=0.0, area=0.01),),
+)
 ```
 
-Note the parameter name is `section_type` rather than `ops_type`, matching the
-OpenSees `section` command syntax. All three methods return the `_Materials`
-instance for chaining:
-
-```python
-(g.opensees.materials
-    .add_nd_material("Concrete", "ElasticIsotropic", E=30e9, nu=0.2, rho=2400)
-    .add_uni_material("Steel", "Steel01", Fy=250e6, E=200e9, b=0.01)
-    .add_section("Slab", "ElasticMembranePlateSection", E=30e9, nu=0.2, h=0.2, rho=2400))
-```
+Which namespace: `ops.nDMaterial` -> solid elements;
+`ops.uniaxialMaterial` -> truss / spring / fibre-section beams;
+`ops.section` -> shells and fiber sections for beams. The constructors
+are **not** chainable across namespaces -- write a separate statement
+for each handle.
 
 
 ## 3. Element Assignment
 
-The elements sub-composite (`g.opensees.elements`) binds OpenSees element types
-to physical groups. It has three methods: `assign`, `fix`, and `add_geom_transf`.
+`ops.element.<Type>(pg="PG", ...)` writes every mesh element in that
+physical group as `<Type>`. PG resolution is "FEM-direct" against
+`fem`. The call returns a typed `ElementGroup`.
 
-### 3.1 Assigning element types -- `assign`
+### 3.1 Assigning element types -- `ops.element.<Type>`
 
 ```python
-g.opensees.elements.assign(
-    pg_name,         # physical-group or label name
-    ops_type,        # OpenSees element type string
+ops.element.<Type>(
+    pg="PG",          # physical-group or label name
     *,
-    material=...,    # name from the matching material registry
-    geom_transf=..., # name from add_geom_transf (beams only)
-    dim=...,         # disambiguation hint when a name exists in multiple dims
-    **extra,         # element-specific scalar parameters
+    material=…,       # nDMaterial / uniaxialMaterial handle
+    section=…,        # section handle (shells / fiber beams)
+    transf=…,         # geomTransf handle (beams only)
+    integration=…,    # beamIntegration handle (force-based beams)
+    body_force=…,     # element body/gravity force (solids)
+    pressure=…,       # 2-D solids
+    **scalars,        # element-specific scalar parameters
 )
 ```
 
-The bridge resolves `pg_name` against both physical groups and apeGmsh labels,
-so `promote_to_physical` is not needed. If a name exists in multiple dimensions,
-pass `dim=3` or `dim=2` to disambiguate.
+`pg=` resolves against both physical groups and apeGmsh labels (labels
+resolve automatically -- no `promote_to_physical`). Keep PG names
+dimension-unique; an ambiguous `pg=` that exists at multiple dimensions
+is an error.
 
-The `material` argument must match a name in the correct registry:
+Material / section / transf / integration are passed as **handles**
+(the variables the constructors returned), not string names:
 
-- Solid elements need an `nDMaterial` (`materials.add_nd_material`)
-- Truss elements need a `uniaxialMaterial` (`materials.add_uni_material`)
-- Shell elements need a `section` (`materials.add_section`)
-- Beam elements take no material -- section properties go in `**extra`
+- Solid elements need an `nDMaterial` handle (`ops.nDMaterial.*`)
+- Truss elements need a `uniaxialMaterial` handle
+  (`ops.uniaxialMaterial.*`)
+- Shell elements need a `section` handle (`ops.section.*`)
+- Beam elements take a `transf` handle plus either section properties
+  as scalar kwargs (`elasticBeamColumn`) or a `beamIntegration` handle
+  (`forceBeamColumn`)
 
-The `**extra` keyword arguments fill element-specific slots: `bodyForce` for
-solids, `thick`/`eleType` for 2-D, `A` for trusses, `A`/`E`/`G`/`Jx`/`Iy`/`Iz`
-for beams. Examples:
+Examples:
 
 ```python
-# 3-D solid tetrahedron
-g.opensees.elements.assign(
-    "Body", "FourNodeTetrahedron",
-    material="Concrete",
-    bodyForce=[0, 0, -9.81 * 2400],
+# 3-D solid tetrahedron -- gravity is an ELEMENT body_force param
+ops.element.FourNodeTetrahedron(
+    pg="Body", material=conc,
+    body_force=(0.0, 0.0, -9.81 * 2400),
 )
 
 # 2-D plane-stress quad
-g.opensees.elements.assign(
-    "Plate", "quad",
-    material="Steel_2D",
+ops.element.quad(
+    pg="Plate", material=steel_2d,
     thick=0.01, eleType="PlaneStress",
 )
 
 # Truss with cross-section area
-g.opensees.elements.assign(
-    "Diagonals", "corotTruss",
-    material="Steel", A=3.14e-4,
-)
+ops.element.corotTruss(pg="Diagonals", material=steel, A=3.14e-4)
 
 # Elastic beam-column (3-D)
-g.opensees.elements.assign(
-    "Columns", "elasticBeamColumn",
-    geom_transf="ColTransf",
-    A=0.04, E=200e9, G=77e9,
-    Jx=1e-4, Iy=2e-4, Iz=2e-4,
+t = ops.geomTransf.PDelta(vecxz=(0, 0, 1))
+ops.element.elasticBeamColumn(
+    pg="Columns", transf=t,
+    A=0.04, E=200e9, G=77e9, J=1e-4, Iy=2e-4, Iz=2e-4,
 )
 
+# Force-based beam-column with a fiber section
+integ = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
+ops.element.forceBeamColumn(pg="Cols", transf=t, integration=integ)
+
 # Shell (section-based)
-g.opensees.elements.assign(
-    "SlabSurface", "ShellMITC4",
-    material="Slab",
-)
+ops.element.ShellMITC4(pg="SlabSurface", section=slab)
 ```
+
+There is **no `eleLoad` pattern verb** -- distributed/body loads are
+element parameters (`body_force=`, `pressure=`), not loads.
 
 ### 3.2 Supported element types
 
@@ -190,380 +223,370 @@ g.opensees.elements.assign(
 | 2-D solid | `quad`, `tri31`, `SSPquad` |
 | Shell | `ShellMITC3`, `ShellMITC4`, `ShellDKGQ`, `ASDShellQ4` |
 | Truss | `truss`, `corotTruss` |
-| Beam | `elasticBeamColumn`, `ElasticTimoshenkoBeam` |
+| Beam | `elasticBeamColumn`, `forceBeamColumn`, `ElasticTimoshenkoBeam` |
 
-Passing an unrecognised `ops_type` raises `ValueError` listing all supported
-types. If your Gmsh mesh uses second-order elements but the assigned OpenSees
-type only supports first-order, `build()` issues a `UserWarning` and discards
-mid-side nodes automatically.
+If your Gmsh mesh uses second-order elements but the assigned OpenSees
+type only supports first-order, `build()` issues a `UserWarning` and
+discards mid-side nodes automatically.
 
-### 3.3 Geometric transformations -- `add_geom_transf`
+### 3.3 Geometric transformations -- `ops.geomTransf`
 
-Beam elements require a geometric transformation defining their local coordinate
-system. Register one before calling `assign`:
-
-```python
-g.opensees.elements.add_geom_transf(
-    "ColTransf", "PDelta",
-    vecxz=[0, 0, 1],
-)
-```
-
-- `name` -- referenced in `assign(..., geom_transf="ColTransf")`
-- `transf_type` -- `"Linear"`, `"PDelta"`, or `"Corotational"`
-- `vecxz` -- the local x-z plane vector (3-D only; ignored for 2-D models)
+Beam elements require a geometric transformation defining their local
+coordinate system. The constructor returns a handle you pass to
+`ops.element.*` as `transf=`:
 
 ```python
-# 2-D frame -- no vecxz needed
-g.opensees.elements.add_geom_transf("Beams", "Linear")
-
-# 3-D frame -- vecxz required
-g.opensees.elements.add_geom_transf("Beams3D", "Corotational", vecxz=[0, 1, 0])
+t = ops.geomTransf.PDelta(vecxz=(0, 0, 1))   # or .Linear / .Corotational
+ops.element.elasticBeamColumn(pg="Columns", transf=t, A=…, E=…, …)
 ```
 
-For non-axis-aligned beams, the static helper
-`g.opensees.elements.vecxz(axis, local_z=(0, 0, 1), roll_deg=0.0)`
-computes a valid `vecxz` from the beam's axis vector and a reference
-local-z direction, with optional section rotation about the beam axis
-via `roll_deg`. See `_opensees_elements.py:44-116`.
+- `vecxz` -- the local x-z plane vector (3-D only; omit for 2-D models)
+- the namespace method name is the transform type: `.Linear`,
+  `.PDelta`, `.Corotational`
+
+### 3.4 Boundary conditions -- `ops.fix`
+
+Apply homogeneous single-point constraints to every node in a physical
+group:
 
 ```python
-# Inclined beam, default local-z toward global +Z
-vxz = g.opensees.elements.vecxz(axis=(1, 0, 1))
-g.opensees.elements.add_geom_transf("Diag", "Linear", vecxz=vxz)
+ops.fix(pg="BasePlate", dofs=(1, 1, 1))
+ops.fix(pg="PinnedBase", dofs=(1, 1, 1, 0, 0, 0))   # ndf=6
+ops.fix(nodes=[101, 102], dofs=(1, 1, 1))           # explicit-node form
 ```
 
-### 3.4 Boundary conditions -- `fix`
+The `dofs` tuple must have exactly `ndf` entries (`1` = fixed, `0` =
+free). Homogeneous SPs are model-level here; non-zero prescribed
+displacements go inside a pattern via `p.sp` (§4).
 
-Apply homogeneous single-point constraints to every node in a physical group:
+**Solid faces:** For solid meshes where you declared a face SP via
+`g.loads.face_sp(...)` on the session, that record resolves into
+`fem.nodes.sp` but is **not** ingested. Re-declare it explicitly:
+homogeneous -> `ops.fix(pg=…, dofs=…)`; prescribed -> `p.sp(...)`
+inside a pattern. See `guide_loads.md` §11.
+
+
+## 4. Loads, Masses, and SP -- Re-declared Explicitly
+
+There is **no ingest step.** `apeSees` does **not** read the session's
+`g.loads` / `g.masses` / `g.constraints`, nor the resolved
+`fem.nodes.loads` / `fem.nodes.masses` / `fem.nodes.sp` records. To put
+loads / masses / SP in the runnable deck you re-declare them explicitly
+on `ops`. (The session declarations still resolve into `FEMData` and
+persist into the `model.h5` neutral zone for the viewer / `Results` --
+they are simply not pulled into the deck.)
+
+### 4.1 Masses -- `ops.mass`
 
 ```python
-g.opensees.elements.fix("BasePlate", dofs=[1, 1, 1])
-g.opensees.elements.fix("PinnedBase", dofs=[1, 1, 1, 0, 0, 0])  # ndf=6
+ops.mass(pg="Roof", values=(m, m, m, 0.0, 0.0, 0.0))
 ```
 
-The `dofs` list must have exactly `ndf` entries (`1` = fixed, `0` = free). The
-`dim` keyword disambiguates when a name exists at multiple dimensions. Unlike
-other declarations, `fix` validates the `dofs` length immediately.
+`values` is an `ndf`-length tuple. No pattern grouping, no ordering
+concerns -- one lumped-mass declaration per physical group.
 
-**Alternative for solid faces:** For solid meshes where you need to prescribe
-displacements or rotations at a face, use `g.loads.face_sp(...)` instead. It
-maps a rigid-body motion at the face centroid to per-node displacements via
-`u_i = disp_xyz + rot_xyz × r_i` and emits `ops.fix()` (homogeneous) or
-`ops.sp()` (non-zero) at each face node. See `guide_loads.md` §11.
+### 4.2 Loads and prescribed SP -- patterns
 
-
-## 4. Ingesting Loads, Masses, and Constraints from FEMData
-
-The bridge does not define loads or masses itself. Those are defined on the
-apeGmsh session (`g.loads`, `g.masses`), resolved into per-node and per-element
-records by the FEMData snapshot, and injected into the bridge through
-`g.opensees.ingest`. This "define on the session, resolve on the snapshot"
-architecture means the same definitions work for any solver bridge.
-
-### 4.1 Pulling loads -- `ingest.loads(fem)`
+Nodal loads and non-zero prescribed displacements are pattern-scoped:
 
 ```python
-fem = g.mesh.queries.get_fem_data(dim=3)
-g.opensees.ingest.loads(fem)
+ts = ops.timeSeries.Linear()              # also Constant/Path/Trig/Pulse
+with ops.pattern.Plain(series=ts) as p:   # also UniformExcitation
+    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))
+    p.sp(pg="LoadingPin", dof=3, value=0.01)   # prescribed displacement
 ```
 
-This translates `fem.nodes.loads` and `fem.elements.loads` into internal
-load-pattern dicts. Each pattern you defined with `g.loads.pattern(...)` becomes
-its own `pattern Plain` block in the output. Supported element load types are
-`beamUniform` (`wy`, `wz`, `wx`) and `surfacePressure` (`p`).
+`p.load` / `p.sp` fan a `pg=` across the group's nodes at build time;
+`node=` takes an explicit tag or a `Node` from `ops.nodes.get(...)`.
+Each session load pattern you declared with `g.loads.pattern(...)`
+becomes a separate `ops.pattern.*` block here, each with its own
+`timeSeries`. The `forces=` tuple length must match the model `ndf`.
 
-### 4.2 Pulling masses -- `ingest.masses(fem)`
+Distributed/body loads (gravity, surface pressure) are **not** patterns
+-- they are element parameters (`body_force=`, `pressure=`) on the
+`ops.element.*` call (§3.1).
 
-```python
-g.opensees.ingest.masses(fem)
-```
+### 4.3 Migration of the old ingest call
 
-Translates `fem.nodes.masses` into `ops.mass(node, mx, my, mz, ...)` commands.
-If you defined volume masses with `g.masses.volume(...)`, the FEMData snapshot
-has already distributed them to nodes -- the bridge passes them through.
+| Old `g.opensees.ingest.X(fem)` | New |
+|---|---|
+| `.loads(fem)` | `with ops.pattern.Plain(series=ts) as p: p.load(pg=…, forces=…)` |
+| `.masses(fem)` | `ops.mass(pg=…, values=…)` |
+| `.sp(fem)` (homogeneous `face_sp`) | `ops.fix(pg=…, dofs=…)` |
+| `.sp(fem)` (prescribed `face_sp`) | `p.sp(pg=…, dof=…, value=…)` |
+| gravity via `g.loads.gravity(...)` | element `body_force=(b1,b2,b3)` param |
+| `.constraints(fem, tie_penalty=)` | **deferred -- no path** (§4.4) |
 
-### 4.3 Pulling SP records -- `ingest.sp(fem)`
+### 4.4 Multi-point constraints are DEFERRED
 
-```python
-g.opensees.ingest.sp(fem)
-```
+> ⚠️ Multi-point constraints (`tie` / `rigid_link` / `equal_dof` /
+> `rigid_diaphragm` / `node_to_surface` / `tied_contact` / `mortar`,
+> and embedded rebar) are **deferred** in `apeSees` -- there is **no
+> OpenSees emission path**. The `Emitter` protocol exposes only
+> `node / fix / mass / element / sp`; there is no `equalDOF`,
+> `rigidLink`, `rigidDiaphragm`, or `ASDEmbeddedNodeElement`. This is
+> deferred by design (ADR 0009;
+> `src/apeGmsh/opensees/architecture/_DEFERRED.md`).
 
-Translates `fem.nodes.sp` (populated by `g.loads.face_sp(...)`) into internal
-SP records. At export time, homogeneous records become `ops.fix()` calls and
-non-zero prescribed displacements become `ops.sp(node, dof, value)` calls.
+Consequences:
 
-### 4.4 Pulling constraints -- `ingest.constraints(fem)`
+- Declare the constraints on the session as usual -- they resolve into
+  `FEMData` and are persisted into the **`model.h5` neutral zone** by
+  `ops.h5(path)`, so the **viewer / `Results`** render them.
+- They are **not** written to any runnable Tcl/Py/Live deck. A model
+  whose load path depends on a tie / rigid link will be **wrong** if
+  you run the emitted deck as-is.
+- To run such a model today, hand-emit the constraint commands by
+  iterating `fem.nodes.constraints` / `fem.elements.constraints` into
+  raw openseespy yourself, or wait for the deferred feature.
 
-```python
-g.opensees.ingest.constraints(fem, tie_penalty=1e12)
-```
-
-Ingests constraint records from `fem.nodes.constraints` and
-`fem.elements.constraints`. Currently the bridge emits **tie** constraints as
-`element ASDEmbeddedNodeElement` commands -- a penalty formulation that
-constrains a slave node to interpolate within three retained master nodes. The
-optional `tie_penalty` sets the `-K` flag; when omitted, OpenSees defaults to
-`1.0e18`. Drop to `1e10`--`1e12` if you see conditioning issues.
-
-Quad-face master topologies are split at the diagonal into two triangles, and
-higher-order faces (Tri6, Quad8) are downgraded to corners. Node-pair
-constraints (`equalDOF`, `rigidLink`) and rigid diaphragms are ingested but
-emission is deferred to future phases.
-
-### 4.5 Chaining ingest calls
-
-All methods return `self`, so a common pattern is:
-
-```python
-fem = g.mesh.queries.get_fem_data(dim=3)
-(g.opensees.ingest
-    .loads(fem)
-    .sp(fem)
-    .masses(fem)
-    .constraints(fem, tie_penalty=1e12))
-```
+Homogeneous fixities (`ops.fix`) and prescribed displacements
+(`p.sp`) **do** have a path -- only the multi-point couplings are
+deferred.
 
 
 ## 5. Building the Model -- `build()`
 
 ```python
-g.opensees.build()
+ops.build()   # -> immutable BuiltModel
 ```
 
-This extracts the active Gmsh mesh and constructs all internal tables. It must
-be called after `g.mesh.generation.generate()` and after all declarations.
+`ops.build()` resolves every typed declaration and `pg=` selector
+against the bound `fem` snapshot and returns an **immutable
+`BuiltModel`** that the emitters consume. You rarely call it directly
+-- `ops.tcl / py / h5 / run` each build internally.
 
-`build()` performs five steps: (1) reads every unique mesh node and builds a
-sequential ID mapping, pruning disconnected nodes; (2) assigns sequential tags
-to all registered materials, sections, and transforms; (3) extracts elements
-per assigned physical group, validates topology compatibility, and maps node
-connectivity; (4) validates all material references, geomTransf requirements,
-and ndm/ndf compatibility -- raising `ValueError` with detailed messages on
-mismatch; (5) emits tie constraint elements if any were ingested.
-
-After `build()` returns, the model is compiled and ready for inspection or
-export.
+`build()` raises early with a pointed error if the model is
+inconsistent: a missing geomTransf on a beam, an `ndm`/`ndf` mismatch,
+an ambiguous `pg=`, or a `dofs` mask whose length is not `ndf`.
 
 
-## 6. Export
+## 6. Emit / Run
 
-The export sub-composite writes the built model to disk. Both exporters read
-exclusively from internal tables -- no Gmsh I/O.
+`apeSees` writes the built model to disk or runs it in process. These
+are **separate statements -- not a fluent chain.** Each `tcl / py / h5
+/ run` calls `build()` internally.
 
-### 6.1 Tcl script -- `export.tcl(path)`
+### 6.1 Tcl script -- `ops.tcl(path)`
 
 ```python
-g.opensees.export.tcl("model.tcl")
+ops.tcl("model.tcl")
 ```
 
-Produces a complete OpenSees Tcl input file containing (in order): model
-builder, nodes, materials/sections/transforms, element connectivity with
-physical-group comments, tied-interface elements, fix commands, nodal masses,
-and load patterns with `eleLoad` commands for beam-uniform and surface loads.
+Produces a complete OpenSees Tcl input file: model builder, nodes,
+materials/sections/transforms, element connectivity with
+physical-group comments, fix commands, nodal masses, and load
+patterns. Multi-point constraints are **not** emitted (deferred -- §4.4).
 
-### 6.2 openseespy script -- `export.py(path)`
+### 6.2 openseespy script -- `ops.py(path)`
 
 ```python
-g.opensees.export.py("model.py")
+ops.py("model.py", run=False)   # run=True subprocesses the script
 ```
 
-Produces an equivalent Python script using `openseespy.opensees as ops`. The
-structure mirrors the Tcl output. Both methods return `_Export` for chaining:
+Produces an equivalent Python script using
+`openseespy.opensees as ops`. The structure mirrors the Tcl output.
+
+`ops.tcl(...)` and `ops.py(...)` are independent statements -- write
+them on separate lines, not as a chain:
 
 ```python
-g.opensees.export.tcl("model.tcl").py("model.py")
+ops.tcl("model.tcl")
+ops.py("model.py")
 ```
 
-### 6.3 Embedding recorders in the exported script
+### 6.3 Native HDF5 + live run
 
-Both `export.tcl` and `export.py` accept four recorder-related kwargs
-(`_opensees_export.py:30-38, 260-268`):
+```python
+ops.h5("model.h5")              # bridge /opensees/ zone + broker neutral zone
+ops.run()                       # in-process openseespy (LiveOpsEmitter)
+ops.analyze(steps=10, dt=0.01)  # drive the analysis chain
+```
 
-| Kwarg                    | Purpose |
-|--------------------------|---------|
-| `recorders=`             | A `ResolvedRecorderSpec` to emit alongside the model. One `recorder ...` line (or `ops.recorder(...)` call) per resolved record, after the model definition. |
-| `recorders_output_dir=`  | Directory prefix for recorder output files. Default `""` = same dir as the script. Trailing `/` optional. |
-| `recorders_file_format=` | `"out"` (text, default) or `"xml"`, or `"mpco"`. The `"mpco"` value switches the emitter to `to_mpco_tcl_command` / `to_mpco_python_command` and writes a single MPCO recorder block instead of per-record `.out` lines. |
-| `manifest_path=`         | Where to write the recorder manifest sidecar (HDF5). Required for the `.out` transcoder to decode the emitted files. Defaults to `<path>.manifest.h5` when `recorders` is given. |
+`ops.h5(path)` writes the canonical model.h5: the bridge's emitted
+`/opensees/` zone **plus** the broker neutral zone (which carries the
+session's loads/masses/constraints for the viewer / `Results`).
 
-The user is responsible for resolving `recorders` against the same
-`FEMData` snapshot the bridge was built from — there is no enforcement
-in the exporter.
+### 6.4 Recorders
+
+```python
+rec = ops.recorder.Node(...)    # ops.recorder.<Type>
+```
+
+Recorder declarations live on `ops.recorder.<Type>`. They are emitted
+alongside the model in `tcl / py / h5`. See
+`guide_recorders_reference.md`.
 
 
 ## 7. Inspection
 
-The inspect sub-composite provides three methods. `summary()` works any time;
-`node_table()` and `element_table()` require `build()` (raise `RuntimeError`
-otherwise).
+Inspection is broker-side or post-emit -- there is no `inspect`
+sub-composite on the bridge.
 
 ### 7.1 Summary
 
 ```python
-print(g.opensees.inspect.summary())
+fem.inspect.summary()
 ```
 
-Returns a multi-line string listing all registered materials, element
-assignments, boundary conditions, load patterns, and (post-build) node/element
-counts by type and physical group. The quickest sanity check before exporting.
+Returns a multi-line string from the broker: registered record sets,
+node/element counts by type and physical group. The quickest sanity
+check before emitting.
 
-### 7.2 Node table
+### 7.2 Broker tables
 
 ```python
-df = g.opensees.inspect.node_table()
+fem.inspect.node_table()
+fem.inspect.element_table()
 ```
 
-DataFrame indexed by OpenSees node ID with `x`, `y`, `z` coordinates,
-`fix_1`...`fix_{ndf}` boolean flags, and `load_1`...`load_{ndf}` cumulative
-force values. Useful for verifying boundary conditions and load placement.
+DataFrames of the broker's nodes and elements -- coordinates,
+connectivity, physical-group membership. Useful for verifying
+placement before emitting.
 
-### 7.3 Element table
+### 7.3 Post-emit reader
 
 ```python
-df = g.opensees.inspect.element_table()
+from apeGmsh.opensees.emitter.h5_reader import open as open_h5
+
+open_h5("model.h5")
 ```
 
-DataFrame indexed by element ID with `gmsh_id`, `ops_type`, `pg_name`,
-`mat_name`, `mat_tag`, `sec_tag`, `transf_tag`, `n_nodes`, `nodes` (tuple),
-`slots`, and `extra`. Use it to verify element counts and connectivity.
+The reference reader inspects an emitted `model.h5` -- the
+ground-truth check of what actually went into the deck.
 
 
 ## 8. Complete Example
 
-End-to-end: create a concrete block, mesh, define materials and BCs, apply
-loads, build, and export.
+End-to-end: create a concrete block, mesh, take the snapshot, declare
+materials/BCs/loads explicitly on the bridge, and emit.
 
 ```python
 from apeGmsh import apeGmsh
+from apeGmsh.opensees import apeSees
 
 # ── Session ───────────────────────────────────────────────
-g = apeGmsh("concrete_block")
-g.begin()
+with apeGmsh("concrete_block") as g:
 
-# ── Geometry ──────────────────────────────────────────────
-# A simple 2m x 1m x 1m block
-g.model.geometry.add_box(0, 0, 0,  2.0, 1.0, 1.0, label="Block")
+    # ── Geometry ──────────────────────────────────────────
+    # A simple 2m x 1m x 1m block
+    g.model.geometry.add_box(0, 0, 0,  2.0, 1.0, 1.0, label="Block")
 
-# Label the base surface for boundary conditions
-g.model.selection.select_surfaces(on_plane=("z", 0.0)).label("Base")
+    # Label the base surface for boundary conditions
+    g.model.selection.select_surfaces(on_plane=("z", 0.0)).label("Base")
 
-# Label the top surface for loading
-g.model.selection.select_surfaces(on_plane=("z", 1.0)).label("Top")
+    # Label the top surface for loading
+    g.model.selection.select_surfaces(on_plane=("z", 1.0)).label("Top")
 
-g.model.geometry.synchronize()
+    g.model.geometry.synchronize()
 
-# ── Mesh ──────────────────────────────────────────────────
-g.mesh.generation.set_size_global(0.15)
-g.mesh.generation.generate(3)
+    # Promote the labels the solver needs into physical groups
+    g.physical.from_label("Block", name="Block")
+    g.physical.from_label("Base",  name="Base")
+    g.physical.from_label("Top",   name="Top")
 
-# ── OpenSees material ────────────────────────────────────
-g.opensees.materials.add_nd_material(
-    "Concrete", "ElasticIsotropic",
-    E=30e9, nu=0.2, rho=2400,
-)
+    # ── Mesh ──────────────────────────────────────────────
+    g.mesh.generation.set_size_global(0.15)
+    g.mesh.generation.generate(3)
 
-# ── Element assignment ───────────────────────────────────
-g.opensees.elements.assign(
-    "Block", "FourNodeTetrahedron",
-    material="Concrete",
-    bodyForce=[0, 0, -9.81 * 2400],
+    # ── FEMData snapshot ──────────────────────────────────
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+# ── OpenSees -- post-session, explicit declarations ──────
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+
+# ── Material ──────────────────────────────────────────────
+conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+
+# ── Element assignment (gravity is an element body_force) ─
+ops.element.FourNodeTetrahedron(
+    pg="Block", material=conc,
+    body_force=(0.0, 0.0, -9.81 * 2400),
 )
 
 # ── Boundary conditions ──────────────────────────────────
-g.opensees.elements.fix("Base", dofs=[1, 1, 1])
+ops.fix(pg="Base", dofs=(1, 1, 1))
 
-# ── Loads ─────────────────────────────────────────────────
-with g.loads.pattern("Gravity"):
-    g.loads.point("Top", force_xyz=(0, 0, -50e3))
+# ── Loads -- RE-DECLARED explicitly (no ingest) ──────────
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.load(pg="Top", forces=(0.0, 0.0, -50e3))
 
-# ── Masses ────────────────────────────────────────────────
-g.masses.volume("Block", density=2400)
-
-# ── Model dimensions ─────────────────────────────────────
-g.opensees.set_model(ndm=3, ndf=3)
-
-# ── FEMData snapshot and ingest ──────────────────────────
-fem = g.mesh.queries.get_fem_data(dim=3)
-(g.opensees.ingest
-    .loads(fem)
-    .masses(fem))
-
-# ── Build and inspect ────────────────────────────────────
-g.opensees.build()
-print(g.opensees.inspect.summary())
-
-# ── Export ────────────────────────────────────────────────
-g.opensees.export.tcl("block_model.tcl").py("block_model.py")
-
-g.end()
+# ── Sanity check + emit ──────────────────────────────────
+fem.inspect.summary()
+ops.tcl("block_model.tcl")
+ops.py("block_model.py")
 ```
 
-The exported files are self-contained model definitions. Run them with
-`opensees block_model.tcl` or `python block_model.py` after appending your
-analysis commands (the bridge intentionally omits analysis setup).
+The emitted files are self-contained model definitions. Run them with
+`opensees block_model.tcl` or `python block_model.py` after appending
+your analysis commands (the bridge intentionally omits analysis setup).
 
 
 ## 9. Practical Advice
 
-### Declaration order does not matter
+### Declaration order
 
-Materials, assignments, BCs, and transforms can be declared in any order. The
-bridge resolves everything at `build()` time. The only hard constraint is that
-`build()` comes after `generate()` and after `ingest.*()` calls.
+`ops.model(...)` **must** come first. After that, materials, elements,
+fix, mass, and patterns can be declared in the order that reads best;
+they are resolved at `build()` (implicit in emit). Capture every
+material/section/transf/integration handle in a variable before the
+element call that consumes it.
 
 ### Physical groups vs. labels
 
-You can pass either a Gmsh physical-group name or an apeGmsh label to `assign`,
-`fix`, or any target argument. The bridge resolves labels automatically, so
-`promote_to_physical` is not needed for the OpenSees workflow.
+`pg=` resolves either a Gmsh physical-group name or an apeGmsh label --
+labels resolve automatically (FEM-direct), so `promote_to_physical` is
+not required for the OpenSees workflow. Keep PG names dimension-unique
+so `pg=` is never ambiguous.
 
 ### Beam elements need geomTransf
 
-Beam elements do not use a material registry. Their section properties are
-scalar kwargs in `assign` (`A=0.04, E=200e9`), but they require a
-`geomTransf`. Forgetting it is the most common beam-model error -- `build()`
-catches it.
+Beam elements do not use a material registry. Their section properties
+are scalar kwargs (`A=0.04, E=200e9`) for `elasticBeamColumn`, or a
+`beamIntegration` handle for `forceBeamColumn`, but they always require
+a `geomTransf` handle. Forgetting it is the most common beam-model
+error -- `build()` catches it.
 
 ### Shell elements need ndf=6
 
-Shell elements require six DOFs per node. If your model mixes shells with
-solids, set `ndf=6` for the entire model.
+Shell elements require six DOFs per node. If your model mixes shells
+with solids, set `ndf=6` for the entire model.
 
-### The export stops at model definition
+### The deck stops at model definition
 
-The scripts omit analysis commands (integrator, algorithm, system, recorder).
-Append your analysis block or source/import the generated file from a driver
-script.
+The emitted scripts omit analysis commands (integrator, algorithm,
+system). Append your analysis block or source/import the generated
+file from a driver script. Recorders, if you declared them on
+`ops.recorder.*`, *are* emitted.
 
-### Tie constraints for non-conformal interfaces
+### Tie / non-conformal interfaces are DEFERRED
 
-Connect parts with non-matching meshes using apeGmsh ties:
+You can declare ties for non-matching meshes on the session:
 
 ```python
 g.constraints.tie("ColumnTop", "SlabBottom", dofs=[1, 2, 3])
-fem = g.mesh.queries.get_fem_data(dim=3)
-g.opensees.ingest.constraints(fem, tie_penalty=1e12)
-g.opensees.build()
 ```
 
-The bridge emits `ASDEmbeddedNodeElement` commands with penalty formulation.
-Set `tie_penalty` to `1e10`--`1e12` for structural models; the OpenSees default
-of `1e18` can cause ill-conditioning with iterative solvers.
+The tie resolves into `FEMData` and persists into `model.h5` for the
+**viewer / `Results`**, but `apeSees` has **no OpenSees emission path**
+for it (deferred -- §4.4). A model whose load path depends on a tie
+will be wrong if you run the emitted deck as-is. To run such a model
+today, hand-emit the constraint commands from `fem.nodes.constraints` /
+`fem.elements.constraints` into raw openseespy yourself, or wait for
+the deferred feature.
 
-### Chaining within sub-composites
+### Loads/masses/SP are not ingested
 
-Every method returns `self`, so you can chain within a sub-composite:
+The single biggest behavioural change from the old bridge: there is no
+`ingest` step and no auto-resolution. `apeSees` does not read
+`g.loads` / `g.masses` / `g.constraints` or the resolved
+`fem.nodes.*` records. Re-declare loads/masses/SP explicitly on `ops`
+(§4). The session declarations are still preserved for the viewer /
+`Results` via the `model.h5` neutral zone -- they just do not enter
+the runnable deck automatically.
 
-```python
-(g.opensees.elements
-    .add_geom_transf("ColTransf", "PDelta", vecxz=[0, 0, 1])
-    .assign("Columns", "elasticBeamColumn", geom_transf="ColTransf",
-            A=0.04, E=200e9, G=77e9, Jx=1e-4, Iy=2e-4, Iz=2e-4)
-    .assign("SlabSurface", "ShellMITC4", material="Slab")
-    .fix("Base", dofs=[1, 1, 1, 0, 0, 0]))
-```
+### Emit calls are separate statements
 
-Chaining across sub-composites does not work -- `materials.add_*` returns the
-`_Materials` instance, not the bridge. Start a new expression for each
-sub-composite.
+`ops.tcl(...)`, `ops.py(...)`, `ops.h5(...)`, `ops.run()` are **not**
+fluent. Write each on its own line; each builds internally.

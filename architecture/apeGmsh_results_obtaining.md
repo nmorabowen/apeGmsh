@@ -31,13 +31,13 @@ document explains the seam that makes that work.
 ## 1. The seam in one diagram
 
 ```
-              g.opensees.recorders.nodes(...)        ┐
-              g.opensees.recorders.gauss(...)        │  Layer 1
-              g.opensees.recorders.line_stations(...)│  Declarative
-              g.opensees.recorders.modal(...)        ┘  intent
+              ops.recorder.declare(...)              ┐
+              ops.recorder.Node(...)                 │  Layer 1
+              ops.recorder.Element(...)              │  Declarative
+              ops.recorder.MPCO(...)                 ┘  intent
                             │
                             ▼
-                  recorders.resolve(fem)
+            ResolvedRecorderSpec(...) (direct ctor)
                             │
                             ▼
               ┌──────────────────────────────┐
@@ -79,20 +79,21 @@ the cells of column three.
 ## 2. Layer 1 — Declarative intent
 
 ```python
-g.opensees.recorders.nodes(
+ops.recorder.nodes(
     components=["displacement", "reaction"], pg="Top", dt=0.01)
-g.opensees.recorders.gauss(
+ops.recorder.gauss(
     components=["stress", "strain"], pg="Body")
-g.opensees.recorders.line_stations(
+ops.recorder.line_stations(
     components=["force"], label="frame")
-g.opensees.recorders.modal(n_modes=10)
+ops.recorder.modal(n_modes=10)
 ```
 
-Each call stores a frozen `RecorderRecord` on the `Recorders`
-composite. **No FEMData. No OpenSees. No IDs.** Just a dataclass that
-says *"I want X on whatever PG/label resolves to, at this cadence."*
-You can declare against names that don't even exist in the mesh yet —
-declarations are pure data.
+`ops` is an `apeSees(fem)` instance (imported from
+`apeGmsh.opensees`). Each call stores a frozen `RecorderRecord` on the
+bridge. **No extra FEMData call. No IDs.** Just a dataclass that says
+*"I want X on whatever PG/label resolves to, at this cadence."* You
+can declare against names that exist in `fem` — declarations are pure
+data.
 
 Selectors mirror the read-side composite vocabulary:
 `pg=` (physical groups), `label=` (apeGmsh labels), `selection=`
@@ -109,18 +110,28 @@ match topology levels: `nodes`, `elements`, `gauss`, `line_stations`,
 ## 3. Layer 2 — The seam: `ResolvedRecorderSpec`
 
 ```python
-spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=6)
+from apeGmsh.results.spec import ResolvedRecorderSpec, ResolvedRecorderRecord
+
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="top",
+        components=("displacement_x", "displacement_y", "displacement_z"),
+        dt=None, n_steps=None, node_ids=top_ids,
+    ),),
+)
 ```
 
-`resolve(fem)` is the bridge from intent to geometry. It:
+The `ResolvedRecorderSpec` is the bridge from intent to geometry. Its
+records already carry, by construction:
 
 1. Looks each selector up against the bound `FEMData` — `pg="Top"` →
    concrete node ID array.
 2. Expands shorthand components (`"displacement"` →
    `displacement_x/y/z`).
 3. Pulls section metadata for layered shells / fiber sections from
-   `g.opensees._sections` so downstream strategies have what they
-   need without re-reading the session.
+   the bridge's internal section registry so downstream strategies
+   have what they need without re-reading the session.
 4. Tags the result with `fem.snapshot_id` so any consumer can verify
    the binding is still consistent.
 
@@ -152,7 +163,7 @@ each path supports**.
 ### 4.1  Strategy A₁ — Export Tcl (`export.tcl`)
 
 ```python
-g.opensees.export.tcl("model.tcl", recorders=spec)
+ops.tcl("model.tcl", recorders=spec)
 ```
 
 Translates each spec record into `recorder Node …` / `recorder
@@ -168,7 +179,7 @@ tooling, reproducibility from a checked-in script.
 ### 4.2  Strategy A₂ — Export Python (`export.py`)
 
 ```python
-g.opensees.export.py("model.py", recorders=spec)
+ops.py("model.py", recorders=spec)
 ```
 
 Same as A₁ but emits `ops.recorder(...)` source code instead of Tcl.
@@ -178,7 +189,16 @@ production pipeline is Python.
 ### 4.3  Strategy A₃ — Live recorders (`emit_recorders`) — *new*
 
 ```python
-spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=3)
+from apeGmsh.results.spec import ResolvedRecorderSpec, ResolvedRecorderRecord
+
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="top",
+        components=("displacement_x", "displacement_y", "displacement_z"),
+        dt=None, n_steps=None, node_ids=top_ids,
+    ),),
+)
 
 with spec.emit_recorders("out/") as live:
     live.begin_stage("gravity", kind="static")
@@ -241,7 +261,7 @@ complete strategy.
 ### 4.5  Strategy C₁ — Export with MPCO line
 
 ```python
-g.opensees.export.tcl("model.tcl", recorders=spec, mpco=True)
+ops.tcl("model.tcl", recorders=spec, mpco=True)
 # … run with STKO loaded …
 results = Results.from_mpco("run.mpco")
 ```
@@ -257,7 +277,16 @@ the recorder's C++ implementation doing the heavy lifting.
 ### 4.6  Strategy C₂ — Live MPCO (`emit_mpco`) — *new*
 
 ```python
-spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=3)
+from apeGmsh.results.spec import ResolvedRecorderSpec, ResolvedRecorderRecord
+
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="top",
+        components=("displacement_x", "displacement_y", "displacement_z"),
+        dt=None, n_steps=None, node_ids=top_ids,
+    ),),
+)
 
 with spec.emit_mpco("run.mpco"):
     for _ in range(n_steps):
@@ -435,8 +464,8 @@ Two things deliberately stay outside this seam:
 - [[Results_architecture]] — comprehensive reference for the reader
   protocol, native HDF5 schema, slab dataclasses, and FEMData
   embedding.
-- [[apeGmsh_architecture]] — overall apeGmsh architecture; OpenSees
-  pipeline section explains where the analysis loop lives.
+- [[apeGmsh_architecture]] — overall apeGmsh architecture; §8 covers
+  the `apeSees(fem)` post-session bridge (Phase-8 teardown).
 - [[apeGmsh_broker]] — `FEMData` snapshot semantics and `snapshot_id`
   drift-detection contract.
 - [[apeGmsh_results_viewer]] — the post-solve viewer, one of many

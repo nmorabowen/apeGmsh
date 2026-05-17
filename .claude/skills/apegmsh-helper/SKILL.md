@@ -1,6 +1,6 @@
 ---
 name: apegmsh-helper
-description: Use whenever the user is working with apeGmsh — the structural-FEM wrapper around Gmsh with OpenSees integration. Triggers on building FEM models from CAD/STEP imports, Part-based assembly workflows, composite-based geometry/mesh/constraint APIs (g.model, g.mesh, g.physical, g.constraints, g.opensees, etc.), non-matching-mesh ties via ASDEmbeddedNodeElement, loads/masses/constraints resolution into the FEMData broker, and exporting models to OpenSees Tcl or openseespy scripts. Covers apeGmsh's own abstractions on top of Gmsh and OpenSees. For raw gmsh API questions see the gmsh-structural skill; for raw OpenSees analysis commands see opensees-expert; for FEM theory first principles see fem-mechanics-expert.
+description: Use whenever the user is working with apeGmsh — the structural-FEM wrapper around Gmsh with OpenSees integration. Triggers on building FEM models from CAD/STEP imports, Part-based assembly workflows, composite-based geometry/mesh/constraint APIs (g.model, g.mesh, g.physical, g.constraints, etc.), the apeSees(fem) OpenSees bridge with typed primitives, loads/masses/constraints resolution into the FEMData broker, and exporting models to OpenSees Tcl or openseespy scripts. Covers apeGmsh's own abstractions on top of Gmsh and OpenSees. For raw gmsh API questions see the gmsh-structural skill; for raw OpenSees analysis commands see opensees-expert; for FEM theory first principles see fem-mechanics-expert.
 ---
 
 # apeGmsh helper
@@ -26,9 +26,10 @@ with apeGmsh(model_name="my_model", verbose=True) as g:
     ...
 ```
 
-`g` is an **apeGmsh session** — one `gmsh.initialize()`, one model, and 16
-composite objects as attributes. Each composite owns a focused slice of the
-API. You never call `gmsh.*` directly.
+`g` is an **apeGmsh session** — one `gmsh.initialize()`, one model, and a
+set of composite objects as attributes. Each composite owns a focused slice
+of the API. You never call `gmsh.*` directly. OpenSees is **not** a session
+composite — it is a separate post-session bridge, `apeSees(fem)` (§5).
 
 | Access | Purpose |
 |---|---|
@@ -42,7 +43,6 @@ API. You never call `gmsh.*` directly.
 | `g.constraints` | Pre-mesh constraint definitions (12 types) |
 | `g.loads` | Pre-mesh load definitions (5 types, pattern grouping) |
 | `g.masses` | Pre-mesh mass definitions (4 types) |
-| `g.opensees` | OpenSees bridge (materials, elements, ingest, inspect, export) |
 | `g.loader` | `.msh` file loader — build a `FEMData` snapshot from a saved mesh |
 | `g.inspect` | Session diagnostics |
 | `g.plot` | Matplotlib (optional dep) |
@@ -50,7 +50,7 @@ API. You never call `gmsh.*` directly.
 
 ### 1.2  Sub-composites are required — no shortcuts
 
-The three biggest composites have focused sub-namespaces:
+The two biggest session composites have focused sub-namespaces:
 
 **`g.model.*`** — geometry sub-composites:
 
@@ -74,15 +74,23 @@ The three biggest composites have focused sub-namespaces:
 | `g.mesh.queries` | `get_nodes`, `get_elements`, `get_fem_data`, `quality_report` |
 | `g.mesh.partitioning` | `renumber`, `partition`, `unpartition`, `summary` |
 
-**`g.opensees.*`** — solver bridge sub-composites:
+OpenSees is **not** a `g.` sub-composite. It is the separate
+post-session bridge `apeSees(fem)` (§5) with typed-primitive
+namespaces (constructors return handles; no string types):
 
-| Sub-composite | Examples |
+| Namespace | Examples |
 |---|---|
-| `g.opensees.materials` | `add_nd_material`, `add_uni_material`, `add_section` |
-| `g.opensees.elements` | `add_geom_transf`, `assign`, `fix` |
-| `g.opensees.ingest` | `loads(fem)`, `masses(fem)`, `constraints(fem)` |
-| `g.opensees.inspect` | `node_table`, `element_table`, `summary` |
-| `g.opensees.export` | `tcl(path)`, `py(path)` |
+| `ops.uniaxialMaterial` / `ops.nDMaterial` / `ops.section` | `Steel02(...)`, `ElasticIsotropic(...)`, `Fiber(...)` |
+| `ops.geomTransf` / `ops.beamIntegration` | `Linear(...)`, `PDelta(...)`, `Lobatto(...)` |
+| `ops.element` | `forceBeamColumn(pg=...)`, `FourNodeTetrahedron(pg=..., body_force=...)` |
+| `ops.timeSeries` / `ops.pattern` / `ops.recorder` | `Linear()`, `Plain(series=...)`, `Node(...)` |
+| flat verbs | `ops.model(...)`, `ops.fix(pg=, dofs=)`, `ops.mass(pg=, values=)`, `ops.build()`, `ops.tcl/py/h5(path)`, `ops.run()`, `ops.analyze(...)` |
+
+**Critical:** the bridge does **not** ingest session-declared
+`g.loads` / `g.masses` / `g.constraints`. Loads, masses and SPs
+must be **re-declared explicitly** on `ops` (§4/§5). Multi-point
+constraints (tie / rigid_link / equal_dof / node_to_surface) have
+**no emission path at all** — deferred (§3.3).
 
 ### 1.3  FEMData is the broker — composite-based architecture
 
@@ -153,7 +161,11 @@ K.RIGID_BEAM, K.EQUAL_DOF, K.TIE, ...   # 13 values
 K.NODE_PAIR_KINDS, K.SURFACE_KINDS      # frozensets for routing
 ```
 
-**Grouped emission** (preferred over `pairs()` for OpenSees):
+**Grouped iteration** — the FEMData constraint-iteration API.
+Note: `apeSees(fem)` does **not** emit these (MP constraints are
+deferred — §3.3); iterate them yourself only for inspection or to
+hand-drive a solver that supports multi-point constraints (the
+`ops.*` below is raw openseespy you write yourself):
 ```python
 # Rigid links — accumulated by master across rigid_beam/rod,
 # rigid_diaphragm, rigid_body, kinematic_coupling, and
@@ -256,6 +268,11 @@ Records split into two composites on the broker:
 - **`fem.elements.constraints`** (`SurfaceConstraintSet`) — surface ties,
   distributing/embedded interpolations, mortar / tied_contact couplings
 
+⚠️ `apeSees(fem)` does **not** emit any of these to OpenSees — MP
+constraints are deferred (§3.3). The loops below are the raw
+openseespy you would write yourself to drive a solver that
+supports multi-point constraints, or for inspection:
+
 ```python
 # 1. Phantom nodes first (node_to_surface generates them)
 for nid, xyz in fem.nodes.constraints.phantom_nodes():
@@ -306,15 +323,35 @@ for nts in fem.nodes.constraints.node_to_surfaces(): # NodeToSurfaceRecord
     ...
 ```
 
-### 3.3  Tie via ASDEmbeddedNodeElement
+### 3.3  ⚠️ Constraint emission is DEFERRED in `apeSees`
 
-```python
-g.opensees.ingest.constraints(fem, tie_penalty=1e12)
-```
+There is **no** OpenSees-emission path for multi-point constraints
+in the new bridge — `tie`, `rigid_link`, `equal_dof`,
+`rigid_diaphragm`, `node_to_surface`, `tied_contact`, `mortar`,
+embedded rebar. The `apeSees` `Emitter` protocol exposes only
+`node / fix / mass / element / sp` — there is no `equalDOF`,
+`rigidLink`, `rigidDiaphragm`, or `ASDEmbeddedNodeElement`. This is
+deferred by design (ADR 0009 "FEM-direct, no ingest";
+`src/apeGmsh/opensees/architecture/_DEFERRED.md`).
 
-apeGmsh emits ties as `ASDEmbeddedNodeElement` (penalty element).
-Default K=1e18. Drop to 1e10-1e12 if conditioning issues arise.
-Quad4 master faces are split into triangles automatically.
+What this means in practice:
+
+- **Declare constraints on the session as usual** (`g.constraints.tie`,
+  `g.constraints.equal_dof`, …). They still resolve into the
+  `FEMData` snapshot and are persisted into the **`model.h5`
+  neutral zone** by `ops.h5(path)` — so the **viewer / `Results`**
+  see them.
+- They are **NOT** written into any runnable Tcl / Py / Live
+  OpenSees deck. A model whose load path depends on a tie /
+  rigid link will be wrong if you run the emitted deck as-is.
+- To actually run such a model today you must hand-emit the
+  constraint commands yourself by iterating
+  `fem.nodes.constraints` / `fem.elements.constraints` (§1.3,
+  §3.2) into raw openseespy, **or** wait for the deferred
+  constraint-emission feature.
+
+Homogeneous fixities and prescribed displacements **do** have a
+path — see §4.3 (`ops.fix` / `p.sp`).
 
 ---
 
@@ -335,20 +372,31 @@ with g.loads.pattern("InternalPressure"):
     # g.loads.line("Iface", magnitude=p, normal=True, away_from=(0,0,0))
 ```
 
-After get_fem_data(), loads split:
-- **`fem.nodes.loads`** — `NodalLoadRecord` (point forces + moments)
-- **`fem.elements.loads`** — `ElementLoadRecord` (pressure, body force)
+After get_fem_data(), the session loads split into
+`fem.nodes.loads` (`NodalLoadRecord`) and `fem.elements.loads`
+(`ElementLoadRecord`). **`apeSees(fem)` does not consume these.**
+They persist into `model.h5` (viewer / `Results`); the iteration
+API below is inspection-only:
 
 ```python
-# 3D frame (ndf=6). Pick the slice matching your model's DOF space —
-# apeGmsh stores spatial vectors only and does not know ndf.
 for load in fem.nodes.loads:
-    fx, fy, fz = load.force_xyz  or (0.0, 0.0, 0.0)
-    mx, my, mz = load.moment_xyz or (0.0, 0.0, 0.0)
-    ops.load(load.node_id, fx, fy, fz, mx, my, mz)
-for eload in fem.elements.loads:
-    ops.eleLoad(eload.element_id, eload.load_type, **eload.params)
+    load.node_id, load.force_xyz, load.moment_xyz   # inspect only
 ```
+
+To put the same loads into OpenSees you **re-declare them
+explicitly** on the bridge, inside a pattern:
+
+```python
+ts = ops.timeSeries.Linear()                 # also Constant/Path/Trig/Pulse
+with ops.pattern.Plain(series=ts) as p:      # also UniformExcitation
+    p.load(pg="Tip", forces=(0.0, -5e4, 0.0, 0.0, 0.0, 0.0))
+    # p.load(node=<tag>, forces=(...))         # explicit node alternative
+```
+
+`p.load` fans a `pg=` across the group's nodes at build time.
+Distributed/body loads have no pattern verb — gravity/body force
+is an **element parameter** (`ops.element.<Solid>(pg=...,
+body_force=(b1,b2,b3))`); 2-D solids take a `pressure=` arg.
 
 ### 4.2  Masses — accumulated per node
 
@@ -356,33 +404,72 @@ for eload in fem.elements.loads:
 g.masses.volume("Body", density=2400)
 ```
 
-After resolution: `fem.nodes.masses`
+After resolution: `fem.nodes.masses` (persisted to `model.h5`;
+inspection only — **not** auto-emitted by `apeSees`):
 
 ```python
 for m in fem.nodes.masses:
-    ops.mass(m.node_id, *m.mass)  # mass = (mx,my,mz,Ixx,Iyy,Izz)
+    m.node_id, m.mass               # mass = (mx,my,mz,Ixx,Iyy,Izz)
 print("Total:", fem.nodes.masses.total_mass())
+```
+
+Re-declare mass explicitly on the bridge:
+
+```python
+ops.mass(pg="Body", values=(mx, my, mz, 0.0, 0.0, 0.0))
+# ops.mass(nodes=[...], values=(...))   # explicit-node alternative
+```
+
+### 4.3  Boundary conditions / SP — explicit on the bridge
+
+`g.constraints` fixities and `g.loads.face_sp` resolve into the
+snapshot but are **not** auto-emitted. Re-declare on `ops`:
+
+```python
+ops.fix(pg="Base", dofs=(1, 1, 1, 1, 1, 1))      # homogeneous SP
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.sp(pg="LoadingPin", dof=3, value=0.01)     # prescribed (non-zero) SP
 ```
 
 ---
 
-## 5. OpenSees pipeline
+## 5. OpenSees bridge — `apeSees(fem)`
+
+OpenSees is driven **after** the session, from the `FEMData`
+snapshot, with typed primitives (no string types). The bridge
+does **not** ingest `g.loads` / `g.masses` / `g.constraints` —
+loads / masses / SPs are re-declared explicitly here (§4);
+multi-point constraints are deferred (§3.3).
 
 ```python
-g.opensees.set_model(ndm=3, ndf=3)
-g.opensees.materials.add_nd_material(
-    "Concrete", "ElasticIsotropic", E=30e9, nu=0.2, rho=2400)
-g.opensees.elements.assign("Body", "FourNodeTetrahedron", material="Concrete")
-g.opensees.elements.fix("Base", dofs=[1, 1, 1])
+from apeGmsh.opensees import apeSees
 
 fem = g.mesh.queries.get_fem_data(dim=3)
-(g.opensees.ingest
-    .loads(fem)
-    .masses(fem)
-    .constraints(fem, tie_penalty=1e12))
-g.opensees.build()
-g.opensees.export.tcl("model.tcl").py("model.py")
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+
+conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+# gravity = element body_force (no eleLoad pattern verb)
+ops.element.FourNodeTetrahedron(
+    pg="Body", material=conc, body_force=(0.0, 0.0, -9.81 * 2400),
+)
+ops.fix(pg="Base", dofs=(1, 1, 1))
+
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))
+
+ops.tcl("model.tcl")          # separate statements — not fluent
+ops.py("model.py", run=False)
+ops.h5("model.h5")            # native HDF5: bridge + broker neutral zone
+# ops.run(); ops.analyze(steps=10, dt=0.01)   # in-process openseespy
 ```
+
+Constructors return handles passed by reference
+(`material=conc`, `transf=t`, `integration=integ`). `ops.build()`
+returns an immutable `BuiltModel`; it is usually implicit because
+`ops.tcl/py/h5/run` build internally. Post-build inspection is
+broker-side (`fem.inspect.*`) or via
+`apeGmsh.opensees.emitter.h5_reader` on the emitted `model.h5`.
 
 ---
 
@@ -475,6 +562,7 @@ longer exist. Use `fem.nodes.*` and `fem.elements.*`.
 
 ```python
 from apeGmsh import apeGmsh, Part
+from apeGmsh.opensees import apeSees
 
 with apeGmsh(model_name="model", verbose=True) as g:
     # Geometry
@@ -503,17 +591,22 @@ with apeGmsh(model_name="model", verbose=True) as g:
     ids, coords = fem.nodes.get(pg="Base")    # selection
     print(fem.inspect.summary())               # introspection
 
-    # OpenSees
-    g.opensees.set_model(ndm=3, ndf=3)
-    g.opensees.materials.add_nd_material("C", "ElasticIsotropic", E=30e9, nu=0.2)
-    g.opensees.elements.assign("Body", "FourNodeTetrahedron", material="C")
-    g.opensees.elements.fix("Base", dofs=[1, 1, 1])
-    g.opensees.ingest.loads(fem).masses(fem).constraints(fem)
-    g.opensees.build()
-    g.opensees.export.tcl("model.tcl").py("model.py")
-
-    # Viewer with FEM overlays
+    # Viewer with FEM overlays (sees session loads/masses/constraints)
     g.mesh.viewer(fem=fem)
+
+# OpenSees — post-session bridge. Loads/masses/SPs are re-declared
+# explicitly (not auto-pulled from g.*); MP constraints deferred (§3.3).
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+c = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+ops.element.FourNodeTetrahedron(
+    pg="Body", material=c, body_force=(0.0, 0.0, -9.81 * 2400),
+)
+ops.fix(pg="Base", dofs=(1, 1, 1))
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))
+ops.tcl("model.tcl")
+ops.py("model.py")
 ```
 
 ---

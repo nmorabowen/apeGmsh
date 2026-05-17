@@ -96,8 +96,8 @@ graph TD
   G --> LD[loads]
   G --> MA[masses]
   G --> S[sections]
-  G --> O[opensees]
   G --> R[results]
+  FEM[FEMData broker] --> OPS["apeSees(fem) — post-session"]
 
   M --> MG[geometry]
   M --> MB[boolean]
@@ -561,24 +561,31 @@ to grow.
 
 ## 8. The solver adapter
 
-`OpenSees` at `g.opensees` is the reference adapter. It reads
-`FEMData` and emits either openseespy calls or Tcl. Nothing in the
-adapter calls gmsh.
+`apeSees(fem)` (imported from `apeGmsh.opensees`) is the reference
+adapter. It is constructed **after** the session, from a `FEMData`
+snapshot. Nothing in the adapter calls gmsh.
 
-The adapter has three moving parts:
+> [!important] Removed in Phase 8
+> The in-session `g.opensees` composite and its sub-composites
+> (`materials`, `elements`, `ingest`, `inspect`, `export`) were
+> removed in the Phase-8 teardown (ADR 0009). The canonical surface is
+> now `apeSees(fem)` — a **post-session**, explicit-constructor bridge.
+> `apeSees` has **no ingest and no auto-resolution**; loads, masses,
+> and SPs must be re-declared explicitly on `ops`. Multi-point
+> constraint emission is deferred (ADR 0009 +
+> `src/apeGmsh/opensees/architecture/_DEFERRED.md`).
 
-1. **`_ElemSpec` registry** (`solvers/_element_specs.py`) — maps
-   gmsh element types to OpenSees element commands, with per-element
-   metadata: `mat_family` (`nd`, `uni`, `section`, `none`),
-   `gmsh_etypes`, `node_reorder`, `slots` / `slots_2d` / `slots_3d`,
-   `expected_pg_dim`.
-2. **Node/element renderer** — `_render_tcl` and `_render_py` produce
-   one line per element from the `_ElemSpec` + user-supplied args.
-3. **Tie element emitter** (`ASDEmbeddedNodeElement`) — a separate
-   code path for node-to-surface ties, because they emit a different
-   element family with `-rot` and `-K penalty` flags. Tie tags start
-   at `1_000_000` when the broker is empty, otherwise
-   `max(existing_tags) + 1`.
+The adapter has two main moving parts:
+
+1. **`_ElemSpec` registry** (`opensees/_internal/_element_specs.py`)
+   — maps gmsh element types to OpenSees element commands, with
+   per-element metadata: `mat_family` (`nd`, `uni`, `section`,
+   `none`), `gmsh_etypes`, `node_reorder`, `slots`.
+2. **Typed-primitive namespaces** (`ops.nDMaterial.*`,
+   `ops.uniaxialMaterial.*`, `ops.section.*`, `ops.geomTransf.*`,
+   `ops.element.*`, `ops.pattern.*`, `ops.timeSeries.*`,
+   `ops.recorder.*`) — constructors return handles passed by
+   reference; no string-registry lookups.
 
 The reason the adapter can be thin is that all the heavy lifting
 happened upstream: the broker's records are already close to
@@ -676,7 +683,7 @@ sequenceDiagram
   participant PR as PartsRegistry
   participant BR as FEMData broker
   participant CR as ConstraintResolver
-  participant OS as g.opensees
+  participant OS as apeSees(fem)
 
   U->>G: g.parts.add(col_A, label="A")
   G->>PR: add(col_A, label="A")
@@ -707,9 +714,9 @@ sequenceDiagram
   CR-->>BR: [NodePairRecord, ...]
   BR-->>U: FEMData
 
-  U->>OS: g.opensees.transfer(fem)
-  OS->>OS: emit ops.node / ops.element / ops.equalDOF / ...
-  OS-->>U: ops.model populated
+  U->>OS: ops = apeSees(fem); ops.model(ndm=3, ndf=6)
+  OS->>OS: ops.element.* / ops.fix / ops.mass / ops.pattern.*
+  OS-->>U: ops.tcl / ops.py / ops.run
 ```
 
 Every arrow in this diagram is in the test suite somewhere. The flow

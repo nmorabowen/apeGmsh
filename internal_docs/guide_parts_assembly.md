@@ -294,12 +294,26 @@ needed by the solver.
 
 ### OpenSees
 
+The OpenSees bridge (`apeSees`) is a **post-session** object constructed from the
+`FEMData` snapshot. Close (or exit) the apeGmsh session first, then build the
+OpenSees model explicitly:
+
 ```python
-g.opensees.build()
-g.opensees.export.py("frame_model.py")
-# or
-g.opensees.export.tcl("frame_model.tcl")
+from apeGmsh.opensees import apeSees
+
+fem = g.mesh.queries.get_fem_data(dim=3)
+# ... exit the session (g.end() or leave the with block) ...
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+# ... materials, elements, fix, patterns ...
+ops.tcl("frame_model.tcl")
+ops.py("frame_model.py")
 ```
+
+Loads, masses, and SP boundary conditions declared on the session via
+`g.loads` / `g.masses` / `g.constraints` are **not** ingested automatically.
+Re-declare them explicitly on `ops` (see `skills/apegmsh/references/opensees-bridge.md`).
 
 ### Direct FEM data access
 
@@ -363,16 +377,22 @@ g.mesh.generation.generate(dim=3)
 g.constraints.equal_dof("beam_top", "col_left",  tolerance=1e-3)
 g.constraints.equal_dof("beam_top", "col_right", tolerance=1e-3)
 
-# Resolve and export
+# Resolve fem
 fem = g.mesh.queries.get_fem_data(dim=3)
 node_map = g.parts.build_node_map(fem.nodes.ids, fem.nodes.coords)
 face_map = g.parts.build_face_map(node_map)
 g.constraints.resolve(fem.nodes.ids, fem.nodes.coords,
                       node_map=node_map, face_map=face_map)
 
-g.opensees.build()
-g.opensees.export.py("portal_frame.py")
 g.end()
+
+# OpenSees — post-session, explicit declarations.
+from apeGmsh.opensees import apeSees
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+# ... materials, elements, fix, patterns (re-declare explicitly) ...
+ops.py("portal_frame.py")
 ```
 
 ## Summary of the Pipeline

@@ -48,20 +48,21 @@ with apeGmsh(model_name="block", verbose=True) as g:
     fem = g.mesh.queries.get_fem_data(dim=3)
     print(fem.info.summary())
 
-    # OpenSees
-    g.opensees.set_model(ndm=3, ndf=3)
-    g.opensees.materials.add_nd_material(
-        "Conc", "ElasticIsotropic",
-        E=30e9, nu=0.2, rho=2400,
+    # OpenSees — post-session bridge, typed primitives. Loads/masses
+    # are re-declared explicitly (the bridge does NOT ingest g.loads /
+    # g.masses); see opensees-bridge.md.
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+    ops.element.FourNodeTetrahedron(
+        pg="Body", material=conc, body_force=(0.0, 0.0, -9.81 * 2400),
     )
-    (g.opensees.elements
-        .assign("Body", "FourNodeTetrahedron", material="Conc")
-        .fix("Base", dofs=[1, 1, 1]))
-    (g.opensees.ingest
-        .loads(fem)
-        .masses(fem))
-    g.opensees.build()
-    g.opensees.export.py("out/block.py")
+    ops.fix(pg="Base", dofs=(1, 1, 1))
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(pg="Tip", forces=(0.0, 0.0, -1e4))
+    ops.py("out/block.py")
 ```
 
 ## 2. Multi-part assembly via `Part`
@@ -110,22 +111,21 @@ with apeGmsh(model_name="bridge") as g:
     g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
-    # Hand off to OpenSees
-    (g.opensees
-        .set_model(ndm=3, ndf=3))
-    (g.opensees.materials
-        .add_nd_material("Steel", "ElasticIsotropic",
-                         E=200e9, nu=0.3, rho=7850)
-        .add_nd_material("Conc",  "ElasticIsotropic",
-                         E=30e9, nu=0.2, rho=2400))
-    (g.opensees.elements
-        .assign("Girder", "FourNodeTetrahedron", material="Steel")
-        .assign("Deck",   "FourNodeTetrahedron", material="Conc"))
-    (g.opensees.ingest
-        .loads(fem)
-        .masses(fem))
-    g.opensees.build()
-    g.opensees.export.py("out/bridge.py")
+    # Hand off to OpenSees — post-session bridge. Materials are typed
+    # handles; loads/masses re-declared explicitly. See opensees-bridge.md.
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    steel = ops.nDMaterial.ElasticIsotropic(E=200e9, nu=0.3, rho=7850)
+    conc  = ops.nDMaterial.ElasticIsotropic(E=30e9,  nu=0.2, rho=2400)
+    ops.element.FourNodeTetrahedron(
+        pg="Girder", material=steel, body_force=(0.0, 0.0, -9.81 * 7850),
+    )
+    ops.element.FourNodeTetrahedron(
+        pg="Deck", material=conc, body_force=(0.0, 0.0, -9.81 * 2400),
+    )
+    ops.py("out/bridge.py")
 ```
 
 Key points:
@@ -175,8 +175,12 @@ with apeGmsh(model_name="hybrid") as g:
     g.physical.add(0, [p_top],  name="ColTop")
 
     # Coupling: embed the column's base node into the soil's top
-    # face.  tie() creates a surface-constraint record that emits as
-    # ASDEmbeddedNodeElement on the OpenSees side.
+    # face.  tie() creates a surface-constraint record in the FEMData
+    # snapshot.  ⚠️ apeSees does NOT emit it — MP-constraint emission
+    # is deferred (see opensees-bridge.md "constraints are DEFERRED").
+    # The record persists into model.h5 for the viewer/Results only;
+    # to actually run this coupled model you must hand-emit the
+    # constraint into raw openseespy yourself.
     g.constraints.tie("SoilTop", "ColBase")
 
     # Loads + masses
@@ -191,61 +195,63 @@ with apeGmsh(model_name="hybrid") as g:
     fem = g.mesh.queries.get_fem_data(dim=None)   # all dims
 
     # OpenSees (3-D frame/shell: ndm=3, ndf=6 for rotations on the column)
-    g.opensees.set_model(ndm=3, ndf=6)
-    (g.opensees.materials
-        .add_nd_material("Soil", "ElasticIsotropic",
-                         E=50e6, nu=0.3, rho=2000))
-    (g.opensees.elements
-        .add_geom_transf("Cols", "Linear", vecxz=[1, 0, 0])
-        .assign("Soil", "stdBrick", material="Soil")
-        .assign("Column", "elasticBeamColumn",
-                geom_transf="Cols",
-                A=0.09, E=30e9, G=12.5e9,
-                Jx=1e-3, Iy=6.75e-4, Iz=6.75e-4)
-        .fix("ColTop", dofs=[0, 0, 0, 0, 0, 0]))   # free top
-    (g.opensees.ingest
-        .loads(fem)
-        .masses(fem)
-        .constraints(fem, tie_penalty=1e12))
-    g.opensees.build()
-    g.opensees.export.py("out/hybrid.py")
+    from apeGmsh.opensees import apeSees
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    soil = ops.nDMaterial.ElasticIsotropic(E=50e6, nu=0.3, rho=2000)
+    cols_t = ops.geomTransf.Linear(vecxz=(1, 0, 0))
+    ops.element.stdBrick(pg="Soil", material=soil)
+    ops.element.elasticBeamColumn(
+        pg="Column", transf=cols_t,
+        A=0.09, E=30e9, G=12.5e9, J=1e-3, Iy=6.75e-4, Iz=6.75e-4,
+    )
+    # loads/masses re-declared explicitly; the g.constraints.tie above
+    # is NOT emitted (deferred — see the note at the tie() call).
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.load(pg="ColTop", forces=(1e4, 0.0, 0.0, 0.0, 0.0, 0.0))
+    ops.py("out/hybrid.py")
 ```
 
 ## 4. Pushover-style second pattern
 
-Once the gravity pattern is built, add a lateral pattern that
-references an already-defined control PG.  The pushover loading is
-just another `with g.loads.pattern(...)` block; the OpenSees bridge
-emits every pattern in declaration order as `pattern Plain <i>
-Linear { ... }`, indexed from 1.
+In the new bridge, **patterns are explicit** — each is its own
+`with ops.pattern.Plain(series=...) as p:` block, opened directly
+on `ops`. The session may still declare loads for the
+viewer/`Results`, but the runnable deck only contains patterns you
+open on the bridge. Gravity is best expressed as an element
+`body_force=`; the lateral pushover is a nodal `p.load`.
 
 ```python
 with apeGmsh(model_name="pushover") as g:
     # ... geometry / mesh setup ...
-
-    # Gravity — pattern 1
-    with g.loads.pattern("dead"):
-        g.loads.gravity("Body", g=(0, 0, -9.81), density=2400)
-
-    # Pushover — pattern 2 (unit lateral point load at control node)
-    with g.loads.pattern("pushover"):
-        g.loads.point("ControlNode", force_xyz=(1.0, 0, 0))
-
     g.mesh.generation.generate(dim=3)
     g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
-    # ... declare materials + elements ...
-    g.opensees.ingest.loads(fem).masses(fem)
-    g.opensees.build()
-    g.opensees.export.py("out/pushover.py")
+from apeGmsh.opensees import apeSees
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+
+# Gravity — body force on the elements (pattern 1 equivalent)
+ops.element.FourNodeTetrahedron(
+    pg="Body", material=conc, body_force=(0.0, 0.0, -9.81 * 2400),
+)
+ops.fix(pg="Base", dofs=(1, 1, 1))
+
+# Pushover — explicit pattern 2: unit lateral load at the control PG
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.load(pg="ControlNode", forces=(1.0, 0.0, 0.0))
+
+ops.py("out/pushover.py")
 ```
 
-Then on the openseespy side you can integrate the two patterns with
-a `LoadControl` analysis for gravity and a `DisplacementControl`
-analysis for the pushover step — the export writes both pattern
-blocks in order, so pattern `1` is gravity and pattern `2` is the
-lateral.
+Patterns appear in the deck in the order you open them on `ops`
+(`pattern Plain <i> Linear { ... }`, indexed from 1). On the
+openseespy side, drive gravity with `LoadControl` and the lateral
+step with `DisplacementControl`.
 
 ## Patterns worth knowing (not full workflows)
 
@@ -311,7 +317,8 @@ analysis.  For MPCO / STKO outputs see the `stko-to-python` skill.
   `get_fem_data(dim=3)` drops the 2-D surface mesh — use
   `dim=None` (all dims) when shells or tied interfaces need to
   reach the bridge.
-- **Calling `set_model(ndm=3, ndf=3)` then assigning a beam
+- **Calling `ops.model(ndm=3, ndf=3)` then declaring a beam
   element.**  Beams need rotational DOFs — use `ndf=6` for 3-D
-  frame/shell models.  The build validator will catch this; it
-  means the model isn't built yet, not that you can keep going.
+  frame/shell models.  `ops.build()` (called by any emit) catches
+  this; it means the model isn't built yet, not that you can keep
+  going.

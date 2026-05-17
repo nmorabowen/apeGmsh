@@ -6,10 +6,10 @@ writers).  Relocated from ``apeGmsh.solvers._recorder_specs`` in
 Phase 8.3b.
 
 The user declares recorders against PG/label/selection names via
-``g.opensees.recorders.*``. Those declarations live as
-:class:`RecorderRecord` instances on the composite. Calling
-``recorders.resolve(fem)`` produces a :class:`ResolvedRecorderSpec`
-— a snapshot tied to a specific FEMData by ``snapshot_id``.
+``ops.recorder.*`` (where ``ops = apeSees(fem)``). Those declarations
+live as :class:`RecorderRecord` instances; they are resolved at
+build/emit time into a :class:`ResolvedRecorderSpec` — a snapshot
+tied to a specific FEMData by ``snapshot_id``.
 
 Only the spec is consumed downstream:
 - Phase 5 / 8: emit Tcl/Python recorder commands or ``recorder mpco`` lines
@@ -78,10 +78,9 @@ class RecorderRecord:
     # Optional user-supplied OpenSees C++ class name override. When set,
     # ``Recorders.resolve`` uses this verbatim for
     # :attr:`ResolvedRecorderRecord.element_class_name` instead of
-    # looking it up via ``OpenSees._elem_assignments``. Use this when
-    # the model is built with direct ``ops.element`` calls (no
-    # ``g.opensees.elements.assign``) and the .out transcoder needs a
-    # disambiguating hint (e.g. tri31 vs SSPquad share a flat size).
+    # looking it up via the bridge's element assignments. Use this
+    # when the .out transcoder needs a disambiguating hint for an
+    # ``ops.element`` call (e.g. tri31 vs SSPquad share a flat size).
     element_class_name: Optional[str] = None
 
 
@@ -93,7 +92,7 @@ class RecorderRecord:
 class LayerSectionDef:
     """One LayeredShellFiberSection's per-layer composition.
 
-    Populated from ``g.opensees._sections`` at recorder-resolve time
+    Populated from the bridge's resolved sections at recorder-resolve time
     for ``category="layers"`` records. Carries the data DomainCapture
     cannot probe from the live openseespy domain — per-layer
     thickness and material tag — so the capture-side
@@ -179,7 +178,7 @@ class ResolvedRecorderSpec:
     - A tuple of :class:`ResolvedRecorderRecord` (one per declaration)
 
     The spec is the bridge between the declarative side
-    (``g.opensees.recorders``) and any execution strategy
+    (``ops.recorder.*``) and any execution strategy
     (Tcl emission, in-process capture, MPCO bridge).
     """
 

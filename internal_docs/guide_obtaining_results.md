@@ -26,22 +26,35 @@ Every strategy starts here:
 
 ```python
 from apeGmsh import apeGmsh, Results
+from apeGmsh.opensees import apeSees
 
 with apeGmsh(model_name="demo") as g:
     # ... build geometry, mesh, physical groups ...
-    g.opensees.set_model(ndm=3, ndf=3)
-    # ... materials, elements, fix ...
     fem = g.mesh.queries.get_fem_data(dim=3)
-    g.opensees.build()
 
-    # Declare what you want recorded
-    g.opensees.recorders.nodes(
-        components=["displacement"], pg="Top")
-    g.opensees.recorders.gauss(
-        components=["stress"], pg="Body")
+# OpenSees — post-session, explicit declarations.
+ops_bridge = apeSees(fem)
+ops_bridge.model(ndm=3, ndf=3)
+# ... materials, elements, fix, patterns (re-declare explicitly) ...
 
-    # Resolve against the FEMData — frozen, gmsh-independent
-    spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=3)
+# Declare what you want recorded on the apeSees bridge
+ops_bridge.recorder.Node(
+    nodes=fem.nodes.get_ids(pg="Top"), dofs=[1, 2, 3], response="disp")
+ops_bridge.recorder.Element(
+    elements=fem.elements.get_ids(pg="Body"), response="stress")
+
+# Build the frozen, gmsh-independent spec directly
+from apeGmsh.results.spec import ResolvedRecorderSpec, ResolvedRecorderRecord
+
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="top",
+        components=("displacement_x", "displacement_y", "displacement_z"),
+        dt=None, n_steps=None,
+        node_ids=fem.nodes.get_ids(pg="Top"),
+    ),),
+)
 
     # ... pick a strategy below ...
 ```
@@ -56,7 +69,7 @@ ways** to run the analysis and read results.
 For cluster jobs, reproducible scripts, or non-Python tooling.
 
 ```python
-g.opensees.export.tcl("model.tcl", recorders=spec)
+ops_bridge.tcl("model.tcl", recorders=spec)
 # … you run OpenSees on the cluster, files land in out/ …
 ```
 
@@ -80,7 +93,7 @@ disp = results.nodes.get(component="displacement_z", pg="Top")
 Same as A₁ but `ops.recorder(...)` source instead of Tcl.
 
 ```python
-g.opensees.export.py("model.py", recorders=spec)
+ops_bridge.py("model.py", recorders=spec)
 # … run python model.py, files land in out/ …
 
 results = Results.from_recorders(spec, "out/", fem=fem)
@@ -230,7 +243,7 @@ for mode in results.modes:
 For the STKO ecosystem and big parallel runs.
 
 ```python
-g.opensees.export.tcl("model.tcl", recorders=spec, mpco=True)
+ops_bridge.tcl("model.tcl", recorders=spec, mpco=True)
 # … run with STKO loaded — produces run.mpco …
 
 results = Results.from_mpco("run.mpco")
@@ -296,7 +309,7 @@ recorder; vanilla openseespy distributions do not ship it.
 Workable options:
   - run inside STKO's bundled Python distribution
   - use spec.emit_recorders(...) for classic recorders + Results.from_recorders(...)
-  - export with g.opensees.export.tcl(..., recorders=spec, mpco=True) and run with STKO loaded
+  - export with ops.tcl(..., recorders=spec, mpco=True) and run with STKO loaded
 ```
 
 ### Coverage

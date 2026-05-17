@@ -60,8 +60,8 @@ graph TD
     G --> PHYS[g.physical<br/><i>mesh.PhysicalGroups</i>]
     G --> MSEL[g.mesh_selection<br/><i>MeshSelectionSet</i>]
     G --> VIEW[g.view<br/><i>mesh.View</i>]
-    G --> OPS[g.opensees<br/><i>solvers.OpenSees</i>]
     G --> PLOT[g.plot<br/><i>viz.Plot — lazy</i>]
+    FEM[FEMData broker] --> OPS["apeSees(fem)<br/><i>post-session bridge</i>"]
 
     MODEL --> MG[.geometry <i>_Geometry</i>]
     MODEL --> MB[.boolean <i>_Boolean</i>]
@@ -77,11 +77,11 @@ graph TD
     MESH --> MESHS[.structured <i>_Structured</i>]
     MESH --> MESHP[.partitioning <i>_Partitioning</i>]
 
-    OPS --> OMAT[.materials <i>_Materials</i>]
-    OPS --> OELEM[.elements <i>_Elements</i>]
-    OPS --> OING[.ingest <i>_Ingest</i>]
-    OPS --> OEXP[.export <i>_Export</i>]
-    OPS --> OINS[.inspect <i>_Inspect</i>]
+    OPS --> OMAT[.nDMaterial / .uniaxialMaterial / .section]
+    OPS --> OELEM[.element / .geomTransf / .beamIntegration]
+    OPS --> OPAT[.pattern / .timeSeries]
+    OPS --> OREC[.recorder]
+    OPS --> ORUN[.tcl / .py / .h5 / .run / .analyze]
 ```
 
 The ASCII equivalent, for pasting into commit messages:
@@ -113,13 +113,16 @@ g                                                       (apeGmsh session)
 ├── physical         mesh.PhysicalGroups
 ├── mesh_selection   mesh.MeshSelectionSet
 ├── view             mesh.View
-├── opensees         solvers.OpenSees
-│   ├── .materials   _Materials
-│   ├── .elements    _Elements
-│   ├── .ingest      _Ingest
-│   ├── .export      _Export
-│   └── .inspect     _Inspect
 └── plot             viz.Plot                           (lazy-loaded)
+
+apeSees(fem)  apeGmsh.opensees.apeSees                 (post-session)
+    ├── .nDMaterial / .uniaxialMaterial / .section
+    ├── .geomTransf / .beamIntegration
+    ├── .element
+    ├── .fix / .mass
+    ├── .pattern / .timeSeries
+    ├── .recorder
+    └── .tcl / .py / .h5 / .run / .analyze
 ```
 
 Output of the workflow is `fem = g.mesh.queries.get_fem_data(dim=N)` —
@@ -237,15 +240,29 @@ for the full broker surface.
 
 ### 3.7 Feed a solver
 
+> [!important] Post-session bridge
+> The in-session `g.opensees` composite was removed in Phase 8 (ADR 0009).
+> The canonical OpenSees surface is `apeSees(fem)` — constructed **after**
+> `get_fem_data()`. It has **no ingest and no auto-resolution**; loads,
+> masses, and SPs must be re-declared explicitly. MP constraint emission is
+> deferred (see `skills/apegmsh/references/opensees-bridge.md`).
+
 | I want to…                              | Call                                                     | Lives in                                         |
 | --------------------------------------- | -------------------------------------------------------- | ------------------------------------------------ |
-| build an OpenSees model in-process      | `g.opensees.set_model(ndm=3, ndf=6); g.opensees.build()` | `solvers/OpenSees.py`                            |
-| emit a `.tcl` or `.py` script           | `g.opensees.export.tcl(path)` / `.py(path)`              | `solvers/_opensees_export.py`                    |
-| ingest FEMData into opensees            | `g.opensees.ingest.loads(fem)` / `.sp(fem)` / `.masses(fem)` / `.constraints(fem)` | `solvers/_opensees_ingest.py`                    |
-| add materials / elements / fixities     | `g.opensees.materials.add_nd_material(...)` / `.add_uni_material(...)` / `.add_section(...)` | `solvers/_opensees_materials.py`                 |
-| assign elements / geom transf / fix     | `g.opensees.elements.add_geom_transf(...)` / `.assign(...)` / `.fix(...)` | `solvers/_opensees_elements.py`                  |
-| inspect the built model                 | `g.opensees.inspect.node_table()` / `.element_table()` / `.summary()` | `solvers/_opensees_inspect.py`                   |
-| renumber for smaller bandwidth          | `Numberer(fem).renumber(method="rcm")`                   | `solvers/Numberer.py`                            |
+| construct the bridge post-session       | `from apeGmsh.opensees import apeSees; ops = apeSees(fem)` | `opensees/apesees.py`                            |
+| set model dimensions                    | `ops.model(ndm=3, ndf=6)`                                | `opensees/apesees.py`                            |
+| add an nD material                      | `conc = ops.nDMaterial.ElasticIsotropic(E=..., nu=..., rho=...)` | `opensees/_internal/ns/`                         |
+| add a uniaxial material                 | `steel = ops.uniaxialMaterial.Steel02(fy=..., E=..., b=...)` | `opensees/_internal/ns/`                         |
+| add elements                            | `ops.element.FourNodeTetrahedron(pg="Body", material=conc, ...)` | `opensees/_internal/ns/`                         |
+| add homogeneous fixities                | `ops.fix(pg="Base", dofs=(1,1,1,1,1,1))`                 | `opensees/apesees.py`                            |
+| add lumped masses                       | `ops.mass(pg="Roof", values=(m,m,m,0,0,0))`              | `opensees/apesees.py`                            |
+| add nodal loads / prescribed SP         | `with ops.pattern.Plain(series=ts) as p: p.load(...); p.sp(...)` | `opensees/pattern/`                              |
+| emit a `.tcl` script                    | `ops.tcl("model.tcl")`                                   | `opensees/emitter/`                              |
+| emit a `.py` script                     | `ops.py("model.py", run=False)`                          | `opensees/emitter/`                              |
+| emit native HDF5                        | `ops.h5("model.h5")`                                     | `opensees/emitter/`                              |
+| run in-process openseespy               | `ops.run()`                                              | `opensees/emitter/`                              |
+| inspect broker side                     | `fem.inspect.summary()` / `.node_table()` / `.element_table()` | `mesh/FEMData.py`                                |
+| renumber for smaller bandwidth          | `Numberer(fem).renumber(method="rcm")`                   | `opensees/_numberer.py`                          |
 
 ### 3.8 Visualise
 
@@ -268,7 +285,7 @@ for the full broker surface.
 | add a new geometry primitive            | `core/_model_geometry.py` — new `add_*` method on `_Geometry`, wrap in `_register(dim, tag, label, kind)` |
 | add a new boolean semantics             | `core/_model_boolean.py` — new method on `_Boolean`, route through `_bool_op` so `pg_preserved()` runs |
 | add a new constraint *kind*             | ① new `*Def` dataclass in `solvers/_constraint_defs.py`; ② new `resolve_*` method on `ConstraintResolver` in `solvers/_constraint_resolver.py`; ③ new user-facing method on `ConstraintsComposite`; ④ OpenSees emission in `solvers/_opensees_constraints.py` |
-| add a new load or mass kind             | Parallel to constraints: `*Def` in `solvers/Loads.py` / `Masses.py`, `resolve_*` on the resolver, user method on the composite, OpenSees handling in `_opensees_ingest.py` |
+| add a new load or mass kind             | Parallel to constraints: `*Def` in `solvers/Loads.py` / `Masses.py`, `resolve_*` on the resolver, user method on the composite; for OpenSees emission add a typed primitive in `opensees/_internal/ns/` |
 | add a new solver adapter                | New module under `solvers/`. Read `FEMData` from the ingest side; consult [[apeGmsh_architecture]] §8 for the boundary contract |
 | add a new viewer overlay                | `viewers/overlays/` — write a `build_*` function returning actors; wire into `viewers/model_viewer.py` or `viewers/mesh_viewer.py` |
 | add a new UI tab                        | `viewers/ui/` — mimic one of the existing panels (`loads_tab.py`, `constraints_tab.py`); wire into `viewers/ui/viewer_window.py::ViewerWindow.add_tab` |
@@ -1233,68 +1250,40 @@ Module-level helpers:
   - `.compare_methods(self)` — returns `{method_name: bandwidth}`.
 - Module helpers: `_compute_bandwidth(connectivity)`, `_build_adjacency(...)`, `_pseudo_peripheral_node(adj)`, `_cm_from_start(...)`, `_rcm_ordering(...)`.
 
-#### `solvers/OpenSees.py`
-- `OpenSees(_HasLogging)` **[composite]** — in-process OpenSeesPy driver.
-  - `.__init__(self, parent)` — builds sub-composites `.materials`, `.elements`, `.ingest`, `.export`, `.inspect`.
-  - `._require_built(self, method)`
-  - `._all_pg_names(self)`
-  - `._find_pg(self, name, *, dim=None)`
-  - `._nodes_for_pg(self, pg_name, *, dim=None)`
-  - `.set_model(self, *, ndm=3, ndf=3)`
-  - `.build(self)`
-  - `.__repr__(self)`
+#### `opensees/apesees.py` (post-session bridge — `apeSees(fem)`)
 
-#### `solvers/_opensees_materials.py`
-- `_Materials` **[sub-composite]**
-  - `.__init__(self, parent)`
-  - `.add_nd_material(self, ...)`
-  - `.add_uni_material(self, ...)`
-  - `.add_section(self, ...)`
+> [!important]
+> `solvers/OpenSees.py` and its sub-composites (`_opensees_materials.py`,
+> `_opensees_elements.py`, `_opensees_ingest.py`, `_opensees_export.py`,
+> `_opensees_inspect.py`, `_opensees_build.py`, `_opensees_constraints.py`)
+> were removed in Phase 8 (ADR 0009). The solver adapter is now in
+> `src/apeGmsh/opensees/`.
 
-#### `solvers/_opensees_elements.py`
-- `_Elements` **[sub-composite]**
-  - `.__init__(self, parent)`
-  - `.add_geom_transf(self, ...)`
-  - `.assign(self, ...)`
-  - `.fix(self, ...)`
+- `apeSees` **[helper]** — post-session explicit-constructor bridge.
+  - `.__init__(self, fem)`
+  - `.model(self, *, ndm, ndf)` — must be called first.
+  - `.nDMaterial.*` — typed primitive constructors; return handles.
+  - `.uniaxialMaterial.*` — typed primitive constructors; return handles.
+  - `.section.*` — typed primitive constructors; return handles.
+  - `.geomTransf.*` — `Linear` / `PDelta` / `Corotational`; return handles.
+  - `.beamIntegration.*` — `Lobatto` / `Legendre` / etc.; return handles.
+  - `.element.*` — typed primitive constructors; `pg=` resolved FEM-direct.
+  - `.fix(self, *, pg=, dofs=)` — homogeneous SP.
+  - `.mass(self, *, pg=, values=)` — lumped nodal mass.
+  - `.timeSeries.*` — `Linear` / `Constant` / `Path` / `Trig` / `Pulse`.
+  - `.pattern.*` — `Plain` / `UniformExcitation` (context-managers).
+  - `.recorder.*` — typed recorder declarations.
+  - `.build(self)` — freeze to immutable `BuiltModel`; usually implicit.
+  - `.tcl(self, path)` — emit Tcl deck (calls `build()` internally).
+  - `.py(self, path, *, run=False)` — emit Python deck.
+  - `.h5(self, path)` — emit native HDF5.
+  - `.run(self)` — in-process openseespy (LiveOpsEmitter).
+  - `.analyze(self, steps, dt)` — drive the analysis chain.
 
-#### `solvers/_opensees_ingest.py`
-- `_Ingest` **[sub-composite]**
-  - `.__init__(self, parent)`
-  - `.loads(self, fem)`
-  - `.sp(self, fem)`
-  - `.masses(self, fem)`
-  - `.constraints(self, fem)`
-
-#### `solvers/_opensees_export.py`
-- `_Export` **[sub-composite]**
-  - `.__init__(self, parent)`
-  - `.tcl(self, path)`
-  - `.py(self, path)`
-
-#### `solvers/_opensees_inspect.py`
-- `_Inspect` **[sub-composite]**
-  - `.__init__(self, parent)`
-  - `.node_table(self)`
-  - `.element_table(self)`
-  - `.summary(self)`
-
-#### `solvers/_opensees_build.py`
-- `run_build(ops)` — module-level; called by `OpenSees.build()`.
-
-#### `solvers/_opensees_constraints.py`
-- `_make_tie_tag_allocator(ops)` → `next_tag()` closure
-- `_quad4_split_pick(rec)`
-- `_pick_retained_nodes(...)`
-- `emit_tie_elements(ops)` — returns `{label: count}`.
-- `render_tie_tcl(entry)`
-- `render_tie_py(entry)`
-
-#### `solvers/_element_specs.py`
+#### `opensees/_internal/_element_specs.py`
 - `_ElemSpec` **[record]** — per-element-type spec (arg slots, PG dim, renderer).
   - `.get_slots(self, ndm)`
   - `.expected_pg_dim` **[property]**
-- Module-level: `_render_tcl(...)`, `_render_py(...)`.
 
 ### 4.5 Sections — `sections/`
 

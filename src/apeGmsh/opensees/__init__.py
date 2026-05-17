@@ -19,8 +19,9 @@ Example:
     ops.tcl("frame.tcl")
     ops.run()
 
-The package coexists with the legacy :mod:`apeGmsh.solvers` during
-the migration period (ADR 0009 — no back-compat shim).
+This is the sole OpenSees surface. The legacy in-session
+``g.opensees.*`` composite and the ``apeGmsh.solvers`` package were
+removed in the Phase-8 teardown (ADR 0009 — no back-compat shim).
 """
 from __future__ import annotations
 

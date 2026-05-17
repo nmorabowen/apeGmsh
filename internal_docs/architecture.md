@@ -82,12 +82,7 @@ g
   |-- .partition          Domain decomposition for parallel solvers
   |-- .view               Gmsh view data (post-processing fields)
   |
-  |-- .opensees           OpenSees solver bridge
-  |     |-- .materials    Material registry (ND, UniAxial, Section)
-  |     |-- .elements     Element assignment + geometric transforms
-  |     |-- .ingest       Load/mass/constraint injection from FEMData
-  |     |-- .inspect      Post-build tables and summaries
-  |     +-- .export       TCL/Python script emission
+  |   (OpenSees bridge — see note below)
   |
   |-- .inspect            Geometry/mesh summary (DataFrames)
   +-- .plot               Matplotlib plotting (optional)
@@ -266,23 +261,35 @@ translation layer, not a computational layer.
 
 ## The OpenSees bridge
 
-The OpenSees bridge is the reference solver adapter:
+The in-session `g.opensees.*` composite was **removed** in the Phase-8
+teardown (ADR 0009). The OpenSees surface is now `apeSees`, a
+**post-session** class constructed from a `FEMData` snapshot:
 
 ```python
-g.opensees.set_model(ndm=3, ndf=3)
-g.opensees.materials.add_nd_material("Concrete", "ElasticIsotropic",
-                                      E=30e9, nu=0.2, rho=2400)
-g.opensees.elements.assign("Body", "FourNodeTetrahedron",
-                            material="Concrete")
-g.opensees.elements.fix("Base", dofs=[1, 1, 1])
-g.opensees.build()
+from apeGmsh.opensees import apeSees
 
-g.opensees.export.tcl("model.tcl")
-g.opensees.export.py("model.py")
+fem = g.mesh.queries.get_fem_data(dim=3)
+# ... close the apeGmsh session first ...
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+ops.element.FourNodeTetrahedron(pg="Body", material=conc,
+                                body_force=(0, 0, -9.81 * 2400))
+ops.fix(pg="Base", dofs=(1, 1, 1))
+
+ops.tcl("model.tcl")
+ops.py("model.py")
 ```
 
-The bridge reads from `FEMData` during `build()`. It does NOT call
-Gmsh directly — all mesh data comes through the broker.
+`apeSees` reads from `FEMData` to resolve `pg=` selectors to node /
+element tags. It does NOT call Gmsh directly — all mesh data comes
+through the broker. Loads, masses, and SP boundary conditions declared
+on the session are **not** ingested automatically; re-declare them
+explicitly on `ops`.
+
+See `skills/apegmsh/references/opensees-bridge.md` for the full API
+reference and old→new migration mapping.
 
 
 ## The viewer
@@ -337,7 +344,7 @@ gmsh (C library)
   |     |
   |     +-- FEMData (solver-agnostic output)
   |
-  +-- solvers/ (OpenSees bridge)
+  +-- opensees/ (apeSees bridge — post-session)
   |     |
   |     +-- openseespy (optional)
   |
@@ -358,7 +365,7 @@ Optional: `matplotlib`, `openseespy`, `PySide6`, `pyvista`, `vtk`.
 src/apeGmsh/
   core/          Geometry, labels, parts, constraints, loads, masses
   mesh/          Meshing pipeline, FEMData, extraction
-  solvers/       OpenSees bridge, constraint/load/mass resolvers
+  opensees/      OpenSees bridge (apeSees — post-session; apeGmsh.solvers removed in Phase-8)
   viz/           Lightweight plotting, selection, VTK export
   viewers/       Qt interactive viewers (30 files)
   sections/      Parametric section builders

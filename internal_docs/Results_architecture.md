@@ -28,9 +28,12 @@ results through a **single composite API** that mirrors `FEMData`.
 ### Design principles
 
 1. **One declarative spec, three execution strategies.** Recorders
-   are owned by apeGmsh, not by the user's solver script. The same
-   `g.opensees.recorders` declaration drives Tcl/Python recorder
+   are declared on the `apeSees` bridge (post-session) via
+   `ops.recorder.Node(...)` / `ops.recorder.Element(...)` etc. The
+   resolved `ResolvedRecorderSpec` drives Tcl/Python recorder
    commands, in-process introspection, or MPCO output.
+   (The old `g.opensees.recorders` session composite was removed in
+   the Phase-8 teardown.)
 2. **Data always lives on disk.** RAM is for queries, not storage.
    Every backend resolves to chunked HDF5; lazy slab reads keep
    memory bounded for million-DOF, multi-partition runs.
@@ -57,13 +60,15 @@ results through a **single composite API** that mirrors `FEMData`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ DECLARATION  (apeGmsh session, by PG/label, like loads/masses)       │
+│ DECLARATION  (post-session, on apeSees bridge)                       │
 │                                                                      │
-│   g.opensees.recorders.nodes("Top", components=["displacement"])    │
-│   g.opensees.recorders.gauss("Body", components=["stress"])         │
+│   ops.recorder.Node(nodes=fem.nodes.get_ids(pg="Top"),              │
+│                     dofs=[1,2,3], response="disp")                  │
+│   ops.recorder.Element(elements=fem.elements.get_ids(pg="Body"),    │
+│                         response="stress")                          │
 │                                                                      │
-│   spec = g.opensees.recorders.resolve(fem)   # → ResolvedSpec        │
-│                                  (carries fem snapshot_id)          │
+│   ops.recorder.declare(nodes=("displacement",), pg="Top")          │
+│       # resolved implicitly at ops.tcl/py emit (binds snapshot_id)  │
 └──────────┬───────────────────────┬───────────────────────┬───────────┘
            │                       │                       │
            ▼                       ▼                       ▼
@@ -107,9 +112,13 @@ results through a **single composite API** that mirrors `FEMData`.
 
 ### Layer 1 — Declarative recorder spec
 
-`g.opensees.recorders` is a pre-mesh / pre-build composite, parallel
-to `g.loads` / `g.masses` / `g.constraints`. Same two-stage pipeline:
-declare against PGs/labels, resolve through `FEMData`.
+Recorders are declared on the `apeSees` bridge (post-session) via
+`ops.recorder.Node(...)` / `ops.recorder.Element(...)` etc., after
+`fem = g.mesh.queries.get_fem_data(dim=3)` and outside the apeGmsh
+session. The same two-stage pattern applies: declare against
+PGs/labels, then emit via `ops.tcl(path)` / `ops.py(path)` /
+`ops.run()` — resolution against the `fem` snapshot is implicit at
+emit (no separate user resolve step).
 
 #### Categories (cover everything OpenSees supports)
 
@@ -147,21 +156,29 @@ declare against PGs/labels, resolve through `FEMData`.
   Mixed kinematics is two entries: `["displacement", "rotation"]`.
   Explicit per-component (`["displacement_x"]`) is always valid.
 - **Default recorder set** can be enabled with
-  `g.opensees.recorders.enable_defaults()`: displacements on all nodes,
+  `ops.recorder.enable_defaults()`: displacements on all nodes,
   reactions on fixed nodes, stress on all GPs of continuum elements,
   axial forces on all line elements. Off by default.
 - **Output cadence** via `dt=` or `n_steps=`. Defaults to every
   analysis step.
-- **Validation at resolve time.** `g.opensees.recorders.gauss("Beams",
-  components=["stress"])` raises if those elements have no GPs in
-  apeGmsh's element-spec capability table — fail fast, not after a
+- **Validation at resolve time.** Requesting a gauss component on
+  elements without GPs raises at resolve time — fail fast, not after a
   4-hour run.
 
 #### Resolution
 
 ```python
+from apeGmsh.results.spec import ResolvedRecorderSpec, ResolvedRecorderRecord
+
 fem = g.mesh.queries.get_fem_data(dim=3)
-spec = g.opensees.recorders.resolve(fem)   # ResolvedRecorderSpec
+spec = ResolvedRecorderSpec(
+    fem_snapshot_id=fem.snapshot_id,
+    records=(ResolvedRecorderRecord(
+        category="nodes", name="top",
+        components=("displacement_x", "displacement_y", "displacement_z"),
+        dt=None, n_steps=None, node_ids=top_ids,
+    ),),
+)
 
 # spec carries per-recorder:
 #   - canonical component names (shorthand expanded)
@@ -200,12 +217,12 @@ The strategies group into three families that share a producer:
 #### Strategy A₁ — Tcl/Python file recorders
 
 ```python
-g.opensees.export.tcl("model.tcl", recorders=spec)
+ops.tcl("model.tcl", recorders=spec)
 # OpenSees writes .out / .xml files when the user runs the script
 results = Results.from_recorders(spec, output_dir="out/", fem=fem)
 ```
 
-`g.opensees.export.{tcl,py}(recorders=spec)` adds the matching
+`ops.tcl(recorders=spec)` / `ops.py(recorders=spec)` add the matching
 `recorder Node …` / `recorder Element …` commands to the script. The
 spec is also serialized as a sidecar HDF5 manifest so
 `Results.from_recorders` can decode the column layout of each file.
@@ -286,7 +303,7 @@ stage attrs. Bounded RAM, no per-step file I/O storms.
 #### Strategy C₁ — STKO/MPCO bridge (Tcl export)
 
 ```python
-g.opensees.export.tcl("model.tcl", recorders=spec, mpco=True)
+ops.tcl("model.tcl", recorders=spec, mpco=True)
 # Writes `recorder mpco …` commands instead of (or alongside) text
 results = Results.from_mpco("out/run.mpco", fem=fem)
 ```
@@ -889,13 +906,14 @@ src/apeGmsh/results/
 > `export/` subpackage (`results.export.vtu/pvd`) was deferred —
 > Phase 10 was not delivered.
 
-Recorder spec lives next to the existing OpenSees bridge:
+Recorder spec lives in the OpenSees bridge package (note: `apeGmsh.solvers`
+was removed in Phase-8; recorder infrastructure now lives under `apeGmsh.opensees`):
 
 ```
-src/apeGmsh/solvers/
-├── Recorders.py             # NEW — g.opensees.recorders composite
-├── _recorder_specs.py       # NEW — declarative records + ResolvedRecorderSpec
-└── _opensees_export.py      # MODIFIED — accept recorders=spec, emit commands
+src/apeGmsh/opensees/
+├── recorder/                # ops.recorder.* — typed recorder declarations
+│   └── ...
+└── _recorder_specs.py       # declarative records + ResolvedRecorderSpec
 ```
 
 FEMData hashing lives next to `FEMData.py`:
@@ -1063,22 +1081,25 @@ transparent.
 
 ### Phase 4 — Recorder spec composite
 
-**Goal:** `g.opensees.recorders.*` declarative API works. Spec
+**Goal:** Recorder declaration API on the `apeSees` bridge works. Spec
 resolves through FEMData and locks to its snapshot_id. No emission
-yet.
+yet. (Note: `apeGmsh.solvers` was removed in Phase-8; this phase
+was completed under `apeGmsh.opensees`.)
 
 **New files:**
-- `src/apeGmsh/solvers/Recorders.py` — `Recorders` composite with
-  `.nodes`, `.elements`, `.line_stations`, `.gauss`, `.fibers`,
-  `.layers`, `.modal` methods
-- `src/apeGmsh/solvers/_recorder_specs.py` —
+- `src/apeGmsh/opensees/recorder/` — `ops.recorder.*` typed recorder
+  declarations; methods include `.Node`, `.Element`, `.declare`,
+  `.MPCO` (no `.resolve` — resolution is implicit at emit)
+- `src/apeGmsh/opensees/_recorder_specs.py` —
   `RecorderRecord` (declarative, by PG/label),
   `ResolvedRecorderRecord` (concrete IDs after resolve),
   `ResolvedRecorderSpec` (collection, carries fem `snapshot_id`)
 
 **Modified files:**
-- `src/apeGmsh/solvers/OpenSees.py` — add `recorders` attribute,
-  expose `g.opensees.recorders.resolve(fem)`
+- `src/apeGmsh/opensees/apesees.py` — `recorder` attribute on the
+  bridge, exposing `ops.recorder.declare(...)` /
+  `ops.recorder.Node(...)` / `ops.recorder.Element(...)` /
+  `ops.recorder.MPCO(...)`
 - `src/apeGmsh/solvers/_element_specs.py` — extend `_ElemSpec` with
   capability flags: `has_gauss: bool`, `has_fibers: bool`,
   `has_layers: bool`, `has_line_stations: bool`,

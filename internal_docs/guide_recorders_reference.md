@@ -9,7 +9,13 @@ selectors / cadence options apply.**
 > wire them into validation:
 >
 > ```python
-> from apeGmsh.solvers.Recorders import Recorders
+> # TODO(apeSees migration): from apeGmsh.solvers.Recorders import Recorders
+> # apeGmsh.solvers was removed in the Phase-8 teardown.
+> # Recorder declarations now live on the apeSees bridge: ops.recorder.Node(...),
+> # ops.recorder.Element(...), etc.  The discovery methods below reflect the
+> # old session-composite API; equivalent runtime introspection on the new
+> # bridge is via ops.recorder.available_categories() (if exposed) or the
+> # vocabulary in this document.
 >
 > Recorders.categories()
 > # ('nodes', 'elements', 'line_stations', 'gauss',
@@ -122,9 +128,9 @@ Shorthand expansions are clipped to the active `ndm` / `ndf` at
 rotations).
 
 ```python
-g.opensees.recorders.nodes(
-    components=["displacement", "reaction_force"],
-    pg="Top",
+ops.recorder.Node(
+    nodes=fem.nodes.get_ids(pg="Top"),
+    dofs=[1, 2, 3], response="disp",
     dt=0.01,
 )
 ```
@@ -151,9 +157,9 @@ into separate records (one for global, one for local).
 This category currently has no shorthands; pass canonical names.
 
 ```python
-g.opensees.recorders.elements(
-    components=["nodal_resisting_force_x"],
-    pg="Frame",
+ops.recorder.Element(
+    elements=fem.elements.get_ids(pg="Frame"),
+    response="globalForce",
 )
 ```
 
@@ -186,9 +192,9 @@ declaration path. They emerge through MPCO's `section.deformation`
 bucket on the read side.
 
 ```python
-g.opensees.recorders.line_stations(
-    components=["axial_force", "bending_moment_y"],
-    label="frame",
+ops.recorder.Element(
+    elements=fem.elements.get_ids(label="frame"),
+    response="section", args=[1, "force"],
 )
 ```
 
@@ -238,9 +244,9 @@ Stress and strain components cannot mix in one record (they come
 from different OpenSees recorder tokens). Split into two records.
 
 ```python
-g.opensees.recorders.gauss(
-    components=["stress", "von_mises_stress"],
-    pg="Body",
+ops.recorder.Element(
+    elements=fem.elements.get_ids(pg="Body"),
+    response="stress",
 )
 ```
 
@@ -270,9 +276,9 @@ the `.out` file format. Use `spec.capture(...)` or
 `spec.emit_mpco(...)` instead.
 
 ```python
-g.opensees.recorders.fibers(
-    components=["fiber_stress", "fiber_strain"],
-    pg="RC_Columns",
+ops.recorder.Element(
+    elements=fem.elements.get_ids(pg="RC_Columns"),
+    response="section", args=[1, "fiber", "stress"],
 )
 ```
 
@@ -299,9 +305,9 @@ Same as `fibers` — not emittable via classic recorders. Use
 thickness + material-tag metadata) or `spec.emit_mpco(...)`.
 
 ```python
-g.opensees.recorders.layers(
-    components=["fiber_stress", "fiber_strain"],
-    pg="Slab",
+ops.recorder.Element(
+    elements=fem.elements.get_ids(pg="Slab"),
+    response="section", args=[1, "fiber", "stress"],
 )
 ```
 
@@ -316,7 +322,8 @@ Eigenvalue analysis. Each requested mode lands as its own stage with
 ### Signature
 
 ```python
-g.opensees.recorders.modal(n_modes=10, dt=None, n_steps=None, name=None)
+# TODO(apeSees migration): g.opensees.recorders.modal(n_modes=10, dt=None, n_steps=None, name=None)
+# Modal capture uses domain capture (Strategy B): spec.capture(...).capture_modes(n_modes=10)
 ```
 
 Modal records have **no `components=` and no selectors** — they
@@ -335,7 +342,10 @@ drive eigenvalue analysis and will raise on `__enter__` if your spec
 contains modal records.
 
 ```python
-g.opensees.recorders.modal(n_modes=10)
+# TODO(apeSees migration): g.opensees.recorders.modal(n_modes=10)
+# Modal capture in apeSees uses domain capture (Strategy B):
+#   with spec.capture(path="modes.h5", fem=fem) as cap:
+#       cap.capture_modes(n_modes=10)
 ```
 
 ---
@@ -363,11 +373,12 @@ The `Recorders` registry supports the standard container protocols
 (`Recorders.py:886-895`):
 
 ```python
-recs = g.opensees.recorders
-
-len(recs)          # number of declared records
-list(recs)         # iterate -- yields RecorderRecord objects
-recs.clear()       # drop all declarations and reset the auto-id counter
+# TODO(apeSees migration): recs = g.opensees.recorders
+# g.opensees.recorders (session composite) was removed in the Phase-8 teardown.
+# Recorder declarations now live on the apeSees bridge (ops.recorder.X(...)).
+# The equivalent container on the new bridge is ops.recorder; introspection
+# methods (len, iter, clear) depend on the bridge version — consult the
+# apeSees source if you need programmatic enumeration.
 ```
 
 `clear()` is useful when re-running a parametric study in the same

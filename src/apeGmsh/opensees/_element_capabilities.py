@@ -77,7 +77,7 @@ class _ElemSpec:
     slots_2d    : tuple[str, ...] | None = None  # overrides slots for ndm=2
     slots_3d    : tuple[str, ...] | None = None  # overrides slots for ndm=3
 
-    # Recorder capabilities — used by g.opensees.recorders.resolve()
+    # Recorder capabilities — used by recorder resolution
     # to validate at declaration time. ``has_*`` describes whether the
     # element class *can* expose results at that topology level —
     # specific instances may or may not, but the class supports it.
@@ -106,7 +106,7 @@ class _ElemSpec:
     def supports(self, recorder_category: str) -> bool:
         """True if this element class supports the given recorder category.
 
-        Categories are the ones used by ``g.opensees.recorders.*`` —
+        Categories are the ones used by ``ops.recorder.*`` —
         ``"gauss"``, ``"fibers"``, ``"layers"``, ``"line_stations"``.
         ``"nodes"`` and ``"elements"`` (per-element-node forces) are
         always supported and not checked here.

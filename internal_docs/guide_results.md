@@ -48,7 +48,7 @@ MPCO doesn't embed a full FEMData; the reader synthesises a partial one from the
 
 ### `Results.from_recorders` — classic OpenSees recorders
 
-For `.out` / `.xml` files written by `g.opensees.export.tcl(..., recorders=spec)`, `g.opensees.export.py(..., recorders=spec)`, or `spec.emit_recorders(...)` (Strategy A₁/A₂/A₃).
+For `.out` / `.xml` files written by `ops.tcl(..., recorders=spec)`, `ops.py(..., recorders=spec)`, or `spec.emit_recorders(...)` (Strategy A₁/A₂/A₃). Here `ops` is the `apeSees(fem)` bridge.
 
 ```python
 results = Results.from_recorders(spec, "out/", fem=fem)
@@ -188,28 +188,32 @@ Full coverage of selectors, slab dataclass shapes, time slicing, and the `.avail
 
 ```python
 from apeGmsh import apeGmsh, Results
+from apeGmsh.opensees import apeSees
 import openseespy.opensees as ops
 
 with apeGmsh(model_name="slab") as g:
     # ... geometry, mesh, physical groups ...
-    g.opensees.set_model(ndm=3, ndf=3)
-    # ... materials, elements, fix ...
     fem = g.mesh.queries.get_fem_data(dim=3)
-    g.opensees.build()
 
-    # Declare what to record
-    g.opensees.recorders.nodes(components=["displacement"], pg="Top")
-    g.opensees.recorders.gauss(components=["stress"], pg="Body")
-    spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=3)
+# OpenSees — post-session, explicit declarations.
+bridge = apeSees(fem)
+bridge.model(ndm=3, ndf=3)
+# ... materials, elements, fix, patterns (re-declare explicitly) ...
 
-    # Run with domain capture (Strategy B)
-    with spec.capture(path="run.h5", fem=fem, ndm=3, ndf=3) as cap:
-        cap.begin_stage("gravity", kind="static")
-        # ... static analysis ...
-        for _ in range(10):
-            ops.analyze(1, 0.1)
-            cap.step(t=ops.getTime())
-        cap.end_stage()
+# Declare recorders and resolve the spec — see guide_obtaining_results.md
+# for the full five-strategy walkthrough.  The recorder declaration API
+# is `ops.recorder.Node(...)` / `ops.recorder.Element(...)` on the apeSees
+# bridge; resolve() returns a ResolvedRecorderSpec used by the strategies below.
+spec = ...   # see guide_obtaining_results.md for declaration + resolve
+
+# Run with domain capture (Strategy B)
+with spec.capture(path="run.h5", fem=fem, ndm=3, ndf=3) as cap:
+    cap.begin_stage("gravity", kind="static")
+    # ... static analysis ...
+    for _ in range(10):
+        ops.analyze(1, 0.1)
+        cap.step(t=ops.getTime())
+    cap.end_stage()
 
 # Open the file
 results = Results.from_native("run.h5", fem=fem)

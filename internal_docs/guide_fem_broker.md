@@ -370,7 +370,9 @@ for rec in fem.nodes.sp.prescribed():
     ...
 ```
 
-Ingest into the OpenSees bridge via `g.opensees.ingest.sp(fem)`.
+Pass to the OpenSees bridge explicitly: homogeneous SPs become `ops.fix(pg=..., dofs=...)`;
+prescribed SPs go inside a pattern via `p.sp(pg=..., dof=..., value=...)`.
+See `skills/apegmsh/references/opensees-bridge.md` for the full migration mapping.
 
 
 ## Selection shorthand and dim filter

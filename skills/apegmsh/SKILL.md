@@ -11,8 +11,8 @@ description: >
   editing/queries/partitioning``, labels, physical groups, FEMData
   broker (``g.mesh.queries.get_fem_data``), multi-part assemblies
   (``Part`` + ``g.parts``), loads / masses / constraints (``g.loads``,
-  ``g.masses``, ``g.constraints``), the OpenSees bridge
-  (``g.opensees.materials/elements/ingest/inspect/export``), and the
+  ``g.masses``, ``g.constraints``), the ``apeSees(fem)`` OpenSees
+  bridge with typed primitives, and the
   ``apeGmshViewer`` post-processing app. Also use it when the user says
   "meshing", "FEA mesh", "structural mesh", or "OpenSees from gmsh"
   in a context where apeGmsh is the wrapper of choice — the user has
@@ -40,18 +40,20 @@ The library is big. Don't try to remember every composite — read the
 reference file that matches the task, *then* write the code. The
 references are tight; reading them is cheap.
 
-- **`references/api-cheatsheet.md`** — one-page map of every composite
-  (`g.model.*`, `g.mesh.*`, `g.opensees.*`, `g.parts`, `g.loads`,
+- **`references/api-cheatsheet.md`** — one-page map of every session
+  composite (`g.model.*`, `g.mesh.*`, `g.parts`, `g.loads`,
   `g.masses`, `g.constraints`, `g.physical`, `g.labels`,
-  `g.mesh_selection`) and the methods on each. Read this first for
-  any non-trivial apeGmsh task — it will save you from guessing
-  signatures.
+  `g.mesh_selection`) plus the post-session `apeSees(fem)` bridge,
+  and the methods on each. Read this first for any non-trivial
+  apeGmsh task — it will save you from guessing signatures.
 - **`references/fem-broker.md`** — deep dive on `FEMData`, the broker
   object returned by `g.mesh.queries.get_fem_data(dim=...)`. Read this
   when the task touches nodes, elements, iteration, or solver hand-off.
-- **`references/opensees-bridge.md`** — the `g.opensees.*` pipeline:
-  materials, element assignment, `ingest.loads/masses`, `build()`,
-  `export.tcl/py`. Read this for any OpenSees generation task.
+- **`references/opensees-bridge.md`** — the `apeSees(fem)` bridge:
+  typed-primitive materials/sections/elements, explicit
+  `ops.fix`/`ops.mass`/`ops.pattern`, `ops.tcl/py/h5/run`, and the
+  deferred multi-point-constraint gap. Read this for any OpenSees
+  generation task.
 - **`references/workflows.md`** — end-to-end patterns: single-session,
   multi-part assembly, solid-frame coupling, pushover. Read when the
   user asks for a complete example or a workflow they haven't built
@@ -67,16 +69,20 @@ Three concepts, in this order:
 
 **1. A session (`g`) owns a single Gmsh kernel.** Open it with
 `g.begin()` / `g.end()` or a `with apeGmsh(...) as g:` block. Every
-composite — `g.model`, `g.mesh`, `g.opensees`, `g.loads`, etc. — is
-a thin namespace that talks to that shared kernel. There is **no
-separate Assembly class**. The session *is* the assembly.
+composite — `g.model`, `g.mesh`, `g.loads`, etc. — is a thin
+namespace that talks to that shared kernel. There is **no
+separate Assembly class**. The session *is* the assembly. OpenSees
+is **not** a session composite — it is the separate post-session
+bridge `apeSees(fem)`.
 
 **2. Composites split by concern.** `g.model` is further split into
 `geometry / boolean / transforms / io / queries`. `g.mesh` splits
 into `generation / sizing / field / structured / editing / queries /
-partitioning`. `g.opensees` splits into `materials / elements /
-ingest / inspect / export`. Every method you want has a home — you
-rarely need to reach into `gmsh.*` directly.
+partitioning`. The OpenSees bridge `apeSees(fem)` exposes typed
+namespaces (`uniaxialMaterial / nDMaterial / section / geomTransf /
+beamIntegration / element / timeSeries / pattern / recorder`) plus
+flat verbs (`model / fix / mass / build / tcl / py / h5 / run`).
+Every method you want has a home — you rarely reach into `gmsh.*`.
 
 **3. `FEMData` is the solver contract.** When the mesh is ready, call
 `fem = g.mesh.queries.get_fem_data(dim=3)` (or `dim=2`, or `None` for
@@ -116,16 +122,21 @@ with apeGmsh(model_name="my_model", verbose=True) as g:
     fem = g.mesh.queries.get_fem_data(dim=3)
     print(fem.info)        # "N nodes, M elements, bandwidth=..."
 
-    # 6. OPENSEES (optional)
-    g.opensees.set_model(ndm=3, ndf=3)
-    g.opensees.materials.add_nd_material("Conc", "ElasticIsotropic",
-                                          E=30e9, nu=0.2, rho=2400)
-    g.opensees.elements.assign("Body", "FourNodeTetrahedron",
-                                material="Conc")
-    g.opensees.elements.fix("Base", dofs=[1, 1, 1])
-    g.opensees.ingest.loads(fem).masses(fem)
-    g.opensees.build()
-    g.opensees.export.py("model.py")
+# 6. OPENSEES (optional) — post-session bridge, typed primitives.
+#    Loads/masses/SPs are re-declared explicitly (NOT auto-pulled
+#    from g.loads/g.masses); MP constraints are deferred.
+from apeGmsh.opensees import apeSees
+
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+conc = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2, rho=2400)
+ops.element.FourNodeTetrahedron(
+    pg="Body", material=conc, body_force=(0.0, 0.0, -9.81 * 2400),
+)
+ops.fix(pg="Base", dofs=(1, 1, 1))
+with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+    p.load(pg="Tip", forces=(0.0, 0.0, -5e4))
+ops.py("model.py")
 ```
 
 This is the **happy path**. When the user asks for something more
@@ -145,8 +156,9 @@ assuming a deeper problem:
 
 2. **Physical group resolves to wrong dimension** — `g.physical.add(1,
    tags, name="Fixed")` and `g.physical.add(2, tags, name="Fixed")`
-   are different groups. If the OpenSees bridge later complains about
-   ambiguity, pass `dim=` to `elements.assign(...)` / `elements.fix(...)`.
+   are different groups. Keep PG names dimension-unique so the
+   `apeSees(fem)` `pg=` selectors (`ops.element(pg=...)`,
+   `ops.fix(pg=...)`) resolve unambiguously.
 
 3. **"No label, physical group, or part named X"** — target resolution
    order is `label → physical group → part label`. The name you used

@@ -255,8 +255,12 @@ for c in fem.nodes.constraints.pairs():
         solver.equal_dof(c.master_node, c.slave_node, c.dofs)
 ```
 
-The OpenSees bridge (`g.opensees.ingest.loads(fem).masses(fem)`)
-is a thin wrapper over this same shape.
+This iteration shape is for solver-agnostic hand-off and
+inspection. The `apeSees(fem)` OpenSees bridge does **not**
+consume it — it requires loads/masses/SPs to be re-declared
+explicitly (`ops.fix` / `ops.mass` / `ops.pattern`), and
+multi-point constraints are deferred (no emission path). See
+`opensees-bridge.md`.
 
 ## Common traps
 

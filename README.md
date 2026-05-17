@@ -97,7 +97,7 @@ session *is* the assembly. Parts are registered into
 | `g.constraints`  | Solver-agnostic constraint definitions & resolver |
 | `g.loads`        | Load patterns & definitions (resolved into `fem.loads`) |
 | `g.masses`       | Mass definitions (resolved into `fem.masses`) |
-| `g.opensees`     | OpenSees bridge (see sub-composites below) |
+| *(post-session)* | `apeSees(fem)` — OpenSees bridge (separate post-session object; see below) |
 | `g.inspect`      | Session-level diagnostics |
 | `g.plot`         | Matplotlib visualisations (optional) |
 | `g.view`         | Gmsh post-processing scalar/vector views |
@@ -134,20 +134,42 @@ Seven focused namespaces for meshing:
 Plus flat `g.mesh.viewer()` and `g.mesh.results_viewer()` for
 interactive windows.
 
-### `g.opensees` sub-composites
+### `apeSees(fem)` — post-session OpenSees bridge
 
-Five focused namespaces for the OpenSees bridge:
+The OpenSees bridge is constructed **after** the session closes, from a
+`FEMData` snapshot. It is **not** a `g.` composite — the in-session
+`g.opensees` attribute was removed in Phase 8 (ADR 0009).
 
-| Access | Methods |
+```python
+from apeGmsh.opensees import apeSees
+
+fem = g.mesh.queries.get_fem_data(dim=3)
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+```
+
+`apeSees` has **no ingest and no auto-resolution**. Loads, masses, and
+SPs must be re-declared explicitly on `ops`. Multi-point constraint
+emission is deferred (ADR 0009).
+
+| Namespace | What it provides |
 |---|---|
-| `g.opensees.materials` | `add_nd_material`, `add_uni_material`, `add_section` |
-| `g.opensees.elements`  | `add_geom_transf`, `vecxz`, `assign`, `fix` |
-| `g.opensees.ingest`    | `loads(fem)`, `sp(fem)`, `masses(fem)`, `constraints(fem)` — ingest resolved records from a FEMData snapshot |
-| `g.opensees.inspect`   | `node_table`, `element_table`, `summary` |
-| `g.opensees.export`    | `tcl(path)`, `py(path)` |
-
-Plus two lifecycle entry points that stay flat on `g.opensees`:
-`set_model(ndm, ndf)` and `build()`.
+| `ops.nDMaterial.*` | nD material typed constructors; return handles |
+| `ops.uniaxialMaterial.*` | uniaxial material typed constructors; return handles |
+| `ops.section.*` | section typed constructors; return handles |
+| `ops.geomTransf.*` | `Linear` / `PDelta` / `Corotational`; return handles |
+| `ops.beamIntegration.*` | `Lobatto`, `Legendre`, …; return handles |
+| `ops.element.*` | element typed constructors; `pg=` resolved FEM-direct |
+| `ops.fix(pg=, dofs=)` | homogeneous SP (model-level) |
+| `ops.mass(pg=, values=)` | lumped nodal mass |
+| `ops.timeSeries.*` | `Linear`, `Constant`, `Path`, `Trig`, `Pulse` |
+| `ops.pattern.*` | `Plain`, `UniformExcitation` (context-managers) |
+| `ops.recorder.*` | typed recorder declarations |
+| `ops.tcl(path)` | emit Tcl deck |
+| `ops.py(path, run=False)` | emit Python deck |
+| `ops.h5(path)` | emit native HDF5 |
+| `ops.run()` | in-process openseespy |
+| `ops.analyze(steps, dt)` | drive the analysis chain |
 
 ### The FEM broker
 
@@ -270,18 +292,15 @@ apeGmsh/
         MshLoader.py
         Partition.py
       solvers/
-        OpenSees.py                # g.opensees composite container
-        _opensees_materials.py     # g.opensees.materials
-        _opensees_elements.py      # g.opensees.elements
-        _opensees_ingest.py        # g.opensees.ingest
-        _opensees_inspect.py       # g.opensees.inspect
-        _opensees_export.py        # g.opensees.export
-        _opensees_build.py         # OpenSees.build() implementation
-        _element_specs.py          # element type registry
         Constraints.py
         Loads.py
         Masses.py
         Numberer.py
+      opensees/                  # apeSees(fem) post-session bridge (Phase 8+)
+        apesees.py               # apeSees class — explicit-constructor entry point
+        _internal/               # typed primitive namespaces (nDMaterial, element, …)
+        pattern/                 # Plain, UniformExcitation context-managers
+        emitter/                 # tcl / py / h5 / run emitters + h5_reader
       viewers/                  # PyQt/PyVista viewers
       results/                  # VTU export + Results container
       viz/                      # Selection, Inspect, Plot, VTKExport
@@ -329,11 +348,11 @@ See the `examples/` directory — every notebook runs in-place after
 See [`internal_docs/MIGRATION_v1.md`](internal_docs/MIGRATION_v1.md) for the full
 checklist. In short: package rename (`pyGmsh → apeGmsh`), `g.model.*`
 split into five sub-composites, `g.mesh.*` split into seven,
-`g.opensees.*` split into five (with `assign_element → assign`,
-`consume_*_from_fem → ingest.loads/masses`, `export_tcl/py → export.tcl/py`),
 `g.mass → g.masses`, `g.initialize/finalize → g.begin/end`. The
-migration guide ships a ~150-line Python script that handles every
-mechanical rewrite on an existing project.
+in-session `g.opensees.*` composite was **removed** in Phase 8 (ADR
+0009) — replace it with `from apeGmsh.opensees import apeSees; ops =
+apeSees(fem)`. The migration guide ships a ~150-line Python script that
+handles every mechanical rewrite on an existing project.
 
 ## Credits
 

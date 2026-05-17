@@ -41,8 +41,11 @@ Optional extras (pip): `matplotlib` (plots), `openseespy` (analysis),
 | `g.physical`       | `PhysicalGroups`    | Solver-facing named groups |
 | `g.mesh_selection` | `MeshSelectionSet`  | Post-mesh node/element selection sets |
 | `g.view`           | `View`              | Gmsh post-processing scalar/vector views |
-| `g.opensees`       | `OpenSees`          | OpenSees bridge (5 sub-composites) |
 | `g.plot`           | `Plot`              | Matplotlib visualisations (optional extra) |
+
+OpenSees is **not** a session composite — it is the post-session
+bridge `apeSees(fem)` (`from apeGmsh.opensees import apeSees`), see
+the `apeSees(fem)` section below and `opensees-bridge.md`.
 
 ---
 
@@ -401,39 +404,52 @@ summary() -> pd.DataFrame
 to_dataframe(dim, tag) -> pd.DataFrame
 ```
 
-## `g.opensees` — OpenSees bridge (see `opensees-bridge.md`)
+## `apeSees(fem)` — OpenSees bridge (see `opensees-bridge.md`)
+
+Post-session. `from apeGmsh.opensees import apeSees`. Typed
+primitives return **handles** passed by reference (no string
+types). **Not fluent** — separate statements.
 
 ```
-g.opensees.set_model(*, ndm=3, ndf=3)
-g.opensees.build()
+ops = apeSees(fem, *, default_orientation=Cartesian())
+ops.model(*, ndm, ndf)
 
-g.opensees.materials
-    .add_nd_material(name, ops_type, **params)
-    .add_uni_material(name, ops_type, **params)
-    .add_section(name, section_type, **params)
+# materials / sections / transforms — return handles
+m  = ops.nDMaterial.<Type>(**typed_kwargs)
+m  = ops.uniaxialMaterial.<Type>(**typed_kwargs)   # Steel02: fy= not Fy=
+s  = ops.section.<Type>(**typed_kwargs)
+t  = ops.geomTransf.Linear|PDelta|Corotational(*, vecxz=None, orientation=None)
+bi = ops.beamIntegration.Lobatto(*, section=s, n_ip=5)
 
-g.opensees.elements
-    .add_geom_transf(name, transf_type, *, vecxz=None, **extra)
-    .assign(pg_name, ops_type, *, material=None, geom_transf=None, dim=None, **extra)
-    .fix(pg_name, *, dofs, dim=None)
+# elements — pg= selection; gravity/pressure are element params
+ops.element.<Type>(*, pg, material=m | section=s | transf=t, integration=bi,
+                    body_force=(b1,b2,b3), pressure=p)        -> ElementGroup
 
-g.opensees.ingest
-    .loads(fem)
-    .masses(fem)
-    .sp(fem)
-    .constraints(fem)
+# BCs / mass / loads — EXPLICIT (no ingest of g.loads/g.masses)
+ops.fix(*, pg=None, nodes=None, dofs)                  # homogeneous SP
+ops.mass(*, pg=None, nodes=None, values)
+ts = ops.timeSeries.Linear|Constant|Path|Trig|Pulse(...)
+with ops.pattern.Plain(series=ts) as p:                # or UniformExcitation
+    p.load(*, pg=None, node=None, forces)
+    p.sp(*, pg=None, node=None, dof, value)            # prescribed (non-zero)
+ops.recorder.<Type>(...)
 
-g.opensees.inspect
-    .node_table() -> DataFrame
-    .element_table() -> DataFrame
-    .summary() -> str
-
-g.opensees.export
-    .tcl(path) -> self
-    .py(path)  -> self
+# emit / run (each builds internally)
+ops.build() -> BuiltModel
+ops.tcl(path, *, run=False)
+ops.py(path,  *, run=False)
+ops.h5(path,  *, model_name=None, cuts=(), sweeps=())
+ops.run(*, wipe=True)
+ops.analyze(*, steps, dt=None) -> int
 ```
 
-Every declaration method returns `self` — fluent chaining everywhere.
+⚠️ **Multi-point constraints are DEFERRED**: `tie`, `rigid_link`,
+`equal_dof`, `rigid_diaphragm`, `node_to_surface`, `tied_contact`,
+`mortar`, embedded rebar have **no emission path** (ADR 0009;
+`opensees/architecture/_DEFERRED.md`). Session declarations persist
+into `model.h5` for the viewer/`Results` but never reach a runnable
+deck. Inspection is broker-side (`fem.inspect.*`) or
+`apeGmsh.opensees.emitter.h5_reader.open(path)`.
 
 ## FEMData (see `fem-broker.md` for details)
 
