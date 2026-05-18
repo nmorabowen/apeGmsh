@@ -8,14 +8,14 @@ Solver-agnostic kinematic-constraint engine. Constraints are
 
 Stage 1 — **declare** before meshing. The factory methods on
 `g.constraints` (`equal_dof`, `rigid_link`, `tie`, …) store
-[`ConstraintDef`][apeGmsh.solvers._constraint_defs.ConstraintDef]
+[`ConstraintDef`][apeGmsh.core.constraints.defs.ConstraintDef]
 dataclasses describing intent at the geometry level. These
 definitions carry no node tags and survive remeshing.
 
 Stage 2 — **resolve** after meshing.
-[`ConstraintResolver`][apeGmsh.solvers._constraint_resolver.ConstraintResolver]
+[`ConstraintResolver`][apeGmsh.mesh._constraint_resolver._resolver.ConstraintResolver]
 walks the def list and produces concrete
-[`ConstraintRecord`][apeGmsh.solvers._constraint_records.ConstraintRecord]
+[`ConstraintRecord`][apeGmsh.mesh.records._constraints.ConstraintRecord]
 objects (actual node tags, weights, offset vectors). Records land on
 the FEM broker:
 
@@ -112,12 +112,12 @@ with apeGmsh(model_name="frame") as g:
 ## Base class
 
 All Stage-1 definitions inherit from
-[`ConstraintDef`][apeGmsh.solvers._constraint_defs.ConstraintDef] —
+[`ConstraintDef`][apeGmsh.core.constraints.defs.ConstraintDef] —
 a thin dataclass carrying `kind`, `master_label`, `slave_label`, and
 an optional friendly `name`. Subclasses add their kind-specific
 parameters.
 
-::: apeGmsh.solvers._constraint_defs.ConstraintDef
+::: apeGmsh.core.constraints.defs.ConstraintDef
     options:
       heading_level: 3
 
@@ -127,15 +127,15 @@ Pairwise constraints between **co-located** nodes. The resolver
 matches master-side nodes against slave-side nodes within
 `tolerance` and emits one `NodePairRecord` per match.
 
-::: apeGmsh.solvers._constraint_defs.EqualDOFDef
+::: apeGmsh.core.constraints.defs.EqualDOFDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers._constraint_defs.RigidLinkDef
+::: apeGmsh.core.constraints.defs.RigidLinkDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers._constraint_defs.PenaltyDef
+::: apeGmsh.core.constraints.defs.PenaltyDef
     options:
       heading_level: 3
 
@@ -145,15 +145,15 @@ One master node drives many slave nodes through a kinematic
 transformation about a master point. Use these for floor diaphragms,
 lumped rigid bodies, or any cluster sharing a chosen DOF subset.
 
-::: apeGmsh.solvers._constraint_defs.RigidDiaphragmDef
+::: apeGmsh.core.constraints.defs.RigidDiaphragmDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers._constraint_defs.RigidBodyDef
+::: apeGmsh.core.constraints.defs.RigidBodyDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers._constraint_defs.KinematicCouplingDef
+::: apeGmsh.core.constraints.defs.KinematicCouplingDef
     options:
       heading_level: 3
 
@@ -167,20 +167,20 @@ through a rigid arm before being equal-DOF-coupled to the original
 
 Two variants:
 
-* [`NodeToSurfaceDef`][apeGmsh.solvers._constraint_defs.NodeToSurfaceDef]
+* [`NodeToSurfaceDef`][apeGmsh.core.constraints.defs.NodeToSurfaceDef]
   emits the master → phantom link as a kinematic
   `rigidLink('beam', …)` constraint. Cheap and exact.
-* [`NodeToSurfaceSpringDef`][apeGmsh.solvers._constraint_defs.NodeToSurfaceSpringDef]
+* [`NodeToSurfaceSpringDef`][apeGmsh.core.constraints.defs.NodeToSurfaceSpringDef]
   emits it as a stiff `elasticBeamColumn` element. Use this when the
   master has free rotational DOFs that receive direct moment loading
   — the constraint variant can produce an ill-conditioned reduced
   stiffness matrix in that case.
 
-::: apeGmsh.solvers._constraint_defs.NodeToSurfaceDef
+::: apeGmsh.core.constraints.defs.NodeToSurfaceDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers._constraint_defs.NodeToSurfaceSpringDef
+::: apeGmsh.core.constraints.defs.NodeToSurfaceSpringDef
     options:
       heading_level: 3
 
@@ -190,15 +190,15 @@ A slave node is constrained to the displacement field of a master
 surface or volume through shape-function interpolation. Handles
 non-matching meshes, distributed loads, and embedded reinforcement.
 
-::: apeGmsh.solvers._constraint_defs.TieDef
+::: apeGmsh.core.constraints.defs.TieDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers._constraint_defs.DistributingCouplingDef
+::: apeGmsh.core.constraints.defs.DistributingCouplingDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers._constraint_defs.EmbeddedDef
+::: apeGmsh.core.constraints.defs.EmbeddedDef
     options:
       heading_level: 3
 
@@ -208,11 +208,11 @@ Bidirectional surface couplings. Use these when neither side can be
 clearly picked as finer than the other and you want a symmetric
 treatment.
 
-::: apeGmsh.solvers._constraint_defs.TiedContactDef
+::: apeGmsh.core.constraints.defs.TiedContactDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers._constraint_defs.MortarDef
+::: apeGmsh.core.constraints.defs.MortarDef
     options:
       heading_level: 3
 
@@ -220,24 +220,24 @@ treatment.
 
 Resolved records — what the FEM broker exposes after meshing.
 
-::: apeGmsh.solvers._constraint_records
+::: apeGmsh.mesh.records._constraints
     options:
       heading_level: 3
 
 ## Resolver
 
-::: apeGmsh.solvers._constraint_resolver.ConstraintResolver
+::: apeGmsh.mesh._constraint_resolver._resolver.ConstraintResolver
     options:
       heading_level: 3
 
 ## Module shim
 
-The top-level [`apeGmsh.solvers.Constraints`][] module re-exports all
+The top-level [`apeGmsh.core.ConstraintsComposite`][] module re-exports all
 public names from the `_constraint_*` modules for backwards
 compatibility. Module-level docstring contains the canonical
 taxonomy.
 
-::: apeGmsh.solvers.Constraints
+::: apeGmsh.core.ConstraintsComposite
     options:
       members: false
       heading_level: 3

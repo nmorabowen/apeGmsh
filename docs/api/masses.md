@@ -12,14 +12,14 @@ Stage 1 — **declare** before meshing. The four factories on
 [`line`][apeGmsh.core.MassesComposite.MassesComposite.line],
 [`surface`][apeGmsh.core.MassesComposite.MassesComposite.surface],
 [`volume`][apeGmsh.core.MassesComposite.MassesComposite.volume])
-store [`MassDef`][apeGmsh.solvers.Masses.MassDef] dataclasses on
+store [`MassDef`][apeGmsh.core.masses.defs.MassDef] dataclasses on
 geometric targets.
 
 Stage 2 — **resolve** after meshing.
-[`MassResolver`][apeGmsh.solvers.Masses.MassResolver] converts each
+[`MassResolver`][apeGmsh.mesh._mass_resolver.MassResolver] converts each
 def to per-node contributions, then the composite **accumulates**
 contributions across overlapping defs so each node ends up with at
-most one [`MassRecord`][apeGmsh.solvers.Masses.MassRecord]. Records
+most one [`MassRecord`][apeGmsh.mesh.records._masses.MassRecord]. Records
 land on `fem.nodes.masses` as a `MassSet` (an iterable of
 `MassRecord` with `total_mass()` / `by_node()` helpers — see
 [FEM Broker](fem.md)).
@@ -113,34 +113,34 @@ with apeGmsh(model_name="frame") as g:
 
 ## Definitions
 
-::: apeGmsh.solvers.Masses.MassDef
+::: apeGmsh.core.masses.defs.MassDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers.Masses.PointMassDef
+::: apeGmsh.core.masses.defs.PointMassDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers.Masses.LineMassDef
+::: apeGmsh.core.masses.defs.LineMassDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers.Masses.SurfaceMassDef
+::: apeGmsh.core.masses.defs.SurfaceMassDef
     options:
       heading_level: 3
 
-::: apeGmsh.solvers.Masses.VolumeMassDef
+::: apeGmsh.core.masses.defs.VolumeMassDef
     options:
       heading_level: 3
 
 ## Resolved record
 
-::: apeGmsh.solvers.Masses.MassRecord
+::: apeGmsh.mesh.records._masses.MassRecord
     options:
       heading_level: 3
 
 ## Resolver
 
-::: apeGmsh.solvers.Masses.MassResolver
+::: apeGmsh.mesh._mass_resolver.MassResolver
     options:
       heading_level: 3

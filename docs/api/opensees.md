@@ -41,8 +41,8 @@ primitives (``Linear`` / ``PDelta`` / ``Corotational``).
 Standalone recorder declaration helper. Recorder declarations live on
 `ops.recorder.*` in the `apeSees` bridge.
 
-<!-- TODO(apeSees migration): apeGmsh.solvers.Recorders.Recorders — verify new module path under apeGmsh.opensees after Phase 8.3b lands -->
-::: apeGmsh.solvers.Recorders.Recorders
+<!-- TODO(apeSees migration): apeGmsh.opensees.recorder — verify new module path under apeGmsh.opensees after Phase 8.3b lands -->
+::: apeGmsh.opensees.recorder
 
 ## Numberer
 
