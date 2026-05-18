@@ -24,9 +24,17 @@ error (never silently mapped to row 0 — that would corrupt centroids).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from .._chain import SelectionChain
+
+if TYPE_CHECKING:
+    # Type-only: the runtime import stays deferred inside _materialize
+    # (TYPE_CHECKING is False at runtime, so the module's load-time
+    # imports remain just the package-root leaf + numpy).
+    from ._element_types import GroupResult
 
 #: Engine attribute carrying the sibling ``NodeComposite`` (set by
 #: ``FEMData.__init__``).  Named here so the wiring point and the
@@ -152,6 +160,9 @@ class ElementChain(SelectionChain):
         return tuple(a for a, k in zip(atoms, dist <= t) if k)
 
     # ── terminal ────────────────────────────────────────────
+    def result(self) -> "GroupResult":
+        return self._materialize()
+
     def _materialize(self) -> "GroupResult":
         """The selected elements as the **existing** ``GroupResult``.
 

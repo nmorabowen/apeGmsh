@@ -471,6 +471,14 @@ class Selection(list):
             m.mesh.sizing.set_size('left_top_edge', size=0.1)
         """
         import warnings
+        if self._queries is None:
+            raise RuntimeError(
+                "Selection.to_label()/.to_physical() requires a Selection "
+                "bound to the model-queries engine — build it via "
+                "m.model.queries.select(...). This Selection has "
+                "_queries=None (constructed standalone), so it has no "
+                "session to register the label/physical-group on."
+            )
         session = self._queries._model._parent
         dims    = sorted({d for d, _ in self})
         with warnings.catch_warnings():
@@ -504,6 +512,14 @@ class Selection(list):
 
             g.constraints.fix('Base', dofs=[1, 2, 3])
         """
+        if self._queries is None:
+            raise RuntimeError(
+                "Selection.to_label()/.to_physical() requires a Selection "
+                "bound to the model-queries engine — build it via "
+                "m.model.queries.select(...). This Selection has "
+                "_queries=None (constructed standalone), so it has no "
+                "session to register the label/physical-group on."
+            )
         session = self._queries._model._parent
         for d in sorted({d for d, _ in self}):
             tags = [t for dim, t in self if dim == d]
@@ -926,6 +942,9 @@ class GeometryChain(SelectionChain):
         return tuple(kept)
 
     # ── terminal — the LEGACY Selection, unchanged ──────────
+    def result(self) -> "Selection":
+        return self._materialize()
+
     def _materialize(self) -> "Selection":
         """Return the legacy :class:`Selection`, constructed as today.
 
