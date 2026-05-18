@@ -95,8 +95,8 @@ session *is* the assembly. Parts are registered into
 | `g.mesh`         | Meshing (see sub-composites below) |
 | `g.mesh_selection` | Post-mesh node/element selection sets |
 | `g.constraints`  | Solver-agnostic constraint definitions & resolver |
-| `g.loads`        | Load patterns & definitions (resolved into `fem.loads`) |
-| `g.masses`       | Mass definitions (resolved into `fem.masses`) |
+| `g.loads`        | Load patterns & definitions (resolved into `fem.nodes.loads` / `fem.elements.loads`) |
+| `g.masses`       | Mass definitions (resolved into `fem.nodes.masses`) |
 | *(post-session)* | `apeSees(fem)` — OpenSees bridge (separate post-session object; see below) |
 | `g.inspect`      | Session-level diagnostics |
 | `g.plot`         | Matplotlib visualisations (optional) |
@@ -174,22 +174,23 @@ emission is deferred (ADR 0009).
 ### The FEM broker
 
 `get_fem_data(dim)` returns a `FEMData` snapshot — a solver-agnostic
-container with node IDs, coordinates, element connectivity, physical
-groups, mesh selection sets, and the resolved load/mass/constraint
-records. It's the single contract between Gmsh and any downstream
-solver.
+container organised into `.nodes` and `.elements` composites plus
+`.info`, `.inspect`, and `.mesh_selection`. It's the single contract
+between Gmsh and any downstream solver.
 
 ```python
 g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
 fem = g.mesh.queries.get_fem_data(dim=3)
 
-# fem.node_ids, fem.element_ids, fem.node_coords, fem.connectivity
-# fem.info           → mesh statistics (n_nodes, n_elems, bandwidth)
-# fem.physical       → physical group lookup
-# fem.mesh_selection → post-mesh selection sets
-# fem.loads          → resolved NodalLoadRecord / ElementLoadRecord
-# fem.masses         → resolved MassRecord
-# fem.constraints    → resolved ConstraintRecord
+# fem.nodes.ids / fem.nodes.coords                 — node IDs, coordinates
+# fem.elements.ids / fem.elements.connectivity     — element IDs, connectivity
+# fem.nodes.get(pg=...) / .get(label=...)          — subset by group / label
+# fem.info                                         — mesh stats (n_nodes, n_elems, bandwidth)
+# fem.mesh_selection                               — post-mesh selection sets
+# fem.nodes.loads / fem.elements.loads             — resolved NodalLoadRecord / ElementLoadRecord
+# fem.nodes.masses                                 — resolved MassRecord
+# fem.nodes.constraints / fem.elements.constraints — resolved constraint records
+# fem.inspect.summary()                            — human-readable broker summary
 ```
 
 ### Constraints, loads, masses
@@ -202,8 +203,9 @@ Two-stage pipeline:
    lightweight definition dataclasses that reference *labels*, not raw
    tags.
 2. **Resolve** (post-mesh, automatic): `get_fem_data()` resolves every
-   definition against the mesh and attaches the results to
-   `fem.constraints`, `fem.loads`, `fem.masses`.
+   definition against the mesh and attaches the results to the
+   `fem.nodes` / `fem.elements` composites (`.constraints`, `.loads`,
+   `.masses`).
 
 The resolver is pure NumPy math with no Gmsh dependency — solver
 bridges consume the records directly.

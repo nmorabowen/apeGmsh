@@ -240,10 +240,14 @@ def _write_labels(fem: "FEMData", f: Any) -> None:
 
 
 def _write_mesh_selections(fem: "FEMData", f: Any) -> None:
-    """Write ``/mesh_selections/{name}/{node_ids, node_coords, element_ids}``.
+    """Write ``/mesh_selections/{name}/{node_ids, node_coords,
+    element_ids, connectivity}``.
 
     Mirrors ``/physical_groups`` and ``/labels`` shape so the same
-    ``H5Reader._read_named_index`` helper handles all three.  Sourced
+    ``H5Reader._read_named_index`` helper handles all three — that
+    helper reads only the node/element id datasets, so the extra
+    ``connectivity`` dataset is transparent to it and is consumed only
+    by :meth:`MeshSelectionStore.get_elements` on reload.  Sourced
     from :attr:`FEMData.mesh_selection` (a
     :class:`apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore` captured
     at ``get_fem_data()`` time).  Omitted entirely when the snapshot
@@ -252,7 +256,10 @@ def _write_mesh_selections(fem: "FEMData", f: Any) -> None:
 
     Added in Phase 8.7 commit 2 (schema 2.3.0 → 2.4.0, additive) so
     the viewer's ``selection=`` selector round-trips through
-    ``model.h5``.
+    ``model.h5``.  ``connectivity`` was added afterwards (still
+    additive, presence-detected on read → no schema bump; old files
+    just lack the dataset) so a reloaded element-bearing set no
+    longer raises from ``get_elements`` for want of connectivity.
     """
     store = getattr(fem, "mesh_selection", None)
     if store is None:
@@ -298,10 +305,17 @@ def _write_mesh_selections(fem: "FEMData", f: Any) -> None:
             try:
                 elem_data = store.get_elements(d, t)
                 eids = np.asarray(elem_data["element_ids"], dtype=np.int64)
+                conn = np.asarray(elem_data["connectivity"], dtype=np.int64)
             except (KeyError, ValueError, AttributeError):
                 eids = np.array([], dtype=np.int64)
+                conn = np.empty((0, 0), dtype=np.int64)
             if eids.size > 0:
                 sub.create_dataset("element_ids", data=eids)
+                # Persist connectivity alongside element_ids: without
+                # it a reloaded element set keeps element_ids but
+                # MeshSelectionStore.get_elements() raises "no element
+                # data".  Rows align 1:1 with element_ids.
+                sub.create_dataset("connectivity", data=conn)
 
 
 def _write_named_index_at_root(
@@ -1025,6 +1039,12 @@ def _read_mesh_selections(parent: Any):
         if "element_ids" in sub:
             info["element_ids"] = np.asarray(
                 sub["element_ids"][...], dtype=np.int64,
+            )
+        # Presence-detected: pre-connectivity files simply lack this
+        # dataset and round-trip exactly as before.
+        if "connectivity" in sub:
+            info["connectivity"] = np.asarray(
+                sub["connectivity"][...], dtype=np.int64,
             )
 
         sets[(dim, tag)] = info

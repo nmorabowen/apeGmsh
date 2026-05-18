@@ -359,27 +359,36 @@ def _from_gmsh(
         parts = getattr(session, "parts", None)
         if parts is not None and getattr(parts, "_instances", None):
             import gmsh  # local import — gmsh is alive during factory
-            try:
-                part_node_map = parts.build_node_map(
-                    node_ids, node_coords_all,
-                ) or {}
-            except Exception:
-                part_node_map = {}
+            # Fail loud, mirroring the constraint-path policy above
+            # (the same build_node_map call there is deliberately not
+            # swallowed): a part-map build failure must surface with
+            # its real cause, not degrade to an empty map that
+            # resurfaces later as a misleading "part not found".
+            part_node_map = parts.build_node_map(
+                node_ids, node_coords_all,
+            ) or {}
             # Element map: iterate each part instance's DimTags and
             # ask Gmsh for the elements on each entity (the registry
             # has no element-map builder today).
+            #
+            # inst.entities can hold tags that fragment_all() / boolean
+            # ops have retagged out of existence (skill pitfall 7.6 —
+            # OCC renumbers entities; the coordinate-based node map is
+            # the robust contract).  Skip absent entities *explicitly*
+            # by pre-filtering against the live model — not via a
+            # blanket ``except`` — so a genuine getElements failure on
+            # an entity the model DOES have still fails loud.
+            present = set(gmsh.model.getEntities())
             for label, inst in parts._instances.items():
                 e_ids: set[int] = set()
                 for d in sorted(inst.entities.keys(), reverse=True):
                     for t in inst.entities[d]:
-                        try:
-                            _, etags_list, _ = (
-                                gmsh.model.mesh.getElements(int(d), int(t))
-                            )
-                            for arr in etags_list:
-                                e_ids.update(int(x) for x in arr)
-                        except Exception:
-                            pass
+                        if (int(d), int(t)) not in present:
+                            continue
+                        _, etags_list, _ = gmsh.model.mesh.getElements(
+                            int(d), int(t))
+                        for arr in etags_list:
+                            e_ids.update(int(x) for x in arr)
                 if e_ids:
                     part_elem_map[label] = e_ids
 
@@ -410,10 +419,10 @@ def _from_gmsh(
     if session is not None:
         ms_comp = getattr(session, "mesh_selection", None)
         if ms_comp is not None and len(ms_comp) > 0:
-            try:
-                ms_store = ms_comp._snapshot()
-            except Exception:
-                pass
+            # Fail loud (see the note above): a snapshot failure must
+            # not silently drop every mesh-selection set and resurface
+            # later as a misleading "selection not found".
+            ms_store = ms_comp._snapshot()
 
     return cls(
         nodes=nodes,

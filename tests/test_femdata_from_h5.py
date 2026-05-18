@@ -479,6 +479,39 @@ def test_round_trip_mesh_selections(tmp_path: Path) -> None:
     assert rebuilt.mesh_selection.get_name(2, 1) == "slab_face"
 
 
+def test_round_trip_mesh_selection_element_connectivity(
+    tmp_path: Path,
+) -> None:
+    """Regression: an element-bearing mesh selection keeps its
+    connectivity across the HDF5 round-trip, so the reloaded
+    ``MeshSelectionStore.get_elements`` returns data instead of
+    raising "no element data" (the pre-fix behaviour where the
+    writer dropped connectivity)."""
+    from apeGmsh.mesh.MeshSelectionSet import MeshSelectionStore
+
+    fem = _make_full_fem()
+    fem.mesh_selection = MeshSelectionStore({
+        (2, 1): {
+            "name": "slab_face",
+            "node_ids": np.array([2, 3, 5], dtype=np.int64),
+            "node_coords": np.array([
+                [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.5, 0.5, 1.0],
+            ], dtype=np.float64),
+            "element_ids": np.array([20], dtype=np.int64),
+            "connectivity": np.array([[2, 3, 5]], dtype=np.int64),
+        },
+    })
+    out = tmp_path / "rt_conn.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    assert rebuilt.mesh_selection is not None
+    # Pre-fix this raised ValueError("...has no element data...").
+    elems = rebuilt.mesh_selection.get_elements(2, 1)
+    np.testing.assert_array_equal(elems["element_ids"], [20])
+    np.testing.assert_array_equal(elems["connectivity"], [[2, 3, 5]])
+
+
 # =====================================================================
 # Empty composites + snapshot id
 # =====================================================================

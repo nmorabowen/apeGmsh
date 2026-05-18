@@ -373,13 +373,16 @@ def test_to_h5_writes_mesh_selections_at_root(tmp_path: Path) -> None:
         assert int(base.attrs["tag"]) == 1
         assert base.attrs["name"] == "base_nodes"
         np.testing.assert_array_equal(base["node_ids"][:], [1, 2])
-        # dim=0 → no element_ids dataset
+        # dim=0 → no element_ids / connectivity datasets
         assert "element_ids" not in base
+        assert "connectivity" not in base
 
         slab = f["mesh_selections/slab_face"]
         assert int(slab.attrs["dim"]) == 2
         np.testing.assert_array_equal(slab["node_ids"][:], [2, 3, 5])
         np.testing.assert_array_equal(slab["element_ids"][:], [20])
+        # connectivity persisted alongside element_ids (rows 1:1)
+        np.testing.assert_array_equal(slab["connectivity"][:], [[2, 3, 5]])
 
 
 def test_to_h5_omits_mesh_selections_when_absent(tmp_path: Path) -> None:
