@@ -13,10 +13,15 @@ from ._mesh_partitioning import RenumberResult, PartitionInfo
 from .PhysicalGroups import PhysicalGroups
 from .MeshSelectionSet import MeshSelectionSet, MeshSelectionStore
 from .View import View
-from .FEMData import FEMData, MeshInfo, NodeResult
-from ._element_types import ElementTypeInfo, ElementGroup, GroupResult
+from .FEMData import FEMData, MeshInfo
+from ._element_types import ElementTypeInfo
 from ._group_set import NamedGroupSet, PhysicalGroupSet, LabelSet
-from ._record_set import (
+# Relocated to apeGmsh._kernel (selection-unification-v2 P1-K, the
+# keystone cycle-break).  Re-exported here (a downward mesh -> _kernel
+# edge — the intended layering direction) so the public
+# ``apeGmsh.mesh`` surface is byte-stable for callers.
+from .._kernel.payloads import NodeResult, ElementGroup, GroupResult
+from .._kernel.record_sets import (
     ConstraintKind, LoadKind,
     NodeConstraintSet, SurfaceConstraintSet,
     NodalLoadSet, ElementLoadSet, MassSet,

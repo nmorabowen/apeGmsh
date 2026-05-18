@@ -62,7 +62,20 @@ from apeGmsh.results._composites import (
     SpringsResultsComposite,
     _ElementGeometryMixin,
 )
+from apeGmsh._kernel.chain import SelectionChain
 from apeGmsh.results._result_chain import ResultChain
+# selection-unification-v2 P2-I (§6.1 STOP-2(c)): the sub-composite
+# ``.select()`` hooks now return the v2 terminal ``MeshSelection``
+# (legacy ``ResultChain`` left defined-but-unwired; P3 deletes it).
+# The host-return-type assertions below are BEHAVIOURAL (they then
+# exercise level / set-algebra / the slab read + extra-kwarg parity +
+# the R5 fail-loud invariant, which must stay green) → assert the new
+# type.  ``type(sel) is ...`` was a "no NEW subclass" pin — that
+# invariant still holds, now against the canonical ``MeshSelection``
+# terminal (it has no subclasses), so it asserts the new type rather
+# than xfail.  The results terminal read is the verbatim rename
+# ``.get`` → ``.values`` on ``MeshSelection``.
+from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.results._slabs import (
     FiberSlab,
     GaussSlab,
@@ -210,6 +223,15 @@ _NATIVE_CASES = [
 
 
 def _sids(seq):
+    """Sorted ids from a chain or a plain id sequence.
+
+    selection-unification-v2 P2-I (§6.1 STOP-2(b)): the sub-composite
+    ``.select()`` now returns ``MeshSelection`` whose ``__iter__``
+    yields ``(id, payload)`` pairs.  Set-algebra / identity is defined
+    on the ``_items`` atoms (unchanged by the pair-view), so a chain
+    is read via ``_items``; a plain id array iterates as bare ids."""
+    if isinstance(seq, SelectionChain):
+        return sorted(int(a) for a in seq._items)
     return sorted(int(x) for x in seq)
 
 
@@ -234,8 +256,11 @@ def test_select_returns_reused_resultchain_element_level(tmp_path, attr):
     r = _make_native(tmp_path)
     sub = getattr(r.elements, attr)
     sel = sub.select(ids=[10, 20])
-    assert isinstance(sel, ResultChain)          # the reused chain
-    assert type(sel) is ResultChain              # no new subclass
+    # P2-I: was ResultChain.  Still ONE canonical terminal (the
+    # "no new subclass" invariant holds against MeshSelection, which
+    # itself has no subclasses).
+    assert isinstance(sel, MeshSelection)        # the reused terminal
+    assert type(sel) is MeshSelection            # no new subclass
     assert sel.FAMILY == "point"
     assert sel._level == "element"
     assert _sids(sel) == [10, 20]
@@ -272,27 +297,27 @@ def test_native_subcomposite_select_get_parity(
         np.testing.assert_array_equal(slab.values, baseline.values)
         np.testing.assert_array_equal(slab.time, baseline.time)
 
-    # id-seeded
+    # id-seeded   (P2-I: chain terminal .get → .values)
     _assert_parity(
-        sub.select(ids=[10]).get(component=comp, **extra)
+        sub.select(ids=[10]).values(component=comp, **extra)
     )
     # pg-seeded (delegates to _resolve_element_ids)
     _assert_parity(
-        sub.select(pg="Near").get(component=comp, **extra)
+        sub.select(pg="Near").values(component=comp, **extra)
     )
     # spatial daisy-chain: box around the origin keeps only element 10's
     # centroid (element 20 centroid is at (5.5,5.5,0)) -> same final ids
     _assert_parity(
         sub.select()
            .in_box((-1.0, -1.0, -1.0), (2.0, 2.0, 2.0))
-           .get(component=comp, **extra)
+           .values(component=comp, **extra)
     )
     # ... and chained further with on_plane (z=0 keeps it)
     _assert_parity(
         sub.select(pg="Both")
            .in_box((-1.0, -1.0, -1.0), (2.0, 2.0, 2.0))
            .on_plane((0, 0, 0), (0, 0, 1), tol=1e-9)
-           .get(component=comp, **extra)
+           .values(component=comp, **extra)
     )
 
 
@@ -301,17 +326,17 @@ def test_extra_kwargs_actually_filter(tmp_path):
     different value yields a different slab (proves the chain forwards
     them to the host reader, not drops them)."""
     r = _make_native(tmp_path)
-    f0 = r.elements.fibers.select(ids=[10]).get(
+    f0 = r.elements.fibers.select(ids=[10]).values(  # P2-I: .get→.values
         component="fiber_stress", gp_indices=[0],
     )
-    f1 = r.elements.fibers.select(ids=[10]).get(
+    f1 = r.elements.fibers.select(ids=[10]).values(  # P2-I: .get→.values
         component="fiber_stress", gp_indices=[1],
     )
     assert _sids(np.unique(f0.gp_index)) == [0]
     assert _sids(np.unique(f1.gp_index)) == [1]
     assert not np.array_equal(f0.values, f1.values)
 
-    lyr = r.elements.layers.select(ids=[10]).get(
+    lyr = r.elements.layers.select(ids=[10]).values(  # P2-I: .get→.values
         component="layer_stress", gp_indices=[0], layer_indices=[1],
     )
     assert set(np.unique(lyr.gp_index)) == {0}
@@ -329,12 +354,16 @@ def test_unknown_extra_kwarg_fails_loud(tmp_path):
     own .get signature is the single source of truth.  gauss.get has no
     gp_indices= -> a loud TypeError, not a silent drop."""
     r = _make_native(tmp_path)
+    # P2-I: chain terminal .get → .values; the R5 invariant is
+    # unchanged — .values forwards **extra opaquely, so the host's own
+    # .get signature is still the single source of truth and an
+    # unknown kwarg fails loud THERE (never silently dropped here).
     with pytest.raises(TypeError):
-        r.elements.gauss.select(ids=[10]).get(
+        r.elements.gauss.select(ids=[10]).values(
             component="stress_xx", gp_indices=[0],
         )
     with pytest.raises(TypeError):
-        r.elements.line_stations.select(ids=[10]).get(
+        r.elements.line_stations.select(ids=[10]).values(
             component="sectionForce", layer_indices=[0],
         )
 
@@ -516,25 +545,27 @@ def test_springs_select_get_parity(tmp_path):
         sub = r.elements.springs
 
         sel = sub.select(ids=[10, 20])
-        assert isinstance(sel, ResultChain)
-        assert type(sel) is ResultChain
+        # P2-I: was ResultChain (still one canonical terminal — the
+        # "no new subclass" invariant holds against MeshSelection).
+        assert isinstance(sel, MeshSelection)
+        assert type(sel) is MeshSelection
         assert sel._level == "element"
         assert _sids(sel) == [10, 20]
         assert _sids(sub.select()) == [10, 20, 30]
 
-        base_multi = sub.get(ids=[10, 20], component=comp)
+        base_multi = sub.get(ids=[10, 20], component=comp)  # composite get
         assert isinstance(base_multi, SpringSlab)
-        got_multi = sel.get(component=comp)
+        got_multi = sel.values(component=comp)  # P2-I: chain .get→.values
         np.testing.assert_array_equal(
             got_multi.element_index, base_multi.element_index,
         )
         np.testing.assert_array_equal(got_multi.values, base_multi.values)
 
         # spatial daisy-chain: box around origin keeps only element 10
-        base_one = sub.get(ids=[10], component=comp)
+        base_one = sub.get(ids=[10], component=comp)  # composite get
         spatial = (sub.select()
                       .in_box((-1.0, -1.0, -1.0), (2.0, 2.0, 2.0))
-                      .get(component=comp))
+                      .values(component=comp))  # P2-I: chain .get→.values
         np.testing.assert_array_equal(
             spatial.element_index, base_one.element_index,
         )

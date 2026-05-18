@@ -34,7 +34,7 @@ from __future__ import annotations
 import numpy as np
 from numpy import ndarray
 
-from apeGmsh.core.masses.defs import (
+from apeGmsh._kernel.defs.masses import (
     LineMassDef,
     PointMassDef,
     SurfaceMassDef,
@@ -50,7 +50,7 @@ from apeGmsh.fem._shape_functions import (
     compute_jacobian_dets,
     get_shape_functions,
 )
-from apeGmsh.mesh.records._masses import MassRecord
+from apeGmsh._kernel.records._masses import MassRecord
 
 
 # ======================================================================

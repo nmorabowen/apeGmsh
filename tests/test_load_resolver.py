@@ -18,8 +18,8 @@ from apeGmsh.core.loads.defs import (
     PointLoadDef,
     SurfaceLoadDef,
 )
-from apeGmsh.mesh._load_resolver import LoadResolver
-from apeGmsh.mesh.records import ElementLoadRecord, NodalLoadRecord
+from apeGmsh._kernel.resolvers._load_resolver import LoadResolver
+from apeGmsh._kernel.records import ElementLoadRecord, NodalLoadRecord
 
 
 # ---------------------------------------------------------------------

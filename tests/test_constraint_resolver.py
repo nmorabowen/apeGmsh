@@ -24,8 +24,8 @@ from apeGmsh.core.constraints.defs import (
     RigidDiaphragmDef,
     RigidLinkDef,
 )
-from apeGmsh.mesh._constraint_resolver import ConstraintResolver
-from apeGmsh.mesh.records import (
+from apeGmsh._kernel.resolvers._constraint_resolver import ConstraintResolver
+from apeGmsh._kernel.records import (
     InterpolationRecord,
     NodeGroupRecord,
     NodePairRecord,

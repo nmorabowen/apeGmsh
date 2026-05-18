@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 from numpy import ndarray
 
-from apeGmsh.core.loads.defs import (
+from apeGmsh._kernel.defs.loads import (
     BodyLoadDef,
     FaceLoadDef,
     FaceSPDef,
@@ -29,7 +29,7 @@ from apeGmsh.core.loads.defs import (
     PointLoadDef,
     SurfaceLoadDef,
 )
-from apeGmsh.mesh.records._loads import (
+from apeGmsh._kernel.records._loads import (
     ElementLoadRecord,
     NodalLoadRecord,
     SPRecord,
@@ -409,7 +409,7 @@ class LoadResolver:
         Any other node count raises :class:`NotImplementedError` rather
         than silently producing wrong numbers.
         """
-        from ._consistent_quadrature import integrate_edge
+        from .._consistent_quadrature import integrate_edge
 
         if defn.q_xyz is not None:
             q = np.asarray(defn.q_xyz, dtype=float)
@@ -438,7 +438,7 @@ class LoadResolver:
         function integration is otherwise identical to
         :meth:`resolve_line_consistent`.
         """
-        from ._consistent_quadrature import integrate_edge
+        from .._consistent_quadrature import integrate_edge
 
         accum: dict[int, ndarray] = {}
         for edge, q in items:
@@ -469,7 +469,7 @@ class LoadResolver:
         magnitude does not over/undershoot the way a single midpoint
         sample does.
         """
-        from ._consistent_quadrature import integrate_edge_scaled
+        from .._consistent_quadrature import integrate_edge_scaled
 
         accum: dict[int, ndarray] = {}
         for edge, dir_vec, scalar_fn in items:
@@ -500,7 +500,7 @@ class LoadResolver:
         normal evaluated at each Gauss point.  Any other node count
         raises :class:`NotImplementedError`.
         """
-        from ._consistent_quadrature import integrate_face
+        from .._consistent_quadrature import integrate_face
 
         d = None
         if not defn.normal:

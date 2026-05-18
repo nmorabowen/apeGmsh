@@ -34,9 +34,9 @@ from apeGmsh.core.masses.defs import (
     SurfaceMassDef,
     VolumeMassDef,
 )
-from apeGmsh.mesh._mass_resolver import MassResolver
-from apeGmsh.mesh._record_set import MassSet
-from apeGmsh.mesh.records._masses import MassRecord
+from apeGmsh._kernel.resolvers._mass_resolver import MassResolver
+from apeGmsh._kernel.record_sets import MassSet
+from apeGmsh._kernel.records._masses import MassRecord
 
 
 # (MassDefType, reduction) -> method name on MassesComposite

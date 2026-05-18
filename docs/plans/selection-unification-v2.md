@@ -53,12 +53,13 @@ legacy surface removed. Concretely, ratified by the project owner:
 
 ## 2. The keystone (the whole game)
 
-`NodeResult` (`mesh/FEMData.py:76-134`), `ElementGroup` /
-`GroupResult` (`mesh/_element_types.py:211-313`, `:15` self-declared
-leaf) are **lightweight, dependency-free numpy payloads**. **Relocate
-those three into `apeGmsh/_kernel/`** alongside the pure
-defs/records/resolver layer. This single move closes three independent
-findings at once:
+`NodeResult` (`mesh/FEMData.py:76-134`), `ElementGroup`
+(`mesh/_element_types.py:156-225`) / `GroupResult` (`:232-392`,
+`:15` self-declared leaf; the coupled `resolve_type_filter`
+`:399-440` moves with them) are **lightweight, dependency-free numpy
+payloads**. **Relocate that triad into `apeGmsh/_kernel/`** alongside
+the pure defs/records/resolver layer. This single move closes three
+independent findings at once:
 
 - **HT1 (RED-1 FATAL) dissolves.** `_record_set.py`'s only non-pure
   tie is the deferred `:469 from .FEMData import NodeResult` inside
@@ -83,6 +84,48 @@ problem, and the iteration contract simultaneously is the signal that
 this is the correct layering. **P1-K is the highest-leverage phase;
 everything else is conventional once it lands.**
 
+### 2.1 P1-K pre-flight corrections (execution-map; ratified before any move)
+
+An exhaustive read-only execution-map + cycle pre-flight (the contract
+the relocation follows) corrected the plan **before any file moved**.
+Recorded explicitly so the move set is complete and the source-of-truth
+matches HEAD:
+
+- **(1) Stale line numbers → corrected to HEAD** (above): `ElementGroup`
+  `:156-225`, `GroupResult` `:232-392` (not `:211-313`).
+- **(2) The keystone is a closed *four*-symbol triad.**
+  `GroupResult.get()` calls `resolve_type_filter`
+  (`_element_types.py:399-440`), which reads `ElementGroup`
+  attributes — `NodeResult`+`ElementGroup`+`GroupResult`+
+  `resolve_type_filter` move together to `_kernel/payloads.py`.
+  `ElementTypeInfo`/`make_type_info`/alias machinery **stay** in
+  `mesh/_element_types.py` (no back-edge — it never calls the moved
+  trio).
+- **(3) STOP-condition resolved — `_consistent_quadrature.py` joins
+  the move set.** `mesh/_load_resolver.py` imports
+  `mesh/_consistent_quadrature.py` at 4 deferred sites
+  (`:412/441/472/503`). Relocating `_load_resolver`→`_kernel` without
+  it re-forms a `_kernel→mesh` up-edge — the exact cycle P1-K deletes.
+  `_consistent_quadrature.py` is **pure** (numpy-only, zero
+  `apeGmsh.*` imports — verified) → relocate to
+  `_kernel/_consistent_quadrature.py`, rewrite the 4 sites to
+  `from .._consistent_quadrature import …`. With this addition the
+  pre-flight finds **no surviving (c)-class up-edge**: every move-set
+  cross-package import is DISSOLVED (target co-relocates) or
+  ALLOWED-DOWNWARD (`apeGmsh.fem`, HT10).
+- **(4) Internal re-export decision (Option i — forced by the gate).**
+  `mesh/FEMData.py` keeps `from .._kernel.payloads import NodeResult`;
+  `mesh/_element_types.py` keeps a downward
+  `from .._kernel.payloads import ElementGroup, GroupResult,
+  resolve_type_filter` re-export. Legal `mesh→_kernel` **downward**
+  edge (the intended direction) and *mandatory* — the P1-K gate
+  requires the contract tests + all P0-C pins **byte-unchanged**, and
+  some import these via their `apeGmsh.mesh.*` paths. This is an
+  internal import-path facade, **not** the user-facing backward-compat
+  the v2 mandate forbids; flagged as a P3/P4 internal-cleanup
+  candidate (sweep with the legacy surface). Full file:line repoint
+  list + topological order live in the execution-map (§A–§E).
+
 ---
 
 ## 3. Hard truths (source-proven; future implementers must not re-trip these)
@@ -97,7 +140,7 @@ everything else is conventional once it lands.**
 | **HT6** | the two `Selection` classes are **structurally irreconcilable** (`list` subclass `.tags()` *method* vs frozen `__slots__` `.tags` *property*); `viz.Selection` is **public-exported** + viewer-constructed | `core/_selection.py:361`; `viz/Selection.py:99-154`; `apeGmsh/__init__.py:79,187-188`; `model_viewer.py:1671`, `mesh_viewer.py:1454` | Removal is a real **migration** (P3), not a reconcile. v1's "keep both" was backward-compat-driven; no longer binds. |
 | **HT7** | spatial = **6 copies with real divergence** — axis-aligned `nodes_on_plane(coords,axis,value,atol)` vs `(point,normal,tol)`; silent row-0 centroid bug | `mesh/_mesh_filters.py:23-42`, `:137-162` (`:159` `.get(nid,0)`); `results/_composites.py`; the 4 chain `_spatial_*` hooks | Unify via **pinned reviewed flips** (P3), not relocation. Owns ratified v1-S5 item 3. |
 | **HT8** | chain `__iter__` yields **bare atoms**; legacy terminals yield `(id,payload)` | `_chain.py:216-217`; `mesh/FEMData.py:114-116`; `mesh/_element_types.py:211-219` | `MeshSelection.__iter__` override + `.result()` alias (ratified). |
-| **HT9** | `GeometryChain` lacks the `crossing` straddle mode **and** the 2-point `Line` primitive that legacy `queries.select` has (~60 test sites) | `_chain.py:47-50 REQUIRED_VERBS`; `core/_selection.py:93-125` (`Line`), `:132-194` (`_parse_primitive`: dict→Plane, 2pts→Line, 3pts→Plane; `on`/`crossing`/`not_*`) | P2-G: add `crossing_plane` + `Line`/2-point verbs **before** legacy removal; parity-test vs the ~60 sites. |
+| **HT9** | `GeometryChain` lacks the `crossing` straddle mode **and** the 2-point `Line` primitive that legacy `queries.select` has (parity battery = **122 occurrences / 9 files**, not ~60 — §6.1) | `_chain.py:47-50 REQUIRED_VERBS`; `core/_selection.py:93-125` (`Line`), `:132-194` (`_parse_primitive`: dict→Plane, 2pts→Line, 3pts→Plane; `on`/`crossing`/`not_*`) | P2-G: add `crossing_plane` + `Line`/2-point verbs **before** legacy removal; parity-test vs the ~60 sites. |
 | **HT10** | `_mass_resolver.py` eagerly imports `apeGmsh.fem._hrz/_shape_functions` (leaf-pure sibling pkg) | `mesh/_mass_resolver.py:43-52`; `fem/_hrz.py`, `fem/_shape_functions.py` (zero `apeGmsh.*` eager) | **State explicitly:** `_kernel` MAY depend on `apeGmsh.fem`. `fem` added to tripwire `PKGS` (visible, not hidden). |
 
 > [!warning] HT2/HT3 are the durable replacement for v1's "FP-4 / do
@@ -197,7 +240,8 @@ must not be folded into `spatial.py`.
 
 ## 6. Phase ledger
 
-Order: **P0-T ∥ P0-C → P1-K → (P2-I ∥ P2-G) → P3 → P4.** P0 blocking.
+Order: **P0-T ∥ P0-C → P1-K → P2-I → P2-G → P3 → P4.** P0 blocking.
+(`P2-I ∥ P2-G` was REFUTED — sequential, see §6.1 STOP-1.)
 
 | Phase | Status | Commit |
 |-------|--------|--------|
@@ -232,12 +276,19 @@ on HEAD; zero production edits.
 
 Create `apeGmsh/_kernel/`. Relocate, as a **pure module move** (no
 behaviour change, no resolver merge, no spatial merge, no
-`tolerate_wrong_dim`): `NodeResult`/`ElementGroup`/`GroupResult` →
-`_kernel/payloads.py`; `core.{loads,masses,constraints}.defs`;
-`mesh.records._*`; the 3 resolvers + `_constraint_resolver/`;
-`_record_set.py` (rewrite `:469`→`_kernel`); the 3 `Labels`
-predicates → `_kernel/_label_prefix.py`. Repoint `PhysicalGroups.py:10`,
-`core/Labels.py` internals, the 3 composites, `FEMData.py:58-61`.
+`tolerate_wrong_dim`) — per the §2.1 corrections and the execution-map
+§A–§E: the keystone triad `NodeResult`/`ElementGroup`/`GroupResult`/
+`resolve_type_filter` → `_kernel/payloads.py`;
+`core.{loads,masses,constraints}.defs`; `mesh.records._*`; the 3
+resolvers + `_constraint_resolver/`; **`_consistent_quadrature.py`**
+(§2.1-(3)); `_record_set.py` (rewrite `:469`→`_kernel`); the 3
+`Labels` predicates → `_kernel/_label_prefix.py`;
+`apeGmsh/_chain.py`→`_kernel/chain.py`. Repoint every consumer per
+execution-map §B (the 3 composites, `FEMData.py:58-65`,
+`PhysicalGroups.py:10`, `core/Labels.py` internals, the 5 chain
+imports, all deferred/test sites); keep the §2.1-(4) Option-i
+`mesh→_kernel` downward re-exports so the invisibility-proof tests
+stay byte-unchanged.
 **Gate:** widened tripwire green, BASELINE updated **in the same
 commit** (the relocation diff *is* the reviewed decision —
 `test_import_dag_polarity.py:18-20`); `test_resolution_contract.py` +
@@ -246,6 +297,60 @@ P0-C pins unchanged** (this is the proof of invisibility);
 `import apeGmsh` clean with `apeGmsh.__file__` under the worktree.
 Closes HT1, HT4, R3-B. Rollback: the move is one reviewable diff;
 revert the PR.
+
+### 6.1 P2 pre-flight corrections (ratified before any P2 execution)
+
+An exhaustive read-only P2 execution-map + contract pre-flight found
+the plan prose wrong a third time. Corrected **before any P2 file
+changed**; the locks below are same-commit reviewed-diffs (identical
+discipline to the import BASELINE and §2.1/§3.1):
+
+- **STOP-1 — `P2-I ∥ P2-G` is unsafe; mandated order is P2-I → P2-G.**
+  `_kernel/chain.py:91-116` `__init_subclass__` enforces
+  `REQUIRED_VERBS` at **import time** on every concrete chain. The
+  instant P2-G appends `crossing_plane`, every chain lacking it (5
+  legacy + 2 new) raises `TypeError` at `import apeGmsh`. So: **P2-I
+  first** (no `REQUIRED_VERBS` touch). **P2-G second, internally
+  ordered:** (1) add a *base concrete* `SelectionChain.crossing_plane`
+  (+ `Line`/2-point verb) delegating to a new hook, **point family
+  raising loud** (the `GeometryChain.in_box` `inclusive=`→`TypeError`
+  precedent — entity-only, never silent `[]`); (2) override on
+  `EntitySelection` (+ legacy `GeometryChain` for through-P3 parity);
+  (3) **only then** append to `REQUIRED_VERBS`. `crossing_plane` is a
+  `REQUIRED_VERBS` **verb**, **never** a `_REQUIRED_HOOKS` entry.
+- **STOP-2 — P2-I is NOT purely additive.** The 5 `.select()` host
+  hooks (`core/Model.py:236`, `mesh/FEMData.py:310/964`,
+  `results/_composites.py:618/678/891`, `mesh/MeshSelectionSet.py:834`)
+  must **return the new types** (legacy 5 `*Chain` left
+  defined-but-unwired; P3 deletes them). Same-commit reviewed-diffs the
+  plan's P2-I gate omitted: (a) `tests/test_selection_idiom.py`
+  `_EXPECTED_CHAINS` is an **equality** lock → 5→7; (b)
+  `test_point_family_laws` must unpack `(id,_)` once
+  `MeshSelection.__iter__` yields `(id,payload)` (the ratified HT8
+  design — set-algebra is unaffected, it works on `_items`; only the
+  public `__iter__` presentation changes); (c) `type(x) is
+  <LegacyChain>` identity assertions in `test_fem_chain.py` /
+  `test_result_chain.py` / `test_result_chain_subcomposites.py` /
+  `test_geometry_chain.py` / `test_mesh_selection_chain.py` break at
+  **P2-I** (not P3) — update/xfail-with-P3-marker same-commit. The
+  23+ `(id,payload)` production callers go through `.get()`
+  (`NodeResult`/`GroupResult`, **not** repointed) — untouched.
+- **Placement.** `EntitySelection` → `core/_selection.py` (beside
+  `GeometryChain`; no new edge). `MeshSelection` → **new leaf
+  `mesh/_mesh_selection.py`** (mirrors `_node_chain.py`): eager
+  `from .._kernel.chain import SelectionChain` only, payloads deferred.
+  Adds **one** declared same-commit BASELINE triple
+  `("mesh","_kernel","mesh/_mesh_selection.py")` — the *same downward
+  polarity already frozen*; **no `core↔mesh` triple, no deferred edge
+  flips eager**. ("P2 additive ⇒ BASELINE unchanged" was imprecise.)
+- **`EntitySelection.to_dataframe()` is NEW** (legacy
+  `core/_selection.Selection` has none; only `viz/Selection` does) —
+  implement **locally**, no `viz` import (R8), session via
+  `self._engine`. `.to_label`→`session.labels.add` (Tier-1,
+  `_label:`); `.to_physical`→`session.physical.add` (Tier-2 raw) —
+  ADR-locked non-merge (R-v2-3).
+- **Parity battery = 122 occurrences / 9 files** (lead
+  `tests/test_selection.py` 59), not HT9's "~60".
 
 ### P2-I — the idiom (additive; own PR)
 
@@ -259,21 +364,31 @@ the spawning sub-composite's typed `.get` (the locked
 `test_result_chain_subcomposites.py` fail-loud invariant). `.result()`
 = identity alias. `EntitySelection.to_label`/`.to_physical` per
 R-v2-3 + ADR; `.to_dataframe()`. Legacy `Selection` classes
-**byte-unchanged** here (removal is P3). **Gate:** new idiom
+**byte-unchanged** here (removal is P3). Repoints the 5 `.select()`
+host hooks to return the new types (§6.1 STOP-2). **Gate:** new idiom
 daisy-chains at all levels (smoke); 23+ `(id,payload)` callers green
-unchanged; ADR committed; tripwire green every commit. Closes HT8,
-R3-A, R3-4.
+unchanged (they go via `.get()`, untouched); ADR committed; the four
+proof tests byte-unchanged; **same-commit** locks per §6.1 STOP-2
+(`test_selection_idiom._EXPECTED_CHAINS` 5→7, `test_point_family_laws`
+pair-unpack, the 5 identity-assertion files) + the one declared
+BASELINE triple for `mesh/_mesh_selection.py`. Closes HT8, R3-A, R3-4.
 
 ### P2-G — geometry predicate completion (additive; own PR)
 
 Add `crossing_plane(point,normal,*,tol)` + a `Line`/2-point verb path
-to `EntitySelection` (entity family) and to `_chain.py
+to `EntitySelection` (entity family) and to `_kernel/chain.py
 REQUIRED_VERBS`; port `core/_selection.py:166-194` on/crossing/not_*
-(8-BB-corner) semantics into the entity hooks. **Gate:** parity test —
+(8-BB-corner) + `Line` semantics into the entity hooks. **Internally
+ordered per §6.1 STOP-1** (base concrete verb + point-family loud-raise
+→ entity override → append to `REQUIRED_VERBS` last; `import apeGmsh`
+green at every intra-PR commit). **Gate:** parity test —
 `EntitySelection` crossing/line/not_* == legacy `queries.select`
-across the ~60 existing crossing/line sites; `__init_subclass__`
-enforces the new verbs. Closes HT9. (Must land **before** P3 removes
-legacy `queries.select`.)
+across the **122-site / 9-file** parity battery (§6.1);
+`__init_subclass__` enforces the new verbs on all 7 concrete chains;
+`test_selection_idiom.test_identical_public_verb_surface` carves
+`crossing_plane` into the family-specific-signature exception
+(same-commit, the `in_box` template). Closes HT9. (Must land **before**
+P3 removes legacy `queries.select`.)
 
 ### P3 — full removal + spatial dedup (BREAKING; gated; own PR)
 

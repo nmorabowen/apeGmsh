@@ -37,9 +37,9 @@ from apeGmsh.core.loads.defs import (
     PointLoadDef,
     SurfaceLoadDef,
 )
-from apeGmsh.mesh._load_resolver import LoadResolver
-from apeGmsh.mesh._record_set import NodalLoadSet as LoadSet
-from apeGmsh.mesh.records._loads import LoadRecord
+from apeGmsh._kernel.resolvers._load_resolver import LoadResolver
+from apeGmsh._kernel.record_sets import NodalLoadSet as LoadSet
+from apeGmsh._kernel.records._loads import LoadRecord
 
 
 # (LoadDefType, reduction, target_form) -> method name on LoadsComposite
@@ -1666,7 +1666,7 @@ class LoadsComposite:
         ``(node_seq, dvec, scalar_fn)`` so the resolver can Gauss-sample
         the field rather than use a single midpoint value.
         """
-        from ..mesh._load_resolver import _direction_vec
+        from .._kernel.resolvers._load_resolver import _direction_vec
         dvec = _direction_vec(defn.direction)
         mag_fn = (lambda p: self._eval_magnitude(defn.magnitude, p))
         items: list = []
@@ -1686,7 +1686,7 @@ class LoadsComposite:
     def _resolve_line_element(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
         if callable(defn.magnitude) and defn.q_xyz is None:
-            from ..mesh._load_resolver import _direction_vec
+            from .._kernel.resolvers._load_resolver import _direction_vec
             dvec = _direction_vec(defn.direction)
             items: list = []
             for eid, _row, _nf, _nl, p1, p2, _ct in \

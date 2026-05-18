@@ -220,7 +220,7 @@ class Model(_HasLogging):
         # cross-package edge (tests/test_import_dag_polarity.py stays
         # green with the baseline unchanged).
         from ._helpers import resolve_to_dimtags
-        from ._selection import GeometryChain
+        from ._selection import EntitySelection
 
         if target is None and dim is None:
             raise ValueError(
@@ -233,7 +233,11 @@ class Model(_HasLogging):
             default_dim=3 if dim is None else dim,
             session=self._parent,
         )
-        return GeometryChain(dimtags, _engine=self.queries)
+        # selection-unification-v2 P2-I (§6.1 STOP-2): the host hook
+        # returns the v2 terminal ``EntitySelection`` (legacy
+        # ``GeometryChain`` left defined-but-unwired; P3 deletes it).
+        # Same deferred-import idiom; no new eager cross-package edge.
+        return EntitySelection(dimtags, _engine=self.queries)
 
     # ------------------------------------------------------------------
     # Visualisation

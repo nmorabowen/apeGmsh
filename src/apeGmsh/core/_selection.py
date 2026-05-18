@@ -20,7 +20,7 @@ import gmsh
 # is the package-root leaf, not one of those four packages, so the
 # polarity baseline is unaffected (identical idiom to
 # ``mesh/_node_chain.py``).
-from .._chain import SelectionChain
+from .._kernel.chain import SelectionChain
 
 DimTag = tuple[int, int]
 
@@ -192,6 +192,73 @@ def _select_impl(dimtags: Iterable[DimTag], *, on=None, crossing=None,
             result.append((d, t))
 
     return Selection(result, _queries=_queries)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entity-family crossing/straddle hook — shared by GeometryChain AND
+# EntitySelection (selection-unification-v2 P2-G, HT9).
+#
+# This is the unified-idiom fold of the legacy
+# ``queries.select(on=/crossing=/not_on=/not_crossing=)`` +
+# ``queries.line`` surface.  It ports ``_select_impl``'s 8-bounding-box-
+# corner semantics **exactly** (``core/_selection.py`` :166-194 — the
+# byte-unchanged legacy engine, NOT modified by P2-G; P3 removes it):
+#
+#   * ``spec`` is the legacy ``_parse_primitive`` grammar (dict→Plane,
+#     2 points→``Line`` [the legacy ``queries.line`` 2-point path],
+#     3 points→Plane, ``Plane``/``Line`` instance passthrough);
+#   * ``mode`` ∈ {on, crossing, not_on, not_crossing} is the exactly-
+#     one-of predicate the legacy 4 kwargs expressed;
+#   * per dimtag ``bb = gmsh.model.getBoundingBox(d, t)``;
+#     ``sd = primitive.signed_distances(bb)``;
+#     on  = ``bool(np.all(np.abs(sd) <= tol))``;
+#     crossing = ``bool(sd.min() < -tol and sd.max() > tol)``;
+#     ``not_*`` inverts (``hit ^ invert``);
+#   * ``tol`` default ``1e-6`` — byte-identical to the legacy default.
+#
+# It refines the chain (intersects with ``atoms``, preserving the
+# chain's insertion order — the chain-protocol contract), so the
+# returned tuple is exactly the legacy ``Selection`` membership set
+# restricted to (and ordered by) the chain's current atoms.  Defined in
+# THIS module, so it reuses the in-module ``Plane`` / ``Line`` /
+# ``_bb_corners`` / ``_parse_primitive`` primitives and adds **no** new
+# import edge (the import-DAG-polarity BASELINE is unaffected).
+
+_CROSSING_MODES = ("on", "crossing", "not_on", "not_crossing")
+
+
+def _crossing_impl(atoms: tuple, spec, *, tol: float, mode: str) -> tuple:
+    """Entity-family straddle filter (shared GeometryChain / EntitySelection).
+
+    Returns the subset of ``atoms`` (``(dim, tag)`` dimtags) that
+    satisfies the ``mode`` predicate against ``spec``, preserving the
+    chain's insertion order.  Semantics are byte-identical to
+    :func:`_select_impl` (the legacy ``queries.select`` engine).
+    """
+    if mode not in _CROSSING_MODES:
+        raise ValueError(
+            f"crossing_plane(mode={mode!r}) is invalid; expected one of "
+            f"{_CROSSING_MODES} (the legacy queries.select "
+            "on=/crossing=/not_on=/not_crossing= predicate set)."
+        )
+    t = float(tol)
+    if t < 0:
+        raise ValueError(f"tolerance must be non-negative, got {t}.")
+    primitive = _parse_primitive(spec)
+    base_mode = 'on' if 'on' in mode else 'crossing'
+    invert = mode.startswith('not_')
+
+    kept = []
+    for d, tg in atoms:
+        bb = gmsh.model.getBoundingBox(int(d), int(tg))
+        sd = primitive.signed_distances(bb)
+        if base_mode == 'on':
+            hit = bool(np.all(np.abs(sd) <= t))
+        else:
+            hit = bool(sd.min() < -t and sd.max() > t)
+        if hit ^ invert:
+            kept.append((d, tg))
+    return tuple(kept)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -941,6 +1008,22 @@ class GeometryChain(SelectionChain):
                 kept.append((d, t_))
         return tuple(kept)
 
+    # ── crossing_plane — legacy on/crossing/not_* straddle ──
+    def _spatial_crossing(
+        self, atoms: tuple, spec, *, tol: float, mode: str
+    ) -> tuple:
+        """Entity-family straddle filter (the HT9 fold).
+
+        Delegates to the module-level :func:`_crossing_impl`, shared
+        byte-for-byte with :class:`EntitySelection` — ports the legacy
+        ``queries.select(on=/crossing=/not_on=/not_crossing=)`` +
+        ``queries.line`` 8-bbox-corner semantics
+        (:func:`_select_impl`, byte-unchanged) into the unified chain
+        surface.  Refines the chain (intersected with ``atoms``,
+        insertion order preserved).
+        """
+        return _crossing_impl(atoms, spec, tol=tol, mode=mode)
+
     # ── terminal — the LEGACY Selection, unchanged ──────────
     def result(self) -> "Selection":
         return self._materialize()
@@ -952,5 +1035,334 @@ class GeometryChain(SelectionChain):
         wired exactly like ``queries.select(...)`` output: ``.to_label``
         / ``.to_physical`` / ``.tags`` / ``.select(on=)`` all work
         through the byte-unchanged legacy class.
+        """
+        return Selection(list(self._items), _queries=self._engine)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EntitySelection — the v2 entity-family terminal (selection-unification-v2 P2-I)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# This is the **chain==terminal** entity-family type the
+# ``g.model.select(...)`` host hook returns from P2-I onward
+# (``docs/plans/selection-unification-v2.md`` §4/§5 R-v2-2/-3, §6 P2-I).
+# It is defined **beside** ``GeometryChain`` in this same module, so it
+# adds *no* new import edge (the import-DAG-polarity BASELINE is
+# unaffected — ``core/_selection.py`` already imports the package-root
+# leaf ``_kernel.chain``).
+#
+# ``EntitySelection`` subsumes **everything** ``GeometryChain`` does —
+# the entity-family spatial contract is byte-identical (it reuses the
+# same in-module ``Plane`` / ``Line`` / ``_bb_corners`` /
+# ``_parse_primitive`` primitives and the same gmsh-BRep / bbox hooks),
+# so P1-K-style *invisibility* holds: a chain built through the
+# repointed host behaves exactly like the legacy ``GeometryChain`` did
+# (proven by ``tests/test_p2i_parity.py``).  On top of that parity it
+# adds the v2 **direct terminals** so the chain *is* the terminal (no
+# ``.result()`` ceremony required):
+#
+#   * ``.to_label(name)``   — Tier-1, ``_label:``-prefixed,
+#     boolean-op-stable (``session.labels.add`` per dim);
+#   * ``.to_physical(name)`` — Tier-2, raw gmsh PG
+#     (``session.physical.add`` per dim);
+#   * ``.to_dataframe()``   — NEW (no ``viz`` import; local mirror of
+#     ``viz/Selection.py``'s columns, gmsh bbox/mass + session label
+#     reverse-map);
+#   * ``.result()`` / ``._materialize()`` — zero-cost identity alias to
+#     the **legacy** ``core/_selection.Selection`` (R-v2-2), so the
+#     documented ``.tags()`` / ``.to_label`` / ``.to_physical`` /
+#     ``.select(on=)`` callers keep working unchanged through the
+#     byte-unchanged legacy terminal.
+#
+# Tier-1 (``.to_label``) and Tier-2 (``.to_physical``) are **separate
+# registries that must never be merged** — ADR 0015.  A ``Clash``
+# user-name can legitimately coexist as ``(d, 'Clash')`` (Tier-2) *and*
+# ``(d, '_label:Clash')`` (Tier-1); merging them silently destroys
+# Tier-1 boolean-op identity.
+
+
+class EntitySelection(SelectionChain):
+    """Daisy-chainable + terminal CAD-entity selection (entity family).
+
+    Atoms are ``(dim, tag)`` dimtags.  Constructed by the
+    ``g.model.select(...)`` host hook (see
+    :meth:`core.Model.Model.select`), which delegates *all* name
+    resolution to the existing, contract-locked geometry resolver —
+    this class never re-implements tier logic.
+
+    Behaviourally identical to the legacy :class:`GeometryChain` for
+    every inherited verb / set-algebra / spatial hook (the
+    selection-unification-v2 P2-I invisibility contract); the only
+    *additions* are the v2 direct terminals
+    (``.to_label`` / ``.to_physical`` / ``.to_dataframe``) and the
+    ``.result()`` identity alias to the byte-unchanged legacy
+    :class:`Selection`.
+
+    Example
+    -------
+    ::
+
+        (g.model.select("BottomFaces")
+            .in_box((0, 0, 0), (1, 1, 0.5))
+            .to_physical("lower_faces"))      # Tier-2, direct terminal
+    """
+
+    FAMILY = "entity"
+
+    __slots__ = ()
+
+    # ── coordinate access — entity bounding-box centre ──────
+    def _coords_of(self, atoms: tuple) -> np.ndarray:
+        """Bounding-box **centre** of each ``(dim, tag)`` entity.
+
+        Identical to :meth:`GeometryChain._coords_of` — entity-family
+        ``nearest_to`` / ``where`` operate on the bbox centre (a coarse
+        proxy; for exact geometric predicates use the legacy
+        ``on=``/``crossing=``).
+        """
+        if not atoms:
+            return np.empty((0, 3), dtype=np.float64)
+        rows = []
+        for d, t in atoms:
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(
+                int(d), int(t)
+            )
+            rows.append((
+                0.5 * (xmin + xmax),
+                0.5 * (ymin + ymax),
+                0.5 * (zmin + zmax),
+            ))
+        return np.asarray(rows, dtype=np.float64)
+
+    # ── in_box override — gmsh BRep, inclusive= forbidden ───
+    def in_box(self, lo, hi, **kw) -> "EntitySelection":
+        """Refine to entities whose BRep bounding box lies in ``[lo, hi]``.
+
+        Byte-identical semantics to :meth:`GeometryChain.in_box`:
+        delegates to ``gmsh.model.getEntitiesInBoundingBox`` (BRep
+        CONTAINMENT, closed, ``Geometry.Tolerance`` ~1e-8 expanded).
+        The point-family ``inclusive=`` half-open knob is inexpressible
+        for the entity family and is rejected **loudly** (R3 / ADR
+        precedent) — never silently ignored.
+
+        Raises
+        ------
+        TypeError
+            If ``inclusive=`` (or any keyword) is passed.
+        """
+        if kw:
+            raise TypeError(
+                "EntitySelection.in_box() does not accept "
+                f"{sorted(kw)!r}. The entity family uses "
+                "gmsh.model.getEntitiesInBoundingBox (BRep "
+                "bbox-intersect), which is inherently closed — the "
+                "half-open / 'inclusive=' knob is point-family only "
+                "and inexpressible here (selection-unification R3). "
+                "Drop the keyword; use queries.select(on=/crossing=) "
+                "for an exact geometric predicate."
+            )
+        return self._wrap(self._spatial_box(self._items, lo, hi))
+
+    def _spatial_box(self, atoms: tuple, lo, hi) -> tuple:
+        """gmsh BRep containment query, intersected with the chain.
+
+        Identical to :meth:`GeometryChain._spatial_box`:
+        ``getEntitiesInBoundingBox`` queried per distinct dim present
+        in ``atoms``, then intersected with the chain's current atoms
+        so the verb *refines* (chain protocol), preserving insertion
+        order.
+        """
+        if not atoms:
+            return ()
+        lo = [float(v) for v in lo]
+        hi = [float(v) for v in hi]
+        dims = sorted({int(d) for d, _ in atoms})
+        hits: set = set()
+        for d in dims:
+            for hd, ht in gmsh.model.getEntitiesInBoundingBox(
+                lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], d
+            ):
+                hits.add((int(hd), int(ht)))
+        return tuple(a for a in atoms if (int(a[0]), int(a[1])) in hits)
+
+    # ── in_sphere — entity bbox centre within radius ────────
+    def _spatial_sphere(self, atoms: tuple, center, radius: float) -> tuple:
+        """Identical to :meth:`GeometryChain._spatial_sphere` — closed
+        ball on the entity bbox centre (entity-family proxy)."""
+        r = float(radius)
+        if r < 0:
+            raise ValueError(f"radius must be non-negative, got {r}.")
+        if not atoms:
+            return ()
+        c = self._coords_of(atoms)
+        ctr = np.asarray(center, dtype=np.float64).reshape(3)
+        mask = np.linalg.norm(c - ctr, axis=1) <= r
+        return tuple(a for a, k in zip(atoms, mask) if k)
+
+    # ── on_plane — all 8 bbox corners within tol of plane ───
+    def _spatial_plane(self, atoms: tuple, point, normal, tol: float) -> tuple:
+        """Identical to :meth:`GeometryChain._spatial_plane` — an
+        entity is kept iff *all 8* of its bbox corners are within
+        ``tol`` of the plane (the legacy ``select(on=...)`` test,
+        entity family, via the in-module :class:`Plane`)."""
+        t = float(tol)
+        if t < 0:
+            raise ValueError(f"tolerance must be non-negative, got {t}.")
+        n = np.asarray(normal, dtype=np.float64).reshape(3)
+        nn = np.linalg.norm(n)
+        if nn == 0:
+            raise ValueError("normal vector has zero length.")
+        if not atoms:
+            return ()
+        plane = Plane(normal=n / nn, anchor=np.asarray(point, dtype=np.float64))
+        kept = []
+        for d, t_ in atoms:
+            bb = gmsh.model.getBoundingBox(int(d), int(t_))
+            if bool(np.all(np.abs(plane.signed_distances(bb)) <= t)):
+                kept.append((d, t_))
+        return tuple(kept)
+
+    # ── crossing_plane — legacy on/crossing/not_* straddle ──
+    def _spatial_crossing(
+        self, atoms: tuple, spec, *, tol: float, mode: str
+    ) -> tuple:
+        """Identical to :meth:`GeometryChain._spatial_crossing` — the
+        HT9 fold.  Delegates to the module-level :func:`_crossing_impl`
+        (shared byte-for-byte with :class:`GeometryChain`): the legacy
+        ``queries.select(on=/crossing=/not_on=/not_crossing=)`` +
+        ``queries.line`` 8-bbox-corner semantics (:func:`_select_impl`,
+        byte-unchanged) through the unified chain surface, refining the
+        chain (intersected with ``atoms``, insertion order preserved).
+        """
+        return _crossing_impl(atoms, spec, tol=tol, mode=mode)
+
+    # ── session access (same wiring the legacy Selection wants) ──
+    def _session(self):
+        """The owning session.
+
+        ``_engine`` is the ``_Queries`` instance — exactly the object
+        the legacy :class:`Selection` carries as ``_queries=``.  The
+        session is ``_engine._model._parent`` (verified against the
+        byte-unchanged legacy ``Selection.to_label`` at
+        ``core/_selection.py``).
+        """
+        if self._engine is None:
+            raise RuntimeError(
+                "EntitySelection.to_label()/.to_physical()/"
+                ".to_dataframe() requires a selection bound to the "
+                "model-queries engine — build it via "
+                "g.model.select(...). This selection has _engine=None "
+                "(constructed standalone), so it has no session to "
+                "register on / read metadata from."
+            )
+        return self._engine._model._parent
+
+    # ── direct Tier-1 terminal (boolean-op-stable labels) ───
+    def to_label(self, name: str) -> "EntitySelection":
+        """Register every entity as a **Tier-1 label** (``_label:``).
+
+        Per-dim ``session.labels.add(d, tags, name=name)`` — the
+        boolean-op-stable, ``_label:``-prefixed registry (ADR 0015,
+        distinct from :meth:`to_physical`'s raw Tier-2 PG).  Replicates
+        the byte-unchanged legacy ``Selection.to_label`` exactly,
+        including its multi-dim warning suppression (re-using one name
+        across dims is the documented intent here, not a mistake).
+        Returns ``self`` for chaining.
+        """
+        import warnings
+        session = self._session()
+        dims = sorted({d for d, _ in self._items})
+        with warnings.catch_warnings():
+            if len(dims) > 1:
+                warnings.filterwarnings(
+                    "ignore", message=r".*already exists at dim.*",
+                )
+            for d in dims:
+                tags = [t for dim, t in self._items if dim == d]
+                session.labels.add(d, tags, name=name)
+        return self
+
+    # ── direct Tier-2 terminal (raw physical groups) ────────
+    def to_physical(self, name: str) -> "EntitySelection":
+        """Register every entity as a **Tier-2 physical group** (raw).
+
+        Per-dim ``session.physical.add(d, tags, name=name)`` — the raw
+        gmsh-PG registry (ADR 0015, distinct from :meth:`to_label`'s
+        Tier-1 ``_label:`` registry; the two are never merged).
+        Replicates the byte-unchanged legacy ``Selection.to_physical``.
+        Returns ``self`` for chaining.
+        """
+        session = self._session()
+        for d in sorted({d for d, _ in self._items}):
+            tags = [t for dim, t in self._items if dim == d]
+            session.physical.add(d, tags, name=name)
+        return self
+
+    # ── direct dataframe terminal (NEW; no viz import) ──────
+    def to_dataframe(self):
+        """Return a DataFrame ``dim, tag, kind, label, x, y, z, mass``.
+
+        **NEW** terminal — the legacy ``core/_selection.Selection`` has
+        no ``to_dataframe`` (only ``viz/Selection`` does).  Implemented
+        **locally** (no ``viz`` import — keeps the import-DAG polarity
+        intact, R8): ``kind`` from the session's
+        ``model._metadata`` entity registry, ``label`` from the
+        session label reverse-map (Tier-1), ``x/y/z`` from the gmsh
+        **bounding-box centre**, ``mass`` from ``gmsh.model.occ.getMass``
+        (length/area/volume; ``0.0`` for points).  Mirrors
+        ``viz/Selection.py``'s column set without importing it.
+        """
+        import pandas as pd
+
+        session = self._session()
+        reg = getattr(session.model, "_metadata", {}) or {}
+        label_map: dict = {}
+        labels_comp = getattr(session, "labels", None)
+        if labels_comp is not None:
+            try:
+                label_map = labels_comp.reverse_map()
+            except Exception:
+                label_map = {}
+
+        rows = []
+        for d, t in self._items:
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(
+                int(d), int(t)
+            )
+            if int(d) == 0:
+                mass = 0.0
+            else:
+                try:
+                    mass = float(gmsh.model.occ.getMass(int(d), int(t)))
+                except Exception:
+                    mass = float("nan")
+            info = reg.get((int(d), int(t)), {})
+            rows.append({
+                "dim": int(d),
+                "tag": int(t),
+                "kind": info.get("kind"),
+                "label": label_map.get((int(d), int(t)), ""),
+                "x": 0.5 * (xmin + xmax),
+                "y": 0.5 * (ymin + ymax),
+                "z": 0.5 * (zmin + zmax),
+                "mass": mass,
+            })
+        return pd.DataFrame(
+            rows,
+            columns=["dim", "tag", "kind", "label", "x", "y", "z", "mass"],
+        )
+
+    # ── terminal — the LEGACY Selection, unchanged (R-v2-2) ──
+    def result(self) -> "Selection":
+        return self._materialize()
+
+    def _materialize(self) -> "Selection":
+        """Identity alias → the byte-unchanged legacy :class:`Selection`.
+
+        Zero-cost (1-line) alias (R-v2-2): ``_engine`` is the
+        ``_Queries`` instance so the returned legacy terminal is wired
+        exactly like ``queries.select(...)`` output — ``.tags()`` /
+        ``.to_label`` / ``.to_physical`` / ``.select(on=)`` keep
+        working through the byte-unchanged legacy class.
         """
         return Selection(list(self._items), _queries=self._engine)

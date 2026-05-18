@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import cast
 
-from apeGmsh.mesh.records._loads import NodalLoadRecord
+from apeGmsh._kernel.records._loads import NodalLoadRecord
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.section.fiber import FiberPoint, RectPatch

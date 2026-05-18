@@ -14,10 +14,10 @@ skew term cannot regress silently:
 """
 import numpy as np
 
-from apeGmsh.mesh.records._constraints import (
+from apeGmsh._kernel.records._constraints import (
     InterpolationRecord, NodeGroupRecord, NodePairRecord,
 )
-from apeGmsh.mesh.records._kinds import ConstraintKind as K
+from apeGmsh._kernel.records._kinds import ConstraintKind as K
 
 
 def test_equal_dof_is_selection_matrix():

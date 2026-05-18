@@ -22,20 +22,20 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
-from apeGmsh.mesh.records._constraints import (
+from apeGmsh._kernel.records._constraints import (
     InterpolationRecord,
     NodeGroupRecord,
     NodePairRecord,
     NodeToSurfaceRecord,
     SurfaceCouplingRecord,
 )
-from apeGmsh.mesh.records._kinds import ConstraintKind
-from apeGmsh.mesh.records._loads import (
+from apeGmsh._kernel.records._kinds import ConstraintKind
+from apeGmsh._kernel.records._loads import (
     ElementLoadRecord,
     NodalLoadRecord,
     SPRecord,
 )
-from apeGmsh.mesh.records._masses import MassRecord
+from apeGmsh._kernel.records._masses import MassRecord
 
 
 # =====================================================================

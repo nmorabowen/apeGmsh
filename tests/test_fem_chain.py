@@ -47,9 +47,18 @@ import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh._chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
+from apeGmsh._kernel.chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
 from apeGmsh.mesh._node_chain import NodeChain
 from apeGmsh.mesh._elem_chain import ElementChain
+# selection-unification-v2 P2-I (§6.1 STOP-2(c)): the broker node /
+# element ``.select()`` hooks now return the v2 terminal
+# ``MeshSelection`` (legacy ``NodeChain`` / ``ElementChain`` left
+# defined-but-unwired; P3 deletes them).  The host-return-type
+# assertions below are BEHAVIOURAL (they then exercise len /
+# daisy-chain / .result() parity / set-algebra, which must stay
+# green), so they assert the new type; the legacy structural-shape
+# tests above keep asserting the (still-defined) legacy classes.
+from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.mesh.FEMData import (
     FEMData, NodeComposite, ElementComposite, NodeResult,
 )
@@ -131,7 +140,7 @@ def test_init_subclass_still_accepts_elementchain_shape():
 def test_node_select_returns_nodechain_seeded_by_resolver(cube_fem):
     fem = cube_fem
     sel = fem.nodes.select(pg="Body")
-    assert isinstance(sel, NodeChain)
+    assert isinstance(sel, MeshSelection)      # P2-I: was NodeChain
     assert sel.FAMILY == "point"
     # 27-node lattice volume PG
     assert len(sel) == 27
@@ -144,7 +153,7 @@ def test_node_select_returns_nodechain_seeded_by_resolver(cube_fem):
 def test_element_select_returns_elementchain_seeded_by_resolver(cube_fem):
     fem = cube_fem
     sel = fem.elements.select(pg="Body")
-    assert isinstance(sel, ElementChain)
+    assert isinstance(sel, MeshSelection)      # P2-I: was ElementChain
     assert sel.FAMILY == "point"
     assert len(sel) == 8                       # 8 hex8 cells
     assert len(fem.elements.select()) == len(fem.elements)
@@ -204,7 +213,7 @@ def test_node_chain_daisychains_each_verb_returns_nodechain(cube_fem):
     step2 = step1.in_box((-1, -1, -1), (2, 2, 2))
     step3 = step2.on_plane((0, 0, 0), (0, 0, 1), tol=1e-9)
     for s in (step1, step2, step3):
-        assert isinstance(s, NodeChain)
+        assert isinstance(s, MeshSelection)    # P2-I: was NodeChain
     # full fluent one-liner: z=0 plane of the lattice = 9 nodes
     chained = (fem.nodes.select(pg="Body")
                  .in_box((-1, -1, -1), (2, 2, 2))
@@ -218,7 +227,7 @@ def test_element_chain_daisychains_each_verb_returns_elementchain(cube_fem):
     step2 = step1.in_box((-1, -1, -1), (2, 2, 2))
     step3 = step2.on_plane((0, 0, 0.25), (0, 0, 1), tol=0.1)
     for s in (step1, step2, step3):
-        assert isinstance(s, ElementChain)
+        assert isinstance(s, MeshSelection)    # P2-I: was ElementChain
     # 8 cells; centroids at z in {0.25, 0.75}; the z=0.25 plane keeps 4
     chained = (fem.elements.select(pg="Body")
                  .in_box((-1, -1, -1), (2, 2, 2))
@@ -297,29 +306,42 @@ def test_set_algebra_union_intersect_difference_symmetric(cube_fem):
     assert len(a - b) == 3                     # difference
     assert len(a ^ b) == 6                     # symmetric difference
     assert len(a | a) == 5                     # idempotent (one law)
-    # named aliases match the operators
-    assert tuple(a.union(b)) == tuple(a | b)
-    assert tuple(a.difference(b)) == tuple(a - b)
-    # every set-algebra result is itself a NodeChain (chainable)
+    # named aliases match the operators — compare on the ATOMS
+    # (``_items``); P2-I ``MeshSelection.__iter__`` yields
+    # ``(id, payload)`` pairs (ndarray payload → ambiguous tuple ``==``),
+    # but set-algebra is defined on ``_items`` and is unaffected.
+    assert (a.union(b))._items == (a | b)._items
+    assert (a.difference(b))._items == (a - b)._items
+    # every set-algebra result is itself the chain type (chainable)
     for s in (a | b, a & b, a - b, a ^ b):
-        assert isinstance(s, NodeChain)
+        assert isinstance(s, MeshSelection)    # P2-I: was NodeChain
 
     # element side too
     eids = [int(x) for x in fem.elements.get(pg="Body").ids]
     ea = fem.elements.select(ids=eids[:5])
     eb = fem.elements.select(ids=eids[3:])
     assert len(ea | eb) == 8
-    assert isinstance(ea & eb, ElementChain)
+    assert isinstance(ea & eb, MeshSelection)  # P2-I: was ElementChain
 
 
 def test_cross_type_and_cross_engine_set_algebra_is_loud(cube_fem):
     fem = cube_fem
     nc = fem.nodes.select(ids=[1])
     ec = fem.elements.select(ids=[int(fem.elements.ids[0])])
-    # cross-type (NodeChain vs ElementChain) — loud
-    with pytest.raises(TypeError, match="same chain type"):
+    # node-selection ⊕ element-selection is **loud** — the contract
+    # under test (it must raise, never silently combine).
+    # selection-unification-v2 P2-I: both hosts now return the single
+    # ``MeshSelection`` terminal, so ``_compatible`` discriminates on
+    # the ENGINE identity (node engine = NodeComposite vs element
+    # engine = ElementComposite — different objects) rather than the
+    # chain *type* arm.  Loudness is preserved; only which guard arm
+    # (and message) fires changed by the unification, so the regex
+    # accepts either the legacy "same chain type" or the
+    # engine-identity message.
+    _loud = r"same chain type|different engines"
+    with pytest.raises(TypeError, match=_loud):
         nc | ec
-    with pytest.raises(TypeError, match="same chain type"):
+    with pytest.raises(TypeError, match=_loud):
         nc & ec
 
     # cross-engine (two different FEMData node engines) — loud

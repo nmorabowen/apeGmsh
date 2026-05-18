@@ -7,7 +7,7 @@ import pandas as pd
 
 from apeGmsh._logging import _HasLogging
 from apeGmsh._types import Tag, DimTag
-from apeGmsh.core.Labels import is_label_pg
+from apeGmsh._kernel._label_prefix import is_label_pg
 
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
@@ -209,7 +209,7 @@ class PhysicalGroups(_HasLogging):
         if dim is None:
             for d in range(4):
                 for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(d):
-                    from apeGmsh.core.Labels import add_prefix
+                    from apeGmsh._kernel._label_prefix import add_prefix
                     if gmsh.model.getPhysicalName(pg_dim, pg_tag) == add_prefix(label_name):
                         dim = pg_dim
                         break
@@ -255,7 +255,7 @@ class PhysicalGroups(_HasLogging):
                 # Infer from first label
                 for d in range(4):
                     for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(d):
-                        from apeGmsh.core.Labels import add_prefix
+                        from apeGmsh._kernel._label_prefix import add_prefix
                         if gmsh.model.getPhysicalName(pg_dim, pg_tag) == add_prefix(lbl):
                             inferred_dim = pg_dim
                             break

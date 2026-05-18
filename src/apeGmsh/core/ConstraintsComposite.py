@@ -48,9 +48,9 @@ from apeGmsh.core.constraints.defs import (
     TieDef,
     TiedContactDef,
 )
-from apeGmsh.mesh._constraint_resolver import ConstraintResolver
-from apeGmsh.mesh._record_set import NodeConstraintSet as ConstraintSet
-from apeGmsh.mesh.records._constraints import ConstraintRecord
+from apeGmsh._kernel.resolvers._constraint_resolver import ConstraintResolver
+from apeGmsh._kernel.record_sets import NodeConstraintSet as ConstraintSet
+from apeGmsh._kernel.records._constraints import ConstraintRecord
 
 _DISPATCH: dict[type, str] = {
     EqualDOFDef:             "_resolve_node_pair",
@@ -345,7 +345,7 @@ class ConstraintsComposite:
         resolver contract — if a pattern resolves to zero mesh nodes:
         a BC that silently binds nothing is worse than one that errors.
         """
-        from apeGmsh.mesh.records._loads import SPRecord
+        from apeGmsh._kernel.records._loads import SPRecord
 
         if not self._bc_defs:
             return []

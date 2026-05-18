@@ -790,14 +790,29 @@ class MeshSelectionSet(_HasLogging):
         existing-surface route is the documented two step
         ``from_physical(dim, "PG", ms_name="foo")`` /
         ``from_geometric(sel, name="foo")`` **then**
-        ``select(name="foo")``.  Persistence (``.save_as(name)`` /
-        round-trip as ``selection=``) remains deferred and out of
-        S3d scope.
+        ``select(name="foo")``.  Persistence is now available on the
+        returned ``MeshSelection`` via ``.save_as(name)``
+        (selection-unification-v2 P2-I): it registers the (already
+        narrowed) id set through the existing
+        :meth:`MeshSelectionSet.add` surface, so the named set
+        snapshots into ``fem.mesh_selection`` and round-trips via
+        FEMData HDF5 as ``selection=`` — the live-mesh engine is the
+        only context where the mutable mesh-selection store is
+        reachable (see ADR 0015).
         """
-        from ._mesh_selection_chain import (  # deferred — see plan §3
-            MeshSelectionChain,
-            engine_for,
-        )
+        # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
+        # terminal ``MeshSelection`` (legacy ``MeshSelectionChain`` left
+        # defined-but-unwired; P3 deletes it).  ``engine_for`` is kept
+        # verbatim — the per-``(level, dim)`` memoised ``_LiveMeshEngine``
+        # singleton is what ``SelectionChain._compatible`` gates
+        # set-algebra identity on, and ``MeshSelection`` delegates the
+        # per-engine live-mesh read back to a ``MeshSelectionChain``
+        # built from this exact same engine (byte-faithful).  Same
+        # deferred-import idiom; ``_mesh_selection`` imports only the
+        # package-root leaf ``_kernel.chain`` at load (one declared
+        # downward BASELINE triple; no new eager cross-package edge).
+        from ._mesh_selection_chain import engine_for  # deferred — plan §3
+        from ._mesh_selection import MeshSelection      # deferred — plan §3
 
         if level not in ("node", "element"):
             raise ValueError(
@@ -831,7 +846,7 @@ class MeshSelectionSet(_HasLogging):
                 elem_ids, _ = self._get_mesh_elements(d)
                 atoms = [int(e) for e in elem_ids]
 
-        return MeshSelectionChain(atoms, _engine=eng)
+        return MeshSelection(atoms, _engine=eng)
 
     def sort_set(
         self,

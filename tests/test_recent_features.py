@@ -25,15 +25,15 @@ from apeGmsh.core.constraints.defs import (
     NodeToSurfaceSpringDef,
     TiedContactDef,
 )
-from apeGmsh.mesh._constraint_resolver import ConstraintResolver
-from apeGmsh.mesh.records import (
+from apeGmsh._kernel.resolvers._constraint_resolver import ConstraintResolver
+from apeGmsh._kernel.records import (
     NodePairRecord,
     NodeToSurfaceRecord,
     SurfaceCouplingRecord,
 )
 from apeGmsh.core.loads.defs import FaceLoadDef, FaceSPDef
-from apeGmsh.mesh._load_resolver import LoadResolver
-from apeGmsh.mesh.records import ConstraintKind, NodalLoadRecord, SPRecord
+from apeGmsh._kernel.resolvers._load_resolver import LoadResolver
+from apeGmsh._kernel.records import ConstraintKind, NodalLoadRecord, SPRecord
 
 
 # ---------------------------------------------------------------------

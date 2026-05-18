@@ -55,12 +55,13 @@ from numpy import ndarray
 from ._group_set import (
     PhysicalGroupSet, LabelSet, _to_object,
 )
-from ._record_set import (
+from .._kernel.record_sets import (
     NodeConstraintSet, SurfaceConstraintSet,
     NodalLoadSet, SPSet, ElementLoadSet, MassSet,
 )
-from ._element_types import (
-    ElementTypeInfo, ElementGroup, GroupResult,
+from ._element_types import ElementTypeInfo
+from .._kernel.payloads import (
+    NodeResult, ElementGroup, GroupResult,
     resolve_type_filter,
 )
 
@@ -72,66 +73,15 @@ if TYPE_CHECKING:
 # =====================================================================
 # NodeResult — pair-iterating node view
 # =====================================================================
-
-class NodeResult:
-    """Iterable pair-view of node IDs and coordinates.
-
-    Iteration yields ``(node_id, xyz)`` pairs — clean one-liner for
-    solver node emission::
-
-        for nid, xyz in fem.nodes.get(pg="Base"):
-            ops.node(nid, *xyz)
-
-    Array access is still available::
-
-        result = fem.nodes.get(pg="Base")
-        result.ids       # ndarray(N,) object dtype — iterates as Python int
-        result.coords    # ndarray(N, 3) float64
-        result.to_dataframe()
-
-    The ID array uses ``dtype=object`` so iterating yields plain
-    Python ``int`` values, which OpenSees and other C-extension
-    solvers accept without ``int()`` casts.
-    """
-
-    __slots__ = ('_ids', '_coords')
-
-    def __init__(self, ids: ndarray, coords: ndarray) -> None:
-        ids_arr = np.asarray(ids)
-        if ids_arr.dtype != object:
-            ids_arr = ids_arr.astype(object)
-        self._ids = ids_arr
-        self._coords = np.asarray(coords, dtype=np.float64)
-
-    @property
-    def ids(self) -> ndarray:
-        return self._ids
-
-    @property
-    def coords(self) -> ndarray:
-        return self._coords
-
-    def __iter__(self):
-        for nid, xyz in zip(self._ids, self._coords):
-            yield nid, xyz
-
-    def __len__(self) -> int:
-        return len(self._ids)
-
-    def __bool__(self) -> bool:
-        return len(self._ids) > 0
-
-    def __repr__(self) -> str:
-        return f"NodeResult({len(self)} nodes)"
-
-    def to_dataframe(self) -> "pd.DataFrame":
-        import pandas as pd
-        return pd.DataFrame(
-            self._coords,
-            index=pd.Index(
-                [int(x) for x in self._ids], name='node_id'),
-            columns=['x', 'y', 'z'],
-        )
+#
+# RELOCATED to ``apeGmsh._kernel.payloads`` (selection-unification-v2
+# P1-K, the keystone cycle-break — closes HT1/HT8/R3-B).  Class
+# identity is unchanged; only the module path moved.  ``NodeResult`` is
+# re-exported above via ``from .._kernel.payloads import NodeResult``
+# (a downward ``mesh`` → ``_kernel`` edge — the intended layering
+# direction) so ``from apeGmsh.mesh.FEMData import NodeResult`` and the
+# byte-unchanged contract/pin tests keep resolving.  Flagged as a
+# P3/P4 internal-cleanup candidate.
 
 
 # =====================================================================
@@ -335,7 +285,13 @@ class NodeComposite:
         cross-package edge (``tests/test_import_dag_polarity.py`` stays
         green with the baseline unchanged).
         """
-        from ._node_chain import NodeChain  # deferred — see plan §3 idiom
+        # selection-unification-v2 P2-I (§6.1 STOP-2): the host hook
+        # returns the v2 terminal ``MeshSelection`` (legacy ``NodeChain``
+        # left defined-but-unwired; P3 deletes it).  Same deferred-import
+        # idiom — ``_mesh_selection`` imports only the package-root leaf
+        # ``_kernel.chain`` at load, so no new eager cross-package edge
+        # (one declared downward BASELINE triple; tripwire stays green).
+        from ._mesh_selection import MeshSelection  # deferred — plan §3
 
         if ids is not None:
             atoms = [int(n) for n in ids]
@@ -357,7 +313,7 @@ class NodeComposite:
                     seed_ids, seed_coords, partition
                 )
             atoms = [int(n) for n in seed_ids]
-        return NodeChain(atoms, _engine=self)
+        return MeshSelection(atoms, _engine=self)
 
     def get(
         self,
@@ -973,7 +929,11 @@ class ElementComposite:
         cross-package edge (``tests/test_import_dag_polarity.py`` stays
         green with the baseline unchanged).
         """
-        from ._elem_chain import ElementChain  # deferred — see plan §3
+        # selection-unification-v2 P2-I (§6.1 STOP-2): the host hook
+        # returns the v2 terminal ``MeshSelection`` (legacy
+        # ``ElementChain`` left defined-but-unwired; P3 deletes it).
+        # Same deferred-import idiom; no new eager cross-package edge.
+        from ._mesh_selection import MeshSelection  # deferred — plan §3
 
         if ids is not None:
             atoms = [int(e) for e in ids]
@@ -1011,7 +971,7 @@ class ElementComposite:
                     element_type=element_type, partition=partition,
                 ).ids
             ]
-        return ElementChain(atoms, _engine=self)
+        return MeshSelection(atoms, _engine=self)
 
     # ── Lookups ─────────────────────────────────────────────
 
