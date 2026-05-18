@@ -36,24 +36,42 @@ import apeGmsh
 PKGS = {"core", "mesh", "viz", "results", "_kernel", "fem"}
 
 # Frozen snapshot of every EAGER (module-level, non-TYPE_CHECKING)
-# cross-package import among PKGS, captured on the unification branch
-# baseline.  (src_pkg, dst_pkg, file-relative-to-apeGmsh/).
+# cross-package import among PKGS.  (src_pkg, dst_pkg,
+# file-relative-to-apeGmsh/).
 #
-# The ``mesh/results -> fem`` triples below are pre-existing eager
-# edges that only became *visible* once ``fem`` entered ``PKGS``
-# (pure scope-widening; no ``core<->mesh`` edge changed).  ``_kernel``
-# contributes zero edges today — the package does not yet exist; the
-# guard is armed so it cannot grow a hidden one.
+# REFROZEN by selection-unification-v2 **P1-K** (the keystone
+# relayer).  The relocation diff *is* the reviewed decision (see the
+# module docstring): the pure data/algorithm layer moved into the
+# root-leaf ``apeGmsh._kernel`` package, so ``core`` / ``mesh`` /
+# ``results`` now import strictly DOWNWARD into ``_kernel`` and the
+# latent ``core<->mesh`` cycle is **deleted**.  Classified delta vs the
+# pre-P1-K baseline:
+#   * REMOVED — all 3 ``('core','mesh',…)`` + all 5 ``('mesh','core',…)``
+#     triples, and ``('mesh','fem','mesh/_mass_resolver.py')``
+#     (the cycle and the old fem edge are gone).
+#   * ADDED — only ``*→_kernel`` downward edges, plus the single
+#     ``('_kernel','fem','_kernel/resolvers/_mass_resolver.py')`` (HT10:
+#     ``_kernel`` MAY depend on leaf-pure ``apeGmsh.fem``).
+# The 2 ``('results','fem',…)`` edges are unchanged (carried).  No
+# ``core<->mesh`` triple survives — that is the P1-K invariant.
 BASELINE = {
-    ("core", "mesh", "core/ConstraintsComposite.py"),
-    ("core", "mesh", "core/LoadsComposite.py"),
-    ("core", "mesh", "core/MassesComposite.py"),
-    ("mesh", "core", "mesh/PhysicalGroups.py"),
-    ("mesh", "core", "mesh/_constraint_resolver/_resolver.py"),
-    ("mesh", "core", "mesh/_load_resolver.py"),
-    ("mesh", "core", "mesh/_mass_resolver.py"),
-    ("mesh", "core", "mesh/records/__init__.py"),
-    ("mesh", "fem", "mesh/_mass_resolver.py"),
+    ("_kernel", "fem", "_kernel/resolvers/_mass_resolver.py"),
+    ("core", "_kernel", "core/ConstraintsComposite.py"),
+    ("core", "_kernel", "core/Labels.py"),
+    ("core", "_kernel", "core/LoadsComposite.py"),
+    ("core", "_kernel", "core/MassesComposite.py"),
+    ("core", "_kernel", "core/_selection.py"),
+    ("core", "_kernel", "core/constraints/defs.py"),
+    ("core", "_kernel", "core/loads/defs.py"),
+    ("core", "_kernel", "core/masses/defs.py"),
+    ("mesh", "_kernel", "mesh/FEMData.py"),
+    ("mesh", "_kernel", "mesh/PhysicalGroups.py"),
+    ("mesh", "_kernel", "mesh/__init__.py"),
+    ("mesh", "_kernel", "mesh/_elem_chain.py"),
+    ("mesh", "_kernel", "mesh/_element_types.py"),
+    ("mesh", "_kernel", "mesh/_mesh_selection_chain.py"),
+    ("mesh", "_kernel", "mesh/_node_chain.py"),
+    ("results", "_kernel", "results/_result_chain.py"),
     ("results", "fem", "results/_gauss_extrapolation.py"),
     ("results", "fem", "results/_gauss_world_coords.py"),
 }
@@ -160,7 +178,7 @@ def test_core_init_does_not_import_selection_leaves() -> None:
 def test_spike_modules_present_and_safe() -> None:
     """S0a spike: the leaf chain + one point-family chainable + the
     deferred host hook import cleanly on the active path."""
-    chain = importlib.import_module("apeGmsh._chain")
+    chain = importlib.import_module("apeGmsh._kernel.chain")
     nodec = importlib.import_module("apeGmsh.mesh._node_chain")
     femd = importlib.import_module("apeGmsh.mesh.FEMData")
     assert hasattr(chain, "SelectionChain")

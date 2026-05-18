@@ -61,7 +61,7 @@ def loads_results(g, tmp_path: Path):
     results = Results.from_native(path)
     # Inject load records on the post-load fem object so the diagram
     # sees them (the writer doesn't persist loads to H5 today).
-    from apeGmsh.mesh.records import NodalLoadRecord
+    from apeGmsh._kernel.records import NodalLoadRecord
     fem_after = results.fem
     n_after = list(fem_after.nodes.ids)
     fem_after.nodes.loads._records.append(NodalLoadRecord(
@@ -200,7 +200,7 @@ def test_detach_clears_state(loads_results, headless_plotter):
 
 def test_zero_force_records_skipped(loads_results, headless_plotter):
     """Records with all-zero force_xyz produce no glyph (degenerate)."""
-    from apeGmsh.mesh.records import NodalLoadRecord
+    from apeGmsh._kernel.records import NodalLoadRecord
     loads_results.fem.nodes.loads._records.append(NodalLoadRecord(
         pattern="ZEROES", node_id=int(loads_results.fem.nodes.ids[0]),
         force_xyz=(0.0, 0.0, 0.0),
@@ -214,7 +214,7 @@ def test_zero_force_records_skipped(loads_results, headless_plotter):
 def test_moment_only_records_skipped(loads_results, headless_plotter):
     """Records with only moments (force_xyz=None) are ignored — moments
     need a different glyph and aren't drawn yet."""
-    from apeGmsh.mesh.records import NodalLoadRecord
+    from apeGmsh._kernel.records import NodalLoadRecord
     loads_results.fem.nodes.loads._records.append(NodalLoadRecord(
         pattern="MOMENT_ONLY",
         node_id=int(loads_results.fem.nodes.ids[0]),

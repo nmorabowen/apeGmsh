@@ -20,7 +20,7 @@ import gmsh
 # is the package-root leaf, not one of those four packages, so the
 # polarity baseline is unaffected (identical idiom to
 # ``mesh/_node_chain.py``).
-from .._chain import SelectionChain
+from .._kernel.chain import SelectionChain
 
 DimTag = tuple[int, int]
 

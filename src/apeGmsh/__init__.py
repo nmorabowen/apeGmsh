@@ -68,7 +68,7 @@ from apeGmsh.mesh.Mesh import (
 )
 from apeGmsh.mesh.MshLoader import MshLoader
 from apeGmsh.results.Results import Results
-import apeGmsh.mesh.records as Constraints
+import apeGmsh._kernel.records as Constraints  # relocated (P1-K keystone)
 from apeGmsh.mesh._numberer import Numberer, NumberedMesh
 from apeGmsh.mesh._mesh_partitioning import RenumberResult, PartitionInfo
 from apeGmsh.viewers.mesh_viewer import MeshViewer

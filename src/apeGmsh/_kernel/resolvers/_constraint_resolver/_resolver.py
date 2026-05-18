@@ -18,7 +18,7 @@ from typing import Sequence
 import numpy as np
 from numpy import ndarray
 
-from apeGmsh.core.constraints.defs import (
+from apeGmsh._kernel.defs.constraints import (
     DistributingCouplingDef,
     EqualDOFDef,
     KinematicCouplingDef,
@@ -32,14 +32,14 @@ from apeGmsh.core.constraints.defs import (
     TieDef,
     TiedContactDef,
 )
-from apeGmsh.mesh.records._constraints import (
+from apeGmsh._kernel.records._constraints import (
     InterpolationRecord,
     NodeGroupRecord,
     NodePairRecord,
     NodeToSurfaceRecord,
     SurfaceCouplingRecord,
 )
-from apeGmsh.mesh.records._kinds import ConstraintKind
+from apeGmsh._kernel.records._kinds import ConstraintKind
 
 from ._geom import (
     SHAPE_FUNCTIONS,

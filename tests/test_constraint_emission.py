@@ -16,9 +16,9 @@ import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.mesh._record_set import NodeConstraintSet
-from apeGmsh.mesh.records._constraints import NodeGroupRecord, NodePairRecord
-from apeGmsh.mesh.records._kinds import ConstraintKind as K
+from apeGmsh._kernel.record_sets import NodeConstraintSet
+from apeGmsh._kernel.records._constraints import NodeGroupRecord, NodePairRecord
+from apeGmsh._kernel.records._kinds import ConstraintKind as K
 
 
 # =====================================================================

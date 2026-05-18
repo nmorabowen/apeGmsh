@@ -44,7 +44,7 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh._chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
+from apeGmsh._kernel.chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
 from apeGmsh.core._selection import GeometryChain, Selection
 from apeGmsh.mesh._node_chain import NodeChain
 

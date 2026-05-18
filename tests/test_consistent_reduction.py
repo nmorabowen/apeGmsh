@@ -9,11 +9,11 @@ import numpy as np
 import pytest
 
 from apeGmsh.core.loads.defs import LineLoadDef, SurfaceLoadDef
-from apeGmsh.mesh._consistent_quadrature import (
+from apeGmsh._kernel._consistent_quadrature import (
     integrate_edge,
     integrate_face,
 )
-from apeGmsh.mesh._load_resolver import LoadResolver
+from apeGmsh._kernel.resolvers._load_resolver import LoadResolver
 
 
 # ---------------------------------------------------------------------

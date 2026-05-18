@@ -52,7 +52,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from apeGmsh._chain import (
+from apeGmsh._kernel.chain import (
     REQUIRED_VERBS,
     SelectionChain,
     _REQUIRED_HOOKS,

@@ -46,7 +46,7 @@ import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh._chain import REQUIRED_VERBS, SelectionChain
+from apeGmsh._kernel.chain import REQUIRED_VERBS, SelectionChain
 
 # Importing the five host modules registers every concrete subclass.
 from apeGmsh.core._selection import GeometryChain
