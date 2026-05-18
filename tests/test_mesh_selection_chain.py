@@ -54,6 +54,17 @@ from apeGmsh.mesh._mesh_selection_chain import (
     MeshSelectionChain,
     _LiveMeshEngine,
 )
+# selection-unification-v2 P2-I (§6.1 STOP-2(c)):
+# ``g.mesh_selection.select(...)`` now returns the v2 terminal
+# ``MeshSelection`` (legacy ``MeshSelectionChain`` left
+# defined-but-unwired; P3 deletes it).  The host-return-type
+# assertions below are BEHAVIOURAL (they then exercise
+# .ids / len / daisy-chain / spatial / set-algebra / the
+# eager-API parity / .result() dict-shape, which must stay green),
+# so they assert the new type; the legacy structural-shape /
+# engine-adapter tests keep asserting the still-defined
+# ``MeshSelectionChain`` / ``_LiveMeshEngine``.
+from apeGmsh.mesh._mesh_selection import MeshSelection
 
 
 # =====================================================================
@@ -143,7 +154,7 @@ def test_engine_adapter_rejects_bad_level():
 def test_node_select_seeds_full_live_node_universe(live):
     ms = live.mesh_selection
     sel = ms.select()                       # default level="node"
-    assert isinstance(sel, MeshSelectionChain)
+    assert isinstance(sel, MeshSelection)   # P2-I: was MeshSelectionChain
     assert sel.FAMILY == "point"
     all_ids, _ = ms._get_mesh_nodes()
     assert len(sel) == len(all_ids) == 27   # whole lattice
@@ -154,7 +165,7 @@ def test_node_select_seeds_full_live_node_universe(live):
 def test_element_select_seeds_full_live_element_universe(live):
     ms = live.mesh_selection
     sel = ms.select(level="element", dim=3)
-    assert isinstance(sel, MeshSelectionChain)
+    assert isinstance(sel, MeshSelection)   # P2-I: was MeshSelectionChain
     assert sel.FAMILY == "point"
     eids, _ = ms._get_mesh_elements(3)
     assert len(sel) == len(eids) == 8       # 8 hex8 cells
@@ -197,7 +208,7 @@ def test_node_chain_daisychains_each_verb(live):
     s2 = s1.in_box((-1, -1, -1), (2, 2, 2))
     s3 = s2.on_plane((0, 0, 0), (0, 0, 1), tol=1e-9)
     for s in (s1, s2, s3):
-        assert isinstance(s, MeshSelectionChain)
+        assert isinstance(s, MeshSelection)  # P2-I: was MeshSelectionChain
     chained = (ms.select()
                  .in_box((-1, -1, -1), (2, 2, 2))
                  .on_plane((0, 0, 0), (0, 0, 1), tol=1e-9))
@@ -210,7 +221,7 @@ def test_element_chain_daisychains_each_verb(live):
     s2 = s1.in_box((-1, -1, -1), (2, 2, 2))
     s3 = s2.on_plane((0, 0, 0.25), (0, 0, 1), tol=0.1)
     for s in (s1, s2, s3):
-        assert isinstance(s, MeshSelectionChain)
+        assert isinstance(s, MeshSelection)  # P2-I: was MeshSelectionChain
     # 8 cells; centroids z in {0.25, 0.75}; z=0.25 plane keeps 4
     chained = (ms.select(level="element", dim=3)
                  .in_box((-1, -1, -1), (2, 2, 2))
@@ -383,10 +394,14 @@ def test_set_algebra_node_level(live):
     assert len(a - b) == 3
     assert len(a ^ b) == 6
     assert len(a | a) == 5                     # idempotent (one law)
-    assert tuple(a.union(b)) == tuple(a | b)
-    assert tuple(a.difference(b)) == tuple(a - b)
+    # compare on the ATOMS (``_items``); P2-I
+    # ``MeshSelection.__iter__`` yields ``(id, payload)`` pairs
+    # (ndarray payload → ambiguous tuple ``==``), but set-algebra is
+    # defined on ``_items`` and is unaffected by the pair-view.
+    assert (a.union(b))._items == (a | b)._items
+    assert (a.difference(b))._items == (a - b)._items
     for s in (a | b, a & b, a - b, a ^ b):
-        assert isinstance(s, MeshSelectionChain)
+        assert isinstance(s, MeshSelection)  # P2-I: was MeshSelectionChain
 
 
 def test_set_algebra_element_level_same_engine(live):
@@ -396,7 +411,7 @@ def test_set_algebra_element_level_same_engine(live):
     ea = ms.select(level="element", dim=3, ids=eids[:5])
     eb = ms.select(level="element", dim=3, ids=eids[3:])
     assert len(ea | eb) == 8
-    assert isinstance(ea & eb, MeshSelectionChain)
+    assert isinstance(ea & eb, MeshSelection)  # P2-I: was MeshSelectionChain
 
 
 def test_cross_level_and_cross_dim_set_algebra_is_loud(live):

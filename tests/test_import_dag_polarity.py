@@ -54,6 +54,20 @@ PKGS = {"core", "mesh", "viz", "results", "_kernel", "fem"}
 #     ``_kernel`` MAY depend on leaf-pure ``apeGmsh.fem``).
 # The 2 ``('results','fem',…)`` edges are unchanged (carried).  No
 # ``core<->mesh`` triple survives — that is the P1-K invariant.
+#
+# selection-unification-v2 **P2-I** same-commit reviewed delta
+# (``docs/plans/selection-unification-v2.md`` §6.1 "Placement"): the v2
+# point terminal lives in the NEW leaf ``mesh/_mesh_selection.py``,
+# whose only module-level import is the package-root leaf
+# ``from .._kernel.chain import SelectionChain`` (payloads + the four
+# legacy chains are deferred inside method bodies, identical to
+# ``mesh/_node_chain.py``).  That adds exactly ONE downward triple
+# ``('mesh','_kernel','mesh/_mesh_selection.py')`` — the *same polarity
+# already frozen* for every other ``mesh→_kernel`` leaf.  The 5 host
+# repoints reuse the existing deferred-import idiom (the
+# ``results→mesh`` / ``mesh→results`` delegate imports are function-body
+# only, so invisible to this eager tripwire by construction): NO
+# ``core↔mesh`` triple, NO deferred edge flipped eager, nothing removed.
 BASELINE = {
     ("_kernel", "fem", "_kernel/resolvers/_mass_resolver.py"),
     ("core", "_kernel", "core/ConstraintsComposite.py"),
@@ -69,6 +83,7 @@ BASELINE = {
     ("mesh", "_kernel", "mesh/__init__.py"),
     ("mesh", "_kernel", "mesh/_elem_chain.py"),
     ("mesh", "_kernel", "mesh/_element_types.py"),
+    ("mesh", "_kernel", "mesh/_mesh_selection.py"),
     ("mesh", "_kernel", "mesh/_mesh_selection_chain.py"),
     ("mesh", "_kernel", "mesh/_node_chain.py"),
     ("results", "_kernel", "results/_result_chain.py"),
