@@ -167,7 +167,27 @@ def _element_centroids(fem) -> tuple[ndarray, ndarray]:
         out_cent.append(cent)
 
     if not out_ids:
-        return np.array([], dtype=np.int64), np.empty((0, 3), dtype=np.float64)
+        # Fail loud, never silent-empty (resolution-contract Rule 6).
+        # Every element-geometry verb (nearest_to / in_box / in_sphere /
+        # on_plane, both the legacy helpers and the .select() chain that
+        # inherits this contract) funnels through here. A reader-
+        # synthesised MPCO FEMData omits element connectivity for any
+        # element class MPCO does not write into MODEL/ELEMENTS, so the
+        # centroid filter would otherwise return an empty slab with no
+        # signal that the geometry was simply unavailable.
+        raise RuntimeError(
+            "Element-geometry spatial filtering (nearest_to / in_box / "
+            "in_sphere / on_plane) needs a bound FEMData that carries "
+            "element connectivity, but the bound FEMData has no "
+            f"resolvable elements ({sorted_node_ids.size} node(s), 0 "
+            "element groups). This is the case for a reader-synthesised "
+            "MPCO FEMData whose MODEL/ELEMENTS group does not carry "
+            "connectivity for the requested element class (e.g. "
+            "ZeroLength springs in models where STKO did not emit them) "
+            "— element centroids cannot be computed. Re-attach a "
+            "session-built FEMData that carries element geometry via "
+            "results.bind(fem)."
+        )
     return np.concatenate(out_ids), np.vstack(out_cent)
 
 
@@ -177,9 +197,9 @@ def _nearest_element_id(fem, point, *, candidate_ids=None) -> int:
     If ``candidate_ids`` is provided, restrict the search to that set.
     """
     target = np.asarray(point, dtype=np.float64).reshape(3)
+    # _element_centroids fails loud when the bound FEMData carries no
+    # resolvable element geometry, so ids is always non-empty here.
     ids, cent = _element_centroids(fem)
-    if ids.size == 0:
-        raise RuntimeError("FEMData has no elements.")
     if candidate_ids is None:
         cand_mask = np.ones(ids.size, dtype=bool)
     else:
@@ -198,9 +218,7 @@ def _element_ids_in_box(fem, box_min, box_max) -> ndarray:
     """Return element IDs whose centroid lies inside the AABB."""
     lo = np.asarray(box_min, dtype=np.float64).reshape(3)
     hi = np.asarray(box_max, dtype=np.float64).reshape(3)
-    ids, cent = _element_centroids(fem)
-    if ids.size == 0:
-        return np.array([], dtype=np.int64)
+    ids, cent = _element_centroids(fem)   # fails loud if no element geometry
     mask = np.all((cent >= lo) & (cent < hi), axis=1)
     return ids[mask]
 
@@ -211,9 +229,7 @@ def _element_ids_in_sphere(fem, center, radius) -> ndarray:
     r = float(radius)
     if r < 0:
         raise ValueError(f"radius must be non-negative, got {r}.")
-    ids, cent = _element_centroids(fem)
-    if ids.size == 0:
-        return np.array([], dtype=np.int64)
+    ids, cent = _element_centroids(fem)   # fails loud if no element geometry
     mask = np.linalg.norm(cent - c, axis=1) <= r
     return ids[mask]
 
@@ -229,9 +245,7 @@ def _element_ids_on_plane(fem, point_on_plane, normal, tolerance) -> ndarray:
     tol = float(tolerance)
     if tol < 0:
         raise ValueError(f"tolerance must be non-negative, got {tol}.")
-    ids, cent = _element_centroids(fem)
-    if ids.size == 0:
-        return np.array([], dtype=np.int64)
+    ids, cent = _element_centroids(fem)   # fails loud if no element geometry
     distance = np.abs((cent - p) @ n_hat)
     mask = distance <= tol
     return ids[mask]

@@ -456,3 +456,139 @@ def test_element_centroids_in_range_missing_node_id_fails_loud(
         KeyError, match=r"element 10 references node 0 .*fail loud"
     ):
         _element_centroids(fem)
+
+
+# =====================================================================
+# Fail-loud: NO resolvable element geometry (reader-synthesised MPCO
+# FEMData that lacks element connectivity for the requested class).
+#
+# Sibling of the dangling-node-ref guard above: there the FEM has
+# elements but a corrupt node ref; here the FEM has *no* element groups
+# at all (the shape a reader-synthesised MPCO FEMData takes when MPCO
+# did not write the element class into MODEL/ELEMENTS). The centroid
+# path must fail loud (resolution-contract Rule 6: never silent-empty),
+# not return an empty slab from springs.in_box / nearest_to / ...
+# =====================================================================
+
+def _elementless_fem(node_ids, coords):
+    """A FEMData mock that has nodes but zero resolvable elements."""
+    return SimpleNamespace(
+        snapshot_id="testhash",
+        nodes=SimpleNamespace(
+            ids=np.asarray(node_ids, dtype=np.int64),
+            coords=np.asarray(coords, dtype=np.float64),
+            physical=SimpleNamespace(
+                node_ids=lambda n: np.array([], dtype=np.int64),
+            ),
+            labels=SimpleNamespace(
+                node_ids=lambda n: np.array([], dtype=np.int64),
+            ),
+        ),
+        elements=SimpleNamespace(
+            ids=np.array([], dtype=np.int64),
+            types=[],                       # ← no element groups
+            resolve=lambda *, element_type=None: (
+                np.array([], dtype=np.int64),
+                np.empty((0, 0), dtype=np.int64),
+            ),
+            physical=SimpleNamespace(
+                element_ids=lambda n: np.array([], dtype=np.int64),
+            ),
+            labels=SimpleNamespace(
+                element_ids=lambda n: np.array([], dtype=np.int64),
+            ),
+        ),
+    )
+
+
+def test_element_geometry_no_resolvable_elements_fails_loud(
+    tmp_path: Path,
+) -> None:
+    """Every element-geometry verb must raise (not silent-empty) when
+    the bound FEMData carries no resolvable element geometry.
+
+    Pre-existing footgun (confirmed by an Opus 4.7 red/blue review):
+    ``_element_centroids`` returned ``(empty, empty)`` so
+    ``in_box`` / ``in_sphere`` / ``on_plane`` returned an empty slab
+    with no signal, while only ``nearest_to`` happened to raise. They
+    are now uniformly fail-loud at the single centroid chokepoint.
+    """
+    r, _fem = _make_results_with_fem(tmp_path)
+    r._fem = _elementless_fem(
+        node_ids=[1, 2, 3, 4, 5],
+        coords=[[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [5, 5, 5]],
+    )
+    fem = r._fem
+
+    from apeGmsh.results._composites import (
+        _element_centroids,
+        _element_ids_in_box,
+        _element_ids_in_sphere,
+        _element_ids_on_plane,
+        _nearest_element_id,
+    )
+
+    msg = r"no resolvable elements.*results\.bind\(fem\)"
+
+    # The single chokepoint.
+    with pytest.raises(RuntimeError, match=msg):
+        _element_centroids(fem)
+
+    # Every low-level helper funnels through it — including
+    # nearest_to, whose old "FEMData has no elements." is consolidated
+    # into the one actionable message.
+    with pytest.raises(RuntimeError, match=msg):
+        _element_ids_in_box(fem, (-9.0, -9.0, -9.0), (9.0, 9.0, 9.0))
+    with pytest.raises(RuntimeError, match=msg):
+        _element_ids_in_sphere(fem, (0.0, 0.0, 0.0), 100.0)
+    with pytest.raises(RuntimeError, match=msg):
+        _element_ids_on_plane(fem, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 1e-6)
+    with pytest.raises(RuntimeError, match=msg):
+        _nearest_element_id(fem, (0.0, 0.0, 0.0))
+
+    # Headline: the user-facing legacy springs spatial filters (the
+    # exact surface the S3f review flagged) now fail loud instead of
+    # returning a silently empty SpringSlab.
+    with pytest.raises(RuntimeError, match=msg):
+        r.elements.springs.in_box(
+            (-9.0, -9.0, -9.0), (9.0, 9.0, 9.0),
+            component="spring_force_0",
+        )
+    with pytest.raises(RuntimeError, match=msg):
+        r.elements.springs.nearest_to(
+            (0.0, 0.0, 0.0), component="spring_force_0",
+        )
+    with pytest.raises(RuntimeError, match=msg):
+        r.elements.springs.on_plane(
+            (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 1e-6,
+            component="spring_force_0",
+        )
+
+
+def test_springs_in_box_works_when_mpco_carries_connectivity() -> None:
+    """Counter-case / happy-path lock.
+
+    The premise that MPCO always synthesises an *empty* element set
+    for ZeroLength springs does NOT hold for ``zl_springs.mpco``: that
+    file *does* carry ``19-ZeroLength[1:0]`` connectivity, so the
+    centroid path resolves and ``springs.in_box`` returns real data.
+    This pins that the fail-loud guard does not regress the case where
+    element geometry *is* available (the guard only fires when there is
+    genuinely nothing to centroid).
+    """
+    fixture = Path("tests/fixtures/results/zl_springs.mpco")
+    if not fixture.exists():
+        pytest.skip(f"Missing fixture: {fixture}")
+
+    r = Results.from_mpco(fixture)
+    fem = r._fem
+    assert [t.name for t in fem.elements.types] == ["zerolength"]
+    assert sorted(int(e) for e in fem.elements.ids) == [100, 200]
+
+    slab = r.elements.springs.in_box(
+        (-1e9, -1e9, -1e9), (1e9, 1e9, 1e9),
+        component="spring_force_0",
+    )
+    # 2 springs (elem 100, 200) across the 5 ramped steps.
+    assert slab.values.shape[0] == 5
+    assert slab.values.shape[1] == 2
