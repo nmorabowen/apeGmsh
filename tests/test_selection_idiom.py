@@ -76,6 +76,19 @@ _SET_ALGEBRA = (
 # still required everywhere; only its signature is family-specific, so
 # the "identical signature" assertion excludes it and the four
 # point-family chains are checked for in_box separately.
+# ``crossing_plane`` (selection-unification-v2 P2-G / HT9) is the second
+# family-specific verb: it is a *required* verb on all seven chains, but
+# semantically **entity-only** — the entity family
+# (``EntitySelection`` / ``GeometryChain``) backs it with the real
+# bounding-box straddle (the legacy ``queries.select`` on/crossing/
+# not_* engine), while the point family inherits a base concrete verb
+# whose hook **fails loud** (the ``in_box(inclusive=)``→``TypeError``
+# precedent — a node/element id has no bbox to straddle).  Carved into
+# the family-specific exception EXACTLY as ``in_box`` is (same-commit,
+# §6 P2-G): asserted callable everywhere, signature-identical across the
+# point chains, and the entity-family behaviour is covered separately by
+# ``tests/test_p2g_parity.py`` (parity vs the byte-unchanged legacy
+# ``queries.select``/``queries.line``) + ``test_entity_family_laws``.
 # EQUALITY lock — 5 legacy chains + the 2 v2 terminals (P2-I §6.1
 # STOP-2(a): 5→7).  Legacy chains stay defined-and-importable but
 # unwired through P2-I; P3 deletes them and this set drops back.
@@ -149,6 +162,21 @@ def test_identical_public_verb_surface():
                     for c in _POINT_CHAINS}
             assert len(sigs) == 1, (
                 f"in_box signature drifted across point chains: {sigs}"
+            )
+            continue
+        if name == "crossing_plane":
+            # Family-specific verb by ratified design (selection-
+            # unification-v2 P2-G / HT9): entity-only straddle predicate;
+            # the point family inherits a loud-raising base.  Mirrors the
+            # ``in_box`` carve-out — callable everywhere (asserted above),
+            # signature-identical across the point chains here, entity
+            # family covered by ``tests/test_p2g_parity.py`` /
+            # ``test_entity_family_laws``.
+            sigs = {inspect.signature(getattr(c, "crossing_plane"))
+                    for c in _POINT_CHAINS}
+            assert len(sigs) == 1, (
+                f"crossing_plane signature drifted across point "
+                f"chains: {sigs}"
             )
             continue
         sigs = {cls: inspect.signature(getattr(cls, name))

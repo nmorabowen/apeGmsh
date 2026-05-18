@@ -45,8 +45,8 @@ VALID_FAMILIES = ("entity", "point")
 #: Public verb surface every concrete chain must expose.  Locked here;
 #: ``__init_subclass__`` makes a missing/renamed verb an ImportError.
 REQUIRED_VERBS = (
-    "in_box", "in_sphere", "on_plane", "nearest_to", "where",
-    "union", "intersect", "difference",
+    "in_box", "in_sphere", "on_plane", "crossing_plane", "nearest_to",
+    "where", "union", "intersect", "difference",
 )
 
 #: Hooks a concrete subclass must implement (not inherit as the base
@@ -128,6 +128,34 @@ class SelectionChain:
     def _spatial_plane(self, atoms: tuple, point, normal, tol: float) -> tuple:
         raise NotImplementedError
 
+    def _spatial_crossing(
+        self, atoms: tuple, spec, *, tol: float, mode: str
+    ) -> tuple:
+        """Entity-only straddle hook — the point family fails **loud**.
+
+        This is **not** a ``_REQUIRED_HOOKS`` entry: a required hook
+        whose base is this stub would make ``__init_subclass__`` reject
+        *every* point chain (none can implement a bounding-box-straddle
+        test).  Instead it is a concrete base method that raises
+        ``TypeError`` for the point family — the
+        ``GeometryChain.in_box(inclusive=)``→``TypeError`` precedent
+        (an inexpressible knob is rejected loudly, never silently
+        ignored / returned as ``[]``).  Only the entity family
+        (``EntitySelection`` / ``GeometryChain``) overrides it with the
+        real bounding-box straddle implementation.
+        """
+        raise TypeError(
+            f"{type(self).__name__}.crossing_plane() is an entity-family "
+            f"predicate only (FAMILY={self.FAMILY!r} is the point "
+            "family). It tests a CAD entity's bounding box for straddle "
+            "('on' = all 8 bbox corners within tol; 'crossing' = corners "
+            "on both sides) — a node / element id has no bounding box, "
+            "so the straddle predicate is inexpressible here and is "
+            "rejected loudly (the in_box(inclusive=) precedent), never "
+            "silently empty. Use a coordinate predicate instead: "
+            "in_box / in_sphere / on_plane / where on the point family."
+        )
+
     def _materialize(self):
         raise NotImplementedError
 
@@ -142,6 +170,45 @@ class SelectionChain:
 
     def on_plane(self: "TSelf", point, normal, *, tol: float) -> "TSelf":
         return self._wrap(self._spatial_plane(self._items, point, normal, tol))
+
+    def crossing_plane(
+        self: "TSelf",
+        spec,
+        *,
+        tol: float = 1e-6,
+        mode: str = "crossing",
+    ) -> "TSelf":
+        """Refine by a geometric *straddle* predicate (entity family only).
+
+        Folds the legacy ``queries.select(on=/crossing=/not_on=/
+        not_crossing=)`` + ``queries.line`` surface into the unified
+        idiom.  ``spec`` is the legacy ``_parse_primitive`` grammar — a
+        dict (``{'z': 0}`` → axis-aligned plane), **two** points
+        (``[(x1,y1,z1), (x2,y2,z2)]`` → infinite ``Line``, the legacy
+        ``queries.line`` 2-point path), **three** points (infinite plane
+        through 3 points), or a ``Plane`` / ``Line`` instance passed
+        through unchanged.  ``mode`` selects the legacy predicate:
+
+        * ``"on"``           — entirely on the primitive (all 8
+          bounding-box corners within ``tol``);
+        * ``"crossing"``     — straddles it (corners on both sides);
+        * ``"not_on"``       — negation of ``on``;
+        * ``"not_crossing"`` — negation of ``crossing``.
+
+        ``tol`` defaults to ``1e-6`` — byte-identical to the legacy
+        ``queries.select`` / ``_select_impl`` default.
+
+        This is an **entity-only** predicate: it tests a CAD entity's
+        bounding box for straddle, which has no meaning for the point
+        family (a node / element id has no bounding box to straddle).
+        The point family therefore **fails loud** (the
+        ``in_box(inclusive=)``→``TypeError`` precedent — never a silent
+        ``[]``); only the entity family overrides
+        :meth:`_spatial_crossing`.
+        """
+        return self._wrap(
+            self._spatial_crossing(self._items, spec, tol=tol, mode=mode)
+        )
 
     def nearest_to(self: "TSelf", point, *, count: int = 1) -> "TSelf":
         return self._wrap(self._nearest(self._items, point, count))
