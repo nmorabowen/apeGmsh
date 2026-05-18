@@ -24,7 +24,7 @@ import numpy as np
 
 from apeGmsh.core.MassesComposite import _validate_derive_rotational
 from apeGmsh.core.masses.defs import SurfaceMassDef, VolumeMassDef
-from apeGmsh.mesh._mass_resolver import MassResolver
+from apeGmsh._kernel.resolvers._mass_resolver import MassResolver
 
 
 # ---------------------------------------------------------------------------

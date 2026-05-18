@@ -53,12 +53,13 @@ legacy surface removed. Concretely, ratified by the project owner:
 
 ## 2. The keystone (the whole game)
 
-`NodeResult` (`mesh/FEMData.py:76-134`), `ElementGroup` /
-`GroupResult` (`mesh/_element_types.py:211-313`, `:15` self-declared
-leaf) are **lightweight, dependency-free numpy payloads**. **Relocate
-those three into `apeGmsh/_kernel/`** alongside the pure
-defs/records/resolver layer. This single move closes three independent
-findings at once:
+`NodeResult` (`mesh/FEMData.py:76-134`), `ElementGroup`
+(`mesh/_element_types.py:156-225`) / `GroupResult` (`:232-392`,
+`:15` self-declared leaf; the coupled `resolve_type_filter`
+`:399-440` moves with them) are **lightweight, dependency-free numpy
+payloads**. **Relocate that triad into `apeGmsh/_kernel/`** alongside
+the pure defs/records/resolver layer. This single move closes three
+independent findings at once:
 
 - **HT1 (RED-1 FATAL) dissolves.** `_record_set.py`'s only non-pure
   tie is the deferred `:469 from .FEMData import NodeResult` inside
@@ -82,6 +83,48 @@ One relayering move closing the import cycle, the element-typing
 problem, and the iteration contract simultaneously is the signal that
 this is the correct layering. **P1-K is the highest-leverage phase;
 everything else is conventional once it lands.**
+
+### 2.1 P1-K pre-flight corrections (execution-map; ratified before any move)
+
+An exhaustive read-only execution-map + cycle pre-flight (the contract
+the relocation follows) corrected the plan **before any file moved**.
+Recorded explicitly so the move set is complete and the source-of-truth
+matches HEAD:
+
+- **(1) Stale line numbers → corrected to HEAD** (above): `ElementGroup`
+  `:156-225`, `GroupResult` `:232-392` (not `:211-313`).
+- **(2) The keystone is a closed *four*-symbol triad.**
+  `GroupResult.get()` calls `resolve_type_filter`
+  (`_element_types.py:399-440`), which reads `ElementGroup`
+  attributes — `NodeResult`+`ElementGroup`+`GroupResult`+
+  `resolve_type_filter` move together to `_kernel/payloads.py`.
+  `ElementTypeInfo`/`make_type_info`/alias machinery **stay** in
+  `mesh/_element_types.py` (no back-edge — it never calls the moved
+  trio).
+- **(3) STOP-condition resolved — `_consistent_quadrature.py` joins
+  the move set.** `mesh/_load_resolver.py` imports
+  `mesh/_consistent_quadrature.py` at 4 deferred sites
+  (`:412/441/472/503`). Relocating `_load_resolver`→`_kernel` without
+  it re-forms a `_kernel→mesh` up-edge — the exact cycle P1-K deletes.
+  `_consistent_quadrature.py` is **pure** (numpy-only, zero
+  `apeGmsh.*` imports — verified) → relocate to
+  `_kernel/_consistent_quadrature.py`, rewrite the 4 sites to
+  `from .._consistent_quadrature import …`. With this addition the
+  pre-flight finds **no surviving (c)-class up-edge**: every move-set
+  cross-package import is DISSOLVED (target co-relocates) or
+  ALLOWED-DOWNWARD (`apeGmsh.fem`, HT10).
+- **(4) Internal re-export decision (Option i — forced by the gate).**
+  `mesh/FEMData.py` keeps `from .._kernel.payloads import NodeResult`;
+  `mesh/_element_types.py` keeps a downward
+  `from .._kernel.payloads import ElementGroup, GroupResult,
+  resolve_type_filter` re-export. Legal `mesh→_kernel` **downward**
+  edge (the intended direction) and *mandatory* — the P1-K gate
+  requires the contract tests + all P0-C pins **byte-unchanged**, and
+  some import these via their `apeGmsh.mesh.*` paths. This is an
+  internal import-path facade, **not** the user-facing backward-compat
+  the v2 mandate forbids; flagged as a P3/P4 internal-cleanup
+  candidate (sweep with the legacy surface). Full file:line repoint
+  list + topological order live in the execution-map (§A–§E).
 
 ---
 
@@ -232,12 +275,19 @@ on HEAD; zero production edits.
 
 Create `apeGmsh/_kernel/`. Relocate, as a **pure module move** (no
 behaviour change, no resolver merge, no spatial merge, no
-`tolerate_wrong_dim`): `NodeResult`/`ElementGroup`/`GroupResult` →
-`_kernel/payloads.py`; `core.{loads,masses,constraints}.defs`;
-`mesh.records._*`; the 3 resolvers + `_constraint_resolver/`;
-`_record_set.py` (rewrite `:469`→`_kernel`); the 3 `Labels`
-predicates → `_kernel/_label_prefix.py`. Repoint `PhysicalGroups.py:10`,
-`core/Labels.py` internals, the 3 composites, `FEMData.py:58-61`.
+`tolerate_wrong_dim`) — per the §2.1 corrections and the execution-map
+§A–§E: the keystone triad `NodeResult`/`ElementGroup`/`GroupResult`/
+`resolve_type_filter` → `_kernel/payloads.py`;
+`core.{loads,masses,constraints}.defs`; `mesh.records._*`; the 3
+resolvers + `_constraint_resolver/`; **`_consistent_quadrature.py`**
+(§2.1-(3)); `_record_set.py` (rewrite `:469`→`_kernel`); the 3
+`Labels` predicates → `_kernel/_label_prefix.py`;
+`apeGmsh/_chain.py`→`_kernel/chain.py`. Repoint every consumer per
+execution-map §B (the 3 composites, `FEMData.py:58-65`,
+`PhysicalGroups.py:10`, `core/Labels.py` internals, the 5 chain
+imports, all deferred/test sites); keep the §2.1-(4) Option-i
+`mesh→_kernel` downward re-exports so the invisibility-proof tests
+stay byte-unchanged.
 **Gate:** widened tripwire green, BASELINE updated **in the same
 commit** (the relocation diff *is* the reviewed decision —
 `test_import_dag_polarity.py:18-20`); `test_resolution_contract.py` +
