@@ -40,7 +40,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libgl1 libegl1 libxkbcommon0 libdbus-1-3 \
-            libfontconfig1 libxcb-cursor0
+            libfontconfig1 libxcb-cursor0 libglu1-mesa
 
       - name: Install package with docs-building extras
         run: |

@@ -14,6 +14,7 @@ authors = [
 
 dependencies = [
     "gmsh",
+    "h5py",
     "numpy",
     "pandas",
 ]
