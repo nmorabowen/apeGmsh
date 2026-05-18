@@ -195,6 +195,73 @@ def _select_impl(dimtags: Iterable[DimTag], *, on=None, crossing=None,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Entity-family crossing/straddle hook — shared by GeometryChain AND
+# EntitySelection (selection-unification-v2 P2-G, HT9).
+#
+# This is the unified-idiom fold of the legacy
+# ``queries.select(on=/crossing=/not_on=/not_crossing=)`` +
+# ``queries.line`` surface.  It ports ``_select_impl``'s 8-bounding-box-
+# corner semantics **exactly** (``core/_selection.py`` :166-194 — the
+# byte-unchanged legacy engine, NOT modified by P2-G; P3 removes it):
+#
+#   * ``spec`` is the legacy ``_parse_primitive`` grammar (dict→Plane,
+#     2 points→``Line`` [the legacy ``queries.line`` 2-point path],
+#     3 points→Plane, ``Plane``/``Line`` instance passthrough);
+#   * ``mode`` ∈ {on, crossing, not_on, not_crossing} is the exactly-
+#     one-of predicate the legacy 4 kwargs expressed;
+#   * per dimtag ``bb = gmsh.model.getBoundingBox(d, t)``;
+#     ``sd = primitive.signed_distances(bb)``;
+#     on  = ``bool(np.all(np.abs(sd) <= tol))``;
+#     crossing = ``bool(sd.min() < -tol and sd.max() > tol)``;
+#     ``not_*`` inverts (``hit ^ invert``);
+#   * ``tol`` default ``1e-6`` — byte-identical to the legacy default.
+#
+# It refines the chain (intersects with ``atoms``, preserving the
+# chain's insertion order — the chain-protocol contract), so the
+# returned tuple is exactly the legacy ``Selection`` membership set
+# restricted to (and ordered by) the chain's current atoms.  Defined in
+# THIS module, so it reuses the in-module ``Plane`` / ``Line`` /
+# ``_bb_corners`` / ``_parse_primitive`` primitives and adds **no** new
+# import edge (the import-DAG-polarity BASELINE is unaffected).
+
+_CROSSING_MODES = ("on", "crossing", "not_on", "not_crossing")
+
+
+def _crossing_impl(atoms: tuple, spec, *, tol: float, mode: str) -> tuple:
+    """Entity-family straddle filter (shared GeometryChain / EntitySelection).
+
+    Returns the subset of ``atoms`` (``(dim, tag)`` dimtags) that
+    satisfies the ``mode`` predicate against ``spec``, preserving the
+    chain's insertion order.  Semantics are byte-identical to
+    :func:`_select_impl` (the legacy ``queries.select`` engine).
+    """
+    if mode not in _CROSSING_MODES:
+        raise ValueError(
+            f"crossing_plane(mode={mode!r}) is invalid; expected one of "
+            f"{_CROSSING_MODES} (the legacy queries.select "
+            "on=/crossing=/not_on=/not_crossing= predicate set)."
+        )
+    t = float(tol)
+    if t < 0:
+        raise ValueError(f"tolerance must be non-negative, got {t}.")
+    primitive = _parse_primitive(spec)
+    base_mode = 'on' if 'on' in mode else 'crossing'
+    invert = mode.startswith('not_')
+
+    kept = []
+    for d, tg in atoms:
+        bb = gmsh.model.getBoundingBox(int(d), int(tg))
+        sd = primitive.signed_distances(bb)
+        if base_mode == 'on':
+            hit = bool(np.all(np.abs(sd) <= t))
+        else:
+            hit = bool(sd.min() < -t and sd.max() > t)
+        if hit ^ invert:
+            kept.append((d, tg))
+    return tuple(kept)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Direction helpers — for Selection.parallel_to() and .normal_along()
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -941,6 +1008,22 @@ class GeometryChain(SelectionChain):
                 kept.append((d, t_))
         return tuple(kept)
 
+    # ── crossing_plane — legacy on/crossing/not_* straddle ──
+    def _spatial_crossing(
+        self, atoms: tuple, spec, *, tol: float, mode: str
+    ) -> tuple:
+        """Entity-family straddle filter (the HT9 fold).
+
+        Delegates to the module-level :func:`_crossing_impl`, shared
+        byte-for-byte with :class:`EntitySelection` — ports the legacy
+        ``queries.select(on=/crossing=/not_on=/not_crossing=)`` +
+        ``queries.line`` 8-bbox-corner semantics
+        (:func:`_select_impl`, byte-unchanged) into the unified chain
+        surface.  Refines the chain (intersected with ``atoms``,
+        insertion order preserved).
+        """
+        return _crossing_impl(atoms, spec, tol=tol, mode=mode)
+
     # ── terminal — the LEGACY Selection, unchanged ──────────
     def result(self) -> "Selection":
         return self._materialize()
@@ -1138,6 +1221,20 @@ class EntitySelection(SelectionChain):
             if bool(np.all(np.abs(plane.signed_distances(bb)) <= t)):
                 kept.append((d, t_))
         return tuple(kept)
+
+    # ── crossing_plane — legacy on/crossing/not_* straddle ──
+    def _spatial_crossing(
+        self, atoms: tuple, spec, *, tol: float, mode: str
+    ) -> tuple:
+        """Identical to :meth:`GeometryChain._spatial_crossing` — the
+        HT9 fold.  Delegates to the module-level :func:`_crossing_impl`
+        (shared byte-for-byte with :class:`GeometryChain`): the legacy
+        ``queries.select(on=/crossing=/not_on=/not_crossing=)`` +
+        ``queries.line`` 8-bbox-corner semantics (:func:`_select_impl`,
+        byte-unchanged) through the unified chain surface, refining the
+        chain (intersected with ``atoms``, insertion order preserved).
+        """
+        return _crossing_impl(atoms, spec, tol=tol, mode=mode)
 
     # ── session access (same wiring the legacy Selection wants) ──
     def _session(self):
