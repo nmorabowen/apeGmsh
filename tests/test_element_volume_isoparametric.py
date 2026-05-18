@@ -18,7 +18,7 @@ import unittest
 import numpy as np
 
 from apeGmsh.core.masses.defs import VolumeMassDef
-from apeGmsh.mesh._mass_resolver import MassResolver
+from apeGmsh._kernel.resolvers._mass_resolver import MassResolver
 
 
 def _vol(coords):

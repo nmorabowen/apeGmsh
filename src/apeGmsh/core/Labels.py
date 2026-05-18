@@ -64,27 +64,22 @@ from apeGmsh._types import DimTag
 if TYPE_CHECKING:
     from apeGmsh._types import SessionProtocol as _SessionBase
 
-# The internal prefix that distinguishes label PGs from user PGs.
-LABEL_PREFIX = "_label:"
-
-
-def is_label_pg(name: str) -> bool:
-    """Return True if *name* is an internal label PG name."""
-    return name.startswith(LABEL_PREFIX)
-
-
-def strip_prefix(name: str) -> str:
-    """Strip the ``_label:`` prefix from a label PG name."""
-    if name.startswith(LABEL_PREFIX):
-        return name[len(LABEL_PREFIX):]
-    return name
-
-
-def add_prefix(name: str) -> str:
-    """Add the ``_label:`` prefix to a bare label name."""
-    if name.startswith(LABEL_PREFIX):
-        return name
-    return LABEL_PREFIX + name
+# The internal ``_label:`` prefix predicates were RELOCATED to
+# apeGmsh._kernel._label_prefix (selection-unification-v2 P1-K, HT4):
+# core/Labels.py is NOT wholesale-relocatable (it eagerly ``import
+# gmsh`` and hosts a gmsh-driven class), but these four helpers are
+# pure ``str`` logic.  Re-exported here via a downward ``core`` ->
+# ``_kernel`` edge (the intended layering direction) so the in-file
+# uses below, ``from apeGmsh.core.Labels import add_prefix`` /
+# ``is_label_pg`` / ``strip_prefix`` / ``LABEL_PREFIX``, and the
+# byte-unchanged contract/pin tests keep resolving.  Flagged as a
+# P3/P4 internal-cleanup candidate.
+from apeGmsh._kernel._label_prefix import (  # noqa: F401
+    LABEL_PREFIX,
+    add_prefix,
+    is_label_pg,
+    strip_prefix,
+)
 
 
 # =====================================================================

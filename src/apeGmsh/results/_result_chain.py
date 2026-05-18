@@ -45,7 +45,7 @@ from typing import Any
 
 import numpy as np
 
-from .._chain import SelectionChain
+from .._kernel.chain import SelectionChain
 
 #: The two levels a ``ResultChain``'s atoms can live at.
 VALID_LEVELS = ("node", "element")

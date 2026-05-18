@@ -19,10 +19,10 @@ from apeGmsh.mesh.FEMData import (
     MeshInfo,
     NodeComposite,
 )
-from apeGmsh.mesh.records._constraints import NodeGroupRecord, NodePairRecord
-from apeGmsh.mesh.records._kinds import ConstraintKind
-from apeGmsh.mesh.records._loads import NodalLoadRecord, SPRecord
-from apeGmsh.mesh.records._masses import MassRecord
+from apeGmsh._kernel.records._constraints import NodeGroupRecord, NodePairRecord
+from apeGmsh._kernel.records._kinds import ConstraintKind
+from apeGmsh._kernel.records._loads import NodalLoadRecord, SPRecord
+from apeGmsh._kernel.records._masses import MassRecord
 from apeGmsh.opensees.emitter import h5_reader
 
 

@@ -47,7 +47,7 @@ import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh._chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
+from apeGmsh._kernel.chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
 from apeGmsh.mesh._node_chain import NodeChain
 from apeGmsh.mesh._elem_chain import ElementChain
 from apeGmsh.mesh.FEMData import (

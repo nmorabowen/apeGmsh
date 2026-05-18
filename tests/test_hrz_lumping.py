@@ -22,7 +22,7 @@ from apeGmsh.fem._hrz import (
     volume_code,
 )
 from apeGmsh.fem import _shape_functions as SF
-from apeGmsh.mesh._mass_resolver import MassResolver
+from apeGmsh._kernel.resolvers._mass_resolver import MassResolver
 
 
 # =====================================================================

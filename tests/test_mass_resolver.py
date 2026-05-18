@@ -13,8 +13,8 @@ from apeGmsh.core.masses.defs import (
     SurfaceMassDef,
     VolumeMassDef,
 )
-from apeGmsh.mesh._mass_resolver import MassResolver
-from apeGmsh.mesh.records import MassRecord
+from apeGmsh._kernel.resolvers._mass_resolver import MassResolver
+from apeGmsh._kernel.records import MassRecord
 
 
 def _resolver(coords_by_tag, ndf=6):

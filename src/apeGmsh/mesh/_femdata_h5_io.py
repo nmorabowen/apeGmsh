@@ -425,7 +425,7 @@ def _write_constraints(fem: "FEMData", f: Any) -> None:
     datasets use a per-record-type payload dtype from
     :mod:`apeGmsh.mesh._record_h5`.
     """
-    from .records._constraints import (
+    from apeGmsh._kernel.records._constraints import (
         InterpolationRecord,
         NodeGroupRecord,
         NodePairRecord,
@@ -1070,7 +1070,7 @@ def _read_constraints(
     * ``NodePair*``, ``NodeGroup*``, ``NodeToSurface*`` → node-side
     * ``Interpolation*``, ``SurfaceCoupling*``         → element-side
     """
-    from .records._constraints import (
+    from apeGmsh._kernel.records._constraints import (
         InterpolationRecord,
         NodeGroupRecord,
         NodePairRecord,
@@ -1229,8 +1229,8 @@ def _decode_interpolation(row: Any, cls: type) -> Any:
 
 
 def _decode_surface_coupling(row: Any, cls: type) -> Any:
-    from .records._constraints import InterpolationRecord
-    from .records._kinds import ConstraintKind
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
 
     p = row["payload"]
     shape = tuple(int(x) for x in np.asarray(p["mortar_operator_shape"]))
@@ -1298,8 +1298,8 @@ def _decode_node_to_surface(
     row: Any, cls: type,
     node_xyz: dict[int, Any] | None = None,
 ) -> Any:
-    from .records._constraints import NodePairRecord
-    from .records._kinds import ConstraintKind
+    from apeGmsh._kernel.records._constraints import NodePairRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
 
     p = row["payload"]
     slaves = [int(x) for x in
@@ -1359,7 +1359,7 @@ def _read_loads(
     parent: Any,
 ) -> tuple[list[Any], list[Any], list[Any]]:
     """Decode ``/loads/{nodal|element|sp}/{pattern}`` datasets."""
-    from .records._loads import ElementLoadRecord, NodalLoadRecord, SPRecord
+    from apeGmsh._kernel.records._loads import ElementLoadRecord, NodalLoadRecord, SPRecord
 
     nodal: list[Any] = []
     element: list[Any] = []
@@ -1428,7 +1428,7 @@ def _read_loads(
 
 def _read_masses(ds: Any) -> list[Any]:
     """Decode the ``/masses`` dataset into ``MassRecord`` objects."""
-    from .records._masses import MassRecord
+    from apeGmsh._kernel.records._masses import MassRecord
 
     out: list[Any] = []
     if ds is None:

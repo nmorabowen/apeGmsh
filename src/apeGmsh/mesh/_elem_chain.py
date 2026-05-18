@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .._chain import SelectionChain
+from .._kernel.chain import SelectionChain
 
 if TYPE_CHECKING:
     # Type-only: the runtime import stays deferred inside _materialize
