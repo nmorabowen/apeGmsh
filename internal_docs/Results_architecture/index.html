@@ -3590,6 +3590,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -3642,6 +3646,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Flow Atlas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3939,6 +3971,34 @@
     
   
     Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
   
 
     
@@ -5348,9 +5408,12 @@ results through a <strong>single composite API</strong> that mirrors <code>FEMDa
 <h3 id="design-principles">Design principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h3>
 <ol>
 <li><strong>One declarative spec, three execution strategies.</strong> Recorders
-   are owned by apeGmsh, not by the user's solver script. The same
-   <code>g.opensees.recorders</code> declaration drives Tcl/Python recorder
-   commands, in-process introspection, or MPCO output.</li>
+   are declared on the <code>apeSees</code> bridge (post-session) via
+   <code>ops.recorder.Node(...)</code> / <code>ops.recorder.Element(...)</code> etc. The
+   resolved <code>ResolvedRecorderSpec</code> drives Tcl/Python recorder
+   commands, in-process introspection, or MPCO output.
+   (The old <code>g.opensees.recorders</code> session composite was removed in
+   the Phase-8 teardown.)</li>
 <li><strong>Data always lives on disk.</strong> RAM is for queries, not storage.
    Every backend resolves to chunked HDF5; lazy slab reads keep
    memory bounded for million-DOF, multi-partition runs.</li>
@@ -5375,57 +5438,63 @@ results through a <strong>single composite API</strong> that mirrors <code>FEMDa
 </ol>
 <h3 id="architecture-overview">Architecture overview<a class="headerlink" href="#architecture-overview" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────────────────────────────────────────────────────────┐
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│ DECLARATION  (apeGmsh session, by PG/label, like loads/masses)       │
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│ DECLARATION  (post-session, on apeSees bridge)                       │
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│                                                                      │
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   g.opensees.recorders.nodes(&quot;Top&quot;, components=[&quot;displacement&quot;])    │
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│   g.opensees.recorders.gauss(&quot;Body&quot;, components=[&quot;stress&quot;])         │
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│                                                                      │
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│   spec = g.opensees.recorders.resolve(fem)   # → ResolvedSpec        │
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│                                  (carries fem snapshot_id)          │
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>└──────────┬───────────────────────┬───────────────────────┬───────────┘
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>           │                       │                       │
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>           ▼                       ▼                       ▼
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>   ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>   │ TclWriter    │        │ DomainCapture│        │ MPCOWriter   │
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>   │ + parser     │        │ (in-process) │        │ (recorder    │
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>   │ (.out/.xml)  │        │ openseespy   │        │  mpco …)     │
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>   └──────┬───────┘        └──────┬───────┘        └──────┬───────┘
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>          │                       │                       │
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>          ▼                       ▼                       ▼
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>   ┌────────────────────────────────────────┐    ┌──────────────────┐
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>   │ apeGmsh native HDF5 (run.h5)            │    │ STKO MPCO HDF5  │
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>   │  ├── attrs (schema_version, …)          │    │ (run.mpco)      │
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>   │  ├── time, stages/, partitions/         │    │  └── MODEL_STAGE│
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>   │  └── model/ (embedded FEMData snapshot, │    │       /MODEL,   │
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>   │             carries snapshot_id)        │    │        /RESULTS │
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>   └────────────────┬───────────────────────┘    └──────────┬──────┘
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>                    │                                       │
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>                    ▼                                       ▼
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>            ┌──────────────┐                       ┌──────────────┐
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>            │ NativeReader │                       │ MPCOReader   │
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>            └──────┬───────┘                       └──────┬───────┘
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>                   │                                       │
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>                   └───────────────┬───────────────────────┘
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>                                   ▼
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>                       ┌────────────────────┐
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>                       │ Results composite  │   ← user-facing API
-</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>                       │  .stages, .modes   │
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>                       │  .nodes            │   ← mirrors FEMData
-</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>                       │  .elements         │
-</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>                       │    .gauss          │
-</span><span id="__span-0-40"><a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>                       │    .fibers         │
-</span><span id="__span-0-41"><a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>                       │    .layers         │
-</span><span id="__span-0-42"><a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>                       │  .fem  (bound)     │
-</span><span id="__span-0-43"><a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>                       │  .inspect          │
-</span><span id="__span-0-44"><a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>                       └────────────────────┘
-</span><span id="__span-0-45"><a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>                                   │
-</span><span id="__span-0-46"><a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>                                   ▼
-</span><span id="__span-0-47"><a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>                          viewer / scripts
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   ops.recorder.Node(nodes=fem.nodes.get_ids(pg=&quot;Top&quot;),              │
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│                     dofs=[1,2,3], response=&quot;disp&quot;)                  │
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│   ops.recorder.Element(elements=fem.elements.get_ids(pg=&quot;Body&quot;),    │
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│                         response=&quot;stress&quot;)                          │
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│                                                                      │
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│   ops.recorder.declare(nodes=(&quot;displacement&quot;,), pg=&quot;Top&quot;)          │
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│       # resolved implicitly at ops.tcl/py emit (binds snapshot_id)  │
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>└──────────┬───────────────────────┬───────────────────────┬───────────┘
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>           │                       │                       │
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>           ▼                       ▼                       ▼
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>   ┌──────────────┐        ┌──────────────┐        ┌──────────────┐
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>   │ TclWriter    │        │ DomainCapture│        │ MPCOWriter   │
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>   │ + parser     │        │ (in-process) │        │ (recorder    │
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>   │ (.out/.xml)  │        │ openseespy   │        │  mpco …)     │
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>   └──────┬───────┘        └──────┬───────┘        └──────┬───────┘
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>          │                       │                       │
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>          ▼                       ▼                       ▼
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>   ┌────────────────────────────────────────┐    ┌──────────────────┐
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>   │ apeGmsh native HDF5 (run.h5)            │    │ STKO MPCO HDF5  │
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>   │  ├── attrs (schema_version, …)          │    │ (run.mpco)      │
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>   │  ├── time, stages/, partitions/         │    │  └── MODEL_STAGE│
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>   │  └── model/ (embedded FEMData snapshot, │    │       /MODEL,   │
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>   │             carries snapshot_id)        │    │        /RESULTS │
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>   └────────────────┬───────────────────────┘    └──────────┬──────┘
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>                    │                                       │
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>                    ▼                                       ▼
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>            ┌──────────────┐                       ┌──────────────┐
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>            │ NativeReader │                       │ MPCOReader   │
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>            └──────┬───────┘                       └──────┬───────┘
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>                   │                                       │
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>                   └───────────────┬───────────────────────┘
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>                                   ▼
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>                       ┌────────────────────┐
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>                       │ Results composite  │   ← user-facing API
+</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>                       │  .stages, .modes   │
+</span><span id="__span-0-39"><a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>                       │  .nodes            │   ← mirrors FEMData
+</span><span id="__span-0-40"><a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>                       │  .elements         │
+</span><span id="__span-0-41"><a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>                       │    .gauss          │
+</span><span id="__span-0-42"><a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>                       │    .fibers         │
+</span><span id="__span-0-43"><a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>                       │    .layers         │
+</span><span id="__span-0-44"><a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>                       │  .fem  (bound)     │
+</span><span id="__span-0-45"><a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>                       │  .inspect          │
+</span><span id="__span-0-46"><a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>                       └────────────────────┘
+</span><span id="__span-0-47"><a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>                                   │
+</span><span id="__span-0-48"><a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a>                                   ▼
+</span><span id="__span-0-49"><a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a>                          viewer / scripts
 </span></code></pre></div>
 <h3 id="layer-1-declarative-recorder-spec">Layer 1 — Declarative recorder spec<a class="headerlink" href="#layer-1-declarative-recorder-spec" title="Permanent link">&para;</a></h3>
-<p><code>g.opensees.recorders</code> is a pre-mesh / pre-build composite, parallel
-to <code>g.loads</code> / <code>g.masses</code> / <code>g.constraints</code>. Same two-stage pipeline:
-declare against PGs/labels, resolve through <code>FEMData</code>.</p>
+<p>Recorders are declared on the <code>apeSees</code> bridge (post-session) via
+<code>ops.recorder.Node(...)</code> / <code>ops.recorder.Element(...)</code> etc., after
+<code>fem = g.mesh.queries.get_fem_data(dim=3)</code> and outside the apeGmsh
+session. The same two-stage pattern applies: declare against
+PGs/labels, then emit via <code>ops.tcl(path)</code> / <code>ops.py(path)</code> /
+<code>ops.run()</code> — resolution against the <code>fem</code> snapshot is implicit at
+emit (no separate user resolve step).</p>
 <h4 id="categories-cover-everything-opensees-supports">Categories (cover everything OpenSees supports)<a class="headerlink" href="#categories-cover-everything-opensees-supports" title="Permanent link">&para;</a></h4>
 <table>
 <thead>
@@ -5537,29 +5606,37 @@ declare against PGs/labels, resolve through <code>FEMData</code>.</p>
 <p>Mixed kinematics is two entries: <code>["displacement", "rotation"]</code>.
   Explicit per-component (<code>["displacement_x"]</code>) is always valid.
 - <strong>Default recorder set</strong> can be enabled with
-  <code>g.opensees.recorders.enable_defaults()</code>: displacements on all nodes,
+  <code>ops.recorder.enable_defaults()</code>: displacements on all nodes,
   reactions on fixed nodes, stress on all GPs of continuum elements,
   axial forces on all line elements. Off by default.
 - <strong>Output cadence</strong> via <code>dt=</code> or <code>n_steps=</code>. Defaults to every
   analysis step.
-- <strong>Validation at resolve time.</strong> <code>g.opensees.recorders.gauss("Beams",
-  components=["stress"])</code> raises if those elements have no GPs in
-  apeGmsh's element-spec capability table — fail fast, not after a
+- <strong>Validation at resolve time.</strong> Requesting a gauss component on
+  elements without GPs raises at resolve time — fail fast, not after a
   4-hour run.</p>
 <h4 id="resolution">Resolution<a class="headerlink" href="#resolution" title="Permanent link">&para;</a></h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">recorders</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>   <span class="c1"># ResolvedRecorderSpec</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># spec carries per-recorder:</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1">#   - canonical component names (shorthand expanded)</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1">#   - concrete node IDs / element IDs (PGs flattened)</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1">#   - group keys (class_tag, int_rule) for element-level results</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1">#   - cadence (dt or n_steps)</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c1">#   - intended output channel</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="c1">#</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="c1"># spec also carries a top-level fem snapshot_id (content hash of the</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="c1"># FEMData it was resolved against). Re-meshing produces a new</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># snapshot_id; old specs refuse to emit/capture against the new fem.</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResolvedRecorderSpec</span><span class="p">,</span> <span class="n">ResolvedRecorderRecord</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">spec</span> <span class="o">=</span> <span class="n">ResolvedRecorderSpec</span><span class="p">(</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">fem_snapshot_id</span><span class="o">=</span><span class="n">fem</span><span class="o">.</span><span class="n">snapshot_id</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">records</span><span class="o">=</span><span class="p">(</span><span class="n">ResolvedRecorderRecord</span><span class="p">(</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>        <span class="n">category</span><span class="o">=</span><span class="s2">&quot;nodes&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;top&quot;</span><span class="p">,</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="n">components</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">,</span> <span class="s2">&quot;displacement_y&quot;</span><span class="p">,</span> <span class="s2">&quot;displacement_z&quot;</span><span class="p">),</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="n">dt</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">n_steps</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">node_ids</span><span class="o">=</span><span class="n">top_ids</span><span class="p">,</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="p">),),</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="p">)</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># spec carries per-recorder:</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="c1">#   - canonical component names (shorthand expanded)</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="c1">#   - concrete node IDs / element IDs (PGs flattened)</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="c1">#   - group keys (class_tag, int_rule) for element-level results</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="c1">#   - cadence (dt or n_steps)</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="c1">#   - intended output channel</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="c1">#</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="c1"># spec also carries a top-level fem snapshot_id (content hash of the</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="c1"># FEMData it was resolved against). Re-meshing produces a new</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="c1"># snapshot_id; old specs refuse to emit/capture against the new fem.</span>
 </span></code></pre></div>
 <p>The resolved spec is the <strong>single source of truth</strong> for what gets
 recorded. It also serves as the manifest for parsing the recorder
@@ -5581,11 +5658,11 @@ this section is the schema-grounded reference.</p>
   sub-strategies (Tcl-export, in-process).</li>
 </ul>
 <h4 id="strategy-a1-tclpython-file-recorders">Strategy A₁ — Tcl/Python file recorders<a class="headerlink" href="#strategy-a1-tclpython-file-recorders" title="Permanent link">&para;</a></h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">)</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># OpenSees writes .out / .xml files when the user runs the script</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="s2">&quot;out/&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div>
-<p><code>g.opensees.export.{tcl,py}(recorders=spec)</code> adds the matching
+<p><code>ops.tcl(recorders=spec)</code> / <code>ops.py(recorders=spec)</code> add the matching
 <code>recorder Node …</code> / <code>recorder Element …</code> commands to the script. The
 spec is also serialized as a sidecar HDF5 manifest so
 <code>Results.from_recorders</code> can decode the column layout of each file.</p>
@@ -5651,7 +5728,7 @@ mode shapes via <code>ops.nodeEigenvector(...)</code>, and writes one stage per
 mode with <code>kind="mode"</code> and the eigenvalue/frequency/period in the
 stage attrs. Bounded RAM, no per-step file I/O storms.</p>
 <h4 id="strategy-c1-stkompco-bridge-tcl-export">Strategy C₁ — STKO/MPCO bridge (Tcl export)<a class="headerlink" href="#strategy-c1-stkompco-bridge-tcl-export" title="Permanent link">&para;</a></h4>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">g</span><span class="o">.</span><span class="n">opensees</span><span class="o">.</span><span class="n">export</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">,</span> <span class="n">mpco</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">,</span> <span class="n">recorders</span><span class="o">=</span><span class="n">spec</span><span class="p">,</span> <span class="n">mpco</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="c1"># Writes `recorder mpco …` commands instead of (or alongside) text</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_mpco</span><span class="p">(</span><span class="s2">&quot;out/run.mpco&quot;</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
 </span></code></pre></div>
@@ -6306,11 +6383,12 @@ in <code>readers/_protocol.py</code> (no separate <code>_stage.py</code>), and t
 <code>export/</code> subpackage (<code>results.export.vtu/pvd</code>) was deferred —
 Phase 10 was not delivered.</p>
 </blockquote>
-<p>Recorder spec lives next to the existing OpenSees bridge:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>src/apeGmsh/solvers/
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>├── Recorders.py             # NEW — g.opensees.recorders composite
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>├── _recorder_specs.py       # NEW — declarative records + ResolvedRecorderSpec
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>└── _opensees_export.py      # MODIFIED — accept recorders=spec, emit commands
+<p>Recorder spec lives in the OpenSees bridge package (note: <code>apeGmsh.solvers</code>
+was removed in Phase-8; recorder infrastructure now lives under <code>apeGmsh.opensees</code>):</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>src/apeGmsh/opensees/
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>├── recorder/                # ops.recorder.* — typed recorder declarations
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>│   └── ...
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>└── _recorder_specs.py       # declarative records + ResolvedRecorderSpec
 </span></code></pre></div>
 <p>FEMData hashing lives next to <code>FEMData.py</code>:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>src/apeGmsh/mesh/
@@ -6447,20 +6525,23 @@ once via openseespy; committed to repo.</p>
 when the source is MPCO instead of native HDF5 — backend swap is
 transparent.</p>
 <h3 id="phase-4-recorder-spec-composite">Phase 4 — Recorder spec composite<a class="headerlink" href="#phase-4-recorder-spec-composite" title="Permanent link">&para;</a></h3>
-<p><strong>Goal:</strong> <code>g.opensees.recorders.*</code> declarative API works. Spec
+<p><strong>Goal:</strong> Recorder declaration API on the <code>apeSees</code> bridge works. Spec
 resolves through FEMData and locks to its snapshot_id. No emission
-yet.</p>
+yet. (Note: <code>apeGmsh.solvers</code> was removed in Phase-8; this phase
+was completed under <code>apeGmsh.opensees</code>.)</p>
 <p><strong>New files:</strong>
-- <code>src/apeGmsh/solvers/Recorders.py</code> — <code>Recorders</code> composite with
-  <code>.nodes</code>, <code>.elements</code>, <code>.line_stations</code>, <code>.gauss</code>, <code>.fibers</code>,
-  <code>.layers</code>, <code>.modal</code> methods
-- <code>src/apeGmsh/solvers/_recorder_specs.py</code> —
+- <code>src/apeGmsh/opensees/recorder/</code> — <code>ops.recorder.*</code> typed recorder
+  declarations; methods include <code>.Node</code>, <code>.Element</code>, <code>.declare</code>,
+  <code>.MPCO</code> (no <code>.resolve</code> — resolution is implicit at emit)
+- <code>src/apeGmsh/opensees/_recorder_specs.py</code> —
   <code>RecorderRecord</code> (declarative, by PG/label),
   <code>ResolvedRecorderRecord</code> (concrete IDs after resolve),
   <code>ResolvedRecorderSpec</code> (collection, carries fem <code>snapshot_id</code>)</p>
 <p><strong>Modified files:</strong>
-- <code>src/apeGmsh/solvers/OpenSees.py</code> — add <code>recorders</code> attribute,
-  expose <code>g.opensees.recorders.resolve(fem)</code>
+- <code>src/apeGmsh/opensees/apesees.py</code> — <code>recorder</code> attribute on the
+  bridge, exposing <code>ops.recorder.declare(...)</code> /
+  <code>ops.recorder.Node(...)</code> / <code>ops.recorder.Element(...)</code> /
+  <code>ops.recorder.MPCO(...)</code>
 - <code>src/apeGmsh/solvers/_element_specs.py</code> — extend <code>_ElemSpec</code> with
   capability flags: <code>has_gauss: bool</code>, <code>has_fibers: bool</code>,
   <code>has_layers: bool</code>, <code>has_line_stations: bool</code>,

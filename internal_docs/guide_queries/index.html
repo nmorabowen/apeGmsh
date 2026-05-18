@@ -2942,6 +2942,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2994,6 +2998,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Flow Atlas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3291,6 +3323,34 @@
     
   
     Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
   
 
     
@@ -4139,6 +4199,21 @@ Two volumes are adjacent if they share at least one face.</p>
 overlaps the specified region. This is an approximate search — it
 finds entities whose AABB intersects, not whose actual geometry
 intersects.</p>
+<blockquote>
+<p>[!note] Fluent alternative: <code>g.model.select(...).in_box(...)</code>
+For daisy-chainable entity selection, <code>g.model.select()</code> returns the
+unified <code>GeometryChain</code> (entity family) whose <code>.in_box / .in_sphere /
+.on_plane / .nearest_to / .where</code> verbs compose and support set
+algebra (<code>| &amp; - ^</code>). Its <code>.in_box</code> delegates to
+<code>getEntitiesInBoundingBox</code> (BRep bbox-<strong>containment</strong>, closed; the
+point-family half-open / <code>inclusive=</code> knob does <strong>not</strong> exist here
+and passing it raises <code>TypeError</code>). This is <strong>additive</strong> — every
+query method on this page, and the legacy
+<code>g.model.queries.select(on=/crossing=)</code> predicate selector, are
+unchanged and still the right tool for exact geometric predicates.
+See <a href="../guide_selection/">Selection in apeGmsh</a> §0 and the maintainer
+page <a href="../guide_selection_chain/">The Selection Chain</a>.</p>
+</blockquote>
 <h2 id="9-model-registry">9. Model registry<a class="headerlink" href="#9-model-registry" title="Permanent link">&para;</a></h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">df</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">registry</span><span class="p">()</span>
 </span></code></pre></div>
@@ -4159,7 +4234,9 @@ debugging and introspection:</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>guide_basics.md</code> — geometry creation and boolean operations</li>
-<li><code>guide_selection.md</code> — spatial selection queries</li>
+<li><code>guide_selection.md</code> — spatial selection queries (and the unified
+  <code>.select()</code> idiom, §0)</li>
+<li><code>guide_selection_chain.md</code> — maintainer invariants for <code>.select()</code></li>
 <li><code>guide_cad_import.md</code> — STEP/IGES I/O operations</li>
 </ul>
 

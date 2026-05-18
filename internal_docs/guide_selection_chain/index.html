@@ -1,0 +1,4713 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/guide_selection_chain/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>The Selection Chain — maintainer invariants - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-selection-chain-maintainer-invariants" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The Selection Chain — maintainer invariants
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first_steps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First steps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Building models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_meshing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Physics
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Physics
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver bridge
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solver bridge
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Results
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results container
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_obtaining_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Obtaining results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_recorders_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Recorder reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guide_results_filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading & filtering
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../examples/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/01_hello_plate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hello plate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/02_cantilever_beam_2D/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cantilever beam (2D)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building richer models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Building richer models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/04_portal_frame_2D/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portal frame (2D)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/05_labels_and_pgs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Labels & physical groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/10b_part_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Part assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/12_interface_tie/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interface tie
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis types
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Analysis types
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/17_modal_analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Modal analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/19_pushover_elastoplastic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pushover (elastoplastic)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_1" id="__nav_4_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Foundations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Foundations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_groundTruth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subsystems
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Subsystems
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_results_obtaining/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh background
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Gmsh background
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Flow Atlas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_instance_computed_view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_light_theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-what-shipped-in-one-paragraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. What shipped, in one paragraph
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-fp-1-the-import-polarity-invariant-the-one-that-bites" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. FP-1 — the import-polarity invariant (the one that bites)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. FP-1 — the import-polarity invariant (the one that bites)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The mechanism
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-the-leaf-module-is-safe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why the leaf module is safe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-ci-tripwire" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The CI tripwire
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-fp-2-the-two-legacy-selection-classes-are-irreconcilable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. FP-2 — the two legacy Selection classes are irreconcilable
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-the-__init_subclass__-required_verbs-family-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. The __init_subclass__ + REQUIRED_VERBS + FAMILY contract
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. The __init_subclass__ + REQUIRED_VERBS + FAMILY contract">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-ci-lock-and-its-critical-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The CI lock — and its critical scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-two-in_box-families-t15-ratified-r3-r4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The two in_box families (T15, ratified R3 / R4)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-fp-4-the-deliberate-femdata-node-vs-element-swallow-asymmetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. FP-4 — the deliberate FEMData node-vs-element swallow asymmetry
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-s1-what-actually-merged-not-a-single-resolver" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. S1 — what actually merged (not a single resolver)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-the-fail-loud-centroid-contract-s53-already-merged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. The fail-loud centroid contract (S5.3 — already merged)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-how-to-add-a-new-chain-safely" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. How to add a new chain safely
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-dispositions-resolved-vs-still-deferred" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Dispositions (resolved vs still-deferred)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-reference-map-verified-fileline-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Reference map (verified file:line + tests)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-selection-chain-maintainer-invariants">The Selection Chain — maintainer invariants<a class="headerlink" href="#the-selection-chain-maintainer-invariants" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>[!note] Audience
+This is the <strong>maintainer</strong> page for the unified <code>.select()</code> idiom
+(the <code>SelectionChain</code> family). It documents the load-bearing
+invariants that make the chain import-safe and the legacy selection
+surface untouched. If you only want to <em>use</em> <code>.select()</code>, read
+<a href="../guide_selection/">Selection in apeGmsh</a>,
+<a href="../guide_results_filtering/">Reading &amp; Filtering Results</a>, or
+<a href="../guide_fem_broker/">The FEM Broker</a> instead.</p>
+<p>The full design record — the 4-wave red/blue adversarial exercise,
+the killed alternatives, the phase ledger — lives in
+<code>docs/plans/selection-unification.md</code>. This page is the <em>operational</em>
+distillation: the rules you must not break when you touch this code,
+with the source and test references that enforce them.</p>
+</blockquote>
+<hr />
+<h2 id="1-what-shipped-in-one-paragraph">1. What shipped, in one paragraph<a class="headerlink" href="#1-what-shipped-in-one-paragraph" title="Permanent link">&para;</a></h2>
+<p>A single fluent, daisy-chainable selection idiom — <code>.select()</code> — was
+added <strong>additively</strong> at all four levels: geometry
+(<code>g.model.select()</code>), the FEM broker (<code>fem.nodes.select()</code> /
+<code>fem.elements.select()</code>), results (<code>results.nodes.select()</code> /
+<code>results.elements.select()</code>), and the live mesh
+(<code>g.mesh_selection.select()</code>). Every <code>.select()</code> returns a chainable
+object with the same verbs (<code>.in_box / .in_sphere / .on_plane /
+.nearest_to / .where</code>), the same set algebra (<code>| &amp; - ^</code> and
+<code>.union / .intersect / .difference</code>), and a domain terminal
+(<code>.result()</code>; results uses <code>.get(component=, time=, stage=)</code>). <strong>No
+old method changed behaviour</strong> except the one deliberate, pinned
+<code>g.mesh_selection</code> box default flip (S2) and three formerly-silent
+paths that now fail loud (S5). The old selection methods all still
+work — <code>.select()</code> sits <em>beside</em> them, it does not replace or facade
+them. This is by design: a true facade was proven fatal (FP-1 / FP-2
+below).</p>
+<p>The architecture that survives:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>apeGmsh/_chain.py                 leaf — stdlib/typing only
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  class SelectionChain            chaining + set-algebra + name enforcement
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>core/_selection.py    GeometryChain(SelectionChain)  FAMILY=&quot;entity&quot;
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>mesh/_node_chain.py   NodeChain(SelectionChain)      FAMILY=&quot;point&quot;
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>mesh/_elem_chain.py   ElementChain(SelectionChain)   FAMILY=&quot;point&quot;
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>results/_result_chain.py ResultChain(SelectionChain) FAMILY=&quot;point&quot;
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>mesh/_mesh_selection_chain.py MeshSelectionChain(...) FAMILY=&quot;point&quot;
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>core/_resolution.py   resolve_target()   shared Loads+Masses resolver (S1)
+</span></code></pre></div>
+<p>The two legacy <code>Selection</code> classes (<code>core/_selection.py</code> and
+<code>viz/Selection.py</code>) are left <strong>byte-unchanged</strong> as terminals.</p>
+<hr />
+<h2 id="2-fp-1-the-import-polarity-invariant-the-one-that-bites">2. FP-1 — the import-polarity invariant (the one that bites)<a class="headerlink" href="#2-fp-1-the-import-polarity-invariant-the-one-that-bites" title="Permanent link">&para;</a></h2>
+<h3 id="the-mechanism">The mechanism<a class="headerlink" href="#the-mechanism" title="Permanent link">&para;</a></h3>
+<p><code>core</code> and <code>mesh</code> are in a <em>latent</em> import cycle on <code>main</code>, and the
+process only survives because the cross-package edges have a specific
+<strong>eager/deferred polarity</strong>:</p>
+<ul>
+<li><code>core → mesh</code> is <strong>eager</strong> (module-level): <code>core/LoadsComposite.py</code>,
+  <code>core/MassesComposite.py</code>, <code>core/ConstraintsComposite.py</code> import
+  from <code>apeGmsh.mesh</code> at module top, and <code>core/__init__.py:1-6</code> pulls
+  those three composites in.</li>
+<li><code>mesh → core</code> is <strong>deferred</strong> (function-body): e.g.
+  <code>mesh/_mesh_structured.py:562-567</code> does
+  <code>from apeGmsh.core._helpers import resolve_to_dimtags</code> /
+  <code>from apeGmsh.core._selection import …</code> <em>inside a method body</em>, not
+  at module top.</li>
+</ul>
+<p>Eager-<code>core→mesh</code> plus deferred-<code>mesh→core</code> <strong>terminates</strong>. Flip any
+deferred <code>mesh→core</code> (or <code>viz→core</code>) edge to eager and <code>import
+apeGmsh</code> crashes with <code>ImportError</code>. A static cycle detector cannot
+catch this — the cycle is <em>already there statically</em>; only the
+eager/deferred polarity of the edge set matters.</p>
+<p>The original "shared <code>@final</code> ABC that reparents the existing
+Selections onto a <code>core</code> base" design was <strong>killed</strong> here: reparenting
+<code>viz</code>/<code>mesh</code>/<code>FEMData</code> Selections onto a <code>core</code> base would force a
+deferred edge eager.</p>
+<h3 id="why-the-leaf-module-is-safe">Why the leaf module is safe<a class="headerlink" href="#why-the-leaf-module-is-safe" title="Permanent link">&para;</a></h3>
+<p><code>apeGmsh/_chain.py</code> is the <strong>package-root leaf</strong>: it imports only the
+standard library (<code>from typing import …</code>) — see its module docstring
+and <code>_chain.py:30-34</code>. It is <em>not</em> one of <code>{core, mesh, viz,
+results}</code>, so importing it from any of those packages adds <strong>no</strong>
+cross-package edge to the polarity baseline.</p>
+<p>Two structural facts make the chain hooks safe:</p>
+<ol>
+<li><code>core/_selection.py:17-23</code> imports <code>from .._chain import
+   SelectionChain</code> at module top. This is allowed because <code>_chain</code> is
+   the root leaf, not a <code>core↔mesh/viz/results</code> edge — identical idiom
+   to <code>mesh/_node_chain.py:14</code>.</li>
+<li><code>core/__init__.py:1-14</code> imports <code>Part / Model / PartsRegistry /
+   Instance / ConstraintsComposite / LoadsComposite / MassesComposite</code>
+   <strong>only</strong> — it does <strong>not</strong> import <code>_selection</code> / <code>_chain</code> /
+   <code>_spatial</code> / <code>_resolution</code>. So a sibling leaf is reachable
+   <em>without</em> dragging in the eager <code>core→mesh</code> chain.</li>
+</ol>
+<p>Every <code>.select()</code> host hook uses the <strong>deferred-import idiom</strong> —
+<code>from ._node_chain import NodeChain</code> <em>inside the <code>select()</code> method
+body</em>, mirroring the shipped precedent at
+<code>mesh/_mesh_structured.py:562-567</code>. See <code>mesh/FEMData.py:338</code>
+(<code>select()</code> for nodes), <code>mesh/FEMData.py:976</code> (elements),
+<code>results/_composites.py:601</code>, <code>mesh/MeshSelectionSet.py:733</code>,
+<code>core/Model.py:153</code> (the docstring there spells out the deferred
+rationale verbatim).</p>
+<h3 id="the-ci-tripwire">The CI tripwire<a class="headerlink" href="#the-ci-tripwire" title="Permanent link">&para;</a></h3>
+<p><code>tests/test_import_dag_polarity.py</code> is the lock. It:</p>
+<ul>
+<li>snapshots the <strong>frozen set of eager cross-package edges</strong> among
+  <code>{core, mesh, viz, results}</code> in <code>BASELINE</code> (8 triples:
+  <code>core→mesh</code> ×3 from the Loads/Masses/Constraints composites,
+  <code>mesh→core</code> ×5 from <code>PhysicalGroups.py</code>,
+  <code>_constraint_resolver/_resolver.py</code>, <code>_load_resolver.py</code>,
+  <code>_mass_resolver.py</code>, <code>records/__init__.py</code>) and fails on <strong>any</strong>
+  add or remove (<code>test_eager_cross_package_edges_frozen</code>);</li>
+<li>asserts the exact FP-1 mechanism is closed —
+  <code>core/__init__.py</code> must not import any of <code>_selection</code> / <code>_chain</code> /
+  <code>_spatial</code> / <code>_resolution</code>
+  (<code>test_core_init_does_not_import_selection_leaves</code>);</li>
+<li>asserts the leaf + one point chain + the deferred host hook import
+  cleanly (<code>test_spike_modules_present_and_safe</code>).</li>
+</ul>
+<blockquote>
+<p>[!warning] Maintainer rule
+If you add a new eager cross-package import among <code>{core, mesh, viz,
+results}</code>, this test goes red. That is intentional. If the new edge
+is genuinely required, update <code>BASELINE</code> <strong>in the same commit</strong> so
+the import-graph change is an explicit, reviewed diff — never a
+silent regression. Adding a new chain or new <code>.select()</code> host must
+use the deferred-import idiom and must <strong>not</strong> require a <code>BASELINE</code>
+change.</p>
+</blockquote>
+<p>The editable install resolves <code>apeGmsh</code> to the <strong>main repo</strong> <code>src/</code>,
+not a worktree. Every in-process gate must set
+<code>PYTHONPATH=&lt;worktree&gt;\src</code> and assert <code>apeGmsh.__file__</code> is the
+worktree, or a green is a false negative
+(<code>docs/plans/selection-unification.md</code> §3 keystone).</p>
+<hr />
+<h2 id="3-fp-2-the-two-legacy-selection-classes-are-irreconcilable">3. FP-2 — the two legacy <code>Selection</code> classes are irreconcilable<a class="headerlink" href="#3-fp-2-the-two-legacy-selection-classes-are-irreconcilable" title="Permanent link">&para;</a></h2>
+<p>There are two classes both named <code>Selection</code>, and they are
+<strong>structurally incompatible</strong>:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>core/_selection.py:369</code></th>
+<th><code>viz/Selection.py:99</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Base</td>
+<td><code>class Selection(list)</code> (mutable list subclass)</td>
+<td><code>class Selection</code> with <code>__slots__ = ('_dimtags','_dim','_parent')</code> (frozen)</td>
+</tr>
+<tr>
+<td>Tags accessor</td>
+<td><code>.tags()</code> — a <strong>method</strong> (<code>:450</code>)</td>
+<td><code>.tags</code> — a <strong>property</strong> (<code>:153-154</code>)</td>
+</tr>
+<tr>
+<td>Constructor</td>
+<td><code>(dimtags, *, _queries=)</code></td>
+<td><code>(dimtags, parent)</code></td>
+</tr>
+<tr>
+<td>Refinement</td>
+<td><code>.to_label</code> (<code>:454</code>) / <code>.to_physical</code> (<code>:489</code>) — mutates live gmsh</td>
+<td><code>.filter</code> (<code>:227</code>) / <code>.limit</code> (<code>:264</code>) / <code>.sorted_by</code> (<code>:268</code>)</td>
+</tr>
+<tr>
+<td>Label/PG filter</td>
+<td>respects label→PG→part precedence</td>
+<td><code>labels=</code> / <code>physical=</code> filters <strong>bypass</strong> that precedence</td>
+</tr>
+</tbody>
+</table>
+<p><code>.tags()</code> method vs <code>.tags</code> property alone makes any cross-class
+<code>@final</code> identity test impossible — there is no single base they can
+both honour without breaking one caller surface.</p>
+<blockquote>
+<p>[!warning] Maintainer rule
+Do <strong>not</strong> merge, reparent, or "unify" these two <code>Selection</code>
+classes. They are the <strong>terminals</strong> of the new chain: <code>GeometryChain</code>
+(<code>g.model.select()</code>) materialises to <code>core/_selection.Selection</code>
+<em>unchanged</em> (so <code>.to_label()</code> / <code>.to_physical()</code> / <code>.tags()</code> keep
+working — see <code>core/_selection.py</code> GeometryChain docstring at
+<code>:781-789</code> and the terminal assertion in
+<code>tests/test_selection_idiom.py:563-565</code>). <code>viz/Selection.py</code> is the
+entity-query composite's frozen snapshot and is byte-unchanged. The
+chain wraps <em>around</em> them; it never replaces them. This is exactly
+why the public API has <strong>one</strong> canonical new idiom but the old ways
+persist — a facade was impossible, not merely declined.</p>
+</blockquote>
+<hr />
+<h2 id="4-the-__init_subclass__-required_verbs-family-contract">4. The <code>__init_subclass__</code> + <code>REQUIRED_VERBS</code> + <code>FAMILY</code> contract<a class="headerlink" href="#4-the-__init_subclass__-required_verbs-family-contract" title="Permanent link">&para;</a></h2>
+<p><code>SelectionChain</code> (<code>_chain.py:53-223</code>) enforces the shared surface at
+<strong>class-definition time</strong>, which is strictly stronger than a CI test
+(a bad subclass is an <code>ImportError</code>-class failure the moment its
+module loads).</p>
+<p><code>_chain.py:84-109</code> <code>__init_subclass__</code>:</p>
+<ul>
+<li>exempts abstract intermediates (no <code>FAMILY</code> set) — only concrete
+  leaves are checked;</li>
+<li>rejects a <code>FAMILY</code> not in <code>VALID_FAMILIES = ("entity", "point")</code>
+  (<code>_chain.py:36</code>);</li>
+<li>requires every verb in <code>REQUIRED_VERBS</code> (<code>_chain.py:40-43</code>:
+  <code>in_box, in_sphere, on_plane, nearest_to, where, union, intersect,
+  difference</code>) to be present and callable;</li>
+<li>requires every hook in <code>_REQUIRED_HOOKS</code> (<code>_chain.py:47-50</code>:
+  <code>_coords_of, _spatial_box, _spatial_sphere, _spatial_plane,
+  _materialize</code>) to be <strong>overridden</strong> (not left as the base
+  <code>NotImplementedError</code> stub).</li>
+</ul>
+<p>The set-algebra dedup law is <strong>one</strong> law — insertion-order-preserving
+<code>dict.fromkeys</code> (<code>_chain.py:71-74</code> <code>_dedupe</code>). Every refining verb
+returns <code>type(self)(…)</code> so chaining is covariant (<code>_chain.py:76-78</code>
+<code>_wrap</code>). Cross-type and cross-engine combination is <strong>loud</strong>
+(<code>_chain.py:163-174</code> <code>_compatible</code> raises <code>TypeError</code>).</p>
+<h3 id="the-ci-lock-and-its-critical-scope">The CI lock — and its critical scope<a class="headerlink" href="#the-ci-lock-and-its-critical-scope" title="Permanent link">&para;</a></h3>
+<p><code>tests/test_selection_idiom.py</code> (S3e) is the <strong>only</strong> file that looks
+at all five chains together:</p>
+<ul>
+<li><code>test_exactly_these_concrete_chains</code> — the family is <strong>closed at
+  five</strong> (<code>GeometryChain, NodeChain, ElementChain, ResultChain,
+  MeshSelectionChain</code>); a 6th leaf breaks the <code>==</code> and forces whoever
+  adds it to wire it in;</li>
+<li><code>test_identical_public_verb_surface</code> — every required/set-algebra
+  name is callable on all five and its <code>inspect.signature</code> is
+  byte-identical across all five, <strong>except</strong> <code>in_box</code> whose signature
+  is family-specific by ratified design (entity family has no
+  <code>inclusive=</code> knob — see §5);</li>
+<li><code>test_init_subclass_rejects_bad_family</code> /
+  <code>…_rejects_dropped_verb</code> / <code>…_rejects_missing_hook</code> — re-prove the
+  definition-time gate;</li>
+<li><code>test_point_family_laws</code> (parametrised over the 4 point chains) and
+  <code>test_entity_family_laws</code> (GeometryChain only) — per-family
+  behavioural laws.</li>
+</ul>
+<blockquote>
+<p>[!warning] Maintainer rule — never assert cross-family identity
+<code>test_selection_idiom.py</code> asserts a shared verb-<strong>name</strong> /
+<strong>signature</strong> surface <strong>and</strong> per-family laws. It <strong>never</strong> asserts
+that <code>GeometryChain.in_box</code> and <code>NodeChain.in_box</code> return the <em>same
+thing</em> for the same box. They cannot: <code>in_box</code> is honestly three
+irreconcilable semantics (T15) — entity-family gmsh BRep CONTAINMENT
+(closed, <code>Geometry.Tolerance</code>≈1e-8 expanded, <strong>no</strong> half-open knob)
+vs point-family node-coordinate / element-centroid half-open
+<code>[lo, hi)</code>. The entity and point laws live in <strong>separate,
+family-scoped test bodies</strong> with deliberately no cross-comparison.
+Keep it that way.</p>
+</blockquote>
+<hr />
+<h2 id="5-the-two-in_box-families-t15-ratified-r3-r4">5. The two <code>in_box</code> families (T15, ratified R3 / R4)<a class="headerlink" href="#5-the-two-in_box-families-t15-ratified-r3-r4" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>POINT family (<code>NodeChain</code> / <code>ElementChain</code> / <code>ResultChain</code> / <code>MeshSelectionChain</code>)</th>
+<th>ENTITY family (<code>GeometryChain</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Atoms</td>
+<td>node ids / element ids</td>
+<td><code>(dim, tag)</code> CAD dimtags</td>
+</tr>
+<tr>
+<td><code>in_box</code> default</td>
+<td>half-open <code>[lo, hi)</code> per axis (canonical, R4)</td>
+<td>gmsh <code>getEntitiesInBoundingBox</code> — BRep bbox-<strong>CONTAINMENT</strong>, closed, box expanded by <code>Geometry.Tolerance</code>≈1e-8</td>
+</tr>
+<tr>
+<td><code>inclusive=</code></td>
+<td><code>inclusive=True</code> → closed <code>[lo, hi]</code></td>
+<td><strong>any</strong> keyword (incl. <code>inclusive=</code>) → <code>TypeError</code> (fail loud, never silently ignored)</td>
+</tr>
+<tr>
+<td>Coordinate</td>
+<td>node coords / element centroid (mean of node coords)</td>
+<td>entity bounding-box centre (sphere/nearest/where), 8 corners (on_plane)</td>
+</tr>
+</tbody>
+</table>
+<p>Point-family box logic: <code>mesh/_node_chain.py:40-50</code> (<code>_spatial_box</code>;
+<code>inclusive</code> selects <code>&lt;= hi</code> vs <code>&lt; hi</code>). Entity-family override:
+<code>core/_selection.py:820-858</code> (<code>in_box(self, lo, hi, **kw)</code> — <code>if kw:
+raise TypeError(...)</code>), delegating to
+<code>core/_selection.py:860+</code> <code>_spatial_box</code> which queries
+<code>gmsh.model.getEntitiesInBoundingBox</code> per distinct dim and intersects
+with the chain (preserving insertion order). The base
+<code>SelectionChain.in_box</code> (<code>_chain.py:128-131</code>) has the point-family
+<code>inclusive: bool = False</code> signature; <code>GeometryChain</code> overrides it with
+a <code>**kw</code>-rejecting signature — this is the one verb the S3e signature
+test exempts from cross-chain identity.</p>
+<blockquote>
+<p>[!note] R3 / R4 are decided behaviour, not bugs
+The point-family box default went <strong>closed → half-open</strong> in S2 (a
+reconciliation, not a relocation — <code>g.mesh_selection</code>'s box was
+closed on <code>main</code> while <code>results</code>' box was already half-open). The
+entity family physically <em>cannot</em> express a half-open box (gmsh has
+no such knob), so it rejects the kwarg loudly. Do not "fix" either
+by trying to make them agree.</p>
+</blockquote>
+<hr />
+<h2 id="6-fp-4-the-deliberate-femdata-node-vs-element-swallow-asymmetry">6. FP-4 — the deliberate FEMData node-vs-element swallow asymmetry<a class="headerlink" href="#6-fp-4-the-deliberate-femdata-node-vs-element-swallow-asymmetry" title="Permanent link">&para;</a></h2>
+<p><code>FEMData</code> does <strong>not</strong> call the shared <code>resolve_target</code>. It has its
+own resolvers with a <strong>deliberate, documented</strong> asymmetry that S1 and
+S3 must not touch:</p>
+<ul>
+<li><strong>Node path</strong> — <code>FEMData._resolve_one_target</code>
+  (<code>mesh/FEMData.py:456</code>) catches <strong><code>KeyError</code> only</strong>
+  (<code>:480</code>, <code>:485</code>). A <code>ValueError</code> from a wrong-dimension reference
+  propagates (fails loud).</li>
+<li><strong>Element path</strong> — <code>FEMData._resolve_one_elem_target</code>
+  (<code>mesh/FEMData.py:851</code>) catches <strong><code>(KeyError, ValueError)</code></strong>
+  (<code>:869</code>, <code>:873</code>) — a broader swallow, by design.</li>
+</ul>
+<p>This asymmetry is a <strong>correctness invariant</strong> locked by
+<code>tests/test_resolution_contract.py</code> + <code>tests/test_target_resolution.py</code>
+(the S0b characterization battery pinned the node-path
+<code>ValueError</code>-not-swallowed vs element-path swallowed behaviour as
+<em>current</em> behaviour before S1/S2).</p>
+<p><code>fem.nodes.select()</code> / <code>fem.elements.select()</code> <strong>reuse these exact
+resolvers</strong> — they delegate verbatim to <code>_resolve_nodes</code> /
+<code>_resolve_elements</code> (the same methods <code>.get()</code> uses), so
+<code>select(...).result()</code> is id-for-id identical to <code>get(...)</code> and the
+asymmetry is preserved <em>by reuse</em>, not re-implemented. See
+<code>mesh/FEMData.py:322-330</code> (the <code>select()</code> docstring spells this out)
+and <code>mesh/FEMData.py:352-354</code>.</p>
+<blockquote>
+<p>[!warning] Maintainer rule
+S1 unified <strong>only</strong> the Loads/Masses <code>_resolve_target</code> byte-clone
+(see §7). It did <strong>not</strong> create a single library-wide resolver.
+<code>FEMData</code>'s node-vs-element swallow asymmetry and <code>core/_helpers</code>'s
+<code>_resolve_string</code> keep their own resolvers <strong>by design</strong>. A new
+chain must reuse the host's existing resolver — never add a new
+resolver or "harmonise" the asymmetry.</p>
+</blockquote>
+<hr />
+<h2 id="7-s1-what-actually-merged-not-a-single-resolver">7. S1 — what actually merged (not a single resolver)<a class="headerlink" href="#7-s1-what-actually-merged-not-a-single-resolver" title="Permanent link">&para;</a></h2>
+<p><code>core/_resolution.py:33</code> <code>resolve_target(parent, target, source, *,
+expected_dim, not_found_prefix, noun)</code> is the <strong>one shared engine for
+Loads + Masses only</strong>. It was a pure de-duplication: the
+<code>MassesComposite._resolve_target</code> body was a byte-for-byte clone of
+<code>LoadsComposite._resolve_target</code> (only the two error strings
+differed), so both composites now delegate here and the only
+per-composite difference — the not-found <code>KeyError</code> prefix
+(<code>"Target"</code> vs <code>"Mass target"</code>) and the wrong-dim <code>ValueError</code> noun
+(<code>"load"</code> vs <code>"mass"</code>) — is threaded through explicit parameters
+(<code>core/_resolution.py:1-27</code> docstring is explicit: <em>"This is a pure
+de-duplication … reproduces the prior behaviour byte-identically"</em>).</p>
+<p><code>core/_resolution.py</code> is itself a <strong>leaf</strong> (imports only <code>gmsh</code> +
+stdlib; the one intra-<code>core</code> symbol <code>apeGmsh.core.Labels.add_prefix</code>
+is imported deferred inside the function at <code>:94</code>, exactly as the
+original methods did) — so it does not perturb the FP-1 baseline.</p>
+<blockquote>
+<p>[!warning] Maintainer rule
+Do <strong>not</strong> route <code>FEMData._resolve_one_target</code> /
+<code>_resolve_one_elem_target</code> or <code>core/_helpers._resolve_string</code>
+through <code>core/_resolution.py</code>. The contract tests
+(<code>test_resolution_contract.py</code> + <code>test_target_resolution.py</code>) lock
+the Loads/Masses/Constraints + <code>core/_helpers</code> fail-loud surface;
+the broker path is deliberately separate (FP-4). There is no
+byte-parity tautology test for S1 by design — the locked contract
+tests plus the S0b pins are the guarantee.</p>
+</blockquote>
+<hr />
+<h2 id="8-the-fail-loud-centroid-contract-s53-already-merged">8. The fail-loud centroid contract (S5.3 — already merged)<a class="headerlink" href="#8-the-fail-loud-centroid-contract-s53-already-merged" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>[!note] Attribution
+The end-state described here — one shared centroid fail-loud
+contract — is what is true on <code>main</code>. <strong>S5.3 (the
+<code>_element_centroids</code> fix) merged independently, ahead of this
+docs change; it is not introduced here.</strong> Of the three S5 paths,
+only <strong>S5.2</strong> (the loads/masses <code>__ms__</code> consumer, below) is the
+code behavior shipping alongside these docs.</p>
+</blockquote>
+<p>There is <strong>one</strong> centroid fail-loud message/pattern, shared by
+the chain centroids and the formerly-silent legacy helper:</p>
+<ul>
+<li><strong>Chain side</strong> — <code>mesh/_elem_chain.py</code> (<code>_centroid_map</code>, see
+  <code>:45</code>) and <code>results/_result_chain.py</code> build centroids and were
+  fail-loud from the start.</li>
+<li><strong>Legacy side (the already-merged S5.3 fix)</strong> —
+  <code>results/_composites.py:123</code> <code>_element_centroids</code> previously used
+  <code>np.clip</code> to silently map a missing connectivity node id to the
+  last node (corrupting that element's centroid). It now <strong>raises
+  <code>KeyError</code></strong> with an explicit message (<code>:157</code> for the no-nodes
+  case, <code>:177</code> for the absent-id case): <em>"element {eid} ({type})
+  references node {nid} which is not in the FEM node set — refusing
+  to compute a corrupted centroid (fail loud)."</em> The <code>np.clip</code> at
+  <code>:168</code> survives <strong>only</strong> as <code>loc_clamped</code>, a safe index used
+  <em>after</em> the <code>bad</code> mask is computed — it no longer drives the
+  semantic. The docstring (<code>:130-136</code>) explicitly says it shares the
+  same contract and message as the chain-side <code>_centroid_map</code>.</li>
+</ul>
+<p><code>_element_centroids</code> backs the <strong>existing legacy</strong>
+<code>results.elements.in_box / nearest_to / on_plane</code> helpers — so the
+already-merged S5.3 fix makes those legacy helpers fail loud too,
+not just the new chain.</p>
+<p>The other two S5 fail-loud paths (for completeness — full detail in
+<code>docs/plans/selection-unification.md</code> §5):</p>
+<ol>
+<li><strong>Results <code>selection=</code> on import-origin fem (S5.1 — already
+   loud, locked)</strong> — <code>from_msh</code>/MPCO/native produce
+   <code>mesh_selection=None</code>; <code>results/_composites.py</code> <code>_resolve_node_ids</code>
+   / <code>_resolve_element_ids</code> raise <code>RuntimeError</code>
+   (<code>:313-314</code>, <code>:333-336</code>, <code>:367-368</code>, <code>:387-388</code>) instead of
+   silently resolving to an empty set. This path was already loud on
+   <code>main</code>; a characterization pin locks it — it is <strong>not</strong> flipped by
+   this work.</li>
+<li><strong>Loads <code>__ms__</code> consumer (S5.2 — ships with these docs)</strong> —
+   <code>core/LoadsComposite.py:933</code> <code>_target_nodes</code> did
+   <code>if info is None: return set()</code> (silently binding a load to
+   nothing). It now <strong>raises <code>KeyError</code></strong> (<code>:950-955</code>); the
+   <code>MassesComposite</code> counterpart matches. This guard is in the
+   <code>__ms__</code> <em>consumer</em>, distinct from the S1
+   <code>core/_resolution.py</code> resolver. <strong>This is the one S5 code change
+   shipping alongside this documentation</strong> (with a flipped
+   characterization pin + <code>tests/test_s5_loads_ms_failloud.py</code>).</li>
+</ol>
+<hr />
+<h2 id="9-how-to-add-a-new-chain-safely">9. How to add a new chain safely<a class="headerlink" href="#9-how-to-add-a-new-chain-safely" title="Permanent link">&para;</a></h2>
+<p>A concrete checklist. Follow it exactly — the gates enforce most of
+it, but the deferred-import discipline is on you.</p>
+<ol>
+<li>
+<p><strong>Write a new leaf module</strong> (e.g. <code>mesh/_foo_chain.py</code>). Import
+   <strong>only</strong> <code>from .._chain import SelectionChain</code> + numpy/stdlib at
+   module top. Do <strong>not</strong> import <code>apeGmsh.core</code> / <code>mesh</code> / <code>viz</code> /
+   <code>results</code> at module level. (Model your imports on
+   <code>mesh/_node_chain.py:1-14</code>.)</p>
+</li>
+<li>
+<p><strong>Subclass <code>SelectionChain</code></strong>, set <code>FAMILY</code> to <code>"point"</code> or
+   <code>"entity"</code>, and implement every hook in <code>_REQUIRED_HOOKS</code>
+   (<code>_coords_of</code>, <code>_spatial_box</code>, <code>_spatial_sphere</code>, <code>_spatial_plane</code>,
+   <code>_materialize</code>). For a point family, copy the numpy box/sphere/
+   plane logic from <code>NodeChain</code>; for an entity family, override
+   <code>in_box</code> to reject keywords and delegate to gmsh like
+   <code>GeometryChain</code> (<code>core/_selection.py:820-858</code>).
+   <code>__init_subclass__</code> will reject the class at import if you miss a
+   verb, a hook, or use a bad <code>FAMILY</code>.</p>
+</li>
+<li>
+<p><strong>Add the <code>.select()</code> host hook</strong> on the owning composite with a
+   <strong>deferred</strong> import inside the method body
+   (<code>from ._foo_chain import FooChain</code>), mirroring
+   <code>mesh/FEMData.py:338</code>. Never import the chain at the host module
+   top.</p>
+</li>
+<li>
+<p><strong>Reuse the host's existing resolver</strong> for name seeding. Do <strong>not</strong>
+   write a new name→entity resolver — the resolution contract forbids
+   it (FP-4 / §7). Delegate to the exact method <code>.get()</code> already uses
+   (e.g. <code>_resolve_nodes</code>), so <code>select(...).result()</code> is id-for-id
+   identical to <code>get(...)</code>. (This is exactly how
+   <code>g.mesh_selection.select(name=N)</code> works — it <strong>delegates verbatim</strong>
+   to the existing <code>get_tag</code>/<code>get_nodes</code>/<code>get_elements</code> surface via
+   the private <code>_seed_ids_by_name</code>, writes <strong>no</strong> new resolver, only
+   <em>reads</em> <code>_sets</code>, and fails loud on an unknown name — see
+   <code>mesh/MeshSelectionSet.py</code> <code>select()</code> docstring and
+   <code>tests/test_mesh_selection_chain_name_seed.py</code>.)</p>
+</li>
+<li>
+<p><strong>Materialise to the existing terminal type.</strong> Reuse the legacy
+   result type via a deferred import inside <code>_materialize</code> (cf.
+   <code>mesh/_node_chain.py:96</code> <code>from .FEMData import NodeResult</code>). Do not
+   invent a new return type and do not touch the legacy <code>Selection</code>
+   classes.</p>
+</li>
+<li>
+<p><strong>Wire it into the cross-chain contract.</strong>
+   <code>tests/test_selection_idiom.py</code> asserts the family is <em>exactly</em>
+   five (<code>_EXPECTED_CHAINS</code>); a 6th will fail
+   <code>test_exactly_these_concrete_chains</code> until you add it there (and
+   to <code>_POINT_CHAINS</code> if point-family) and give it a focused
+   per-domain smoke test (pattern: <code>tests/test_fem_chain.py</code>,
+   <code>tests/test_result_chain.py</code>, etc.).</p>
+</li>
+<li>
+<p><strong>Run the gates</strong> (opensees venv; <code>PYTHONPATH=&lt;worktree&gt;\src</code>;
+   confirm <code>apeGmsh.__file__</code> is the worktree):</p>
+</li>
+</ol>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pytest tests/test_import_dag_polarity.py \
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>       tests/test_selection_idiom.py \
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>       tests/test_resolution_contract.py \
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>       tests/test_target_resolution.py -q
+</span></code></pre></div>
+<p><code>test_import_dag_polarity.py</code> must stay green <strong>with <code>BASELINE</code>
+   unchanged</strong> — if it demands a <code>BASELINE</code> edit, you added an eager
+   cross-package import (step 1 or 3 violated). Fix the import, do not
+   edit <code>BASELINE</code>.</p>
+<hr />
+<h2 id="10-dispositions-resolved-vs-still-deferred">10. Dispositions (resolved vs still-deferred)<a class="headerlink" href="#10-dispositions-resolved-vs-still-deferred" title="Permanent link">&para;</a></h2>
+<p>Post-S3 dispositions are ratified in
+<code>docs/plans/selection-unification.md</code> §9. One item remains genuinely
+deferred; the other two are resolved.</p>
+<ol>
+<li><strong>Persistence — RESOLVED query-only.</strong> Chained selections are
+   intentionally <strong>ephemeral query objects</strong>. There is <strong>no</strong>
+   <code>.save_as(name)</code>. Named, round-tripping persistence remains the
+   pre-mesh author-time path (<code>g.mesh_selection.add_nodes(...,
+   name=...)</code> → FEMData snapshot → <code>selection=</code>), which already works
+   and is unchanged.</li>
+<li><strong>Results sub-composites <code>.select()</code> — STILL DEFERRED</strong> (the only
+   genuinely not-yet item; track, don't claim "available").
+   <code>results.nodes</code> / <code>results.elements</code> have <code>.select()</code>; the five
+   element sub-composites (<code>gauss</code> / <code>fibers</code> / <code>layers</code> /
+   <code>line_stations</code> / <code>springs</code>) need per-terminal kwarg forwarding
+   and are a follow-on.</li>
+<li><strong><code>g.mesh_selection.select()</code> name-seed — RESOLVED, shipped.</strong>
+   <code>select(*, level="node", dim=2, ids=None, name=None)</code>: beyond
+   <code>ids=</code>/full-universe seeding, <code>name=</code> seeds id-for-id from an
+   <strong>existing</strong> <code>g.mesh_selection</code> set (node ids for <code>level="node"</code>,
+   element ids for <code>level="element"</code>). It <strong>delegates verbatim</strong> to
+   the existing <code>get_tag</code>/<code>get_nodes</code>/<code>get_elements</code> surface via the
+   private <code>_seed_ids_by_name</code> (<strong>no</strong> new resolver), only <em>reads</em>
+   <code>_sets</code> (no registration, no tag allocation), and fails loud on an
+   unknown name or a node-set name asked at the element level;
+   <code>ids=</code>+<code>name=</code> together raises. <code>select(name=N).&lt;spatial&gt;</code> is
+   id-for-id <code>filter_set</code> over set <code>N</code>, proven for an
+   <code>add_nodes</code>-built set <strong>and</strong> a <code>from_physical</code>-built set in
+   <code>tests/test_mesh_selection_chain_name_seed.py</code>. Seeding <em>directly</em>
+   from a raw gmsh PG name / apeGmsh label is <strong>not</strong> a <code>select()</code>
+   parameter (no non-registering resolver exists on
+   <code>MeshSelectionSet</code>); the supported route is the two-step
+   <code>from_physical(...)</code> / <code>from_geometric(...)</code> <strong>then</strong>
+   <code>select(name=...)</code>.</li>
+</ol>
+<hr />
+<h2 id="11-reference-map-verified-fileline-tests">11. Reference map (verified file:line + tests)<a class="headerlink" href="#11-reference-map-verified-fileline-tests" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Source</th>
+<th>Test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Leaf mixin</td>
+<td><code>apeGmsh/_chain.py:53-223</code></td>
+<td><code>test_import_dag_polarity.py::test_spike_modules_present_and_safe</code></td>
+</tr>
+<tr>
+<td>Polarity baseline</td>
+<td><code>core/__init__.py:1-14</code>, <code>mesh/_mesh_structured.py:562-567</code></td>
+<td><code>test_import_dag_polarity.py</code> (all 3)</td>
+</tr>
+<tr>
+<td><code>__init_subclass__</code> enforcement</td>
+<td><code>_chain.py:84-109</code>, <code>REQUIRED_VERBS</code> <code>:40-43</code></td>
+<td><code>test_selection_idiom.py::test_init_subclass_rejects_*</code></td>
+</tr>
+<tr>
+<td>Cross-chain idiom lock</td>
+<td>—</td>
+<td><code>test_selection_idiom.py</code> (S3e, all)</td>
+</tr>
+<tr>
+<td>GeometryChain (entity)</td>
+<td><code>core/_selection.py:769-858</code></td>
+<td><code>test_selection_idiom.py::test_entity_family_laws</code>, <code>tests/test_geometry_chain.py</code></td>
+</tr>
+<tr>
+<td>Legacy <code>Selection(list)</code> terminal</td>
+<td><code>core/_selection.py:369</code>, <code>.tags()</code> <code>:450</code>, <code>.to_label/.to_physical</code> <code>:454/:489</code></td>
+<td><code>test_selection_idiom.py:563-565</code></td>
+</tr>
+<tr>
+<td>Legacy <code>viz/Selection</code></td>
+<td><code>viz/Selection.py:99</code>, <code>.tags</code> prop <code>:153-154</code></td>
+<td>(byte-unchanged)</td>
+</tr>
+<tr>
+<td>NodeChain / ElementChain</td>
+<td><code>mesh/_node_chain.py</code>, <code>mesh/_elem_chain.py</code></td>
+<td><code>tests/test_fem_chain.py</code></td>
+</tr>
+<tr>
+<td>ResultChain</td>
+<td><code>results/_result_chain.py:135</code></td>
+<td><code>tests/test_result_chain.py</code></td>
+</tr>
+<tr>
+<td>MeshSelectionChain</td>
+<td><code>mesh/_mesh_selection_chain.py:158</code></td>
+<td><code>tests/test_mesh_selection_chain.py</code></td>
+</tr>
+<tr>
+<td><code>select(name=)</code> name-seed (shipped)</td>
+<td><code>mesh/MeshSelectionSet.py</code> <code>select()</code> (<code>_seed_ids_by_name</code>; delegates to <code>get_tag</code>/<code>get_nodes</code>/<code>get_elements</code>)</td>
+<td><code>tests/test_mesh_selection_chain_name_seed.py</code></td>
+</tr>
+<tr>
+<td>Host hooks (deferred import)</td>
+<td><code>core/Model.py:153</code>, <code>mesh/FEMData.py:338/976</code>, <code>results/_composites.py:601</code>, <code>mesh/MeshSelectionSet.py:733</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td>FP-4 swallow asymmetry</td>
+<td>node <code>mesh/FEMData.py:456</code>/<code>:480</code>/<code>:485</code> (<code>KeyError</code>) ; elem <code>:851</code>/<code>:869</code>/<code>:873</code> (<code>KeyError,ValueError</code>)</td>
+<td><code>test_resolution_contract.py</code>, <code>test_target_resolution.py</code></td>
+</tr>
+<tr>
+<td>S1 shared resolver (Loads+Masses only)</td>
+<td><code>core/_resolution.py:33</code></td>
+<td><code>test_resolution_contract.py</code>, <code>test_target_resolution.py</code></td>
+</tr>
+<tr>
+<td>S2 box → half-open + <code>inclusive=</code></td>
+<td><code>mesh/_mesh_filters.py:46-83</code>; entry <code>MeshSelectionSet.py</code> <code>add_nodes</code> <code>:210</code> / <code>add_elements</code> <code>:268</code> / <code>filter_set</code> <code>:598</code></td>
+<td>(S0b pins, same commit)</td>
+</tr>
+<tr>
+<td>S5.1 results <code>selection=</code> loud (already loud on main, locked)</td>
+<td><code>results/_composites.py:313-314/333-336/367-368/387-388</code></td>
+<td>characterization pin</td>
+</tr>
+<tr>
+<td>S5.2 Loads/Masses <code>__ms__</code> consumer loud (<strong>ships with these docs</strong>)</td>
+<td><code>core/LoadsComposite.py:950-955</code> (+ <code>MassesComposite</code> counterpart)</td>
+<td><code>tests/test_s5_loads_ms_failloud.py</code> (+ flipped char pin)</td>
+</tr>
+<tr>
+<td>S5.3 centroid fail-loud (already merged separately, not this PR)</td>
+<td><code>results/_composites.py:123</code> (<code>:157</code>/<code>:177</code> raise; <code>:168</code> clip is post-validation only)</td>
+<td>(merged ahead of these docs)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>docs/plans/selection-unification.md</code> — the authoritative design
+  record (hard truths, FP-1/2/4, T15, phase ledger, ratified
+  decisions).</li>
+<li><a href="../guide_selection/">Selection in apeGmsh</a> — user-facing geometry +
+  mesh selection.</li>
+<li><a href="../guide_results_filtering/">Reading &amp; Filtering Results</a> —
+  results <code>.select()</code> and the legacy helpers.</li>
+<li><a href="../guide_fem_broker/">The FEM Broker</a> — <code>fem.nodes/elements.select()</code>.</li>
+<li><a href="../guide_queries/">apeGmsh model queries</a> — the legacy entity
+  <code>queries.select(on=/crossing=)</code> predicate selector.</li>
+<li><a href="../MIGRATION_v1/">MIGRATION_v1</a> — the S2 box-default and S5
+  fail-loud user-visible changes.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,506 @@
+[
+  {
+    "id": "active-objects-cascade",
+    "title": "Click a source → Properties Panel updates",
+    "grounds": "04-active-objects.md",
+    "summary": "ParaView's central signal cascade. One click in the Pipeline Browser fans out to every panel that cares — via a single global singleton (pqActiveObjects) emitting Qt signals — rather than direct wiring.",
+    "steps": [
+      {
+        "from": "qtcomp",
+        "to": "qtcomp",
+        "call": "pqPipelineBrowserWidget: user clicks tree row",
+        "passes": "QModelIndex (row → pqPipelineSource*)",
+        "file": "Qt/Components/pqPipelineBrowserWidget.cxx",
+        "note": "Tree selection is a thin wrapper over pqPipelineModel — clicks become signals, not direct method calls."
+      },
+      {
+        "from": "qtcomp",
+        "to": "qtcore",
+        "call": "pqActiveObjects::setActivePipelineProxy(proxy)",
+        "passes": "proxy: pqProxy*",
+        "file": "Qt/Components/pqActiveObjects.h:129",
+        "note": "Tree click handler funnels into the global active-object singleton — the single source of truth for 'what is selected right now'."
+      },
+      {
+        "from": "qtcore",
+        "to": "qtcomp",
+        "call": "pqActiveObjects emits pipelineProxyChanged(proxy)",
+        "passes": "Qt signal: pipelineProxyChanged(pqProxy*)",
+        "file": "Qt/Components/pqActiveObjects.h:152-159",
+        "note": "Properties Panel, Color Editor, Info Panel, View Frame buttons all rebind off this signal. No direct A → B wiring."
+      },
+      {
+        "from": "qtcomp",
+        "to": "qtcomp",
+        "call": "pqPropertiesPanel::setPipelineProxy(proxy)",
+        "passes": "proxy: pqProxy*",
+        "file": "Qt/Components/pqPropertiesPanel.h:164",
+        "note": "Panel clears previous editors and rebuilds for the new selection."
+      },
+      {
+        "from": "qtcomp",
+        "to": "remsm",
+        "call": "pqProxyWidget introspects vtkSMProperty list",
+        "passes": "iterator: vtkSMPropertyIterator(proxy)",
+        "file": "Qt/Components/pqProxyWidget.h:28",
+        "note": "Walk every property on the proxy — type + domain drive which Qt widget to create."
+      },
+      {
+        "from": "remsm",
+        "to": "qtcomp",
+        "call": "per-property widget created and added to layout",
+        "passes": "QWidget* (slider, combo, line edit, file picker, …)",
+        "file": "Qt/Components/pqPropertyWidgetInterface.h",
+        "note": "Property domain determines the editor: DoubleRangeDomain → slider, EnumerationDomain → combo, ArrayListDomain → array picker."
+      }
+    ]
+  },
+
+  {
+    "id": "eye-icon-visibility",
+    "title": "Toggle eye icon on pipeline node → actor hides",
+    "grounds": "03-outline-eye-icon.md",
+    "summary": "Visibility is a property on the representation, not a UI flag. Clicking the eye toggles a typed property and the view re-renders through the standard pipeline.",
+    "steps": [
+      {
+        "from": "qtcomp",
+        "to": "qtcomp",
+        "call": "pqPipelineModel: icon-column click intercepted",
+        "passes": "QModelIndex + Qt::CheckStateRole",
+        "file": "Qt/Components/pqPipelineModel.cxx",
+        "note": "Model handles the click on column 0 (icon) rather than delegating to the tree's selection."
+      },
+      {
+        "from": "qtcomp",
+        "to": "remviews",
+        "call": "pqDisplayPolicy::setRepresentationVisibility(repr, view, visible)",
+        "passes": "repr: pqDataRepresentation*, view: pqView*, visible: bool",
+        "file": "Qt/Core/pqDisplayPolicy.h",
+        "note": "Policy object decides whether a representation should be created on-the-fly, or just toggled."
+      },
+      {
+        "from": "remviews",
+        "to": "remsm",
+        "call": "vtkSMRepresentationProxy: SetProperty('Visibility', visible)",
+        "passes": "vtkSMIntVectorProperty value: 0 or 1",
+        "file": "Remoting/Views/vtkSMRepresentationProxy.h",
+        "note": "It's just a property change. Same mechanism as every other property edit."
+      },
+      {
+        "from": "remsm",
+        "to": "vtk",
+        "call": "UpdateVTKObjects() → vtkPVDataRepresentation::SetVisibility(int)",
+        "passes": "actor.SetVisibility(int)",
+        "file": "Remoting/Views/vtkPVDataRepresentation.h:62",
+        "note": "All accumulated property changes are flushed to the VTK object in one call."
+      },
+      {
+        "from": "remviews",
+        "to": "vtk",
+        "call": "vtkSMViewProxy::StillRender()",
+        "passes": "render request",
+        "file": "Remoting/Views/vtkSMViewProxy.h",
+        "note": "View asks each visible representation to draw — the hidden one is skipped because its actor's visibility is now 0."
+      }
+    ]
+  },
+
+  {
+    "id": "apply-property-change",
+    "title": "Edit property → Apply → pipeline updates → view re-renders",
+    "grounds": "05-apply-autoapply.md",
+    "summary": "The Apply button is a transaction. Edits accumulate as 'unchecked values' on properties — the GUI can preview without committing. One click commits them all and propagates through the DAG.",
+    "steps": [
+      {
+        "from": "qtcomp",
+        "to": "remsm",
+        "call": "pqProxyWidget: user types in QLineEdit → SetUncheckedValue",
+        "passes": "value (as variant), validated against domain",
+        "file": "Qt/Components/pqProxyWidget.h:28",
+        "note": "Unchecked = previewable but not yet pushed. Domains catch invalid values before commit."
+      },
+      {
+        "from": "qtcomp",
+        "to": "qtapp",
+        "call": "pqProxyWidget emits changeAvailable()",
+        "passes": "Qt signal (no payload)",
+        "file": "Qt/Components/pqProxyWidget.cxx",
+        "note": "Apply button is bound to this signal — it enables on any pending change, disables after apply."
+      },
+      {
+        "from": "qtapp",
+        "to": "remsm",
+        "call": "pqApplyBehavior::onApplied() — commit unchecked → checked",
+        "passes": "for each modified proxy: SetUncheckedValue → SetValue",
+        "file": "Qt/ApplicationComponents/pqApplyBehavior.h",
+        "note": "Behavior owns the apply cycle. Auto-Apply is just this behavior firing on every changeAvailable() instead of on button click."
+      },
+      {
+        "from": "remsm",
+        "to": "vtk",
+        "call": "vtkSMProxy::UpdateVTKObjects()",
+        "passes": "serialized property → C++ setter calls on VTK object",
+        "file": "Remoting/ServerManager/vtkSMProxy.h",
+        "note": "Single round-trip pushes all dirty properties at once."
+      },
+      {
+        "from": "vtk",
+        "to": "remsm",
+        "call": "vtkAlgorithm fires vtkCommand::ModifiedEvent",
+        "passes": "observer notification",
+        "file": "VTK/Common/Core/vtkObject.h",
+        "note": "Standard VTK observer pattern. ParaView listens for this on every source."
+      },
+      {
+        "from": "remsm",
+        "to": "remviews",
+        "call": "downstream representations marked dirty (MarkModified)",
+        "passes": "MTime bump on representation proxy",
+        "file": "Remoting/Views/vtkPVDataRepresentation.h:62",
+        "note": "Pipeline DAG is walked — anything that consumes the modified source's output port invalidates."
+      },
+      {
+        "from": "remviews",
+        "to": "vtk",
+        "call": "vtkSMViewProxy::StillRender() runs pipeline + redraws",
+        "passes": "render request",
+        "file": "Remoting/Views/vtkSMViewProxy.h",
+        "note": "View asks reps for fresh data; reps ask their source to update; source executes; new data flows back; actor renders."
+      }
+    ]
+  },
+
+  {
+    "id": "color-by-array",
+    "title": "Change color array → transfer function rebinds → scalar bar updates",
+    "grounds": "06-color-map-editor.md",
+    "summary": "Coloring is a property of the representation, not the source. A separate transfer-function proxy holds the colormap — multiple representations can share or override it.",
+    "steps": [
+      {
+        "from": "qtcomp",
+        "to": "remviews",
+        "call": "pqDisplayColorWidget: user selects 'Pressure' in dropdown",
+        "passes": "(association: POINTS, array: 'Pressure')",
+        "file": "Qt/Components/pqDisplayColorWidget.h",
+        "note": "Widget shows the input's available arrays — driven by domain query on the representation's ColorArrayName property."
+      },
+      {
+        "from": "remviews",
+        "to": "remsm",
+        "call": "representation.SetProperty('ColorArrayName', (POINTS, 'Pressure'))",
+        "passes": "vtkSMStringVectorProperty with 2 elements",
+        "file": "Remoting/Views/vtkSMRepresentationProxy.h",
+        "note": "Color array is just another typed property on the representation proxy."
+      },
+      {
+        "from": "remviews",
+        "to": "remviews",
+        "call": "vtkSMTransferFunctionManager::GetColorTransferFunction('Pressure')",
+        "passes": "name → existing or new vtkSMTransferFunctionProxy",
+        "file": "Remoting/Views/vtkSMTransferFunctionManager.h",
+        "note": "Transfer functions are global, keyed by array name — two reps of 'Pressure' share the same LUT by default."
+      },
+      {
+        "from": "remsm",
+        "to": "vtk",
+        "call": "representation.LookupTable = LUT proxy; UpdateVTKObjects",
+        "passes": "vtkPVDiscretizableColorTransferFunction reference",
+        "file": "Remoting/Views/vtkPVDiscretizableColorTransferFunction.h",
+        "note": "Mapper now uses the shared LUT. Editing it once recolors every rep that points at it."
+      },
+      {
+        "from": "qtapp",
+        "to": "remviews",
+        "call": "pqColorMapEditor receives activeRepresentationChanged → rebinds",
+        "passes": "Qt signal from pqActiveObjects",
+        "file": "Qt/ApplicationComponents/pqColorMapEditor.h",
+        "note": "Editor dock follows the active rep automatically — see flow #1 for the cascade."
+      },
+      {
+        "from": "remviews",
+        "to": "vtk",
+        "call": "vtkScalarBarActor + StillRender — bar drawn in-view",
+        "passes": "scalar bar with title, ticks, range",
+        "file": "Remoting/Views/vtkPVScalarBarActor.h",
+        "note": "Scalar bar is a VTK actor inside the render window, not a Qt widget. Survives screenshots and exports."
+      }
+    ]
+  },
+
+  {
+    "id": "warning-to-output-dock",
+    "title": "VTK warning fires → routed to Output dock",
+    "grounds": "01-output-dock.md",
+    "summary": "Every vtkWarningMacro, vtkErrorMacro, Python exception, and qWarning is captured by a single message handler and routed (thread-safe) to one dock — color-coded by severity.",
+    "steps": [
+      {
+        "from": "vtk",
+        "to": "remcore",
+        "call": "vtkAlgorithm::RequestData → vtkWarningMacro('Bad input')",
+        "passes": "(message, severity) into vtkOutputWindow",
+        "file": "VTK/Common/Core/vtkOutputWindow.h",
+        "note": "VTK's standard message macros all funnel into vtkOutputWindow — the singleton that ParaView overrides."
+      },
+      {
+        "from": "remcore",
+        "to": "qtcore",
+        "call": "vtkPVOutputWindow forwards to Qt via callback",
+        "passes": "(text: QString, type: enum)",
+        "file": "Remoting/Core/vtkPVOutputWindow.h",
+        "note": "ParaView replaces the default output window at startup. The replacement bridges into Qt's message system."
+      },
+      {
+        "from": "qtcore",
+        "to": "qtcore",
+        "call": "Qt message handler (installed via qInstallMessageHandler)",
+        "passes": "(QtMsgType type, QMessageLogContext ctx, QString msg)",
+        "file": "Qt/Core/pqOutputWidget.cxx",
+        "note": "Captures qDebug/qWarning/qCritical from Qt AND from the VTK bridge. Single funnel for the whole app."
+      },
+      {
+        "from": "qtcore",
+        "to": "qtcore",
+        "call": "MessageHandler emits Qt signal — thread-safe routing to UI thread",
+        "passes": "signal: message(QString, QtMsgType)",
+        "file": "Qt/Core/pqOutputWidget.cxx",
+        "note": "Critical: handler may fire from a worker thread. Emitting a signal Qt-marshals to the UI thread."
+      },
+      {
+        "from": "qtcore",
+        "to": "qtcomp",
+        "call": "pqOutputWidget appends to QTextEdit, color-coded",
+        "passes": "HTML span with severity class",
+        "file": "Qt/Core/pqOutputWidget.h",
+        "note": "Red = error, yellow = warning, gray = info. Lets users see severity at a glance."
+      },
+      {
+        "from": "qtcomp",
+        "to": "qtapp",
+        "call": "status-bar badge increments (warningCount++)",
+        "passes": "counter update",
+        "file": "Qt/ApplicationComponents/pqStatusBar.h",
+        "note": "Low-bandwidth feedback. User sees '3 warnings' badge; click raises the dock."
+      }
+    ]
+  },
+
+  {
+    "id": "split-view",
+    "title": "Click Split → multi-view re-tiles",
+    "grounds": "02-view-frame-chrome.md",
+    "summary": "View frame chrome is a thin QToolBar with registered actions. Splits are server-side: the Qt side just reacts to a layout proxy change.",
+    "steps": [
+      {
+        "from": "qtcomp",
+        "to": "qtcomp",
+        "call": "pqViewFrame: user clicks 'Split Horizontal' button",
+        "passes": "QAction triggered",
+        "file": "Qt/Components/pqViewFrame.h",
+        "note": "Title-bar buttons are QActions registered via addTitleBarAction — plugins use the same mechanism."
+      },
+      {
+        "from": "qtcomp",
+        "to": "remviews",
+        "call": "pqMultiViewWidget: calls vtkSMViewLayoutProxy::Split(cell, dir, 0.5)",
+        "passes": "(cell index, direction, fraction)",
+        "file": "Qt/Components/pqMultiViewWidget.h:28",
+        "note": "Qt widget owns no layout state — it just delegates to the server-side layout proxy."
+      },
+      {
+        "from": "remviews",
+        "to": "remviews",
+        "call": "vtkSMViewLayoutProxy mutates cell tree, creates new empty cell",
+        "passes": "new cell index returned",
+        "file": "Remoting/Views/vtkSMViewLayoutProxy.h:44",
+        "note": "Logical layout = a binary tree of cells. Splits add a new branch."
+      },
+      {
+        "from": "remviews",
+        "to": "qtcomp",
+        "call": "ProxyEvent fires; pqMultiViewWidget observer triggers reload()",
+        "passes": "observer notification",
+        "file": "Qt/Components/pqMultiViewWidget.cxx",
+        "note": "Qt walks the new layout tree and rebuilds the QSplitter hierarchy to match. Authoritative state is on the server side."
+      },
+      {
+        "from": "qtcomp",
+        "to": "qtcomp",
+        "call": "new pqViewFrame created and inserted at new cell",
+        "passes": "QWidget* inserted into QSplitter",
+        "file": "Qt/Components/pqViewFrame.h",
+        "note": "Each frame is independent — its own toolbar, its own active state. Border color tracks which is active."
+      }
+    ]
+  },
+
+  {
+    "id": "settings-dialog",
+    "title": "Open Settings → tabs auto-generated from proxies",
+    "grounds": "07-property-descriptors-settings.md",
+    "summary": "Settings are proxies. The dialog walks the 'settings' proxy group and builds a tab per proxy — zero per-option UI code. Search filters across all tabs.",
+    "steps": [
+      {
+        "from": "qtapp",
+        "to": "qtcomp",
+        "call": "Edit menu → SettingsDialogReaction::onTriggered",
+        "passes": "QAction triggered",
+        "file": "Qt/ApplicationComponents/pqDesktopServicesReaction.h",
+        "note": "Reaction pattern — every action wraps a QAction with a thin handler class."
+      },
+      {
+        "from": "qtcomp",
+        "to": "remsm",
+        "call": "pqSettingsDialog::pqSettingsDialog(parent) constructor",
+        "passes": "proxy manager session",
+        "file": "Qt/Components/pqSettingsDialog.h",
+        "note": "Dialog opens, then asks the proxy manager 'who is in the settings group?'"
+      },
+      {
+        "from": "remsm",
+        "to": "qtcomp",
+        "call": "vtkSMSessionProxyManager::GetProxiesInGroup('settings')",
+        "passes": "N: General, Render, Color, …",
+        "file": "Remoting/ServerManager/vtkSMSessionProxyManager.h:29-99",
+        "note": "Settings proxies are registered the same way as filter proxies — XML-defined."
+      },
+      {
+        "from": "qtcomp",
+        "to": "qtcomp",
+        "call": "for each proxy: create QTabWidget tab containing pqProxyWidget",
+        "passes": "proxy → QWidget tree",
+        "file": "Qt/Components/pqProxyWidget.h:28",
+        "note": "Same proxy widget as the Properties Panel. One implementation, two contexts."
+      },
+      {
+        "from": "qtcomp",
+        "to": "qtcomp",
+        "call": "pqSearchBox: filterWidgets(text) across all tabs",
+        "passes": "search text",
+        "file": "Qt/Components/pqSearchBox.h",
+        "note": "Global search hides non-matching properties. Users find any option without knowing which tab it's on."
+      },
+      {
+        "from": "qtcomp",
+        "to": "qtcore",
+        "call": "OK → apply changes; pqSettings persists to disk",
+        "passes": "QSettings → registry / .config / .ini",
+        "file": "Qt/Core/pqSettings.h:23",
+        "note": "Restart-required settings are flagged; the dialog warns the user before closing."
+      }
+    ]
+  },
+
+  {
+    "id": "contour-dag",
+    "title": "Apply Contour to Sphere → full DAG flow",
+    "grounds": "future: Source / Representation split",
+    "summary": "The four-role pipeline in motion. A filter is a SourceProxy that consumes another SourceProxy's output. The view doesn't see data — it sees representations.",
+    "steps": [
+      {
+        "from": "qtcomp",
+        "to": "remsm",
+        "call": "Filters menu → newProxy('filters', 'Contour')",
+        "passes": "group, type → vtkSMSourceProxy*",
+        "file": "Remoting/ServerManager/vtkSMSessionProxyManager.h:29-99",
+        "note": "Proxy types are defined in XML (Remoting/Application/Resources/filters_filterscore.xml). No C++ per new filter."
+      },
+      {
+        "from": "remsm",
+        "to": "remsm",
+        "call": "contour.GetProperty('Input').AddInputConnection(sphere, 0)",
+        "passes": "(producer proxy, output port index)",
+        "file": "Remoting/ServerManager/vtkSMInputProperty.h:29-83",
+        "note": "This is the edge in the pipeline DAG — typed, validated against producer's output data type."
+      },
+      {
+        "from": "qtapp",
+        "to": "remsm",
+        "call": "User clicks Apply → pqApplyBehavior fires",
+        "passes": "commit transaction",
+        "file": "Qt/ApplicationComponents/pqApplyBehavior.h",
+        "note": "Apply commits all unchecked property values across all modified proxies."
+      },
+      {
+        "from": "remsm",
+        "to": "vtk",
+        "call": "contour.UpdateVTKObjects + UpdatePipelineInformation",
+        "passes": "execute filter, expose new output port metadata",
+        "file": "Remoting/ServerManager/vtkSMSourceProxy.h:57-69",
+        "note": "UpdatePipelineInformation runs only metadata (array names, bounds), not the heavy filter. Drives the GUI's array pickers."
+      },
+      {
+        "from": "remsm",
+        "to": "remviews",
+        "call": "auto-create vtkSMRepresentationProxy (GeometryRepresentation)",
+        "passes": "rep.Input = contour.outputPort(0)",
+        "file": "Remoting/Views/vtkSMRepresentationProxy.h",
+        "note": "Representation is a separate proxy from the source. One source can feed multiple representations (wireframe + solid)."
+      },
+      {
+        "from": "remviews",
+        "to": "vtk",
+        "call": "rep.Visibility = 1; view.StillRender",
+        "passes": "render request",
+        "file": "Remoting/Views/vtkSMViewProxy.h",
+        "note": "View asks each visible rep for its actor; reps run the upstream pipeline; data flows into mappers; actor appears."
+      }
+    ]
+  },
+
+  {
+    "id": "save-state-pvsm",
+    "title": "File → Save State → .pvsm written",
+    "grounds": "future: session persistence unification",
+    "summary": "State save is reflection on the proxy graph. Every property serializes itself; every connection writes itself. The file is XML, human-readable, version-resilient.",
+    "steps": [
+      {
+        "from": "qtapp",
+        "to": "qtcomp",
+        "call": "pqSaveStateReaction::onTriggered",
+        "passes": "QAction trigger",
+        "file": "Qt/ApplicationComponents/pqSaveStateReaction.h",
+        "note": "Reaction wraps the menu action. Same pattern as every other action in the app."
+      },
+      {
+        "from": "qtcomp",
+        "to": "remsm",
+        "call": "vtkSMSessionProxyManager::SaveXMLState(rootElement)",
+        "passes": "writes <ServerManagerState> root",
+        "file": "Remoting/ServerManager/vtkSMSessionProxyManager.h:29-99",
+        "note": "Walks every registered proxy in the current session."
+      },
+      {
+        "from": "remsm",
+        "to": "remsm",
+        "call": "for each proxy: vtkSMProxy::SaveXMLState",
+        "passes": "<Proxy group=… type=… id=…>",
+        "file": "Remoting/ServerManager/vtkSMProxy.h",
+        "note": "Proxy emits its own XML. New proxy types need zero serialization code — they inherit it."
+      },
+      {
+        "from": "remsm",
+        "to": "remsm",
+        "call": "per property: vtkSMProperty::SaveStateValues",
+        "passes": "<Property name=… ><Element value=… /></Property>",
+        "file": "Remoting/ServerManager/vtkSMProperty.h:5-100",
+        "note": "Each property type knows how to serialize itself. Input properties write proxy id refs; vectors write per-element."
+      },
+      {
+        "from": "remsm",
+        "to": "remsm",
+        "call": "ProxyCollection entries — proxy registration, names, logs",
+        "passes": "<ProxyCollection name='sources'><Item id=… /></ProxyCollection>",
+        "file": "Remoting/ServerManager/vtkSMSessionProxyManager.h:29-99",
+        "note": "Captures user-friendly names and grouping (sources, views, representations…)."
+      },
+      {
+        "from": "remsm",
+        "to": "qtcore",
+        "call": "vtkPVXMLElement::PrintXML → file written to disk",
+        "passes": "XML string → file path",
+        "file": "Remoting/Core/vtkPVXMLElement.h",
+        "note": "Loading reverses the same path: parse XML → instantiate proxies → set properties → reconnect inputs."
+      }
+    ]
+  }
+]

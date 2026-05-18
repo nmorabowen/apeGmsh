@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ParaView Flows — Reference Map for apeGmsh</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>ParaView Flows</h1>
+    <p class="subtitle">
+      Reference map of how ParaView's packages collaborate. Click an action on the left to
+      see which packages are involved and what data is passed between them. Each flow is
+      annotated with the apeGmsh plan doc it grounds.
+    </p>
+  </header>
+
+  <main>
+    <aside class="sidebar-left">
+      <h2>Actions</h2>
+      <ul id="action-list"></ul>
+    </aside>
+
+    <section class="canvas-wrap">
+      <div id="cy"></div>
+      <div class="legend">
+        <span class="legend-item"><span class="dot dot-data"></span>Data &amp; rendering core</span>
+        <span class="legend-item"><span class="dot dot-server"></span>Remoting (proxies, state)</span>
+        <span class="legend-item"><span class="dot dot-qt"></span>Qt UI layer</span>
+        <span class="legend-item"><span class="dot dot-app"></span>App shell / scripting</span>
+      </div>
+    </section>
+
+    <aside class="sidebar-right">
+      <div class="flow-header">
+        <h2 id="flow-title">Select an action</h2>
+        <p id="flow-grounds"></p>
+        <p id="flow-summary"></p>
+      </div>
+      <ol id="flow-steps"></ol>
+    </aside>
+  </main>
+
+  <footer>
+    <span>Single-file static viewer. Edit <code>flows.json</code> to add or modify flows.</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

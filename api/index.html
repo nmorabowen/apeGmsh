@@ -16,7 +16,7 @@
         <link rel="prev" href="../architecture/gmsh_api_reference/">
       
       
-        <link rel="next" href="session/">
+        <link rel="next" href="../api-flows/">
       
       
         
@@ -2783,6 +2783,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2835,6 +2839,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Flow Atlas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3132,6 +3164,34 @@
     
   
     Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
   
 
     
@@ -3825,13 +3885,18 @@ session object's layout:</p>
 </tr>
 <tr>
 <td><a href="opensees/">OpenSees</a></td>
-<td><code>g.opensees</code></td>
-<td>OpenSees bridge (<code>materials</code>, <code>elements</code>, <code>ingest</code>, <code>inspect</code>, <code>export</code>)</td>
+<td><code>apeSees(fem)</code></td>
+<td>OpenSees bridge — post-session explicit-constructor (<code>nDMaterial</code>, <code>element</code>, <code>fix</code>, <code>mass</code>, <code>pattern</code>, recorders, <code>tcl</code>/<code>py</code>/<code>h5</code>/<code>run</code>)</td>
 </tr>
 <tr>
 <td><a href="results/">Results</a></td>
 <td><code>Results</code></td>
 <td>Post-processing container</td>
+</tr>
+<tr>
+<td><a href="selection/">Selection</a></td>
+<td><code>.select()</code></td>
+<td>Unified daisy-chainable selection idiom across all four levels</td>
 </tr>
 <tr>
 <td><a href="viewers/">Viewers</a></td>

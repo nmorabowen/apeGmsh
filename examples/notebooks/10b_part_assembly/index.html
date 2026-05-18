@@ -2986,6 +2986,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -3038,6 +3042,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Flow Atlas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3335,6 +3367,34 @@
     
   
     Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
   
 
     
@@ -4913,7 +4973,7 @@ alter stiffness.</p>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.core.Part</span><span class="w"> </span><span class="kn">import</span> <span class="n">Part</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.solvers.Recorders</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>   <span class="c1"># canonical home moves in Phase 8.3b</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>
 
 <span class="c1"># Geometry / instancing</span>
 <span class="n">L</span>      <span class="o">=</span> <span class="mf">3.0</span>                     <span class="c1"># column height</span>
@@ -4940,7 +5000,7 @@ import openseespy.opensees as ops
 
 from apeGmsh import apeGmsh, Results
 from apeGmsh.core.Part import Part
-from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
+from apeGmsh.results.spec import Recorders
 
 # Geometry / instancing
 L      = 3.0                     # column height

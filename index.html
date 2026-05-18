@@ -421,10 +421,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#gopensees-sub-composites" class="md-nav__link">
+  <a href="#apeseesfem-post-session-opensees-bridge" class="md-nav__link">
     <span class="md-ellipsis">
       
-        g.opensees sub-composites
+        apeSees(fem) — post-session OpenSees bridge
       
     </span>
   </a>
@@ -3045,6 +3045,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -3097,6 +3101,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Flow Atlas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3394,6 +3426,34 @@
     
   
     Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
   
 
     
@@ -4103,10 +4163,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#gopensees-sub-composites" class="md-nav__link">
+  <a href="#apeseesfem-post-session-opensees-bridge" class="md-nav__link">
     <span class="md-ellipsis">
       
-        g.opensees sub-composites
+        apeSees(fem) — post-session OpenSees bridge
       
     </span>
   </a>
@@ -4449,15 +4509,15 @@ session <em>is</em> the assembly. Parts are registered into
 </tr>
 <tr>
 <td><code>g.loads</code></td>
-<td>Load patterns &amp; definitions (resolved into <code>fem.loads</code>)</td>
+<td>Load patterns &amp; definitions (resolved into <code>fem.nodes.loads</code> / <code>fem.elements.loads</code>)</td>
 </tr>
 <tr>
 <td><code>g.masses</code></td>
-<td>Mass definitions (resolved into <code>fem.masses</code>)</td>
+<td>Mass definitions (resolved into <code>fem.nodes.masses</code>)</td>
 </tr>
 <tr>
-<td><code>g.opensees</code></td>
-<td>OpenSees bridge (see sub-composites below)</td>
+<td><em>(post-session)</em></td>
+<td><code>apeSees(fem)</code> — OpenSees bridge (separate post-session object; see below)</td>
 </tr>
 <tr>
 <td><code>g.inspect</code></td>
@@ -4549,56 +4609,110 @@ session <em>is</em> the assembly. Parts are registered into
 </table>
 <p>Plus flat <code>g.mesh.viewer()</code> and <code>g.mesh.results_viewer()</code> for
 interactive windows.</p>
-<h3 id="gopensees-sub-composites"><code>g.opensees</code> sub-composites<a class="headerlink" href="#gopensees-sub-composites" title="Permanent link">&para;</a></h3>
-<p>Five focused namespaces for the OpenSees bridge:</p>
+<h3 id="apeseesfem-post-session-opensees-bridge"><code>apeSees(fem)</code> — post-session OpenSees bridge<a class="headerlink" href="#apeseesfem-post-session-opensees-bridge" title="Permanent link">&para;</a></h3>
+<p>The OpenSees bridge is constructed <strong>after</strong> the session closes, from a
+<code>FEMData</code> snapshot. It is <strong>not</strong> a <code>g.</code> composite — the in-session
+<code>g.opensees</code> attribute was removed in Phase 8 (ADR 0009).</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>apeSees</code> has <strong>no ingest and no auto-resolution</strong>. Loads, masses, and
+SPs must be re-declared explicitly on <code>ops</code>. Multi-point constraint
+emission is deferred (ADR 0009).</p>
 <table>
 <thead>
 <tr>
-<th>Access</th>
-<th>Methods</th>
+<th>Namespace</th>
+<th>What it provides</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>g.opensees.materials</code></td>
-<td><code>add_nd_material</code>, <code>add_uni_material</code>, <code>add_section</code></td>
+<td><code>ops.nDMaterial.*</code></td>
+<td>nD material typed constructors; return handles</td>
 </tr>
 <tr>
-<td><code>g.opensees.elements</code></td>
-<td><code>add_geom_transf</code>, <code>vecxz</code>, <code>assign</code>, <code>fix</code></td>
+<td><code>ops.uniaxialMaterial.*</code></td>
+<td>uniaxial material typed constructors; return handles</td>
 </tr>
 <tr>
-<td><code>g.opensees.ingest</code></td>
-<td><code>loads(fem)</code>, <code>sp(fem)</code>, <code>masses(fem)</code>, <code>constraints(fem)</code> — ingest resolved records from a FEMData snapshot</td>
+<td><code>ops.section.*</code></td>
+<td>section typed constructors; return handles</td>
 </tr>
 <tr>
-<td><code>g.opensees.inspect</code></td>
-<td><code>node_table</code>, <code>element_table</code>, <code>summary</code></td>
+<td><code>ops.geomTransf.*</code></td>
+<td><code>Linear</code> / <code>PDelta</code> / <code>Corotational</code>; return handles</td>
 </tr>
 <tr>
-<td><code>g.opensees.export</code></td>
-<td><code>tcl(path)</code>, <code>py(path)</code></td>
+<td><code>ops.beamIntegration.*</code></td>
+<td><code>Lobatto</code>, <code>Legendre</code>, …; return handles</td>
+</tr>
+<tr>
+<td><code>ops.element.*</code></td>
+<td>element typed constructors; <code>pg=</code> resolved FEM-direct</td>
+</tr>
+<tr>
+<td><code>ops.fix(pg=, dofs=)</code></td>
+<td>homogeneous SP (model-level)</td>
+</tr>
+<tr>
+<td><code>ops.mass(pg=, values=)</code></td>
+<td>lumped nodal mass</td>
+</tr>
+<tr>
+<td><code>ops.timeSeries.*</code></td>
+<td><code>Linear</code>, <code>Constant</code>, <code>Path</code>, <code>Trig</code>, <code>Pulse</code></td>
+</tr>
+<tr>
+<td><code>ops.pattern.*</code></td>
+<td><code>Plain</code>, <code>UniformExcitation</code> (context-managers)</td>
+</tr>
+<tr>
+<td><code>ops.recorder.*</code></td>
+<td>typed recorder declarations</td>
+</tr>
+<tr>
+<td><code>ops.tcl(path)</code></td>
+<td>emit Tcl deck</td>
+</tr>
+<tr>
+<td><code>ops.py(path, run=False)</code></td>
+<td>emit Python deck</td>
+</tr>
+<tr>
+<td><code>ops.h5(path)</code></td>
+<td>emit native HDF5</td>
+</tr>
+<tr>
+<td><code>ops.run()</code></td>
+<td>in-process openseespy</td>
+</tr>
+<tr>
+<td><code>ops.analyze(steps, dt)</code></td>
+<td>drive the analysis chain</td>
 </tr>
 </tbody>
 </table>
-<p>Plus two lifecycle entry points that stay flat on <code>g.opensees</code>:
-<code>set_model(ndm, ndf)</code> and <code>build()</code>.</p>
 <h3 id="the-fem-broker">The FEM broker<a class="headerlink" href="#the-fem-broker" title="Permanent link">&para;</a></h3>
 <p><code>get_fem_data(dim)</code> returns a <code>FEMData</code> snapshot — a solver-agnostic
-container with node IDs, coordinates, element connectivity, physical
-groups, mesh selection sets, and the resolved load/mass/constraint
-records. It's the single contract between Gmsh and any downstream
-solver.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># fem.node_ids, fem.element_ids, fem.node_coords, fem.connectivity</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="c1"># fem.info           → mesh statistics (n_nodes, n_elems, bandwidth)</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="c1"># fem.physical       → physical group lookup</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># fem.mesh_selection → post-mesh selection sets</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="c1"># fem.loads          → resolved NodalLoadRecord / ElementLoadRecord</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="c1"># fem.masses         → resolved MassRecord</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># fem.constraints    → resolved ConstraintRecord</span>
+container organised into <code>.nodes</code> and <code>.elements</code> composites plus
+<code>.info</code>, <code>.inspect</code>, and <code>.mesh_selection</code>. It's the single contract
+between Gmsh and any downstream solver.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># fem.nodes.ids / fem.nodes.coords                 — node IDs, coordinates</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="c1"># fem.elements.ids / fem.elements.connectivity     — element IDs, connectivity</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="c1"># fem.nodes.get(pg=...) / .get(label=...)          — subset by group / label</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1"># fem.info                                         — mesh stats (n_nodes, n_elems, bandwidth)</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="c1"># fem.mesh_selection                               — post-mesh selection sets</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="c1"># fem.nodes.loads / fem.elements.loads             — resolved NodalLoadRecord / ElementLoadRecord</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="c1"># fem.nodes.masses                                 — resolved MassRecord</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="c1"># fem.nodes.constraints / fem.elements.constraints — resolved constraint records</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="c1"># fem.inspect.summary()                            — human-readable broker summary</span>
 </span></code></pre></div>
 <h3 id="constraints-loads-masses">Constraints, loads, masses<a class="headerlink" href="#constraints-loads-masses" title="Permanent link">&para;</a></h3>
 <p>Two-stage pipeline:</p>
@@ -4609,8 +4723,9 @@ solver.</p>
    lightweight definition dataclasses that reference <em>labels</em>, not raw
    tags.</li>
 <li><strong>Resolve</strong> (post-mesh, automatic): <code>get_fem_data()</code> resolves every
-   definition against the mesh and attaches the results to
-   <code>fem.constraints</code>, <code>fem.loads</code>, <code>fem.masses</code>.</li>
+   definition against the mesh and attaches the results to the
+   <code>fem.nodes</code> / <code>fem.elements</code> composites (<code>.constraints</code>, <code>.loads</code>,
+   <code>.masses</code>).</li>
 </ol>
 <p>The resolver is pure NumPy math with no Gmsh dependency — solver
 bridges consume the records directly.</p>
@@ -4621,92 +4736,89 @@ into the assembly session, tracks which tags belong to which label,
 and offers higher-level operations (<code>fragment_all</code>, <code>fuse_group</code>,
 <code>build_node_map</code>, <code>build_face_map</code>) that keep working through
 fragmentation and re-tagging.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Part</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">web</span> <span class="o">=</span> <span class="n">Part</span><span class="p">(</span><span class="s2">&quot;web&quot;</span><span class="p">)</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">web</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="c1"># ... web.model.geometry.add_... to build the shape</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">web</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;web.step&quot;</span><span class="p">)</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">web</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;I_beam&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">import_step</span><span class="p">(</span><span class="s2">&quot;web.step&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;web&quot;</span><span class="p">)</span>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">import_step</span><span class="p">(</span><span class="s2">&quot;flange.step&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;top_flange&quot;</span><span class="p">,</span>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>                        <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">200</span><span class="p">))</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">import_step</span><span class="p">(</span><span class="s2">&quot;flange.step&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;bot_flange&quot;</span><span class="p">)</span>
-</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
-</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">fragment_all</span><span class="p">()</span>   <span class="c1"># conformal interfaces</span>
-</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>
-</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Part</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">web</span> <span class="o">=</span> <span class="n">Part</span><span class="p">(</span><span class="s2">&quot;web&quot;</span><span class="p">)</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">web</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1"># ... web.model.geometry.add_... to build the shape</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">web</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="s2">&quot;web.step&quot;</span><span class="p">)</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">web</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;I_beam&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">import_step</span><span class="p">(</span><span class="s2">&quot;web.step&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;web&quot;</span><span class="p">)</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">import_step</span><span class="p">(</span><span class="s2">&quot;flange.step&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;top_flange&quot;</span><span class="p">,</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>                        <span class="n">translate</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">200</span><span class="p">))</span>
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">import_step</span><span class="p">(</span><span class="s2">&quot;flange.step&quot;</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;bot_flange&quot;</span><span class="p">)</span>
+</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
+</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>    <span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">fragment_all</span><span class="p">()</span>   <span class="c1"># conformal interfaces</span>
+</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>
+</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="project-layout">Project layout<a class="headerlink" href="#project-layout" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>apeGmsh/
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  pyproject.toml
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  README.md
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  CHANGELOG.md
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  docs/                        # mkdocs site source (index, api/, changelog)
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  internal_docs/               # authored guides, migration, plans
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    MIGRATION_v1.md
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    guide_basics.md
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>    guide_meshing.md
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>    guide_cad_import.md
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    guide_fem_broker.md
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    guide_parts_assembly.md
-</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>    guide_parts_vs_session.md
-</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>    guide_selection.md
-</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>  architecture/                # design notes (surfaced in docs site)
-</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>  examples/         # runnable notebooks and scripts
-</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>  tests/            # pytest suite (no Gmsh required)
-</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>  src/
-</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>    apeGmsh/
-</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>      __init__.py
-</span><span id="__span-5-21"><a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>      _core.py                 # apeGmsh session class
-</span><span id="__span-5-22"><a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>      _session.py              # _SessionBase + composite wiring
-</span><span id="__span-5-23"><a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>      core/
-</span><span id="__span-5-24"><a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>        Model.py               # g.model composite container
-</span><span id="__span-5-25"><a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>        _model_geometry.py     # g.model.geometry
-</span><span id="__span-5-26"><a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>        _model_boolean.py      # g.model.boolean
-</span><span id="__span-5-27"><a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>        _model_transforms.py   # g.model.transforms
-</span><span id="__span-5-28"><a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>        _model_io.py           # g.model.io
-</span><span id="__span-5-29"><a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a>        _model_queries.py      # g.model.queries
-</span><span id="__span-5-30"><a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>        Part.py
-</span><span id="__span-5-31"><a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a>        _parts_registry.py
-</span><span id="__span-5-32"><a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a>        ConstraintsComposite.py
-</span><span id="__span-5-33"><a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a>        LoadsComposite.py
-</span><span id="__span-5-34"><a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a>        MassesComposite.py
-</span><span id="__span-5-35"><a id="__codelineno-5-35" name="__codelineno-5-35" href="#__codelineno-5-35"></a>      mesh/
-</span><span id="__span-5-36"><a id="__codelineno-5-36" name="__codelineno-5-36" href="#__codelineno-5-36"></a>        Mesh.py                # g.mesh composite container
-</span><span id="__span-5-37"><a id="__codelineno-5-37" name="__codelineno-5-37" href="#__codelineno-5-37"></a>        _mesh_generation.py    # g.mesh.generation
-</span><span id="__span-5-38"><a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a>        _mesh_sizing.py        # g.mesh.sizing
-</span><span id="__span-5-39"><a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a>        _mesh_field.py         # g.mesh.field (FieldHelper)
-</span><span id="__span-5-40"><a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a>        _mesh_structured.py    # g.mesh.structured
-</span><span id="__span-5-41"><a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a>        _mesh_editing.py       # g.mesh.editing
-</span><span id="__span-5-42"><a id="__codelineno-5-42" name="__codelineno-5-42" href="#__codelineno-5-42"></a>        _mesh_queries.py       # g.mesh.queries
-</span><span id="__span-5-43"><a id="__codelineno-5-43" name="__codelineno-5-43" href="#__codelineno-5-43"></a>        _mesh_partitioning.py  # g.mesh.partitioning
-</span><span id="__span-5-44"><a id="__codelineno-5-44" name="__codelineno-5-44" href="#__codelineno-5-44"></a>        _mesh_algorithms.py    # Algorithm2D/3D, OptimizeMethod
-</span><span id="__span-5-45"><a id="__codelineno-5-45" name="__codelineno-5-45" href="#__codelineno-5-45"></a>        FEMData.py
-</span><span id="__span-5-46"><a id="__codelineno-5-46" name="__codelineno-5-46" href="#__codelineno-5-46"></a>        PhysicalGroups.py
-</span><span id="__span-5-47"><a id="__codelineno-5-47" name="__codelineno-5-47" href="#__codelineno-5-47"></a>        MeshSelectionSet.py
-</span><span id="__span-5-48"><a id="__codelineno-5-48" name="__codelineno-5-48" href="#__codelineno-5-48"></a>        MshLoader.py
-</span><span id="__span-5-49"><a id="__codelineno-5-49" name="__codelineno-5-49" href="#__codelineno-5-49"></a>        Partition.py
-</span><span id="__span-5-50"><a id="__codelineno-5-50" name="__codelineno-5-50" href="#__codelineno-5-50"></a>      solvers/
-</span><span id="__span-5-51"><a id="__codelineno-5-51" name="__codelineno-5-51" href="#__codelineno-5-51"></a>        OpenSees.py                # g.opensees composite container
-</span><span id="__span-5-52"><a id="__codelineno-5-52" name="__codelineno-5-52" href="#__codelineno-5-52"></a>        _opensees_materials.py     # g.opensees.materials
-</span><span id="__span-5-53"><a id="__codelineno-5-53" name="__codelineno-5-53" href="#__codelineno-5-53"></a>        _opensees_elements.py      # g.opensees.elements
-</span><span id="__span-5-54"><a id="__codelineno-5-54" name="__codelineno-5-54" href="#__codelineno-5-54"></a>        _opensees_ingest.py        # g.opensees.ingest
-</span><span id="__span-5-55"><a id="__codelineno-5-55" name="__codelineno-5-55" href="#__codelineno-5-55"></a>        _opensees_inspect.py       # g.opensees.inspect
-</span><span id="__span-5-56"><a id="__codelineno-5-56" name="__codelineno-5-56" href="#__codelineno-5-56"></a>        _opensees_export.py        # g.opensees.export
-</span><span id="__span-5-57"><a id="__codelineno-5-57" name="__codelineno-5-57" href="#__codelineno-5-57"></a>        _opensees_build.py         # OpenSees.build() implementation
-</span><span id="__span-5-58"><a id="__codelineno-5-58" name="__codelineno-5-58" href="#__codelineno-5-58"></a>        _element_specs.py          # element type registry
-</span><span id="__span-5-59"><a id="__codelineno-5-59" name="__codelineno-5-59" href="#__codelineno-5-59"></a>        Constraints.py
-</span><span id="__span-5-60"><a id="__codelineno-5-60" name="__codelineno-5-60" href="#__codelineno-5-60"></a>        Loads.py
-</span><span id="__span-5-61"><a id="__codelineno-5-61" name="__codelineno-5-61" href="#__codelineno-5-61"></a>        Masses.py
-</span><span id="__span-5-62"><a id="__codelineno-5-62" name="__codelineno-5-62" href="#__codelineno-5-62"></a>        Numberer.py
-</span><span id="__span-5-63"><a id="__codelineno-5-63" name="__codelineno-5-63" href="#__codelineno-5-63"></a>      viewers/                  # PyQt/PyVista viewers
-</span><span id="__span-5-64"><a id="__codelineno-5-64" name="__codelineno-5-64" href="#__codelineno-5-64"></a>      results/                  # VTU export + Results container
-</span><span id="__span-5-65"><a id="__codelineno-5-65" name="__codelineno-5-65" href="#__codelineno-5-65"></a>      viz/                      # Selection, Inspect, Plot, VTKExport
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>apeGmsh/
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  pyproject.toml
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  README.md
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  CHANGELOG.md
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  docs/                        # mkdocs site source (index, api/, changelog)
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  internal_docs/               # authored guides, migration, plans
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    MIGRATION_v1.md
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    guide_basics.md
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    guide_meshing.md
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    guide_cad_import.md
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>    guide_fem_broker.md
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>    guide_parts_assembly.md
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    guide_parts_vs_session.md
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>    guide_selection.md
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>  architecture/                # design notes (surfaced in docs site)
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>  examples/         # runnable notebooks and scripts
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>  tests/            # pytest suite (no Gmsh required)
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>  src/
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>    apeGmsh/
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>      __init__.py
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>      _core.py                 # apeGmsh session class
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>      _session.py              # _SessionBase + composite wiring
+</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>      core/
+</span><span id="__span-6-24"><a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>        Model.py               # g.model composite container
+</span><span id="__span-6-25"><a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a>        _model_geometry.py     # g.model.geometry
+</span><span id="__span-6-26"><a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a>        _model_boolean.py      # g.model.boolean
+</span><span id="__span-6-27"><a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>        _model_transforms.py   # g.model.transforms
+</span><span id="__span-6-28"><a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a>        _model_io.py           # g.model.io
+</span><span id="__span-6-29"><a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a>        _model_queries.py      # g.model.queries
+</span><span id="__span-6-30"><a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a>        Part.py
+</span><span id="__span-6-31"><a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a>        _parts_registry.py
+</span><span id="__span-6-32"><a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a>        ConstraintsComposite.py
+</span><span id="__span-6-33"><a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a>        LoadsComposite.py
+</span><span id="__span-6-34"><a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a>        MassesComposite.py
+</span><span id="__span-6-35"><a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a>      mesh/
+</span><span id="__span-6-36"><a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a>        Mesh.py                # g.mesh composite container
+</span><span id="__span-6-37"><a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a>        _mesh_generation.py    # g.mesh.generation
+</span><span id="__span-6-38"><a id="__codelineno-6-38" name="__codelineno-6-38" href="#__codelineno-6-38"></a>        _mesh_sizing.py        # g.mesh.sizing
+</span><span id="__span-6-39"><a id="__codelineno-6-39" name="__codelineno-6-39" href="#__codelineno-6-39"></a>        _mesh_field.py         # g.mesh.field (FieldHelper)
+</span><span id="__span-6-40"><a id="__codelineno-6-40" name="__codelineno-6-40" href="#__codelineno-6-40"></a>        _mesh_structured.py    # g.mesh.structured
+</span><span id="__span-6-41"><a id="__codelineno-6-41" name="__codelineno-6-41" href="#__codelineno-6-41"></a>        _mesh_editing.py       # g.mesh.editing
+</span><span id="__span-6-42"><a id="__codelineno-6-42" name="__codelineno-6-42" href="#__codelineno-6-42"></a>        _mesh_queries.py       # g.mesh.queries
+</span><span id="__span-6-43"><a id="__codelineno-6-43" name="__codelineno-6-43" href="#__codelineno-6-43"></a>        _mesh_partitioning.py  # g.mesh.partitioning
+</span><span id="__span-6-44"><a id="__codelineno-6-44" name="__codelineno-6-44" href="#__codelineno-6-44"></a>        _mesh_algorithms.py    # Algorithm2D/3D, OptimizeMethod
+</span><span id="__span-6-45"><a id="__codelineno-6-45" name="__codelineno-6-45" href="#__codelineno-6-45"></a>        FEMData.py
+</span><span id="__span-6-46"><a id="__codelineno-6-46" name="__codelineno-6-46" href="#__codelineno-6-46"></a>        PhysicalGroups.py
+</span><span id="__span-6-47"><a id="__codelineno-6-47" name="__codelineno-6-47" href="#__codelineno-6-47"></a>        MeshSelectionSet.py
+</span><span id="__span-6-48"><a id="__codelineno-6-48" name="__codelineno-6-48" href="#__codelineno-6-48"></a>        MshLoader.py
+</span><span id="__span-6-49"><a id="__codelineno-6-49" name="__codelineno-6-49" href="#__codelineno-6-49"></a>        Partition.py
+</span><span id="__span-6-50"><a id="__codelineno-6-50" name="__codelineno-6-50" href="#__codelineno-6-50"></a>      solvers/
+</span><span id="__span-6-51"><a id="__codelineno-6-51" name="__codelineno-6-51" href="#__codelineno-6-51"></a>        Constraints.py
+</span><span id="__span-6-52"><a id="__codelineno-6-52" name="__codelineno-6-52" href="#__codelineno-6-52"></a>        Loads.py
+</span><span id="__span-6-53"><a id="__codelineno-6-53" name="__codelineno-6-53" href="#__codelineno-6-53"></a>        Masses.py
+</span><span id="__span-6-54"><a id="__codelineno-6-54" name="__codelineno-6-54" href="#__codelineno-6-54"></a>        Numberer.py
+</span><span id="__span-6-55"><a id="__codelineno-6-55" name="__codelineno-6-55" href="#__codelineno-6-55"></a>      opensees/                  # apeSees(fem) post-session bridge (Phase 8+)
+</span><span id="__span-6-56"><a id="__codelineno-6-56" name="__codelineno-6-56" href="#__codelineno-6-56"></a>        apesees.py               # apeSees class — explicit-constructor entry point
+</span><span id="__span-6-57"><a id="__codelineno-6-57" name="__codelineno-6-57" href="#__codelineno-6-57"></a>        _internal/               # typed primitive namespaces (nDMaterial, element, …)
+</span><span id="__span-6-58"><a id="__codelineno-6-58" name="__codelineno-6-58" href="#__codelineno-6-58"></a>        pattern/                 # Plain, UniformExcitation context-managers
+</span><span id="__span-6-59"><a id="__codelineno-6-59" name="__codelineno-6-59" href="#__codelineno-6-59"></a>        emitter/                 # tcl / py / h5 / run emitters + h5_reader
+</span><span id="__span-6-60"><a id="__codelineno-6-60" name="__codelineno-6-60" href="#__codelineno-6-60"></a>      viewers/                  # PyQt/PyVista viewers
+</span><span id="__span-6-61"><a id="__codelineno-6-61" name="__codelineno-6-61" href="#__codelineno-6-61"></a>      results/                  # VTU export + Results container
+</span><span id="__span-6-62"><a id="__codelineno-6-62" name="__codelineno-6-62" href="#__codelineno-6-62"></a>      viz/                      # Selection, Inspect, Plot, VTKExport
 </span></code></pre></div>
 <h2 id="viewers">Viewers<a class="headerlink" href="#viewers" title="Permanent link">&para;</a></h2>
 <p>apeGmsh ships two separate viewers because pre-solve inspection and
@@ -4763,11 +4875,11 @@ and a per-Geometry display fix so only the active geometry renders.</p>
 <p>See <a href="internal_docs/MIGRATION_v1/"><code>internal_docs/MIGRATION_v1.md</code></a> for the full
 checklist. In short: package rename (<code>pyGmsh → apeGmsh</code>), <code>g.model.*</code>
 split into five sub-composites, <code>g.mesh.*</code> split into seven,
-<code>g.opensees.*</code> split into five (with <code>assign_element → assign</code>,
-<code>consume_*_from_fem → ingest.loads/masses</code>, <code>export_tcl/py → export.tcl/py</code>),
 <code>g.mass → g.masses</code>, <code>g.initialize/finalize → g.begin/end</code>. The
-migration guide ships a ~150-line Python script that handles every
-mechanical rewrite on an existing project.</p>
+in-session <code>g.opensees.*</code> composite was <strong>removed</strong> in Phase 8 (ADR
+0009) — replace it with <code>from apeGmsh.opensees import apeSees; ops =
+apeSees(fem)</code>. The migration guide ships a ~150-line Python script that
+handles every mechanical rewrite on an existing project.</p>
 <h2 id="credits">Credits<a class="headerlink" href="#credits" title="Permanent link">&para;</a></h2>
 <p><strong>Developed by:</strong> Nicolás Mora Bowen · Patricio Palacios · José Abell · Guppi</p>
 <p>Part of José Abell's <em>El Ladruño Research Group</em>.</p>
