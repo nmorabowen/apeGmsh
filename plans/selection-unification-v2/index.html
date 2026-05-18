@@ -1,0 +1,4463 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Gmsh wrapper for structural FEM workflows with parts, constraints, loads, mass, and OpenSees integration.">
+      
+      
+      
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/plans/selection-unification-v2/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/favicon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Selection / Resolution Unification v2 — Hardened Plan - apeGmsh</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#selection-resolution-unification-v2-hardened-plan" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="apeGmsh" class="md-header__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            apeGmsh
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Selection / Resolution Unification v2 — Hardened Plan
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="apeGmsh" class="md-nav__button md-logo" aria-label="apeGmsh" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    apeGmsh
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/nmorabowen/apeGmsh" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    nmorabowen/apeGmsh
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_1" id="__nav_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/first_steps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First steps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Building models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_parts_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_parts_vs_session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts vs Session
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_cad_import/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CAD Import
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_meshing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Meshing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_queries/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Queries
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_transforms/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transforms
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_3" id="__nav_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Physics
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Physics
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_4" id="__nav_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver bridge
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solver bridge
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_fem_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_5" id="__nav_2_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Results
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results container
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_obtaining_results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Obtaining results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_recorders_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Recorder reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/guide_results_filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reading & filtering
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_6" id="__nav_2_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../examples/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/01_hello_plate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hello plate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/02_cantilever_beam_2D/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cantilever beam (2D)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Building richer models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Building richer models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/04_portal_frame_2D/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Portal frame (2D)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/05_labels_and_pgs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Labels & physical groups
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/10b_part_assembly/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Part assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/12_interface_tie/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interface tie
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis types
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Analysis types
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/17_modal_analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Modal analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/notebooks/19_pushover_elastoplastic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pushover (elastoplastic)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Architecture
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_1" id="__nav_4_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Foundations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_1">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Foundations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_principles/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Principles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_navigation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Navigation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_groundTruth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ground truth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_hinting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Type hinting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subsystems
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Subsystems
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_broker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_partInstanceAssemble/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts & Assembly
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_visualization/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Visualization
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/apeGmsh_results_obtaining/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh background
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Gmsh background
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_geometry_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Geometry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_basics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing basics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_meshing_advanced/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Meshing advanced
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_partitioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — Partitioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/gmsh_api_reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gmsh — API reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api-flows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Flow Atlas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session (apeGmsh)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/parts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/mesh/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/constraints/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Constraints
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/loads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Loads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/masses/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Masses
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sections/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sections
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/fem/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FEM Broker
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/opensees/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    OpenSees
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viewers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewers
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/viz/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viz
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Planning
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Planning
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_v2_final/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Final plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_v2_unified_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2 — Unified architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_aesthetic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Aesthetic system
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_fuse_group/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fuse group
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_mesh_selection_set/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mesh selection sets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_rigid_element/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rigid element
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_instance_computed_view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_box_select/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Box select
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_light_theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — Light theme
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/plan_viewer_pg_persistence/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Viewer — PG persistence
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../internal_docs/MIGRATION_v1/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-goal-ratified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Goal (ratified)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-the-keystone-the-whole-game" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. The keystone (the whole game)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-hard-truths-source-proven-future-implementers-must-not-re-trip-these" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Hard truths (source-proven; future implementers must not re-trip these)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Hard truths (source-proven; future implementers must not re-trip these)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-p0-reconciliations-observed-reality-the-pins-are-authoritative" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 P0 reconciliations (observed reality — the pins are authoritative)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-ratified-product-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Ratified product decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-phase-ledger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Phase ledger
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Phase ledger">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#p0-t-tripwire-hardening-blocking-additive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0-T — tripwire hardening (blocking, additive)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p0-c-characterization-battery-blocking-additive-zero-prod-edits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P0-C — characterization battery (blocking, additive, zero prod edits)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p1-k-the-keystone-relayer-behaviour-invisible-own-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P1-K — the keystone relayer (behaviour-INVISIBLE; own PR)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p2-i-the-idiom-additive-own-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2-I — the idiom (additive; own PR)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p2-g-geometry-predicate-completion-additive-own-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P2-G — geometry predicate completion (additive; own PR)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p3-full-removal-spatial-dedup-breaking-gated-own-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3 — full removal + spatial dedup (BREAKING; gated; own PR)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p4-docs-adr-memory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P4 — docs / ADR / memory
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-invariants-that-must-hold-at-every-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Invariants that must hold at every commit
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-explicitly-out-of-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Explicitly OUT of scope
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="selection-resolution-unification-v2-hardened-plan">Selection / Resolution Unification v2 — Hardened Plan<a class="headerlink" href="#selection-resolution-unification-v2-hardened-plan" title="Permanent link">&para;</a></h1>
+<p>Status: <strong>DESIGN RATIFIED — implementation not started.</strong> Supersedes the
+scope conclusions of <code>docs/plans/selection-unification.md</code> (v1).</p>
+<p>Author: head-engineer adjudication of a 4-wave red/blue adversarial
+exercise (3× RED Opus + 1× BLUE Opus + adjudication), 2026-05-17/18.</p>
+<blockquote>
+<p>[!important] What v1 was, and why v2 exists
+v1 (<code>selection-unification.md</code>, S0a–S3f shipped, S5 pending) delivered
+a verb-consistent <code>.select()</code> chain <strong>additively, beside the legacy
+surface</strong>, under a <em>non-negotiable backward-compatibility constraint</em>.
+That constraint is exactly what produced the debt the project owner is
+now resolving: ~11 divergent terminal types, two classes both named
+<code>Selection</code>, 4 name-resolvers, 6 spatial copies. The owner has
+<strong>explicitly removed backward-compat</strong> and ratified <strong>full removal</strong>.
+v2 is the cycle-breaking relayer + the single idiom + the gated
+removal that v1's constraint forbade. The v1 doc's <em>technical hard
+truths</em> (FP-1/FP-2/FP-4) remain true at source and are re-stated here
+as HT1–HT10 on durable source grounds — but its <em>conclusions</em>
+("therefore do not remove", "facade preserved") were
+backward-compat-driven and no longer bind.</p>
+</blockquote>
+<p>Every load-bearing claim below was verified at source during the
+exercise; <code>file:line</code> references are given so they can be re-checked.</p>
+<hr />
+<h2 id="1-goal-ratified">1. Goal (ratified)<a class="headerlink" href="#1-goal-ratified" title="Permanent link">&para;</a></h2>
+<p>One fluent idiom, two terminals, one spatial kernel, no import cycle,
+legacy surface removed. Concretely, ratified by the project owner:</p>
+<ol>
+<li><strong>Full removal</strong>, no backward compatibility — sequenced <strong>last</strong> and
+   <strong>gated</strong> (P3), not folded into the invisible relayer.</li>
+<li><strong>Two terminals</strong>: <code>EntitySelection</code> (CAD dimtags) +
+   <code>MeshSelection</code> (node|element ids). <strong>chain == terminal</strong> — no
+   <code>.result()</code> ceremony; <code>.result()</code> survives as a <strong>zero-cost identity
+   alias</strong> so the documented <code>for nid,xyz</code> / <code>for eid,conn</code> idiom and
+   the 23+ existing callers do not churn.</li>
+<li><strong>Relayer split in two</strong>: cycle-break (structural, genuinely
+   behaviour-invisible) is a <strong>different kind of work</strong> from
+   engine-dedup (behaviour-touching, reviewed pin-flips) and <strong>must not
+   be one phase</strong>.</li>
+<li><strong>"One engine" = one <em>spatial</em> kernel only.</strong> The FEMData
+   node/element/broker <em>name</em>-resolvers are semantically different and
+   the difference is <strong>load-bearing correctness</strong> (HT2/HT3) — they stay
+   separate. Spatial's 6 copies unify via <strong>pinned reviewed flips</strong>.</li>
+<li><code>.save_as(name)</code> (named, round-trips to results) and the geometry
+   <code>crossing</code> / <code>Line</code> predicates fold into the idiom.</li>
+</ol>
+<hr />
+<h2 id="2-the-keystone-the-whole-game">2. The keystone (the whole game)<a class="headerlink" href="#2-the-keystone-the-whole-game" title="Permanent link">&para;</a></h2>
+<p><code>NodeResult</code> (<code>mesh/FEMData.py:76-134</code>), <code>ElementGroup</code> /
+<code>GroupResult</code> (<code>mesh/_element_types.py:211-313</code>, <code>:15</code> self-declared
+leaf) are <strong>lightweight, dependency-free numpy payloads</strong>. <strong>Relocate
+those three into <code>apeGmsh/_kernel/</code></strong> alongside the pure
+defs/records/resolver layer. This single move closes three independent
+findings at once:</p>
+<ul>
+<li><strong>HT1 (RED-1 FATAL) dissolves.</strong> <code>_record_set.py</code>'s only non-pure
+  tie is the deferred <code>:469 from .FEMData import NodeResult</code> inside
+  <code>NodeConstraintSet.phantom_nodes()</code>. With <code>NodeResult</code> in <code>_kernel</code>,
+  that rewrites to a <strong>downward</strong> <code>mesh→_kernel</code> edge — not a
+  <code>_kernel⇄mesh</code> cycle. Class identity is unchanged (only the module
+  path moves), so <code>phantom_nodes()</code>'s public return is byte-stable.</li>
+<li><strong>HT8/R3-C (iteration contract).</strong> <code>MeshSelection</code> overrides
+  <code>__iter__</code> to delegate to the relocated <code>NodeResult</code>/<code>GroupResult</code>,
+  yielding <code>(id,xyz)</code> / <code>(eid,conn)</code>. chain==terminal <strong>and</strong> the 23+
+  callers survive.</li>
+<li><strong>R3-B (element payload).</strong> <code>GroupResult</code>/<code>ElementGroup</code> are
+  <strong>retained intact</strong> (not deleted) — the OpenSees emitter and beam
+  viewer need per-type <code>ElementGroup.element_type</code>
+  (<code>opensees/_internal/build.py:333-336</code>,
+  <code>opensees/_orientation.py:368-380</code>, <code>phase-8.7-scope.md:98</code>); a flat
+  list is <code>TypeError</code>-or-corrupt for mixed-type
+  (<code>_element_types.py:295-313</code> raises by design).</li>
+</ul>
+<p>One relayering move closing the import cycle, the element-typing
+problem, and the iteration contract simultaneously is the signal that
+this is the correct layering. <strong>P1-K is the highest-leverage phase;
+everything else is conventional once it lands.</strong></p>
+<hr />
+<h2 id="3-hard-truths-source-proven-future-implementers-must-not-re-trip-these">3. Hard truths (source-proven; future implementers must not re-trip these)<a class="headerlink" href="#3-hard-truths-source-proven-future-implementers-must-not-re-trip-these" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Hard truth</th>
+<th>Source</th>
+<th>Disposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>HT1</strong></td>
+<td><code>_record_set.py</code> straddle: eagerly imported by all 3 core composites <em>and</em> welded back to the non-relocated broker via deferred <code>phantom_nodes()→FEMData.NodeResult</code></td>
+<td><code>core/LoadsComposite.py:41</code>, <code>core/MassesComposite.py:38</code>, <code>core/ConstraintsComposite.py:52</code>; <code>mesh/FEMData.py:58-61</code>; <code>_record_set.py:469</code></td>
+<td>Dissolved by the §2 keystone (relocate <code>NodeResult</code>).</td>
+</tr>
+<tr>
+<td><strong>HT2</strong></td>
+<td>node↔element name-resolver divergence = <strong>3 orthogonal axes</strong> (dim-threading, part-gating, exception-breadth), runtime-proven. The element <em>name-resolver</em> does not thread <code>dim</code>; the public <code>elements.get(dim=)</code> is a <strong>separate downstream post-filter that silently empties</strong> on mismatch (no raise) — see §3.1(a)</td>
+<td>node <code>mesh/FEMData.py:456-496</code> (<code>:478</code> dim-threaded label, <code>:489</code> dim-gated part, <code>:480,485</code> <code>except KeyError</code>); elem resolver <code>:851-880</code> (<code>:868</code> unscoped label, <code>:875</code> unconditional part, <code>:869,873</code> <code>except (KeyError,ValueError)</code>); public <code>dim=</code> post-filter <code>:753</code>→<code>:807</code></td>
+<td><strong>NOT collapsible.</strong> Resolvers stay separate. Pinned by <code>test_pin_element_path_no_dim_scoping_and_unconditional_part</code>. The silent-empty <code>get(dim=)</code> post-filter is a <strong>P3 fail-loud candidate</strong>.</td>
+</tr>
+<tr>
+<td><strong>HT3</strong></td>
+<td>broker <code>_group_set._resolve</code> <strong>silently merges</strong> a multi-dim PG; contract engines <strong>raise</strong>; <code>test_rule3_pg_multidim_raises_everywhere</code> parametrize <strong>excludes the broker</strong></td>
+<td><code>mesh/_group_set.py:80-95,146-180</code>; <code>core/_resolution.py:122-130</code> (raises); <code>tests/test_resolution_contract.py:69-82</code></td>
+<td>Characterize-and-keep (P0-C pin). Do <strong>not</strong> silently "fix".</td>
+</tr>
+<tr>
+<td><strong>HT4</strong></td>
+<td><code>core/Labels.py</code> is <strong>not</strong> wholesale-relocatable (eager <code>import gmsh</code> + gmsh-driven class); only the 3 predicates are pure</td>
+<td><code>core/Labels.py:59</code>, <code>:68 LABEL_PREFIX</code>, <code>:71-87</code> (<code>is_label_pg/strip_prefix/add_prefix</code>); sole eager consumer <code>mesh/PhysicalGroups.py:10</code></td>
+<td>Split predicates → <code>_kernel/_label_prefix.py</code>; repoint (P1-K work item).</td>
+</tr>
+<tr>
+<td><strong>HT5</strong></td>
+<td>import tripwire <code>PKGS={core,mesh,viz,results}</code> is <strong>blind</strong> to <code>_kernel</code>/<code>fem</code>; "strictly stronger invariant" was false advertising</td>
+<td><code>tests/test_import_dag_polarity.py:31</code>, <code>:36-45 BASELINE</code>, <code>:105-106</code></td>
+<td>P0-T: widen <code>PKGS</code> to add <code>_kernel</code> + <code>fem</code>; re-freeze BASELINE.</td>
+</tr>
+<tr>
+<td><strong>HT6</strong></td>
+<td>the two <code>Selection</code> classes are <strong>structurally irreconcilable</strong> (<code>list</code> subclass <code>.tags()</code> <em>method</em> vs frozen <code>__slots__</code> <code>.tags</code> <em>property</em>); <code>viz.Selection</code> is <strong>public-exported</strong> + viewer-constructed</td>
+<td><code>core/_selection.py:361</code>; <code>viz/Selection.py:99-154</code>; <code>apeGmsh/__init__.py:79,187-188</code>; <code>model_viewer.py:1671</code>, <code>mesh_viewer.py:1454</code></td>
+<td>Removal is a real <strong>migration</strong> (P3), not a reconcile. v1's "keep both" was backward-compat-driven; no longer binds.</td>
+</tr>
+<tr>
+<td><strong>HT7</strong></td>
+<td>spatial = <strong>6 copies with real divergence</strong> — axis-aligned <code>nodes_on_plane(coords,axis,value,atol)</code> vs <code>(point,normal,tol)</code>; silent row-0 centroid bug</td>
+<td><code>mesh/_mesh_filters.py:23-42</code>, <code>:137-162</code> (<code>:159</code> <code>.get(nid,0)</code>); <code>results/_composites.py</code>; the 4 chain <code>_spatial_*</code> hooks</td>
+<td>Unify via <strong>pinned reviewed flips</strong> (P3), not relocation. Owns ratified v1-S5 item 3.</td>
+</tr>
+<tr>
+<td><strong>HT8</strong></td>
+<td>chain <code>__iter__</code> yields <strong>bare atoms</strong>; legacy terminals yield <code>(id,payload)</code></td>
+<td><code>_chain.py:216-217</code>; <code>mesh/FEMData.py:114-116</code>; <code>mesh/_element_types.py:211-219</code></td>
+<td><code>MeshSelection.__iter__</code> override + <code>.result()</code> alias (ratified).</td>
+</tr>
+<tr>
+<td><strong>HT9</strong></td>
+<td><code>GeometryChain</code> lacks the <code>crossing</code> straddle mode <strong>and</strong> the 2-point <code>Line</code> primitive that legacy <code>queries.select</code> has (~60 test sites)</td>
+<td><code>_chain.py:47-50 REQUIRED_VERBS</code>; <code>core/_selection.py:93-125</code> (<code>Line</code>), <code>:132-194</code> (<code>_parse_primitive</code>: dict→Plane, 2pts→Line, 3pts→Plane; <code>on</code>/<code>crossing</code>/<code>not_*</code>)</td>
+<td>P2-G: add <code>crossing_plane</code> + <code>Line</code>/2-point verbs <strong>before</strong> legacy removal; parity-test vs the ~60 sites.</td>
+</tr>
+<tr>
+<td><strong>HT10</strong></td>
+<td><code>_mass_resolver.py</code> eagerly imports <code>apeGmsh.fem._hrz/_shape_functions</code> (leaf-pure sibling pkg)</td>
+<td><code>mesh/_mass_resolver.py:43-52</code>; <code>fem/_hrz.py</code>, <code>fem/_shape_functions.py</code> (zero <code>apeGmsh.*</code> eager)</td>
+<td><strong>State explicitly:</strong> <code>_kernel</code> MAY depend on <code>apeGmsh.fem</code>. <code>fem</code> added to tripwire <code>PKGS</code> (visible, not hidden).</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>[!warning] HT2/HT3 are the durable replacement for v1's "FP-4 / do
+not touch the broker." The reason is <strong>not</strong> "the old doc says so" —
+it is RED-2's runtime-proven source fact that the node/element/broker
+resolvers compute <em>different entity sets</em> for the same reference, and
+that difference is correctness (e.g. multi-dim label scoping). Any
+future "let's unify the resolvers" must re-read HT2/HT3 first.</p>
+</blockquote>
+<h3 id="31-p0-reconciliations-observed-reality-the-pins-are-authoritative">3.1 P0 reconciliations (observed reality — the pins are authoritative)<a class="headerlink" href="#31-p0-reconciliations-observed-reality-the-pins-are-authoritative" title="Permanent link">&para;</a></h3>
+<p>P0-C empirically characterized the running system and caught <strong>two
+places where this plan's prose was wrong</strong>. The pins lock <em>observed
+reality</em>; this plan is corrected to match them (not vice-versa).
+Recorded explicitly so P1-K's invisibility proof and P3's
+reviewed-flips are anchored to fact:</p>
+<ul>
+<li><strong>(a) Element <code>get(dim=)</code> is a silent-empty post-filter, not "no dim
+  arg".</strong> HT2's <em>resolver</em> claim is intact (the element name-resolver
+  does not thread <code>dim</code>). But the public <code>fem.elements.get(dim=)</code>
+  parameter <strong>exists</strong> (<code>mesh/FEMData.py:753</code>) and is applied as a
+  downstream group post-filter (<code>:807</code>): on a dim-3-only result,
+  <code>elements.get(label="reg", dim=2)</code> and
+  <code>elements.get(target="P1", dim=2)</code> return an <strong>empty <code>GroupResult</code>
+  with NO raise</strong> — not the dim-2 slice, not an error. Locked by
+  <code>test_pin_element_path_no_dim_scoping_and_unconditional_part</code>. This
+  silent-empty is a <strong>P3 fail-loud candidate</strong> (sibling to HT3/HT7).</li>
+<li><strong>(b) Results dispatcher silently UNIONS multiple named selectors.</strong>
+  The prior assumption ("exactly-one selector; passing both raises")
+  is <strong>false</strong>. <code>results…_resolve_node_ids(pg=X, label=Y)</code> returns the
+  <strong>sorted union</strong> of both, <strong>no raise</strong>
+  (<code>results/_composites.py:312-335</code>). The exactly-one guard fires
+  <strong>only</strong> when <code>ids=</code> is combined with a named selector
+  (<code>:293-298</code>/<code>:347-352</code>). Locked by
+  <code>test_pin_results_samename_label_pg_precedence</code>. The silent
+  multi-named-selector union is a <strong>P3 fail-loud candidate</strong>; any P3
+  text must say "<code>ids=</code> is exclusive vs named selectors; multiple
+  <em>named</em> selectors currently UNION" — never "passing both raises".</li>
+</ul>
+<p>Neither reconciliation changes the ratified architecture or scope —
+both refine HT2 / correct a mental-model error and add two
+characterized behaviors to the P3 fail-loud review set.</p>
+<hr />
+<h2 id="4-architecture">4. Architecture<a class="headerlink" href="#4-architecture" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>apeGmsh/_kernel/                 [NEW root-leaf pkg; stdlib/numpy/gmsh + apeGmsh.fem only]
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  _label_prefix.py    is_label_pg / strip_prefix / add_prefix / LABEL_PREFIX   (HT4)
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  defs/               core.{loads,masses,constraints}.defs  (relocated, pure)
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  records/            mesh.records._{loads,masses,constraints,kinds}  (relocated, pure)
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  resolvers/          mesh._{load,mass,constraint}_resolver + _constraint_resolver/  (relocated)
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  record_sets.py      _record_set.py (relocated; :469 → from .._kernel … NodeResult)
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>  payloads.py         NodeResult / ElementGroup / GroupResult  ← THE KEYSTONE (HT1, R3-B)
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  spatial.py          one point-family kernel + fail-loud centroid (P3; pinned flips)
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  chain.py            SelectionChain  (moved from apeGmsh/_chain.py)
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>core / mesh / viz / results   ── all import DOWNWARD into _kernel ──►  _kernel ──► apeGmsh.fem
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>                              (no core⇄mesh cycle; tripwire PKGS now includes _kernel, fem)
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>EntitySelection(SelectionChain)  FAMILY=&quot;entity&quot;   — dimtags; .to_label(Tier-1)/.to_physical(Tier-2)
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>MeshSelection(SelectionChain)    FAMILY=&quot;point&quot;    — node|elem ids; __iter__→(id,payload); .save_as
+</span></code></pre></div>
+<p><code>_constraint_resolver/_geom.py</code> (KDTree/Newton non-matching-mesh tie
+kernel) relocates <strong>with</strong> its package but is <strong>OUT of scope</strong> for
+selection — it is a different problem (projection, not selection) and
+must not be folded into <code>spatial.py</code>.</p>
+<hr />
+<h2 id="5-ratified-product-decisions">5. Ratified product decisions<a class="headerlink" href="#5-ratified-product-decisions" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>R-v2-1</strong> Full removal, no backward compat; sequenced <strong>last</strong>
+  (P3), gated on <strong>zero internal callers</strong> of each removed symbol.</li>
+<li><strong>R-v2-2</strong> Two terminals; chain==terminal; <code>.result()</code> = zero-cost
+  identity alias (1-line; saves 23+ call-sites).</li>
+<li><strong>R-v2-3</strong> <code>EntitySelection.to_label</code> = <code>session.labels.add</code>
+  (Tier-1, <code>_label:</code>-prefixed, boolean-stable);
+  <code>EntitySelection.to_physical</code> = <code>session.physical.add</code> (Tier-2, raw
+  gmsh PG). <strong>Distinct registries; ADR-locked non-mergeable.</strong> A
+  <code>Clash</code> user-name can coexist as <code>(d,'Clash')</code> <em>and</em>
+  <code>(d,'_label:Clash')</code>; merging them silently destroys Tier-1
+  boolean-op identity. <code>EntitySelection</code> also exposes <code>.to_dataframe()</code>.</li>
+<li><strong>R-v2-4</strong> <code>GroupResult</code>/<code>ElementGroup</code> <strong>retained intact</strong>
+  (relocated, not deleted) as the element payload — parallel to the
+  results <code>*Slab</code>s.</li>
+<li><strong>R-v2-5</strong> "One engine" = <strong>spatial-only</strong> unification via pinned
+  flips. Name-resolvers (node/element/broker) stay separate (HT2/HT3).</li>
+<li><strong>R-v2-6</strong> Relayer split: P1-K (cycle-break) is behaviour-invisible
+  pure relocation; <strong>no resolver/spatial dedup in P1-K</strong>.</li>
+<li><strong>R-v2-7</strong> <code>.save_as(name)</code> + <code>crossing_plane</code>/<code>Line</code> verbs folded
+  into the idiom (P2-I / P2-G).</li>
+</ul>
+<hr />
+<h2 id="6-phase-ledger">6. Phase ledger<a class="headerlink" href="#6-phase-ledger" title="Permanent link">&para;</a></h2>
+<p>Order: <strong>P0-T ∥ P0-C → P1-K → (P2-I ∥ P2-G) → P3 → P4.</strong> P0 blocking.</p>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Status</th>
+<th>Commit</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P0-T</td>
+<td>pending</td>
+<td>—</td>
+</tr>
+<tr>
+<td>P0-C</td>
+<td>pending</td>
+<td>—</td>
+</tr>
+<tr>
+<td>P1-K</td>
+<td>pending</td>
+<td>—</td>
+</tr>
+<tr>
+<td>P2-I</td>
+<td>pending</td>
+<td>—</td>
+</tr>
+<tr>
+<td>P2-G</td>
+<td>pending</td>
+<td>—</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>pending</td>
+<td>—</td>
+</tr>
+<tr>
+<td>P4</td>
+<td>pending</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h3 id="p0-t-tripwire-hardening-blocking-additive">P0-T — tripwire hardening (blocking, additive)<a class="headerlink" href="#p0-t-tripwire-hardening-blocking-additive" title="Permanent link">&para;</a></h3>
+<p>Add <code>_kernel</code> <strong>and</strong> <code>fem</code> to <code>tests/test_import_dag_polarity.py:31
+PKGS</code>; re-derive <code>BASELINE</code> on untouched HEAD (no relocation yet) so
+the frozen set is honest before any move. <strong>Gate:</strong> tripwire green
+with widened <code>PKGS</code>; BASELINE diff = pure scope-widening, reviewed.
+Closes HT5, HT10. Rollback: revert one test file.</p>
+<h3 id="p0-c-characterization-battery-blocking-additive-zero-prod-edits">P0-C — characterization battery (blocking, additive, zero prod edits)<a class="headerlink" href="#p0-c-characterization-battery-blocking-additive-zero-prod-edits" title="Permanent link">&para;</a></h3>
+<p>Add pins that turn every would-be silent flip into a reviewed
+pin-flip: <code>test_pin_broker_multidim_pg_silently_merges</code> (HT3),
+<code>test_pin_element_path_no_dim_scoping_and_unconditional_part</code> (HT2),
+<code>test_pin_meshselection_on_plane_is_axis_aligned</code> (HT7),
+<code>test_pin_meshfilters_element_centroids_silent_row0</code> (HT7),
+<code>test_pin_element_samename_label_pg_precedence</code>,
+<code>test_pin_results_samename_label_pg_precedence</code>. <strong>Gate:</strong> 100% green
+on HEAD; zero production edits.</p>
+<h3 id="p1-k-the-keystone-relayer-behaviour-invisible-own-pr">P1-K — the keystone relayer (behaviour-INVISIBLE; own PR)<a class="headerlink" href="#p1-k-the-keystone-relayer-behaviour-invisible-own-pr" title="Permanent link">&para;</a></h3>
+<p>Create <code>apeGmsh/_kernel/</code>. Relocate, as a <strong>pure module move</strong> (no
+behaviour change, no resolver merge, no spatial merge, no
+<code>tolerate_wrong_dim</code>): <code>NodeResult</code>/<code>ElementGroup</code>/<code>GroupResult</code> →
+<code>_kernel/payloads.py</code>; <code>core.{loads,masses,constraints}.defs</code>;
+<code>mesh.records._*</code>; the 3 resolvers + <code>_constraint_resolver/</code>;
+<code>_record_set.py</code> (rewrite <code>:469</code>→<code>_kernel</code>); the 3 <code>Labels</code>
+predicates → <code>_kernel/_label_prefix.py</code>. Repoint <code>PhysicalGroups.py:10</code>,
+<code>core/Labels.py</code> internals, the 3 composites, <code>FEMData.py:58-61</code>.
+<strong>Gate:</strong> widened tripwire green, BASELINE updated <strong>in the same
+commit</strong> (the relocation diff <em>is</em> the reviewed decision —
+<code>test_import_dag_polarity.py:18-20</code>); <code>test_resolution_contract.py</code> +
+<code>test_target_resolution.py</code> (20) <strong>byte-unchanged &amp; green</strong>; <strong>all
+P0-C pins unchanged</strong> (this is the proof of invisibility);
+<code>import apeGmsh</code> clean with <code>apeGmsh.__file__</code> under the worktree.
+Closes HT1, HT4, R3-B. Rollback: the move is one reviewable diff;
+revert the PR.</p>
+<h3 id="p2-i-the-idiom-additive-own-pr">P2-I — the idiom (additive; own PR)<a class="headerlink" href="#p2-i-the-idiom-additive-own-pr" title="Permanent link">&para;</a></h3>
+<p><code>EntitySelection</code> + <code>MeshSelection</code> as <code>SelectionChain</code> subclasses on
+the P1-K kernel. <code>MeshSelection.__iter__</code> overridden → <code>(id,payload)</code>
+via relocated payloads; <code>.ids</code>/<code>.coords</code>/<code>.connectivity</code>/<code>.groups()</code>
+accessors; <code>.save_as(name)</code> (registers into the mesh-selection store →
+round-trips via FEMData HDF5 → addressable as <code>selection=</code>);
+<code>.values(component=,time=,stage=,**slab_kw)</code> forwarding <strong>verbatim</strong> to
+the spawning sub-composite's typed <code>.get</code> (the locked
+<code>test_result_chain_subcomposites.py</code> fail-loud invariant). <code>.result()</code>
+= identity alias. <code>EntitySelection.to_label</code>/<code>.to_physical</code> per
+R-v2-3 + ADR; <code>.to_dataframe()</code>. Legacy <code>Selection</code> classes
+<strong>byte-unchanged</strong> here (removal is P3). <strong>Gate:</strong> new idiom
+daisy-chains at all levels (smoke); 23+ <code>(id,payload)</code> callers green
+unchanged; ADR committed; tripwire green every commit. Closes HT8,
+R3-A, R3-4.</p>
+<h3 id="p2-g-geometry-predicate-completion-additive-own-pr">P2-G — geometry predicate completion (additive; own PR)<a class="headerlink" href="#p2-g-geometry-predicate-completion-additive-own-pr" title="Permanent link">&para;</a></h3>
+<p>Add <code>crossing_plane(point,normal,*,tol)</code> + a <code>Line</code>/2-point verb path
+to <code>EntitySelection</code> (entity family) and to <code>_chain.py
+REQUIRED_VERBS</code>; port <code>core/_selection.py:166-194</code> on/crossing/not_<em>
+(8-BB-corner) semantics into the entity hooks. </em><em>Gate:</em><em> parity test —
+<code>EntitySelection</code> crossing/line/not_</em> == legacy <code>queries.select</code>
+across the ~60 existing crossing/line sites; <code>__init_subclass__</code>
+enforces the new verbs. Closes HT9. (Must land <strong>before</strong> P3 removes
+legacy <code>queries.select</code>.)</p>
+<h3 id="p3-full-removal-spatial-dedup-breaking-gated-own-pr">P3 — full removal + spatial dedup (BREAKING; gated; own PR)<a class="headerlink" href="#p3-full-removal-spatial-dedup-breaking-gated-own-pr" title="Permanent link">&para;</a></h3>
+<p>Gated precondition: P2-I/P2-G shipped; <strong>zero internal callers</strong> of
+each removed symbol (re-run the blast-radius census). Delete: both
+<code>Selection</code> classes, <code>queries.select</code>+<code>select_all*</code>,
+<code>g.model.selection.*</code>, <code>fem.*.get/get_ids/resolve</code>,
+<code>g.mesh_selection.add_*/from_*</code>, the 5 legacy chains; drop <code>Selection</code>/
+<code>SelectionComposite</code> from <code>apeGmsh.__init__.__all__</code>; repoint the
+viewer <code>.selection</code> property + public export to <code>EntitySelection</code>.
+Migrate the ~35 load-bearing src callers (opensees/viewers/cuts/
+results). Unify the 6 spatial copies → <code>_kernel/spatial.py</code> as
+<strong>pinned reviewed flips</strong> (each flip = a P0-C pin diff in the same
+commit; absorbs ratified v1-S5 item 3). Rewrite ~7 legacy test files +
+the two guide docs. <strong>Gate:</strong> full suite green; no legacy symbol
+importable; every spatial flip is a reviewed pin diff. Closes HT6,
+HT7, R-v2-1.</p>
+<h3 id="p4-docs-adr-memory">P4 — docs / ADR / memory<a class="headerlink" href="#p4-docs-adr-memory" title="Permanent link">&para;</a></h3>
+<p>Supersede <code>selection-unification.md</code>; ADR for the label/PG
+non-merge + the <code>_kernel</code> boundary; tighten the
+<code>MeshSelectionSet.py:741-742</code> axis-aligned-vs-generalized docstring;
+update apegmsh-helper skill selection section; update MEMORY entries.</p>
+<hr />
+<h2 id="7-invariants-that-must-hold-at-every-commit">7. Invariants that must hold at every commit<a class="headerlink" href="#7-invariants-that-must-hold-at-every-commit" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>tests/test_resolution_contract.py</code> + <code>tests/test_target_resolution.py</code>
+  (20) green; <strong>byte-unchanged through P1-K</strong> (invisibility proof).</li>
+<li><code>tests/test_import_dag_polarity.py</code> (widened <code>PKGS</code> incl.
+  <code>_kernel</code>+<code>fem</code>) green every commit; <code>BASELINE</code> changes only as an
+  explicit same-commit reviewed diff.</li>
+<li>All P0-C characterization pins green; any change is a deliberate,
+  same-commit pin-flip with a regression test (never silent drift).</li>
+<li>Name-resolvers (FEMData node/element, <code>_group_set._resolve</code>) <strong>not
+  unified</strong> (HT2/HT3). <code>_constraint_resolver/_geom.py</code> <strong>not</strong> folded
+  into <code>spatial.py</code>.</li>
+<li>Verification protocol (non-negotiable):
+  <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>$env:PYTHONPATH = &quot;&lt;worktree&gt;\src&quot;
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>$env:LADRUNO_OPENSEES_QUIET = &quot;1&quot;
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>C:\Users\nmora\venv\opensees_venv\Scripts\python.exe -c &quot;import apeGmsh; print(apeGmsh.__file__)&quot;   # MUST be the worktree
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>C:\Users\nmora\venv\opensees_venv\Scripts\python.exe -m pytest &lt;targets&gt; -q
+</span></code></pre></div>
+  The editable install resolves <code>apeGmsh</code> to the <strong>main repo</strong> <code>src/</code>
+  otherwise — a green without the worktree assertion is a false
+  negative.</li>
+<li>Delivery: worktree → PR onto <code>origin/main</code>, one PR per phase.</li>
+</ul>
+<hr />
+<h2 id="8-explicitly-out-of-scope">8. Explicitly OUT of scope<a class="headerlink" href="#8-explicitly-out-of-scope" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Collapsing the FEMData node/element/broker <strong>name</strong>-resolvers
+  (HT2/HT3 — load-bearing correctness; ratified R-v2-5).</li>
+<li><code>_constraint_resolver/_geom.py</code> (non-matching-mesh tie projection).</li>
+<li>Any backward-compat shim, deprecation-window, or <code>select→get</code>
+  aliasing beyond the single <code>.result()</code> identity alias (R-v2-2).</li>
+<li>Reviving v1's "facade preserved / keep both Selections" — that was
+  backward-compat-driven and is explicitly reversed.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
