@@ -9,9 +9,17 @@ is duck-typed: any object exposing ``.ids`` (ndarray of node ids) and
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from .._chain import SelectionChain
+
+if TYPE_CHECKING:
+    # Type-only: the runtime import stays deferred inside _materialize
+    # (TYPE_CHECKING is False at runtime, so the FEMData <-> _node_chain
+    # load cycle the docstring describes is not reopened).
+    from .FEMData import NodeResult
 
 
 class NodeChain(SelectionChain):
@@ -76,6 +84,9 @@ class NodeChain(SelectionChain):
         return tuple(a for a, k in zip(atoms, dist <= t) if k)
 
     # ── terminal ────────────────────────────────────────────
+    def result(self) -> "NodeResult":
+        return self._materialize()
+
     def _materialize(self) -> "NodeResult":
         """The selected nodes as the **existing** ``NodeResult``.
 

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from apeGmsh.core.Labels import Labels
     from apeGmsh.core.Model import Model
+    from apeGmsh.mesh.PhysicalGroups import PhysicalGroups
 
 Tag = int
 DimTag = tuple[int, int]
@@ -33,6 +34,7 @@ class SessionProtocol(Protocol):
     _auto_pg_from_label: bool
     model: "Model"
     labels: "Labels"
+    physical: "PhysicalGroups"
 
     @property
     def is_active(self) -> bool: ...

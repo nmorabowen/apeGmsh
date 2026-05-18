@@ -29,7 +29,14 @@ is asserted by the CI contract test, never by cross-family identity.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Iterable, Iterator
+from typing import Any, ClassVar, Iterable, Iterator, TypeVar
+
+#: Self-type for the covariant daisy-chain: every refining/​set-algebra
+#: verb returns the *same concrete subclass* it was called on.  A
+#: ``bound=`` TypeVar is the version-agnostic pre-PEP-673 idiom —
+#: ``typing.Self`` is 3.11+ and the project floor is 3.10 (pyright is
+#: pinned to 3.10), so ``Self`` would be an unknown import symbol.
+TSelf = TypeVar("TSelf", bound="SelectionChain")
 
 __all__ = ["SelectionChain", "VALID_FAMILIES", "REQUIRED_VERBS"]
 
@@ -73,7 +80,7 @@ class SelectionChain:
         """Insertion-order-preserving de-duplication (the one law)."""
         return tuple(dict.fromkeys(atoms))
 
-    def _wrap(self, atoms: Iterable[Any]) -> "SelectionChain":
+    def _wrap(self: "TSelf", atoms: Iterable[Any]) -> "TSelf":
         """New chain of *this exact* subclass, same engine (covariant)."""
         return type(self)(atoms, _engine=self._engine)
 
@@ -125,21 +132,21 @@ class SelectionChain:
         raise NotImplementedError
 
     # ── public verb surface (identical names everywhere) ────
-    def in_box(self, lo, hi, *, inclusive: bool = False) -> "SelectionChain":
+    def in_box(self: "TSelf", lo, hi, *, inclusive: bool = False) -> "TSelf":
         return self._wrap(
             self._spatial_box(self._items, lo, hi, inclusive=inclusive)
         )
 
-    def in_sphere(self, center, radius: float) -> "SelectionChain":
+    def in_sphere(self: "TSelf", center, radius: float) -> "TSelf":
         return self._wrap(self._spatial_sphere(self._items, center, radius))
 
-    def on_plane(self, point, normal, *, tol: float) -> "SelectionChain":
+    def on_plane(self: "TSelf", point, normal, *, tol: float) -> "TSelf":
         return self._wrap(self._spatial_plane(self._items, point, normal, tol))
 
-    def nearest_to(self, point, *, count: int = 1) -> "SelectionChain":
+    def nearest_to(self: "TSelf", point, *, count: int = 1) -> "TSelf":
         return self._wrap(self._nearest(self._items, point, count))
 
-    def where(self, predicate) -> "SelectionChain":
+    def where(self: "TSelf", predicate) -> "TSelf":
         """Keep atoms whose coordinate row satisfies ``predicate``."""
         coords = self._coords_of(self._items)
         keep = [a for a, xyz in zip(self._items, coords) if predicate(xyz)]
@@ -173,21 +180,21 @@ class SelectionChain:
                 "(different FEMData / model / results)."
             )
 
-    def union(self, other: "SelectionChain") -> "SelectionChain":
+    def union(self: "TSelf", other: "SelectionChain") -> "TSelf":
         self._compatible(other)
         return self._wrap(self._items + other._items)
 
-    def intersect(self, other: "SelectionChain") -> "SelectionChain":
+    def intersect(self: "TSelf", other: "SelectionChain") -> "TSelf":
         self._compatible(other)
         keep = set(other._items)
         return self._wrap(a for a in self._items if a in keep)
 
-    def difference(self, other: "SelectionChain") -> "SelectionChain":
+    def difference(self: "TSelf", other: "SelectionChain") -> "TSelf":
         self._compatible(other)
         drop = set(other._items)
         return self._wrap(a for a in self._items if a not in drop)
 
-    def symmetric_difference(self, other: "SelectionChain") -> "SelectionChain":
+    def symmetric_difference(self: "TSelf", other: "SelectionChain") -> "TSelf":
         self._compatible(other)
         a, b = set(self._items), set(other._items)
         only = a ^ b
