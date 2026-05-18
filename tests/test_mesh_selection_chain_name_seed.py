@@ -46,7 +46,8 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.mesh._mesh_selection_chain import MeshSelectionChain
+from apeGmsh.mesh._mesh_selection_chain import MeshSelectionChain  # noqa: F401  (legacy, unwired until P3)
+from apeGmsh.mesh._mesh_selection import MeshSelection
 
 
 @pytest.fixture
@@ -95,7 +96,7 @@ def test_name_seed_node_equals_eager_add_nodes_set(live):
     assert len(eager) == 8                       # half-open default shell
 
     seeded = ms.select(name="boxn")
-    assert isinstance(seeded, MeshSelectionChain)
+    assert isinstance(seeded, MeshSelection)   # P2-I: was MeshSelectionChain
     assert seeded.FAMILY == "point"
     assert _sorted_ids(seeded.ids) == eager
     res = seeded.result()
@@ -189,7 +190,7 @@ def test_name_seed_daisychains_and_set_algebra(live):
     assert _sorted_ids((a & b).ids) == [4, 5]
     assert _sorted_ids((a - b).ids) == [1, 2, 3]
     for s in (a | b, a & b, a - b):
-        assert isinstance(s, MeshSelectionChain)
+        assert isinstance(s, MeshSelection)  # P2-I: was MeshSelectionChain
 
     chained = ms.select(name="A").in_box((-9, -9, -9), (9, 9, 9),
                                           inclusive=True)

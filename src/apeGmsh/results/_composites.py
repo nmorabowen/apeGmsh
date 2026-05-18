@@ -601,7 +601,18 @@ class _ElementGeometryMixin:
         (an unknown node id raises; never the ``np.clip`` silent
         substitution ``_element_centroids`` does).
         """
-        from ._result_chain import ResultChain, engine_for
+        # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
+        # terminal ``MeshSelection`` (legacy ``ResultChain`` left
+        # defined-but-unwired; P3 deletes it).  ``engine_for`` is kept
+        # verbatim — the memoised ``_ResultChainEngine`` singleton is
+        # what ``SelectionChain._compatible`` gates set-algebra on, and
+        # ``MeshSelection`` delegates the per-engine read back to a
+        # ``ResultChain`` built from this exact same engine (byte-faithful
+        # results-engine behaviour).  ``MeshSelection`` is a new leaf
+        # importing only ``_kernel.chain`` at load — no new eager
+        # cross-package edge (one declared downward BASELINE triple).
+        from ._result_chain import engine_for
+        from ..mesh._mesh_selection import MeshSelection
 
         seed = self._combine_candidates(
             pg=pg, label=label, selection=selection, ids=ids,
@@ -615,7 +626,7 @@ class _ElementGeometryMixin:
         else:
             atoms = [int(e) for e in np.asarray(seed)]
         engine = engine_for(self._r, self, "element")
-        return ResultChain(atoms, _engine=engine)
+        return MeshSelection(atoms, _engine=engine)
 
 
 # =====================================================================
@@ -658,13 +669,22 @@ class NodeResultsComposite(_SelectionMixin):
         same selection as ``get(...)`` (no extra scoping).  The spatial
         verbs narrow the chain *before* the terminal read.
 
-        ``ResultChain`` is imported **deferred** (mirrors
-        ``mesh/_node_chain.py``): it imports only the package-root leaf
-        ``apeGmsh._chain`` + numpy, so this adds no eager cross-package
-        edge and ``results`` stays runtime-clean of ``core``/``mesh``
-        (``tests/test_import_dag_polarity.py`` baseline unchanged).
+        Both ``engine_for`` and ``MeshSelection`` are imported
+        **deferred** (mirrors ``mesh/_node_chain.py``): each underlying
+        module imports only the package-root leaf ``apeGmsh._kernel``
+        + numpy at load, so this adds **no eager** cross-package edge
+        (``results`` stays runtime-clean of ``core``/``mesh`` at
+        import time; ``tests/test_import_dag_polarity.py`` baseline
+        unchanged — the one declared P2-I triple is the *downward*
+        ``mesh→_kernel`` one for ``mesh/_mesh_selection.py``).
         """
-        from ._result_chain import ResultChain, engine_for
+        # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
+        # terminal ``MeshSelection``; ``engine_for`` kept verbatim (the
+        # ``_ResultChainEngine`` singleton gates set-algebra identity);
+        # ``MeshSelection`` delegates the node-level read back to a
+        # ``ResultChain`` on this same engine (byte-faithful).
+        from ._result_chain import engine_for
+        from ..mesh._mesh_selection import MeshSelection
 
         seed = self._resolve_node_ids(
             pg=pg, label=label, selection=selection, ids=ids,
@@ -675,7 +695,7 @@ class NodeResultsComposite(_SelectionMixin):
         else:
             atoms = [int(n) for n in np.asarray(seed)]
         engine = engine_for(self._r, self, "node")
-        return ResultChain(atoms, _engine=engine)
+        return MeshSelection(atoms, _engine=engine)
 
     def get(
         self,
@@ -867,16 +887,25 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         ``select(...).get(component=)`` is id-for-id the same selection
         as ``get(...)``.
 
-        ``ResultChain`` is imported **deferred** (mirrors
-        ``mesh/_elem_chain.py``): only the package-root leaf
-        ``apeGmsh._chain`` + numpy, so ``results`` stays runtime-clean
-        of ``core``/``mesh`` and the
-        ``tests/test_import_dag_polarity.py`` baseline is unchanged.
-        Element centroids are computed **fail-loud** in ``ResultChain``
-        (an unknown node id raises; never the ``np.clip`` silent
-        substitution ``_element_centroids`` does).
+        Both ``engine_for`` and ``MeshSelection`` are imported
+        **deferred** (mirrors ``mesh/_elem_chain.py``): each underlying
+        module imports only the package-root leaf ``apeGmsh._kernel``
+        + numpy at load, so ``results`` stays runtime-clean of
+        ``core``/``mesh`` at import time and the
+        ``tests/test_import_dag_polarity.py`` baseline is unchanged
+        (the one declared P2-I triple is the *downward*
+        ``mesh→_kernel`` one for ``mesh/_mesh_selection.py``).  Element
+        centroids are still computed **fail-loud** (an unknown node id
+        raises; never the ``np.clip`` silent substitution
+        ``_element_centroids`` does) — ``MeshSelection`` delegates the
+        element-level read back to a ``ResultChain`` on this same
+        engine, so that invariant is byte-faithful.
         """
-        from ._result_chain import ResultChain, engine_for
+        # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
+        # terminal ``MeshSelection``; ``engine_for`` kept verbatim (the
+        # ``_ResultChainEngine`` singleton gates set-algebra identity).
+        from ._result_chain import engine_for
+        from ..mesh._mesh_selection import MeshSelection
 
         seed = self._combine_candidates(
             pg=pg, label=label, selection=selection, ids=ids,
@@ -888,7 +917,7 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         else:
             atoms = [int(e) for e in np.asarray(seed)]
         engine = engine_for(self._r, self, "element")
-        return ResultChain(atoms, _engine=engine)
+        return MeshSelection(atoms, _engine=engine)
 
     def get(
         self,

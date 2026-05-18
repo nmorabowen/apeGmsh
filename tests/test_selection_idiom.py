@@ -48,12 +48,20 @@ import pytest
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.chain import REQUIRED_VERBS, SelectionChain
 
-# Importing the five host modules registers every concrete subclass.
-from apeGmsh.core._selection import GeometryChain
+# Importing the host modules registers every concrete subclass.
+# selection-unification-v2 P2-I (§6.1 STOP-2): the family is now SEVEN
+# — the 5 legacy chains (defined-but-unwired; P3 deletes them) plus the
+# 2 v2 terminals ``EntitySelection`` / ``MeshSelection`` the 5 host
+# hooks now return.  ``_EXPECTED_CHAINS`` is an EQUALITY lock, so it is
+# 5→7 here (and importing the two new modules registers them as
+# ``SelectionChain.__subclasses__`` so ``_all_concrete_subclasses``
+# finds them).
+from apeGmsh.core._selection import GeometryChain, EntitySelection
 from apeGmsh.mesh._node_chain import NodeChain
 from apeGmsh.mesh._elem_chain import ElementChain
 from apeGmsh.results._result_chain import ResultChain
 from apeGmsh.mesh._mesh_selection_chain import MeshSelectionChain
+from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
 
@@ -68,10 +76,20 @@ _SET_ALGEBRA = (
 # still required everywhere; only its signature is family-specific, so
 # the "identical signature" assertion excludes it and the four
 # point-family chains are checked for in_box separately.
+# EQUALITY lock — 5 legacy chains + the 2 v2 terminals (P2-I §6.1
+# STOP-2(a): 5→7).  Legacy chains stay defined-and-importable but
+# unwired through P2-I; P3 deletes them and this set drops back.
 _EXPECTED_CHAINS = {
     GeometryChain, NodeChain, ElementChain, ResultChain, MeshSelectionChain,
+    EntitySelection, MeshSelection,
 }
-_POINT_CHAINS = (NodeChain, ElementChain, ResultChain, MeshSelectionChain)
+# ``MeshSelection`` is point-family and is added here so the shared
+# ``in_box``-signature contract genuinely covers the v2 terminal the
+# four point hosts now return (not only the legacy four).
+_POINT_CHAINS = (
+    NodeChain, ElementChain, ResultChain, MeshSelectionChain,
+    MeshSelection,
+)
 
 
 def _all_concrete_subclasses(cls) -> set:
@@ -310,7 +328,26 @@ def _make_results_with_fem(tmp_path: Path):
     return Results.from_native(path, fem=fem)
 
 
+def _atom_ids(chain) -> list[int]:
+    """The chain's atom ids — read from ``_items`` (the canonical
+    identity).  selection-unification-v2 P2-I (§6.1 STOP-2(b)): the
+    point hosts now return ``MeshSelection`` whose ``__iter__`` yields
+    ``(id, payload)`` pairs, but set-algebra / identity is defined on
+    ``_items`` (the atoms), which is *unchanged* by the pair-view —
+    so the laws below read ``_items``, not the pair iterator."""
+    return sorted(int(a) for a in chain._items)
+
+
 def _ids(seq) -> list[int]:
+    """Ids from a chain or a plain sequence.
+
+    A chain post-P2-I iterates as ``(id, payload)`` pairs (the ratified
+    HT8 design); a plain id sequence iterates as bare ids.  Normalise
+    both: a chain reads ``_items`` (the canonical atom identity,
+    unaffected by the pair-view); anything else is treated as a bare
+    id sequence."""
+    if isinstance(seq, SelectionChain):
+        return _atom_ids(seq)
     return sorted(int(x) for x in seq)
 
 
@@ -330,7 +367,10 @@ def _seed_point_chain(kind, *, cube_fem=None, live=None, tmp_path=None):
         return allc, a, b, ((0, 0, 0), (1, 1, 1)), None
     if kind == "element":
         allc = cube_fem.elements.select(pg="Body")        # 8 hex
-        eids = sorted(int(x) for x in allc)
+        # P2-I: ``allc`` is a ``MeshSelection`` whose element-level
+        # ``__iter__`` yields ``(eid, conn)`` pairs (HT8) — unpack the
+        # id to slice the a/b sub-selections.
+        eids = sorted(int(eid) for eid, _conn in allc)
         a = cube_fem.elements.select(ids=eids[:3])
         b = cube_fem.elements.select(ids=eids[1:4])
         # centroids at {0.25,0.75}^3; box ..-(0.75,0.75,0.75):
@@ -384,28 +424,40 @@ def test_point_family_laws(kind, cube_fem, live, tmp_path):
     )
 
     # ── set-algebra laws on a non-trivial pair ──────────────
+    # selection-unification-v2 P2-I (§6.1 STOP-2(b)): the point hosts
+    # now return ``MeshSelection`` whose ``__iter__`` yields
+    # ``(id, payload)`` pairs.  Set-algebra is UNAFFECTED — it is
+    # defined on the ``_items`` atoms, not on the pair-view — so the
+    # laws below read the atoms (``_items`` / ``_ids``), exactly the
+    # canonical identity the contract specifies.  ``payload`` (an
+    # ndarray xyz / a conn tuple) is deliberately NOT hashable as a
+    # set member, which is why these now go through the atoms.
     assert _ids(a | a) == _ids(a)                       # idempotent ∪
     assert _ids(a & a) == _ids(a)                       # idempotent ∩
-    assert list(a - a) == []                            # self-difference
-    assert list(a ^ a) == []                            # self-sym-diff
+    assert (a - a)._items == ()                         # self-difference
+    assert (a ^ a)._items == ()                         # self-sym-diff
     # commutative as id-sets (insertion order may differ, sets equal)
     assert _ids(a | b) == _ids(b | a)
-    assert set(a & b) == set(b & a)
+    assert set((a & b)._items) == set((b & a)._items)
     # named aliases == operators
     assert _ids(a.union(b)) == _ids(a | b)
     assert _ids(a.intersect(b)) == _ids(a & b)
     assert _ids(a.difference(b)) == _ids(a - b)
 
     # ── insertion-order preservation (the one dedup law) ────
-    a_first = list(a)
-    # a|b keeps a's order first, then b's new atoms, deduped
-    union_seq = list(a | b)
-    assert union_seq[:len(a_first)] == a_first, (
+    # Read the atoms (``_items``) — the dedup law operates there,
+    # unchanged by the pair-view (the presentation-only HT8 change).
+    a_atoms = list(a._items)
+    union_atoms = list((a | b)._items)
+    assert union_atoms[:len(a_atoms)] == a_atoms, (
         f"{kind}: union must preserve self's insertion order first"
     )
-    assert len(union_seq) == len(set(union_seq))         # deduped
+    assert len(union_atoms) == len(set(union_atoms))     # deduped
     # difference preserves self order
-    assert list(a - b) == [x for x in a_first if x not in set(b)]
+    b_set = set(b._items)
+    assert list((a - b)._items) == [
+        x for x in a_atoms if x not in b_set
+    ]
 
     # ── nearest_to deterministic + stable lowest-index tie ──
     # The contract (`_chain._nearest`): sort key is
@@ -416,10 +468,13 @@ def test_point_family_laws(kind, cube_fem, live, tmp_path):
     # reordering when exact distance ties exist — that is inherent to a
     # positional tie-break and itself deterministic; this file asserts
     # the guarantees the code actually makes, not a stronger one.
+    # nearest_to returns a chain (covariant); read its ATOM ordering
+    # via ``_items`` (the pair-view is presentation-only and does not
+    # change which atoms, or in what order, the verb keeps).
     near_point = (0.0, 0.0, 0.0)
-    r1 = list(allc.nearest_to(near_point, count=2))
-    r2 = list(allc.nearest_to(near_point, count=2))
-    r3 = list(allc.nearest_to(near_point, count=2))
+    r1 = list(allc.nearest_to(near_point, count=2)._items)
+    r2 = list(allc.nearest_to(near_point, count=2)._items)
+    r3 = list(allc.nearest_to(near_point, count=2)._items)
     assert r1 == r2 == r3, (
         f"{kind}: nearest_to not deterministic across repeated calls "
         f"on the same ordering ({r1} vs {r2} vs {r3})"
@@ -430,7 +485,7 @@ def test_point_family_laws(kind, cube_fem, live, tmp_path):
     # atoms keep their input positional order (sorted() is stable, ties
     # only broken by the explicit `i`).
     import math as _math
-    atoms_seq = tuple(allc)
+    atoms_seq = tuple(allc._items)
     coords = allc._coords_of(atoms_seq)
     by_key = sorted(
         range(len(atoms_seq)),
@@ -440,7 +495,7 @@ def test_point_family_laws(kind, cube_fem, live, tmp_path):
             i,
         ),
     )
-    full = list(allc.nearest_to(near_point, count=len(atoms_seq)))
+    full = list(allc.nearest_to(near_point, count=len(atoms_seq))._items)
     assert full == [atoms_seq[i] for i in by_key], (
         f"{kind}: nearest_to order is not the stable "
         f"(distance, lowest-position) sort the contract specifies"
@@ -473,7 +528,12 @@ def test_point_family_laws(kind, cube_fem, live, tmp_path):
         a - geom_other
 
     # ── cross-engine set-algebra is loud (same class, other engine) ─
-    foreign = type(a)(tuple(a), _engine=object())
+    # Build the foreign chain from the ATOMS (``_items``) — passing the
+    # pair-view tuple would seed it with ``(id, payload)`` tuples; the
+    # contract under test is the engine-identity guard, which fires
+    # before atoms are touched, but seeding with atoms keeps the chain
+    # well-formed.
+    foreign = type(a)(tuple(a._items), _engine=object())
     with pytest.raises(TypeError):
         a | foreign
 

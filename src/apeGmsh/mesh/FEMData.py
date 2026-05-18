@@ -285,7 +285,13 @@ class NodeComposite:
         cross-package edge (``tests/test_import_dag_polarity.py`` stays
         green with the baseline unchanged).
         """
-        from ._node_chain import NodeChain  # deferred — see plan §3 idiom
+        # selection-unification-v2 P2-I (§6.1 STOP-2): the host hook
+        # returns the v2 terminal ``MeshSelection`` (legacy ``NodeChain``
+        # left defined-but-unwired; P3 deletes it).  Same deferred-import
+        # idiom — ``_mesh_selection`` imports only the package-root leaf
+        # ``_kernel.chain`` at load, so no new eager cross-package edge
+        # (one declared downward BASELINE triple; tripwire stays green).
+        from ._mesh_selection import MeshSelection  # deferred — plan §3
 
         if ids is not None:
             atoms = [int(n) for n in ids]
@@ -307,7 +313,7 @@ class NodeComposite:
                     seed_ids, seed_coords, partition
                 )
             atoms = [int(n) for n in seed_ids]
-        return NodeChain(atoms, _engine=self)
+        return MeshSelection(atoms, _engine=self)
 
     def get(
         self,
@@ -923,7 +929,11 @@ class ElementComposite:
         cross-package edge (``tests/test_import_dag_polarity.py`` stays
         green with the baseline unchanged).
         """
-        from ._elem_chain import ElementChain  # deferred — see plan §3
+        # selection-unification-v2 P2-I (§6.1 STOP-2): the host hook
+        # returns the v2 terminal ``MeshSelection`` (legacy
+        # ``ElementChain`` left defined-but-unwired; P3 deletes it).
+        # Same deferred-import idiom; no new eager cross-package edge.
+        from ._mesh_selection import MeshSelection  # deferred — plan §3
 
         if ids is not None:
             atoms = [int(e) for e in ids]
@@ -961,7 +971,7 @@ class ElementComposite:
                     element_type=element_type, partition=partition,
                 ).ids
             ]
-        return ElementChain(atoms, _engine=self)
+        return MeshSelection(atoms, _engine=self)
 
     # ── Lookups ─────────────────────────────────────────────
 

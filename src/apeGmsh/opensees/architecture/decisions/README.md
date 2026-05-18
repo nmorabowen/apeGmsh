@@ -21,3 +21,4 @@ earlier one, write a new ADR that supersedes it; do not edit history.
 | [0010](0010-csys-for-frame-orientation.md) | Orientation fields for frame orientation (originally "csys") | Accepted |
 | [0011](0011-h5-as-fourth-emit-target.md) | HDF5 as a fourth emit target | Accepted |
 | [0013](0013-records-in-mesh-not-solvers.md) | Resolved records live in `apeGmsh.mesh.records`, not `apeGmsh.solvers` | Accepted |
+| [0015](0015-label-pg-separate-registries-kernel-leaf.md) | Tier-1 labels / Tier-2 physical groups are separate registries; `apeGmsh/_kernel` is a downward-only leaf | Accepted |

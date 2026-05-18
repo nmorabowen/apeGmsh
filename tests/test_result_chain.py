@@ -67,6 +67,19 @@ from apeGmsh.results._result_chain import (
     ResultChain,
     _ResultChainEngine,
 )
+# selection-unification-v2 P2-I (§6.1 STOP-2(c)): the results
+# ``.select()`` hooks now return the v2 terminal ``MeshSelection``
+# (legacy ``ResultChain`` left defined-but-unwired; P3 deletes it).
+# The host-return-type assertions below are BEHAVIOURAL (they then
+# exercise level / daisy-chain / spatial / set-algebra / the slab
+# read + parity, which must stay green), so they assert the new
+# type; the legacy structural-shape / engine tests keep asserting
+# the still-defined ``ResultChain`` / ``_ResultChainEngine``.  The
+# results terminal read is the **verbatim rename** ``.get`` →
+# ``.values`` on ``MeshSelection`` (R5 / the locked
+# ``test_result_chain_subcomposites`` fail-loud invariant); the
+# slab type + parity behaviour is unchanged.
+from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.results._slabs import ElementSlab, NodeSlab
 from apeGmsh.results.writers import NativeWriter
 
@@ -169,6 +182,16 @@ def _make_results_with_fem(tmp_path: Path, *, with_selection: bool = False):
 
 
 def _sids(seq) -> list[int]:
+    """Sorted ids from a chain or a plain id sequence.
+
+    selection-unification-v2 P2-I (§6.1 STOP-2(b)): the results host
+    now returns ``MeshSelection`` whose ``__iter__`` yields
+    ``(id, payload)`` pairs (the ratified HT8 design).  Set-algebra /
+    identity is defined on the ``_items`` atoms, which are *unchanged*
+    by the pair-view — so for a chain read ``_items``; a plain id
+    sequence (e.g. a slab's ``.ids``) iterates as bare ids."""
+    if isinstance(seq, SelectionChain):
+        return sorted(int(a) for a in seq._items)
     return sorted(int(x) for x in seq)
 
 
@@ -219,7 +242,7 @@ def test_engine_rejects_invalid_level(tmp_path):
 def test_node_select_returns_resultchain_node_level(tmp_path):
     r, _fem = _make_results_with_fem(tmp_path)
     sel = r.nodes.select(pg="TopRow")
-    assert isinstance(sel, ResultChain)
+    assert isinstance(sel, MeshSelection)      # P2-I: was ResultChain
     assert sel.FAMILY == "point"
     assert sel._level == "node"
     assert _sids(sel) == [3, 4]
@@ -232,7 +255,7 @@ def test_node_select_returns_resultchain_node_level(tmp_path):
 def test_element_select_returns_resultchain_element_level(tmp_path):
     r, _fem = _make_results_with_fem(tmp_path)
     sel = r.elements.select(pg="Beams")
-    assert isinstance(sel, ResultChain)
+    assert isinstance(sel, MeshSelection)      # P2-I: was ResultChain
     assert sel._level == "element"
     assert _sids(sel) == [10]
     assert _sids(r.elements.select()) == [10]
@@ -322,7 +345,7 @@ def test_node_chain_daisychains_each_verb_returns_resultchain(tmp_path):
     step2 = step1.in_box((-1, -1, -1), (2, 2, 2))
     step3 = step2.on_plane((0, 0, 0), (0, 0, 1), tol=1e-9)
     for s in (step1, step2, step3):
-        assert isinstance(s, ResultChain)
+        assert isinstance(s, MeshSelection)    # P2-I: was ResultChain
         assert s._level == "node"
     # full one-liner: z=0 plane keeps the 4 corner nodes (node 5 at z=5)
     chained = (r.nodes.select()
@@ -337,7 +360,7 @@ def test_element_chain_daisychains_on_centroid(tmp_path):
     chained = (r.elements.select()
                 .in_box((-1, -1, -1), (2, 2, 2))
                 .on_plane((0, 0, 0), (0, 0, 1), tol=1e-9))
-    assert isinstance(chained, ResultChain)
+    assert isinstance(chained, MeshSelection)  # P2-I: was ResultChain
     assert chained._level == "element"
     assert _sids(chained) == [10]
     # A plane that misses the centroid drops it.
@@ -403,10 +426,14 @@ def test_set_algebra_union_intersect_difference_symmetric(tmp_path):
     assert _sids(a - b) == [1]                 # difference
     assert _sids(a ^ b) == [1, 4, 5]           # symmetric difference
     assert len(a | a) == 3                     # idempotent (one law)
-    assert tuple(a.union(b)) == tuple(a | b)
-    assert tuple(a.difference(b)) == tuple(a - b)
+    # compare on the ATOMS (``_items``); P2-I
+    # ``MeshSelection.__iter__`` yields ``(id, payload)`` pairs
+    # (ndarray payload → ambiguous tuple ``==``), but set-algebra is
+    # defined on ``_items`` and is unaffected by the pair-view.
+    assert (a.union(b))._items == (a | b)._items
+    assert (a.difference(b))._items == (a - b)._items
     for s in (a | b, a & b, a - b, a ^ b):
-        assert isinstance(s, ResultChain)
+        assert isinstance(s, MeshSelection)    # P2-I: was ResultChain
 
 
 def test_cross_level_and_cross_engine_set_algebra_is_loud(tmp_path):
@@ -435,7 +462,7 @@ def test_node_terminal_get_is_nodeslab_and_parity(tmp_path):
     r, _fem = _make_results_with_fem(tmp_path)
     # select(pg=).get(component=) ≡ get(ids=<equiv>, component=)
     chained = r.nodes.select(pg="TopRow")
-    slab = chained.get(component="displacement_x")
+    slab = chained.values(component="displacement_x")  # P2-I: .get→.values
     assert isinstance(slab, NodeSlab)
     assert type(slab).__name__ == "NodeSlab"
 
@@ -449,7 +476,7 @@ def test_node_terminal_get_is_nodeslab_and_parity(tmp_path):
     # spatial daisy-chain BEFORE the terminal read
     spatial = (r.nodes.select()
                 .on_plane((0, 0, 0), (0, 0, 1), tol=1e-9)
-                .get(component="displacement_x"))
+                .values(component="displacement_x"))  # P2-I: .get→.values
     eq2 = r.nodes.get(ids=[1, 2, 3, 4], component="displacement_x")
     assert _sids(spatial.node_ids) == _sids(eq2.node_ids) == [1, 2, 3, 4]
 
@@ -457,7 +484,7 @@ def test_node_terminal_get_is_nodeslab_and_parity(tmp_path):
 def test_element_terminal_get_is_elementslab_and_parity(tmp_path):
     r, _fem = _make_results_with_fem(tmp_path)
     chained = r.elements.select(pg="Beams")
-    slab = chained.get(component="globalForce")
+    slab = chained.values(component="globalForce")  # P2-I: .get→.values
     assert isinstance(slab, ElementSlab)
     assert type(slab).__name__ == "ElementSlab"
 
@@ -468,19 +495,21 @@ def test_element_terminal_get_is_elementslab_and_parity(tmp_path):
     # centroid spatial filter then terminal read
     spatial = (r.elements.select()
                 .in_box((-1, -1, -1), (2, 2, 2))
-                .get(component="globalForce"))
+                .values(component="globalForce"))  # P2-I: .get→.values
     np.testing.assert_array_equal(spatial.values, equiv.values)
 
 
 def test_terminal_get_passes_time_and_stage(tmp_path):
     r, _fem = _make_results_with_fem(tmp_path)
     # time= forwarded to the existing reader path (single step → T=1).
-    slab = r.nodes.select(ids=[1]).get(component="displacement_x", time=0)
+    slab = r.nodes.select(ids=[1]).values(  # P2-I: .get→.values
+        component="displacement_x", time=0,
+    )
     equiv = r.nodes.get(ids=[1], component="displacement_x", time=0)
     assert slab.values.shape == equiv.values.shape == (1, 1)
     np.testing.assert_array_equal(slab.values, equiv.values)
     # explicit stage= also forwarded (the only stage here is "static").
-    slab2 = r.nodes.select(ids=[1]).get(
+    slab2 = r.nodes.select(ids=[1]).values(  # P2-I: .get→.values
         component="displacement_x", stage="static",
     )
     np.testing.assert_array_equal(

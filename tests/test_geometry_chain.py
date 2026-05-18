@@ -45,8 +45,16 @@ import pytest
 
 from apeGmsh import apeGmsh
 from apeGmsh._kernel.chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
-from apeGmsh.core._selection import GeometryChain, Selection
+from apeGmsh.core._selection import GeometryChain, EntitySelection, Selection
 from apeGmsh.mesh._node_chain import NodeChain
+# selection-unification-v2 P2-I (§6.1 STOP-2(c)): ``g.model.select(...)``
+# now returns the v2 terminal ``EntitySelection`` (legacy
+# ``GeometryChain`` left defined-but-unwired; P3 deletes it).  The
+# host-return-type assertions below are BEHAVIOURAL (they then exercise
+# len / daisy-chain / spatial / set-algebra / ``inclusive=``→TypeError
+# / ``.result()``→legacy ``Selection``, which must stay green), so they
+# assert the new type; the legacy structural-shape tests keep asserting
+# the still-defined ``GeometryChain``.
 
 
 # =====================================================================
@@ -123,13 +131,13 @@ def test_select_returns_geometrychain_seeded_by_tier_resolution(cube):
     g = cube
     # string -> label tier (Tier 1): "box" is a dim-3 volume label.
     vol = g.model.select("box")
-    assert isinstance(vol, GeometryChain)
+    assert isinstance(vol, EntitySelection)    # P2-I: was GeometryChain
     assert vol.FAMILY == "entity"
     assert sorted(tuple(vol)) == [(3, 1)]
 
     # string -> PG tier (Tier 2): "Faces" is the 6-face physical group.
     faces = g.model.select("Faces")
-    assert isinstance(faces, GeometryChain)
+    assert isinstance(faces, EntitySelection)  # P2-I: was GeometryChain
     assert len(faces) == 6
     assert {d for d, _ in faces} == {2}
 
@@ -157,7 +165,7 @@ def test_select_delegates_to_resolve_to_dimtags(monkeypatch):
         g.model.sync()
         monkeypatch.setattr(_h, "resolve_to_dimtags", _spy)
         ch = g.model.select("box", dim=2)
-        assert isinstance(ch, GeometryChain)
+        assert isinstance(ch, EntitySelection)  # P2-I: was GeometryChain
         assert seen["ref"] == "box"
         assert seen["default_dim"] == 2     # dim= forwarded as default_dim
     finally:
@@ -193,7 +201,7 @@ def test_chain_daisychains_and_each_verb_returns_geometrychain(cube):
     step2 = step1.in_box((-1, -1, -1), (2, 2, 2))
     step3 = step2.on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
     for s in (step1, step2, step3):
-        assert isinstance(s, GeometryChain)
+        assert isinstance(s, EntitySelection)  # P2-I: was GeometryChain
     # the full fluent one-liner composes to exactly the z=0 face
     chained = (g.model.select("Faces")
                  .in_box((-1, -1, -1), (2, 2, 2))
@@ -239,8 +247,8 @@ def test_in_box_uses_gmsh_brep_query_not_coordinate_halfopen(cube):
     assert set(tuple(nudged)) == set(tuple(z0)) and len(z0) == 1
 
     # The result still refines the chain (intersected with current
-    # atoms) and stays a GeometryChain.
-    assert isinstance(sub, GeometryChain)
+    # atoms) and stays the entity terminal type.
+    assert isinstance(sub, EntitySelection)    # P2-I: was GeometryChain
     assert set(tuple(sub)).issubset(set(tuple(faces)))
 
 
@@ -257,8 +265,8 @@ def test_in_box_inclusive_keyword_raises_typeerror(cube):
         faces.in_box((0, 0, 0), (1, 1, 1), something=1)
     # the positional form (no keyword) still works
     assert isinstance(
-        faces.in_box((-1, -1, -1), (2, 2, 2)), GeometryChain
-    )
+        faces.in_box((-1, -1, -1), (2, 2, 2)), EntitySelection
+    )                                          # P2-I: was GeometryChain
 
 
 def test_on_plane_in_sphere_nearest_where_entity_bbox_semantics(cube):
@@ -318,9 +326,9 @@ def test_set_algebra_union_intersect_difference_symmetric(cube):
     # named aliases match the operators
     assert tuple(bottom.union(left)) == tuple(bottom | left)
     assert tuple(bottom.difference(left)) == tuple(bottom - left)
-    # every set-algebra result is itself a GeometryChain (chainable)
+    # every set-algebra result is itself the entity terminal (chainable)
     for s in (bottom | left, bottom & left, bottom - left, bottom ^ left):
-        assert isinstance(s, GeometryChain)
+        assert isinstance(s, EntitySelection)  # P2-I: was GeometryChain
 
 
 def test_cross_type_set_algebra_is_loud(cube):
