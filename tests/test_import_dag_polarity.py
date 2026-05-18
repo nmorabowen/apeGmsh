@@ -28,11 +28,22 @@ import pathlib
 
 import apeGmsh
 
-PKGS = {"core", "mesh", "viz", "results"}
+# ``_kernel`` + ``fem`` are in scope so the tripwire can police the
+# selection-unification-v2 keystone edges *before* ``_kernel`` exists
+# (plan HT5/HT10).  ``apeGmsh.fem`` is leaf-pure, but other packages
+# eagerly import it; without ``fem`` here those edges were invisible
+# and a future ``_kernel<->*`` / ``*<->fem`` cycle could green-wash.
+PKGS = {"core", "mesh", "viz", "results", "_kernel", "fem"}
 
 # Frozen snapshot of every EAGER (module-level, non-TYPE_CHECKING)
 # cross-package import among PKGS, captured on the unification branch
 # baseline.  (src_pkg, dst_pkg, file-relative-to-apeGmsh/).
+#
+# The ``mesh/results -> fem`` triples below are pre-existing eager
+# edges that only became *visible* once ``fem`` entered ``PKGS``
+# (pure scope-widening; no ``core<->mesh`` edge changed).  ``_kernel``
+# contributes zero edges today — the package does not yet exist; the
+# guard is armed so it cannot grow a hidden one.
 BASELINE = {
     ("core", "mesh", "core/ConstraintsComposite.py"),
     ("core", "mesh", "core/LoadsComposite.py"),
@@ -42,6 +53,9 @@ BASELINE = {
     ("mesh", "core", "mesh/_load_resolver.py"),
     ("mesh", "core", "mesh/_mass_resolver.py"),
     ("mesh", "core", "mesh/records/__init__.py"),
+    ("mesh", "fem", "mesh/_mass_resolver.py"),
+    ("results", "fem", "results/_gauss_extrapolation.py"),
+    ("results", "fem", "results/_gauss_world_coords.py"),
 }
 
 _ROOT = pathlib.Path(apeGmsh.__file__).parent
