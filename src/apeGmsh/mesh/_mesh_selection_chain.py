@@ -64,7 +64,7 @@ no ``.save_as(name)``.  Naming/round-tripping a chained selection as a
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 import numpy as np
 
@@ -72,6 +72,24 @@ from .._chain import SelectionChain
 
 #: The two levels a ``MeshSelectionChain``'s atoms can live at.
 VALID_LEVELS = ("node", "element")
+
+
+class MeshSelectionResult(TypedDict, total=False):
+    """Shape of :meth:`MeshSelectionChain.result`.
+
+    Level-dependent (hence ``total=False``): the node level populates
+    ``tags`` + ``coords``; the element level populates ``element_ids``
+    + ``connectivity``.  This is the *exact* dict
+    ``MeshSelectionSet.get_nodes`` / ``get_elements`` return today — a
+    ``TypedDict`` is a plain ``dict`` at runtime, so the ratified
+    live-mesh terminal contract is byte-unchanged; the annotation only
+    gives the editor the key names.
+    """
+
+    tags: np.ndarray
+    coords: np.ndarray
+    element_ids: np.ndarray
+    connectivity: np.ndarray
 
 
 class _LiveMeshEngine:
@@ -306,10 +324,10 @@ class MeshSelectionChain(SelectionChain):
         """The selected live-mesh ids (node ids or element ids)."""
         return [int(a) for a in self._items]
 
-    def result(self) -> dict:
+    def result(self) -> MeshSelectionResult:
         return self._materialize()
 
-    def _materialize(self) -> dict:
+    def _materialize(self) -> MeshSelectionResult:
         """The selected live-mesh ids as the **same-shape** dict
         ``MeshSelectionSet.get_nodes`` / ``get_elements`` return today.
 
