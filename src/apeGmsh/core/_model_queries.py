@@ -566,8 +566,9 @@ class _Queries:
 
     def plane(self, *args, **kwargs) -> Plane:
         """
-        Construct a :class:`Plane` for use with ``select(on=...)`` /
-        ``select(crossing=...)`` (or any future API that accepts a plane).
+        Construct a :class:`Plane` for use with
+        ``m.model.select(...).crossing_plane(plane, mode=...)`` (or any
+        other API that accepts a plane spec).
 
         Forms accepted
         --------------
@@ -583,8 +584,10 @@ class _Queries:
         ::
 
             mid = m.model.queries.plane(z=2.5)
-            faces_cut = m.model.queries.select(faces, crossing=mid)
-            below     = m.model.queries.select(faces, not_crossing=mid)
+            faces_cut = m.model.select(faces, dim=2).crossing_plane(
+                mid, mode="crossing")
+            below     = m.model.select(faces, dim=2).crossing_plane(
+                mid, mode="not_crossing")
         """
         if args and not kwargs:
             if len(args) == 3:

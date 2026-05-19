@@ -319,7 +319,8 @@ def _read_named_groups(
 # ``node_coords`` and optional ``element_ids`` / ``connectivity``.
 # We give it its own subgroup ``/model/mesh_selection/`` so the
 # embedded FEMData round-trips post-mesh selections (created via
-# ``g.mesh_selection.add_nodes(...)`` / ``add_elements(...)``).
+# ``g.mesh_selection.select(...).save_as(name)`` or
+# ``g.mesh_selection.add(dim, ids, name=)``).
 
 
 def _write_mesh_selection(fem: "FEMData", model_group: "h5py.Group") -> None:

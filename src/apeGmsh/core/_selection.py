@@ -2,7 +2,9 @@
 Geometric selection primitives and the Selection result type.
 
 Users never import from this module directly — everything is accessed
-through ``m.model.queries.select()``.
+through ``m.model.select()``, which returns an
+:class:`EntitySelection`; its ``.result()`` terminal yields the
+:class:`Selection` payload defined here.
 """
 
 from __future__ import annotations
@@ -195,32 +197,30 @@ def _select_impl(dimtags: Iterable[DimTag], *, on=None, crossing=None,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Entity-family crossing/straddle hook — shared by GeometryChain AND
-# EntitySelection (selection-unification-v2 P2-G, HT9).
+# Entity-family crossing/straddle hook for EntitySelection
+# (selection-unification-v2 P2-G, HT9).
 #
-# This is the unified-idiom fold of the legacy
-# ``queries.select(on=/crossing=/not_on=/not_crossing=)`` +
-# ``queries.line`` surface.  It ports ``_select_impl``'s 8-bounding-box-
-# corner semantics **exactly** (``core/_selection.py`` :166-194 — the
-# byte-unchanged legacy engine, NOT modified by P2-G; P3 removes it):
+# This is the unified-idiom ``crossing_plane`` straddle.  It ports
+# ``_select_impl``'s 8-bounding-box-corner semantics **exactly**
+# (``core/_selection.py`` :166-194 — the in-module engine):
 #
-#   * ``spec`` is the legacy ``_parse_primitive`` grammar (dict→Plane,
-#     2 points→``Line`` [the legacy ``queries.line`` 2-point path],
-#     3 points→Plane, ``Plane``/``Line`` instance passthrough);
+#   * ``spec`` is the ``_parse_primitive`` grammar (dict→Plane,
+#     2 points→``Line``, 3 points→Plane, ``Plane``/``Line`` instance
+#     passthrough);
 #   * ``mode`` ∈ {on, crossing, not_on, not_crossing} is the exactly-
-#     one-of predicate the legacy 4 kwargs expressed;
+#     one-of straddle predicate;
 #   * per dimtag ``bb = gmsh.model.getBoundingBox(d, t)``;
 #     ``sd = primitive.signed_distances(bb)``;
 #     on  = ``bool(np.all(np.abs(sd) <= tol))``;
 #     crossing = ``bool(sd.min() < -tol and sd.max() > tol)``;
 #     ``not_*`` inverts (``hit ^ invert``);
-#   * ``tol`` default ``1e-6`` — byte-identical to the legacy default.
+#   * ``tol`` default ``1e-6``.
 #
 # It refines the chain (intersects with ``atoms``, preserving the
 # chain's insertion order — the chain-protocol contract), so the
-# returned tuple is exactly the legacy ``Selection`` membership set
-# restricted to (and ordered by) the chain's current atoms.  Defined in
-# THIS module, so it reuses the in-module ``Plane`` / ``Line`` /
+# returned tuple is exactly the ``Selection`` membership set restricted
+# to (and ordered by) the chain's current atoms.  Defined in THIS
+# module, so it reuses the in-module ``Plane`` / ``Line`` /
 # ``_bb_corners`` / ``_parse_primitive`` primitives and adds **no** new
 # import edge (the import-DAG-polarity BASELINE is unaffected).
 
@@ -228,18 +228,18 @@ _CROSSING_MODES = ("on", "crossing", "not_on", "not_crossing")
 
 
 def _crossing_impl(atoms: tuple, spec, *, tol: float, mode: str) -> tuple:
-    """Entity-family straddle filter (shared GeometryChain / EntitySelection).
+    """Entity-family straddle filter (the ``crossing_plane`` engine).
 
     Returns the subset of ``atoms`` (``(dim, tag)`` dimtags) that
     satisfies the ``mode`` predicate against ``spec``, preserving the
     chain's insertion order.  Semantics are byte-identical to
-    :func:`_select_impl` (the legacy ``queries.select`` engine).
+    :func:`_select_impl`.
     """
     if mode not in _CROSSING_MODES:
         raise ValueError(
             f"crossing_plane(mode={mode!r}) is invalid; expected one of "
-            f"{_CROSSING_MODES} (the legacy queries.select "
-            "on=/crossing=/not_on=/not_crossing= predicate set)."
+            f"{_CROSSING_MODES} (the on=/crossing=/not_on=/not_crossing= "
+            "straddle predicate set)."
         )
     t = float(tol)
     if t < 0:
@@ -350,7 +350,7 @@ def _require_dim(sel: "Selection", expected_dim: int, *, method: str) -> None:
             f"Selection.{method}() requires dim={expected_dim} entities, "
             f"but got {len(bad)} entity(ies) of other dims: {preview}\n"
             f"Either narrow your Selection first, e.g.\n"
-            f"    queries.select('your_target', dim={expected_dim}).{method}(...)\n"
+            f"    m.model.select('your_target', dim={expected_dim}).{method}(...)\n"
             f"or filter by dim before calling this method."
         )
 
@@ -435,8 +435,11 @@ def _order_clusters_by_global_axis(
 
 class Selection(list):
     """
-    A filtered list of ``(dim, tag)`` pairs returned by
-    ``m.model.queries.select()`` and the ``select_all_*`` entry points.
+    A filtered list of ``(dim, tag)`` pairs — the payload yielded by
+    the ``.result()`` terminal of an :class:`EntitySelection` (itself
+    returned by ``m.model.select(...)``).  **Retained by architecture**
+    as the entity-side terminal payload; it is not a legacy or
+    backward-compat type.
 
     A Selection is a ``list`` subclass, so it iterates as ``(dim, tag)``
     pairs and supports indexing.  It is also chainable — every method
@@ -488,7 +491,7 @@ class Selection(list):
     -------
     ::
 
-        surf = m.model.queries.select_all_surfaces()
+        surf = m.model.select(dim=2).result()
 
         # Lateral sides of an axis-aligned box — three equivalent forms:
         (surf.normal_along("x") | surf.normal_along("y")).to_physical("sides")
@@ -496,8 +499,8 @@ class Selection(list):
         surf.normal_along("x").union(surf.normal_along("y")).to_physical("sides")
 
         # Chain refine → consume
-        (m.model.queries
-            .select(curves, on={'z': 0})
+        (m.model.select(curves, dim=1).result()
+            .select(on={'z': 0})
             .select(on={'x': 0})
             .to_label("bottom_left_edge"))
     """
@@ -509,7 +512,8 @@ class Selection(list):
 
     def select(self, *, on=None, crossing=None, not_on=None, not_crossing=None,
                tol: float = 1e-6) -> "Selection":
-        """Filter this selection further.  Same arguments as ``queries.select()``."""
+        """Filter this selection further by position predicates
+        (``on`` / ``crossing`` / ``not_on`` / ``not_crossing``)."""
         return _select_impl(self, on=on, crossing=crossing,
                             not_on=not_on, not_crossing=not_crossing,
                             tol=tol, _queries=self._queries)
@@ -530,8 +534,8 @@ class Selection(list):
         -------
         ::
 
-            (m.model.queries
-                .select(curves, on={'x': 0})
+            (m.model.select(curves, dim=1).result()
+                .select(on={'x': 0})
                 .select(on={'y': 5})
                 .to_label('left_top_edge'))
 
@@ -542,7 +546,7 @@ class Selection(list):
             raise RuntimeError(
                 "Selection.to_label()/.to_physical() requires a Selection "
                 "bound to the model-queries engine — build it via "
-                "m.model.queries.select(...). This Selection has "
+                "m.model.select(...).result(). This Selection has "
                 "_queries=None (constructed standalone), so it has no "
                 "session to register the label/physical-group on."
             )
@@ -573,8 +577,8 @@ class Selection(list):
         -------
         ::
 
-            (m.model.queries
-                .select(faces, on={'z': 0})
+            (m.model.select(faces, dim=2).result()
+                .select(on={'z': 0})
                 .to_physical('Base'))
 
             g.constraints.fix('Base', dofs=[1, 2, 3])
@@ -583,7 +587,7 @@ class Selection(list):
             raise RuntimeError(
                 "Selection.to_label()/.to_physical() requires a Selection "
                 "bound to the model-queries engine — build it via "
-                "m.model.queries.select(...). This Selection has "
+                "m.model.select(...).result(). This Selection has "
                 "_queries=None (constructed standalone), so it has no "
                 "session to register the label/physical-group on."
             )
@@ -628,7 +632,7 @@ class Selection(list):
         -------
         ::
 
-            edges = m.model.queries.select("layer_1", dim=1)
+            edges = m.model.select("layer_1", dim=1).result()
             verticals = edges.parallel_to("z")
             obliques  = edges.parallel_to((1, 1, 0), angle_tol=2.0)
 
@@ -663,7 +667,7 @@ class Selection(list):
         -------
         ::
 
-            faces = m.model.queries.select("layer_1", dim=2)
+            faces = m.model.select("layer_1", dim=2).result()
             horizontals = faces.normal_along("z")
             verticals   = faces.normal_along("x").select(...)
         """
@@ -815,35 +819,29 @@ class Selection(list):
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # This is the **chain==terminal** entity-family type the
-# ``g.model.select(...)`` host hook returns from P2-I onward
+# ``g.model.select(...)`` host hook returns
 # (``docs/plans/selection-unification-v2.md`` §4/§5 R-v2-2/-3, §6 P2-I).
-# It is defined **beside** ``GeometryChain`` in this same module, so it
-# adds *no* new import edge (the import-DAG-polarity BASELINE is
-# unaffected — ``core/_selection.py`` already imports the package-root
-# leaf ``_kernel.chain``).
+# It is defined in this same module, so it adds *no* new import edge
+# (the import-DAG-polarity BASELINE is unaffected — ``core/_selection.py``
+# already imports the package-root leaf ``_kernel.chain``).
 #
-# ``EntitySelection`` subsumes **everything** ``GeometryChain`` does —
-# the entity-family spatial contract is byte-identical (it reuses the
-# same in-module ``Plane`` / ``Line`` / ``_bb_corners`` /
-# ``_parse_primitive`` primitives and the same gmsh-BRep / bbox hooks),
-# so P1-K-style *invisibility* holds: a chain built through the
-# repointed host behaves exactly like the legacy ``GeometryChain`` did
-# (proven by ``tests/test_p2i_parity.py``).  On top of that parity it
-# adds the v2 **direct terminals** so the chain *is* the terminal (no
-# ``.result()`` ceremony required):
+# The entity-family spatial contract reuses the same in-module
+# ``Plane`` / ``Line`` / ``_bb_corners`` / ``_parse_primitive``
+# primitives and the same gmsh-BRep / bbox hooks.  On top of the
+# composable verbs it adds the v2 **direct terminals** so the chain
+# *is* the terminal (no ``.result()`` ceremony required):
 #
 #   * ``.to_label(name)``   — Tier-1, ``_label:``-prefixed,
 #     boolean-op-stable (``session.labels.add`` per dim);
 #   * ``.to_physical(name)`` — Tier-2, raw gmsh PG
 #     (``session.physical.add`` per dim);
-#   * ``.to_dataframe()``   — NEW (no ``viz`` import; local mirror of
-#     ``viz/Selection.py``'s columns, gmsh bbox/mass + session label
+#   * ``.to_dataframe()``   — local mirror of ``viz/Selection.py``'s
+#     columns (no ``viz`` import; gmsh bbox/mass + session label
 #     reverse-map);
 #   * ``.result()`` / ``._materialize()`` — zero-cost identity alias to
-#     the **legacy** ``core/_selection.Selection`` (R-v2-2), so the
-#     documented ``.tags()`` / ``.to_label`` / ``.to_physical`` /
-#     ``.select(on=)`` callers keep working unchanged through the
-#     byte-unchanged legacy terminal.
+#     the ``core/_selection.Selection`` payload (R-v2-2), so
+#     ``.tags()`` / ``.to_label`` / ``.to_physical`` / ``.select(on=)``
+#     are all available on it.
 #
 # Tier-1 (``.to_label``) and Tier-2 (``.to_physical``) are **separate
 # registries that must never be merged** — ADR 0015.  A ``Clash``
@@ -861,13 +859,11 @@ class EntitySelection(SelectionChain):
     resolution to the existing, contract-locked geometry resolver —
     this class never re-implements tier logic.
 
-    Behaviourally identical to the legacy :class:`GeometryChain` for
-    every inherited verb / set-algebra / spatial hook (the
-    selection-unification-v2 P2-I invisibility contract); the only
-    *additions* are the v2 direct terminals
-    (``.to_label`` / ``.to_physical`` / ``.to_dataframe``) and the
-    ``.result()`` identity alias to the byte-unchanged legacy
-    :class:`Selection`.
+    Every inherited verb / set-algebra / spatial hook composes; the
+    direct terminals are ``.to_label`` / ``.to_physical`` /
+    ``.to_dataframe``, and ``.result()`` is a zero-cost identity alias
+    to the :class:`Selection` payload (retained by architecture as the
+    entity-side terminal type).
 
     Example
     -------
@@ -886,10 +882,9 @@ class EntitySelection(SelectionChain):
     def _coords_of(self, atoms: tuple) -> np.ndarray:
         """Bounding-box **centre** of each ``(dim, tag)`` entity.
 
-        Identical to :meth:`GeometryChain._coords_of` — entity-family
-        ``nearest_to`` / ``where`` operate on the bbox centre (a coarse
-        proxy; for exact geometric predicates use the legacy
-        ``on=``/``crossing=``).
+        Entity-family ``nearest_to`` / ``where`` operate on the bbox
+        centre (a coarse proxy; for exact geometric predicates use
+        ``.on_plane(...)`` / ``.crossing_plane(...)``).
         """
         if not atoms:
             return np.empty((0, 3), dtype=np.float64)
@@ -909,8 +904,7 @@ class EntitySelection(SelectionChain):
     def in_box(self, lo, hi, **kw) -> "EntitySelection":
         """Refine to entities whose BRep bounding box lies in ``[lo, hi]``.
 
-        Byte-identical semantics to :meth:`GeometryChain.in_box`:
-        delegates to ``gmsh.model.getEntitiesInBoundingBox`` (BRep
+        Delegates to ``gmsh.model.getEntitiesInBoundingBox`` (BRep
         CONTAINMENT, closed, ``Geometry.Tolerance`` ~1e-8 expanded).
         The point-family ``inclusive=`` half-open knob is inexpressible
         for the entity family and is rejected **loudly** (R3 / ADR
@@ -929,15 +923,14 @@ class EntitySelection(SelectionChain):
                 "bbox-intersect), which is inherently closed — the "
                 "half-open / 'inclusive=' knob is point-family only "
                 "and inexpressible here (selection-unification R3). "
-                "Drop the keyword; use queries.select(on=/crossing=) "
-                "for an exact geometric predicate."
+                "Drop the keyword; use .on_plane(...) / "
+                ".crossing_plane(...) for an exact geometric predicate."
             )
         return self._wrap(self._spatial_box(self._items, lo, hi))
 
     def _spatial_box(self, atoms: tuple, lo, hi) -> tuple:
         """gmsh BRep containment query, intersected with the chain.
 
-        Identical to :meth:`GeometryChain._spatial_box`:
         ``getEntitiesInBoundingBox`` queried per distinct dim present
         in ``atoms``, then intersected with the chain's current atoms
         so the verb *refines* (chain protocol), preserving insertion
@@ -958,8 +951,8 @@ class EntitySelection(SelectionChain):
 
     # ── in_sphere — entity bbox centre within radius ────────
     def _spatial_sphere(self, atoms: tuple, center, radius: float) -> tuple:
-        """Identical to :meth:`GeometryChain._spatial_sphere` — closed
-        ball on the entity bbox centre (entity-family proxy)."""
+        """Closed ball on the entity bbox centre (entity-family
+        proxy)."""
         r = float(radius)
         if r < 0:
             raise ValueError(f"radius must be non-negative, got {r}.")
@@ -972,10 +965,9 @@ class EntitySelection(SelectionChain):
 
     # ── on_plane — all 8 bbox corners within tol of plane ───
     def _spatial_plane(self, atoms: tuple, point, normal, tol: float) -> tuple:
-        """Identical to :meth:`GeometryChain._spatial_plane` — an
-        entity is kept iff *all 8* of its bbox corners are within
-        ``tol`` of the plane (the legacy ``select(on=...)`` test,
-        entity family, via the in-module :class:`Plane`)."""
+        """An entity is kept iff *all 8* of its bbox corners are within
+        ``tol`` of the plane (the ``on=`` straddle test, entity family,
+        via the in-module :class:`Plane`)."""
         t = float(tol)
         if t < 0:
             raise ValueError(f"tolerance must be non-negative, got {t}.")
@@ -997,25 +989,24 @@ class EntitySelection(SelectionChain):
     def _spatial_crossing(
         self, atoms: tuple, spec, *, tol: float, mode: str
     ) -> tuple:
-        """Identical to :meth:`GeometryChain._spatial_crossing` — the
-        HT9 fold.  Delegates to the module-level :func:`_crossing_impl`
-        (shared byte-for-byte with :class:`GeometryChain`): the legacy
-        ``queries.select(on=/crossing=/not_on=/not_crossing=)`` +
-        ``queries.line`` 8-bbox-corner semantics (:func:`_select_impl`,
-        byte-unchanged) through the unified chain surface, refining the
-        chain (intersected with ``atoms``, insertion order preserved).
+        """The ``crossing_plane`` straddle fold.  Delegates to the
+        module-level :func:`_crossing_impl`: the
+        ``on``/``crossing``/``not_on``/``not_crossing`` predicate over
+        the 8-bbox-corner signed-distance semantics
+        (:func:`_select_impl`) through the unified chain surface,
+        refining the chain (intersected with ``atoms``, insertion order
+        preserved).
         """
         return _crossing_impl(atoms, spec, tol=tol, mode=mode)
 
-    # ── session access (same wiring the legacy Selection wants) ──
+    # ── session access (same wiring Selection carries) ──
     def _session(self):
         """The owning session.
 
         ``_engine`` is the ``_Queries`` instance — exactly the object
-        the legacy :class:`Selection` carries as ``_queries=``.  The
-        session is ``_engine._model._parent`` (verified against the
-        byte-unchanged legacy ``Selection.to_label`` at
-        ``core/_selection.py``).
+        :class:`Selection` carries as ``_queries=``.  The session is
+        ``_engine._model._parent`` (the same wiring
+        ``Selection.to_label`` uses at ``core/_selection.py``).
         """
         if self._engine is None:
             raise RuntimeError(
@@ -1034,11 +1025,11 @@ class EntitySelection(SelectionChain):
 
         Per-dim ``session.labels.add(d, tags, name=name)`` — the
         boolean-op-stable, ``_label:``-prefixed registry (ADR 0015,
-        distinct from :meth:`to_physical`'s raw Tier-2 PG).  Replicates
-        the byte-unchanged legacy ``Selection.to_label`` exactly,
-        including its multi-dim warning suppression (re-using one name
-        across dims is the documented intent here, not a mistake).
-        Returns ``self`` for chaining.
+        distinct from :meth:`to_physical`'s raw Tier-2 PG).  Behaves
+        identically to ``Selection.to_label``, including its multi-dim
+        warning suppression (re-using one name across dims is the
+        documented intent here, not a mistake).  Returns ``self`` for
+        chaining.
         """
         import warnings
         session = self._session()
@@ -1060,8 +1051,8 @@ class EntitySelection(SelectionChain):
         Per-dim ``session.physical.add(d, tags, name=name)`` — the raw
         gmsh-PG registry (ADR 0015, distinct from :meth:`to_label`'s
         Tier-1 ``_label:`` registry; the two are never merged).
-        Replicates the byte-unchanged legacy ``Selection.to_physical``.
-        Returns ``self`` for chaining.
+        Behaves identically to ``Selection.to_physical``.  Returns
+        ``self`` for chaining.
         """
         session = self._session()
         for d in sorted({d for d, _ in self._items}):
@@ -1073,7 +1064,7 @@ class EntitySelection(SelectionChain):
     def to_dataframe(self):
         """Return a DataFrame ``dim, tag, kind, label, x, y, z, mass``.
 
-        **NEW** terminal — the legacy ``core/_selection.Selection`` has
+        Direct terminal — the ``core/_selection.Selection`` payload has
         no ``to_dataframe`` (only ``viz/Selection`` does).  Implemented
         **locally** (no ``viz`` import — keeps the import-DAG polarity
         intact, R8): ``kind`` from the session's
@@ -1123,17 +1114,17 @@ class EntitySelection(SelectionChain):
             columns=["dim", "tag", "kind", "label", "x", "y", "z", "mass"],
         )
 
-    # ── terminal — the LEGACY Selection, unchanged (R-v2-2) ──
+    # ── terminal — the Selection payload (R-v2-2) ──
     def result(self) -> "Selection":
         return self._materialize()
 
     def _materialize(self) -> "Selection":
-        """Identity alias → the byte-unchanged legacy :class:`Selection`.
+        """Identity alias → the :class:`Selection` payload.
 
         Zero-cost (1-line) alias (R-v2-2): ``_engine`` is the
-        ``_Queries`` instance so the returned legacy terminal is wired
-        exactly like ``queries.select(...)`` output — ``.tags()`` /
-        ``.to_label`` / ``.to_physical`` / ``.select(on=)`` keep
-        working through the byte-unchanged legacy class.
+        ``_Queries`` instance so the returned terminal is wired exactly
+        like ``m.model.select(...).result()`` — ``.tags()`` /
+        ``.to_label`` / ``.to_physical`` / ``.select(on=)`` are all
+        available on it.
         """
         return Selection(list(self._items), _queries=self._engine)

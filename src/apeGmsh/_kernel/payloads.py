@@ -55,12 +55,12 @@ class NodeResult:
     Iteration yields ``(node_id, xyz)`` pairs — clean one-liner for
     solver node emission::
 
-        for nid, xyz in fem.nodes.get(pg="Base"):
+        for nid, xyz in fem.nodes.select(pg="Base").result():
             ops.node(nid, *xyz)
 
     Array access is still available::
 
-        result = fem.nodes.get(pg="Base")
+        result = fem.nodes.select(pg="Base").result()
         result.ids       # ndarray(N,) object dtype — iterates as Python int
         result.coords    # ndarray(N, 3) float64
         result.to_dataframe()

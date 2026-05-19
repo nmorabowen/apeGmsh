@@ -22,12 +22,12 @@ Construction::
 
 Usage::
 
-    # Domain nodes — NodeResult iterates as (node_id, xyz) pairs
-    for nid, xyz in fem.nodes.get():
+    # Domain nodes — MeshSelection iterates as (node_id, xyz) pairs
+    for nid, xyz in fem.nodes.select():
         ops.node(nid, *xyz)
 
     # Supports
-    for nid in fem.nodes.get_ids(pg="Base"):
+    for nid in fem.nodes.select(pg="Base").ids:
         ops.fix(nid, 1, 1, 1)
 
     # Elements (iterate by type)
@@ -35,8 +35,9 @@ Usage::
         for eid, conn in group:
             ops.element(group.type_name, eid, *conn, mat_tag)
 
-    # Elements (resolve to flat arrays — single type)
-    ids, conn = fem.elements.get(label="col.web").resolve()
+    # Elements (resolve to flat arrays — single type; .resolve() on the
+    # GroupResult that .result() returns)
+    ids, conn = fem.elements.select(label="col.web").result().resolve()
 
     # Constraints
     K = fem.nodes.constraints.Kind
@@ -182,8 +183,9 @@ class NodeComposite:
 
     Primary interface::
 
-        fem.nodes.get(pg="Base")    → NodeResult (iterable of (id, xyz))
-        fem.nodes.get()             → all domain nodes
+        fem.nodes.select(pg="Base")   → MeshSelection (iterates (id, xyz));
+                                        .result() → NodeResult, .ids, .coords
+        fem.nodes.select()            → all domain nodes
 
     Sub-composites::
 
@@ -260,37 +262,39 @@ class NodeComposite:
     ):
         """Start a daisy-chainable node selection.
 
-        Returns a :class:`~apeGmsh.mesh._node_chain.NodeChain` (point
-        family) that composes fluently::
+        Returns a :class:`~apeGmsh.mesh._mesh_selection.MeshSelection`
+        (point family) that composes fluently and terminates with
+        ``.ids`` / ``.coords`` / ``.connectivity`` / ``.result()`` /
+        ``.resolve()``::
 
             fem.nodes.select(pg="Base").in_box(lo, hi).on_plane(p, n, tol=1e-6)
             fem.nodes.select(ids=a) | fem.nodes.select(ids=b)
 
-        Accepts the **same selectors** as :meth:`get`
-        (``target`` / ``pg`` / ``label`` / ``tag`` / ``partition`` /
-        ``dim``) plus ``ids=`` (explicit id list); no-arg seeds every
-        domain node.  Name resolution is **not** re-implemented here:
-        the ``target``/``pg``/``label``/``tag``/``dim`` seed is obtained
-        by delegating verbatim to :meth:`_resolve_nodes` — the exact
-        method :meth:`get` uses, preserving its documented node-path
-        ``KeyError``-only swallow asymmetry (FP-4) by reuse — and the
-        optional ``partition`` filter reuses :meth:`_intersect_partition`
-        exactly as :meth:`get` does, so ``select(...).result()`` is
-        id-for-id the same selection as ``get(...)`` (no extra scoping
+        Accepts ``target`` / ``pg`` / ``label`` / ``tag`` /
+        ``partition`` / ``dim`` plus ``ids=`` (explicit id list); no-arg
+        seeds every domain node.  Name resolution is **not**
+        re-implemented here: the
+        ``target``/``pg``/``label``/``tag``/``dim`` seed is obtained by
+        delegating verbatim to :meth:`_resolve_nodes`, preserving its
+        documented node-path ``KeyError``-only swallow asymmetry (FP-4)
+        by reuse — and the optional ``partition`` filter reuses
+        :meth:`_intersect_partition`, so the resolved id set is exactly
+        what the locked resolution contract returns (no extra scoping
         or boundary walk).
 
-        ``NodeChain`` is imported **deferred** (mirrors
-        ``mesh/_mesh_structured.py``): ``_node_chain`` imports only the
-        package-root leaf ``apeGmsh._chain``, so this adds no eager
-        cross-package edge (``tests/test_import_dag_polarity.py`` stays
-        green with the baseline unchanged).
+        ``MeshSelection`` is imported **deferred** (mirrors
+        ``mesh/_mesh_structured.py``): ``_mesh_selection`` imports only
+        the package-root leaf ``apeGmsh._kernel.chain`` at load, so this
+        adds no eager cross-package edge
+        (``tests/test_import_dag_polarity.py`` stays green with the
+        baseline unchanged).
         """
-        # selection-unification-v2 P2-I (§6.1 STOP-2): the host hook
-        # returns the v2 terminal ``MeshSelection`` (legacy ``NodeChain``
-        # left defined-but-unwired; P3 deletes it).  Same deferred-import
-        # idiom — ``_mesh_selection`` imports only the package-root leaf
-        # ``_kernel.chain`` at load, so no new eager cross-package edge
-        # (one declared downward BASELINE triple; tripwire stays green).
+        # selection-unification-v2: the host hook returns the v2
+        # terminal ``MeshSelection`` (the point-family chain==terminal).
+        # Same deferred-import idiom — ``_mesh_selection`` imports only
+        # the package-root leaf ``_kernel.chain`` at load, so no new
+        # eager cross-package edge (one declared downward BASELINE
+        # triple; tripwire stays green).
         from ._mesh_selection import MeshSelection  # deferred — plan §3
 
         if ids is not None:
@@ -522,7 +526,7 @@ class ElementComposite:
 
     Selection API::
 
-        result = fem.elements.get(label="col.web")
+        result = fem.elements.select(label="col.web").result()
         ids, conn = result.resolve()           # single-type
         ids, conn = result.resolve(element_type='tet4')  # pick one
 
@@ -801,36 +805,36 @@ class ElementComposite:
     ):
         """Start a daisy-chainable element selection.
 
-        Returns an :class:`~apeGmsh.mesh._elem_chain.ElementChain`
+        Returns a :class:`~apeGmsh.mesh._mesh_selection.MeshSelection`
         (point family — atoms are element ids, spatial verbs operate on
-        element centroids) that composes fluently::
+        element centroids) that composes fluently and terminates with
+        ``.ids`` / ``.coords`` / ``.connectivity`` / ``.groups()`` /
+        ``.result()`` / ``.resolve()``::
 
             fem.elements.select(pg="Body").in_box(lo, hi).on_plane(p, n, tol=1e-6)
             fem.elements.select(ids=a) | fem.elements.select(ids=b)
 
-        Accepts the **same selectors** as :meth:`get`
-        (``target`` / ``pg`` / ``label`` / ``tag`` / ``dim`` /
-        ``element_type`` / ``partition``) plus ``ids=`` (explicit id
+        Accepts ``target`` / ``pg`` / ``label`` / ``tag`` / ``dim`` /
+        ``element_type`` / ``partition`` plus ``ids=`` (explicit id
         list); no-arg seeds every element.  Name resolution is **not**
         re-implemented here: the ``target``/``pg``/``label``/``tag``
         seed is obtained by delegating verbatim to
-        :meth:`_resolve_elem_ids` — the exact method :meth:`get` uses,
-        preserving its documented element-path ``(KeyError, ValueError)``
-        swallow (FP-4) by reuse.  The auxiliary
-        ``dim``/``element_type``/``partition`` filters are applied by
-        reusing :meth:`get` verbatim (no filter logic re-implemented),
-        so ``select(...).result()`` is id-for-id the same selection as
-        ``get(...)`` / ``resolve(...)``.
+        :meth:`_resolve_elem_ids`, preserving its documented
+        element-path ``(KeyError, ValueError)`` swallow (FP-4) by
+        reuse.  The auxiliary ``dim``/``element_type``/``partition``
+        filters reuse the shared :meth:`_filtered_groups` helper (no
+        filter logic re-implemented), so the resolved selection is
+        exactly what the locked resolution contract returns.
 
-        ``ElementChain`` is imported **deferred** (mirrors
-        ``mesh/_mesh_structured.py``): ``_elem_chain`` imports only the
-        package-root leaf ``apeGmsh._chain``, so this adds no eager
-        cross-package edge (``tests/test_import_dag_polarity.py`` stays
-        green with the baseline unchanged).
+        ``MeshSelection`` is imported **deferred** (mirrors
+        ``mesh/_mesh_structured.py``): ``_mesh_selection`` imports only
+        the package-root leaf ``apeGmsh._kernel.chain`` at load, so this
+        adds no eager cross-package edge
+        (``tests/test_import_dag_polarity.py`` stays green with the
+        baseline unchanged).
         """
-        # selection-unification-v2 P2-I (§6.1 STOP-2): the host hook
-        # returns the v2 terminal ``MeshSelection`` (legacy
-        # ``ElementChain`` left defined-but-unwired; P3 deletes it).
+        # selection-unification-v2: the host hook returns the v2
+        # terminal ``MeshSelection`` (the point-family chain==terminal).
         # Same deferred-import idiom; no new eager cross-package edge.
         from ._mesh_selection import MeshSelection  # deferred — plan §3
 
@@ -1127,13 +1131,13 @@ class FEMData:
         self.mesh_selection = mesh_selection
         self.inspect  = InspectComposite(self)
         # Wire the sibling NodeComposite onto the ElementComposite so
-        # ElementChain (fem.elements.select(...)) can compute element
-        # centroids in-memory (no live Gmsh session needed — works for
+        # fem.elements.select(...) can compute element centroids
+        # in-memory (no live Gmsh session needed — works for
         # import-origin FEMData too). Every construction path funnels
         # through this __init__, so one wiring line covers from_gmsh /
         # from_msh / from_h5 / from_native / from_mpco / direct. The
         # attribute name is the contract shared with
-        # mesh/_elem_chain.NODES_REF_ATTR.
+        # mesh/_mesh_selection.NODES_REF_ATTR.
         elements._apegmsh_nodes_ref = nodes
 
     @property

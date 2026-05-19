@@ -22,3 +22,4 @@ earlier one, write a new ADR that supersedes it; do not edit history.
 | [0011](0011-h5-as-fourth-emit-target.md) | HDF5 as a fourth emit target | Accepted |
 | [0013](0013-records-in-mesh-not-solvers.md) | Resolved records live in `apeGmsh.mesh.records`, not `apeGmsh.solvers` | Accepted |
 | [0015](0015-label-pg-separate-registries-kernel-leaf.md) | Tier-1 labels / Tier-2 physical groups are separate registries; `apeGmsh/_kernel` is a downward-only leaf | Accepted |
+| [0016](0016-selection-unification-v2-complete.md) | selection-unification-v2 complete: legacy surface removed, two terminals on one spatial kernel, two ratified capability gaps | Accepted (supersedes the P2-I-transient framing of 0015) |

@@ -166,16 +166,17 @@ intersects.
 
 > [!note] Fluent alternative: `g.model.select(...).in_box(...)`
 > For daisy-chainable entity selection, `g.model.select()` returns the
-> unified `GeometryChain` (entity family) whose `.in_box / .in_sphere /
-> .on_plane / .nearest_to / .where` verbs compose and support set
-> algebra (`| & - ^`). Its `.in_box` delegates to
+> unified `EntitySelection` (entity family) whose `.in_box / .in_sphere
+> / .on_plane / .crossing_plane / .nearest_to / .where` verbs compose
+> and support set algebra (`| & - ^`). Its `.in_box` delegates to
 > `getEntitiesInBoundingBox` (BRep bbox-**containment**, closed; the
 > point-family half-open / `inclusive=` knob does **not** exist here
-> and passing it raises `TypeError`). This is **additive** — every
-> query method on this page, and the legacy
-> `g.model.queries.select(on=/crossing=)` predicate selector, are
-> unchanged and still the right tool for exact geometric predicates.
-> See [Selection in apeGmsh](guide_selection.md) §0 and the maintainer
+> and passing it raises `TypeError`). For an exact geometric predicate
+> use `.on_plane(...)` / `.crossing_plane(spec, mode=...)`; the former
+> `g.model.queries.select(on=/crossing=)` predicate selector has been
+> **removed** (its behaviour is folded into those verbs). Every other
+> query method on this page is unchanged. See
+> [Selection in apeGmsh](guide_selection.md) §0 and the maintainer
 > page [The Selection Chain](guide_selection_chain.md).
 
 

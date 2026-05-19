@@ -31,20 +31,22 @@ transforms, io, queries.
 
 ### Fluent selection — `g.model.select()`
 
-`g.model.select(...)` is the geometry entry of the unified,
-daisy-chainable [selection idiom](selection.md). It is **additive** —
-`g.model.queries.select(...)` (the `on=`/`crossing=` predicate
-selector documented below) and `g.model.selection.select_*` are
-unchanged. `select()` returns a
-[`GeometryChain`][apeGmsh.core._selection.GeometryChain] (entity
-family); `.result()` yields the same legacy `Selection`, so
-`.to_label()` / `.to_physical()` / `.tags()` keep working.
+`g.model.select(...)` is the **single** entity-selection surface and
+the geometry entry of the unified, daisy-chainable
+[selection idiom](selection.md). The former
+`g.model.queries.select(...)` predicate selector and the former
+`g.model.selection.select_*` entity composite have been **removed**;
+their behaviour is folded into the verbs below. `select()` returns an
+[`EntitySelection`][apeGmsh.core._selection.EntitySelection] (entity
+family) with direct terminals `.to_label()` / `.to_physical()` /
+`.to_dataframe()`; `.result()` is a zero-cost identity alias yielding
+the [`Selection`][apeGmsh.core._selection.Selection] payload (retained
+by architecture as the entity-side terminal type).
 
 ```python
 (g.model.select("Faces")                          # tiered name resolve
     .in_box((-0.1, -0.1, -0.1), (1.1, 1.1, 1.1))  # gmsh BRep containment
     .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
-    .result()
     .to_physical("Base"))
 ```
 
@@ -55,18 +57,23 @@ the point-vs-entity family contract.
 
 ### Geometric predicates — cheat sheet
 
-The full set of filters available on `queries.select(...)` and `Selection`:
+The straddle predicates are reached two ways: as the
+`.crossing_plane(spec, *, mode=)` verb on the
+[`EntitySelection`][apeGmsh.core._selection.EntitySelection] chain, or
+as the `.select(on=/crossing=/not_on=/not_crossing=)` refinement method
+on the [`Selection`][apeGmsh.core._selection.Selection] payload (after
+`.result()`):
 
 | Predicate | Where | Dim | Example | Keeps entities that… |
 |---|---|---|---|---|
-| `on=` | kwarg on `select()` | any | `on={"z": 0}` | lie **entirely on** the plane |
-| `crossing=` | kwarg on `select()` | any | `crossing={"z": 0}` | **straddle** the plane |
-| `not_on=` | kwarg on `select()` | any | `not_on={"z": 0}` | are **not entirely on** the plane |
-| `not_crossing=` | kwarg on `select()` | any | `not_crossing={"z": 0}` | lie **entirely on one side** |
+| `mode="on"` / `on=` | `.crossing_plane()` verb / `.select()` kwarg | any | `on={"z": 0}` | lie **entirely on** the plane |
+| `mode="crossing"` / `crossing=` | `.crossing_plane()` verb / `.select()` kwarg | any | `crossing={"z": 0}` | **straddle** the plane |
+| `mode="not_on"` / `not_on=` | `.crossing_plane()` verb / `.select()` kwarg | any | `not_on={"z": 0}` | are **not entirely on** the plane |
+| `mode="not_crossing"` / `not_crossing=` | `.crossing_plane()` verb / `.select()` kwarg | any | `not_crossing={"z": 0}` | lie **entirely on one side** |
 | `.parallel_to(...)` | method on `Selection` | 1 (curves) | `edges.parallel_to("z")` | are curves whose chord direction is **parallel** to it |
 | `.normal_along(...)` | method on `Selection` | 2 (surfaces) | `faces.normal_along("z")` | are surfaces whose **normal** is along it |
 
-#### Primitive formats accepted by `on=` / `crossing=` / `not_on=` / `not_crossing=`
+#### Primitive (plane / line) spec formats
 
 | Form | Meaning |
 |---|---|
@@ -74,7 +81,6 @@ The full set of filters available on `queries.select(...)` and `Selection`:
 | `[(x1,y1,z1), (x2,y2,z2)]` | Infinite line through 2 points (for curves in 2-D) |
 | `[(x1,y1,z1), (x2,y2,z2), (x3,y3,z3)]` | Infinite plane through 3 points (for surfaces / volumes) |
 | `m.model.queries.plane(...)` | `Plane` object — axis-aligned, 3-point, or `normal=`/`through=` |
-| `m.model.queries.line(p1, p2)` | `Line` object — explicit 2-point construction |
 
 #### Direction formats accepted by `.parallel_to(...)` / `.normal_along(...)`
 
@@ -84,35 +90,32 @@ The full set of filters available on `queries.select(...)` and `Selection`:
 | `(1, 0, 0)` / `(1, 1, 0)` | Any non-zero 3-vector (normalized internally) |
 | `angle_tol=2.0` | Tolerance in **degrees**; default `1.0`. Anti-parallel counts as parallel. |
 
-#### Entry-point methods on `queries` (build a Selection from scratch)
+#### Seeding a selection
 
-| Method | Returns |
+| Call | Returns |
 |---|---|
-| `select_all()` | every entity, all dims |
-| `select_all_points()` | dim=0 |
-| `select_all_curves()` | dim=1 |
-| `select_all_surfaces()` | dim=2 |
-| `select_all_volumes()` | dim=3 |
-| `select(name_or_dimtags, dim=N)` | by PG / label name, or from an explicit set |
+| `g.model.select(dim=N)` | every entity at dimension `N` (point=0, curve=1, surface=2, volume=3) |
+| `g.model.select(name_or_dimtags, dim=N)` | by PG / label / part name, or from an explicit `(dim, tag)` set |
 
-### Selection — result type for `select()`
+### Selection — `.result()` payload of `select()`
 
-`select()` returns a `Selection` — a chainable list of `(dim, tag)` pairs.
-No import is needed; you receive one whenever you call `select()`.
+`g.model.select(...)` returns an `EntitySelection`; its `.result()`
+yields a `Selection` — a chainable list of `(dim, tag)` pairs. No
+import is needed. The `Selection` payload still carries the position
+predicates (`.select(on=/crossing=/not_on=/not_crossing=, tol=)`),
+direction filters, and set-algebra.
 
 ```python
-curves = m.model.queries.boundary(surf, oriented=False)
+curves = m.model.queries.boundary(surf, oriented=False)  # -> Selection
 
 # axis-aligned plane
-bottom = m.model.queries.select(curves, on={'y': 0})
+bottom = curves.select(on={'y': 0})
 
 # 2-point line
-mid    = m.model.queries.select(curves, crossing=[(0,5,0),(5,5,0)])
+mid    = curves.select(crossing=[(0,5,0),(5,5,0)])
 
 # chain to narrow further
-left_bottom = (m.model.queries
-    .select(curves, on={'y': 0})
-    .select(on={'x': 0}))
+left_bottom = curves.select(on={'y': 0}).select(on={'x': 0})
 
 # extract bare tags for downstream calls
 m.mesh.structured.set_transfinite_curve(bottom.tags(), n=11)
@@ -120,44 +123,39 @@ m.mesh.structured.set_transfinite_curve(bottom.tags(), n=11)
 
 #### Starting from every entity of a dimension
 
-When parsing an imported `.geo` / STEP file with no labels yet, use the
-`select_all_*` shortcuts as your starting point:
+When parsing an imported `.geo` / STEP file with no labels yet, seed
+with `g.model.select(dim=N)` (no target):
 
 ```python
-# Every volume in the model, as a chainable Selection
-m.model.queries.select_all_volumes().to_physical("solids")
+# Every volume in the model
+g.model.select(dim=3).to_physical("solids")
 
 # Volumes the plane z = -15 slices through
-(m.model.queries
-    .select_all_volumes()
-    .select(crossing={"z": -15})
+(g.model.select(dim=3)
+    .crossing_plane({"z": -15}, mode="crossing")
     .to_physical("crossers"))
 
 # The floor (surfaces lying on z = 0)
-(m.model.queries
-    .select_all_surfaces()
-    .select(on={"z": 0})
+(g.model.select(dim=2)
+    .crossing_plane({"z": 0}, mode="on")
     .to_physical("base"))
 ```
 
-Symmetric helpers exist for each dimension:
-`select_all_points()`, `select_all_curves()`, `select_all_surfaces()`,
-`select_all_volumes()`. Use `select_all()` (no args) to get **every**
-entity across all dimensions.
+`dim=0` points, `dim=1` curves, `dim=2` surfaces, `dim=3` volumes.
 
 #### Direction-based filters — `parallel_to` and `normal_along`
 
-For dim-restricted filtering by *direction* (not position), Selection
-offers two methods:
+For dim-restricted filtering by *direction* (not position), the
+`Selection` payload offers two methods:
 
 ```python
 # Curves: keep only edges whose chord is along a direction
-edges = m.model.queries.select("box", dim=1)
+edges = g.model.select("box", dim=1).result()
 verticals = edges.parallel_to("z")                    # axis alias
 diagonals = edges.parallel_to((1, 1, 0), angle_tol=2) # arbitrary vector
 
 # Surfaces: keep only faces whose normal is along a direction
-faces = m.model.queries.select("box", dim=2)
+faces = g.model.select("box", dim=2).result()
 horizontals = faces.normal_along("z")
 ```
 
@@ -167,12 +165,11 @@ Both accept axis aliases (`"x"` / `"y"` / `"z"`) or any non-zero 3-vector
 raises if the Selection contains non-curve entities, `normal_along` raises
 for non-surface entities — with a fix-it suggestion in the error.
 
-They chain with the existing position predicates:
+They chain with the position predicates:
 
 ```python
 # Vertical edges on the x = 0 wall
-(m.model.queries
-    .select("box", dim=1)
+(g.model.select("box", dim=1).result()
     .parallel_to("z")
     .select(on={"x": 0}))
 ```
@@ -196,7 +193,7 @@ variable).
 | `a - b` | `a.difference(b)` | in `a`, not in `b` | `lateral = all.difference(horizontal)` |
 
 ```python
-surf = m.model.queries.select_all_surfaces()
+surf = g.model.select(dim=2).result()
 
 # Three equivalent ways to grab the lateral sides of an axis-aligned box:
 (surf.normal_along("x") | surf.normal_along("y")).to_physical("sides")
@@ -218,12 +215,12 @@ twice.
 
 #### Resolve-only `select(...)` — no predicate required
 
-`queries.select("name", dim=N)` with **no** geometric predicate returns
-the entities under that name as a chainable Selection — useful as an
+`g.model.select("name", dim=N)` with **no** spatial verb returns
+the entities under that name as a chainable selection — useful as an
 entry point into the method-style filters:
 
 ```python
-m.model.queries.select("box", dim=1).parallel_to("z").to_physical("verticals")
+g.model.select("box", dim=1).result().parallel_to("z").to_physical("verticals")
 ```
 
 ::: apeGmsh.core._selection.Selection

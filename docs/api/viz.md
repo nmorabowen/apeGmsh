@@ -7,11 +7,14 @@ export.
 
 ::: apeGmsh.viz.Plot.Plot
 
-## Selection
+## Selection — viewer pick-result
+
+The frozen `DimTag` snapshot exposed by an interactive viewer's
+`.selection` property (`g.model.viewer()` / `g.mesh.viewer()`). For
+programmatic entity selection use `g.model.select(...)` (see
+[Selection](selection.md)).
 
 ::: apeGmsh.viz.Selection.Selection
-
-::: apeGmsh.viz.Selection.SelectionComposite
 
 ## `g.inspect`
 

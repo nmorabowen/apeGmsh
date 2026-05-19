@@ -121,7 +121,7 @@ class _Structured:
 
         Pass a Selection's tags to constrain many curves at once::
 
-            edges = m.model.queries.select("box", dim=1)
+            edges = m.model.select("box", dim=1).result()
             m.mesh.structured.set_transfinite_curve(
                 edges.parallel_to("z").tags(),
                 n_nodes=21,
@@ -201,7 +201,7 @@ class _Structured:
 
         Apply to every horizontal face of a layer::
 
-            faces = m.model.queries.select("layer_1", dim=2)
+            faces = m.model.select("layer_1", dim=2).result()
             m.mesh.structured.set_transfinite_surface(
                 faces.normal_along("z").tags(),
             )
@@ -420,7 +420,7 @@ class _Structured:
 
         Per-axis control — use the lower-level methods instead::
 
-            edges = m.model.queries.select("box", dim=1)
+            edges = m.model.select("box", dim=1).result()
             m.mesh.structured.set_transfinite_curve(
                 edges.parallel_to("x").tags(), n_nodes=11)
             m.mesh.structured.set_transfinite_curve(

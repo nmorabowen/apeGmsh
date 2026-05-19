@@ -207,7 +207,9 @@ These methods remain flat on `g.model`:
 - `g.model.viewer(fem=...)`
 - `g.model.gui()`
 - `g.model.launch_picker()`
-- `g.model.selection` (the entity selection sub-composite)
+- `g.model.select(...)` — fluent entity selection (the
+  `g.model.selection` sub-composite was later removed by
+  selection-unification v2; see §6a)
 
 And the existing `g.parts`, `g.physical`, `g.constraints`, `g.loads`,
 `g.mesh_selection` composites are unchanged in location.
@@ -691,13 +693,11 @@ parts. The auto-mapping collapsed this richness.
 
 ### Mesh selection parameter alias
 
-```diff
- g.mesh_selection.add_nodes(
--    nearest_to=(1.0, 0.5, 0.0),     # deprecated alias
-+    closest_to=(1.0, 0.5, 0.0),
-     count=3,
- )
-```
+The v1.0-era `nearest_to`→`closest_to` alias applied to
+`g.mesh_selection.add_nodes` / `add_elements`. Those spatial
+registrars were **removed entirely** by selection-unification v2
+(§6a) — use `g.mesh_selection.select(...).nearest_to(...)` instead;
+there is no `add_nodes` to pass either keyword to.
 
 ### Convenience delegates on the session
 
@@ -711,16 +711,44 @@ parts. The auto-mapping collapsed this richness.
 
 ---
 
-## 6a. Selection-unification behavioural changes (post-v1.0)
+## 6a. Selection-unification v2 — full removal (BREAKING, post-v1.0)
 
-The selection-unification work added a new fluent `.select()` idiom
-**additively** — no existing selection method was renamed or removed,
-and there is nothing to find/replace for it. The behavioural changes
-you must know about: one breaking box default (S2), and a fail-loud
-end-state on three formerly-silent paths (S5) that you may now hit at
-runtime. Only one of the three S5 paths (the loads/masses `__ms__`
-consumer) is a behavior change landing *with* this release; the other
-two were already loud / merged ahead of it (attributed below).
+Selection-unification v2 collapsed every selection surface onto a
+**single fluent idiom** and **hard-removed** the legacy surface
+(no shim, no deprecation window). The fluent `.select()` family is now
+the only way to select; the old entry points raise `AttributeError` /
+`ImportError`. Migration table:
+
+| Removed | Replacement |
+|---|---|
+| `g.model.queries.select(on=/crossing=/not_on=/not_crossing=)`, `g.model.queries.line(...)` | `g.model.select(target, dim=)` → `EntitySelection`; straddle via `.crossing_plane(spec, mode=)` or `.result().select(on=...)` |
+| `g.model.queries.select_all*()` | `g.model.select(dim=N)` (no target) |
+| `g.model.selection` / `g.model.selection.select_*` (`SelectionComposite`) | `g.model.select(...)` (see capability gap below) |
+| `fem.nodes.get/get_ids/get_coords`, `fem.elements.get/get_ids/get_coords/resolve` | `fem.nodes.select(...)` / `fem.elements.select(...)` → `MeshSelection`; terminals `.ids` / `.coords` / `.connectivity` / `.groups()` / `.result()` / `.resolve()` |
+| `g.mesh_selection.add_nodes` / `add_elements` (spatial registrars) | `g.mesh_selection.select(...).save_as(name)` (live engine); `g.mesh_selection.add(dim, ids, name=)` / `from_physical(...)` retained for explicit ids. `filter_set` / `sort_set` / `union` / `intersection` / `difference` are **retained**. |
+| `results.<level>.select(...).get(component=)` chain terminal; the chain `.values()` | `results.<level>.select(...).values(component=)` → forwards to the **retained** typed reader `results.<sub>.get(component=, ids=, pg=, label=, selection=)` |
+| package exports of `core._selection.Selection` / `viz.Selection` | the **classes are RETAINED** by architecture (`.result()` payload / viewer pick-result type) — only the exports were dropped; reach them via `g.model.select(...).result()` / `viewer.selection` |
+
+**Two capability gaps with no v2 successor** (document, do not paper
+over):
+
+- `g.mesh_selection.from_geometric(...)` + `viz.Selection.to_mesh_*`
+  (the "geometric entity selection → named mesh-selection" path) —
+  both ends were removed; there is no v2 replacement.
+- The `SelectionComposite.select_*` rich filter grammar
+  (`labels=` fnmatch, `kinds=`, `length/area/volume_range=`,
+  `predicate=fn`, `exclude_tags=`, `physical=`, `at_point=`) —
+  `EntitySelection` has only spatial verbs + set-ops +
+  `to_label/to_physical/to_dataframe`. The retained
+  `viz.Selection.filter()` carries that grammar but is **viewer-pick
+  only**, not a `g.model.select` migration path.
+
+The other behavioural changes you must know about: one breaking box
+default (S2), and a fail-loud end-state on three formerly-silent
+paths (S5) that you may now hit at runtime. Only one of the three S5
+paths (the loads/masses `__ms__` consumer) is a behavior change
+landing *with* the v1.0 release; the other two were already loud /
+merged ahead of it (attributed below).
 
 ### S2 — `g.mesh_selection` box default: closed → half-open (BREAKING)
 
@@ -732,23 +760,17 @@ closed-closed. A coordinate exactly equal to an upper bound is now
 
 ```diff
  # A node exactly on the z = 10 upper face:
--g.mesh_selection.add_nodes(in_box=(-5,-5,0, 5,5,10), name="z")  # INCLUDED it
-+g.mesh_selection.add_nodes(in_box=(-5,-5,0, 5,5,10), name="z")  # now EXCLUDES it
-
- # Restore the old closed-closed behaviour explicitly:
-+g.mesh_selection.add_nodes(in_box=(-5,-5,0, 5,5,10),
-+                           inclusive=True, name="z")
+-g.mesh_selection.select().in_box((-5,-5,0), (5,5,10)).save_as("z")  # half-open: EXCLUDES it
++g.mesh_selection.select().in_box((-5,-5,0), (5,5,10),
++                                 inclusive=True).save_as("z")        # closed: INCLUDES it
 ```
 
-`inclusive=True` is accepted by `add_nodes`, `add_elements`, and
-`filter_set` and restores the pre-S2 closed upper bound. If you relied
-on a tight box capturing on-face nodes, either pad the box by a small
-ε or pass `inclusive=True`. `results.*.in_box` is **unchanged** (it
-was already half-open) — this only reconciles the mesh side to match.
-
-The new `g.mesh_selection.select(...).in_box(lo, hi)` chain follows
-the same half-open default, with `.in_box(lo, hi, inclusive=True)`
-for the closed variant.
+The point-family `in_box(lo, hi)` is half-open `[lo, hi)` by default;
+pass `inclusive=True` for the closed `[lo, hi]` box (restores the
+pre-S2 closed upper bound). If you relied on a tight box capturing
+on-face nodes, either pad the box by a small ε or pass
+`inclusive=True`. `results.*.in_box` is **unchanged** (it was always
+half-open) — this only reconciles the mesh side to match.
 
 ### S5 — fail-loud end-state on three formerly-silent paths
 
@@ -1011,14 +1033,18 @@ Save as `migrate_v1.py` and run: `python migrate_v1.py /path/to/your/project`
   entry points stay flat on `g.mesh`
 - `g.opensees.set_model()` and `g.opensees.build()` — the two
   OpenSees lifecycle verbs stay flat
-- The **entire legacy selection surface** — `g.model.selection.*`,
-  `g.model.queries.select(on=/crossing=)`, `g.mesh_selection.add_*` /
-  `filter_set`, `fem.nodes/elements.get/resolve`,
-  `results.*.get/in_box/nearest_to/on_plane`, and both `Selection`
-  classes. The post-v1.0 `.select()` idiom (§6a) is **purely
-  additive**; nothing here was renamed, removed, or wrapped. The only
-  behavioural deltas are the S2 box default and the S5 fail-loud paths
-  in §6a.
+> **Selection surface — REMOVED, not unchanged.** Earlier revisions of
+> this guide stated the legacy selection surface
+> (`g.model.selection.*`, `g.model.queries.select(on=/crossing=)`,
+> `g.mesh_selection.add_nodes` / `add_elements`,
+> `fem.nodes/elements.get/resolve`, the chain `results.*.select().get`)
+> was "purely additive, nothing removed". That is **no longer true**:
+> selection-unification v2 **hard-removed** all of it. See §6a for the
+> full removal, the migration table, and the two capability gaps. The
+> `core._selection.Selection` and `viz.Selection` *classes* are
+> retained by architecture (only their package exports were dropped);
+> the retained typed reader `results.<sub>.get(component=)` is the
+> successor to the chain `.values()` terminal.
 
 ---
 

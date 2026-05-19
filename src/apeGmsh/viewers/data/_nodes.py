@@ -3,8 +3,8 @@
 Mirrors only the FEMData node-side accessors audited in
 [phase-8.7-scope.md §2](../../opensees/architecture/phase-8.7-scope.md)
 — the surface the viewer actually exercises.  Anything outside that
-slice (e.g. ``fem.nodes.get(...)`` selection API, partitions) stays on
-the FEMData and is not migrated.
+slice (e.g. the ``fem.nodes.select(...)`` selection API, partitions)
+stays on the FEMData and is not migrated.
 """
 from __future__ import annotations
 

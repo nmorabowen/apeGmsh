@@ -1,19 +1,29 @@
 # Changelog
 
-## v1.6.0 — Unified `.select()` fluent selection · half-open mesh box · loads/masses fail-loud
+## v1.6.0 — Selection-unification v2: one `.select()` idiom · legacy selection surface REMOVED (BREAKING) · half-open mesh box · loads/masses fail-loud
 
-Selection / resolution unification. A single **daisy-chainable
-`.select()` idiom** is added at all four levels — geometry, the live
-mesh, the FEM broker, and results — so spatial selection composes the
-same way everywhere instead of four hand-mirrored APIs. The change is
-**additive**: every existing selection method —
-`fem.nodes.get(pg=)`, `fem.elements.get` / `.resolve`,
-`results.*` `.get` / `.in_box` / `.nearest_to` / `.on_plane`,
-`g.mesh_selection.add_nodes` / `add_elements` / `filter_set`,
-`g.model.queries.select`, `g.model.selection.select_*`, and the two
-legacy `Selection` classes — keeps working unchanged. `.select()` is
-the one canonical *new* idiom and sits beside the old ones — it is not
-a replacement or a facade over them.
+Selection / resolution unification (**v2**). A single
+**daisy-chainable `.select()` idiom** is now the *only* selection idiom
+at all four levels — geometry, the live mesh, the FEM broker, and
+results. This is a **BREAKING** change: the legacy selection surface
+was **removed with no deprecation shim** (project-owner-ratified full
+removal — v1's backward-compat constraint was explicitly dropped).
+Removed: `fem.nodes.get` / `fem.elements.get` / `.resolve` (the
+selection accessors), the `results.*.select(...).values()` chain path,
+`g.mesh_selection.add_nodes` / `add_elements` / `from_geometric`,
+`g.model.queries.select` / `queries.line` / `select_all*`,
+`g.model.selection` (`SelectionComposite`), the four legacy `*Chain`
+modules + `GeometryChain`, and the `Selection` / `SelectionComposite`
+package exports. The classes `core._selection.Selection` and
+`viz.Selection` are **retained by architecture** as internal
+terminal-payload / viewer-pick-result types — **not** user entry
+points; only their exports were dropped.
+
+**Migrate every legacy call** per the old→v2 table and the two
+**known capability gaps** (geometric-selection → named mesh-selection;
+the `SelectionComposite` filter grammar — both have *no* v2 successor)
+in [`docs/api/selection.md`](docs/api/selection.md) and
+[ADR 0016](src/apeGmsh/opensees/architecture/decisions/0016-selection-unification-v2-complete.md).
 
 Two behavior changes ride along. The `g.mesh_selection` box filter
 moves **closed → half-open** by default to match the results side
@@ -31,13 +41,13 @@ surface changed.
 A new canonical, daisy-chainable selection chain. Entry points,
 returning a chain that composes fluently:
 
-| Entry point | Chain | Family | Terminal |
+| Entry point | Terminal | Family | Result |
 |---|---|---|---|
-| `g.model.select(target, *, dim=)` | `GeometryChain` | entity | `.result()` → legacy `Selection` (`.to_label/.to_physical/.tags` unchanged) |
-| `fem.nodes.select(...)` | `NodeChain` | point | `.result()` → `NodeResult` (same as `fem.nodes.get(...)`) |
-| `fem.elements.select(...)` | `ElementChain` | point | `.result()` → `GroupResult` (same as `fem.elements.get(...)`) |
-| `results.nodes.select(...)` / `results.elements.select(...)` | `ResultChain` | point | `.get(component=, time=, stage=)` → slab (same as `results.<level>.get(...)`) |
-| `g.mesh_selection.select(*, level=, dim=, ids=, name=)` | `MeshSelectionChain` | point | `.result()` → same dict as `get_nodes/get_elements`; `.ids` |
+| `g.model.select(target, *, dim=)` | `EntitySelection` | entity | `.to_label`/`.to_physical`/`.to_dataframe`/`.result()` (→ the retained `Selection` payload) |
+| `fem.nodes.select(...)` | `MeshSelection` | point | `.result()` → `NodeResult`; `.ids`/`.coords` |
+| `fem.elements.select(...)` | `MeshSelection` | point | `.groups()`/`.result()`/`.resolve()` → `GroupResult` |
+| `results.nodes.select(...)` / `results.elements.select(...)` | `MeshSelection` | point | `.values(component=, time=, stage=)` → slab (forwards onto the retained `results.<level>.get(...)` reader) |
+| `g.mesh_selection.select(*, level=, dim=, ids=, name=)` | `MeshSelection` | point | `.result()` → same dict as `get_nodes/get_elements`; `.ids`; `.save_as(name)` (live-mesh only) |
 
 - **Refining verbs** (identical names on every chain): `.in_box(lo,
   hi, *, inclusive=False)`, `.in_sphere(center, radius)`,
@@ -79,22 +89,29 @@ returning a chain that composes fluently:
     box, expanded by `Geometry.Tolerance` ≈ 1e-8). There is no
     half-open notion, so passing `inclusive=` (or any keyword)
     **raises `TypeError`** rather than being silently ignored. For
-    an exact geometric on/crossing predicate use the unchanged
-    `g.model.queries.select(on=/crossing=)`.
+    an exact geometric on/crossing predicate use
+    `g.model.select(target).crossing_plane(spec, mode="on"|"crossing")`
+    (the v2 successor; `g.model.queries.select` was removed).
 
   The two families share verb *names* and set algebra but never
   share `.in_box` behavior; do not assume a cross-family result is
   identical.
-- The legacy `Selection` classes (`core/_selection.Selection`,
-  `viz/Selection.Selection`) are **byte-unchanged terminals** —
-  `GeometryChain.result()` returns the same `core` `Selection` the
-  legacy `queries.select(...)` produces, so existing `.to_label()` /
-  `.to_physical()` chains keep working.
-- **Persistence is query-only by design.** Chains are ephemeral
-  query objects — there is no `.save_as`. Named, round-tripping
-  persistence stays the pre-mesh path
-  `g.mesh_selection.add_nodes(..., name=...)` → FEMData snapshot →
-  `results(selection=...)` (unchanged).
+- The classes `core/_selection.Selection` and `viz/Selection.Selection`
+  are **retained by architecture** (the `EntitySelection.result()`
+  terminal payload and the viewer pick-result type, respectively) —
+  structurally distinct internal types, **not** user entry points;
+  only their package exports were dropped.
+  `g.model.select(...).result()` returns the retained `core`
+  `Selection` payload (`.to_label` / `.to_physical` / `.to_dataframe`
+  are also direct terminals).
+- **Named persistence is `.save_as(name)`** on a `MeshSelection`
+  (**live-mesh engine only**), or the retained explicit-ids registrar
+  `g.mesh_selection.add(dim, ids, name=)` → FEMData snapshot →
+  `results(selection=...)`. The removed
+  `g.mesh_selection.add_nodes(..., name=...)` /
+  `from_geometric` two-step has **no** v2 successor for the
+  geometric-selection → named-set round-trip (a documented capability
+  gap — see `docs/api/selection.md`).
 
 ### BREAKING — `g.mesh_selection` box is now half-open by default
 

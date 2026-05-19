@@ -1021,7 +1021,7 @@ class _Geometry:
         registry, and ``label=`` is rejected: a label would silently
         attach the name to an unrelated curve.  To name the member
         curves as a group, group the curves themselves, e.g.
-        ``queries.select([c1, c2, c3]).to_physical(name=...)``.
+        ``m.model.select([c1, c2, c3]).to_physical(name=...)``.
 
         Example
         -------
@@ -1050,7 +1050,7 @@ class _Geometry:
                 "path = add_wire([...]); sweep(profile, path)\n"
                 "  - To name the member curves as a group, group the "
                 "curves themselves: "
-                "queries.select([c1, c2, ...]).to_physical(name=...)"
+                "m.model.select([c1, c2, ...]).to_physical(name=...)"
             )
         curve_tags = [
             self._resolve_entity_tag(c, dim=1, what="curve", allow_sign=True)

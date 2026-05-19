@@ -6,23 +6,21 @@ Post-processing container.
 
 `results.nodes.select(...)` and `results.elements.select(...)` are the
 results entries of the unified, daisy-chainable
-[selection idiom](selection.md). They are **additive** — the existing
-`.get` / `.in_box` / `.nearest_to` / `.on_plane` helpers are unchanged.
-`.select()` returns a
-[`ResultChain`][apeGmsh.results._result_chain.ResultChain] (point
-family); the terminal is `.get(component=...)`, returning the **same
-slab** (`NodeSlab` / `ElementSlab`) with id/value parity to
-`results.<level>.get(...)`.
+[selection idiom](selection.md). `.select()` returns a
+[`MeshSelection`][apeGmsh.mesh._mesh_selection.MeshSelection] (point
+family); the terminal is `.values(component=...)`, which forwards to
+the **retained** `results.<level>.get(...)` reader and returns the
+same slab (`NodeSlab` / `ElementSlab`) with id/value parity.
 
 ```python
 slab = (results.nodes.select(pg="Base")
     .in_box(lo, hi)                                # half-open [lo, hi)
     .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
-    .get(component="displacement_x"))              # -> NodeSlab
+    .values(component="displacement_x"))           # -> NodeSlab
 ```
 
 A bare results selection needs a component — `.result()` raises
-`RuntimeError`; use `.get(component=...)`. Element spatial verbs
+`RuntimeError`; use `.values(component=...)`. Element spatial verbs
 operate on element centroids.
 
 !!! warning "S5 — formerly-silent results paths now raise"

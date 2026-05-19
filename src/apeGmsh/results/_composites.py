@@ -577,40 +577,40 @@ class _ElementGeometryMixin:
         behaviourally-equivalent ``select`` — defined on the class, so
         it wins MRO and is byte-unchanged vs the prior release).
         Returns a
-        :class:`~apeGmsh.results._result_chain.ResultChain` (point
+        :class:`~apeGmsh.mesh._mesh_selection.MeshSelection` (point
         family, element level; spatial verbs operate on element
-        **centroids**) read with a terminal ``.get(component=...)``::
+        **centroids**) read with a terminal ``.values(component=...)``::
 
             (results.elements.fibers.select(pg="Cols")
                  .in_box(lo, hi)
-                 .get(component="fiber_stress", gp_indices=[0]))
+                 .values(component="fiber_stress", gp_indices=[0]))
 
         Accepts the **same selectors** as the spawning sub-composite's
-        :meth:`get` plus ``element_type=`` (the same additive narrowing
-        :meth:`in_box` / :meth:`nearest_to` already accept).  No
-        selector seeds every domain element.  Resolution is **not**
+        retained ``.get`` plus ``element_type=`` (the same additive
+        narrowing :meth:`in_box` / :meth:`nearest_to` already accept).
+        No selector seeds every domain element.  Resolution is **not**
         re-implemented: the seed ids are obtained by delegating verbatim
         to :meth:`_combine_candidates` (which itself calls the existing
         :meth:`_SelectionMixin._resolve_element_ids`) — the exact path
-        the element geometry helpers use — so ``select(...).get(...)``
-        is id-for-id the same selection as ``get(...)`` (locked
-        resolution contract preserved).
+        the element geometry helpers use — so the resolved selection is
+        exactly what the locked resolution contract returns.
 
-        The chain terminal forwards the spawning sub-composite's
-        **extra** ``.get`` kwargs too (e.g. ``gp_indices=`` for
-        ``fibers``; ``gp_indices=`` / ``layer_indices=`` for
-        ``layers``), not just the uniform ``component=`` / ``time=`` /
-        ``stage=`` — the sub-composite's own ``.get`` signature stays
-        the single source of truth (an unknown kwarg fails loud there).
+        ``.values(...)`` forwards to the spawning sub-composite's
+        **retained** ``.get`` reader, including its **extra** kwargs
+        (e.g. ``gp_indices=`` for ``fibers``; ``gp_indices=`` /
+        ``layer_indices=`` for ``layers``), not just the uniform
+        ``component=`` / ``time=`` / ``stage=`` — the sub-composite's
+        own ``.get`` signature stays the single source of truth (an
+        unknown kwarg fails loud there).
 
-        ``ResultChain`` is imported **deferred** (mirrors
-        ``results.elements.select`` / ``mesh/_elem_chain.py``): only the
-        package-root leaf ``apeGmsh._chain`` + numpy, so ``results``
-        stays runtime-clean of ``core``/``mesh`` and the
+        ``MeshSelection`` is imported **deferred** (mirrors
+        ``mesh/_mesh_selection.py``): only the package-root leaf
+        ``apeGmsh._kernel`` + numpy, so ``results`` stays runtime-clean
+        of ``core``/``mesh`` and the
         ``tests/test_import_dag_polarity.py`` baseline is unchanged.
-        Element centroids are computed **fail-loud** in ``ResultChain``
-        (an unknown node id raises; never the ``np.clip`` silent
-        substitution ``_element_centroids`` does).
+        Element centroids are computed **fail-loud** (an unknown node
+        id raises; never the ``np.clip`` silent substitution
+        ``_element_centroids`` does).
         """
         # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
         # terminal ``MeshSelection`` (legacy ``ResultChain`` left
@@ -660,34 +660,37 @@ class NodeResultsComposite(_SelectionMixin):
     ):
         """Start a daisy-chainable node-result selection.
 
-        Returns a :class:`~apeGmsh.results._result_chain.ResultChain`
-        (point family, node level) that composes fluently and is then
-        read with a terminal ``.get(component=...)``::
+        Returns a
+        :class:`~apeGmsh.mesh._mesh_selection.MeshSelection` (point
+        family, node level) that composes fluently and is then read
+        with a terminal ``.values(component=...)``::
 
             (results.nodes.select(pg="Base")
                  .in_box(lo, hi)
                  .on_plane(p, n, tol=1e-6)
-                 .get(component="displacement_x"))
+                 .values(component="displacement_x"))
             results.nodes.select(ids=a) | results.nodes.select(ids=b)
 
-        Accepts the **same selectors** as :meth:`get`
+        Accepts the **same selectors** as the retained ``.get``
         (``pg`` / ``label`` / ``selection`` / ``ids``); no selector
         seeds every domain node.  Name resolution is **not**
         re-implemented here: the seed ids are obtained by delegating
         verbatim to :meth:`_SelectionMixin._resolve_node_ids` — the
-        exact method :meth:`get` / :meth:`in_box` / :meth:`nearest_to`
-        already use — so ``select(...).get(component=)`` is id-for-id the
-        same selection as ``get(...)`` (no extra scoping).  The spatial
-        verbs narrow the chain *before* the terminal read.
+        exact method ``.get`` / :meth:`in_box` / :meth:`nearest_to`
+        already use — so the resolved selection is exactly what the
+        locked resolution contract returns.  The spatial verbs narrow
+        the chain *before* the terminal read; ``.values(...)`` forwards
+        to the retained ``results.nodes.get`` reader.
 
         Both ``engine_for`` and ``MeshSelection`` are imported
-        **deferred** (mirrors ``mesh/_node_chain.py``): each underlying
-        module imports only the package-root leaf ``apeGmsh._kernel``
-        + numpy at load, so this adds **no eager** cross-package edge
-        (``results`` stays runtime-clean of ``core``/``mesh`` at
-        import time; ``tests/test_import_dag_polarity.py`` baseline
-        unchanged — the one declared P2-I triple is the *downward*
-        ``mesh→_kernel`` one for ``mesh/_mesh_selection.py``).
+        **deferred** (mirrors ``mesh/_mesh_selection.py``): each
+        underlying module imports only the package-root leaf
+        ``apeGmsh._kernel`` + numpy at load, so this adds **no eager**
+        cross-package edge (``results`` stays runtime-clean of
+        ``core``/``mesh`` at import time;
+        ``tests/test_import_dag_polarity.py`` baseline unchanged — the
+        one declared P2-I triple is the *downward* ``mesh→_kernel`` one
+        for ``mesh/_mesh_selection.py``).
         """
         # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
         # terminal ``MeshSelection``; ``engine_for`` kept verbatim (the
@@ -878,15 +881,16 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
     ):
         """Start a daisy-chainable element-result selection.
 
-        Returns a :class:`~apeGmsh.results._result_chain.ResultChain`
-        (point family, element level; spatial verbs operate on element
-        **centroids**) read with a terminal ``.get(component=...)``::
+        Returns a
+        :class:`~apeGmsh.mesh._mesh_selection.MeshSelection` (point
+        family, element level; spatial verbs operate on element
+        **centroids**) read with a terminal ``.values(component=...)``::
 
             (results.elements.select(pg="Beams")
                  .in_box(lo, hi)
-                 .get(component="globalForce"))
+                 .values(component="globalForce"))
 
-        Accepts the **same selectors** as :meth:`get` plus
+        Accepts the **same selectors** as the retained ``.get`` plus
         ``element_type=`` (the same additive narrowing
         :meth:`_ElementGeometryMixin.in_box` / :meth:`nearest_to`
         accept).  No selector seeds every domain element.  Resolution
@@ -894,23 +898,22 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         delegating verbatim to
         :meth:`_ElementGeometryMixin._combine_candidates` (which itself
         calls the existing :meth:`_resolve_element_ids`) — the exact
-        path the element geometry helpers use — so
-        ``select(...).get(component=)`` is id-for-id the same selection
-        as ``get(...)``.
+        path the element geometry helpers use — so the resolved
+        selection is exactly what the locked resolution contract
+        returns.
 
         Both ``engine_for`` and ``MeshSelection`` are imported
-        **deferred** (mirrors ``mesh/_elem_chain.py``): each underlying
-        module imports only the package-root leaf ``apeGmsh._kernel``
-        + numpy at load, so ``results`` stays runtime-clean of
-        ``core``/``mesh`` at import time and the
+        **deferred** (mirrors ``mesh/_mesh_selection.py``): each
+        underlying module imports only the package-root leaf
+        ``apeGmsh._kernel`` + numpy at load, so ``results`` stays
+        runtime-clean of ``core``/``mesh`` at import time and the
         ``tests/test_import_dag_polarity.py`` baseline is unchanged
         (the one declared P2-I triple is the *downward*
         ``mesh→_kernel`` one for ``mesh/_mesh_selection.py``).  Element
         centroids are still computed **fail-loud** (an unknown node id
         raises; never the ``np.clip`` silent substitution
-        ``_element_centroids`` does) — ``MeshSelection`` delegates the
-        element-level read back to a ``ResultChain`` on this same
-        engine, so that invariant is byte-faithful.
+        ``_element_centroids`` does); ``.values(...)`` forwards to the
+        retained ``results.elements.get`` reader.
         """
         # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
         # terminal ``MeshSelection``; ``engine_for`` kept verbatim (the

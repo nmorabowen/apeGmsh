@@ -839,7 +839,8 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
     Tries a duck-typed test-fixture API first
     (``fem.element_end_coords(eid) -> (c1, c2)``), then falls back to
     the real :class:`apeGmsh.mesh.FEMData.FEMData` path
-    (``fem.elements.get(tag=eid).resolve()`` + ``fem.nodes.get_coords()``).
+    (``fem.elements.select(tag=eid).result().resolve()`` +
+    ``fem.nodes.select(...).coords``).
 
     The duck-typed shortcut keeps test fixtures simple — they don't
     need a fully-built ElementComposite when the only thing the

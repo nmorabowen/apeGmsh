@@ -383,7 +383,8 @@ class PhysicalGroupSet(NamedGroupSet):
     """Snapshot of solver-facing physical groups.
 
     Accessed via ``fem.nodes.physical`` / ``fem.elements.physical``
-    (shared reference) and indirectly via ``fem.nodes.get(pg="Base")``.
+    (shared reference) and indirectly via
+    ``fem.nodes.select(pg="Base")``.
     """
 
     def __repr__(self) -> str:
@@ -397,7 +398,7 @@ class LabelSet(NamedGroupSet):
 
     Accessed via ``fem.nodes.labels`` / ``fem.elements.labels``
     (shared reference) and indirectly via
-    ``fem.nodes.get(label="col.web")``.
+    ``fem.nodes.select(label="col.web")``.
     """
 
     def __repr__(self) -> str:

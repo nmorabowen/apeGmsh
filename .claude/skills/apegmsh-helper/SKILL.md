@@ -141,22 +141,24 @@ fem
   +-- .inspect            InspectComposite (summary, tables, source tracing)
 ```
 
-**Selection API** — get subsets by physical group or label.
-`fem.nodes.get(pg=)` / `fem.elements.get/.resolve` are the
-single-shot accessors (unchanged, still fine). For anything
-spatial or composed, prefer the canonical fluent `.select()` chain
-(§1.4) — `fem.nodes.select(pg="Base").result()` returns the *same*
-`NodeResult` as `fem.nodes.get(pg="Base")`.
+**Selection API** — get subsets by physical group or label. The
+canonical fluent `.select()` chain (§1.4) is the **only** accessor:
+`fem.nodes.select(...)` / `fem.elements.select(...)` return a
+`MeshSelection` with `.ids` / `.coords` / `.connectivity` /
+`.groups()` / `.result()` / `.resolve()`. (The old single-shot
+`fem.nodes.get/get_ids/get_coords`, `fem.elements.get/resolve` were
+**removed** by selection-unification v2 — there is no shim.)
 ```python
-# NodeResult yields (id, xyz) pairs on iteration — ids are Python ints
-for nid, xyz in fem.nodes.get(pg="Base"):
+# .result() on a node selection -> NodeResult (yields (id, xyz) pairs;
+# ids are Python ints)
+for nid, xyz in fem.nodes.select(pg="Base").result():
     ops.node(nid, *xyz)
 
-# Attribute access for bulk arrays
-result = fem.nodes.get(pg="Base")
-result.ids              # ndarray (object dtype — yields Python int on iter)
-result.coords           # ndarray (N, 3) float64
-result.to_dataframe()   # pandas DataFrame
+# Or read the bulk arrays directly off the MeshSelection
+sel = fem.nodes.select(pg="Base")
+sel.ids                 # list[int]
+sel.coords              # ndarray (N, 3) float64
+sel.result().to_dataframe()   # pandas DataFrame (via NodeResult)
 ```
 
 **Kind constants** — no magic strings (typed as `ClassVar[str]`):
@@ -200,22 +202,22 @@ algebra:
 
 | Entry point | Returns | Family | Terminal |
 |---|---|---|---|
-| `g.model.select(target, *, dim=)` | `GeometryChain` | entity | `.result()` → legacy `Selection` |
-| `fem.nodes.select(...)` | `NodeChain` | point | `.result()` → `NodeResult` |
-| `fem.elements.select(...)` | `ElementChain` | point | `.result()` → `GroupResult` |
-| `results.nodes.select(...)` / `results.elements.select(...)` | `ResultChain` | point | `.get(component=, time=, stage=)` → slab |
-| `g.mesh_selection.select(*, level=, dim=, ids=, name=)` | `MeshSelectionChain` | point | `.result()` / `.ids` |
+| `g.model.select(target, *, dim=)` | `EntitySelection` | entity | `.to_label`/`.to_physical`/`.to_dataframe`; `.result()` → `Selection` payload |
+| `fem.nodes.select(...)` | `MeshSelection` | point | `.ids`/`.coords`/`.result()` → `NodeResult` |
+| `fem.elements.select(...)` | `MeshSelection` | point | `.ids`/`.groups()`/`.result()` → `GroupResult` |
+| `results.nodes.select(...)` / `results.elements.select(...)` | `MeshSelection` | point | `.values(component=, time=, stage=)` → slab |
+| `g.mesh_selection.select(*, level=, dim=, ids=, name=)` | `MeshSelection` | point | `.ids`/`.coords`/`.result()`; `.save_as(name)` (live engine) |
 
 **Refining verbs** (identical on every chain), each returns a new
 chain of the same type so they compose:
 
 ```python
-sel = (fem.nodes.select(pg="Body")          # seed (same selectors as .get)
+sel = (fem.nodes.select(pg="Body")          # seed by pg/label/tag/dim/ids
            .in_box((0, 0, 0), (1, 1, 1))     # half-open [lo, hi)
            .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
            .nearest_to((0.5, 0.5, 0.0), count=4)
            .where(lambda xyz: xyz[2] == 0.0))
-nodes = sel.result()                          # the existing NodeResult
+nodes = sel.result()                          # -> NodeResult
 ```
 
 - `.in_box(lo, hi, *, inclusive=False)` · `.in_sphere(center, radius)`
@@ -228,10 +230,13 @@ nodes = sel.result()                          # the existing NodeResult
   ```python
   fem.nodes.select(ids=a) | fem.nodes.select(ids=b)
   ```
-- **Seeding reuses the locked resolvers** — broker chains take the
-  same selectors as `.get` (`target`/`pg`/`label`/`tag`/`dim`/
-  `partition`, `element_type=` for elements) plus `ids=`; no-arg seeds
-  the whole domain. Results chains take `pg=`/`label=`/`selection=`/
+- **Seeding reuses the locked resolvers** — broker chains take
+  `target`/`pg`/`label`/`tag`/`dim`/`partition` (`element_type=` for
+  elements) plus `ids=`; no-arg seeds the whole domain. The seed
+  delegates verbatim to the same contract-locked resolver
+  (`_resolve_nodes` / `_resolve_elem_ids`) the removed `.get` used —
+  the resolved selection is exactly what the locked resolution
+  contract returns. Results chains take `pg=`/`label=`/`selection=`/
   `ids=`. `g.mesh_selection.select` takes `ids=` **or** `name=` (an
   **existing** `g.mesh_selection` set, seeded id-for-id — delegates
   verbatim to the existing `get_tag`/`get_nodes`/`get_elements`,
@@ -239,11 +244,13 @@ nodes = sel.result()                          # the existing NodeResult
   seeds the full live-mesh universe. `g.model.select` resolves
   strings through the same label→PG→part tier as everything else.
 - **Results terminal differs** — a results selection needs a
-  component, so it ends in `.get(...)`, not `.result()`:
+  component, so it ends in `.values(...)` (which forwards to the
+  **retained** typed reader `results.<sub>.get(component=, ids=, pg=,
+  label=, selection=)`), not `.result()`:
   ```python
   (results.nodes.select(pg="Base")
        .in_box(lo, hi)
-       .get(component="displacement_x"))
+       .values(component="displacement_x"))
   ```
 
 **Two spatial families — same names, NOT the same behavior:**
@@ -256,35 +263,50 @@ nodes = sel.result()                          # the existing NodeResult
   `getEntitiesInBoundingBox`: BRep bbox **containment** (the whole
   entity bbox must fall inside the query box, ~1e-8 expanded). No
   half-open notion → passing `inclusive=` (or any kw) **raises
-  `TypeError`**. For exact geometric on/crossing use the unchanged
-  `g.model.queries.select(on=/crossing=)`.
+  `TypeError`**. For an exact geometric predicate use the
+  `.on_plane(...)` / `.crossing_plane(spec, mode=...)` verbs (the old
+  `g.model.queries.select(on=/crossing=)` selector was removed; its
+  behaviour is folded into those verbs).
 
 Never assume a cross-family `.in_box` gives the same set.
 
-**The old selection methods still work** —
-`fem.nodes.get(pg=)`, `fem.elements.get` / `.resolve`,
-`results.*` `.get` / `.in_box` / `.nearest_to` / `.on_plane`,
-`g.mesh_selection.add_nodes` / `add_elements` / `filter_set`,
-`g.model.queries.select`, `g.model.selection.select_*`, and the two
-legacy `Selection` classes are all unchanged. `.select()` sits
-**beside** them as the one canonical fluent idiom; prefer it for new
-code. `GeometryChain.result()` returns the *same* legacy `Selection`
-(so `.to_label()` / `.to_physical()` keep working).
+**The legacy selection surface was REMOVED (no shim)** —
+selection-unification v2 hard-removed `fem.nodes/elements.get` /
+`get_ids` / `get_coords` / `resolve`, the chain
+`results.*.select(...).get(...)` terminal,
+`g.mesh_selection.add_nodes` / `add_elements` / `from_geometric`,
+`g.model.queries.select` / `select_all*` / `line`,
+`g.model.selection` / `select_*` (`SelectionComposite`), and the
+package exports of both `Selection` classes. Calling them raises
+`AttributeError` / `ImportError`. Use `.select()` exclusively. The
+`core._selection.Selection` and `viz.Selection` *classes* are
+**retained by architecture** (the `.result()` payload and the viewer
+pick-result type) — only the exports were dropped;
+`EntitySelection.result()` returns the `Selection` payload (so
+`.to_label()` / `.to_physical()` work, and they also work directly on
+`EntitySelection`). Retained on the mesh side:
+`g.mesh_selection.add(dim, ids, name=)`, `from_physical(...)`,
+`filter_set`, `sort_set`, `union`/`intersection`/`difference`.
 
-**Persistence is query-only** — chains are ephemeral; there is no
-`.save_as`. For a named, round-tripping selection use the pre-mesh
-`g.mesh_selection.add_nodes(..., name=...)` path → it lands in the
-FEMData snapshot and round-trips as `results(selection=...)`
-(unchanged).
+**Persistence** — chains are query objects, but the live-mesh chain
+has a `.save_as(name)` terminal:
+`g.mesh_selection.select(...).<verbs>.save_as("my_set")` registers
+the result into the live `g.mesh_selection` store (live engine only;
+broker/results chains raise — they hold a read-only snapshot). It
+then lands in the FEMData snapshot and round-trips as
+`results(selection=...)`. For explicit ids use
+`g.mesh_selection.add(dim, ids, name=)`.
 
-**Mesh-selection name-seed is available**: `g.mesh_selection.select(
-name="my_set")` seeds id-for-id from an **existing**
-`g.mesh_selection` set (node ids for `level="node"`, element ids for
-`level="element"`), then narrow with the usual spatial verbs — the
-fluent equivalent of `filter_set` over that set. Seeding *directly*
-from a raw gmsh PG name / apeGmsh label is **not** a `select()`
-parameter; use the two-step `from_physical(...)` / `from_geometric(
-...)` **then** `select(name=...)`.
+**Mesh-selection name-seed**: `g.mesh_selection.select(name="my_set")`
+seeds id-for-id from an **existing** `g.mesh_selection` set (node ids
+for `level="node"`, element ids for `level="element"`), then narrow
+with the usual spatial verbs — the fluent equivalent of `filter_set`
+over that set. Seeding *directly* from a raw gmsh PG name / apeGmsh
+label is **not** a `select()` parameter; use the two-step
+`from_physical(...)` **then** `select(name=...)`. (The one-step
+`from_geometric` bridge was removed with no v2 successor — a
+documented capability gap; use `to_physical` pre-mesh +
+`from_physical` post-mesh instead.)
 
 **Not yet available** (don't reach for this): results sub-composite
 `.select()` (`gauss`/`fibers`/`layers`/`line_stations`/`springs` —
@@ -630,21 +652,21 @@ auto-skips unmeshed dimensions.
 
 ### 7.6  Don't hold tags past `fragment_all()`
 OCC renumbers entities. Re-query via `g.parts.instances` or
-`g.model.selection` after fragmentation.
+`g.model.select(...)` after fragmentation.
 
 ### 7.7  Tie penalty default is 1e18
 Drop to 1e10-1e12 if Newton fails to converge. The element only
 needs K >> parent element stiffness.
 
 ### 7.8  `in_box` is half-open `[lo, hi)` (point family)
-`g.mesh_selection.add_nodes/add_elements/filter_set(in_box=)` and
-every point-family `.select().in_box(...)` exclude a coordinate /
-centroid lying exactly on the **upper** box face by default (matches
-the results side; adjacent boxes don't double-count). Pass
-`inclusive=True` for the closed box `[lo, hi]`. The entity family
-(`g.model.select().in_box`) has **no** `inclusive=` knob — passing
-it raises `TypeError` (use `g.model.queries.select(on=/crossing=)`
-for an exact predicate).
+Every point-family `.select().in_box(...)` (and the retained
+`filter_set(in_box=)`) excludes a coordinate / centroid lying exactly
+on the **upper** box face by default (matches the results side;
+adjacent boxes don't double-count). Pass `inclusive=True` for the
+closed box `[lo, hi]`. The entity family (`g.model.select().in_box`)
+has **no** `inclusive=` knob — passing it raises `TypeError` (use
+`.on_plane(...)` / `.crossing_plane(spec, mode=...)` for an exact
+predicate).
 
 ### 7.9  These selection paths fail loud (no silent wrong answer)
 - `results(...)` with `selection=` on an import-origin FEM
@@ -682,11 +704,13 @@ longer exist. Use `fem.nodes.*` and `fem.elements.*`.
 
 ### 8.6  ❌ Hand-stitching spatial filters → use `.select()` chain
 For a composed/spatial selection don't manually `np.isin` /
-intersect `.get(pg=)` results, and don't assume the entity-family
+intersect results, and don't assume the entity-family
 `g.model.select().in_box` matches a point-family box. Use the one
 canonical chain (§1.4): `fem.nodes.select(pg=...).in_box(...)
 .on_plane(...)`, set algebra with `| & - ^`. The old single-shot
-`.get/.resolve/.add_nodes` accessors still work for the simple case.
+`fem.*.get/.resolve` / `g.mesh_selection.add_nodes` accessors were
+**removed** — `.select()` is the only accessor (its no-arg / `pg=`
+seed covers the simple case too).
 
 ### 8.7  ❌ `results.elements.gauss.select(...)`
 Not shipped yet. Results sub-composites (`gauss`/`fibers`/`layers`/
@@ -696,7 +720,8 @@ existing `.in_box/.nearest_to/.on_plane` helpers.
 `g.mesh_selection.select(name="my_set")` seeds id-for-id from an
 existing set — see §1.4. Seeding directly from a raw gmsh PG name /
 label is still not a `select()` parameter; use the two-step
-`from_physical(...)`/`from_geometric(...)` then `select(name=...)`.)
+`from_physical(...)` then `select(name=...)`. The one-step
+`from_geometric` bridge was removed with no v2 successor.)
 
 ---
 
@@ -730,12 +755,13 @@ with apeGmsh(model_name="model", verbose=True) as g:
 
     # FEM broker
     fem = g.mesh.queries.get_fem_data(dim=3)
-    ids, coords = fem.nodes.get(pg="Base")     # single-shot (unchanged)
+    base = fem.nodes.select(pg="Base")          # -> MeshSelection
+    ids, coords = base.ids, base.coords         # bulk arrays
     # canonical fluent selection (all 4 levels; same verbs everywhere):
     sel = (fem.nodes.select(pg="Body")
                .in_box((0, 0, 0), (1, 1, 1))   # half-open; inclusive=True → closed
                .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6))
-    nodes = sel.result()                        # → NodeResult (same as .get)
+    nodes = sel.result()                        # → NodeResult
     both = fem.nodes.select(ids=a) | fem.nodes.select(ids=b)   # set algebra
     faces = g.model.select("box", dim=2).in_box(lo, hi)        # entity family
     print(fem.inspect.summary())               # introspection

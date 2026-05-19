@@ -32,7 +32,7 @@ class Model(_HasLogging):
 
     Plus entity selection:
 
-    * ``g.model.selection`` — spatial entity queries
+    * ``g.model.select(...)`` — fluent spatial entity selection
 
     And top-level utilities on the Model itself:
 
@@ -146,20 +146,23 @@ class Model(_HasLogging):
         """Start a fluent, daisy-chainable CAD-entity selection.
 
         This is the **geometry entry** of the unified selection family
-        (``docs/plans/selection-unification.md``).  It is *additive* and
-        does not replace the existing entry points:
+        (``docs/plans/selection-unification-v2.md``).  It is the single
+        entity-selection surface: the former
+        ``g.model.queries.select(tags, on=/crossing=...)`` predicate
+        selector and the former ``g.model.selection.select_*`` entity
+        composite have been removed; their behaviour is folded into the
+        verbs below.
 
-        * ``g.model.queries.select(tags, on=/crossing=...)`` — the
-          legacy geometric-predicate selector (unchanged); and
-        * ``g.model.selection.select_*`` — the legacy entity-query
-          composite (unchanged).
-
-        ``select()`` returns a :class:`~apeGmsh.core._selection.GeometryChain`
-        (entity family) whose verbs (``in_box``, ``in_sphere``,
-        ``on_plane``, ``nearest_to``, ``where``, ``|`` ``&`` ``-``
-        ``^``) compose, and whose ``.result()`` yields the **legacy**
-        ``Selection`` — so ``.to_label()`` / ``.to_physical()`` /
-        ``.tags()`` keep working through the byte-unchanged terminal.
+        ``select()`` returns an
+        :class:`~apeGmsh.core._selection.EntitySelection` (entity
+        family) whose verbs (``in_box``, ``in_sphere``, ``on_plane``,
+        ``crossing_plane``, ``nearest_to``, ``where``, ``|`` ``&`` ``-``
+        ``^``) compose, and whose direct terminals ``.to_label()`` /
+        ``.to_physical()`` / ``.to_dataframe()`` consume it without a
+        ``.result()`` step.  ``.result()`` is a zero-cost identity alias
+        yielding the :class:`~apeGmsh.core._selection.Selection`
+        payload, on which ``.tags()`` / ``.to_label()`` /
+        ``.to_physical()`` are also available.
 
         Name resolution is delegated **verbatim** to the existing,
         contract-locked geometry resolver
@@ -194,7 +197,7 @@ class Model(_HasLogging):
 
         Returns
         -------
-        GeometryChain
+        EntitySelection
 
         Example
         -------
@@ -203,14 +206,13 @@ class Model(_HasLogging):
             # seed with a face physical group, then refine spatially
             (g.model.select("BottomFaces")
                 .in_box((0, 0, 0), (1, 1, 0.5))
-                .result()
                 .to_physical("lower_faces"))
         """
         # Deferred import — the established idiom (mirrors
-        # mesh/_mesh_structured.py).  ``_selection`` is same-package and
-        # ``_chain`` is the package-root leaf, so this adds no eager
-        # cross-package edge (tests/test_import_dag_polarity.py stays
-        # green with the baseline unchanged).
+        # mesh/_mesh_structured.py).  ``_selection`` is same-package, so
+        # this adds no eager cross-package edge
+        # (tests/test_import_dag_polarity.py stays green with the
+        # baseline unchanged).
         from ._helpers import resolve_to_dimtags
         from ._selection import EntitySelection
 
@@ -225,10 +227,10 @@ class Model(_HasLogging):
             default_dim=3 if dim is None else dim,
             session=self._parent,
         )
-        # selection-unification-v2 P2-I (§6.1 STOP-2): the host hook
-        # returns the v2 terminal ``EntitySelection`` (legacy
-        # ``GeometryChain`` left defined-but-unwired; P3 deletes it).
-        # Same deferred-import idiom; no new eager cross-package edge.
+        # selection-unification-v2: the host hook returns the v2
+        # terminal ``EntitySelection`` (the entity-family
+        # chain==terminal). Same deferred-import idiom; no new eager
+        # cross-package edge.
         return EntitySelection(dimtags, _engine=self.queries)
 
     # ------------------------------------------------------------------

@@ -275,10 +275,10 @@ sequence, see §6.2 SC-1..SC-5.)
 | P1-K  | **SHIPPED** | `adc0c72` | #249 |
 | P2-I  | **SHIPPED** | `caaea3c` | #251 |
 | P2-G  | **SHIPPED** | `b427e5f` | #252 |
-| P3-K  | **NEXT** — invisible delegation-collapse + spatial unify (pins pinned; legacy oracle present) | — | — |
-| P3-R  | pending — BREAKING removal (exports only; classes retained) + ~35-caller migration + `_mesh_filters` flip + dependent-test rewrite; gated on §6.3 caller artifact | — | — |
-| P3-S  | pending — additive new-idiom spatial regression pins | — | — |
-| P4    | pending | — | — |
+| P3-K  | **SHIPPED & MERGED** — invisible delegation-collapse + spatial unify | `a696bb0` | #254 |
+| P3-R  | **SHIPPED & MERGED** — BREAKING removal (exports only; classes retained) + caller migration + `_mesh_filters` flip + dependent-test rewrite | `49033ed` | #255 |
+| P3-S  | **SHIPPED** — additive new-idiom spatial regression pins (4 gaps; M-CORRECTION-P3S) | `44a9087` | #256 |
+| P4    | **IN PROGRESS** — docs / ADR 0016 / skill / memory + the two ratified capability gaps (M-CORRECTION-P4) | — | this PR |
 
 > [!note] Ledger authoritative as of 2026-05-18 (was stale "all pending")
 > **All additive phases shipped and LANDED ON `main`.** Each of the 4 v2
@@ -917,7 +917,14 @@ to_mesh_*`) and the rescoped §7 invariant 1.
   P3-R** (its `_mesh_filters`/`add_*` surface removed there), with
   new-idiom regression successors added in P3-S. All four green every
   commit (§6.2 SC-3 — the program-wide "byte-unchanged through P3" was
-  unsatisfiable and is formally rescoped here).
+  unsatisfiable and is formally rescoped here). **FINAL (P4):** the
+  invariant held at every commit — `test_resolution_contract.py`
+  byte-unchanged through P3-K/P3-R/P3-S (and P4, docs-only); the two
+  proof files oracle-equal post-P3-R; `test_pin_spatial_v2.py` is the
+  P3-R SC-11 `_mesh_filters` fail-loud reviewed pin; the P3-S
+  new-idiom successors are `tests/test_pin_spatial_kernel_v2.py`
+  (5 reviewed pins, frozen literals). P4 changed no test
+  (docs/skill/ADR/memory only) so the bar is unchanged.
 - P3-S's "new-idiom regression successors" (the bullet above) are
   pinned **exclusively through `g.mesh_selection.select(...)`** — NOT a
   direct `_kernel.spatial` import (the §6.2 P3-S 2026-05-19

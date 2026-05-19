@@ -1,13 +1,16 @@
 """
-Selection — model-entity selection composite for apeGmsh.
+Selection — the interactive viewer pick-result type for apeGmsh.
 
-Exposed as ``g.model.selection``.  Provides five query entry points
-(``select_points``, ``select_curves``, ``select_surfaces``,
-``select_volumes``, ``select_all``) plus three topology helpers
-(``boundary_of``, ``adjacent_to``, ``closest_to``).  Each returns a
-frozen :class:`Selection` snapshot of ``DimTag``s.
+This is the frozen ``DimTag`` snapshot exposed by an interactive
+viewer's ``.selection`` property (``g.model.viewer()`` /
+``g.mesh.viewer()`` → ``ModelViewer.selection`` /
+``MeshViewer.selection``), reflecting what was picked in the viewport.
+It is retained **by architecture** as the viewer pick-result type (it
+is *not* a ``g.model.select`` migration path — for programmatic entity
+selection use ``g.model.select(...)`` which returns an
+:class:`~apeGmsh.core._selection.EntitySelection`).
 
-The resulting :class:`Selection` supports:
+A picked :class:`Selection` supports:
 
 * set operations  — ``|``, ``&``, ``-``, ``^``
 * refinement     — ``.filter(**kw)``, ``.limit(n)``, ``.sorted_by(...)``
@@ -15,15 +18,13 @@ The resulting :class:`Selection` supports:
 * conversion     — ``.to_list()``, ``.to_tags()``, ``.to_dataframe()``,
                    ``.to_physical(name, tag=-1)``
 
-Typical usage after an IGES import::
+Typical usage after an interactive pick::
 
-    sel = g.model.selection
-    cols = sel.select_curves(vertical=True)
+    v = g.model.viewer()
+    # ... pick entities in the viewer ...
+    sel = v.selection
+    cols = sel.filter(vertical=True)
     cols.to_physical("columns")
-    beams = sel.select_curves(horizontal=True)
-    beams.to_physical("beams")
-    base = sel.select_points(on_plane=("z", 0.0, 1e-3))
-    base.to_physical("fixed_support")
 """
 
 from __future__ import annotations
@@ -86,7 +87,7 @@ Escape hatch:
 
 Example::
 
-    sel = g.model.selection.select_curves(
+    sel = v.selection.filter(
         vertical=True, length_range=(2.0, 4.0),
     ).filter(physical="columns")
 """
@@ -101,9 +102,10 @@ class Selection:
     Frozen snapshot of a set of Gmsh ``DimTag``s with set-algebra,
     refinement, and conversion helpers.
 
-    ``Selection`` objects are returned by the query methods on the
-    :class:`SelectionComposite` (``g.model.selection``) — you do not
-    normally instantiate them directly.
+    ``Selection`` objects are exposed by an interactive viewer's
+    ``.selection`` property (``g.model.viewer()`` /
+    ``g.mesh.viewer()``) — you do not normally instantiate them
+    directly.
 
     Attributes
     ----------

@@ -1,6 +1,21 @@
 # Selection / Resolution Unification — Hardened Plan
 
-Status: **S3 DONE (S3a–S3e + S3f landed); S5 pending**
+> [!warning] SUPERSEDED — see
+> [`selection-unification-v2.md`](selection-unification-v2.md)
+> This v1 plan is retained only as the historical S0–S3 record. Its
+> *technical hard truths* (FP-1/FP-2/FP-4) remain true and were
+> re-stated as HT1–HT10 in v2; but its **conclusions** —
+> "facade preserved / keep both `Selection` classes / `.select()` is
+> additive, nothing removed / non-negotiable backward-compat" — were
+> **explicitly REVERSED** by the project owner. v1's S5 was reframed
+> and delivered as v2 P0–P4: full removal of the legacy selection
+> surface (no shim), one idiom with two terminals on one spatial
+> kernel, two ratified capability gaps. For the current, authoritative
+> plan, status, ADR and migration table, read **v2** (and ADR 0016).
+> v1 §9 is left intact (live source still cross-references it).
+
+Status: **SUPERSEDED by selection-unification-v2.md** (v1 record:
+S3 DONE (S3a–S3e + S3f landed); S5 reframed → v2 P0–P4, COMPLETE)
 
 Phase ledger (commit hashes):
 

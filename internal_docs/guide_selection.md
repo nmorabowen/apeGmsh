@@ -4,7 +4,7 @@ apeGmsh has two complementary selection systems that sit on opposite sides of th
 
 | System | Lives on | Operates on | Created | Exposed on the broker |
 |---|---|---|---|---|
-| Geometric selection | `g.model.selection` | BRep / OCC entities — points, curves, surfaces, volumes | **Before** `g.mesh.generation.generate()` | *indirectly*, via `fem.nodes.physical` or `fem.mesh_selection` |
+| Geometric selection | `g.model.select(...)` | BRep / OCC entities — points, curves, surfaces, volumes | **Before** `g.mesh.generation.generate()` | *indirectly*, via `fem.nodes.physical` or `fem.mesh_selection` |
 | Mesh selection | `g.mesh_selection` | Mesh nodes and elements | **After** `g.mesh.generation.generate()` | *directly*, via `fem.mesh_selection` |
 
 The guiding idea: **OCC selection is geometry, mesh selection is topology**. One talks in terms of `(dim, tag)` BRep entries and is invariant to how you mesh. The other talks in terms of node IDs and element IDs and only becomes meaningful once a mesh exists.
@@ -21,153 +21,161 @@ results, and the live mesh:
 ```python
 g.model.select("box", dim=2).in_box(lo, hi).on_plane(p, n, tol=1e-6)   # geometry
 fem.nodes.select(pg="Base").in_box(lo, hi)                             # broker
-results.nodes.select(pg="Base").in_box(lo, hi).get(component="displacement_z")
+results.nodes.select(pg="Base").in_box(lo, hi).values(component="displacement_z")
 g.mesh_selection.select().in_box(lo, hi).on_plane(p, n, tol=1e-6)      # live mesh
 ```
 
 Every `.select()` returns a chain with the same verbs
-(`.in_box / .in_sphere / .on_plane / .nearest_to / .where`), the same
-set algebra (`| & - ^` and `.union / .intersect / .difference`), and a
-domain terminal — `.result()` everywhere, except results which reads
-with `.get(component=, time=, stage=)`. Name resolution inside
+(`.in_box / .in_sphere / .on_plane / .crossing_plane / .nearest_to /
+.where`), the same set algebra (`| & - ^` and
+`.union / .intersect / .difference`), and a domain terminal —
+`.result()` everywhere, except results which reads with
+`.values(component=, time=, stage=)`. Name resolution inside
 `.select()` is **never re-implemented**: it delegates to the same
-contract-locked resolver the matching `.get()` already uses, so
-`select(...).result()` is id-for-id identical to `get(...)`.
+contract-locked resolver, so the resolved selection is exactly what
+the locked resolution contract returns.
 
-> [!note] `.select()` is **additive** — the old ways still work
-> Everything else in this guide (`g.model.selection.select_*`,
-> `g.model.queries.select(on=/crossing=)`, `g.mesh_selection.add_*`,
-> the `Selection` set algebra, the bridges) is **unchanged and fully
-> supported**. `.select()` sits *beside* the legacy surface, it does
-> not replace or wrap it. A facade was deliberately not built (it was
-> proven structurally impossible) — there is exactly one new canonical
-> idiom and the old ways persist by design. Reach for `.select()` for
-> new fluent code; keep the legacy entry points where they already fit.
-> The maintainer invariants behind this live in
+> [!warning] `.select()` is the **only** selection surface (v2 removed the rest)
+> Selection-unification v2 **hard-removed** the entire legacy surface:
+> `g.model.selection` / `g.model.selection.select_*`
+> (`SelectionComposite`), `g.model.queries.select(on=/crossing=)` /
+> `queries.line` / `queries.select_all*`, `g.mesh_selection.add_nodes`
+> / `add_elements` / `from_geometric`,
+> `fem.nodes/elements.get/get_ids/get_coords/resolve`, and the chain
+> `results.*.select(...).get(...)` terminal. There is **no shim** —
+> calling them raises `AttributeError` / `ImportError`. Use `.select()`
+> exclusively. The `core._selection.Selection` and `viz.Selection`
+> *classes* are retained **by architecture** (the `.result()` payload
+> and the viewer pick-result type respectively); only their package
+> exports were dropped. Two capability gaps have no v2 successor — see
+> §3.3 and §1.2. The maintainer invariants live in
 > [The Selection Chain](guide_selection_chain.md).
 
 
 ## 1. Geometric selection — the OCC side
 
-The geometric selection composite is attached to the model as `g.model.selection`. It is a *query engine* over the currently synchronised OCC topology. Every call returns a frozen `Selection` snapshot that behaves like a mathematical set with some refinement and conversion helpers attached.
+The entity-selection entry is `g.model.select(target, *, dim=)`. It is
+a *query engine* over the currently synchronised OCC topology and
+returns an `EntitySelection` — a daisy-chainable chain==terminal.
+`.result()` yields the retained `Selection` payload (a frozen
+`(dim, tag)` set with refinement / conversion helpers).
 
-### 1.1 The five query entry points
+### 1.1 Seeding
 
-There is one method per BRep dimension plus an `all`:
+`select()` takes a name (label / physical-group / part), an explicit
+`(dim, tag)` set, or nothing-plus-`dim=` for *every* entity at a
+dimension:
 
 ```python
-sel = g.model.selection
-
-pts  = sel.select_points(**filters)      # dim = 0
-crvs = sel.select_curves(**filters)      # dim = 1
-srfs = sel.select_surfaces(**filters)    # dim = 2
-vols = sel.select_volumes(**filters)     # dim = 3
-any_ = sel.select_all(dim=-1, **filters) # across all dims
+faces   = g.model.select("TopFaces", dim=2)   # by PG / label / part
+all_vol = g.model.select(dim=3)               # every volume
+subset  = g.model.select([(1, 4), (1, 5)])    # explicit dimtags
 ```
 
-The composite implicitly calls `gmsh.model.occ.synchronize()` before querying, so you do not have to remember to sync yourself — but the geometry has to actually exist in the OCC kernel for the query to see it.
+Name resolution delegates verbatim to the contract-locked geometry
+resolver (label → physical group → part); `select()` re-implements no
+tier logic and adds no scoping of its own. The OCC kernel is
+synchronised implicitly before querying.
 
-### 1.2 The filter vocabulary
+### 1.2 The verb surface (and a capability gap)
 
-All query methods take the same keyword-argument vocabulary. Filters are **AND-combined**, so passing several at once narrows the result.
+`EntitySelection` composes spatial verbs, set-algebra, and direct
+terminals:
 
-**Identity filters**
+- `.in_box(lo, hi)` — gmsh BRep containment (closed; `inclusive=`
+  raises `TypeError` — it is point-family only)
+- `.in_sphere(center, radius)` — bbox-centre distance test
+- `.on_plane(point, normal, *, tol)` — all 8 bbox corners within `tol`
+- `.crossing_plane(spec, *, tol, mode)` — `on` / `crossing` /
+  `not_on` / `not_crossing` straddle (`spec` is an axis dict, a
+  2/3-point list, or `m.model.queries.plane(...)`)
+- `.nearest_to(point, n=)` / `.where(predicate)`
+- set-algebra `| & - ^` and `.union / .intersect / .difference`
+- terminals `.to_label(name)` / `.to_physical(name)` /
+  `.to_dataframe()` / `.result()`
 
-- `tags=[...]` / `exclude_tags=[...]` — keep or drop by raw entity tag
-- `labels="col_*"` — glob match against apeGmsh's registry labels (labels are the `name=...` you attach when creating geometry)
-- `kinds="box"` — match against the kind recorded by the geometry factory (`"box"`, `"cylinder"`, `"disk"`, ...)
-- `physical="fixed"` — members of a physical group by name or tag
+After `.result()` the `Selection` payload additionally offers the
+position predicates `.select(on=/crossing=/not_on=/not_crossing=,
+tol=)`, the direction filters `.parallel_to(...)` (curves) /
+`.normal_along(...)` (surfaces), `.tags()`, and the same set-algebra.
 
-**Spatial filters**
-
-- `in_box=(x0, y0, z0, x1, y1, z1)` — delegates to `getEntitiesInBoundingBox`
-- `in_sphere=(cx, cy, cz, r)` — centroid distance test
-- `on_plane=("z", 0.0, 1e-6)` — entity's bounding box touches an axis-aligned plane
-- `on_axis=("z", 1e-6)` — entity centroid lies on a coordinate axis
-- `at_point=(x, y, z, atol)` — entity bounding box contains the point
-
-**Metric ranges**
-
-- `length_range=(lo, hi)` — dim=1 only, uses `occ.getMass`
-- `area_range=(lo, hi)` — dim=2 only
-- `volume_range=(lo, hi)` — dim=3 only
-
-**Orientation (curves only)**
-
-- `horizontal=True` — curve lies in a plane normal to z
-- `vertical=True` — curve is parallel to z
-- `aligned=("x", 5.0)` — parallel to the given axis within `atol_deg`
-
-**Escape hatch**
-
-- `predicate=lambda dim, tag: ...` — arbitrary Python predicate evaluated last
-
-A typical use after importing an IGES frame:
+> [!warning] Capability gap — the rich filter grammar has no successor
+> The removed `SelectionComposite.select_*` exposed a rich
+> keyword-filter grammar (`labels=` fnmatch, `kinds=`,
+> `length/area/volume_range=`, `predicate=fn`, `exclude_tags=`,
+> `physical=`, `at_point=`, `on_axis=`, `horizontal=`/`vertical=`/
+> `aligned=`). `EntitySelection` has **no** equivalent — only the
+> spatial verbs, set-ops, and `.to_*` terminals above. The retained
+> `viz.Selection.filter()` carries that grammar but is
+> **viewer-pick-only**, not a `g.model.select` migration path. For the
+> common cases: use `dim=` seeding + spatial verbs; resolve a named
+> physical group / label directly; or `.where(predicate)` /
+> `.result().parallel_to(...)` for orientation.
 
 ```python
-sel = g.model.selection
-
-columns = sel.select_curves(vertical=True)
-beams   = sel.select_curves(horizontal=True, length_range=(0.5, 12.0))
-base    = sel.select_points(on_plane=("z", 0.0, 1e-3))
-
-print(columns)   # <Selection dim=1 n=24 [C1, C2, …]>
+# Vertical column curves on the x = 0 wall, named as a physical group
+(g.model.select("frame", dim=1).result()
+    .parallel_to("z")
+    .select(on={"x": 0})
+    .to_physical("left_columns"))
 ```
 
-### 1.3 Working with a `Selection`
+### 1.3 Set algebra
 
-A `Selection` is an immutable snapshot but supports rich manipulation. Set algebra uses the normal Python operators:
+Set algebra uses the normal Python operators on either the chain or
+the `Selection` payload:
 
 ```python
-all_curves = sel.select_curves()
+all_curves = g.model.select(dim=1).result()
 diagonals  = all_curves - columns - beams      # set difference
 edges      = columns | beams                   # union
-corners    = columns & sel.select_curves(in_box=(0, 0, 0, 0.5, 0.5, 100))
+corners    = columns & g.model.select(dim=1).in_box(
+    (0, 0, 0), (0.5, 0.5, 100)).result()
 ```
 
-Refinement re-applies filters to an existing set without re-running the full universe query:
+`Selection` subclasses `list`, so `|`/`&`/`-`/`^` (set-with-dedup),
+not `+` (list concat), are the combining operators.
+
+### 1.4 Topology queries
+
+Cross-dimensional topology queries live on `g.model.queries` (the
+removed `boundary_of`/`adjacent_to`/`closest_to` helpers have no
+direct successor; use these instead):
 
 ```python
-short_cols = columns.filter(length_range=(0, 4.0))
-leftmost   = columns.sorted_by("x").limit(5)
+# Boundary entities — delegates to gmsh.model.getBoundary
+faces_of_block = g.model.queries.boundary(block_vol_tag, dim=3)  # -> Selection
+
+# Volumes adjacent to a set (share a boundary entity)
+adj_vols = g.model.queries.adjacencies(some_vol_tag, dim=3)
+
+# Nearest entities to a point: g.model.select(dim=N).nearest_to(p, n=)
+pin_points = g.model.select(dim=0).nearest_to((0.0, 0.0, 10.0), n=4)
 ```
 
-Geometry helpers work on the whole set:
-
-```python
-columns.bbox()      # (xmin, ymin, zmin, xmax, ymax, zmax)
-columns.centers()   # ndarray(N, 3) — entity centroids
-columns.masses()    # ndarray(N,)  — length/area/volume per entity
-```
-
-### 1.4 Topology helpers
-
-Some queries do not fit the filter vocabulary because they cross dimensions. For those, the composite exposes three helpers:
-
-```python
-# Boundary of a set — delegates to gmsh.model.getBoundary
-faces_of_block = sel.boundary_of(block_volumes)
-
-# Entities of dim_target whose boundary touches the source set
-bounding_volumes = sel.adjacent_to(some_surfaces, dim_target=3)
-
-# Nearest-n entities to a point
-pin_points = sel.closest_to(0.0, 0.0, 10.0, dim=0, n=4)
-```
-
-`boundary_of` and `adjacent_to` are the right way to get "the surfaces of this block" or "the volumes that share this interface surface" — they respect the OCC topology instead of guessing from bounding boxes.
+`g.model.queries.boundary` / `adjacencies` respect the OCC topology
+instead of guessing from bounding boxes.
 
 ### 1.5 Persisting a geometric selection
 
-A geometric `Selection` by itself is just a tuple of `DimTag`s held in Python. To make it survive outside the current selection session, promote it to a **physical group**:
+An `EntitySelection` / `Selection` is just `(dim, tag)`s held in
+Python. To make it survive meshing, register it — either as a **Tier-2
+physical group** (carried into the msh/vtu output and visible to other
+tools) or a **Tier-1 label** (`_label:`-prefixed, boolean-op-stable):
 
 ```python
-columns.to_physical("columns")
-beams.to_physical("beams", tag=101)
-base.to_physical("fixed_support")
+g.model.select("Columns", dim=1).to_physical("columns")
+g.model.select("Beams",   dim=1).to_label("beams")
+g.model.select(dim=0).on_plane((0,0,0), (0,0,1), tol=1e-3).to_physical(
+    "fixed_support")
 ```
 
-This calls `g.physical.add(dim, tags, name=...)` for you and returns the physical-group tag. Physical groups are the *only* mechanism that carries named entity groupings through the mesher and into the msh/vtu outputs, so any selection you want the solver to see should be promoted before `g.mesh.generation.generate()`.
+`.to_physical` calls `g.physical.add(dim, tags, name=...)`;
+`.to_label` calls `g.session.labels.add(...)`. Physical groups are the
+*only* mechanism that carries named entity groupings through the
+mesher into the msh/vtu outputs, so anything the solver must see
+should be promoted before `g.mesh.generation.generate()`. (Tier-1 and
+Tier-2 are **separate registries that are never merged** — ADR 0015.)
 
 
 ## 2. Mesh selection — the post-mesh side
@@ -183,71 +191,66 @@ Once `g.mesh.generation.generate(dim)` has run, the picture changes. The BRep en
 
 ### 2.1 Spatial queries on mesh entities
 
-The two creation methods mirror the OCC side but work on mesh data:
+`g.mesh_selection.select(...)` returns a point-family `MeshSelection`;
+the live-engine terminal `.save_as(name)` registers it as a named set
+(the removed `add_nodes` / `add_elements` spatial registrars have no
+direct equivalent — this is the replacement):
 
 ```python
 g.mesh.generation.generate(3)
 
-# Node sets — filters work on node coordinates
-base = g.mesh_selection.add_nodes(
-    on_plane = ("z", 0.0, 1e-3),
-    name     = "base",
-)
+# Node sets — spatial verbs work on node coordinates
+base = (g.mesh_selection.select()                       # node level
+    .on_plane((0, 0, 0), (0, 0, 1), tol=1e-3)
+    .save_as("base"))
 
-interior = g.mesh_selection.add_nodes(
-    in_box   = (-5, -5, 1, 5, 5, 10),
-    name     = "core_nodes",
-)
+interior = (g.mesh_selection.select()
+    .in_box((-5, -5, 1), (5, 5, 10))
+    .save_as("core_nodes"))
 
-top5 = g.mesh_selection.add_nodes(
-    closest_to = (0.0, 0.0, 10.0),
-    count      = 5,
-    name       = "roof_monitor",
-)
+top5 = (g.mesh_selection.select()
+    .nearest_to((0.0, 0.0, 10.0), n=5)
+    .save_as("roof_monitor"))
 
-# Element sets — filters work on element centroids (in_box) or
-# on "all nodes lie on plane" (on_plane)
-slab = g.mesh_selection.add_elements(
-    dim      = 2,
-    on_plane = ("z", 10.0, 1e-3),
-    name     = "slab_surf",
-)
+# Element sets — verbs work on element centroids
+slab = (g.mesh_selection.select(level="element", dim=2)
+    .on_plane((0, 0, 10.0), (0, 0, 1), tol=1e-3)
+    .save_as("slab_surf"))
 
-core = g.mesh_selection.add_elements(
-    dim    = 3,
-    in_box = (-5, -5, 0, 5, 5, 10),
-    name   = "core_solid",
-)
+core = (g.mesh_selection.select(level="element", dim=3)
+    .in_box((-5, -5, 0), (5, 5, 10))
+    .save_as("core_solid"))
 ```
 
-Each creation call returns the allocated tag. Tags are auto-allocated per-dim and independent from physical-group tags.
+`.save_as` returns the chain (so it stays fluent); the named set's tag
+is auto-allocated per-dim, independent from physical-group tags.
 
-> [!warning] `in_box` default changed (S2): now half-open
-> As of the selection-unification work, `g.mesh_selection`'s `in_box`
-> filter is **half-open on the upper side** by default
-> (`xmin <= xyz < xmax` per axis), matching the `results` side which
-> was already half-open. Previously it was closed-closed. A coordinate
-> exactly on an upper bound is now **excluded** so adjacent boxes do
-> not double-count a shared face. Pass `inclusive=True` to
-> `add_nodes` / `add_elements` / `filter_set` to restore the old
-> closed-closed behaviour. See [MIGRATION_v1](MIGRATION_v1.md).
+> [!warning] point-family `in_box` is half-open (S2)
+> The point-family `.in_box(lo, hi)` is **half-open on the upper side**
+> by default (`xmin <= xyz < xmax` per axis), matching the `results`
+> side. A coordinate exactly on an upper bound is **excluded** so
+> adjacent boxes do not double-count a shared face. Pass
+> `.in_box(lo, hi, inclusive=True)` for the closed `[lo, hi]` box (the
+> retained `filter_set(..., inclusive=True)` does the same). See
+> [MIGRATION_v1](MIGRATION_v1.md).
 
 ### 2.2 Explicit lists and predicates
 
-If you already know the IDs — for example, from a solver query or from a post-processing pipeline — you can register them directly:
+If you already know the IDs — for example, from a solver query or from a post-processing pipeline — you can register them directly with the retained `add`:
 
 ```python
 g.mesh_selection.add(dim=0, tags=[12, 18, 22, 41], name="instr_nodes")
 g.mesh_selection.add(dim=2, tags=elem_id_list,      name="damage_zone")
 ```
 
-For anything the built-in filters do not cover, pass a `predicate`:
+For anything the spatial verbs do not cover, use `.where(predicate)`
+on the chain:
 
 ```python
 def above_z(coords):              # coords is (N, 3)
     return coords[:, 2] > 5.0
 
-g.mesh_selection.add_nodes(predicate=above_z, name="upper_half")
+g.mesh_selection.select().where(above_z).save_as("upper_half")
 ```
 
 ### 2.3 Refining and combining sets
@@ -292,7 +295,7 @@ Geometric and mesh selections are complementary, not alternatives. Real workflow
 The simplest bridge. It writes an OCC selection into Gmsh's physical-group table so the mesher sees it and the msh/vtu output carries it. This is the standard way to make a geometric selection persist across meshing:
 
 ```python
-g.model.selection.select_points(on_plane=("z", 0, 1e-3)).to_physical("base")
+g.model.select(dim=0).on_plane((0,0,0), (0,0,1), tol=1e-3).to_physical("base")
 g.mesh.generation.generate(3)
 # Now fem.nodes.physical will contain 'base'
 ```
@@ -308,31 +311,36 @@ g.mesh_selection.from_physical(dim=0, name_or_tag="base", ms_name="base_nodes")
 
 Why would you want this? Because a physical group lives in Gmsh's world — it is still geometry-flavoured. Converting it to a mesh selection gives you the cached node array and makes it addressable uniformly next to your other mesh selections.
 
-### 3.3 `MeshSelectionSet.from_geometric(...)` — the one-step bridge
+### 3.3 The one-step `from_geometric` bridge — REMOVED (capability gap)
 
-This is the workhorse bridge. It takes a geometric `Selection` (pre-mesh) and builds a mesh selection out of it **after the mesh has been generated**, without requiring you to create a physical group first:
+> [!warning] No v2 successor
+> `MeshSelectionSet.from_geometric(...)` (and its
+> `Selection.to_mesh_nodes()` / `to_mesh_elements()` backing) — the
+> one-step "geometric entity selection → named mesh selection without
+> a physical group" bridge — was **removed** by selection-unification
+> v2 along with `viz.Selection.to_mesh_*`. There is **no direct v2
+> replacement** (a documented capability gap).
+
+The remaining bridge is **`to_physical` + `from_physical`** (§3.1 →
+§3.2): promote the geometric selection to a physical group pre-mesh,
+then materialise that physical group as a mesh selection post-mesh:
 
 ```python
-# Pre-mesh: build the geometric query
-top_faces = g.model.selection.select_surfaces(on_plane=("z", 10.0, 1e-3))
+# Pre-mesh: geometric selection -> physical group
+g.model.select(dim=2).on_plane((0,0,10.0), (0,0,1), tol=1e-3).to_physical(
+    "roof_faces")
 
 # Mesh
 g.mesh.generation.generate(3)
 
-# Post-mesh: extract the corresponding node set
-g.mesh_selection.from_geometric(
-    top_faces,
-    kind="nodes",              # or "elements"
-    name="roof_nodes",
-)
+# Post-mesh: physical group -> mesh selection
+g.mesh_selection.from_physical(dim=2, name_or_tag="roof_faces",
+                               ms_name="roof_nodes")
 ```
 
-Under the hood this calls `top_faces.to_mesh_nodes()` (or `.to_mesh_elements()`), which uses `gmsh.model.mesh.getNodes(dim, tag, includeBoundary=True)` on each entity in the selection and deduplicates.
-
-Two rules of thumb:
-
-- Use **`to_physical` + `from_physical`** when you want the group to appear in the msh/vtu output or be visible to another tool.
-- Use **`from_geometric`** when the group is purely an internal handle and you just want the mesh IDs on the apeGmsh side.
+This costs one extra physical group versus the removed one-step path,
+but it is the only supported route and also makes the group visible to
+the msh/vtu output and other tools.
 
 
 ## 4. Selection on the FEM broker
@@ -375,30 +383,28 @@ g.model.geometry.add_box(0, 0, 0, 10, 10, 10, label="blk")
 g.model.sync()
 
 # Geometric selection → physical group (survives meshing)
-g.model.selection.select_surfaces(on_plane=("z", 0, 1e-3)).to_physical("base")
-g.model.selection.select_surfaces(on_plane=("z", 10, 1e-3)).to_physical("top")
+g.model.select(dim=2).on_plane((0,0,0),  (0,0,1), tol=1e-3).to_physical("base")
+g.model.select(dim=2).on_plane((0,0,10), (0,0,1), tol=1e-3).to_physical("top")
 
-# Geometric selection → mesh selection bridge (prepared, not yet run)
-monitor_curves = g.model.selection.select_curves(
-    vertical=True,
-    in_box=(-0.1, -0.1, -0.1, 0.1, 0.1, 10.1),
-)
+# Geometric selection → physical group, pre-mesh (the from_geometric
+# one-step bridge was removed — promote to a PG and pull it back below)
+(g.model.select(dim=1).in_box((-0.1,-0.1,-0.1), (0.1,0.1,10.1)).result()
+    .parallel_to("z")                       # vertical curves (no filter grammar)
+    .to_physical("monitor_curves"))
 
 # --- Meshing -------------------------------------------------------
 g.mesh.generation.generate(3)
 
 # --- Mesh selection (post-mesh) ------------------------------------
 # Spatial query directly on mesh nodes
-g.mesh_selection.add_nodes(
-    in_sphere=(5, 5, 5, 1.0),
-    name="core_probe",
-)
+g.mesh_selection.select().in_sphere((5, 5, 5), 1.0).save_as("core_probe")
 
-# Bridge the pre-mesh geometric selection into the mesh world
-g.mesh_selection.from_geometric(monitor_curves, kind="nodes", name="monitor")
+# Bridge the pre-mesh geometric selection in via its physical group
+g.mesh_selection.from_physical(dim=1, name_or_tag="monitor_curves",
+                               ms_name="monitor")
 
-# Pull a physical group in as a mesh selection too, if you need a
-# uniform handle for downstream code
+# Pull another physical group in as a mesh selection too, for a
+# uniform downstream handle
 g.mesh_selection.from_physical(dim=2, name_or_tag="top", ms_name="top_nodes")
 
 # --- FEM broker ----------------------------------------------------
@@ -425,7 +431,7 @@ Notice that once you are on the broker, the code never branches on where a group
 
 It is worth stepping back from the API and keeping a few principles in mind.
 
-**Choose the side that matches the question you are asking.** If the thing you want to refer to is a geometric feature of the CAD — a named face, a column line, an import label — start on the OCC side with `g.model.selection`. The queries survive remeshing, they are cheap to re-run, and promoting to a physical group gets them into the output file. If the thing you want to refer to only makes sense after discretisation — "the five nodes closest to the sensor", "all elements whose centroid lies inside this damage box" — start on the mesh side with `g.mesh_selection`.
+**Choose the side that matches the question you are asking.** If the thing you want to refer to is a geometric feature of the CAD — a named face, a column line, an import label — start on the OCC side with `g.model.select(...)`. The queries survive remeshing, they are cheap to re-run, and promoting to a physical group gets them into the output file. If the thing you want to refer to only makes sense after discretisation — "the five nodes closest to the sensor", "all elements whose centroid lies inside this damage box" — start on the mesh side with `g.mesh_selection`.
 
 **Let physical groups carry the named geometry across the mesher.** That is what they were designed for, and that is what the msh/vtu writers and every third-party post-processor expect. If your workflow exports the mesh to another tool, the groups must be physical groups.
 

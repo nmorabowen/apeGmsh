@@ -8,7 +8,7 @@ Accessed via ``g.mesh.partitioning``.  The single home for:
   so that ``get_fem_data()`` produces solver-ready tags.
 * **Partitioning** — MPI-style domain decomposition via Gmsh/METIS.
   Partition membership is captured in ``FEMData`` and queryable via
-  ``fem.nodes.get(partition=2)``.
+  ``fem.nodes.select(partition=2)``.
 """
 from __future__ import annotations
 
