@@ -185,6 +185,33 @@ them.
   `core/_selection.py:353/:545/:586/:938/:1161`;
   `mesh/_mesh_structured.py:124/:204/:423`) are **P4 /
   optional-same-commit cosmetic** — not PROD callers, not a blocker.
+- **M-CORRECTION-P3S (2026-05-19 — head-resolvable, owner-INFORMED;
+  same class as the M-CORRECTION above + the SC-12 precedent; NOT
+  owner-re-ratified; owner explicitly confirmed the reshaped scope
+  2026-05-19).** P3-S's plan prose "the unified `_kernel/spatial.py`
+  fail-loud centroid" is precision-corrected: the fail-loud centroid is
+  **per-engine** in `mesh/_mesh_selection.py:_centroid_map_live`
+  (`:329-356`, `KeyError` `:346-352`), **not** in `_kernel/spatial.py`
+  (87 lines; box/sphere/plane mask math only; its own docstring
+  `:34-38` states exactly this). P3-S ships **one additive file**
+  `tests/test_pin_spatial_kernel_v2.py` of new-idiom successors
+  (`g.mesh_selection.select(...)` only — **no `from apeGmsh._kernel
+  import spatial`**, RED-2) closing the four source-proven HEAD gaps —
+  PIN 1 element-`.coords` centroid value + `.coords`-triggered
+  fail-loud (Gap D); PIN 2 element-`on_plane` **frozen id-set**
+  replacing `test_mesh_selection_chain.py:209`'s `len()==4` (Gap C);
+  PIN 3 `<=tol` plane boundary via the live idiom (Gap E); PIN 4
+  non-unit-normal normalisation via the live idiom (Gap F) — never the
+  already-green literals (`test_mesh_selection_chain.py:222-336,
+  432-449`, the P3-R rewrites). Zero `src/` change; zero edits to
+  existing tests; the behaviour-changing `_mesh_filters` flip already
+  lives in P3-R (`49033ed`). Head-caught at source: PIN 4 replicates
+  the existing-oracle `.in_box((0,0,0),(1,1,1))` prefix (the
+  `[2,12,17,25]` literal is the half-open-box-prefixed z=0 subset, not
+  the full 9-node plane); PIN 3 uses the proof-file/p2g empirical-
+  capture+structural-derivation freeze pattern. Cross-ref:
+  `test_pin_spatial_v2.py:21-25` (the in-repo P3-S charter);
+  `selection-unification-v2.md` §6.2 P3-S note + §7 touch (2026-05-19).
 
 ## 1. Zero-PROD-caller census (the P3-R gate) — summary
 

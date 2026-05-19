@@ -725,6 +725,78 @@ behaviour is a reviewed pin with a paired regression test; no
 behaviour change beyond P3-R's already-reviewed flipped sites. Closes
 HT7 and the spatial half of R-v2-5.
 
+> [!note] P3-S precision reconciliation (2026-05-19 — M-CORRECTION
+> class: head-resolvable, owner-INFORMED via this note + the §7 touch
+> below + `selection-unification-v2-p3r-callers.md` §0 M-CORRECTION-P3S
+> + the P3-S PR body + the memory note; **NOT** owner-re-ratified —
+> reverses no R-v2-x, no phase-structure change; same disposition class
+> as the §6.3 §0 M-CORRECTION / SC-12 precedent. Owner explicitly
+> confirmed the reshaped scope 2026-05-19.) Pre-flight census + 3×RED +
+> 1×BLUE + head re-verification at HEAD `fab558f` (P3-R merged):
+> 1. **Precision fix to the P3-S prose above.** "the unified
+>    `_kernel/spatial.py` fail-loud centroid" is imprecise: at HEAD only
+>    the plane/box/sphere **mask math** is unified in
+>    `_kernel/spatial.py` (`:74-86` `plane_mask`/`box_mask`/
+>    `sphere_mask`; the module docstring `:34-38` explicitly states the
+>    element-centroid `_coords_of` source "stays per-engine in
+>    `MeshSelection`" and the `_mesh_filters` centroid unification "is a
+>    P3-R concern, not P3-K"). The **fail-loud centroid is the
+>    per-engine `MeshSelection._centroid_map_live`**
+>    (`mesh/_mesh_selection.py:329-356`, `KeyError` at `:346-352`
+>    "…not in the live mesh node set — refusing to compute a corrupted
+>    centroid (fail loud)."), reached by element-level `.coords`
+>    (`:478-486` → `_coords_of` `:385-395` → `_coords_of_live`
+>    `:358-382`). Read P3-S as: assert, **via the new idiom only**, that
+>    (a) element `.coords` yields the per-engine fail-loud centroid
+>    value (never silent row-0) and (b) `.on_plane` runs the unified
+>    `_kernel/spatial.py` `(point,normal,tol)` `plane_mask`.
+> 2. **Direct `_kernel.spatial` unit pins are rejected** (RED-2): the
+>    P3-S mechanism is the new idiom `g.mesh_selection.select(...)`
+>    **exclusively** — three committed artifacts name it and never a
+>    kernel-unit path (this P3-S text `:719-722`; the superseded-spec
+>    `:586-589`; the in-repo charter `tests/test_pin_spatial_v2.py:21-25`).
+>    No `from apeGmsh._kernel import spatial` in the new file; no
+>    `_kernel/*` math-leaf unit-test precedent exists in the suite.
+> 3. **The literal box/sphere/plane + fail-loud-centroid-via-`.in_box`
+>    pins are ALREADY green at HEAD** (`tests/test_mesh_selection_chain.py`
+>    `:222-336`, `:432-449` — the P3-R rewrites; head-verified zero
+>    `.coords` in that file and the only suite-wide selection-`.coords`
+>    assertion is `tests/test_fem_chain.py:357-358`, node-level
+>    shape/dtype only). P3-S therefore adds **only the four
+>    source-proven successor gaps**, never duplicates, in one additive
+>    file `tests/test_pin_spatial_kernel_v2.py` (zero `src/` change,
+>    zero edits to existing tests; existing green literals re-used as
+>    oracles): **PIN 1** element-`.coords` centroid value + a
+>    `.coords`-triggered fail-loud regression (Gap D — the *only*
+>    element-`.coords` value pin in the suite; the existing `:432-449`
+>    fail-loud is via `.in_box`, head-verified, so the `.coords` entry
+>    path is genuinely additive); **PIN 2** element-`on_plane` **frozen
+>    id-set** replacing the cardinality-only `len()==4` at
+>    `test_mesh_selection_chain.py:209` (Gap C — the §7 silent-drift
+>    hole); **PIN 3** `<=tol` plane **boundary** via the live idiom
+>    (Gap E); **PIN 4** **non-unit normal** normalisation via the live
+>    idiom (Gap F).
+> 4. **Head-caught corrections to the executor contract (trust-nothing,
+>    at source).** PIN 4 must **replicate the existing-oracle chain
+>    prefix** `select().in_box((0,0,0),(1,1,1)).on_plane(...)` and vary
+>    *only* the normal to non-unit — the `[2,12,17,25]` literal at
+>    `test_mesh_selection_chain.py:222-231` is the half-open-box-prefixed
+>    z=0 **subset**, NOT the full 9-node z=0 plane that a box-less
+>    `select().on_plane(...)` yields (head-verified at source; the full
+>    z=0 plane is only `len()==9`-pinned at `:185-195`). PIN 3 freezes
+>    its boundary id-set via the plan-endorsed **proof-file/p2g freeze
+>    pattern** (empirical capture once under the env trap + a documented
+>    structural derivation from the {0,0.5,1}³ lattice), never a
+>    self-referential assertion.
+> 5. **Stale citations corrected.** P3-S's `MeshSelectionSet.py:715`→
+>    `:849` is pre-P3-R numbering; at HEAD `MeshSelectionSet.select` is
+>    `:511-645` (symbol unchanged, returns `MeshSelection`).
+>    `_kernel/chain.py:171` = `on_plane(self,point,normal,*,tol)`
+>    (`tol` keyword-only, **no default** — every call passes `tol=`);
+>    `:128` = the abstract `_spatial_plane` stub (impl
+>    `mesh/_mesh_selection.py:416`). `_kernel/chain.py` is the surviving
+>    `SelectionChain` base, **not** a P3-R-deleted module.
+
 ### P4 — docs / ADR / memory
 
 Supersede `selection-unification.md`; ADR for the label/PG
@@ -751,6 +823,15 @@ to_mesh_*`) and the rescoped §7 invariant 1.
   new-idiom regression successors added in P3-S. All four green every
   commit (§6.2 SC-3 — the program-wide "byte-unchanged through P3" was
   unsatisfiable and is formally rescoped here).
+- P3-S's "new-idiom regression successors" (the bullet above) are
+  pinned **exclusively through `g.mesh_selection.select(...)`** — NOT a
+  direct `_kernel.spatial` import (the §6.2 P3-S 2026-05-19
+  M-CORRECTION); each is a reviewed assertion + a paired regression,
+  and the element-`on_plane` centroid pin is a **frozen id-set** (not a
+  cardinality check) so a cardinality-preserving centroid corruption
+  cannot drift silently. The fail-loud centroid is the per-engine
+  `MeshSelection._centroid_map_live`, not `_kernel/spatial.py` (which
+  unifies only the box/sphere/plane mask math).
 - `tests/test_import_dag_polarity.py` (widened `PKGS` incl.
   `_kernel`+`fem`) green every commit; `BASELINE` changes only as an
   explicit same-commit reviewed diff.
