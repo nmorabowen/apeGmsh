@@ -57,6 +57,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ._internal.build import BridgeError, expand_pg_to_elements
 from ._internal.compose import _compose_model_h5, _path_stem
 from .emitter.h5 import H5Emitter
 
@@ -197,20 +198,20 @@ class ModelData:
             ``pg`` resolves to no elements; ``ele_type`` is unknown /
             has no transf slot; ``vecxz`` is not three components.
         """
+        # selection-unification v2: delegate PG → (eid, conn) expansion
+        # to the bridge's canonical helper, which uses
+        # ``fem.elements.select(pg=pg).groups()`` (the only resolution
+        # path the v2-migrated real ``FEMData`` exposes — ``.get(pg=)``
+        # was removed in P3-R).  Single source of truth for the
+        # expansion; the BridgeError → ValueError wrap keeps
+        # ModelData's public exception API stable.
         try:
-            result = self._fem.elements.get(pg=pg)
-        except KeyError as e:
+            items = expand_pg_to_elements(self._fem, pg)
+        except BridgeError as e:
             raise ValueError(
                 f"ModelData.oriented_elements: pg={pg!r} not found in "
-                f"the bound FEMData (.elements.get raised KeyError)."
+                f"the bound FEMData."
             ) from e
-
-        items: list[tuple[int, tuple[int, ...]]] = []
-        for grp in result:
-            for eid, conn in grp:
-                items.append(
-                    (int(eid), tuple(int(c) for c in conn))
-                )
         if not items:
             raise ValueError(
                 f"ModelData.oriented_elements: pg={pg!r} resolves to "
