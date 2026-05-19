@@ -194,7 +194,11 @@ class TestFEMDataPartitions:
         if not fem.partitions:
             pytest.skip("Partitioning did not produce queryable partitions")
         p = fem.partitions[0]
-        result = fem.nodes.get(partition=p)
+        # selection-unification v2 P3-R: ``fem.nodes.get(partition=)``
+        # is removed; ``fem.nodes.select(partition=)`` is the migration
+        # target (P-NODE — same _resolve_nodes + _intersect_partition,
+        # id-for-id).  MeshSelection exposes .ids / .coords directly.
+        result = fem.nodes.select(partition=p)
         assert len(result.ids) > 0
         assert result.coords.shape[0] == len(result.ids)
 
@@ -205,8 +209,11 @@ class TestFEMDataPartitions:
         if not fem.partitions:
             pytest.skip("Partitioning did not produce queryable partitions")
         p = fem.partitions[0]
-        result = fem.elements.get(partition=p)
-        assert result.n_elements > 0
+        # P3-R: ``fem.elements.get(partition=)`` removed →
+        # ``fem.elements.select(partition=)``; the terminal id count is
+        # the element count (P-ELEM-IDS).
+        result = fem.elements.select(partition=p)
+        assert len(result.ids) > 0
 
     def test_partition_union_covers_all_elements(self, g):
         _build_plate(g)
@@ -217,7 +224,7 @@ class TestFEMDataPartitions:
         all_ids = set(int(e) for e in fem.elements.ids)
         union = set()
         for p in fem.partitions:
-            eids = fem.elements.get(partition=p).ids
+            eids = fem.elements.select(partition=p).ids   # P3-R: was .get
             union.update(int(e) for e in eids)
         assert union == all_ids
 
@@ -225,7 +232,7 @@ class TestFEMDataPartitions:
         _build_plate(g)
         fem = g.mesh.queries.get_fem_data(dim=2)
         with pytest.raises(KeyError, match="Partition 99 not found"):
-            fem.nodes.get(partition=99)
+            fem.nodes.select(partition=99)                 # P3-R: was .get
 
     def test_partition_with_pg_intersection(self, g):
         """partition= combined with pg= returns intersection."""
@@ -240,9 +247,12 @@ class TestFEMDataPartitions:
             pytest.skip("PG or partition not available")
         p = fem.partitions[0]
         # Intersection should be <= each set
-        pg_ids = fem.nodes.get(pg="Plate").ids
-        part_ids = fem.nodes.get(partition=p).ids
-        both_ids = fem.nodes.get(pg="Plate", partition=p).ids
+        # P3-R: ``fem.nodes.get(...)`` removed → ``.select(...)`` (the
+        # pg= / partition= / pg=+partition= selectors are identical —
+        # P-NODE, same _resolve_nodes + _intersect_partition).
+        pg_ids = fem.nodes.select(pg="Plate").ids
+        part_ids = fem.nodes.select(partition=p).ids
+        both_ids = fem.nodes.select(pg="Plate", partition=p).ids
         assert len(both_ids) <= len(pg_ids)
         assert len(both_ids) <= len(part_ids)
         # All intersection IDs should be in both sets
@@ -252,17 +262,25 @@ class TestFEMDataPartitions:
             assert int(nid) in pg_set
             assert int(nid) in part_set
 
-    def test_get_ids_with_partition(self, g):
-        """get_ids() forwards partition= correctly."""
+    def test_select_forwards_partition(self, g):
+        """``select(partition=)`` forwards partition= correctly.
+
+        selection-unification v2 P3-R: the legacy ``get(partition=)``
+        vs ``get_ids(partition=)`` parity is vacuous (both removed and
+        collapsed into the single ``select(partition=).ids``); this
+        pins the surviving v2 surface — a non-empty partition id set
+        whose every id is in the partition's element/node universe."""
         _build_plate(g)
         g.mesh.partitioning.partition(2)
         fem = g.mesh.queries.get_fem_data(dim=2)
         if not fem.partitions:
             pytest.skip("No partitions")
         p = fem.partitions[0]
-        ids_via_get = fem.nodes.get(partition=p).ids
-        ids_via_shortcut = fem.nodes.get_ids(partition=p)
-        np.testing.assert_array_equal(ids_via_get, ids_via_shortcut)
+        ids = fem.nodes.select(partition=p).ids
+        assert len(ids) > 0
+        # the partition id set is a subset of the full node universe
+        all_nodes = set(int(n) for n in fem.nodes.ids)
+        assert all(int(n) in all_nodes for n in ids)
 
 
 # =====================================================================

@@ -185,6 +185,22 @@ class _StubNodes:
     def get_coords(self, *, pg: str) -> np.ndarray:
         return self._coords
 
+    def select(self, target=None, *, pg: str | None = None, **_kw):
+        """selection-unification v2 P3-R: ``fem.nodes.get_coords(pg=)``
+        is removed; ``fem.nodes.select(pg=).coords`` is the migration
+        target (P-COORD).  Mirrors the broker — same coords as the
+        (removed) ``get_coords`` body via the ``.coords`` terminal."""
+        return _SelResult(self._coords)
+
+
+class _SelResult:
+    """The ``fem.nodes.select(...)`` terminal — exposes ``.coords``
+    (the only surface PROD reads after the ``get_coords``→``select``
+    P3-R migration)."""
+
+    def __init__(self, coords: np.ndarray) -> None:
+        self.coords = coords
+
 
 class _StubFEM:
     def __init__(self, coords: np.ndarray) -> None:

@@ -180,7 +180,7 @@ def bounding_polygon_from_physical_surface(
     """
     from ._planes import plane_from_coords
 
-    coords = fem.nodes.get_coords(pg=pg_name)
+    coords = fem.nodes.select(pg=pg_name).coords
     coords_arr = np.asarray(coords, dtype=float)
     if coords_arr.size == 0:
         raise ValueError(

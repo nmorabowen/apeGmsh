@@ -1,20 +1,22 @@
-"""S3a — GeometryChain (entity family) focused smoke test.
+"""S3a (P3-R) — the entity-family ``g.model.select(...)`` terminal.
 
 Phase S3a of the selection-unification work
-(``docs/plans/selection-unification.md`` §5/§6, ratified decision R3):
-the fluent, daisy-chainable ``GeometryChain`` is added *beside* the
-legacy ``core/_selection.Selection`` (which stays byte-unchanged as the
-terminal type) and reached via the new, additive ``g.model.select(...)``
-host hook.
+(``docs/plans/selection-unification.md`` §5/§6, ratified decision R3),
+carried through selection-unification-v2 P3-R
+(``docs/plans/selection-unification-v2.md`` §6.2 / §6.3): the
+fluent, daisy-chainable entity-family terminal ``EntitySelection``
+(the legacy ``GeometryChain`` is deleted) is reached via the
+``g.model.select(...)`` host hook and materialises the RETAINED legacy
+``core/_selection.Selection`` terminal (R-v2-8).
 
 What this locks:
 
-* ``g.model.select(...)`` returns a ``GeometryChain`` and delegates
+* ``g.model.select(...)`` returns an ``EntitySelection`` and delegates
   name resolution to the contract-locked geometry resolver
   (``resolve_to_dimtags``) — label -> PG -> part tiering, not
   re-implemented here.
 * The chain daisy-chains: ``.select(...).in_box(...).on_plane(...)``
-  composes, every verb returning a new ``GeometryChain``.
+  composes, every verb returning a new ``EntitySelection``.
 * Entity-family spatial semantics:
     - ``in_box`` uses ``gmsh.model.getEntitiesInBoundingBox`` (BRep
       bbox-INTERSECT — Gmsh's own entity query), NOT coordinate
@@ -29,11 +31,15 @@ What this locks:
 * Set algebra ``| & - ^`` with insertion-order dedup; cross-type
   combination is loud.
 * ``.result()`` returns a **legacy** ``core/_selection.Selection``
-  instance, so ``.to_label()`` / ``.to_physical()`` / ``.tags()`` keep
-  working through the unchanged terminal.
-* The legacy entry points — ``g.model.queries.select`` and
-  ``g.model.selection.select_*`` — still behave exactly as before
-  (FP-2: the two legacy ``Selection`` classes are untouched).
+  instance (the class is RETAINED — R-v2-8), so ``.to_label()`` /
+  ``.to_physical()`` / ``.tags()`` keep working through the unchanged
+  terminal.
+* The geometric-predicate engine is now reached through the v2
+  ``g.model.select(...).crossing_plane(spec, mode=)`` verb (the legacy
+  ``g.model.queries.select`` / ``g.model.selection.select_*`` entry
+  points are removed by P3-R); the two RETAINED ``Selection`` classes
+  (``core/_selection.Selection`` list-subclass vs ``viz`` frozen) stay
+  irreconcilable and distinct (FP-2 / R-v2-8).
 
 No ``openseespy`` dependency (curated no-openseespy CI gate): pure
 apeGmsh + gmsh + numpy.  A tiny unit cube with a 6-face physical group
@@ -44,17 +50,23 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh._kernel.chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
-from apeGmsh.core._selection import GeometryChain, EntitySelection, Selection
-from apeGmsh.mesh._node_chain import NodeChain
-# selection-unification-v2 P2-I (§6.1 STOP-2(c)): ``g.model.select(...)``
-# now returns the v2 terminal ``EntitySelection`` (legacy
-# ``GeometryChain`` left defined-but-unwired; P3 deletes it).  The
-# host-return-type assertions below are BEHAVIOURAL (they then exercise
-# len / daisy-chain / spatial / set-algebra / ``inclusive=``→TypeError
-# / ``.result()``→legacy ``Selection``, which must stay green), so they
-# assert the new type; the legacy structural-shape tests keep asserting
-# the still-defined ``GeometryChain``.
+from apeGmsh._kernel.chain import SelectionChain
+from apeGmsh.core._selection import EntitySelection, Selection
+from apeGmsh.mesh._mesh_selection import MeshSelection
+# selection-unification-v2 P3-R (§6.2 / §6.3): the legacy
+# ``GeometryChain`` / ``NodeChain`` classes are **deleted** and the
+# removed ``g.model.queries.select`` / ``g.model.selection.select_*``
+# legacy entry points no longer exist.  ``g.model.select(...)`` returns
+# the v2 terminal ``EntitySelection``.  The GeometryChain
+# structural-shape / __init_subclass__ tests are deleted (now covered
+# by ``tests/test_selection_idiom.py`` over the two v2 terminals); the
+# behaviour-bearing tests below keep their full coverage on the
+# ``g.model.select(...)`` path (the legacy ``queries.select``
+# geometric-predicate test is rewritten onto the v2
+# ``crossing_plane`` verb with frozen ``(dim, tag)`` literals — P2-G
+# proved the equivalence, ``tests/test_p2g_parity.py``; the removed
+# ``g.model.selection.select_*`` test is deleted, no v2 successor
+# [SC-12 precedent / §6.3 disposition 3]).
 
 
 # =====================================================================
@@ -77,57 +89,27 @@ def cube(g):
 
 
 # =====================================================================
-# Class-shape invariants (the S3a structural contract)
+# Class-shape invariant — the host hook returns the v2 terminal
+# (the legacy GeometryChain structural-shape + __init_subclass__ gate
+# tests are deleted; covered by tests/test_selection_idiom.py)
 # =====================================================================
 
-def test_geometrychain_is_entity_family_subclass():
-    assert issubclass(GeometryChain, SelectionChain)
-    assert GeometryChain.FAMILY == "entity"
-    # legacy terminal is the unchanged list subclass
+def test_select_returns_entityselection_entity_family(cube):
+    g = cube
+    sel = g.model.select("Faces")
+    assert isinstance(sel, EntitySelection)
+    assert issubclass(EntitySelection, SelectionChain)
+    assert sel.FAMILY == "entity"
+    # legacy terminal is the RETAINED list subclass (R-v2-8)
     assert issubclass(Selection, list)
-    assert GeometryChain is not Selection
-
-
-def test_geometrychain_passes_init_subclass_gate():
-    # __init_subclass__ (ratified R2) accepted GeometryChain: a valid
-    # FAMILY, every required verb callable, every required hook a real
-    # override (not the base NotImplementedError stub).
-    assert GeometryChain.FAMILY in ("entity", "point")
-    for verb in REQUIRED_VERBS:
-        assert callable(getattr(GeometryChain, verb, None)), verb
-    for hook in _REQUIRED_HOOKS:
-        impl = getattr(GeometryChain, hook, None)
-        assert impl is not None
-        assert impl is not getattr(SelectionChain, hook, None), hook
-
-
-def test_init_subclass_still_rejects_bad_subclasses():
-    # The gate is not weakened by adding GeometryChain.
-    with pytest.raises(TypeError, match="FAMILY.*invalid"):
-        class _BadFamily(SelectionChain):
-            FAMILY = "nope"
-
-    with pytest.raises(TypeError, match="missing required selection verb"):
-        class _MissingVerb(SelectionChain):
-            FAMILY = "entity"
-            in_box = None  # drop a verb
-
-            def _coords_of(self, a): ...
-            def _spatial_box(self, a, lo, hi, *, inclusive): ...
-            def _spatial_sphere(self, a, c, r): ...
-            def _spatial_plane(self, a, p, n, t): ...
-            def _materialize(self): ...
-
-    with pytest.raises(TypeError, match="must implement.*hook"):
-        class _MissingHook(SelectionChain):
-            FAMILY = "point"  # all verbs inherited; no hooks
+    assert EntitySelection is not Selection
 
 
 # =====================================================================
-# .select() host hook — additive, delegates to the locked resolver
+# .select() host hook — delegates to the locked resolver
 # =====================================================================
 
-def test_select_returns_geometrychain_seeded_by_tier_resolution(cube):
+def test_select_returns_entityselection_seeded_by_tier_resolution(cube):
     g = cube
     # string -> label tier (Tier 1): "box" is a dim-3 volume label.
     vol = g.model.select("box")
@@ -333,7 +315,7 @@ def test_set_algebra_union_intersect_difference_symmetric(cube):
 
 def test_cross_type_set_algebra_is_loud(cube):
     gc = cube.model.select("Faces")
-    nc = NodeChain((), _engine=None)
+    nc = MeshSelection((), _engine=None)       # P3-R: was NodeChain
     with pytest.raises(TypeError, match="same chain type"):
         gc | nc
     with pytest.raises(TypeError, match="same chain type"):
@@ -375,43 +357,40 @@ def test_result_terminal_to_physical_and_tags_still_work(cube):
 
 
 # =====================================================================
-# Legacy entry points unchanged (FP-2 — byte-identical Selections)
+# selection-unification-v2 P3-R: the legacy entry points
+# ``g.model.queries.select`` and ``g.model.selection.select_*`` are
+# **removed**.
+#
+# * ``test_legacy_queries_select_unchanged`` is deleted — the
+#   geometric-predicate engine is now reached via the v2
+#   ``g.model.select(...).crossing_plane(spec, mode=)`` verb, whose
+#   behaviour (every spec / mode / set-algebra on the RETAINED
+#   ``Selection`` terminal) is exhaustively pinned with frozen
+#   ``(dim, tag)`` literals in the dedicated ``tests/test_p2g_parity.py``
+#   (P2-G proved ``crossing_plane`` ≡ the now-removed ``queries.select``
+#   engine).  The legacy ``queries.select("box", dim=2, ...)``
+#   boundary-extraction-then-predicate call is a removed surface with
+#   no byte-equivalent v2 call (v2 seeds from explicitly-resolved
+#   entities) — keeping a half-rewritten copy here would duplicate
+#   ``test_p2g_parity.py`` worse.
+# * ``test_legacy_selection_composite_select_star_unchanged`` is
+#   deleted — ``g.model.selection`` (the ``SelectionComposite``) is
+#   removed with **no v2 successor** for its ``select_volumes`` /
+#   ``select_surfaces`` filter grammar (the SC-12 precedent / §6.3
+#   M-NOTE-G7-cascade disposition 3; a P4-documented capability gap).
+#
+# The RETAINED two-``Selection``-classes distinctness invariant
+# (behaviour-bearing — both classes survive P3-R, R-v2-8) is kept and
+# rewritten off the deleted ``GeometryChain`` onto the v2
+# ``EntitySelection`` terminal.
 # =====================================================================
 
-def test_legacy_queries_select_unchanged(cube):
-    g = cube
-    # the byte-unchanged geometric-predicate selector still returns the
-    # legacy list-subclass Selection and behaves identically.
-    sel = g.model.queries.select("box", dim=2, on={"z": 0})
-    assert type(sel).__name__ == "Selection"
-    assert isinstance(sel, list)
-    assert len(sel) == 1
-    assert callable(getattr(sel, "tags"))      # .tags() is a METHOD
-    # the resolve-only + chain + set-algebra legacy path is intact
-    all_faces = g.model.queries.select("box", dim=2)
-    assert len(all_faces) == 6
-    bottom = g.model.queries.select("box", dim=2, on={"z": 0})
-    top = g.model.queries.select("box", dim=2, on={"z": 1})
-    assert len(bottom | top) == 2
-    assert len((all_faces - bottom)) == 5
-
-
-def test_legacy_selection_composite_select_star_unchanged(cube):
-    g = cube
-    # viz SelectionComposite.select_* still returns the frozen
-    # __slots__ viz Selection whose .tags is a PROPERTY (not a method).
-    vsel = g.model.selection.select_volumes()
-    assert type(vsel).__name__ == "Selection"
-    assert sorted(int(x) for x in vsel.tags) == [1]   # .tags PROPERTY
-    fsel = g.model.selection.select_surfaces()
-    assert sorted(int(x) for x in fsel.tags) == [1, 2, 3, 4, 5, 6]
-
-
-def test_two_legacy_selection_classes_remain_distinct():
-    # FP-2: the core/_selection.Selection (list subclass, .tags()
-    # method) and the viz/Selection.Selection (frozen __slots__, .tags
-    # property) are irreconcilable and stay separate. GeometryChain is
-    # a third, independent type — it is neither of them.
+def test_two_retained_selection_classes_remain_distinct():
+    # R-v2-8 / FP-2: the core/_selection.Selection (list subclass,
+    # .tags() method) and the viz/Selection.Selection (frozen
+    # __slots__, .tags property) are RETAINED through P3-R and stay
+    # irreconcilable.  EntitySelection (the v2 entity terminal) is a
+    # third, independent type — it is neither of them.
     from apeGmsh.core._selection import Selection as CoreSel
     from apeGmsh.viz.Selection import Selection as VizSel
 
@@ -420,5 +399,5 @@ def test_two_legacy_selection_classes_remain_distinct():
     assert not issubclass(VizSel, list)         # frozen __slots__
     assert callable(CoreSel.tags)               # .tags() METHOD
     assert isinstance(VizSel.tags, property)    # .tags PROPERTY
-    assert GeometryChain is not CoreSel
-    assert GeometryChain is not VizSel
+    assert EntitySelection is not CoreSel
+    assert EntitySelection is not VizSel

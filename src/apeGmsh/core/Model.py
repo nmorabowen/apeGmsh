@@ -81,14 +81,6 @@ class Model(_HasLogging):
         self.io = _IO(self)
         self.queries = _Queries(self)
 
-        # Entity-selection sub-composite (g.model.selection.select_points(...))
-        # NB: SelectionComposite's methods that touch `physical` require a
-        # full ``apeGmsh`` session — ``Part`` sessions have a ``model``
-        # composite but never touch ``model.selection``, so the runtime
-        # cast is safe in practice.
-        from apeGmsh.viz.Selection import SelectionComposite
-        self.selection = SelectionComposite(parent=parent, model=self)  # type: ignore[arg-type]
-
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._model._*)
     # ------------------------------------------------------------------
@@ -254,10 +246,19 @@ class Model(_HasLogging):
         Parameters
         ----------
         **kwargs :
-            Forwarded to :meth:`selection.picker` (e.g. ``dims``,
-            ``point_size``, ``line_width``, ``surface_opacity``).
+            Forwarded to
+            :class:`~apeGmsh.viewers.model_viewer.ModelViewer`
+            (e.g. ``physical_group``, ``dims``, ``point_size``,
+            ``line_width``, ``surface_opacity``).
         """
-        return self.selection.picker(**kwargs)
+        # selection-unification v2 P3-R / §6.3 §4 SC-7: inline the
+        # former ``self.selection.picker(**kwargs)`` (SelectionComposite
+        # removed by M-STOP-2).  ``model=self`` is the identical object
+        # the deleted ``picker`` passed as ``model=self._model``.
+        from apeGmsh.viewers.model_viewer import ModelViewer
+        p = ModelViewer(parent=self._parent, model=self, **kwargs)
+        p.show()
+        return p
 
     def preview(
         self,

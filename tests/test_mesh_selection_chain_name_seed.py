@@ -46,7 +46,19 @@ from __future__ import annotations
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.mesh._mesh_selection_chain import MeshSelectionChain  # noqa: F401  (legacy, unwired until P3)
+# selection-unification-v2 P3-R: the legacy ``MeshSelectionChain`` is
+# **deleted** (its dead import is dropped) and the eager
+# ``add_nodes`` / ``add_elements`` API is **removed** (SC-11).  The
+# name-seed parity invariant (``select(name=N)`` == the existing set;
+# ``select(name=N).<spatial>`` == ``filter_set`` over it) is unchanged
+# — it delegates to the RETAINED ``get_tag`` / ``get_nodes`` /
+# ``get_elements`` / ``filter_set`` / ``from_physical`` / ``add``
+# surface; the named sets are now built by the RETAINED ``add`` /
+# ``from_physical`` instead of the removed ``add_nodes`` /
+# ``add_elements`` (the parity is set-identity, independent of how the
+# set was registered).  The redundant ``add_nodes``-built variant of
+# the name-seed parity is dropped (the ``from_physical`` variant covers
+# the same invariant with only retained surfaces).
 from apeGmsh.mesh._mesh_selection import MeshSelection
 
 
@@ -87,22 +99,11 @@ def _set_elem_ids(ms, dim, tag) -> list[int]:
 # Name-seed == the existing set (pure parity, both seed kinds)
 # =====================================================================
 
-def test_name_seed_node_equals_eager_add_nodes_set(live):
-    """``select(name=N)`` is id-for-id the ``add_nodes(name=N)`` set,
-    and the terminal is the same ``get_nodes`` shape."""
-    ms = live.mesh_selection
-    tag = ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), name="boxn")
-    eager = _set_node_ids(ms, tag)
-    assert len(eager) == 8                       # half-open default shell
-
-    seeded = ms.select(name="boxn")
-    assert isinstance(seeded, MeshSelection)   # P2-I: was MeshSelectionChain
-    assert seeded.FAMILY == "point"
-    assert _sorted_ids(seeded.ids) == eager
-    res = seeded.result()
-    assert _sorted_ids(res["tags"]) == eager
-    assert res["tags"].dtype == object
-    assert res["coords"].shape[1] == 3
+# selection-unification-v2 P3-R: the ``add_nodes``-built variant of
+# the node name-seed parity is deleted — ``add_nodes`` is removed and
+# the SAME invariant ("select(name=N) is id-for-id the existing set +
+# get_nodes shape") is covered by the ``from_physical`` variant below
+# using only retained surfaces.
 
 
 def test_name_seed_node_equals_from_physical_set(live):
@@ -115,23 +116,33 @@ def test_name_seed_node_equals_from_physical_set(live):
     assert len(eager) == 26                      # all 27 but interior node
 
     seeded = ms.select(name="shell_nodes")
+    assert isinstance(seeded, MeshSelection)   # P2-I: was MeshSelectionChain
+    assert seeded.FAMILY == "point"
     assert _sorted_ids(seeded.ids) == eager
-    assert _sorted_ids(seeded.result()["tags"]) == eager
+    res = seeded.result()
+    assert _sorted_ids(res["tags"]) == eager
+    assert res["tags"].dtype == object
+    assert res["coords"].shape[1] == 3
 
 
-def test_name_seed_element_equals_eager_add_elements_set(live):
+def test_name_seed_element_equals_registered_set(live):
     """Element level: ``select(level='element', dim=3, name=N)`` is
-    id-for-id ``add_elements(dim=3, name=N)``; terminal is the
-    ``get_elements`` shape."""
+    id-for-id the registered element set ``N``; terminal is the
+    ``get_elements`` shape.  The set is built by the RETAINED explicit
+    ``add(3, eids, name=)`` (the removed ``add_elements`` is gone; the
+    name-seed parity is set-identity, independent of the registrar).
+    The chosen eids are the deterministic 4 cells with centroid
+    z==0.25 (the S3d fixture fact)."""
     ms = live.mesh_selection
-    # known S3d fixture fact: half-open box upper-z 0.75 keeps the 4
-    # cells whose centroid z == 0.25.
-    tag = ms.add_elements(dim=3, in_box=(-1.0, -1.0, -1.0, 2.0, 2.0, 0.75),
-                          name="boxe")
+    # dim-3 hex ids here are 25..32 (the 6 Shell surface meshes consume
+    # 1..24 first); the 4 cells with centroid z==0.25 are 25..28.
+    tag = ms.add(3, [25, 26, 27, 28], name="boxe")
     eager = _set_elem_ids(ms, 3, tag)
     assert len(eager) == 4
 
     seeded = ms.select(level="element", dim=3, name="boxe")
+    assert isinstance(seeded, MeshSelection)
+    assert seeded.FAMILY == "point"
     assert _sorted_ids(seeded.ids) == eager
     res = seeded.result()
     assert _sorted_ids(res["element_ids"]) == eager
@@ -148,7 +159,10 @@ def test_name_seed_then_spatial_equals_filter_set_add_nodes(live):
     (half-open both sides) — name-seed + fluent spatial is the eager
     seed + spatial, id-for-id."""
     ms = live.mesh_selection
-    tag = ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), name="boxn")  # 8 nodes
+    # the named seed set is built by the RETAINED explicit add() (was
+    # add_nodes(in_box=...)); the 8 half-open-box node ids are the
+    # deterministic S3d fixture fact, registered directly.
+    tag = ms.add(0, [2, 9, 12, 17, 21, 23, 25, 27], name="boxn")
 
     sub = (-1.0, -1.0, -1.0, 0.5, 0.5, 0.5)
     ft = ms.filter_set(0, tag, in_box=sub, name="boxn_sub")
@@ -203,7 +217,7 @@ def test_name_seed_daisychains_and_set_algebra(live):
 
 def test_unknown_name_fails_loud_with_route_hint(live):
     ms = live.mesh_selection
-    ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), name="exists")
+    ms.add(0, [1, 2, 3, 4], name="exists")     # P3-R: was add_nodes
     with pytest.raises(KeyError) as ei:
         ms.select(name="nope")
     msg = ei.value.args[0]
@@ -216,7 +230,7 @@ def test_unknown_name_fails_loud_with_route_hint(live):
 
 def test_ids_and_name_are_mutually_exclusive(live):
     ms = live.mesh_selection
-    ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), name="exists")
+    ms.add(0, [1, 2, 3, 4], name="exists")     # P3-R: was add_nodes
     with pytest.raises(ValueError, match="mutually exclusive"):
         ms.select(ids=[1], name="exists")
 
@@ -225,7 +239,7 @@ def test_node_set_name_not_found_at_element_level(live):
     """A node set name asked at the element level is a loud miss (the
     (dim, tag)+name identity contract): no cross-dim silent match."""
     ms = live.mesh_selection
-    ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), name="nset")   # dim=0 set
+    ms.add(0, [1, 2, 3, 4], name="nset")       # dim=0 set (P3-R: was add_nodes)
     with pytest.raises(KeyError, match="No mesh-selection set named"):
         ms.select(level="element", dim=3, name="nset")     # dim=3 lookup
 
@@ -240,7 +254,7 @@ def test_name_seed_does_not_register_or_allocate(live):
     ``_next_tag`` (the locked no-registration invariant, extended to
     the name path)."""
     ms = live.mesh_selection
-    ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), name="boxn")
+    ms.add(0, [2, 9, 12, 17, 21, 23, 25, 27], name="boxn")  # was add_nodes
     ms.from_physical(2, "Shell", ms_name="shell_nodes")
 
     sets_before = dict(ms._sets)

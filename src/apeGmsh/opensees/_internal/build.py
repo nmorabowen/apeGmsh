@@ -320,7 +320,9 @@ def expand_pg_to_elements(
         The error includes the available PG names to help the user.
     """
     try:
-        result = fem.elements.get(pg=pg)
+        # selection-unification v2 P3-R / §6.3 §2 #5 (P-GROUPRESULT;
+        # m3 — resolution raises at .select()).
+        result = fem.elements.select(pg=pg).groups()
     except (KeyError, ValueError) as e:
         # FEMData raises one of these for an unknown PG; surface a
         # bridge-flavored error so the call-site can distinguish.
@@ -342,7 +344,8 @@ def expand_pg_to_nodes(fem: "FEMData", pg: str) -> tuple[int, ...]:
     Raises :class:`BridgeError` if ``pg`` is unknown.
     """
     try:
-        ids = fem.nodes.get(pg=pg).ids
+        # selection-unification v2 P3-R / §6.3 §2 #6 (P-NODE; m3).
+        ids = fem.nodes.select(pg=pg).ids
     except (KeyError, ValueError) as e:
         available = _available_pg_names(fem)
         raise BridgeError(

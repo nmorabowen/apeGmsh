@@ -204,19 +204,19 @@ def test_pin_broker_multidim_pg_silently_merges():
         assert len(fem.nodes.ids) == 27
 
         # (a) BROKER side — silent merge, NO exception.
-        res = fem.nodes.get(pg="Mixed")
+        res = fem.nodes.select(pg="Mixed")
         assert len(res.ids) == 27      # dim-3 (27) ∪ dim-2 face (9) = 27
         assert (
             len(np.asarray(fem.nodes.physical.node_ids("Mixed"))) == 27
         )
         # The merge is real: a dim-scoped read collapses to that one
         # slice (dim-2 face = 3x3 = 9-node grid; dim-3 = all 27).
-        assert len(fem.nodes.get(pg="Mixed", dim=2).ids) == 9
-        assert len(fem.nodes.get(pg="Mixed", dim=3).ids) == 27
+        assert len(fem.nodes.select(pg="Mixed", dim=2).ids) == 9
+        assert len(fem.nodes.select(pg="Mixed", dim=3).ids) == 27
         # The element broker likewise does NOT raise on the multi-dim
         # PG; it returns only the dim-3 hex groups (8 cells, no dim-2
         # elems extracted) — pinned so a future raise here is reviewed.
-        eres = fem.elements.get(pg="Mixed")
+        eres = fem.elements.select(pg="Mixed").groups()
         assert sum(len(grp.ids) for grp in eres) == 8
         assert sorted({grp.element_type.dim for grp in eres}) == [3]
 
@@ -268,9 +268,9 @@ def test_pin_element_path_no_dim_scoping_and_unconditional_part(
     fem = part_and_multidim_label_fem
 
     # --- axis 1: node path IS dim-scoped (different counts per dim) ---
-    n2 = len(fem.nodes.get(label="reg", dim=2).ids)
-    n3 = len(fem.nodes.get(label="reg", dim=3).ids)
-    nN = len(fem.nodes.get(label="reg").ids)            # dim=None
+    n2 = len(fem.nodes.select(label="reg", dim=2).ids)
+    n3 = len(fem.nodes.select(label="reg", dim=3).ids)
+    nN = len(fem.nodes.select(label="reg").ids)            # dim=None
     assert n2 == 9       # dim-2 face = 3x3 grid
     assert n3 == 27      # dim-3 volume = full lattice
     assert nN == 27      # dim=None UNIONs → 27 (matches dim-3 here)
@@ -280,14 +280,14 @@ def test_pin_element_path_no_dim_scoping_and_unconditional_part(
     #     union (label "reg") returns the dim-3 hex group. dim= is then
     #     a downstream group post-filter — dim=2 silently EMPTIES (no
     #     raise, no ignore); dim=3 keeps the 8 cells. ---
-    e_union = fem.elements.get(label="reg")
+    e_union = fem.elements.select(label="reg").groups()
     assert sum(len(grp.ids) for grp in e_union) == 8
     assert sorted({grp.element_type.dim for grp in e_union}) == [3]
 
-    e_d2 = fem.elements.get(label="reg", dim=2)
+    e_d2 = fem.elements.select(label="reg", dim=2).groups()
     assert sum(len(grp.ids) for grp in e_d2) == 0       # EMPTIED
     assert list(e_d2) == []                              # GroupResult empty
-    e_d3 = fem.elements.get(label="reg", dim=3)
+    e_d3 = fem.elements.select(label="reg", dim=3).groups()
     assert sum(len(grp.ids) for grp in e_d3) == 8        # kept
 
     # --- axis 2 + 3: part branch dim-gating + exception breadth ---
@@ -298,18 +298,18 @@ def test_pin_element_path_no_dim_scoping_and_unconditional_part(
         KeyError,
         match=r"No label, physical group, or part named 'P1' at dim=2",
     ):
-        fem.nodes.get(target="P1", dim=2)
+        fem.nodes.select(target="P1", dim=2)
     # dim=None → the part branch fires; 27-node lattice.
-    assert len(fem.nodes.get(target="P1").ids) == 27
+    assert len(fem.nodes.select(target="P1").ids) == 27
 
     # element part branch is `if t in _part_elem_map` (FEMData.py:875)
     # — UNCONDITIONAL (no dim gate): it resolves the part with NO
     # exception, then dim= post-filters. target="P1" → 8 hex; with
     # dim=2 the post-filter silently EMPTIES (still NO exception —
     # contrast the node KeyError above).
-    ep = fem.elements.get(target="P1")
+    ep = fem.elements.select(target="P1").groups()
     assert sum(len(grp.ids) for grp in ep) == 8
-    ep2 = fem.elements.get(target="P1", dim=2)
+    ep2 = fem.elements.select(target="P1", dim=2).groups()
     assert sum(len(grp.ids) for grp in ep2) == 0         # EMPTIED, no raise
     assert list(ep2) == []
 
@@ -350,7 +350,7 @@ def test_pin_element_samename_label_pg_precedence(
     assert set(lab_e).isdisjoint(pg_e)
 
     got = sorted(
-        int(x) for grp in fem.elements.get(target="Clash") for x in grp.ids
+        int(x) for grp in fem.elements.select(target="Clash").groups() for x in grp.ids
     )
     assert got == lab_e        # LABEL wins
     assert got != pg_e         # did NOT fall through to the PG
@@ -362,7 +362,7 @@ def test_pin_element_samename_label_pg_precedence(
         int(x) for x in fem.nodes.labels.node_ids("Clash"))
     pg_n = sorted(
         int(x) for x in fem.nodes.physical.node_ids("Clash"))
-    got_n = sorted(int(x) for x in fem.nodes.get(target="Clash").ids)
+    got_n = sorted(int(x) for x in fem.nodes.select(target="Clash").ids)
     assert got_n == lab_n
     assert got_n != pg_n
     assert len(got_n) == 27

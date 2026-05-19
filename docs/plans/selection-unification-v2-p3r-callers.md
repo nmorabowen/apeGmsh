@@ -109,6 +109,77 @@ them.
   (`test_pin_resolution_v2.py`) and the element sites in §5 use
   `.groups()`/`.result()` (GroupResult-shaped, matching the deleted
   element-`get` body) — **never** `.ids`. Do not "simplify" to `.ids`.
+- **M-NOTE-from_physical (scope clarification — head-reverified at
+  HEAD).** §6.2/§6.3's "`g.mesh_selection.add_*/from_*`" is shorthand
+  for the **justified** targets only: `MeshSelectionSet.add_nodes`
+  (:199-258) + `add_elements` (:259-337) (SC-11 `_mesh_filters`
+  silent-row-0 family) and `from_geometric` (:516-584) (SC-12
+  `viz.Selection.to_mesh_*` consumer — its dependency is removed).
+  **`MeshSelectionSet.from_physical` (:476-514) is RETAINED** — it
+  depends only on retained surfaces (`gmsh.model.*` PG APIs +
+  `self._alloc_tag`/`self._store_node_set`/`np`), has no removed
+  dependency, and no stated removal justification; removing it would be
+  unjustified scope-creep on the irreversible phase. This matches the
+  RED-2/BLUE removal-set enumeration ({add_nodes, add_elements,
+  from_geometric}), which already excluded `from_physical`. (Same
+  prose-too-literal class as the `_model_queries.py:15` correction.)
+- **M-NOTE-G7-cascade (§6.3 §5 reconciliation — head-adjudicated at
+  HEAD after the executor STOP-report; SC-10 anticipated this
+  under-enumeration: "an order of magnitude beyond ~75 files; re-derive
+  by ripgrep").** Executor's full-suite scan = 278 failed/5 err across
+  33 files, **all test-side (zero PROD defects** — G1–G6 surgery
+  source-confirmed sound; e.g. `cuts/_drift.py:446` correctly
+  `.select`). Dispositions (the §5 A/B/C/D categories stand; these
+  refine 3 misclassified/omitted items, behaviour-preserving, no
+  PROD/FROZEN edits):
+  - **`test_p2i_parity.py` → DELETE** (already pre-ratified §5-B
+    "legacy↔v2 parity vacuous once legacy gone; P3-K oracle proved
+    equivalence"). Executor done.
+  - **`test_p2g_parity.py` → REWRITE to v2-only (NOT "surface-only"
+    [§5-B misclassified it], NOT delete).** Source-proven: it is the
+    same vacuous-once-legacy-gone legacy↔v2 parity as p2i (28
+    `queries.select`/`line` refs), BUT it *uniquely* pins v2-OWNED
+    behaviour the RETAINED `EntitySelection.crossing_plane` engine + the
+    §6.1 STOP-1 point-family `TypeError` fail-loud — NOT redundantly
+    covered post-P3-R (the rewritten `test_pin_spatial_v2.py` is now
+    only the SC-11 `_mesh_filters` flip). Rewrite: keep each
+    `g.model.select(seed).crossing_plane(spec,mode=m)` assertion with
+    its expected `(dim,tag)` set **frozen as a literal** (the
+    P2-G-proven value — the legacy oracle is gone, exactly the
+    proof-file freeze pattern); keep the STOP-1 point-family `TypeError`
+    pin verbatim; drop the now-impossible legacy `queries.select`/`line`
+    comparison half. Head owns/verifies this (behaviour-invariant pin,
+    like the proof files).
+  - **`test_selection_filters.py` (33 tests) + the orphaned
+    `g.model.selection.select_*` test sites → RETIRE (delete) with a P4
+    capability-gap note.** Source-proven: `SelectionComposite.select_*`
+    exposed a rich filter grammar (`labels=`fnmatch, `kinds=`,
+    `length/area/volume_range=`, `predicate=fn`, `exclude_tags=`,
+    `physical=`, `at_point=`) via the `_apply_filters` engine;
+    `EntitySelection` (the ratified `g.model.select(...)→EntitySelection`
+    successor) has **no** equivalent (only spatial verbs + set-ops +
+    `to_label/to_physical/to_dataframe`). `SelectionComposite` removal
+    is **already ratified** §6.2 (census/RED-2 zero PROD callers besides
+    `Model.py:89-90`+`Model.viewer():260`/SC-7). Head-ratified via the
+    **SC-12 precedent** (a removed-surface user capability with no v2
+    successor → P4-documented gap, *not* an internal blocker) — **NOT
+    owner-re-ratified** (owner ratified the class removal; SC-12 is the
+    established disposition class). **Owner-informed loudly** (this note
+    + the P3-R PR body + the memory note): §6.3 §5 omitted the
+    `select_*` filter-grammar cascade, and the rich filter API has **no
+    v2 successor** (a P4 capability gap, sibling to SC-12's
+    `from_geometric`). Not papered over.
+  - **Stub/mock cascade (~131 broker-stub + ~7 mock-`_groups` failures)
+    → IN-SCOPE mechanical (A/M-STOP-3 consequence; SC-10).** Per-file
+    test-doubles that mirrored the removed `fem.*.get` must mirror
+    `.select(...)` (node→`.ids/.coords`; element→`.groups()/.result()/
+    .resolve()`, M-NOTE-oracle-shape) **byte-faithfully** (the verified
+    pattern: stub `.select(...)` ≡ `return self.get(...)`); mocks the
+    M-STOP-3 direct-iteration touches must expose `_groups`. Mirror
+    only — never weaken/skip an assertion.
+  - **P4 (§6.2 P4 scope addition):** document the `SelectionComposite.
+    select_*` filter-grammar capability gap beside the SC-12
+    `from_geometric` gap.
 - **RED-2 MINOR stale-strings (non-blocking).** The stale legacy-idiom
   error/docstring strings (`core/_model_geometry.py:1053`;
   `core/_selection.py:353/:545/:586/:938/:1161`;

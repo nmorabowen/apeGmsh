@@ -1,17 +1,20 @@
 """S3e — the cross-chain *idiom* lock (selection-unification).
 
 Sub-phase S3e of the selection-unification work
-(``docs/plans/selection-unification.md`` §5/§6).  S3a–S3d landed the
-``SelectionChain`` mixin plus the five concrete chains
-(``GeometryChain`` entity-family; ``NodeChain`` / ``ElementChain`` /
-``ResultChain`` / ``MeshSelectionChain`` point-family) each with its own
-focused smoke test.  This file is the *only* file that looks at all
-five chains **together** and locks the cross-cutting idiom:
+(``docs/plans/selection-unification.md`` §5/§6), carried through
+selection-unification-v2 P3-R (``docs/plans/selection-unification-v2.md``
+§3 / §6.2): the legacy five chains are **deleted**; the unified family
+is now the two v2 terminals ``EntitySelection`` (entity-family, returned
+by ``g.model.select(...)``) and ``MeshSelection`` (point-family,
+returned by the four point hosts ``fem.nodes`` / ``fem.elements`` /
+``results.<...>`` / ``g.mesh_selection`` ``.select(...)``).  This file
+is the *only* file that looks at both terminals **together** and locks
+the cross-cutting idiom:
 
-* exactly those five concrete chains exist (a future 6th that skips the
+* exactly those two concrete chains exist (a future 3rd that skips the
   ``__init_subclass__`` contract is caught here);
 * the public verb *names* and their ``inspect.signature`` are identical
-  across all five (arities/keyword-only-ness cannot silently drift);
+  across both (arities/keyword-only-ness cannot silently drift);
 * ``__init_subclass__`` still rejects a bad FAMILY / a dropped verb / a
   missing hook at *class-definition* time;
 * per-family behavioural laws hold (point family: half-open vs
@@ -49,18 +52,13 @@ from apeGmsh import apeGmsh
 from apeGmsh._kernel.chain import REQUIRED_VERBS, SelectionChain
 
 # Importing the host modules registers every concrete subclass.
-# selection-unification-v2 P2-I (§6.1 STOP-2): the family is now SEVEN
-# — the 5 legacy chains (defined-but-unwired; P3 deletes them) plus the
-# 2 v2 terminals ``EntitySelection`` / ``MeshSelection`` the 5 host
-# hooks now return.  ``_EXPECTED_CHAINS`` is an EQUALITY lock, so it is
-# 5→7 here (and importing the two new modules registers them as
-# ``SelectionChain.__subclasses__`` so ``_all_concrete_subclasses``
-# finds them).
-from apeGmsh.core._selection import GeometryChain, EntitySelection
-from apeGmsh.mesh._node_chain import NodeChain
-from apeGmsh.mesh._elem_chain import ElementChain
-from apeGmsh.results._result_chain import ResultChain
-from apeGmsh.mesh._mesh_selection_chain import MeshSelectionChain
+# selection-unification-v2 P3-R (§3 / §6.2): the legacy five chains
+# (``GeometryChain`` / ``NodeChain`` / ``ElementChain`` / ``ResultChain``
+# / ``MeshSelectionChain``) are **deleted**; the family is now exactly
+# the TWO v2 terminals ``EntitySelection`` (entity host) / ``MeshSelection``
+# (the four point hosts).  ``_EXPECTED_CHAINS`` is an EQUALITY lock, so
+# it drops 7→2 here (P3-K had it at 7 = 5 dead legacy + 2 v2).
+from apeGmsh.core._selection import EntitySelection
 from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
@@ -77,30 +75,26 @@ _SET_ALGEBRA = (
 # the "identical signature" assertion excludes it and the four
 # point-family chains are checked for in_box separately.
 # ``crossing_plane`` (selection-unification-v2 P2-G / HT9) is the second
-# family-specific verb: it is a *required* verb on all seven chains, but
-# semantically **entity-only** — the entity family
-# (``EntitySelection`` / ``GeometryChain``) backs it with the real
-# bounding-box straddle (the legacy ``queries.select`` on/crossing/
-# not_* engine), while the point family inherits a base concrete verb
-# whose hook **fails loud** (the ``in_box(inclusive=)``→``TypeError``
-# precedent — a node/element id has no bbox to straddle).  Carved into
-# the family-specific exception EXACTLY as ``in_box`` is (same-commit,
-# §6 P2-G): asserted callable everywhere, signature-identical across the
-# point chains, and the entity-family behaviour is covered separately by
-# ``tests/test_p2g_parity.py`` (parity vs the byte-unchanged legacy
-# ``queries.select``/``queries.line``) + ``test_entity_family_laws``.
-# EQUALITY lock — 5 legacy chains + the 2 v2 terminals (P2-I §6.1
-# STOP-2(a): 5→7).  Legacy chains stay defined-and-importable but
-# unwired through P2-I; P3 deletes them and this set drops back.
+# family-specific verb: it is a *required* verb on both terminals, but
+# semantically **entity-only** — the entity family (``EntitySelection``)
+# backs it with the real bounding-box straddle (the on/crossing/not_*
+# engine), while the point family (``MeshSelection``) inherits a base
+# concrete verb whose hook **fails loud** (the
+# ``in_box(inclusive=)``→``TypeError`` precedent — a node/element id has
+# no bbox to straddle).  Carved into the family-specific exception
+# EXACTLY as ``in_box`` is: asserted callable everywhere,
+# signature-identical across the point chains, and the entity-family
+# behaviour is covered separately by ``tests/test_p2g_parity.py``
+# (frozen v2 ``crossing_plane`` literals) + ``test_entity_family_laws``.
+# EQUALITY lock — exactly the 2 v2 terminals (P3-R deleted the legacy
+# five; P3-K had this at 7).
 _EXPECTED_CHAINS = {
-    GeometryChain, NodeChain, ElementChain, ResultChain, MeshSelectionChain,
     EntitySelection, MeshSelection,
 }
-# ``MeshSelection`` is point-family and is added here so the shared
-# ``in_box``-signature contract genuinely covers the v2 terminal the
-# four point hosts now return (not only the legacy four).
+# ``MeshSelection`` is the single point-family terminal — the four
+# point hosts all return it.  The shared ``in_box`` / ``crossing_plane``
+# signature contract is over this one class (the legacy four are gone).
 _POINT_CHAINS = (
-    NodeChain, ElementChain, ResultChain, MeshSelectionChain,
     MeshSelection,
 )
 
@@ -116,13 +110,13 @@ def _all_concrete_subclasses(cls) -> set:
 
 
 # =====================================================================
-# 1. Exactly these five concrete chains
+# 1. Exactly these two concrete chains (the v2 terminals)
 # =====================================================================
 
 def test_exactly_these_concrete_chains():
-    """The family is closed at five.
+    """The family is closed at two (the v2 terminals).
 
-    A future 6th ``XChain(SelectionChain)`` would surface here as an
+    A future 3rd ``XChain(SelectionChain)`` would surface here as an
     extra member of ``__subclasses__`` and break the ``==`` — forcing
     whoever adds it to also wire it into this cross-chain contract
     (and, by ``__init_subclass__``, give it a valid FAMILY + the full
@@ -132,7 +126,7 @@ def test_exactly_these_concrete_chains():
     found = _all_concrete_subclasses(SelectionChain)
     assert found == _EXPECTED_CHAINS, (
         "concrete SelectionChain subclasses drifted from the ratified "
-        f"five. extra={sorted(c.__name__ for c in found - _EXPECTED_CHAINS)} "
+        f"two. extra={sorted(c.__name__ for c in found - _EXPECTED_CHAINS)} "
         f"missing={sorted(c.__name__ for c in _EXPECTED_CHAINS - found)}"
     )
 
@@ -142,11 +136,11 @@ def test_exactly_these_concrete_chains():
 # =====================================================================
 
 def test_identical_public_verb_surface():
-    """Every required/set-algebra name is callable on all five, and its
-    signature is byte-identical across all five — names *and* arities
-    cannot drift.  ``in_box`` is the lone family-specific signature
-    (R3): asserted callable everywhere, signature-identical across the
-    four point chains, and (entity family) separately covered by
+    """Every required/set-algebra name is callable on both terminals,
+    and its signature is byte-identical across both — names *and*
+    arities cannot drift.  ``in_box`` is the lone family-specific
+    signature (R3): asserted callable everywhere, signature-identical
+    across the point chains, and (entity family) separately covered by
     ``test_entity_family_laws``.
     """
     chains = sorted(_EXPECTED_CHAINS, key=lambda c: c.__name__)
@@ -547,7 +541,7 @@ def test_point_family_laws(kind, cube_fem, live, tmp_path):
     assert type(a ^ b) is cls
 
     # ── cross-type set-algebra is loud (point vs entity) ────
-    geom_other = GeometryChain((), _engine=None)
+    geom_other = EntitySelection((), _engine=None)
     with pytest.raises(TypeError):
         a | geom_other
     with pytest.raises(TypeError):
@@ -642,7 +636,7 @@ def test_entity_family_laws(cube_geo):
     assert type(faces.where(lambda xyz: True)) is cls
 
     # ── cross-family combination is loud (entity vs point) ──
-    node_other = NodeChain((), _engine=None)
+    node_other = MeshSelection((), _engine=None)
     with pytest.raises(TypeError):
         faces | node_other
     with pytest.raises(TypeError):

@@ -1,45 +1,42 @@
-"""S3b — NodeChain (promoted) + ElementChain + the FEMData .select() hooks.
+"""S3b (P3-R) — the FEMData ``.select()`` point-family terminal.
 
 Phase S3b of the selection-unification work
-(``docs/plans/selection-unification.md`` §5/§6).  S3a landed the
-GeometryChain (entity family) beside the byte-unchanged legacy
-``core/_selection.Selection``.  S3b promotes the S0a ``NodeChain``
-spike to materialise the *existing* ``NodeResult``, adds the sibling
-point-family ``ElementChain`` (atoms = element ids, spatial verbs on
-element **centroids**, materialises the *existing* ``GroupResult``),
-and wires ``fem.nodes.select(...)`` / ``fem.elements.select(...)`` as
-**additive** host hooks that delegate name resolution verbatim to the
-existing broker resolvers (``NodeComposite._resolve_nodes`` /
-``ElementComposite._resolve_elem_ids`` — the exact methods ``.get()``
-already uses; FP-4 swallow asymmetry preserved *by reuse*).
+(``docs/plans/selection-unification.md`` §5/§6), carried through
+selection-unification-v2 P3-R (``docs/plans/selection-unification-v2.md``
+§6.2 / §6.3).  ``fem.nodes.select(...)`` / ``fem.elements.select(...)``
+return the unified point-family terminal ``MeshSelection`` (the legacy
+``NodeChain`` / ``ElementChain`` are deleted), seeded by delegating
+name resolution verbatim to the existing broker resolvers
+(``NodeComposite._resolve_nodes`` / ``ElementComposite._resolve_elem_ids``
+— the exact methods the now-removed ``.get()`` used; FP-4 swallow
+asymmetry preserved *by reuse*).
 
 What this locks:
 
-* ``fem.nodes.select(...)`` / ``fem.elements.select(...)`` return the
-  point-family chains, seeded by delegating to the existing
+* ``fem.nodes.select(...)`` / ``fem.elements.select(...)`` return
+  ``MeshSelection``, seeded by delegating to the existing
   ``_resolve_nodes`` / ``_resolve_elem_ids`` (a spy proves the call —
   delegation, not a re-implementation).
 * Node & element daisy-chaining:
   ``.select(pg=...).in_box(...).on_plane(...)`` composes, every verb
-  returning the same concrete chain type.
+  returning ``MeshSelection``.
 * Point-family ``in_box`` is half-open ``[lo, hi)`` by default and
-  closed ``[lo, hi]`` with ``inclusive=True`` (R4) — for both chains.
+  closed ``[lo, hi]`` with ``inclusive=True`` (R4) — for both engines.
 * Set algebra ``| & -`` with insertion-order dedup; cross-engine and
   cross-type combination is loud.
-* ``.result()`` returns the **existing** ``NodeResult`` /
-  ``GroupResult`` (same type ``fem.nodes.get`` / ``fem.elements.get``
-  return), and is id-for-id the same selection as ``.get()`` /
-  ``.resolve()`` (parity).
-* The legacy ``.get()`` / ``.resolve()`` byte-behaviour is unchanged
-  (the additive ``.select()`` does not perturb it).
-* ElementChain fails loud if connectivity references an unknown node
-  (never the silent row-0 substitution the generic
+* ``.result()`` returns ``NodeResult`` / ``GroupResult``; its id set
+  (and ``.resolve()`` flat ids/conn) is frozen as an explicit literal
+  against the deterministic fixture (P3-K proved ``select`` ≡ the
+  removed ``get``; the parity-vs-``.get()`` half is gone with ``.get``).
+* The element centroid path fails loud if connectivity references an
+  unknown node (never the silent row-0 substitution the generic
   ``_mesh_filters.element_centroids`` does).
 
 No ``openseespy`` dependency (curated no-openseespy CI gate): pure
 apeGmsh + gmsh + numpy.  A deterministic structured unit cube (3x3x3
-node lattice -> 27 nodes, 8 hex8 cells, all coords in {0, 0.5, 1}) is
-the fixture, so every boundary count is an exact integer.
+node lattice -> 27 nodes [ids 1..27], 8 hex8 cells [ids 1..8], all
+coords in {0, 0.5, 1}) is the fixture, so every count is an exact
+integer literal.
 """
 from __future__ import annotations
 
@@ -47,17 +44,20 @@ import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh._kernel.chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
-from apeGmsh.mesh._node_chain import NodeChain
-from apeGmsh.mesh._elem_chain import ElementChain
-# selection-unification-v2 P2-I (§6.1 STOP-2(c)): the broker node /
-# element ``.select()`` hooks now return the v2 terminal
-# ``MeshSelection`` (legacy ``NodeChain`` / ``ElementChain`` left
-# defined-but-unwired; P3 deletes them).  The host-return-type
-# assertions below are BEHAVIOURAL (they then exercise len /
-# daisy-chain / .result() parity / set-algebra, which must stay
-# green), so they assert the new type; the legacy structural-shape
-# tests above keep asserting the (still-defined) legacy classes.
+from apeGmsh._kernel.chain import SelectionChain
+# selection-unification-v2 P3-R (§6.2 / §6.3): the legacy ``NodeChain``
+# / ``ElementChain`` modules are **deleted** and the broker
+# ``fem.nodes.get`` / ``fem.elements.get`` / ``get_ids`` /
+# ``get_coords`` / ``resolve`` surface is **removed**; the unified
+# point-family terminal ``fem.nodes.select(...)`` /
+# ``fem.elements.select(...)`` → ``MeshSelection`` is the sole survivor
+# and migration target.  The legacy-class structural-shape tests are
+# deleted (now covered by ``tests/test_selection_idiom.py`` over the
+# two v2 terminals); the behaviour-bearing tests below keep their full
+# coverage on the ``.select(...)`` path, with the (now-removed)
+# parity-vs-``.get()`` halves frozen as explicit literals against the
+# deterministic 3x3x3 fixture (the proof-file freeze pattern — P3-K
+# already proved ``select`` ≡ the removed ``get``).
 from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.mesh.FEMData import (
     FEMData, NodeComposite, ElementComposite, NodeResult,
@@ -96,45 +96,22 @@ def _ids(obj) -> list[int]:
 
 
 # =====================================================================
-# Class-shape invariants (the S3b structural contract)
+# Class-shape invariant — the broker hooks return the v2 terminal
+# (the legacy NodeChain/ElementChain structural-shape + __init_subclass__
+# gate tests are deleted; covered by tests/test_selection_idiom.py)
 # =====================================================================
 
-def test_node_and_element_chains_are_point_family_subclasses():
-    for cls in (NodeChain, ElementChain):
-        assert issubclass(cls, SelectionChain)
-        assert cls.FAMILY == "point"
-    assert NodeChain is not ElementChain
-
-
-def test_chains_pass_init_subclass_gate():
-    # __init_subclass__ (ratified R2) accepted both: a valid FAMILY,
-    # every required verb callable, every required hook a real override
-    # (not the base NotImplementedError stub).
-    for cls in (NodeChain, ElementChain):
-        assert cls.FAMILY in ("entity", "point")
-        for verb in REQUIRED_VERBS:
-            assert callable(getattr(cls, verb, None)), (cls, verb)
-        for hook in _REQUIRED_HOOKS:
-            impl = getattr(cls, hook, None)
-            assert impl is not None
-            assert impl is not getattr(SelectionChain, hook, None), (
-                cls, hook
-            )
-
-
-def test_init_subclass_still_accepts_elementchain_shape():
-    # Adding ElementChain did not weaken the gate.
-    with pytest.raises(TypeError, match="FAMILY.*invalid"):
-        class _BadFamily(SelectionChain):
-            FAMILY = "nope"
-
-    with pytest.raises(TypeError, match="must implement.*hook"):
-        class _MissingHook(SelectionChain):
-            FAMILY = "point"  # all verbs inherited; no hooks
+def test_select_hooks_return_point_family_meshselection(cube_fem):
+    fem = cube_fem
+    n = fem.nodes.select(pg="Body")
+    e = fem.elements.select(pg="Body")
+    assert isinstance(n, MeshSelection) and isinstance(e, MeshSelection)
+    assert issubclass(MeshSelection, SelectionChain)
+    assert n.FAMILY == "point" and e.FAMILY == "point"
 
 
 # =====================================================================
-# .select() host hook — additive, delegates to the existing resolver
+# .select() host hook — delegates to the existing resolver
 # =====================================================================
 
 def test_node_select_returns_nodechain_seeded_by_resolver(cube_fem):
@@ -297,7 +274,7 @@ def test_point_family_sphere_plane_nearest_where_centroid(cube_fem):
 
 def test_set_algebra_union_intersect_difference_symmetric(cube_fem):
     fem = cube_fem
-    base = [int(x) for x in fem.nodes.get(pg="Body").ids]
+    base = [int(x) for x in fem.nodes.select(pg="Body").ids]
     a = fem.nodes.select(ids=base[:5])
     b = fem.nodes.select(ids=base[3:8])
 
@@ -317,7 +294,7 @@ def test_set_algebra_union_intersect_difference_symmetric(cube_fem):
         assert isinstance(s, MeshSelection)    # P2-I: was NodeChain
 
     # element side too
-    eids = [int(x) for x in fem.elements.get(pg="Body").ids]
+    eids = [int(x) for x in fem.elements.select(pg="Body").ids]
     ea = fem.elements.select(ids=eids[:5])
     eb = fem.elements.select(ids=eids[3:])
     assert len(ea | eb) == 8
@@ -365,42 +342,42 @@ def test_cross_type_and_cross_engine_set_algebra_is_loud(cube_fem):
 # .result() -> the EXISTING NodeResult / GroupResult (PARITY)
 # =====================================================================
 
-def test_node_result_is_noderesult_and_parity_with_get(cube_fem):
+def test_node_result_is_noderesult_frozen(cube_fem):
     fem = cube_fem
     sel = fem.nodes.select(pg="Body").result()
-    # EXACT existing type — what fem.nodes.get(...) returns.
+    # EXACT terminal type — what the broker node terminal yields.
     assert isinstance(sel, NodeResult)
     assert type(sel).__name__ == "NodeResult"
-    got = fem.nodes.get(pg="Body")
-    # PARITY: select(pg=X).result() ids == get(pg=X) ids
-    assert _ids(sel) == _ids(got)
-    assert len(sel) == len(got) == 27
+    # P3-R: ``.get`` is removed; freeze the v2 id set as an explicit
+    # literal against the deterministic 3x3x3 lattice (P3-K proved
+    # ``select`` ≡ the removed ``get``).
+    assert _ids(sel) == list(range(1, 28))
+    assert len(sel) == 27
     # coords carried correctly (object-dtype ids + (N,3) float64 coords)
     assert sel.coords.shape == (27, 3)
     assert sel.coords.dtype == np.float64
-    # parity also through a label-less target= path
-    assert _ids(fem.nodes.select(target="Body").result()) == _ids(
-        fem.nodes.get(target="Body"))
+    assert sel.ids.dtype == object
+    # same id set through the label-less target= path
+    assert _ids(fem.nodes.select(target="Body").result()) == list(
+        range(1, 28))
 
 
-def test_element_result_is_groupresult_and_parity_with_get(cube_fem):
+def test_element_result_is_groupresult_frozen(cube_fem):
     fem = cube_fem
     sel = fem.elements.select(pg="Body").result()
     assert isinstance(sel, GroupResult)
     assert type(sel).__name__ == "GroupResult"
-    got = fem.elements.get(pg="Body")
-    # PARITY vs .get()
-    assert _ids(sel) == _ids(got)
-    # PARITY vs .resolve() (flat ids, connectivity)
+    # P3-R: ``.get`` / ``.resolve`` are removed; freeze the v2 id set
+    # + the ``.result().resolve()`` flat-shape literal against the
+    # deterministic 8-hex8 fixture.
+    assert _ids(sel) == list(range(1, 9))
     sel_ids, sel_conn = sel.resolve()
-    get_ids, get_conn = fem.elements.resolve(pg="Body")
-    order_s = np.argsort(sel_ids)
-    order_g = np.argsort(get_ids)
-    assert np.array_equal(sel_ids[order_s], get_ids[order_g])
-    assert np.array_equal(sel_conn[order_s], get_conn[order_g])
-    # parity through target= too
-    assert _ids(fem.elements.select(target="Body").result()) == _ids(
-        fem.elements.get(target="Body"))
+    assert sorted(int(x) for x in sel_ids) == list(range(1, 9))
+    assert sel_ids.shape == (8,)
+    assert sel_conn.shape == (8, 8)             # 8 hex8 cells, npe=8
+    # same id set through the label-less target= path
+    assert _ids(fem.elements.select(target="Body").result()) == list(
+        range(1, 9))
 
 
 def test_element_centroid_fails_loud_on_unknown_node(cube_fem):
@@ -428,31 +405,16 @@ def test_element_centroid_fails_loud_on_unknown_node(cube_fem):
 
 
 # =====================================================================
-# Legacy .get() / .resolve() byte-behaviour unchanged (additive only)
+# selection-unification-v2 P3-R: the legacy ``.get()`` / ``.get_ids``
+# / ``.get_coords`` / ``.resolve()`` broker surface is **removed**.
+# The test that pinned its byte-behaviour
+# (``test_legacy_get_and_resolve_unchanged_by_additive_select``) is
+# deleted — there is no longer a ``.get()`` to pin, and the
+# NodeResult/GroupResult shape + count + dtype coverage it carried is
+# fully subsumed by the frozen ``test_node_result_is_noderesult_frozen``
+# / ``test_element_result_is_groupresult_frozen`` above (the
+# ``.select(...)`` path now yields those terminals directly).
 # =====================================================================
-
-def test_legacy_get_and_resolve_unchanged_by_additive_select(cube_fem):
-    fem = cube_fem
-    # node .get(): still a NodeResult, 27 lattice nodes, object-dtype ids
-    nr = fem.nodes.get(pg="Body")
-    assert type(nr).__name__ == "NodeResult"
-    assert len(nr) == 27
-    assert nr.ids.dtype == object
-    # node .get() default (no selector) = every domain node
-    assert len(fem.nodes.get()) == len(fem.nodes)
-    # node .get_ids / .get_coords still work
-    assert sorted(int(x) for x in fem.nodes.get_ids(pg="Body")) == _ids(nr)
-    assert fem.nodes.get_coords(pg="Body").shape == (27, 3)
-
-    # element .get(): GroupResult, 8 hex8; .resolve() flat (ids, conn)
-    gr = fem.elements.get(pg="Body")
-    assert type(gr).__name__ == "GroupResult"
-    assert len(gr.ids) == 8
-    rids, rconn = fem.elements.resolve(pg="Body")
-    assert rids.shape == (8,)
-    assert rconn.shape[0] == 8 and rconn.shape[1] == 8   # hex8 npe
-    # element .get() default = all elements
-    assert len(fem.elements.get().ids) == len(fem.elements)
 
 
 # =====================================================================
@@ -480,10 +442,14 @@ def test_select_works_on_import_origin_fem(tmp_path):
         g.end()
 
     fem = FEMData.from_msh(msh, dim=3)
-    # node + element select/parity with no live session
-    assert _ids(fem.nodes.select().result()) == _ids(fem.nodes.get())
-    assert _ids(fem.elements.select().result()) == _ids(
-        fem.elements.get())
+    # P3-R: ``.get`` is removed; the invariant is that the v2
+    # ``.select()`` terminal materialises on an import-origin FEMData
+    # with NO live session — its no-arg id set is exactly the broker's
+    # full id universe (``fem.nodes.ids`` / ``fem.elements.ids``).
+    assert _ids(fem.nodes.select().result()) == sorted(
+        int(x) for x in fem.nodes.ids)
+    assert _ids(fem.elements.select().result()) == sorted(
+        int(x) for x in fem.elements.ids)
     # centroid spatial verb works in-memory (no Gmsh)
     inside = fem.elements.select().in_box((-1, -1, -1), (2, 2, 2),
                                           inclusive=True)

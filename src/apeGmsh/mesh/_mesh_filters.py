@@ -155,8 +155,21 @@ def element_centroids(
     centroids = np.zeros((E, 3), dtype=np.float64)
     for j in range(npe):
         col_ids = connectivity[:, j]
-        # Vectorised lookup: map node IDs -> coord indices
-        idx = np.array([node_id_to_idx.get(int(nid), 0) for nid in col_ids])
+        # selection-unification v2 P3-R / SC-11: fail loud on a
+        # connectivity node id absent from the node set — the former
+        # ``node_id_to_idx.get(int(nid), 0)`` silently substituted
+        # row 0, producing a *corrupted* centroid with no signal.
+        # Byte-identical to the old path whenever every node is
+        # present (the only case the silent ``, 0`` ever altered was
+        # the missing-node corruption this now refuses).
+        try:
+            idx = np.array([node_id_to_idx[int(nid)] for nid in col_ids])
+        except KeyError as e:
+            raise KeyError(
+                f"connectivity references node {e.args[0]} which is "
+                f"not in the node set — refusing to compute a "
+                f"corrupted centroid (fail loud)."
+            ) from None
         centroids += node_coords[idx]
     centroids /= npe
     return centroids
@@ -212,7 +225,19 @@ def elements_on_plane(
     all_on = np.ones(E, dtype=bool)
     for j in range(npe):
         col_ids = connectivity[:, j]
-        idx = np.array([node_id_to_idx.get(int(nid), 0) for nid in col_ids])
+        # selection-unification v2 P3-R / SC-11: fail loud (see
+        # ``element_centroids``) — the former silent
+        # ``node_id_to_idx.get(int(nid), 0)`` row-0 substitution
+        # corrupted the plane test for a missing node.  Byte-identical
+        # whenever every node is present.
+        try:
+            idx = np.array([node_id_to_idx[int(nid)] for nid in col_ids])
+        except KeyError as e:
+            raise KeyError(
+                f"connectivity references node {e.args[0]} which is "
+                f"not in the node set — refusing to compute a "
+                f"corrupted plane filter (fail loud)."
+            ) from None
         on_plane = np.abs(node_coords[idx, col] - value) <= atol
         all_on &= on_plane
     return all_on

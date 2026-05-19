@@ -68,6 +68,16 @@ PKGS = {"core", "mesh", "viz", "results", "_kernel", "fem"}
 # ``results→mesh`` / ``mesh→results`` delegate imports are function-body
 # only, so invisible to this eager tripwire by construction): NO
 # ``core↔mesh`` triple, NO deferred edge flipped eager, nothing removed.
+#
+# selection-unification-v2 **P3-R** same-commit reviewed delta
+# (``selection-unification-v2-p3r-callers.md`` §3): the 4 legacy
+# point-chain modules are DELETED, so their 4 ``→_kernel`` triples
+# (``mesh/_elem_chain.py``, ``mesh/_mesh_selection_chain.py``,
+# ``mesh/_node_chain.py``, ``results/_result_chain.py``) are removed
+# here — **−4 / +0**.  The two relocated engine adapters
+# (``results/_result_engine.py``, ``mesh/_live_engine.py``) are pure
+# ``typing``-only leaves with no eager cross-package import, so they
+# add NO triple.
 BASELINE = {
     ("_kernel", "fem", "_kernel/resolvers/_mass_resolver.py"),
     ("core", "_kernel", "core/ConstraintsComposite.py"),
@@ -81,12 +91,8 @@ BASELINE = {
     ("mesh", "_kernel", "mesh/FEMData.py"),
     ("mesh", "_kernel", "mesh/PhysicalGroups.py"),
     ("mesh", "_kernel", "mesh/__init__.py"),
-    ("mesh", "_kernel", "mesh/_elem_chain.py"),
     ("mesh", "_kernel", "mesh/_element_types.py"),
     ("mesh", "_kernel", "mesh/_mesh_selection.py"),
-    ("mesh", "_kernel", "mesh/_mesh_selection_chain.py"),
-    ("mesh", "_kernel", "mesh/_node_chain.py"),
-    ("results", "_kernel", "results/_result_chain.py"),
     ("results", "fem", "results/_gauss_extrapolation.py"),
     ("results", "fem", "results/_gauss_world_coords.py"),
 }
@@ -194,8 +200,8 @@ def test_spike_modules_present_and_safe() -> None:
     """S0a spike: the leaf chain + one point-family chainable + the
     deferred host hook import cleanly on the active path."""
     chain = importlib.import_module("apeGmsh._kernel.chain")
-    nodec = importlib.import_module("apeGmsh.mesh._node_chain")
+    msel = importlib.import_module("apeGmsh.mesh._mesh_selection")
     femd = importlib.import_module("apeGmsh.mesh.FEMData")
     assert hasattr(chain, "SelectionChain")
-    assert nodec.NodeChain.FAMILY == "point"
+    assert msel.MeshSelection.FAMILY == "point"
     assert callable(getattr(femd.NodeComposite, "select", None))

@@ -356,7 +356,9 @@ class AlongBeam:
         fan-out. Idempotent — safe to call multiple times.
         """
         try:
-            result = fem.elements.get(pg=self._reference_pg)  # type: ignore[attr-defined]
+            # selection-unification v2 P3-R / §6.3 §2 #7 (P-GROUPRESULT;
+            # m3 — resolution raises at .select()).
+            result = fem.elements.select(pg=self._reference_pg).groups()  # type: ignore[attr-defined]
         except (KeyError, ValueError) as e:
             raise ValueError(
                 f"AlongBeam(reference_pg={self._reference_pg!r}): "

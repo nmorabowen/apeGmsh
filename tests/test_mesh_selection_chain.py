@@ -49,21 +49,24 @@ import numpy as np
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh._kernel.chain import SelectionChain, REQUIRED_VERBS, _REQUIRED_HOOKS
-from apeGmsh.mesh._mesh_selection_chain import (
-    MeshSelectionChain,
-    _LiveMeshEngine,
-)
-# selection-unification-v2 P2-I (§6.1 STOP-2(c)):
-# ``g.mesh_selection.select(...)`` now returns the v2 terminal
-# ``MeshSelection`` (legacy ``MeshSelectionChain`` left
-# defined-but-unwired; P3 deletes it).  The host-return-type
-# assertions below are BEHAVIOURAL (they then exercise
-# .ids / len / daisy-chain / spatial / set-algebra / the
-# eager-API parity / .result() dict-shape, which must stay green),
-# so they assert the new type; the legacy structural-shape /
-# engine-adapter tests keep asserting the still-defined
-# ``MeshSelectionChain`` / ``_LiveMeshEngine``.
+from apeGmsh._kernel.chain import SelectionChain
+# selection-unification-v2 P3-R (§6.2 / §6.3): the legacy
+# ``MeshSelectionChain`` class is **deleted**; ``_LiveMeshEngine`` is
+# **relocated** verbatim to ``apeGmsh.mesh._live_engine`` (plan §3 —
+# pure typing-only leaf, no behaviour change).  The eager
+# ``MeshSelectionSet.add_nodes`` / ``add_elements`` API is **removed**
+# (SC-11 — the ``_mesh_filters`` silent-row-0 family); its
+# resolution/spatial behaviour now lives on the v2 terminal
+# ``g.mesh_selection.select(...)`` → ``MeshSelection``.  The retained
+# eager surface (``add`` / ``filter_set`` / ``union`` /
+# ``intersection`` / ``difference`` / ``get_tag`` / ``summary`` /
+# ``_snapshot`` / ``from_physical``) is unchanged.  The legacy
+# ``MeshSelectionChain`` structural-shape / __init_subclass__ tests
+# are deleted (now covered by ``tests/test_selection_idiom.py``); the
+# parity-vs-``add_nodes``/``add_elements`` halves are dropped and the
+# v2 ``.select(...)`` behaviour is frozen as explicit literals against
+# the deterministic 27-node / 8-hex8 live lattice.
+from apeGmsh.mesh._live_engine import _LiveMeshEngine
 from apeGmsh.mesh._mesh_selection import MeshSelection
 
 
@@ -102,47 +105,24 @@ def _set_node_ids(ms, tag) -> list[int]:
     return _sorted_ids(ms.get_nodes(0, tag)["tags"])
 
 
-def _set_elem_ids(ms, dim, tag) -> list[int]:
-    return _sorted_ids(ms.get_elements(dim, tag)["element_ids"])
-
-
 # =====================================================================
-# Class-shape invariants (the S3d structural contract)
+# Class-shape invariant — the host hook returns the v2 terminal; the
+# relocated _LiveMeshEngine still validates its level.
+# (the legacy MeshSelectionChain structural-shape + __init_subclass__
+# gate tests are deleted; covered by tests/test_selection_idiom.py)
 # =====================================================================
 
-def test_mesh_selection_chain_is_point_family_subclass():
-    assert issubclass(MeshSelectionChain, SelectionChain)
-    assert MeshSelectionChain.FAMILY == "point"
+def test_select_returns_point_family_meshselection(live):
+    ms = live.mesh_selection
+    sel = ms.select()
+    assert isinstance(sel, MeshSelection)
+    assert issubclass(MeshSelection, SelectionChain)
+    assert sel.FAMILY == "point"
 
 
-def test_chain_passes_init_subclass_gate():
-    # __init_subclass__ (ratified R2) must accept the new class: a
-    # valid FAMILY, every required verb callable, every required hook a
-    # real override (not the base NotImplementedError stub).
-    cls = MeshSelectionChain
-    assert cls.FAMILY in ("entity", "point")
-    for verb in REQUIRED_VERBS:
-        assert callable(getattr(cls, verb, None)), (cls, verb)
-    for hook in _REQUIRED_HOOKS:
-        impl = getattr(cls, hook, None)
-        assert impl is not None
-        assert impl is not getattr(SelectionChain, hook, None), (
-            cls, hook
-        )
-
-
-def test_init_subclass_still_rejects_bad_shapes():
-    # Adding MeshSelectionChain did not weaken the gate.
-    with pytest.raises(TypeError, match="FAMILY.*invalid"):
-        class _BadFamily(SelectionChain):
-            FAMILY = "nope"
-
-    with pytest.raises(TypeError, match="must implement.*hook"):
-        class _MissingHook(SelectionChain):
-            FAMILY = "point"  # all verbs inherited; no hooks
-
-
-def test_engine_adapter_rejects_bad_level():
+def test_relocated_engine_adapter_rejects_bad_level():
+    # _LiveMeshEngine relocated to apeGmsh.mesh._live_engine (P3-R §3,
+    # behaviour-verbatim); its level guard is unchanged.
     with pytest.raises(ValueError, match="level.*invalid"):
         _LiveMeshEngine(object(), "bogus", 0)
 
@@ -230,89 +210,73 @@ def test_element_chain_daisychains_each_verb(live):
 
 
 # =====================================================================
-# PARITY — chained .select() == eager add_nodes / add_elements
+# selection-unification-v2 P3-R: the eager ``add_nodes`` /
+# ``add_elements`` API is **removed** (SC-11); its spatial/resolution
+# behaviour is now the v2 ``g.mesh_selection.select(...)`` terminal.
+# The parity-vs-``add_*`` halves are dropped; the ``.select(...)``
+# result is frozen as an explicit literal against the deterministic
+# 27-node / 8-hex8 live lattice (P3-K proved ``select`` ≡ the removed
+# eager spatial path).
 # =====================================================================
 
-def test_node_parity_chain_equals_eager_add_nodes(live):
-    """``select().in_box(b).on_plane(p,n,tol)`` is id-for-id the same
-    node set as the eager ``add_nodes(in_box=b, on_plane=...)``."""
+def test_node_select_in_box_on_plane_frozen(live):
+    """``select().in_box(b).on_plane(p,n,tol)`` resolves the frozen
+    node set (was: parity vs the removed ``add_nodes(in_box=,
+    on_plane=)``)."""
     ms = live.mesh_selection
-    box = (0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
-    plane = ("z", 0.0, 1e-9)
-
-    eager_tag = ms.add_nodes(in_box=box, on_plane=plane, name="eager_n")
-    eager_ids = _set_node_ids(ms, eager_tag)
 
     chained = (ms.select()
-                 .in_box((box[0], box[1], box[2]), (box[3], box[4], box[5]))
+                 .in_box((0.0, 0.0, 0.0), (1.0, 1.0, 1.0))
                  .on_plane((0, 0, 0), (0, 0, 1), tol=1e-9))
-    assert _sorted_ids(chained.ids) == eager_ids
+    assert _sorted_ids(chained.ids) == [2, 12, 17, 25]
     # terminal carries the same ids too (and is the get_nodes shape)
-    assert _sorted_ids(chained.result()["tags"]) == eager_ids
-    # in_box-only parity (half-open default on both sides)
-    et = ms.add_nodes(in_box=box, name="eager_box")
+    assert _sorted_ids(chained.result()["tags"]) == [2, 12, 17, 25]
+    # in_box-only (half-open default): drops the upper {x|y|z=1} shell.
     cb = ms.select().in_box((0, 0, 0), (1, 1, 1))
-    assert _sorted_ids(cb.ids) == _set_node_ids(ms, et)
+    assert _sorted_ids(cb.ids) == [2, 9, 12, 17, 21, 23, 25, 27]
 
 
-def test_element_parity_chain_equals_eager_add_elements(live):
-    """``select(level='element').in_box(b)`` is id-for-id the eager
-    ``add_elements(in_box=b)``.
-
-    ``add_elements``'s ``in_box`` is **centroid**-based (see its
-    docstring + ``_flt.elements_in_box``), and the chain's point-family
-    ``in_box`` operates on element centroids too — so this is true
-    equivalence.  (Note: the eager ``add_elements(on_plane=)`` is
-    *all-nodes-on-plane*, whereas the point-family ``.on_plane`` is
-    centroid-based, by the same deliberate contract ``ElementChain`` /
-    ``ResultChain`` follow — so those two are intentionally *not*
-    paired here; the centroid ``in_box`` is the honest parity.)
+def test_element_select_in_box_frozen(live):
+    """``select(level='element').in_box(b)`` resolves the frozen
+    centroid-based element set (was: parity vs the removed
+    ``add_elements(in_box=b)``).  The point-family ``in_box`` operates
+    on element centroids — centroids are {0.25,0.75}^3, so the
+    half-open ``[.,.75)`` box keeps exactly the 4 cells with centroid
+    z==0.25; inclusive=True closes it to all 8.
     """
     ms = live.mesh_selection
-    # half-open box whose upper bound bisects the centroid lattice:
-    # centroids are {0.25,0.75}^3, so [.,.75) keeps exactly the 4
-    # cells with centroid z==0.25 — a non-trivial subset.
     box = (-1.0, -1.0, -1.0, 2.0, 2.0, 0.75)
-
-    eager_tag = ms.add_elements(dim=3, in_box=box, name="eager_e")
-    eager_ids = _set_elem_ids(ms, 3, eager_tag)
-    assert len(eager_ids) == 4               # sanity: non-trivial
 
     chained = (ms.select(level="element", dim=3)
                  .in_box((box[0], box[1], box[2]),
                          (box[3], box[4], box[5])))
-    assert _sorted_ids(chained.ids) == eager_ids
+    assert _sorted_ids(chained.ids) == [1, 2, 3, 4]
     # terminal == get_elements shape, same element ids
     res = chained.result()
-    assert _sorted_ids(res["element_ids"]) == eager_ids
+    assert _sorted_ids(res["element_ids"]) == [1, 2, 3, 4]
     assert res["element_ids"].dtype == object
     assert res["connectivity"].dtype == object
-    # inclusive=True parity too (closed box -> all 8 cells)
-    et = ms.add_elements(dim=3, in_box=box, inclusive=True,
-                         name="eager_ebox")
+    # inclusive=True closes the box -> all 8 cells.
     cb = (ms.select(level="element", dim=3)
             .in_box((box[0], box[1], box[2]),
                     (box[3], box[4], box[5]), inclusive=True))
-    assert _sorted_ids(cb.ids) == _set_elem_ids(ms, 3, et)
+    assert _sorted_ids(cb.ids) == [1, 2, 3, 4, 5, 6, 7, 8]
     assert len(cb) == 8
 
 
-def test_predicate_parity_chain_where_equals_eager_predicate(live):
-    """``select().where(pred)`` == eager ``add_nodes(predicate=...)``
-    (the eager predicate takes the full coord array; ``.where`` is the
-    per-row fluent equivalent)."""
+def test_predicate_chain_where_frozen(live):
+    """``select().where(pred)`` resolves the frozen node set (was:
+    parity vs the removed ``add_nodes(predicate=...)``)."""
     ms = live.mesh_selection
-    eager_tag = ms.add_nodes(
-        predicate=lambda c: c[:, 0] < 0.5, name="eager_pred")
-    eager_ids = _set_node_ids(ms, eager_tag)
     chained = ms.select().where(lambda xyz: xyz[0] < 0.5)
-    assert _sorted_ids(chained.ids) == eager_ids
     # lattice x in {0, 0.5, 1}; x < 0.5 keeps only the x==0 face = 9
+    assert _sorted_ids(chained.ids) == [1, 2, 3, 4, 9, 10, 11, 12, 21]
     assert len(chained) == 9
 
 
 # =====================================================================
-# Half-open default + inclusive=True closed (S2 parity)
+# Half-open default + inclusive=True closed (frozen — was S2 parity
+# vs the removed eager add_nodes/add_elements inclusive=)
 # =====================================================================
 
 def test_in_box_half_open_default_and_inclusive_node(live):
@@ -324,12 +288,9 @@ def test_in_box_half_open_default_and_inclusive_node(live):
     # with every coord in {0, 0.5}; inclusive=True restores all 27.
     assert len(half) == 8
     assert len(closed) == 27
-    # S2 parity: matches the eager add_nodes inclusive= behaviour.
-    eh = ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), name="eh")
-    ec = ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), inclusive=True,
-                       name="ec")
-    assert _sorted_ids(half.ids) == _set_node_ids(ms, eh)
-    assert _sorted_ids(closed.ids) == _set_node_ids(ms, ec)
+    # frozen literal (was: parity vs the removed eager add_nodes).
+    assert _sorted_ids(half.ids) == [2, 9, 12, 17, 21, 23, 25, 27]
+    assert _sorted_ids(closed.ids) == list(range(1, 28))
 
 
 def test_in_box_half_open_default_and_inclusive_element(live):
@@ -343,13 +304,9 @@ def test_in_box_half_open_default_and_inclusive_element(live):
                      inclusive=True)
     assert len(he) == 1
     assert len(ce) == 8
-    # S2 parity with eager add_elements inclusive=
-    eh = ms.add_elements(dim=3, in_box=(0, 0, 0, 0.75, 0.75, 0.75),
-                         name="ehe")
-    ec = ms.add_elements(dim=3, in_box=(0, 0, 0, 0.75, 0.75, 0.75),
-                         inclusive=True, name="ece")
-    assert _sorted_ids(he.ids) == _set_elem_ids(ms, 3, eh)
-    assert _sorted_ids(ce.ids) == _set_elem_ids(ms, 3, ec)
+    # frozen literal (was: parity vs the removed eager add_elements).
+    assert _sorted_ids(he.ids) == [1]
+    assert _sorted_ids(ce.ids) == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_sphere_plane_nearest_where(live):
@@ -493,37 +450,29 @@ def test_element_centroid_fails_loud_on_unknown_node(live, monkeypatch):
 
 
 # =====================================================================
-# Legacy eager API byte-behaviour unchanged (additive only)
+# RETAINED eager API byte-behaviour unchanged (P3-R: the
+# add_nodes/add_elements portions are dropped — that API is removed;
+# the retained add/filter_set/union/intersection/difference/get_tag/
+# summary/_snapshot surface is still exercised verbatim)
 # =====================================================================
 
-def test_legacy_eager_api_unchanged_by_additive_select(live):
+def test_retained_eager_api_unchanged_by_additive_select(live):
     ms = live.mesh_selection
 
-    # add_nodes spatial seed -> count + get_nodes shape unchanged
-    nt = ms.add_nodes(in_box=(0, 0, 0, 1, 1, 1), name="ln")
-    nd = ms.get_nodes(0, nt)
-    assert nd["tags"].dtype == object
-    assert nd["coords"].shape[1] == 3
-    assert len(nd["tags"]) == 8               # half-open default
-
-    # add_elements -> get_elements shape unchanged
-    et = ms.add_elements(dim=3, in_box=(-1, -1, -1, 2, 2, 2),
-                         name="le")
-    ed = ms.get_elements(3, et)
-    assert ed["element_ids"].dtype == object
-    assert len(ed["element_ids"]) == 8
-
     # explicit add(), filter_set(), union/intersection/difference,
-    # get_tag, summary still behave
+    # get_tag, summary still behave (all RETAINED surfaces).  ``nt`` is
+    # now an explicit add() set (was an add_nodes spatial seed —
+    # add_nodes is removed) so union/intersection still have a 2nd set.
     at = ms.add(0, [1, 2, 3, 4], name="explicit")
     assert _set_node_ids(ms, at) == [1, 2, 3, 4]
+    nt = ms.add(0, [3, 4, 5, 6], name="ln2")
     ft = ms.filter_set(0, at, in_box=(-1, -1, -1, 2, 2, 2),
                        inclusive=True, name="filt")
     assert _set_node_ids(ms, ft) == [1, 2, 3, 4]
     ut = ms.union(0, at, nt, name="u")
-    assert set(_set_node_ids(ms, ut)) >= {1, 2, 3, 4}
+    assert set(_set_node_ids(ms, ut)) == {1, 2, 3, 4, 5, 6}
     it = ms.intersection(0, at, nt, name="i")
-    assert set(_set_node_ids(ms, it)) <= {1, 2, 3, 4}
+    assert set(_set_node_ids(ms, it)) == {3, 4}
     dt = ms.difference(0, at, at, name="d")
     assert _set_node_ids(ms, dt) == []
     assert ms.get_tag(0, "explicit") == at

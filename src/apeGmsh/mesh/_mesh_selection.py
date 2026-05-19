@@ -263,10 +263,15 @@ class MeshSelection(SelectionChain):
         id_to_idx = {int(n): i for i, n in enumerate(node_ids)}
 
         cache: dict = {}
-        for type_info in fem.elements.types:
-            ids, conn = fem.elements.resolve(element_type=type_info.name)
-            ids = np.asarray(ids, dtype=np.int64)
-            conn = np.asarray(conn, dtype=np.int64)
+        # selection-unification v2 P3-R / §6.3 M-STOP-3: iterate the
+        # element groups directly (the ``_centroid_map_element``
+        # pattern) — byte-equivalent to the removed per-type
+        # ``fem.elements.resolve(element_type=)`` loop (``_groups`` is
+        # one group per type code; same dict order as the old
+        # ``fem.elements.types``).
+        for grp in fem.elements._groups.values():
+            ids = np.asarray(grp.ids, dtype=np.int64)
+            conn = np.asarray(grp.connectivity, dtype=np.int64)
             if ids.size == 0:
                 continue
             for row in range(ids.shape[0]):
@@ -274,7 +279,7 @@ class MeshSelection(SelectionChain):
                     rows = [id_to_idx[int(n)] for n in conn[row]]
                 except KeyError as e:
                     raise KeyError(
-                        f"element {int(ids[row])} ({type_info.name}) "
+                        f"element {int(ids[row])} ({grp.type_name}) "
                         f"references node {e.args[0]} which is not in "
                         f"the FEM node set — refusing to compute a "
                         f"corrupted centroid (fail loud)."

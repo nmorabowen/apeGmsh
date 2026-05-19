@@ -76,7 +76,6 @@ from apeGmsh.viewers.model_viewer import ModelViewer
 from apeGmsh.viewers.results_viewer import ResultsViewer
 from apeGmsh.viewers import settings, theme_editor
 from apeGmsh.viz.NotebookPreview import preview
-from apeGmsh.viz.Selection import Selection, SelectionComposite
 from apeGmsh._workdir import workdir
 
 # Backward-compatible alias (SelectionPicker was the pre-v1 name)
@@ -184,8 +183,6 @@ __all__ = [
     "NumberedMesh",
     "RenumberResult",
     "PartitionInfo",
-    "Selection",
-    "SelectionComposite",
     "ModelViewer",
     "MeshViewer",
     "ResultsViewer",

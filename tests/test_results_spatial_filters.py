@@ -63,6 +63,17 @@ def _make_results_with_fem(tmp_path: Path):
             np.array([[1, 2, 3, 4]], dtype=np.int64),
         )
 
+    # selection-unification v2 P3-R / §6.3 M-STOP-3 + disposition 4:
+    # ``_element_centroids`` now iterates ``fem.elements._groups
+    # .values()`` directly — one ``ElementGroup``-shaped group mirroring
+    # the (ids, conn) the legacy ``_resolve`` returned.  Mutable so the
+    # fail-loud tests can corrupt its connectivity.
+    _egroup = SimpleNamespace(
+        ids=np.array([10], dtype=np.int64),
+        connectivity=np.array([[1, 2, 3, 4]], dtype=np.int64),
+        type_name="quad4",
+    )
+
     fem = SimpleNamespace(
         snapshot_id="testhash",
         nodes=SimpleNamespace(
@@ -80,6 +91,7 @@ def _make_results_with_fem(tmp_path: Path):
             ids=np.array([10], dtype=np.int64),
             types=[type_info],
             resolve=_resolve,
+            _groups={0: _egroup},          # P3-R M-STOP-3 (disposition 4)
             physical=SimpleNamespace(
                 element_ids=lambda n: np.array([10], dtype=np.int64),
             ),
@@ -396,13 +408,11 @@ def test_element_centroids_unknown_node_id_fails_loud(tmp_path: Path) -> None:
 
     # Corrupt the single quad: node 4 → 999 (not in fem.nodes.ids,
     # and larger than the max ID → exercises the out-of-range branch).
-    def _resolve_corrupt(*, element_type=None):
-        return (
-            np.array([10], dtype=np.int64),
-            np.array([[1, 2, 3, 999]], dtype=np.int64),
-        )
-
-    fem.elements.resolve = _resolve_corrupt
+    # P3-R / M-STOP-3: ``_element_centroids`` reads ``_groups`` (not
+    # ``resolve``), so corrupt the group's connectivity.
+    fem.elements._groups[0].connectivity = np.array(
+        [[1, 2, 3, 999]], dtype=np.int64
+    )
 
     from apeGmsh.results._composites import (
         _element_centroids,
@@ -442,13 +452,11 @@ def test_element_centroids_in_range_missing_node_id_fails_loud(
 
     # node_ids are {1,2,3,4,5}; 0 is below the minimum so searchsorted
     # returns slot 0 (in range) whose value (1) != 0 → must be caught.
-    def _resolve_corrupt(*, element_type=None):
-        return (
-            np.array([10], dtype=np.int64),
-            np.array([[1, 2, 0, 4]], dtype=np.int64),
-        )
-
-    fem.elements.resolve = _resolve_corrupt
+    # P3-R / M-STOP-3: corrupt ``_groups`` (the centroid path source),
+    # not the removed-from-the-path ``resolve``.
+    fem.elements._groups[0].connectivity = np.array(
+        [[1, 2, 0, 4]], dtype=np.int64
+    )
 
     from apeGmsh.results._composites import _element_centroids
 
@@ -487,6 +495,7 @@ def _elementless_fem(node_ids, coords):
         elements=SimpleNamespace(
             ids=np.array([], dtype=np.int64),
             types=[],                       # ← no element groups
+            _groups={},                     # P3-R M-STOP-3: zero groups
             resolve=lambda *, element_type=None: (
                 np.array([], dtype=np.int64),
                 np.empty((0, 0), dtype=np.int64),

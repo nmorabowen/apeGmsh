@@ -26,6 +26,24 @@ from apeGmsh.cuts import (
 # --------------------------------------------------------------------- #
 # Fixtures: inline FEM stub
 # --------------------------------------------------------------------- #
+class _SelResult:
+    """selection-unification v2 P3-R: the ``fem.nodes.select(...)``
+    terminal — exposes ``.ids`` / ``.coords`` (the only surface PROD
+    reads after the ``get_ids``→``select`` migration)."""
+
+    def __init__(self, *, ids, _idx, _coords) -> None:
+        self.ids = np.asarray(ids, dtype=np.int64)
+        self.__idx = _idx
+        self.__all_coords = _coords
+
+    @property
+    def coords(self) -> np.ndarray:
+        if self.ids.size == 0:
+            return np.empty((0, 3), dtype=float)
+        rows = [self.__idx[int(n)] for n in self.ids]
+        return np.asarray(self.__all_coords)[rows]
+
+
 class _StubNodes:
     def __init__(
         self,
@@ -44,6 +62,14 @@ class _StubNodes:
 
     def get_ids(self, *, pg: str) -> np.ndarray:
         return self._ids_by_pg.get(pg, np.array([], dtype=np.int64))
+
+    def select(self, target=None, *, pg: str | None = None, **_kw):
+        """selection-unification v2 P3-R: ``fem.nodes.get_ids(pg=)`` is
+        removed; ``fem.nodes.select(pg=).ids`` is the migration target
+        (P-NODE).  Mirrors the broker — same ids as the (removed)
+        ``get_ids`` body, exposed via the ``.ids`` terminal."""
+        ids = self._ids_by_pg.get(pg, np.array([], dtype=np.int64))
+        return _SelResult(ids=ids, _idx=self._idx, _coords=self.coords)
 
     def index(self, nid: int) -> int:
         try:

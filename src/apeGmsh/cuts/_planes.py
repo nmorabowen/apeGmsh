@@ -211,7 +211,7 @@ def plane_from_physical_surface(
     (point, normal) : tuple[Vec3, Vec3]
         Plug straight into ``SectionCutDef(plane_point=..., plane_normal=...)``.
     """
-    coords = fem.nodes.get_coords(pg=pg_name)
+    coords = fem.nodes.select(pg=pg_name).coords
     coords_arr = np.asarray(coords, dtype=float)
     if coords_arr.size == 0:
         raise ValueError(

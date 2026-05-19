@@ -198,7 +198,10 @@ class SectionCutDef:
         from ._tag_map import FemToOpsTagMap
 
         point, normal = plane
-        fem_eids = fem.elements.get_ids(pg=elements_pg)
+        # selection-unification v2 P3-R / §6.3 M-MINOR-a: ``.ids`` is a
+        # list (MeshSelection) — wrap in ``np.asarray`` so the ``.size``
+        # guard below and the tag-map lookup keep working.
+        fem_eids = np.asarray(fem.elements.select(pg=elements_pg).ids)
         if fem_eids.size == 0:
             raise ValueError(
                 f"Physical group {elements_pg!r} resolves to zero "

@@ -27,12 +27,38 @@ from apeGmsh.cuts import SectionCutDef
 # --------------------------------------------------------------------- #
 # Inline fixtures: stub FEMData + minimal model.h5
 # --------------------------------------------------------------------- #
+class _SelResult:
+    """selection-unification v2 P3-R: the ``fem.<...>.select(...)``
+    terminal — exposes ``.ids`` / ``.coords`` (the only surface the
+    cuts PROD reads after the ``get_ids``/``get_coords``→``select``
+    migration; ``cuts/_defs.py:204`` etc.)."""
+
+    def __init__(self, *, ids=None, coords=None) -> None:
+        self._ids = ids
+        self._coords = coords
+
+    @property
+    def ids(self):
+        return self._ids
+
+    @property
+    def coords(self):
+        return self._coords
+
+
 class _StubNodes:
     def __init__(self, coords_by_pg: dict[str, np.ndarray]) -> None:
         self._coords_by_pg = coords_by_pg
 
     def get_coords(self, *, pg: str) -> np.ndarray:
         return self._coords_by_pg[pg]
+
+    def select(self, target=None, *, pg: str | None = None, **_kw):
+        """selection-unification v2 P3-R: ``fem.nodes.get_coords(pg=)``
+        is removed; ``fem.nodes.select(pg=).coords`` is the migration
+        target (P-COORD).  Mirrors the broker — same coords as the
+        (removed) ``get_coords`` body."""
+        return _SelResult(coords=self._coords_by_pg[pg])
 
 
 class _StubElements:
@@ -41,6 +67,15 @@ class _StubElements:
 
     def get_ids(self, *, pg: str) -> np.ndarray:
         return self._ids_by_pg.get(pg, np.array([], dtype=np.int64))
+
+    def select(self, target=None, *, pg: str | None = None, **_kw):
+        """selection-unification v2 P3-R: ``fem.elements.get_ids(pg=)``
+        is removed; ``fem.elements.select(pg=).ids`` is the migration
+        target (P-ELEM-IDS).  Mirrors the broker — same ids as the
+        (removed) ``get_ids`` body, exposed via the ``.ids`` terminal."""
+        return _SelResult(
+            ids=self._ids_by_pg.get(pg, np.array([], dtype=np.int64))
+        )
 
 
 class _StubFEM:

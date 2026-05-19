@@ -28,12 +28,28 @@ from apeGmsh.cuts._polygons import (
 # --------------------------------------------------------------------- #
 # Stubs (same shape as test_builders.py / test_sweeps.py)
 # --------------------------------------------------------------------- #
+class _SelResult:
+    """selection-unification v2 P3-R: the ``fem.{nodes,elements}.
+    select(...)`` terminal — exposes ``.coords`` / ``.ids`` (the only
+    surface PROD reads after the ``get_coords``/``get_ids``→``select``
+    migration; P-COORD / P-ELEM-IDS)."""
+
+    def __init__(self, *, coords=None, ids=None) -> None:
+        if coords is not None:
+            self.coords = coords
+        if ids is not None:
+            self.ids = ids
+
+
 class _StubNodes:
     def __init__(self, coords_by_pg: dict[str, np.ndarray]) -> None:
         self._coords_by_pg = coords_by_pg
 
     def get_coords(self, *, pg: str) -> np.ndarray:
         return self._coords_by_pg[pg]
+
+    def select(self, target=None, *, pg: str | None = None, **_kw):
+        return _SelResult(coords=self._coords_by_pg[pg])
 
 
 class _StubElements:
@@ -42,6 +58,11 @@ class _StubElements:
 
     def get_ids(self, *, pg: str) -> np.ndarray:
         return self._ids_by_pg.get(pg, np.array([], dtype=np.int64))
+
+    def select(self, target=None, *, pg: str | None = None, **_kw):
+        return _SelResult(
+            ids=self._ids_by_pg.get(pg, np.array([], dtype=np.int64))
+        )
 
 
 class _StubFEM:

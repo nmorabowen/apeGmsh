@@ -31,7 +31,7 @@ def _build_tunnel(g, *, L=10.0, H1=4.0, H2=2.0, lc=1.0):
     geo.add_line("bl", "tl", label="cl")
     geo.add_line("br", "tr", label="cr")
     geo.add_arc("tl", "tc", "tr", label="ar", through_point=True)
-    g.model.queries.select_all_curves().to_physical(name="frames")
+    g.model.select(None, dim=1).to_physical(name="frames")
     return L, H1, H2
 
 
@@ -190,7 +190,7 @@ def _column_total_fz(*, n_elems, reduction, qfun, H=6.0):
         geo.add_point(0, 0, 0, mesh_size=lc, label="a")
         geo.add_point(0, 0, H, mesh_size=lc, label="b")
         geo.add_line("a", "b", label="col")
-        m.model.queries.select_all_curves().to_physical(name="c1")
+        m.model.select(None, dim=1).to_physical(name="c1")
         with m.loads.pattern("p"):
             m.loads.line(target="c1", magnitude=qfun,
                           direction=(0, 0, 1), reduction=reduction)

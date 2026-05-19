@@ -114,8 +114,15 @@ def test_getter_returns_int_when_no_enum_match(g):
 def test_global_vs_per_entity_smoothing_dont_collide(g):
     """Both methods coexist — different namespaces, different effects."""
     g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
-    # Per-entity (on a curve)
-    edges = g.model.queries.select("box", dim=1)
+    # Per-entity (on a curve).  selection-unification v2 P3-R: the
+    # legacy ``g.model.queries.select("box", dim=1)`` seed is removed;
+    # the box's edges are resolved via the RETAINED ``boundary_curves``
+    # wrapped in the RETAINED legacy ``Selection`` (whose ``.tags()``
+    # is unchanged — R-v2-8).
+    from apeGmsh.core._selection import Selection
+    edges = Selection(
+        g.model.queries.boundary_curves("box"), _queries=g.model.queries
+    )
     g.mesh.structured.set_smoothing(edges.tags()[0], 5, dim=1)
     # Global
     g.mesh.options.set_smoothing(iterations=3)

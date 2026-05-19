@@ -52,33 +52,27 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from apeGmsh._kernel.chain import (
-    REQUIRED_VERBS,
-    SelectionChain,
-    _REQUIRED_HOOKS,
-)
+from apeGmsh._kernel.chain import SelectionChain
 from apeGmsh.results import Results
 from apeGmsh.results._composites import (
     ElementResultsComposite,
     NodeResultsComposite,
 )
-from apeGmsh.results._result_chain import (
-    VALID_LEVELS,
-    ResultChain,
-    _ResultChainEngine,
-)
-# selection-unification-v2 P2-I (§6.1 STOP-2(c)): the results
-# ``.select()`` hooks now return the v2 terminal ``MeshSelection``
-# (legacy ``ResultChain`` left defined-but-unwired; P3 deletes it).
-# The host-return-type assertions below are BEHAVIOURAL (they then
-# exercise level / daisy-chain / spatial / set-algebra / the slab
-# read + parity, which must stay green), so they assert the new
-# type; the legacy structural-shape / engine tests keep asserting
-# the still-defined ``ResultChain`` / ``_ResultChainEngine``.  The
-# results terminal read is the **verbatim rename** ``.get`` →
-# ``.values`` on ``MeshSelection`` (R5 / the locked
-# ``test_result_chain_subcomposites`` fail-loud invariant); the
-# slab type + parity behaviour is unchanged.
+# selection-unification-v2 P3-R (§6.2 / §6.3): the legacy
+# ``ResultChain`` class is **deleted**; ``_ResultChainEngine`` +
+# ``VALID_LEVELS`` are **relocated** verbatim to
+# ``apeGmsh.results._result_engine`` (plan §3 — pure typing-only
+# leaf, no behaviour change).  The results ``.select()`` hooks return
+# the v2 terminal ``MeshSelection``; the chain results read is the
+# verbatim rename ``ResultChain.get`` → ``MeshSelection.values``
+# (R5).  The element-centroid path now iterates
+# ``fem.elements._groups.values()`` directly (M-STOP-3) so the mock
+# FEM exposes ``_groups`` (disposition 4).  The legacy
+# ``ResultChain`` structural-shape / __init_subclass__ tests are
+# deleted (now covered by ``tests/test_selection_idiom.py``); the
+# slab-read parity stays (the typed ``results.<lvl>.get(component=)``
+# reader is RETAINED — category E, no rewrite).
+from apeGmsh.results._result_engine import VALID_LEVELS, _ResultChainEngine
 from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.results._slabs import ElementSlab, NodeSlab
 from apeGmsh.results.writers import NativeWriter
@@ -144,6 +138,22 @@ def _make_results_with_fem(tmp_path: Path, *, with_selection: bool = False):
             np.array([[1, 2, 3, 4]], dtype=np.int64),
         )
 
+    # selection-unification-v2 P3-R / §6.3 M-STOP-3 + disposition 4:
+    # the results element-centroid path (``_centroid_map_result``) now
+    # iterates ``fem.elements._groups.values()`` directly (byte-
+    # equivalent to the removed per-type ``fem.elements.resolve(
+    # element_type=)`` loop).  The mock mirrors that: one
+    # ``ElementGroup``-shaped group (``.ids`` / ``.connectivity`` /
+    # ``.type_name``) carrying the SAME (ids, conn) the legacy
+    # ``_resolve`` returned.  ``_egroup`` is the single mutable group so
+    # the fail-loud test can corrupt its connectivity (the M-STOP-3
+    # path reads ``_groups``, not ``resolve``).
+    _egroup = SimpleNamespace(
+        ids=np.array([10], dtype=np.int64),
+        connectivity=np.array([[1, 2, 3, 4]], dtype=np.int64),
+        type_name="quad4",
+    )
+
     nodes_ns = SimpleNamespace(
         ids=node_ids,
         coords=coords,
@@ -159,6 +169,7 @@ def _make_results_with_fem(tmp_path: Path, *, with_selection: bool = False):
         ids=np.array([10], dtype=np.int64),
         types=[type_info],
         resolve=_resolve,
+        _groups={0: _egroup},          # P3-R M-STOP-3 (disposition 4)
         physical=SimpleNamespace(
             element_ids=lambda n: np.array([10], dtype=np.int64),
         ),
@@ -196,40 +207,25 @@ def _sids(seq) -> list[int]:
 
 
 # =====================================================================
-# Class-shape invariants (the S3c structural contract)
+# Class-shape invariant — the host hooks return the v2 terminal; the
+# relocated _ResultChainEngine still validates its level.
+# (the legacy ResultChain structural-shape + __init_subclass__ gate
+# tests are deleted; covered by tests/test_selection_idiom.py)
 # =====================================================================
 
-def test_resultchain_is_point_family_subclass():
-    assert issubclass(ResultChain, SelectionChain)
-    assert ResultChain.FAMILY == "point"
+def test_select_returns_point_family_meshselection(tmp_path):
+    r, _fem = _make_results_with_fem(tmp_path)
+    n = r.nodes.select(ids=[1])
+    e = r.elements.select(ids=[10])
+    assert isinstance(n, MeshSelection) and isinstance(e, MeshSelection)
+    assert issubclass(MeshSelection, SelectionChain)
+    assert n.FAMILY == "point" and e.FAMILY == "point"
     assert VALID_LEVELS == ("node", "element")
 
 
-def test_resultchain_passes_init_subclass_gate():
-    # __init_subclass__ (ratified R2) accepted ResultChain: valid
-    # FAMILY, every required verb callable, every required hook a real
-    # override (not the base NotImplementedError stub).
-    assert ResultChain.FAMILY in ("entity", "point")
-    for verb in REQUIRED_VERBS:
-        assert callable(getattr(ResultChain, verb, None)), verb
-    for hook in _REQUIRED_HOOKS:
-        impl = getattr(ResultChain, hook, None)
-        assert impl is not None
-        assert impl is not getattr(SelectionChain, hook, None), hook
-
-
-def test_init_subclass_still_rejects_bad_shapes():
-    # Adding ResultChain did not weaken the gate.
-    with pytest.raises(TypeError, match="FAMILY.*invalid"):
-        class _BadFamily(SelectionChain):
-            FAMILY = "nope"
-
-    with pytest.raises(TypeError, match="must implement.*hook"):
-        class _MissingHook(SelectionChain):
-            FAMILY = "point"
-
-
-def test_engine_rejects_invalid_level(tmp_path):
+def test_relocated_engine_rejects_invalid_level(tmp_path):
+    # _ResultChainEngine relocated to apeGmsh.results._result_engine
+    # (P3-R §3, behaviour-verbatim); its level guard is unchanged.
     r, _fem = _make_results_with_fem(tmp_path)
     with pytest.raises(ValueError, match="level.*invalid"):
         _ResultChainEngine(r, r.nodes, "bogus")
@@ -538,14 +534,12 @@ def test_element_centroid_fails_loud_on_unknown_node(tmp_path):
     r, fem = _make_results_with_fem(tmp_path)
 
     # Corrupt the mock fem so element 10's connectivity references a
-    # node id that is not in the FEM node set.
-    def _bad_resolve(*, element_type=None):
-        return (
-            np.array([10], dtype=np.int64),
-            np.array([[1, 2, 3, 10 ** 9]], dtype=np.int64),
-        )
-
-    fem.elements.resolve = _bad_resolve
+    # node id that is not in the FEM node set.  P3-R / M-STOP-3: the
+    # centroid path now iterates ``fem.elements._groups.values()``
+    # (not ``resolve``), so corrupt the group's connectivity.
+    fem.elements._groups[0].connectivity = np.array(
+        [[1, 2, 3, 10 ** 9]], dtype=np.int64
+    )
     with pytest.raises(KeyError, match="not in the FEM node set"):
         r.elements.select().in_box((-9, -9, -9), (9, 9, 9))
 

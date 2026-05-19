@@ -5,9 +5,11 @@ Mirrors the surface the build pipeline uses:
 
   * ``fem.nodes.index(node_id)`` -> int (array index)
   * ``fem.nodes.coords`` -> ndarray (N, 3)
-  * ``fem.nodes.get(pg=name).ids`` -> ndarray
-  * ``fem.elements.get(pg=name)`` -> iterable yielding objects that
-    iterate as ``(eid, conn_tuple)`` pairs
+  * ``fem.nodes.select(pg=name).ids/.coords`` -> ndarray
+    (selection-unification v2 P3-R migration target; ``.get`` removed)
+  * ``fem.elements.select(pg=name).groups()`` -> iterable yielding
+    objects that iterate as ``(eid, conn_tuple)`` pairs; the same
+    terminal also answers ``.result().resolve()`` -> ``(ids, conn)``
 
 Building a real :class:`apeGmsh.mesh.FEMData` requires a live Gmsh
 session; the bridge talks to FEMData through a narrow surface, so a
@@ -59,7 +61,13 @@ class _ElementGroupView:
 class _GroupResultView:
     """Iterable of :class:`_ElementGroupView` — one per element type.
 
-    The build pipeline iterates this directly; nothing else is read.
+    The build pipeline iterates this directly.  selection-unification
+    v2 P3-R: the broker's removed ``fem.elements.get(...)`` is replaced
+    by ``fem.elements.select(...)`` whose terminal exposes ``.groups()``
+    (iterable of per-type groups) and ``.result().resolve()`` →
+    ``(ids, conn)``.  This view backs both: it *is* the iterable of
+    groups (legacy iter contract, unchanged) and also answers
+    ``.groups()`` / ``.result()`` / ``.resolve()`` for the new surface.
     """
 
     _groups: tuple[_ElementGroupView, ...]
@@ -69,6 +77,26 @@ class _GroupResultView:
 
     def __bool__(self) -> bool:
         return len(self._groups) > 0
+
+    # ── new broker surface (P3-R: .select(...).groups() / .result()) ──
+    def groups(self) -> tuple[_ElementGroupView, ...]:
+        return self._groups
+
+    def result(self) -> "_GroupResultView":
+        return self
+
+    def resolve(self):
+        import numpy as _np
+
+        ids: list[int] = []
+        conn: list[tuple[int, ...]] = []
+        for grp in self._groups:
+            ids.extend(int(e) for e in grp.ids)
+            conn.extend(tuple(int(n) for n in c) for c in grp.connectivity)
+        return (
+            _np.asarray(ids, dtype=_np.int64),
+            _np.asarray(conn, dtype=_np.int64) if conn else _np.empty((0, 0), dtype=_np.int64),
+        )
 
 
 class _NodeLabelsStub:
@@ -184,6 +212,25 @@ class _NodesStub:
         coords = self._coords[idxs] if idxs else np.empty((0, 3))
         return _NodeResult(ids=ids, coords=np.asarray(coords))
 
+    def select(
+        self,
+        target: object | None = None,
+        *,
+        pg: str | None = None,
+        label: str | None = None,
+        tag: int | None = None,
+        partition: int | None = None,
+        dim: int | None = None,
+    ) -> _NodeResult:
+        """selection-unification v2 P3-R: ``fem.nodes.get`` is removed;
+        ``fem.nodes.select(pg=).ids/.coords`` is the migration target
+        (P-NODE/P-COORD).  The stub mirrors the broker — behaviour
+        byte-identical to the (now removed) ``.get`` body."""
+        return self.get(
+            target, pg=pg, label=label, tag=tag,
+            partition=partition, dim=dim,
+        )
+
 
 class _ElementsStub:
     """Stand-in for :class:`apeGmsh.mesh.FEMData.ElementComposite`."""
@@ -215,6 +262,29 @@ class _ElementsStub:
                 f"{sorted(self._pgs.keys())}"
             )
         return _GroupResultView(_groups=(self._pgs[pg],))
+
+    def select(
+        self,
+        target: object | None = None,
+        *,
+        pg: str | None = None,
+        label: str | None = None,
+        tag: int | None = None,
+        dim: int | None = None,
+        element_type: str | int | None = None,
+        partition: int | None = None,
+    ) -> _GroupResultView:
+        """selection-unification v2 P3-R: ``fem.elements.get`` is
+        removed; ``fem.elements.select(pg=).groups()`` /
+        ``.result().resolve()`` is the migration target
+        (P-GROUPRESULT).  The stub mirrors the broker — behaviour
+        byte-identical to the (now removed) ``.get`` body; the returned
+        view answers both the legacy iter and the new
+        ``.groups()``/``.result()``/``.resolve()`` surface."""
+        return self.get(
+            target, pg=pg, label=label, tag=tag, dim=dim,
+            element_type=element_type, partition=partition,
+        )
 
 
 class FEMStub:

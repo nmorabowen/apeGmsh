@@ -59,9 +59,9 @@ def test_fem_nodes_target_prefers_label(g):
     p_lbl, p_pg = _build_collision_scene(g)
     fem = g.mesh.queries.get_fem_data()
 
-    via_label  = sorted(int(n) for n in fem.nodes.get(label="foo").ids)
-    via_pg     = sorted(int(n) for n in fem.nodes.get(pg="foo").ids)
-    via_target = sorted(int(n) for n in fem.nodes.get(target="foo").ids)
+    via_label  = sorted(int(n) for n in fem.nodes.select(label="foo").ids)
+    via_pg     = sorted(int(n) for n in fem.nodes.select(pg="foo").ids)
+    via_target = sorted(int(n) for n in fem.nodes.select(target="foo").ids)
 
     assert via_label != via_pg, (
         "Test scenario broken: label and PG resolved to the same "
@@ -79,8 +79,8 @@ def test_fem_nodes_target_raw_dimtag(g):
     fem = g.mesh.queries.get_fem_data()
 
     via_dimtag = sorted(
-        int(n) for n in fem.nodes.get(target=[(0, p_lbl)]).ids)
-    via_label  = sorted(int(n) for n in fem.nodes.get(label="foo").ids)
+        int(n) for n in fem.nodes.select(target=[(0, p_lbl)]).ids)
+    via_label  = sorted(int(n) for n in fem.nodes.select(label="foo").ids)
 
     assert via_dimtag == via_label, (
         f"target=[(0, {p_lbl})] should resolve to the mesh nodes of "

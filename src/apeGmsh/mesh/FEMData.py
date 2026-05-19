@@ -315,50 +315,6 @@ class NodeComposite:
             atoms = [int(n) for n in seed_ids]
         return MeshSelection(atoms, _engine=self)
 
-    def get(
-        self,
-        target=None,
-        *,
-        pg=None,
-        label=None,
-        tag=None,
-        partition: int | None = None,
-        dim: int | None = None,
-    ) -> NodeResult:
-        """Bundled ``(ids, coords)`` for a selection.
-
-        Parameters
-        ----------
-        target : str, list[str], int, or (dim, tag), optional
-            Shorthand — searches PGs first, then labels.
-            A list is interpreted as a **union** of targets.
-        pg : str or list[str], optional
-            Physical group name(s) (explicit).
-        label : str or list[str], optional
-            Label name(s) (explicit).
-        tag : int, (dim, tag), or list, optional
-            Direct Gmsh physical-group tag lookup(s).
-        partition : int, optional
-            Partition ID (intersection filter).
-        dim : int, optional
-            Restrict *pg* / *label* / *target* lookup to a single
-            dimension. Useful for a multi-dim *label* (e.g. one
-            covering a volume + its bounding faces) when you want
-            only one slice; physical groups are single-dim already.
-
-        Returns
-        -------
-        NodeResult
-        """
-        ids, coords = self._resolve_nodes(target, pg=pg,
-                                           label=label, tag=tag, dim=dim)
-
-        if partition is not None:
-            ids, coords = self._intersect_partition(
-                ids, coords, partition)
-
-        return NodeResult(ids, coords)
-
     def _resolve_nodes(self, target, *, pg, label, tag, dim=None):
         """Resolve single or list selectors to (ids, coords).
 
@@ -516,18 +472,6 @@ class NodeComposite:
         mask = np.isin(
             np.asarray(ids, dtype=np.int64), pdata['node_ids'])
         return ids[mask], coords[mask]
-
-    def get_ids(self, target=None, *, pg=None, label=None,
-                tag=None, partition=None, dim=None) -> ndarray:
-        """Node IDs only."""
-        return self.get(target, pg=pg, label=label, tag=tag,
-                        partition=partition, dim=dim).ids
-
-    def get_coords(self, target=None, *, pg=None, label=None,
-                   tag=None, partition=None, dim=None) -> ndarray:
-        """Coordinates only."""
-        return self.get(target, pg=pg, label=label, tag=tag,
-                        partition=partition, dim=dim).coords
 
     # ── Lookups ─────────────────────────────────────────────
 
@@ -699,7 +643,7 @@ class ElementComposite:
 
     # ── Selection API ───────────────────────────────────────
 
-    def get(
+    def _filtered_groups(
         self,
         target=None,
         *,
@@ -710,32 +654,14 @@ class ElementComposite:
         element_type: str | int | None = None,
         partition: int | None = None,
     ) -> GroupResult:
-        """Select elements by PG, label, dim, element type, partition.
-
-        All filters compose as AND intersections.  Returns a
-        ``GroupResult`` — iterable of ``ElementGroup`` objects.
-
-        Parameters
-        ----------
-        target : str, list[str], int, or (dim, tag), optional
-            Shorthand — PGs first, then labels.
-            A list is interpreted as a **union**.
-        pg : str or list[str], optional
-            Physical group name(s) (explicit).
-        label : str or list[str], optional
-            Label name(s) (explicit).
-        tag : int, (dim, tag), or list, optional
-            Direct Gmsh physical-group tag lookup(s).
-        dim : int, optional
-            Filter by element dimension (0–3).
-        element_type : str or int, optional
-            Filter by element type alias, Gmsh code, or Gmsh name.
-        partition : int, optional
-            Filter by partition ID.
-
-        Returns
-        -------
-        GroupResult
+        """Internal element filter — Step-1/2/3 of the (P3-R-removed)
+        public ``get``, relocated **verbatim** (selection-unification
+        v2 P3-R / §6.3 M-STOP-1).  Sole consumer: ``select``'s
+        auxiliary ``dim``/``element_type``/``partition`` branch — so
+        ``select(element_type=|dim=|partition=)`` stays byte-behaviour-
+        identical to the pre-P3-R ``get(...)`` path, including the
+        §3.1(a) silent-empty ``dim=`` post-filter (mismatch → empty
+        ``GroupResult``, no raise).
         """
         # Step 1: resolve ID set from PG/label/tag (union for lists)
         id_set = self._resolve_elem_ids(target, pg=pg, label=label, tag=tag)
@@ -861,33 +787,6 @@ class ElementComposite:
             combined.update(int(x) for x in id_fn(s))
         return combined
 
-    def get_ids(
-        self,
-        target=None, *, pg=None, label=None, tag=None,
-        dim=None, element_type=None, partition=None,
-    ) -> ndarray:
-        """Element IDs only for a selection."""
-        return self.get(
-            target, pg=pg, label=label, tag=tag,
-            dim=dim, element_type=element_type,
-            partition=partition,
-        ).ids
-
-    def resolve(
-        self,
-        target=None, *, pg=None, label=None, tag=None,
-        dim=None, element_type=None, partition=None,
-    ) -> tuple[ndarray, ndarray]:
-        """Flat ``(ids, connectivity)`` — convenience for single-type results.
-
-        Delegates to ``.get(...).resolve()``.
-        """
-        return self.get(
-            target, pg=pg, label=label, tag=tag,
-            dim=dim, element_type=element_type,
-            partition=partition,
-        ).resolve()
-
     def select(
         self,
         target=None,
@@ -961,12 +860,13 @@ class ElementComposite:
             )
         else:
             # Auxiliary dim/element_type/partition filter present —
-            # reuse `.get()` verbatim (which itself delegates name
-            # resolution to `_resolve_elem_ids`); no filter logic is
-            # re-implemented, guaranteeing select(...) == get(...).
+            # reuse the verbatim filter helper `_filtered_groups`
+            # (selection-unification v2 P3-R / §6.3 M-STOP-1: the exact
+            # body the now-removed public `get` used), so select(...)
+            # stays byte-identical to the pre-P3-R get(...) path.
             atoms = [
                 int(e)
-                for e in self.get(
+                for e in self._filtered_groups(
                     target, pg=pg, label=label, tag=tag, dim=dim,
                     element_type=element_type, partition=partition,
                 ).ids

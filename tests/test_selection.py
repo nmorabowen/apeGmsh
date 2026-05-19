@@ -1,31 +1,55 @@
 """
-Tests for ``g.model.queries.select()`` and the ``Selection`` result type.
+Tests for the v2 ``g.model.select(...).crossing_plane(...)`` idiom and
+the RETAINED ``Selection`` / ``Plane`` / ``Line`` / ``_parse_primitive``
+surface.
+
+selection-unification-v2 P3-R (``docs/plans/selection-unification-v2.md``
+§5-C / §6.2): the legacy ``g.model.queries.select(...)`` /
+``g.model.queries.line(...)`` entry points are **removed**.  The
+geometric-predicate engine they fronted is the RETAINED
+``EntitySelection.crossing_plane(spec, *, mode=)`` verb (P2-G proved
+the equivalence — exhaustively pinned with frozen literals in
+``tests/test_p2g_parity.py``); the ``EntitySelection`` → legacy
+``Selection`` terminal (``.to_label`` / ``.to_physical`` / ``.tags()``
+/ ``.select(on=)`` / repr / set-algebra) is covered by
+``tests/test_geometry_chain.py``.  This file is **rewritten** (plan
+§5-C) onto the v2 idiom: every ``queries.select(SEED, MODE=SPEC)``
+becomes ``g.model.select(SEED).crossing_plane(SPEC, mode=MODE)``;
+``queries.line(p1,p2)`` becomes the RETAINED ``Line.through(p1,p2)``;
+``queries.plane(...)`` is RETAINED and unchanged.  The retained
+``_parse_primitive`` / ``Plane`` / ``Line`` / ``Selection``-terminal /
+``boundary_curves`` / ``partition_by`` classes are unchanged.
 
 Covers:
   * Geometric primitives: dict (axis-aligned plane), 2-pt line, 3-pt plane.
-  * Predicates: ``on=`` and ``crossing=``.
-  * The chainable ``Selection`` API: ``.select()``, ``.tags()``,
-    ``.to_label()``, ``.to_physical()``, repr.
-  * Mixed-dim selections.
-  * Error paths.
+  * The v2 ``crossing_plane`` predicate (on / crossing / not_on /
+    not_crossing) over resolved dimtag seeds.
+  * The chainable ``EntitySelection`` → legacy ``Selection`` terminal:
+    ``.to_label()``, ``.to_physical()``, ``.tags()``, repr.
+  * Mixed-dim selections, set-algebra, negation, error paths.
 """
 from __future__ import annotations
 
 import pytest
 
-from apeGmsh.core._selection import Selection, Plane, Line, _parse_primitive
+from apeGmsh.core._selection import (
+    Selection, Plane, Line, _parse_primitive,
+)
 
 
 def _is_selection(obj) -> bool:
-    """Robust isinstance check.
+    """Robust isinstance check (legacy ``Selection`` terminal).
 
-    ``test_library_contracts.py`` purges ``apeGmsh`` from ``sys.modules`` and
-    re-imports, creating a fresh ``Selection`` class in a new module.  When
-    later tests run, the module-level ``Selection`` reference captured at
-    import time may not match the class actually returned by ``select()``.
-    Checking by class name is robust to that re-import dance.
+    ``test_library_contracts.py`` purges ``apeGmsh`` from ``sys.modules``
+    and re-imports; checking by class name is robust to that.
     """
     return type(obj).__name__ == 'Selection'
+
+
+def _tags(sel) -> list:
+    """Sorted tag list from an ``EntitySelection`` (atoms are bare
+    ``(dim, tag)``)."""
+    return sorted(int(t) for _d, t in sel._items)
 
 
 # =====================================================================
@@ -42,7 +66,7 @@ def _box_edges(g, vol):
 
 
 # =====================================================================
-# Primitive parser
+# Primitive parser — RETAINED (_parse_primitive / Plane / Line)
 # =====================================================================
 
 class TestParsePrimitive:
@@ -79,7 +103,7 @@ class TestParsePrimitive:
 
 
 # =====================================================================
-# select() — 2-D rectangle
+# crossing_plane — 2-D rectangle (v2 idiom; frozen literals)
 # =====================================================================
 
 class TestSelect2D:
@@ -89,14 +113,15 @@ class TestSelect2D:
         surf = g.model.geometry.add_rectangle(0, 0, 0, 5, 10)
         curves = g.model.queries.boundary(surf, oriented=False)
 
-        bottom = g.model.queries.select(curves, on={'y': 0})
-        top    = g.model.queries.select(curves, on={'y': 10})
-        left   = g.model.queries.select(curves, on={'x': 0})
-        right  = g.model.queries.select(curves, on={'x': 5})
+        bottom = g.model.select(curves).crossing_plane({'y': 0}, mode='on')
+        top    = g.model.select(curves).crossing_plane({'y': 10}, mode='on')
+        left   = g.model.select(curves).crossing_plane({'x': 0}, mode='on')
+        right  = g.model.select(curves).crossing_plane({'x': 5}, mode='on')
 
         assert len(bottom) == len(top) == len(left) == len(right) == 1
         # the four edges are distinct
-        all_tags = {bottom.tags()[0], top.tags()[0], left.tags()[0], right.tags()[0]}
+        all_tags = {_tags(bottom)[0], _tags(top)[0],
+                    _tags(left)[0], _tags(right)[0]}
         assert len(all_tags) == 4
 
     def test_crossing_two_point_line(self, g):
@@ -104,20 +129,21 @@ class TestSelect2D:
         curves = g.model.queries.boundary(surf, oriented=False)
 
         # horizontal mid-line — the two vertical edges (left, right) cross it
-        mid = g.model.queries.select(curves, crossing=[(0, 5, 0), (5, 5, 0)])
+        mid = g.model.select(curves).crossing_plane(
+            [(0, 5, 0), (5, 5, 0)], mode='crossing')
         assert len(mid) == 2
 
     def test_no_match_returns_empty(self, g):
         surf = g.model.geometry.add_rectangle(0, 0, 0, 5, 10)
         curves = g.model.queries.boundary(surf, oriented=False)
 
-        empty = g.model.queries.select(curves, on={'x': 99})
+        empty = g.model.select(curves).crossing_plane({'x': 99}, mode='on')
         assert len(empty) == 0
-        assert _is_selection(empty)
+        assert _is_selection(empty.result())
 
 
 # =====================================================================
-# select() — 3-D box
+# crossing_plane — 3-D box
 # =====================================================================
 
 class TestSelect3D:
@@ -127,17 +153,21 @@ class TestSelect3D:
         vol = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(vol, oriented=False)
 
-        assert len(g.model.queries.select(faces, on={'z': 0}))  == 1
-        assert len(g.model.queries.select(faces, on={'z': 10})) == 1
-        assert len(g.model.queries.select(faces, on={'x': 0}))  == 1
-        assert len(g.model.queries.select(faces, on={'x': 5}))  == 1
+        assert len(g.model.select(faces).crossing_plane(
+            {'z': 0}, mode='on')) == 1
+        assert len(g.model.select(faces).crossing_plane(
+            {'z': 10}, mode='on')) == 1
+        assert len(g.model.select(faces).crossing_plane(
+            {'x': 0}, mode='on')) == 1
+        assert len(g.model.select(faces).crossing_plane(
+            {'x': 5}, mode='on')) == 1
 
     def test_crossing_plane_picks_vertical_faces(self, g):
         vol = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(vol, oriented=False)
 
         # mid-height plane — 4 vertical faces straddle it
-        side = g.model.queries.select(faces, crossing={'z': 5})
+        side = g.model.select(faces).crossing_plane({'z': 5}, mode='crossing')
         assert len(side) == 4
 
     def test_crossing_3pt_plane(self, g):
@@ -145,70 +175,74 @@ class TestSelect3D:
         faces = g.model.queries.boundary(vol, oriented=False)
 
         # equivalent to z=5 expressed via 3 points
-        side = g.model.queries.select(
-            faces,
-            crossing=[(0, 0, 5), (1, 0, 5), (0, 1, 5)],
-        )
+        side = g.model.select(faces).crossing_plane(
+            [(0, 0, 5), (1, 0, 5), (0, 1, 5)], mode='crossing')
         assert len(side) == 4
 
     def test_volume_crosses_plane(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
-        crossed = g.model.queries.select([(3, v)], crossing={'z': 5})
+        crossed = g.model.select([(3, v)]).crossing_plane(
+            {'z': 5}, mode='crossing')
         assert len(crossed) == 1
 
 
 # =====================================================================
-# Chainable Selection — stacking, .tags(), repr
+# Chainable EntitySelection → legacy Selection terminal
 # =====================================================================
 
 class TestSelectionChain:
 
     def test_stacking_is_AND(self, g):
-        """Stacked .select() narrows progressively (AND logic)."""
+        """Stacked crossing_plane narrows progressively (AND logic)."""
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         edges = _box_edges(g, v)
 
         # corner edge at x=0, y=0 — exactly 1 edge survives both filters
-        corner = (g.model.queries
-                    .select(edges, on={'x': 0})
-                    .select(on={'y': 0}))
+        corner = (g.model.select(edges)
+                    .crossing_plane({'x': 0}, mode='on')
+                    .crossing_plane({'y': 0}, mode='on'))
         assert len(corner) == 1
 
     def test_chain_returns_selection_with_back_ref(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        sel = g.model.queries.select(faces, on={'z': 0})
-        assert _is_selection(sel)
-        assert sel._queries is g.model.queries
-        # chain still works
-        empty = sel.select(on={'x': 99})
+        sel = g.model.select(faces).crossing_plane({'z': 0}, mode='on')
+        # the v2 terminal materialises the legacy Selection (back-ref'd
+        # to the queries engine, R-v2-2).
+        leg = sel.result()
+        assert _is_selection(leg)
+        assert leg._queries is g.model.queries
+        # chain still works (legacy Selection.select(on=) unchanged)
+        empty = leg.select(on={'x': 99})
         assert _is_selection(empty)
         assert empty._queries is g.model.queries
 
     def test_tags_drops_dim(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        sel = g.model.queries.select(faces, crossing={'z': 5})
-        tags = sel.tags()
+        sel = g.model.select(faces).crossing_plane({'z': 5}, mode='crossing')
+        tags = sel.result().tags()
         assert all(isinstance(t, int) for t in tags)
         assert len(tags) == 4
 
     def test_repr_mentions_dim_count_and_chain(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        sel = g.model.queries.select(faces, crossing={'z': 5})
+        sel = g.model.select(faces).crossing_plane(
+            {'z': 5}, mode='crossing').result()
         r = repr(sel)
         assert "4" in r and "surfaces" in r and ".select" in r
 
     def test_empty_repr(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        sel = g.model.queries.select(faces, on={'z': 999})
+        sel = g.model.select(faces).crossing_plane(
+            {'z': 999}, mode='on').result()
         assert "empty" in repr(sel)
 
 
 # =====================================================================
-# to_label / to_physical
+# to_label / to_physical (direct EntitySelection terminals)
 # =====================================================================
 
 class TestSelectionRegister:
@@ -217,17 +251,19 @@ class TestSelectionRegister:
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
 
-        sel = g.model.queries.select(faces, on={'z': 0}).to_label('base')
-        assert _is_selection(sel)
+        sel = g.model.select(faces).crossing_plane(
+            {'z': 0}, mode='on').to_label('base')
+        assert isinstance(sel, type(g.model.select(faces)))
         # round-trip through the labels composite
-        assert g.labels.entities('base', dim=2) == sel.tags()
+        assert g.labels.entities('base', dim=2) == _tags(sel)
 
     def test_to_physical_creates_pg_and_returns_self(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
 
-        sel = g.model.queries.select(faces, on={'z': 10}).to_physical('Top')
-        assert _is_selection(sel)
+        sel = g.model.select(faces).crossing_plane(
+            {'z': 10}, mode='on').to_physical('Top')
+        assert isinstance(sel, type(g.model.select(faces)))
         # downstream API can reach it by PG name
         assert g.physical.entities('Top')
 
@@ -236,10 +272,10 @@ class TestSelectionRegister:
         edges = _box_edges(g, v)
 
         # full fluent chain: filter → label → keep filtering
-        result = (g.model.queries
-                    .select(edges, on={'x': 0})
+        result = (g.model.select(edges)
+                    .crossing_plane({'x': 0}, mode='on')
                     .to_label('left_face_edges')
-                    .select(on={'y': 0}))
+                    .crossing_plane({'y': 0}, mode='on'))
         assert len(result) == 1
         assert g.labels.entities('left_face_edges', dim=1)  # label exists
 
@@ -250,20 +286,20 @@ class TestSelectionRegister:
         edges = _box_edges(g, v)
 
         # mixed manual selection — face on z=0 plus an edge on x=0,y=0
-        face_sel = g.model.queries.select(faces, on={'z': 0})
-        edge_sel = (g.model.queries
-                     .select(edges, on={'x': 0})
-                     .select(on={'y': 0}))
-        mixed = Selection(list(face_sel) + list(edge_sel),
+        face_sel = g.model.select(faces).crossing_plane({'z': 0}, mode='on')
+        edge_sel = (g.model.select(edges)
+                     .crossing_plane({'x': 0}, mode='on')
+                     .crossing_plane({'y': 0}, mode='on'))
+        mixed = Selection(list(face_sel._items) + list(edge_sel._items),
                           _queries=g.model.queries)
         mixed.to_label('mixed')
 
-        assert g.labels.entities('mixed', dim=2) == face_sel.tags()
-        assert g.labels.entities('mixed', dim=1) == edge_sel.tags()
+        assert g.labels.entities('mixed', dim=2) == _tags(face_sel)
+        assert g.labels.entities('mixed', dim=1) == _tags(edge_sel)
 
 
 # =====================================================================
-# Error paths
+# boundary helpers — RETAINED (queries.boundary_curves / _points)
 # =====================================================================
 
 class TestBoundaryHelpers:
@@ -286,26 +322,45 @@ class TestBoundaryHelpers:
         assert len(g.model.queries.boundary_points('box')) == 8
 
 
+# =====================================================================
+# Label-seeded selection + crossing_plane.  P3-R: the legacy
+# ``queries.select(label, dim=N, predicate)`` boundary-extraction is
+# removed (the v2 ``g.model.select(label, dim=N)`` resolves the label
+# entity, NOT its dim-N boundary).  The dim-N boundary is resolved
+# explicitly (the byte-unchanged ``queries.boundary``) and the
+# predicate applied via the v2 ``crossing_plane`` — same final set,
+# the ``tests/test_p2g_parity.py`` seed pattern.
+# =====================================================================
+
 class TestSelectFromLabel:
-    """select() accepting a label string + dim keyword."""
+    """Label-seeded selection + the v2 crossing_plane predicate."""
 
     def test_label_str_with_dim2(self, g):
         g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        g.model.sync()
+        faces = g.model.queries.boundary('box', dim=3, oriented=False)
         # the bottom face of the box
-        assert len(g.model.queries.select('box', dim=2, on={'z': 0})) == 1
+        assert len(g.model.select(faces).crossing_plane(
+            {'z': 0}, mode='on')) == 1
 
     def test_label_str_with_dim1(self, g):
         g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        g.model.sync()
+        edges = g.model.queries.boundary_curves('box')
         # 4 edges on the left face
-        assert len(g.model.queries.select('box', dim=1, on={'x': 0})) == 4
+        assert len(g.model.select(edges).crossing_plane(
+            {'x': 0}, mode='on')) == 4
 
     def test_label_str_with_dim0(self, g):
         g.model.geometry.add_box(0, 0, 0, 5, 5, 10, label='box')
+        g.model.sync()
+        pts = g.model.queries.boundary_points('box')
         # 4 corner points on the left face
-        assert len(g.model.queries.select('box', dim=0, on={'x': 0})) == 4
+        assert len(g.model.select(pts).crossing_plane(
+            {'x': 0}, mode='on')) == 4
 
     def test_label_string_list(self, g):
-        """select() resolves a *list* of label strings, not just one."""
+        """g.model.select() resolves a *list* of label strings."""
         gm = g.model.geometry
         gm.add_point(0, 0, 0, label='a')
         gm.add_point(0, 0, 1, label='b')
@@ -315,15 +370,15 @@ class TestSelectFromLabel:
         c2 = gm.add_line('c', 'd', label='col_right')
         c3 = gm.add_line('a', 'c', label='arch')
 
-        sel = g.model.queries.select(['col_left', 'arch', 'col_right'])
-        assert sorted(t for _, t in sel) == sorted([c1, c2, c3])
+        sel = g.model.select(['col_left', 'arch', 'col_right'])
+        assert sorted(t for _, t in sel._items) == sorted([c1, c2, c3])
 
         # mixed list: bare tag + label strings resolve independently
-        mixed = g.model.queries.select([c1, 'arch', 'col_right'])
-        assert sorted(t for _, t in mixed) == sorted([c1, c2, c3])
+        mixed = g.model.select([c1, 'arch', 'col_right'])
+        assert sorted(t for _, t in mixed._items) == sorted([c1, c2, c3])
 
         # flows into to_physical -> all 3 entities (the original footgun)
-        g.model.queries.select(
+        g.model.select(
             ['col_left', 'arch', 'col_right']).to_physical('frames')
         assert sorted(int(x) for x in g.physical.entities('frames', dim=1)) \
             == sorted([c1, c2, c3])
@@ -336,11 +391,11 @@ class TestMixedDimLabelNoWarning:
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
         edges = g.model.queries.boundary_curves(v)
-        face_sel = g.model.queries.select(faces, on={'z': 0})
-        edge_sel = (g.model.queries
-                      .select(edges, on={'x': 0})
-                      .select(on={'y': 0}))
-        Selection(list(face_sel) + list(edge_sel),
+        face_sel = g.model.select(faces).crossing_plane({'z': 0}, mode='on')
+        edge_sel = (g.model.select(edges)
+                      .crossing_plane({'x': 0}, mode='on')
+                      .crossing_plane({'y': 0}, mode='on'))
+        Selection(list(face_sel._items) + list(edge_sel._items),
                   _queries=g.model.queries).to_label('mixed_label')
 
         # only label-collision warnings would be relevant here; ensure none
@@ -349,32 +404,42 @@ class TestMixedDimLabelNoWarning:
         assert relevant == []
 
 
+# =====================================================================
+# Primitive factories — RETAINED queries.plane(...) + Line.through
+# (the legacy queries.line(...) is removed; Line.through is its
+# byte-identical replacement — queries.line only ever called it).
+# =====================================================================
+
 class TestPrimitiveFactories:
-    """plane()/line() factories on _Queries — no imports needed by user."""
+    """plane() factory on _Queries (RETAINED) + Line.through."""
 
     def test_plane_axis_aligned(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
         z_mid = g.model.queries.plane(z=5)
-        assert len(g.model.queries.select(faces, crossing=z_mid)) == 4
+        assert len(g.model.select(faces).crossing_plane(
+            z_mid, mode='crossing')) == 4
 
     def test_plane_three_points(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
         p = g.model.queries.plane((0, 0, 5), (1, 0, 5), (0, 1, 5))
-        assert len(g.model.queries.select(faces, crossing=p)) == 4
+        assert len(g.model.select(faces).crossing_plane(
+            p, mode='crossing')) == 4
 
     def test_plane_normal_through(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
         p = g.model.queries.plane(normal=(0, 0, 1), through=(0, 0, 5))
-        assert len(g.model.queries.select(faces, crossing=p)) == 4
+        assert len(g.model.select(faces).crossing_plane(
+            p, mode='crossing')) == 4
 
     def test_line_factory(self, g):
         s = g.model.geometry.add_rectangle(0, 0, 0, 5, 10)
         curves = g.model.queries.boundary(s, oriented=False)
-        cut = g.model.queries.line((0, 5, 0), (5, 5, 0))
-        assert len(g.model.queries.select(curves, crossing=cut)) == 2
+        cut = Line.through((0, 5, 0), (5, 5, 0))
+        assert len(g.model.select(curves).crossing_plane(
+            cut, mode='crossing')) == 2
 
     def test_plane_invalid_call_raises(self, g):
         with pytest.raises(ValueError):
@@ -384,13 +449,13 @@ class TestPrimitiveFactories:
 
 
 class TestSetOperations:
-    """Selection supports |, &, - with deduplication / set semantics."""
+    """EntitySelection supports |, &, - with set semantics."""
 
     def test_union_dedups(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        bottom = g.model.queries.select(faces, on={'z': 0})
-        top    = g.model.queries.select(faces, on={'z': 10})
+        bottom = g.model.select(faces).crossing_plane({'z': 0}, mode='on')
+        top    = g.model.select(faces).crossing_plane({'z': 10}, mode='on')
         union  = bottom | top
         assert len(union) == 2
         # idempotent
@@ -399,32 +464,36 @@ class TestSetOperations:
     def test_intersection(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        side    = g.model.queries.select(faces, crossing={'z': 5})
-        on_x0   = g.model.queries.select(faces, on={'x': 0})
+        side    = g.model.select(faces).crossing_plane(
+            {'z': 5}, mode='crossing')
+        on_x0   = g.model.select(faces).crossing_plane({'x': 0}, mode='on')
         common  = side & on_x0
         assert len(common) == 1   # the left face is both vertical and at x=0
 
     def test_difference(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        bottom = g.model.queries.select(faces, on={'z': 0})
-        all_sel = Selection(faces, _queries=g.model.queries)
+        bottom = g.model.select(faces).crossing_plane({'z': 0}, mode='on')
+        all_sel = g.model.select(faces)
         without_bottom = all_sel - bottom
         assert len(without_bottom) == 5
 
     def test_set_ops_preserve_back_ref(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        a = g.model.queries.select(faces, on={'z': 0})
-        b = g.model.queries.select(faces, on={'z': 10})
+        a = g.model.select(faces).crossing_plane({'z': 0}, mode='on')
+        b = g.model.select(faces).crossing_plane({'z': 10}, mode='on')
         for sel in (a | b, a & b, a - b):
-            assert sel._queries is g.model.queries
+            # the materialised legacy terminal stays back-ref'd
+            leg = sel.result()
+            assert leg._queries is g.model.queries
             # chain still works
-            sel.select(on={'x': 0})
+            leg.select(on={'x': 0})
 
 
 class TestPartitionBy:
-    """partition_by groups by dominant bounding-box axis."""
+    """partition_by groups by dominant bounding-box axis (RETAINED
+    legacy ``Selection.partition_by``)."""
 
     def test_curves_of_box_three_directions(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 7, 11)
@@ -462,38 +531,42 @@ class TestPartitionBy:
 
 
 class TestNegation:
-    """not_on= and not_crossing= negation predicates."""
+    """not_on / not_crossing negation modes of crossing_plane."""
 
     def test_not_on_excludes_match(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        # 6 faces, 1 is on z=0, so not_on={'z':0} → 5 faces
-        result = g.model.queries.select(faces, not_on={'z': 0})
+        # 6 faces, 1 is on z=0, so not_on z=0 → 5 faces
+        result = g.model.select(faces).crossing_plane(
+            {'z': 0}, mode='not_on')
         assert len(result) == 5
 
     def test_not_crossing_excludes_match(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
         # 4 vertical faces cross z=5; not_crossing → 2 (top and bottom)
-        result = g.model.queries.select(faces, not_crossing={'z': 5})
+        result = g.model.select(faces).crossing_plane(
+            {'z': 5}, mode='not_crossing')
         assert len(result) == 2
 
     def test_not_on_chained(self, g):
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
         # all faces except top and bottom (the four vertical faces)
-        result = (g.model.queries
-                    .select(faces, not_on={'z': 0})
-                    .select(not_on={'z': 10}))
+        result = (g.model.select(faces)
+                    .crossing_plane({'z': 0}, mode='not_on')
+                    .crossing_plane({'z': 10}, mode='not_on'))
         assert len(result) == 4
 
     def test_negation_matches_complement(self, g):
         """not_X should give exactly the entities that X excludes."""
         v = g.model.geometry.add_box(0, 0, 0, 5, 5, 10)
         faces = g.model.queries.boundary(v, oriented=False)
-        positive = set(g.model.queries.select(faces, on={'z': 0}))
-        negative = set(g.model.queries.select(faces, not_on={'z': 0}))
-        all_set  = set(faces)
+        positive = set(g.model.select(faces).crossing_plane(
+            {'z': 0}, mode='on')._items)
+        negative = set(g.model.select(faces).crossing_plane(
+            {'z': 0}, mode='not_on')._items)
+        all_set  = {(int(d), int(t)) for d, t in faces}
         assert positive | negative == all_set
         assert positive & negative == set()
 
@@ -534,18 +607,19 @@ class TestSetTransfiniteBox:
 
 class TestErrors:
 
-    def test_select_rejects_multiple_predicates(self, g):
+    def test_crossing_plane_rejects_invalid_spec_and_mode(self, g):
+        """selection-unification-v2 P3-R: the legacy
+        ``queries.select`` zero/multi-predicate validation is removed;
+        the v2 ``crossing_plane`` validates spec + mode loudly (the
+        ``tests/test_p2g_parity.py`` ``test_invalid_mode_is_loud``
+        contract, mirrored here for the error-path coverage)."""
         surf = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
         curves = g.model.queries.boundary(surf, oriented=False)
 
-        # Concrete geometry (a dimtag list, not a name ref) must carry
-        # exactly one predicate.  The zero-predicate "resolve only" entry
-        # point is gated on name refs in _Queries.select(); it does not
-        # leak to raw dimtag lists (see commit b5a3dff).
-        with pytest.raises(ValueError, match="exactly one"):
-            g.model.queries.select(curves)
-        with pytest.raises(ValueError, match="exactly one"):
-            g.model.queries.select(curves, on={'x': 0}, crossing={'y': 0})
+        with pytest.raises(ValueError, match="mode="):
+            g.model.select(curves).crossing_plane({'x': 0}, mode='sideways')
+        with pytest.raises(ValueError, match="Cannot infer primitive"):
+            g.model.select(curves).crossing_plane([(0, 0, 0)], mode='on')
 
     def test_plane_at_requires_one_kwarg(self):
         with pytest.raises(ValueError, match="exactly one"):

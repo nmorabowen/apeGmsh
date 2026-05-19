@@ -110,10 +110,14 @@ def test_mesh_selection_roundtrips(g, tmp_path: Path) -> None:
     g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
     g.mesh.sizing.set_global_size(2.0)
     g.mesh.generation.generate(dim=3)
-    g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="bottom")
-    g.mesh_selection.add_elements(
-        dim=3, in_box=[0, 0, 0.5, 1, 1, 1.001], name="top_slab",
-    )
+    # selection-unification v2 P3-R: ``g.mesh_selection.add_nodes`` /
+    # ``add_elements`` removed (SC-11); register the SAME spatial sets
+    # via the v2 ``select(...).<spatial>.save_as(name)`` (which writes
+    # the same ``_sets`` → snapshot → /model/mesh_selection/).
+    g.mesh_selection.select().on_plane(
+        (0, 0, 0.0), (0, 0, 1), tol=1e-3).save_as("bottom")
+    g.mesh_selection.select(level="element", dim=3).in_box(
+        (0, 0, 0.5), (1, 1, 1.001)).save_as("top_slab")
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     path = tmp_path / "with_selection.h5"

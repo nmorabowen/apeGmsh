@@ -858,7 +858,9 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
         return out
 
     for i, eid in enumerate(eids):
-        ids, conn = fem.elements.get(tag=int(eid)).resolve()
+        # selection-unification v2 P3-R / §6.3 §2 #9 (P-GROUPRESULT;
+        # oracle README ratifies).
+        ids, conn = fem.elements.select(tag=int(eid)).result().resolve()
         if conn.size == 0:
             raise ValueError(
                 f"Element {eid} has no connectivity in the bound FEMData."
@@ -867,8 +869,9 @@ def _resolve_element_lengths(fem, element_ids) -> ndarray:
         # tag lookup we expect 1 row; take its first and last node.
         node_a = int(conn.flat[0])
         node_b = int(conn.flat[-1])
-        c1 = np.asarray(fem.nodes.get_coords(node_a), dtype=np.float64)
-        c2 = np.asarray(fem.nodes.get_coords(node_b), dtype=np.float64)
+        # selection-unification v2 P3-R / §6.3 §2 #10/#11 (P-COORD).
+        c1 = np.asarray(fem.nodes.select(node_a).coords, dtype=np.float64)
+        c2 = np.asarray(fem.nodes.select(node_b).coords, dtype=np.float64)
         out[i] = float(np.linalg.norm(c2 - c1))
     return out
 

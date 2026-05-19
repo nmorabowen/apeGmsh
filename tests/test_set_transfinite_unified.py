@@ -1,14 +1,43 @@
-"""Tests for the unified g.mesh.structured.set_transfinite() entry point."""
+"""Tests for the unified g.mesh.structured.set_transfinite() entry point.
+
+selection-unification-v2 P3-R: the legacy seed
+``g.model.queries.select(label, dim=)`` is **removed**; the box's
+edges/faces are rebuilt with the RETAINED ``boundary_curves`` /
+``boundary`` wrapped in the RETAINED legacy ``Selection`` (whose
+``.parallel_to`` / ``.normal_along`` / ``.tags`` / ``.select(on=)``
+are unchanged — R-v2-8).  The transfinite behaviour under test is
+unchanged.
+"""
 import math
 
 import gmsh
 import numpy as np
 import pytest
 
+from apeGmsh.core._selection import Selection
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _edges_sel(g, label):
+    """The label's boundary edges as a legacy ``Selection`` (P3-R seed
+    replacement for the removed ``queries.select(label, dim=1)``)."""
+    return Selection(
+        g.model.queries.boundary_curves(label), _queries=g.model.queries
+    )
+
+
+def _faces_sel(g, label):
+    """The label's boundary faces as a legacy ``Selection`` (P3-R seed
+    replacement for the removed ``queries.select(label, dim=2)``)."""
+    g.model.sync()
+    return Selection(
+        g.model.queries.boundary(label, dim=3, oriented=False),
+        _queries=g.model.queries,
+    )
+
 
 def _generate_or_skip(g):
     """Generate 3-D mesh; skip if gmsh fails (e.g. transfinite topology issue)."""
@@ -33,7 +62,7 @@ def test_scalar_n_on_axis_aligned_box(g):
     g.mesh.structured.set_transfinite("box", n=11)
     _generate_or_skip(g)
     # All 12 edges should have 11 nodes
-    edges = g.model.queries.select("box", dim=1)
+    edges = _edges_sel(g, "box")
     for _, t in edges:
         assert _curve_n_nodes(t) == 11
 
@@ -44,7 +73,7 @@ def test_scalar_n_no_args_walks_whole_model(g):
     g.mesh.structured.set_transfinite(n=7)
     _generate_or_skip(g)
     for label in ("b1", "b2"):
-        edges = g.model.queries.select(label, dim=1)
+        edges = _edges_sel(g, label)
         for _, t in edges:
             assert _curve_n_nodes(t) == 7
 
@@ -57,7 +86,7 @@ def test_dict_n_on_axis_aligned_box(g):
     g.model.geometry.add_box(0, 0, 0, 10, 5, 2, label="box")
     g.mesh.structured.set_transfinite("box", n={"x": 11, "y": 6, "z": 3})
     _generate_or_skip(g)
-    edges = g.model.queries.select("box", dim=1)
+    edges = _edges_sel(g, "box")
     x_edges = edges.parallel_to("x").tags()
     y_edges = edges.parallel_to("y").tags()
     z_edges = edges.parallel_to("z").tags()
@@ -86,7 +115,7 @@ def test_tuple_n_on_axis_aligned_box(g):
     g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
     g.mesh.structured.set_transfinite("box", n=(11, 6, 3))
     _generate_or_skip(g)
-    edges = g.model.queries.select("box", dim=1)
+    edges = _edges_sel(g, "box")
     # Tuple order is (X, Y, Z) — verify by axis classification.
     for t in edges.parallel_to("x").tags():
         assert _curve_n_nodes(t) == 11
@@ -104,7 +133,7 @@ def test_tuple_n_on_rotated_box(g):
     g.mesh.structured.set_transfinite("box", n=(11, 6, 3))
     _generate_or_skip(g)
 
-    edges = g.model.queries.select("box", dim=1)
+    edges = _edges_sel(g, "box")
     # Z edges still aligned with global Z — exact match
     for t in edges.parallel_to("z").tags():
         assert _curve_n_nodes(t) == 3
@@ -139,7 +168,7 @@ def test_size_scalar_per_edge(g):
     g.model.geometry.add_box(0, 0, 0, 10, 5, 2, label="box")
     g.mesh.structured.set_transfinite("box", size=1.0)
     _generate_or_skip(g)
-    edges = g.model.queries.select("box", dim=1)
+    edges = _edges_sel(g, "box")
     # Each edge gets round(L / 1.0) + 1 nodes
     for t in edges.parallel_to("x").tags():
         assert _curve_n_nodes(t) == 11    # 10 / 1 + 1
@@ -154,7 +183,7 @@ def test_size_dict_per_axis(g):
     g.mesh.structured.set_transfinite("box",
                                        size={"x": 1.0, "y": 0.5, "z": 0.5})
     _generate_or_skip(g)
-    edges = g.model.queries.select("box", dim=1)
+    edges = _edges_sel(g, "box")
     for t in edges.parallel_to("x").tags():
         assert _curve_n_nodes(t) == 11   # 10/1 + 1
     for t in edges.parallel_to("y").tags():
@@ -170,13 +199,13 @@ def test_size_dict_per_axis(g):
 def test_surface_cascade_axis_aligned(g):
     g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
     # Pick the bottom face (z=0) by selection
-    bottom = (g.model.queries.select("box", dim=2)
+    bottom = (_faces_sel(g, "box")
                 .normal_along("z").select(on={"z": 0}))
     bottom.to_physical("bottom")
 
     g.mesh.structured.set_transfinite("bottom", n={"x": 11, "y": 6})
     _generate_or_skip(g)
-    edges = g.model.queries.select("bottom", dim=1)
+    edges = _edges_sel(g, "bottom")
     for t in edges.parallel_to("x").tags():
         assert _curve_n_nodes(t) == 11
     for t in edges.parallel_to("y").tags():

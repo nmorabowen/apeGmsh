@@ -63,18 +63,19 @@ from apeGmsh.results._composites import (
     _ElementGeometryMixin,
 )
 from apeGmsh._kernel.chain import SelectionChain
-from apeGmsh.results._result_chain import ResultChain
-# selection-unification-v2 P2-I (§6.1 STOP-2(c)): the sub-composite
-# ``.select()`` hooks now return the v2 terminal ``MeshSelection``
-# (legacy ``ResultChain`` left defined-but-unwired; P3 deletes it).
-# The host-return-type assertions below are BEHAVIOURAL (they then
-# exercise level / set-algebra / the slab read + extra-kwarg parity +
-# the R5 fail-loud invariant, which must stay green) → assert the new
-# type.  ``type(sel) is ...`` was a "no NEW subclass" pin — that
-# invariant still holds, now against the canonical ``MeshSelection``
-# terminal (it has no subclasses), so it asserts the new type rather
-# than xfail.  The results terminal read is the verbatim rename
-# ``.get`` → ``.values`` on ``MeshSelection``.
+# selection-unification-v2 P3-R (§6.2 / §6.3): the legacy
+# ``ResultChain`` class is **deleted**; every sub-composite
+# ``.select()`` returns the single v2 terminal ``MeshSelection``
+# (point family, element level — no new ``SelectionChain`` subclass,
+# ``test_selection_idiom`` stays green).  ``type(sel) is
+# MeshSelection`` is the "no NEW subclass" pin (it has no subclasses).
+# The results terminal read is the verbatim rename
+# ``ResultChain.get`` → ``MeshSelection.values`` (R5).  The
+# element-centroid path iterates ``fem.elements._groups.values()``
+# directly (M-STOP-3) so both mock FEMs expose ``_groups``
+# (disposition 4).  The slab-read parity stays (the typed
+# ``results.elements.<sub>.get(component=)`` reader is RETAINED —
+# category E, no rewrite).
 from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.results._slabs import (
     FiberSlab,
@@ -124,10 +125,20 @@ def _mock_fem():
             node_ids=lambda n: np.array([], dtype=np.int64),
         ),
     )
+    # P3-R / §6.3 M-STOP-3 + disposition 4: the results
+    # element-centroid path now iterates ``fem.elements._groups
+    # .values()`` directly — one ``ElementGroup``-shaped group
+    # mirroring the (ids, conn) the legacy ``_resolve`` returned.
     elements_ns = SimpleNamespace(
         ids=np.array([10, 20], dtype=np.int64),
         types=[SimpleNamespace(name="quad4")],
         resolve=_resolve,
+        _groups={0: SimpleNamespace(
+            ids=np.array([10, 20], dtype=np.int64),
+            connectivity=np.array([[1, 2, 3, 4], [5, 6, 7, 8]],
+                                  dtype=np.int64),
+            type_name="quad4",
+        )},
         physical=SimpleNamespace(element_ids=lambda n: {
             "Near": np.array([10], dtype=np.int64),
             "Both": np.array([10, 20], dtype=np.int64),
@@ -500,10 +511,19 @@ def _spring_mock_fem():
             node_ids=lambda n: np.array([], dtype=np.int64),
         ),
     )
+    # P3-R / §6.3 M-STOP-3 + disposition 4: ``_groups`` mirrors the
+    # legacy ``_resolve`` (ids, conn) for the centroid path.
     elements_ns = SimpleNamespace(
         ids=np.array([10, 20, 30], dtype=np.int64),
         types=[SimpleNamespace(name="quad4")],
         resolve=_resolve,
+        _groups={0: SimpleNamespace(
+            ids=np.array([10, 20, 30], dtype=np.int64),
+            connectivity=np.array(
+                [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]],
+                dtype=np.int64),
+            type_name="quad4",
+        )},
         physical=SimpleNamespace(
             element_ids=lambda n: np.array([10], dtype=np.int64),
         ),

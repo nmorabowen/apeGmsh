@@ -141,9 +141,15 @@ def test_elements_in_box_inherits_parity_and_escape():
         np.array([100, 200], dtype=np.int64),
         np.array([[1], [2]], dtype=np.int64),
     )
+    # P3-R / §6.3 M-STOP-3 + disposition 4: ``_element_ids_in_box``
+    # funnels through ``_element_centroids`` which now iterates
+    # ``fem.elements._groups.values()`` directly — mirror ``grp``.
     fem.elements = types.SimpleNamespace(
         types=[types.SimpleNamespace(name="P1")],
         resolve=lambda *, element_type: grp,
+        _groups={0: types.SimpleNamespace(
+            ids=grp[0], connectivity=grp[1], type_name="P1",
+        )},
     )
     res_ids = _rc._element_ids_in_box(fem, _LO, _HI).tolist()
     assert res_ids == [100]                          # on-face excluded

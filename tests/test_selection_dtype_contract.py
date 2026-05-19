@@ -77,13 +77,20 @@ def test_select_by_dimtag_list_yields_python_int_tags(g):
     _assert_python_int_dimtags(sel)
 
 
-def test_legacy_predicate_select_yields_python_int_tags(g):
-    # The legacy g.model.queries.select(on=) path (NOT GeometryChain) —
-    # _select_impl iterates gmsh.model.getEntities-sourced dimtags and
-    # returns a Selection directly. Same terminal, same int contract.
+def test_predicate_select_yields_python_int_tags(g):
+    # selection-unification-v2 P3-R: the legacy
+    # ``g.model.queries.select(on=)`` entry point is removed; the v2
+    # ``g.model.select(...).crossing_plane(spec, mode="on").result()``
+    # materialises the SAME legacy ``Selection`` via the RETAINED
+    # ``_select_impl`` (M-CORRECTION) — same terminal, same Python-int
+    # dimtag contract.
     g.model.geometry.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0, label="box")
     faces = g.model.queries.boundary("box", dim=2)
-    sel = g.model.queries.select(faces, on={"z": 0})
+    sel = (
+        g.model.select(faces)
+        .crossing_plane({"z": 0}, mode="on")
+        .result()
+    )
     _assert_python_int_dimtags(sel)
 
 

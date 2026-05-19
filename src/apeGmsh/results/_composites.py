@@ -135,8 +135,12 @@ def _element_centroids(fem) -> tuple[ndarray, ndarray]:
     out_ids: list[ndarray] = []
     out_cent: list[ndarray] = []
 
-    for type_info in fem.elements.types:
-        ids, conn = fem.elements.resolve(element_type=type_info.name)
+    # selection-unification v2 P3-R / §6.3 M-STOP-3: iterate element
+    # groups directly — byte-equivalent to the removed per-type
+    # ``fem.elements.resolve(element_type=)`` (``_groups`` is one group
+    # per type code, same dict order as the old ``fem.elements.types``).
+    for grp in fem.elements._groups.values():
+        ids, conn = grp.ids, grp.connectivity
         if ids.size == 0:
             continue
         flat = np.asarray(conn, dtype=np.int64).ravel()
@@ -261,8 +265,15 @@ def _element_ids_of_type(fem, element_type: str) -> ndarray:
     available = [t.name for t in fem.elements.types]
     if element_type not in available:
         return np.array([], dtype=np.int64)
-    ids, _ = fem.elements.resolve(element_type=element_type)
-    return np.asarray(ids, dtype=np.int64)
+    # selection-unification v2 P3-R / §6.3 M-STOP-3: direct group
+    # lookup — byte-equivalent to the removed
+    # ``fem.elements.resolve(element_type=)`` (the guard above already
+    # restricts to a broker type name; ``_groups`` is one group per
+    # type, 1:1 and same order as ``fem.elements.types``).
+    for t, grp in zip(fem.elements.types, fem.elements._groups.values()):
+        if t.name == element_type:
+            return np.asarray(grp.ids, dtype=np.int64)
+    return np.array([], dtype=np.int64)
 
 
 # =====================================================================
@@ -611,7 +622,7 @@ class _ElementGeometryMixin:
         # results-engine behaviour).  ``MeshSelection`` is a new leaf
         # importing only ``_kernel.chain`` at load — no new eager
         # cross-package edge (one declared downward BASELINE triple).
-        from ._result_chain import engine_for
+        from ._result_engine import engine_for
         from ..mesh._mesh_selection import MeshSelection
 
         seed = self._combine_candidates(
@@ -683,7 +694,7 @@ class NodeResultsComposite(_SelectionMixin):
         # ``_ResultChainEngine`` singleton gates set-algebra identity);
         # ``MeshSelection`` delegates the node-level read back to a
         # ``ResultChain`` on this same engine (byte-faithful).
-        from ._result_chain import engine_for
+        from ._result_engine import engine_for
         from ..mesh._mesh_selection import MeshSelection
 
         seed = self._resolve_node_ids(
@@ -904,7 +915,7 @@ class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
         # selection-unification-v2 P2-I (§6.1 STOP-2): return the v2
         # terminal ``MeshSelection``; ``engine_for`` kept verbatim (the
         # ``_ResultChainEngine`` singleton gates set-algebra identity).
-        from ._result_chain import engine_for
+        from ._result_engine import engine_for
         from ..mesh._mesh_selection import MeshSelection
 
         seed = self._combine_candidates(

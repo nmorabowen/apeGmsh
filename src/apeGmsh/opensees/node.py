@@ -311,7 +311,9 @@ class _NodeAccessor:
 
     def _set_by_pg(self, pg: str) -> NodeSet:
         try:
-            result = self._bridge.fem.nodes.get(pg=pg)
+            # selection-unification v2 P3-R / §6.3 §2 #8 (P-NODE+
+            # P-COORD; m3 — resolution raises at .select()).
+            result = self._bridge.fem.nodes.select(pg=pg)
         except (KeyError, ValueError) as e:
             raise KeyError(
                 f"ops.nodes.get(pg={pg!r}): no such node PG in the FEM "

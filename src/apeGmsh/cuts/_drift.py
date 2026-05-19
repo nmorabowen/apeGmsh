@@ -443,7 +443,7 @@ def _single_node_from_pg(
     Raises ``ValueError`` with a clear message if the PG is empty or
     contains more than one node.
     """
-    ids = fem.nodes.get_ids(pg=pg_name)
+    ids = fem.nodes.select(pg=pg_name).ids
     arr = np.asarray(ids).ravel()
     if arr.size == 0:
         raise ValueError(

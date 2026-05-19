@@ -59,13 +59,21 @@ def box_fem():
         g.mesh.structured.set_transfinite_box("box", n=3)
         g.mesh.generation.generate(dim=3)
         # mesh-selection sets used by item 2 (built BEFORE get_fem_data
-        # so they are snapshotted into fem.mesh_selection)
-        n_tag = g.mesh_selection.add_nodes(
-            in_box=(0, 0, 0, 1, 1, 1), name="allbox")
-        g.mesh_selection.add_elements(
-            dim=3, in_box=(0, 0, 0, 1, 1, 1), name="allelem")
-        g.mesh_selection.add_nodes(
-            in_box=(0, 0, 0, 0.5, 1, 1), name="halfbox")
+        # so they are snapshotted into fem.mesh_selection).
+        # selection-unification v2 P3-R: ``add_nodes`` / ``add_elements``
+        # are removed (SC-11); the SAME half-open ``in_box`` set is
+        # registered via the v2 ``select(...).in_box(...).save_as(name)``
+        # (the half-open behaviour these item-2 pins characterise is
+        # preserved on the v2 path — see ``test_mesh_selection_chain``).
+        # ``filter_set`` is RETAINED and unchanged; it refines the
+        # v2-built ``allbox`` set by tag exactly as before.
+        g.mesh_selection.select().in_box(
+            (0, 0, 0), (1, 1, 1)).save_as("allbox")
+        n_tag = g.mesh_selection.get_tag(0, "allbox")
+        g.mesh_selection.select(level="element", dim=3).in_box(
+            (0, 0, 0), (1, 1, 1)).save_as("allelem")
+        g.mesh_selection.select().in_box(
+            (0, 0, 0), (0.5, 1, 1)).save_as("halfbox")
         g.mesh_selection.filter_set(
             0, n_tag, in_box=(0, 0, 0, 0.5, 1, 1), name="filtered")
         fem = g.mesh.queries.get_fem_data(dim=3)
@@ -257,13 +265,22 @@ def test_item1_results_element_box_is_half_open():
             dtype=np.float64,
         ),
     )
-    grp = (
-        np.array([100, 200], dtype=np.int64),
-        np.array([[1], [3]], dtype=np.int64),   # node id 1, node id 3
-    )
+    # P3-R / §6.3 M-STOP-3 + disposition 4: ``_element_ids_in_box``
+    # funnels through ``_element_centroids``, which now iterates
+    # ``fem.elements._groups.values()`` directly — one
+    # ``ElementGroup``-shaped group carrying the SAME (ids, conn) the
+    # legacy ``resolve`` returned.
     fem.elements = types.SimpleNamespace(
         types=[types.SimpleNamespace(name="P1")],
-        resolve=lambda *, element_type: grp,
+        resolve=lambda *, element_type: (
+            np.array([100, 200], dtype=np.int64),
+            np.array([[1], [3]], dtype=np.int64),
+        ),
+        _groups={0: types.SimpleNamespace(
+            ids=np.array([100, 200], dtype=np.int64),
+            connectivity=np.array([[1], [3]], dtype=np.int64),
+            type_name="P1",
+        )},
     )
     ids = _rc._element_ids_in_box(fem, (0.0, 0.0, 0.0), (0.5, 0.5, 0.5))
     # element 100 centroid (0,0,0) is strictly inside -> kept.
@@ -314,11 +331,9 @@ def test_item2_total_lattice_is_deterministic(box_fem):
     assert len(box_fem.nodes.ids) == 27
     xs = sorted(set(np.round(box_fem.nodes.coords[:, 0], 6).tolist()))
     assert xs == [0.0, 0.5, 1.0]
-    n_elems = sum(
-        len(box_fem.elements.resolve(element_type=t.name)[0])
-        for t in box_fem.elements.types
-    )
-    assert n_elems == 8
+    # P3-R: ``fem.elements.resolve(element_type=)`` removed; the total
+    # element count is the broker id universe (8 hex cells).
+    assert len(box_fem.elements.ids) == 8
 
 
 def test_item2_add_nodes_in_box_half_open_count(box_fem):
@@ -338,8 +353,8 @@ def test_item2_add_nodes_in_box_half_open_count(box_fem):
         g.physical.add_volume("box", name="Body")
         g.mesh.structured.set_transfinite_box("box", n=3)
         g.mesh.generation.generate(dim=3)
-        g.mesh_selection.add_nodes(
-            in_box=(0, 0, 0, 1, 1, 1), name="closed", inclusive=True)
+        g.mesh_selection.select().in_box(           # P3-R: was add_nodes
+            (0, 0, 0), (1, 1, 1), inclusive=True).save_as("closed")
         fem2 = g.mesh.queries.get_fem_data(dim=3)
     finally:
         g.end()
@@ -367,9 +382,9 @@ def test_item2_add_elements_in_box_half_open_count(box_fem):
         g.physical.add_volume("box", name="Body")
         g.mesh.structured.set_transfinite_box("box", n=3)
         g.mesh.generation.generate(dim=3)
-        g.mesh_selection.add_elements(
-            dim=3, in_box=(0, 0, 0, 1, 1, 1), name="closed",
-            inclusive=True)
+        g.mesh_selection.select(level="element", dim=3).in_box(
+            (0, 0, 0), (1, 1, 1), inclusive=True   # P3-R: was add_elements
+        ).save_as("closed")
         fem2 = g.mesh.queries.get_fem_data(dim=3)
     finally:
         g.end()
@@ -395,8 +410,8 @@ def test_item2_add_nodes_half_box_excludes_split_plane(box_fem):
         g.physical.add_volume("box", name="Body")
         g.mesh.structured.set_transfinite_box("box", n=3)
         g.mesh.generation.generate(dim=3)
-        g.mesh_selection.add_nodes(
-            in_box=(0, 0, 0, 0.5, 1, 1), name="closed", inclusive=True)
+        g.mesh_selection.select().in_box(           # P3-R: was add_nodes
+            (0, 0, 0), (0.5, 1, 1), inclusive=True).save_as("closed")
         fem2 = g.mesh.queries.get_fem_data(dim=3)
     finally:
         g.end()
@@ -424,8 +439,11 @@ def test_item2_filter_set_in_box_half_open_count(box_fem):
         g.physical.add_volume("box", name="Body")
         g.mesh.structured.set_transfinite_box("box", n=3)
         g.mesh.generation.generate(dim=3)
-        n_tag = g.mesh_selection.add_nodes(
-            in_box=(0, 0, 0, 1, 1, 1), name="allbox_c", inclusive=True)
+        # P3-R: ``add_nodes`` removed → v2 select(...).save_as; the
+        # RETAINED ``filter_set`` then refines it by tag (unchanged).
+        g.mesh_selection.select().in_box(
+            (0, 0, 0), (1, 1, 1), inclusive=True).save_as("allbox_c")
+        n_tag = g.mesh_selection.get_tag(0, "allbox_c")
         g.mesh_selection.filter_set(
             0, n_tag, in_box=(0, 0, 0, 0.5, 1, 1), name="filtered_c",
             inclusive=True)
@@ -474,7 +492,11 @@ def test_item3_node_path_does_not_fall_through_to_same_named_pg(
     # why pinned: S1 (Loads/Masses) must not touch this; S3 reparent
     #   must keep the node path's narrow KeyError-only catch.
     fem = shared_name_fem
-    res = fem.nodes.get(target="Shared")
+    # P3-R: ``fem.nodes.get(target=)`` removed; ``.select(target=)``
+    # reuses the SAME ``_resolve_nodes`` (P-NODE) so the narrow
+    # KeyError-only swallow asymmetry under pin is preserved by reuse
+    # (FP-4).  ``.result()`` is the NodeResult terminal.
+    res = fem.nodes.select(target="Shared").result()
     lab_nodes = sorted(
         np.asarray(fem.nodes.labels.node_ids("Shared")).tolist()
     )
@@ -498,7 +520,11 @@ def test_item3_element_path_does_fall_through_swallowing_valueerror(
     # why pinned: this is the opposite arm of the asymmetry; S1 must
     #   not unify this away and S3 must not regress it to KeyError-only.
     fem = shared_name_fem
-    res = fem.elements.get(target="Shared")
+    # P3-R: ``fem.elements.get(target=)`` removed; ``.select(target=)``
+    # reuses the SAME ``_resolve_elem_ids`` (P-ELEM-IDS) so the
+    # (KeyError, ValueError) fall-through asymmetry under pin is
+    # preserved by reuse.  ``.result()`` is the GroupResult terminal.
+    res = fem.elements.select(target="Shared").result()
     pg_elems = sorted(
         np.asarray(fem.elements.physical.element_ids("Shared")).tolist()
     )
@@ -552,8 +578,11 @@ def test_item4_np_int64_dimtag_resolves_same_as_python_int():
         g.mesh.sizing.set_global_size(0.5)
         g.mesh.generation.generate(dim=3)
         fem = g.mesh.queries.get_fem_data(dim=3)
-        got_int = fem.nodes.get(target=(int(3), int(1)))
-        got_np = fem.nodes.get(target=(np.int64(3), np.int64(1)))
+        # P3-R: ``.get(target=)`` removed → ``.select(target=).result()``
+        # (same _resolve_nodes / _nodes_on_dimtag path, P-NODE).
+        got_int = fem.nodes.select(target=(int(3), int(1))).result()
+        got_np = fem.nodes.select(
+            target=(np.int64(3), np.int64(1))).result()
     finally:
         g.end()
     assert len(got_int.ids) > 0
@@ -580,10 +609,16 @@ def test_item5_broker_multi_target_preserves_insertion_order(
     #   concatenation order with first-occurrence kept (INSERTION).
     # why pinned: S1/S3 must not reorder broker multi-target output.
     fem = two_pg_fem
-    a = np.asarray(fem.nodes.get(target="A").ids).tolist()
-    b = np.asarray(fem.nodes.get(target="B").ids).tolist()
-    ab = np.asarray(fem.nodes.get(target=["A", "B"]).ids).tolist()
-    ba = np.asarray(fem.nodes.get(target=["B", "A"]).ids).tolist()
+    # P3-R: ``fem.nodes.get(target=)`` removed; ``.select(target=)``
+    # reuses the SAME multi-target dedupe (``_dedupe_node_parts``,
+    # P-NODE) so the first-occurrence INSERTION order under pin is
+    # preserved by reuse.  ``.result().ids`` is the NodeResult ids.
+    a = np.asarray(fem.nodes.select(target="A").result().ids).tolist()
+    b = np.asarray(fem.nodes.select(target="B").result().ids).tolist()
+    ab = np.asarray(
+        fem.nodes.select(target=["A", "B"]).result().ids).tolist()
+    ba = np.asarray(
+        fem.nodes.select(target=["B", "A"]).result().ids).tolist()
     # exact insertion-order dedupe of A-block then B-block
     assert ab == list(dict.fromkeys(a + b))
     assert ba == list(dict.fromkeys(b + a))
@@ -611,43 +646,20 @@ def test_item5_results_multi_target_union_is_sorted(two_pg_fem):
 
 
 # =====================================================================
-# Item 6 — VIZ physical= vs label= COLLISION (S3 reparent changes this)
+# Item 6 — VIZ physical= vs label= COLLISION
 # =====================================================================
-
-def test_item6_viz_physical_filter_is_pg_only_ignores_same_named_label():
-    # pin: src/apeGmsh/viz/Selection.py:1030-1032 (_filter_by_identity)
-    #   `physical=` -> _entities_of_physical(physical, dim) which is
-    #   strictly PG-name -> PG-tag -> getEntitiesForPhysicalGroup
-    #   (viz/Selection.py:1193-1213). The `labels=` branch (:1011-1022)
-    #   is a SEPARATE filter; `physical=` never consults the
-    #   label->PG->part precedence.
-    # why pinned: S3 reparents the viz Selection onto the chainable
-    #   family and will route `physical=` through the shared tiered
-    #   resolver -> this entity set changes consciously. Pin the
-    #   current PG-only answer as the before-side.
-    g = apeGmsh(model_name="s0b_viz", verbose=False)
-    g.begin()
-    try:
-        t1 = g.model.geometry.add_box(
-            0.0, 0.0, 0.0, 1.0, 1.0, 1.0, label="b1")
-        t2 = g.model.geometry.add_box(
-            5.0, 0.0, 0.0, 1.0, 1.0, 1.0, label="b2")
-        # PG "Region" on volume t1; LABEL "Region" on volume t2
-        g.physical.add_volume([int(t1)], name="Region")
-        g.labels.add(3, [int(t2)], "Region")
-        sel_phys = g.model.selection.select_volumes(physical="Region")
-        sel_lab = g.model.selection.select_volumes(labels="Region")
-        # NOTE: viz Selection.tags is a *property* (frozen __slots__
-        # class), not a method — see plan §2.1 / viz/Selection.py:99.
-        phys_tags = sorted(int(x) for x in sel_phys.tags)
-        lab_tags = sorted(int(x) for x in sel_lab.tags)
-    finally:
-        g.end()
-    # physical= resolves the PG entity ONLY (t1), ignoring the
-    # identically-named label that points at t2.
-    assert phys_tags == [int(t1)]
-    assert lab_tags == [int(t2)]
-    assert phys_tags != lab_tags
+#
+# selection-unification-v2 P3-R: ``test_item6_viz_physical_filter_is_
+# pg_only_ignores_same_named_label`` is **RETIRED** (deleted).  It
+# pinned ``g.model.selection.select_volumes(physical=/labels=)`` — the
+# ``SelectionComposite._filter_by_identity`` filter grammar — which is
+# **removed** with **no v2 successor** (``EntitySelection`` has only
+# spatial verbs + set-ops + ``to_label``/``to_physical``/``to_dataframe``;
+# the rich ``physical=``/``labels=`` filter grammar has no replacement).
+# This is the SC-12 precedent / §6.3 M-NOTE-G7-cascade disposition 3 —
+# a removed-surface capability with no v2 successor → a P4-documented
+# capability gap, not papered over (sibling of the deleted
+# ``tests/test_selection_filters.py``).
 
 
 # =====================================================================

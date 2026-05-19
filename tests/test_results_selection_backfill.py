@@ -25,7 +25,11 @@ def test_meshselectionstore_node_ids_by_name(g) -> None:
     g.mesh.sizing.set_global_size(2.0)
     g.mesh.generation.generate(dim=3)
 
-    g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="base")
+    # selection-unification-v2 P3-R: ``g.mesh_selection.add_nodes`` is
+    # removed (SC-11); register the same spatial set via the v2
+    # ``g.mesh_selection.select(...).on_plane(...).save_as(name)``.
+    g.mesh_selection.select().on_plane(
+        (0, 0, 0.0), (0, 0, 1), tol=1e-3).save_as("base")
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     nids = fem.mesh_selection.node_ids("base")
@@ -40,9 +44,13 @@ def test_meshselectionstore_element_ids_by_name(g) -> None:
     g.mesh.sizing.set_global_size(2.0)
     g.mesh.generation.generate(dim=3)
 
-    g.mesh_selection.add_elements(
-        dim=3, in_box=[0, 0, 0, 1, 1, 1], name="all_tets",
-    )
+    # P3-R: ``g.mesh_selection.add_elements`` removed (SC-11) →
+    # register via the v2 ``select(...).in_box(...).save_as(...)``.
+    # ``in_box=[0,0,0,1,1,1]`` named "all_tets" = every element in the
+    # unit box → the closed (inclusive=True) box is the faithful
+    # mapping (a half-open box would drop boundary centroids).
+    g.mesh_selection.select(level="element", dim=3).in_box(
+        (0, 0, 0), (1, 1, 1), inclusive=True).save_as("all_tets")
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     eids = fem.mesh_selection.element_ids("all_tets")
@@ -55,7 +63,8 @@ def test_meshselectionstore_unknown_name_raises(g) -> None:
     g.mesh.generation.generate(dim=3)
 
     # Add at least one selection so fem.mesh_selection is non-None.
-    g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="dummy")
+    g.mesh_selection.select().on_plane(            # P3-R: was add_nodes
+        (0, 0, 0.0), (0, 0, 1), tol=1e-3).save_as("dummy")
     fem = g.mesh.queries.get_fem_data(dim=3)
     with pytest.raises(KeyError, match="No mesh selection"):
         fem.mesh_selection.node_ids("not_a_selection")
@@ -67,7 +76,11 @@ def test_meshselectionstore_node_only_set_has_no_elements(g) -> None:
     g.mesh.sizing.set_global_size(2.0)
     g.mesh.generation.generate(dim=3)
 
-    g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="base")
+    # selection-unification-v2 P3-R: ``g.mesh_selection.add_nodes`` is
+    # removed (SC-11); register the same spatial set via the v2
+    # ``g.mesh_selection.select(...).on_plane(...).save_as(name)``.
+    g.mesh_selection.select().on_plane(
+        (0, 0, 0.0), (0, 0, 1), tol=1e-3).save_as("base")
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     # 'base' is a node-only set → element_ids() should not find it.
@@ -84,7 +97,8 @@ def test_results_nodes_get_by_selection(g, tmp_path: Path) -> None:
     g.mesh.sizing.set_global_size(2.0)
     g.mesh.generation.generate(dim=3)
 
-    g.mesh_selection.add_nodes(on_plane=("z", 1.0, 1e-3), name="top")
+    g.mesh_selection.select().on_plane(            # P3-R: was add_nodes
+        (0, 0, 1.0), (0, 0, 1), tol=1e-3).save_as("top")
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     n_nodes = len(fem.nodes.ids)
@@ -117,9 +131,11 @@ def test_results_elements_get_by_selection(g, tmp_path: Path) -> None:
     g.mesh.generation.generate(dim=3)
 
     # Element selection via spatial filter — top half slab.
-    g.mesh_selection.add_elements(
-        dim=3, in_box=[0, 0, 0.5, 1, 1, 1.001], name="top_slab",
-    )
+    # P3-R: ``g.mesh_selection.add_elements`` removed (SC-11) →
+    # the v2 ``select(...).in_box(...).save_as(...)`` (centroid-based
+    # in_box, same half-open default the eager add_elements had).
+    g.mesh_selection.select(level="element", dim=3).in_box(
+        (0, 0, 0.5), (1, 1, 1.001)).save_as("top_slab")
     fem = g.mesh.queries.get_fem_data(dim=3)
     elem_ids = fem.mesh_selection.element_ids("top_slab")
     assert elem_ids.size > 0
@@ -165,7 +181,11 @@ def test_selector_combined_with_ids_raises(g, tmp_path: Path) -> None:
     g.mesh.sizing.set_global_size(2.0)
     g.mesh.generation.generate(dim=3)
 
-    g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="base")
+    # selection-unification-v2 P3-R: ``g.mesh_selection.add_nodes`` is
+    # removed (SC-11); register the same spatial set via the v2
+    # ``g.mesh_selection.select(...).on_plane(...).save_as(name)``.
+    g.mesh_selection.select().on_plane(
+        (0, 0, 0.0), (0, 0, 1), tol=1e-3).save_as("base")
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     path = tmp_path / "run.h5"
@@ -201,7 +221,8 @@ def test_unknown_selection_raises(g, tmp_path: Path) -> None:
 
     # At least one selection so fem.mesh_selection is non-None — the
     # error path we want to test is "name not found", not "no store".
-    g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="exists")
+    g.mesh_selection.select().on_plane(            # P3-R: was add_nodes
+        (0, 0, 0.0), (0, 0, 1), tol=1e-3).save_as("exists")
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     path = tmp_path / "run.h5"
@@ -232,8 +253,11 @@ def test_two_selections_union(g, tmp_path: Path) -> None:
     g.mesh.sizing.set_global_size(2.0)
     g.mesh.generation.generate(dim=3)
 
-    g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="bottom")
-    g.mesh_selection.add_nodes(on_plane=("z", 1.0, 1e-3), name="top")
+    # P3-R: was add_nodes (removed SC-11) → v2 select(...).save_as.
+    g.mesh_selection.select().on_plane(
+        (0, 0, 0.0), (0, 0, 1), tol=1e-3).save_as("bottom")
+    g.mesh_selection.select().on_plane(
+        (0, 0, 1.0), (0, 0, 1), tol=1e-3).save_as("top")
     fem = g.mesh.queries.get_fem_data(dim=3)
 
     bottom = set(int(n) for n in fem.mesh_selection.node_ids("bottom"))

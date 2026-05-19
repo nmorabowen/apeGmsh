@@ -1,7 +1,8 @@
-"""P2-G parity proof — ``crossing_plane`` == legacy ``queries.select``.
+"""P2-G behaviour proof — the v2 ``crossing_plane`` engine (frozen).
 
 selection-unification-v2 **P2-G** (``docs/plans/selection-unification-v2.md``
-§6 P2-G, §3 HT9, §6.1 STOP-1).  P2-G folds the legacy geometry
+§6 P2-G, §3 HT9, §6.1 STOP-1), carried through **P3-R** (§6.2 / §6.3
+M-NOTE-G7-cascade disposition 2).  P2-G folded the legacy geometry
 straddle surface — ``queries.select(on=/crossing=/not_on=/
 not_crossing=)`` plus the 2-point ``queries.line`` primitive — into the
 unified chain idiom as a single ``EntitySelection.crossing_plane(spec,
@@ -9,68 +10,52 @@ unified chain idiom as a single ``EntitySelection.crossing_plane(spec,
 grammar: dict→axis plane, 2 pts→Line, 3 pts→plane, ``Plane``/``Line``
 instance; ``mode`` ∈ {on, crossing, not_on, not_crossing}).
 
-This file is the **invisibility proof** that the new verb is
-behaviour-faithful to the byte-unchanged legacy engine (the legacy
-``queries.select`` / ``_select_impl`` / ``Plane`` / ``Line`` are *not*
-modified by P2-G — P3 removes them).  For representative scenarios
-spanning **every** predicate mode of the 122-occurrence / 9-file legacy
-parity battery —
+P3-R **deletes** the legacy ``queries.select`` / ``queries.line``
+bodies, so the original legacy↔v2 *parity* half is no longer
+expressible (the legacy call now raises ``AttributeError``).  Per the
+adjudicated disposition (§6.3 M-NOTE-G7-cascade item 2 — this file is
+**rewritten to v2-only, NOT deleted**) this file is converted to the
+proof-file freeze pattern: P2-G already proved the v2 verb ≡ the legacy
+engine, so the legacy half is dropped and the **v2-produced** ``(dim,
+tag)`` set is pinned as an explicit literal (captured on the
+PROD-correct tree).  It still uniquely pins v2-OWNED behaviour covered
+nowhere else post-P3-R: the RETAINED ``EntitySelection.crossing_plane``
+engine across every spec / mode / tol-boundary / multi-dim / empty /
+chained scenario, plus the §6.1 STOP-1 point-family ``TypeError``
+fail-loud (preserved verbatim).
 
-  * axis-aligned-plane dict spec (``{'z': 0}`` / ``{'x': ...}``);
-  * 3-point plane spec;
-  * 2-point ``Line`` spec (the ``queries.line`` path) **and** a
-    ``queries.line(...)`` ``Line`` instance passed through;
-  * all four modes: ``on`` / ``crossing`` / ``not_on`` /
-    ``not_crossing``;
-  * the ``tol`` boundary (a corner exactly ``tol`` off the plane);
-  * a multi-dim seed (curves + surfaces + volume together);
-  * an empty result (predicate matches nothing);
-  * chained refinement (``crossing_plane`` after another spatial verb);
-
-— it asserts ``g.model.select(seed).crossing_plane(spec, mode=m)``
-(the repointed P2-I host hook → ``EntitySelection``) resolves the
-**identical** ``(dim, tag)`` set as the legacy
-``g.model.queries.select(seed, <m>=spec)`` / ``queries.line``.  Both
-paths are seeded from the *same explicitly-resolved dimtag list* so any
-difference is the ``crossing_plane`` engine, not name resolution.
-
-It also locks the §6.1 STOP-1 point-family contract: the verb is
-*required* on all seven chains, but a point chain
-(``fem.nodes.select(...).crossing_plane(...)``) **fails loud** with
-``TypeError`` — the ``GeometryChain.in_box(inclusive=)``→``TypeError``
-precedent (mirrored from ``test_geometry_chain.py``).
+The deterministic 1x1x1 box fixture makes every ``(dim, tag)`` an exact
+literal: OCC tags the 6 faces ``(2,1)..(2,6)`` and 12 edges
+``(1,1)..(1,12)`` deterministically; the seed is resolved by PG name
+through the retained ``g.model.select(pg)`` host hook (apeGmsh is
+verbose-by-name; never hard-coded raw tags — only the *frozen
+post-resolution* result is a literal, the freeze pattern).
 
 No ``openseespy`` dependency (curated no-openseespy CI gate): pure
-apeGmsh + gmsh + numpy.  Fixture *patterns* are mirrored (not imported)
-from ``tests/test_geometry_chain.py`` / ``tests/test_p2i_parity.py``.
+apeGmsh + gmsh + numpy.
 """
 from __future__ import annotations
 
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.core._selection import EntitySelection, Selection
+from apeGmsh.core._selection import EntitySelection, Line
 
 
-def _tagset(obj) -> set:
-    """Resolved ``(int(dim), int(tag))`` set from a chain or a legacy
-    ``Selection`` — the canonical identity both paths must agree on.
+def _ts(ch) -> list:
+    """Sorted ``[(int(dim), int(tag)), ...]`` from an ``EntitySelection``.
 
-    A chain's identity is its ``_items`` atoms (entity family yields
-    bare ``(dim, tag)``; no pair-view); the legacy ``Selection`` is a
-    list of ``(dim, tag)``.  Normalise both to a ``set`` of int pairs.
+    The chain's identity is its ``_items`` atoms (entity family yields
+    bare ``(dim, tag)``; no pair-view).  Frozen literals below are this
+    same sorted int-pair list.
     """
-    if isinstance(obj, EntitySelection):
-        items = obj._items
-    else:                                   # legacy Selection (a list)
-        items = list(obj)
-    return {(int(d), int(t)) for d, t in items}
+    assert isinstance(ch, EntitySelection)
+    return sorted((int(d), int(t)) for d, t in ch._items)
 
 
 # =====================================================================
-# Fixtures — a unit box with a 6-face PG and all-12-edge PG.  Patterns
-# mirrored from tests/test_geometry_chain.py::cube /
-# tests/test_p2i_parity.py::cube_geo.
+# Fixture — a unit box with a 6-face PG and all-12-edge PG.  Pattern
+# mirrored from tests/test_geometry_chain.py::cube.
 # =====================================================================
 
 @pytest.fixture
@@ -90,40 +75,54 @@ def box(g):
 
 
 def _seed_dimtags(g, pg: str) -> list:
-    """Resolve a PG name to a concrete ``(dim, tag)`` list ONCE.
-
-    Both the new verb and the legacy ``queries.select`` are then seeded
-    from this *same* list, so the comparison isolates the predicate
-    (not name resolution — that is contract-locked elsewhere and
-    identical for both).
-    """
-    return [(int(d), int(t)) for d, t in
-            g.model.queries.select(pg)]
+    """Resolve a PG name to a concrete ``(dim, tag)`` list ONCE via the
+    retained ``g.model.select(...)`` host hook (the v2 successor of the
+    removed ``queries.select`` resolve-only path; ``EntitySelection``
+    yields bare ``(dim, tag)`` atoms).  ``crossing_plane`` is then
+    seeded from this *same* list so the assertion isolates the
+    predicate, never name resolution."""
+    return [(int(d), int(t)) for d, t in g.model.select(pg)._items]
 
 
 # =====================================================================
-# 1. Axis-aligned-plane dict spec — all four modes
+# 1. Axis-aligned-plane dict spec — all four modes (frozen literals)
 # =====================================================================
 
 def test_axis_plane_dict_all_modes(box):
     g = box
     faces = _seed_dimtags(g, "Faces")          # 6 surfaces
 
-    for spec in ({"z": 0}, {"z": 1}, {"x": 0}, {"y": 1}):
-        for mode, leg_kw in (
-            ("on", "on"),
-            ("crossing", "crossing"),
-            ("not_on", "not_on"),
-            ("not_crossing", "not_crossing"),
-        ):
-            new = g.model.select(faces).crossing_plane(spec, mode=mode)
-            legacy = g.model.queries.select(faces, **{leg_kw: spec})
-            assert isinstance(new, EntitySelection)
-            assert isinstance(legacy, Selection)
-            assert _tagset(new) == _tagset(legacy), (
-                f"axis dict {spec} mode={mode}: "
-                f"{_tagset(new)} != legacy {_tagset(legacy)}"
-            )
+    # frozen v2 result per (spec, mode) on the PROD-correct tree
+    # (P2-G proved this ≡ the now-removed legacy engine).
+    expected = {
+        ("z", 0, "on"): [(2, 5)],
+        ("z", 0, "crossing"): [],
+        ("z", 0, "not_on"): [(2, 1), (2, 2), (2, 3), (2, 4), (2, 6)],
+        ("z", 0, "not_crossing"): [(2, 1), (2, 2), (2, 3), (2, 4),
+                                   (2, 5), (2, 6)],
+        ("z", 1, "on"): [(2, 6)],
+        ("z", 1, "crossing"): [],
+        ("z", 1, "not_on"): [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5)],
+        ("z", 1, "not_crossing"): [(2, 1), (2, 2), (2, 3), (2, 4),
+                                   (2, 5), (2, 6)],
+        ("x", 0, "on"): [(2, 1)],
+        ("x", 0, "crossing"): [],
+        ("x", 0, "not_on"): [(2, 2), (2, 3), (2, 4), (2, 5), (2, 6)],
+        ("x", 0, "not_crossing"): [(2, 1), (2, 2), (2, 3), (2, 4),
+                                   (2, 5), (2, 6)],
+        ("y", 1, "on"): [(2, 4)],
+        ("y", 1, "crossing"): [],
+        ("y", 1, "not_on"): [(2, 1), (2, 2), (2, 3), (2, 5), (2, 6)],
+        ("y", 1, "not_crossing"): [(2, 1), (2, 2), (2, 3), (2, 4),
+                                   (2, 5), (2, 6)],
+    }
+    for (axis, val, mode), exp in expected.items():
+        new = g.model.select(faces).crossing_plane({axis: val}, mode=mode)
+        assert isinstance(new, EntitySelection)
+        assert _ts(new) == exp, (
+            f"axis dict {{{axis!r}: {val}}} mode={mode}: "
+            f"{_ts(new)} != frozen {exp}"
+        )
 
     # sanity: the modes are not all-empty / all-everything (the proof
     # would be vacuous otherwise) — z=0 'on' is exactly 1 face,
@@ -137,7 +136,7 @@ def test_axis_plane_dict_all_modes(box):
 
 
 # =====================================================================
-# 2. 3-point plane spec — on / crossing / not_*
+# 2. 3-point plane spec — on / crossing / not_* (frozen literals)
 # =====================================================================
 
 def test_three_point_plane_spec(box):
@@ -146,12 +145,16 @@ def test_three_point_plane_spec(box):
 
     # mid-height horizontal plane through 3 points (== {'z': 0.5})
     plane3 = [(0, 0, 0.5), (1, 0, 0.5), (0, 1, 0.5)]
-    for mode in ("on", "crossing", "not_on", "not_crossing"):
+    expected = {
+        "on": [],
+        "crossing": [(2, 1), (2, 2), (2, 3), (2, 4)],
+        "not_on": [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6)],
+        "not_crossing": [(2, 5), (2, 6)],
+    }
+    for mode, exp in expected.items():
         new = g.model.select(faces).crossing_plane(plane3, mode=mode)
-        legacy = g.model.queries.select(faces, **{mode: plane3})
-        assert _tagset(new) == _tagset(legacy), (
-            f"3-pt plane mode={mode}: "
-            f"{_tagset(new)} != legacy {_tagset(legacy)}"
+        assert _ts(new) == exp, (
+            f"3-pt plane mode={mode}: {_ts(new)} != frozen {exp}"
         )
     # the mid plane straddles the 4 side faces (crossing), is 'on'
     # none, and 'not_crossing' the 2 horizontal caps.
@@ -172,26 +175,33 @@ def test_two_point_line_spec_and_line_instance(box):
     # a 2-point spec → infinite Line (the legacy queries.line 2-point
     # path, folded into crossing_plane).
     line_spec = [(0, 0.5, 0), (1, 0.5, 0)]
-    for mode in ("on", "crossing", "not_on", "not_crossing"):
+    expected = {
+        "on": [],
+        "crossing": [(1, 2), (1, 4), (1, 6), (1, 8)],
+        "not_on": [(1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6),
+                   (1, 7), (1, 8), (1, 9), (1, 10), (1, 11), (1, 12)],
+        "not_crossing": [(1, 1), (1, 3), (1, 5), (1, 7), (1, 9),
+                         (1, 10), (1, 11), (1, 12)],
+    }
+    for mode, exp in expected.items():
         new = g.model.select(edges).crossing_plane(line_spec, mode=mode)
-        legacy = g.model.queries.select(edges, **{mode: line_spec})
-        assert _tagset(new) == _tagset(legacy), (
-            f"2-pt line mode={mode}: "
-            f"{_tagset(new)} != legacy {_tagset(legacy)}"
+        assert _ts(new) == exp, (
+            f"2-pt line mode={mode}: {_ts(new)} != frozen {exp}"
         )
 
-    # a queries.line(...) Line *instance* passed straight through
-    # crossing_plane must equal the legacy select(crossing=<that Line>).
-    line_obj = g.model.queries.line((0, 0.5, 0), (1, 0.5, 0))
+    # a ``Line`` *instance* passed straight through crossing_plane
+    # (the legacy ``queries.line(...)`` constructor is removed; the
+    # retained ``Line.through`` is its byte-identical replacement —
+    # ``queries.line`` only ever called ``Line.through`` internally).
+    line_obj = Line.through((0, 0.5, 0), (1, 0.5, 0))
     new = g.model.select(edges).crossing_plane(line_obj, mode="crossing")
-    legacy = g.model.queries.select(edges, crossing=line_obj)
-    assert _tagset(new) == _tagset(legacy)
+    assert _ts(new) == [(1, 2), (1, 4), (1, 6), (1, 8)]
     # the mid-y line crosses the 4 edges running in the y-direction.
     assert len(new) == 4
 
 
 # =====================================================================
-# 4. tol boundary — a corner exactly `tol` off the plane
+# 4. tol boundary — a corner exactly `tol` off the plane (frozen)
 # =====================================================================
 
 def test_tol_boundary_parity(box):
@@ -199,32 +209,37 @@ def test_tol_boundary_parity(box):
     faces = _seed_dimtags(g, "Faces")
 
     # Plane z = `eps`; the z=0 face's far bbox corners sit exactly `eps`
-    # below it.  The legacy 'on' test is `np.all(|sd| <= tol)`, so with
-    # tol == eps the z=0 face is ON; with tol just under eps it is not.
-    # Whatever the boundary decision, the new verb must make the SAME
-    # one as the legacy engine (identical `<=` semantics).
+    # below it.  The 'on' test is `np.all(|sd| <= tol)`.  The frozen
+    # results pin the exact `<=` boundary decision the engine makes for
+    # tol at / just under / just over / far below `eps` — all four are
+    # identical here because the straddle uses the bbox span, not the
+    # razor-edge corner alone (the proof: the boundary behaviour is
+    # stable and pinned, not asserted against a removed legacy engine).
     eps = 1e-6
+    per_mode = {
+        "on": [],
+        "not_on": [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 6)],
+        "crossing": [(2, 1), (2, 2), (2, 3), (2, 4)],
+        "not_crossing": [(2, 5), (2, 6)],
+    }
     for tol in (eps, eps * 0.999, eps * 1.001, 1e-9):
-        for mode in ("on", "not_on", "crossing", "not_crossing"):
+        for mode, exp in per_mode.items():
             new = g.model.select(faces).crossing_plane(
                 {"z": eps}, mode=mode, tol=tol
             )
-            legacy = g.model.queries.select(
-                faces, **{mode: {"z": eps}}, tol=tol
+            assert _ts(new) == exp, (
+                f"tol-boundary tol={tol!r} mode={mode}: "
+                f"{_ts(new)} != frozen {exp}"
             )
-            assert _tagset(new) == _tagset(legacy), (
-                f"tol-boundary tol={tol} mode={mode}: "
-                f"{_tagset(new)} != legacy {_tagset(legacy)}"
-            )
-    # default tol parity: crossing_plane defaults tol=1e-6 exactly like
-    # queries.select — same call, no tol kw on either side.
-    assert _tagset(
+    # default tol parity: crossing_plane defaults tol=1e-6 — the {'z':0}
+    # 'on' result is exactly the z=0 face (2,5).
+    assert _ts(
         g.model.select(faces).crossing_plane({"z": 0}, mode="on")
-    ) == _tagset(g.model.queries.select(faces, on={"z": 0}))
+    ) == [(2, 5)]
 
 
 # =====================================================================
-# 5. Multi-dim seed — curves + surfaces + volume together
+# 5. Multi-dim seed — curves + surfaces + volume together (frozen)
 # =====================================================================
 
 def test_multi_dim_seed_parity(box):
@@ -235,18 +250,41 @@ def test_multi_dim_seed_parity(box):
              + _seed_dimtags(g, "box"))
     assert {d for d, _ in mixed} == {1, 2, 3}
 
-    for spec in ({"z": 0}, [(0, 0, 0.5), (1, 0, 0.5), (0, 1, 0.5)]):
+    plane3 = [(0, 0, 0.5), (1, 0, 0.5), (0, 1, 0.5)]
+    expected = {
+        ("z0", "on"): [(1, 4), (1, 8), (1, 9), (1, 11), (2, 5)],
+        ("z0", "crossing"): [],
+        ("z0", "not_on"): [(1, 1), (1, 2), (1, 3), (1, 5), (1, 6),
+                           (1, 7), (1, 10), (1, 12), (2, 1), (2, 2),
+                           (2, 3), (2, 4), (2, 6), (3, 1)],
+        ("z0", "not_crossing"): [(1, 1), (1, 2), (1, 3), (1, 4), (1, 5),
+                                 (1, 6), (1, 7), (1, 8), (1, 9), (1, 10),
+                                 (1, 11), (1, 12), (2, 1), (2, 2),
+                                 (2, 3), (2, 4), (2, 5), (2, 6), (3, 1)],
+        ("p3", "on"): [],
+        ("p3", "crossing"): [(1, 1), (1, 3), (1, 5), (1, 7), (2, 1),
+                             (2, 2), (2, 3), (2, 4), (3, 1)],
+        ("p3", "not_on"): [(1, 1), (1, 2), (1, 3), (1, 4), (1, 5),
+                           (1, 6), (1, 7), (1, 8), (1, 9), (1, 10),
+                           (1, 11), (1, 12), (2, 1), (2, 2), (2, 3),
+                           (2, 4), (2, 5), (2, 6), (3, 1)],
+        ("p3", "not_crossing"): [(1, 2), (1, 4), (1, 6), (1, 8), (1, 9),
+                                 (1, 10), (1, 11), (1, 12), (2, 5),
+                                 (2, 6)],
+    }
+    for spec, nm in (({"z": 0}, "z0"), (plane3, "p3")):
         for mode in ("on", "crossing", "not_on", "not_crossing"):
             new = g.model.select(mixed).crossing_plane(spec, mode=mode)
-            legacy = g.model.queries.select(mixed, **{mode: spec})
-            assert _tagset(new) == _tagset(legacy), (
-                f"multi-dim spec={spec} mode={mode}: "
-                f"{_tagset(new)} != legacy {_tagset(legacy)}"
+            assert _ts(new) == expected[(nm, mode)], (
+                f"multi-dim {nm} mode={mode}: "
+                f"{_ts(new)} != frozen {expected[(nm, mode)]}"
             )
     # the volume straddles z=0.5 (crossing) and is not 'on' it.
     cr = g.model.select(mixed).crossing_plane({"z": 0.5},
                                               mode="crossing")
-    assert (3, 1) in _tagset(cr)
+    assert (3, 1) in _ts(cr)
+    assert _ts(cr) == [(1, 1), (1, 3), (1, 5), (1, 7), (2, 1), (2, 2),
+                       (2, 3), (2, 4), (3, 1)]
 
 
 # =====================================================================
@@ -257,18 +295,15 @@ def test_empty_result_parity(box):
     g = box
     faces = _seed_dimtags(g, "Faces")
 
-    # No face lies on z = 99 → both produce an empty selection.
+    # No face lies on / crosses z = 99 → an empty selection.
     new = g.model.select(faces).crossing_plane({"z": 99}, mode="on")
-    legacy = g.model.queries.select(faces, on={"z": 99})
-    assert _tagset(new) == _tagset(legacy) == set()
+    assert _ts(new) == []
     assert len(new) == 0
     assert isinstance(new, EntitySelection)
     # nothing crosses a far plane either.
-    assert _tagset(
+    assert _ts(
         g.model.select(faces).crossing_plane({"z": 99}, mode="crossing")
-    ) == _tagset(
-        g.model.queries.select(faces, crossing={"z": 99})
-    ) == set()
+    ) == []
 
 
 # =====================================================================
@@ -279,38 +314,37 @@ def test_chained_refinement_parity(box):
     g = box
     faces = _seed_dimtags(g, "Faces")
 
-    # New: chain on_plane (z=0 face) then crossing_plane(not_on x=0).
-    # Legacy: select(on={'z':0}) then .select(not_on={'x':0}).
+    # chain on_plane (z=0 face) then crossing_plane(not_on x=0) → the
+    # z=0 face (2,5) survives (it is not_on x=0).
     new = (g.model.select(faces)
            .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
            .crossing_plane({"x": 0}, mode="not_on"))
-    legacy = (g.model.queries.select(faces, on={"z": 0})
-              .select(not_on={"x": 0}))
-    assert _tagset(new) == _tagset(legacy)
+    assert _ts(new) == [(2, 5)]
 
     # crossing_plane refines (intersects with the chain's current
-    # atoms) just like the legacy chained .select — start from the 4
-    # side faces, then keep those crossing z=0.5.
+    # atoms) — start from not_on x=0.5 (4 sides + caps), then keep
+    # those crossing z=0.5 → the 4 side faces.
     new2 = (g.model.select(faces)
-            .crossing_plane({"x": 0.5}, mode="not_on")   # 4 sides + caps
+            .crossing_plane({"x": 0.5}, mode="not_on")
             .crossing_plane({"z": 0.5}, mode="crossing"))
-    legacy2 = (g.model.queries.select(faces, not_on={"x": 0.5})
-               .select(crossing={"z": 0.5}))
-    assert _tagset(new2) == _tagset(legacy2)
+    assert _ts(new2) == [(2, 1), (2, 2), (2, 3), (2, 4)]
     # every result stays the entity terminal type (chainable)
     assert isinstance(new2, EntitySelection)
 
 
 # =====================================================================
 # 8. §6.1 STOP-1 — point family fails LOUD (the in_box(inclusive=)
-#    →TypeError precedent, mirrored from test_geometry_chain.py)
+#    →TypeError precedent, mirrored from test_geometry_chain.py).
+#    PRESERVED VERBATIM through the P3-R rewrite — it pins v2-OWNED
+#    behaviour (the point-family crossing_plane fail-loud) covered
+#    nowhere else post-P3-R.
 # =====================================================================
 
 def test_point_family_crossing_plane_raises_typeerror(g):
     """``fem.nodes.select(...).crossing_plane(...)`` is inexpressible
     (a node id has no bbox to straddle) and MUST fail loud — exactly
-    the ``GeometryChain.in_box(inclusive=)``→``TypeError`` precedent
-    (``test_geometry_chain.py``), never a silent empty selection."""
+    the ``EntitySelection.in_box(inclusive=)``→``TypeError`` precedent,
+    never a silent empty selection."""
     g.model.geometry.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0, label="box")
     g.physical.add_volume("box", name="Body")
     g.mesh.structured.set_transfinite_box("box", n=3)
@@ -335,9 +369,8 @@ def test_point_family_crossing_plane_raises_typeerror(g):
 
 
 # =====================================================================
-# 9. EntitySelection vs legacy Geometry... the byte-unchanged engine.
-#    A direct _crossing_impl ↔ _select_impl spot-check (same primitive,
-#    same bbox math) — proves the shared helper is the legacy engine.
+# 9. Input validation is loud (the byte-unchanged _parse_primitive /
+#    mode / tol guards on the retained engine).
 # =====================================================================
 
 def test_invalid_mode_is_loud(box):
@@ -348,6 +381,6 @@ def test_invalid_mode_is_loud(box):
     with pytest.raises(ValueError, match="tolerance must be non-negative"):
         g.model.select(faces).crossing_plane({"z": 0}, tol=-1.0)
     # an unparseable spec raises through the legacy _parse_primitive
-    # (1 point is neither a line nor a plane) — same message as legacy.
+    # (1 point is neither a line nor a plane).
     with pytest.raises(ValueError, match="Cannot infer primitive"):
         g.model.select(faces).crossing_plane([(0, 0, 0)], mode="on")
