@@ -1,7 +1,9 @@
 # Selection / Resolution Unification v2 — Hardened Plan
 
-Status: **P0–P2-G SHIPPED & LANDED ON `main`; P3 (breaking, split in
-two) + P4 remaining.** Supersedes the scope conclusions of
+Status: **ALL PHASES (P0-T · P0-C · P1-K · P2-I · P2-G · P3-K · P3-R ·
+P3-S · P4) SHIPPED & MERGED to `main` — program COMPLETE** (P3-S #256
+`4316aab`, P4 #257 `61b24ee`; 2026-05-19). Supersedes the scope
+conclusions of
 `docs/plans/selection-unification.md` (v1). The §6 ledger + the note
 directly under it are authoritative (refreshed 2026-05-18 to
 independently verified reality; the old "all pending" was stale).
@@ -277,8 +279,8 @@ sequence, see §6.2 SC-1..SC-5.)
 | P2-G  | **SHIPPED** | `b427e5f` | #252 |
 | P3-K  | **SHIPPED & MERGED** — invisible delegation-collapse + spatial unify | `a696bb0` | #254 |
 | P3-R  | **SHIPPED & MERGED** — BREAKING removal (exports only; classes retained) + caller migration + `_mesh_filters` flip + dependent-test rewrite | `49033ed` | #255 |
-| P3-S  | **SHIPPED** — additive new-idiom spatial regression pins (4 gaps; M-CORRECTION-P3S) | `44a9087` | #256 |
-| P4    | **IN PROGRESS** — docs / ADR 0016 / skill / memory + the two ratified capability gaps (M-CORRECTION-P4) | — | this PR |
+| P3-S  | **SHIPPED & MERGED** — additive new-idiom spatial regression pins (4 gaps; M-CORRECTION-P3S) | `44a9087` | #256 |
+| P4    | **SHIPPED & MERGED** — docs / ADR 0016 / skill / memory + the two ratified capability gaps (M-CORRECTION-P4) | `81ae4b0` | #257 |
 
 > [!note] Ledger authoritative as of 2026-05-18 (was stale "all pending")
 > **All additive phases shipped and LANDED ON `main`.** Each of the 4 v2
