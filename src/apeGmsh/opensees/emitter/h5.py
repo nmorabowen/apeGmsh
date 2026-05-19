@@ -499,6 +499,11 @@ class H5Emitter:
         self._analysis_attrs: dict[str, Any] = {}
         self._analyze_call: tuple[int, float | None] | None = None
 
+        # File-internal tag counter for ``add_oriented_elements`` (ADR
+        # 0018 / ModelData declarative front-door).  Must not be mixed
+        # with bridge-driven ``element()`` calls on the same instance.
+        self._orientation_tag_counter: int = 0
+
     # =====================================================================
     # Protocol — Model
     # =====================================================================
@@ -672,6 +677,136 @@ class H5Emitter:
                 fem_eid=fem_eid,
             )
         )
+
+    # =====================================================================
+    # Public — declarative orientation inject (ADR 0018 / ModelData)
+    # =====================================================================
+
+    def add_oriented_elements(
+        self,
+        *,
+        type_token: str,
+        vecxz: "tuple[float, float, float]",
+        elements: "Iterable[tuple[int, Sequence[int]]]",
+        ndm: int,
+    ) -> None:
+        """Append one ``geomTransf`` + N elements as one orientation fact.
+
+        Public schema-owning method used by
+        :class:`apeGmsh.opensees.ModelData` to inject the per-element
+        ``vecxz`` orientation the viewer's beam join needs
+        (``h5_reader.element_local_axes_vecxz``).  Driving the bridge
+        Protocol methods (``geomTransf`` / ``element``) from a
+        declarative front-door would require pre-setting ``_internal``
+        side-channels — exporting bridge-internal coupling into a
+        public class.  This method appends a ``_TransformRecord`` and
+        per-element ``_ElementRecord`` instances directly, stamping a
+        real positive ``fem_eid`` (ADR 0018 INV-6).
+
+        Tag values are file-internal — ``model.h5`` only needs the
+        transf record's ``tag`` to match the value stored at the
+        registry-defined slot of each element's ``args``.  The reader
+        join (h5_reader.py:336-363) never cross-checks against a live
+        OpenSees domain.
+
+        Parameters
+        ----------
+        type_token
+            OpenSees element type (``"forceBeamColumn"``,
+            ``"elasticBeamColumn"``, ...).  Must yield a transf slot
+            via :func:`_transf_arg_tail_index` for ``ndm``; an unknown
+            token or one with no transf slot raises (ADR 0018 INV-7).
+        vecxz
+            Three-tuple ``(vx, vy, vz)``.
+        elements
+            Iterable of ``(fem_eid, connectivity)`` pairs.  ``fem_eid``
+            must be ``> 0`` — sentinel ``-1`` is invalid for a
+            declarative inject (ADR 0018 INV-6).
+        ndm
+            2 or 3.  Selects ``slots_2d`` vs ``slots_3d`` for the
+            transf-tag positional slot (ADR 0018 INV-9).
+
+        Raises
+        ------
+        ValueError
+            If ``ndm`` is not in ``{2, 3}``, ``vecxz`` lacks 3
+            components, ``type_token`` is unknown / has no transf
+            slot, or any ``fem_eid`` is ``<= 0``.
+        """
+        import math
+
+        from .._element_capabilities import (
+            _ELEM_REGISTRY,
+            _transf_arg_tail_index,
+            known_beam_type_tokens,
+        )
+
+        if ndm not in (2, 3):
+            raise ValueError(
+                f"H5Emitter.add_oriented_elements: ndm must be 2 or 3, "
+                f"got {ndm!r}."
+            )
+        if len(vecxz) != 3:
+            raise ValueError(
+                f"H5Emitter.add_oriented_elements: vecxz must have 3 "
+                f"components, got {len(vecxz)}: {vecxz!r}."
+            )
+        idx = _transf_arg_tail_index(type_token, ndm, _ELEM_REGISTRY)
+        if idx is None:
+            valid = ", ".join(known_beam_type_tokens(ndm))
+            raise ValueError(
+                f"H5Emitter.add_oriented_elements: type_token="
+                f"{type_token!r} has no transf slot at ndm={ndm}. "
+                f"Valid beam tokens: {valid}."
+            )
+
+        items = list(elements)
+        for fem_eid, _ in items:
+            if int(fem_eid) <= 0:
+                raise ValueError(
+                    f"H5Emitter.add_oriented_elements: fem_eid must "
+                    f"be > 0 (ADR 0018 INV-6 — sentinel -1 is invalid "
+                    f"for a declarative inject), got {fem_eid!r}."
+                )
+
+        # Allocate file-internal tags.  Counter is monotonic on this
+        # emitter; do not mix with bridge-driven ``element()`` calls
+        # on the same instance.
+        self._orientation_tag_counter += 1
+        transf_tag = self._orientation_tag_counter
+        self._transforms.append(
+            _TransformRecord(
+                # geomTransf type-token here is the *class string*
+                # (Linear / PDelta / Corotational), independent of the
+                # element type.  The reader's orientation join reads
+                # only ``vec`` + ``tag`` — geomTransf class does not
+                # affect orientation.  Use the schema-stable default.
+                type_token="Linear",
+                tag=transf_tag,
+                vec=(float(vecxz[0]), float(vecxz[1]), float(vecxz[2])),
+            )
+        )
+
+        # Pad args to (idx + 1) tail length with NaN sentinels — the
+        # viewer's orientation join only reads the transf slot; other
+        # tail columns are unread for orientation.  See
+        # ``_write_element_argstack``: arity = len(connectivity),
+        # tail = args[arity:].
+        for fem_eid, conn in items:
+            conn_t = tuple(int(c) for c in conn)
+            self._orientation_tag_counter += 1
+            ops_tag = self._orientation_tag_counter
+            tail: list[float] = [math.nan] * (idx + 1)
+            tail[idx] = float(transf_tag)
+            self._elements.append(
+                _ElementRecord(
+                    type_token=type_token,
+                    tag=ops_tag,
+                    args=(*conn_t, *tail),
+                    connectivity=conn_t,
+                    fem_eid=int(fem_eid),
+                )
+            )
 
     # =====================================================================
     # Protocol — Time series

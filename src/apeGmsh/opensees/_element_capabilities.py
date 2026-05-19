@@ -357,3 +357,71 @@ def _render_py(
             else:
                 args.append(repr(float(val)) if isinstance(val, np.floating) else repr(val))
     return f"ops.element({', '.join(args)})  # {pg_name}"
+
+
+# ---------------------------------------------------------------------------
+# Transf-arg-tail slot lookup (shared single source of truth, ADR 0018 INV-3)
+# ---------------------------------------------------------------------------
+
+#: Beam-column element types whose geomTransf tag is the first positional
+#: arg after connectivity (``args`` tail index 0).  These are absent from
+#: :data:`_ELEM_REGISTRY` (which only carries the scalar-property beam
+#: forms); the position is a stable OpenSees convention:
+#: ``element forceBeamColumn $ele $iN $jN $transfTag $integrationTag``.
+_FORCE_DISP_BEAMS: frozenset = frozenset({"forceBeamColumn", "dispBeamColumn"})
+
+
+def _transf_arg_tail_index(
+    type_token: str, ndm: int, registry: dict,
+) -> "int | None":
+    """Return the ``args``-tail index of the geomTransf tag, or ``None``.
+
+    ``args`` is the element's positional list *after* the connectivity
+    prefix is dropped (h5-schema.md ``/opensees/element_meta``).  In the
+    vocabulary the connectivity prefix is the leading ``"nodes"`` slot,
+    so the tail index is ``slots.index("transfTag") - 1``.  ``None``
+    means "this element type carries no geomTransf" (solids, trusses,
+    shells) — the caller skips it.
+
+    Single source of truth for the writer/reader join (ADR 0018 INV-3).
+    Both :class:`H5Emitter.add_oriented_elements` (writer) and
+    :meth:`h5_reader.H5Model.element_local_axes_vecxz` (reader) consult
+    this function so the transf tag is always written at the slot the
+    reader will read.
+    """
+    if type_token in _FORCE_DISP_BEAMS:
+        return 0
+    spec = registry.get(type_token)
+    if spec is None:
+        return None
+    if ndm == 2:
+        slots = getattr(spec, "slots_2d", None)
+    elif ndm == 3:
+        slots = getattr(spec, "slots_3d", None)
+    else:
+        slots = None
+    if slots is None:
+        slots = (
+            getattr(spec, "slots_3d", None)
+            or getattr(spec, "slots_2d", None)
+            or getattr(spec, "slots", None)
+        )
+    if not slots or "transfTag" not in slots:
+        return None
+    return slots.index("transfTag") - 1
+
+
+def known_beam_type_tokens(ndm: int) -> tuple[str, ...]:
+    """Return the sorted tuple of beam-type tokens with a transf slot at ``ndm``.
+
+    Used at inject time (ADR 0018 INV-7) to validate a user-supplied
+    ``ele_type`` and produce a helpful raise message listing the valid
+    options.
+    """
+    tokens = sorted(_FORCE_DISP_BEAMS)
+    for token, spec in _ELEM_REGISTRY.items():
+        if not getattr(spec, "needs_transf", False):
+            continue
+        if _transf_arg_tail_index(token, ndm, _ELEM_REGISTRY) is not None:
+            tokens.append(token)
+    return tuple(sorted(set(tokens)))

@@ -413,6 +413,20 @@ When the user supplied an explicit `vecxz=` (no orientation), `per_element_vecxz
 is still present — every row holds the same vector — so the viewer
 can read uniformly.
 
+**Authoring front doors.** Two surfaces produce this zone (one schema,
+one writer in `H5Emitter`):
+
+* `apeSees(fem).h5(path)` — typed-primitive `ops.geomTransf.<Type>(...)` →
+  `BuiltModel.emit` → `H5Emitter.geomTransf(...)`.
+* `apeGmsh.opensees.ModelData(fem).oriented_elements(pg=, ele_type=,
+  vecxz=).write(path)` — declarative side-channel for users who write
+  their model in vanilla openseespy without the bridge.  Sees ADR
+  [0018](decisions/0018-modeldata-vanilla-opensees-enrichment.md) and
+  [modeldata-enrichment-scope.md](modeldata-enrichment-scope.md).
+  Calls `H5Emitter.add_oriented_elements(...)` which appends one
+  `_TransformRecord` + per-element `_ElementRecord`s; the on-disk
+  layout below is identical (single source of truth, INV-1 / INV-3).
+
 ## `/opensees/beam_integration`
 
 One group per `beamIntegration` call.  Keyed by `{type}_{tag}`

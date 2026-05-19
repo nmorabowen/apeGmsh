@@ -611,48 +611,12 @@ def _decode_bytes(v: Any) -> Any:
     return v
 
 
-#: Beam-column element types whose geomTransf tag is the first
-#: positional arg after connectivity (``args`` tail index 0).  These
-#: are absent from
-#: :data:`apeGmsh.opensees._element_capabilities._ELEM_REGISTRY`
-#: (which only carries the scalar-property beam forms); the position is
-#: a stable OpenSees convention:
-#: ``element forceBeamColumn $ele $iN $jN $transfTag $integrationTag``.
-_FORCE_DISP_BEAMS: frozenset = frozenset({"forceBeamColumn", "dispBeamColumn"})
-
-
-def _transf_arg_tail_index(
-    type_token: str, ndm: int, registry: dict,
-) -> "int | None":
-    """Return the ``args``-tail index of the geomTransf tag, or ``None``.
-
-    ``args`` is the element's positional list *after* the connectivity
-    prefix is dropped (h5-schema.md ``/opensees/element_meta``).  In the
-    vocabulary the connectivity prefix is the leading ``"nodes"`` slot,
-    so the tail index is ``slots.index("transfTag") - 1``.  ``None``
-    means "this element type carries no geomTransf" (solids, trusses,
-    shells) — the caller skips it.
-    """
-    if type_token in _FORCE_DISP_BEAMS:
-        return 0
-    spec = registry.get(type_token)
-    if spec is None:
-        return None
-    if ndm == 2:
-        slots = getattr(spec, "slots_2d", None)
-    elif ndm == 3:
-        slots = getattr(spec, "slots_3d", None)
-    else:
-        slots = None
-    if slots is None:
-        slots = (
-            getattr(spec, "slots_3d", None)
-            or getattr(spec, "slots_2d", None)
-            or getattr(spec, "slots", None)
-        )
-    if not slots or "transfTag" not in slots:
-        return None
-    return slots.index("transfTag") - 1
+# Re-exported from `.._element_capabilities` so the writer
+# (`H5Emitter.add_oriented_elements`) and this reader share ONE
+# definition of the transf-slot lookup (ADR 0018 INV-3).  Existing
+# import path `from apeGmsh.opensees.emitter.h5_reader import
+# _transf_arg_tail_index, _FORCE_DISP_BEAMS` is preserved.
+from .._element_capabilities import _FORCE_DISP_BEAMS, _transf_arg_tail_index  # noqa: F401
 
 
 # Re-export under the builtin name shadow so users can write

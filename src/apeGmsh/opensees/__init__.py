@@ -26,11 +26,13 @@ removed in the Phase-8 teardown (ADR 0009 — no back-compat shim).
 from __future__ import annotations
 
 from .apesees import apeSees
+from .model_data import ModelData
 from .node import Node, NodeSet
 from ._orientation import AlongBeam, Cartesian, Cylindrical, Spherical
 
 __all__ = [
     "apeSees",
+    "ModelData",
     "Node",
     "NodeSet",
     "AlongBeam",

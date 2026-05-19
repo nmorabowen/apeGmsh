@@ -24,3 +24,4 @@ earlier one, write a new ADR that supersedes it; do not edit history.
 | [0015](0015-label-pg-separate-registries-kernel-leaf.md) | Tier-1 labels / Tier-2 physical groups are separate registries; `apeGmsh/_kernel` is a downward-only leaf | Accepted |
 | [0016](0016-selection-unification-v2-complete.md) | selection-unification-v2 complete: legacy surface removed, two terminals on one spatial kernel, two ratified capability gaps | Accepted (supersedes the P2-I-transient framing of 0015; §4 amended by 0017) |
 | [0017](0017-selection-gaps-are-incomplete-unification.md) | The two v2 capability gaps are *incomplete unification*, not accepted permanent gaps — v2-native successors owed/planned | Accepted (amends 0016 §4) |
+| [0018](0018-modeldata-vanilla-opensees-enrichment.md) | `ModelData` — declarative `model.h5` orientation enrichment for hand-written OpenSees | Accepted (complements 0011) |
