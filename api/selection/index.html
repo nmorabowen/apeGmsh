@@ -3405,10 +3405,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#known-capability-gaps" class="md-nav__link">
+  <a href="#incomplete-unification-pending-v2-successors" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Known capability gaps
+        Incomplete unification — pending v2 successors
       
     </span>
   </a>
@@ -4446,10 +4446,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#known-capability-gaps" class="md-nav__link">
+  <a href="#incomplete-unification-pending-v2-successors" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Known capability gaps
+        Incomplete unification — pending v2 successors
       
     </span>
   </a>
@@ -5148,31 +5148,45 @@ removal). Map every old call to its v2 successor:</p>
 </tr>
 </tbody>
 </table>
-<h2 id="known-capability-gaps">Known capability gaps<a class="headerlink" href="#known-capability-gaps" title="Permanent link">&para;</a></h2>
-<p>Two removed capabilities have <strong>no v2 successor</strong>. This is an
-owner-ratified consequence of full removal (the SC-12 disposition
-class: a removed capability with no successor is documented here, not
-re-introduced):</p>
+<h2 id="incomplete-unification-pending-v2-successors">Incomplete unification — pending v2 successors<a class="headerlink" href="#incomplete-unification-pending-v2-successors" title="Permanent link">&para;</a></h2>
+<p>v2's mandate was <strong>unification</strong> (collapse the divergent selection
+surface into one idiom), <strong>not</strong> capability reduction. Two capabilities
+came out of the removal without a v2-idiom equivalent. They are <strong>not
+accepted permanent gaps</strong> — they are <em>incomplete unification</em> and are
+owed v2-native successors (form / scope / priority planned; see
+<a href="../../src/apeGmsh/opensees/architecture/decisions/0017-selection-gaps-are-incomplete-unification.md">ADR 0017</a>
+and <code>docs/plans/selection-gaps-v3.md</code>). The earlier "SC-12 accepted
+gap" framing was an over-application of a precedent meant for <em>redundant</em>
+removals to a <em>unique-capability</em> removal; corrected here by owner
+decision (2026-05-19).</p>
 <ol>
 <li><strong>Geometric-selection → named mesh-selection
    (<code>g.mesh_selection.from_geometric</code> + <code>viz.Selection.to_mesh_*</code>).</strong>
-   Both ends were removed; there is no v2 path that turns a geometry
-   pick into a persisted named mesh-selection. <code>.save_as(name)</code> is
-   <strong>live-mesh-engine only</strong> and persists the <em>current chain's ids</em>, not
-   a geometry round-trip. Nearest manual workaround: resolve the
-   geometry to ids yourself, then <code>g.mesh_selection.add(dim, ids,
-   name=)</code> — this is <strong>not</strong> equivalent to the removed
-   geometric-selection round-trip.</li>
+   Both ends were removed. <strong>The capability is not lost</strong> — it survives
+   as two retained calls (<code>g.model.select(...).to_physical(name)</code> then
+   <code>g.mesh_selection.from_physical(dim, name, ms_name=)</code>, or
+   <code>g.mesh_selection.add(dim, ids, name=)</code>). What was lost is the
+   <em>one-call</em> "arbitrary geometric pick → named persistent
+   mesh-selection with no physical group in between" (<code>.save_as(name)</code>
+   is <strong>live-mesh-engine only</strong> and persists the <em>current chain's ids</em>,
+   not a geometry round-trip). Open question: whether that one-call
+   ergonomic is worth a v2-idiom shorthand on the entity terminal —
+   ergonomics, not a functionality loss.</li>
 <li><strong>The <code>SelectionComposite</code> filter grammar
    (<code>g.model.selection.select_*(labels=fnmatch / kinds= /
    length|area|volume_range= / predicate= / exclude_tags= / physical= /
-   at_point=)</code>).</strong> <code>EntitySelection</code> (<code>g.model.select(...)</code>) exposes
-   only spatial verbs + set algebra + <code>to_label</code>/<code>to_physical</code>/
-   <code>to_dataframe</code>/<code>result</code>; it has <strong>no</strong> declarative filter-grammar
-   equivalent. (The retained <code>viz.Selection.filter()</code> still exposes a
-   similar grammar, but it is the <em>viewer pick-result</em> type reached only
-   from a viewer pick — it is <strong>not</strong> a <code>g.model.select(...)</code> migration
-   path.)</li>
+   at_point=)</code>).</strong> This is a genuine <strong>unique-capability</strong> loss:
+   <code>EntitySelection</code> (<code>g.model.select(...)</code>) exposes only spatial verbs</li>
+<li>set algebra + <code>to_label</code>/<code>to_physical</code>/<code>to_dataframe</code>/<code>result</code> and
+   has <strong>no</strong> declarative entity-attribute filter equivalent. The filter
+   <em>engine</em> still exists (<code>viz.Selection.filter()</code>), but only on the
+   <em>viewer pick-result</em> path — that programmatic-vs-interactive
+   asymmetry <strong>is itself the kind of inconsistency v2 exists to
+   eliminate</strong>, so a v2-native successor on <code>EntitySelection</code>
+   (composing with the existing verbs/set-algebra; <strong>not</strong> a resurrected
+   <code>SelectionComposite</code>) is <strong>planned</strong>, not declined. The deleted
+   <code>tests/test_selection_filters.py</code> (33 tests, recoverable from git) is
+   its behavioural floor.</li>
 </ol>
 <h2 id="behavior-changes-already-shipped">Behavior changes (already shipped)<a class="headerlink" href="#behavior-changes-already-shipped" title="Permanent link">&para;</a></h2>
 <p>Two pre-existing, intentionally-pinned behavior changes shipped earlier
