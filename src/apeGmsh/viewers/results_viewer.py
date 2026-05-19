@@ -107,6 +107,19 @@ class ResultsViewer:
         self._pending_model_h5: Optional[Path] = (
             Path(model_h5) if model_h5 is not None else None
         )
+        # Effective ``model_h5`` for scene-side orientation: explicit
+        # kwarg wins; otherwise fall back to ``results._path`` when the
+        # results were opened from disk AND the file carries the
+        # OpenSees orientation zone (``/opensees/transforms`` +
+        # ``/opensees/element_meta``). Producer-agnostic — both the
+        # bridge writer and ``ModelData`` produce a byte-equivalent
+        # zone (ADR 0018 INV-16) so a single seam covers both. Distinct
+        # from ``_pending_model_h5`` (which still drives the director's
+        # cuts wiring + auto-load — P2 does not touch that opt-in
+        # path).
+        self._effective_model_h5: Optional[Path] = self._resolve_effective_model_h5(
+            results=results, explicit=self._pending_model_h5,
+        )
 
         # Populated in show()
         self._director: "ResultsDirector | None" = None
@@ -239,6 +252,44 @@ class ResultsViewer:
             # stderr only and was easy to lose.
             log_error("init", "ResultsViewer.show", exc)
             raise
+
+    @staticmethod
+    def _resolve_effective_model_h5(
+        *,
+        results: "Results",
+        explicit: Optional[Path],
+    ) -> Optional[Path]:
+        """Compute the ``model_h5`` actually used to build the scene.
+
+        Resolution order:
+
+        1. **Explicit** ``model_h5=`` kwarg (whatever the user passed)
+           wins unconditionally — even if the path doesn't exist or
+           the file lacks the orientation zone. Downstream
+           :meth:`ViewerData.from_h5` raises clearly in that case.
+        2. **Auto-fallback** to ``results._path`` when the results were
+           opened from disk AND the file carries the
+           ``/opensees/transforms`` + ``/opensees/element_meta`` pair
+           (the byte-equivalent zone produced by both ``apeSees.h5()``
+           and ``ModelData.write``).
+        3. ``None`` otherwise — the live ``ViewerData.from_fem(fem)``
+           path runs as before, degrading to default orientation
+           (graceful, never crashes — INV-11 of ADR 0018).
+
+        Recorder / MPCO files don't carry ``/opensees/``, so the probe
+        naturally excludes them and any non-default layout still needs
+        an explicit ``model_h5=``.
+        """
+        if explicit is not None:
+            return explicit
+        results_path = getattr(results, "_path", None)
+        if results_path is None:
+            return None
+        from .data._h5_probe import has_opensees_orientation
+        candidate = Path(results_path)
+        if has_opensees_orientation(candidate):
+            return candidate
+        return None
 
     def _show_impl(self, *, maximized: bool = True):
         """The actual show() body — see :meth:`show` for the trap wrapper."""
