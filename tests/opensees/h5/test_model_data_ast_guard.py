@@ -94,6 +94,31 @@ def _collect_offences(path: Path) -> list[tuple[int, str]]:
                      f"(only read mode 'r' is allowed)")
                 )
 
+        # 4. Legacy selection API on fem-side surfaces:
+        # ``<something>.elements.get(...)`` or ``<something>.nodes.get(...)``.
+        # selection-unification v2 P3-R removed ``fem.elements.get`` /
+        # ``fem.nodes.get`` from the real ``FEMData``; the FEMStub
+        # fixture kept them as a back-compat shim, which silenced an
+        # AttributeError in the C3 round of this feature.  The v2
+        # idiom is ``.select(pg=).groups()`` / ``.select(pg=).ids``;
+        # ``ModelData`` delegates to
+        # ``apeGmsh.opensees._internal.build.expand_pg_to_elements``
+        # for PG → (eid, conn) expansion.
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr in {"elements", "nodes"}
+        ):
+            offences.append(
+                (node.lineno,
+                 f"forbidden legacy selection API: "
+                 f".{node.func.value.attr}.get(...) — "
+                 f"use .{node.func.value.attr}.select(...) (v2 P3-R) "
+                 f"or expand_pg_to_elements / expand_pg_to_nodes")
+            )
+
     return offences
 
 
@@ -131,3 +156,62 @@ def test_model_data_has_no_h5py_write_surface() -> None:
             f"  {MODEL_DATA_PATH.name}:{ln}  {why}" for ln, why in offences
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Positive controls — confirm the guard actually fires on the patterns it
+# is meant to catch.  Without these, a future refactor that broke the
+# detector would silently turn the acceptance test vacuous.
+# ---------------------------------------------------------------------------
+
+def _offences_from_source(source: str) -> list[tuple[int, str]]:
+    """Run the same AST walk on a string, for positive-control tests."""
+    tree = ast.parse(source, filename="<test>")
+    offences: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in FORBIDDEN_METHOD_NAMES:
+                offences.append((node.lineno, f"h5py write: .{node.func.attr}"))
+            if (
+                node.func.attr == "get"
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.value is not None
+                and node.func.value.attr in {"elements", "nodes"}
+            ):
+                offences.append(
+                    (node.lineno,
+                     f"legacy selection: .{node.func.value.attr}.get(...)")
+                )
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Attribute)
+                    and target.value.attr == "attrs"
+                ):
+                    offences.append((node.lineno, "attrs[..]= mutation"))
+    return offences
+
+
+def test_positive_control_catches_h5py_writer() -> None:
+    src = "import h5py\nf = h5py.File('x', 'w')\ng = f.create_group('foo')\n"
+    found = _offences_from_source(src)
+    assert any("create_group" in r for _, r in found), found
+
+
+def test_positive_control_catches_legacy_elements_get() -> None:
+    src = "items = fem.elements.get(pg='Cols')\n"
+    found = _offences_from_source(src)
+    assert any("elements.get" in r for _, r in found), found
+
+
+def test_positive_control_catches_legacy_nodes_get() -> None:
+    src = "ids = fem.nodes.get(pg='Base')\n"
+    found = _offences_from_source(src)
+    assert any("nodes.get" in r for _, r in found), found
+
+
+def test_positive_control_catches_attrs_mutation() -> None:
+    src = "f['meta'].attrs['key'] = 'value'\n"
+    found = _offences_from_source(src)
+    assert any("attrs" in r for _, r in found), found
