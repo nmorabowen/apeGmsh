@@ -4445,7 +4445,7 @@ physical group. The two tiers are distinguished by a name prefix:</p>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Tier 2  (solver-facing)             &quot;name&quot;            ─► g.physical
 </span></code></pre></div>
 <p>The prefix <code>_label:</code> is the central convention.
-<a href="../src/apeGmsh/core/Labels.py"><code>core/Labels.py:68</code></a> defines
+<code>core/Labels.py:68</code> defines
 <code>LABEL_PREFIX</code>, and three module-level helpers gate the two tiers:</p>
 <ul>
 <li><code>is_label_pg(name)</code> — True if the PG is Tier 1.</li>

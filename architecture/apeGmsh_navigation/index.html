@@ -6506,7 +6506,7 @@ end-to-end trace.</p>
 <h2 id="2-top-level-composite-map">2. Top-level composite map<a class="headerlink" href="#2-top-level-composite-map" title="Permanent link">&para;</a></h2>
 <p>Every symbol below hangs off a live <code>apeGmsh</code> session instance (<code>g</code>).
 <code>g.*</code> attributes are created by <code>_SessionBase._create_composites()</code> from
-the <code>_COMPOSITES</code> tuple in <a href="../src/apeGmsh/_core.py"><code>_core.py</code></a>.</p>
+the <code>_COMPOSITES</code> tuple in <code>_core.py</code>.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>graph TD
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    G[apeGmsh session &lt;br/&gt; g]
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    G --&gt; INSPECT[g.inspect&lt;br/&gt;&lt;i&gt;viz.Inspect&lt;/i&gt;]
@@ -6584,7 +6584,7 @@ the <code>_COMPOSITES</code> tuple in <a href="../src/apeGmsh/_core.py"><code>_c
 </span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>    └── .tcl / .py / .h5 / .run / .analyze
 </span></code></pre></div>
 <p>Output of the workflow is <code>fem = g.mesh.queries.get_fem_data(dim=N)</code> —
-a frozen <a href="../src/apeGmsh/mesh/FEMData.py"><code>FEMData</code></a> that has its own
+a frozen <code>FEMData</code> that has its own
 composite tree: <code>fem.nodes</code>, <code>fem.elements</code>, <code>fem.physical</code>, <code>fem.labels</code>,
 <code>fem.constraints</code>, <code>fem.loads</code>, <code>fem.masses</code>, <code>fem.inspect</code>. See §4.3
 for the full broker surface.</p>

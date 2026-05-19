@@ -5709,10 +5709,16 @@ package exports. The classes <code>core._selection.Selection</code> and
 terminal-payload / viewer-pick-result types — <strong>not</strong> user entry
 points; only their exports were dropped.</p>
 <p><strong>Migrate every legacy call</strong> per the old→v2 table and the two
-<strong>known capability gaps</strong> (geometric-selection → named mesh-selection;
-the <code>SelectionComposite</code> filter grammar — both have <em>no</em> v2 successor)
-in <a href="docs/api/selection.md"><code>docs/api/selection.md</code></a> and
-<a href="src/apeGmsh/opensees/architecture/decisions/0016-selection-unification-v2-complete.md">ADR 0016</a>.</p>
+<strong>incomplete-unification gaps</strong> in
+<a href="../api/selection/"><code>api/selection.md</code></a> (ADR 0017 supersedes the earlier
+ADR-0016 "accepted gap" framing — these are <em>owed v2 successors</em>, not
+WONTFIX). Gap 1 (geometric-selection → named mesh-selection): the
+capability is <strong>intact</strong> via the retained 2-call route
+(<code>g.model.select(...).to_physical(name)</code> then
+<code>g.mesh_selection.from_physical(...)</code>) — only the one-call ergonomic
+was lost. Gap 2 (the <code>SelectionComposite</code> filter grammar): a genuine
+unique-capability loss for which a <strong>v2-native <code>EntitySelection</code>
+successor is owed/planned</strong> (not a resurrected <code>SelectionComposite</code>).</p>
 <p>Two behavior changes ride along. The <code>g.mesh_selection</code> box filter
 moves <strong>closed → half-open</strong> by default to match the results side
 (<strong>breaking</strong> — see below; <code>inclusive=True</code> restores the old closed
@@ -5826,10 +5832,12 @@ returning a chain that composes fluently:</p>
   (<strong>live-mesh engine only</strong>), or the retained explicit-ids registrar
   <code>g.mesh_selection.add(dim, ids, name=)</code> → FEMData snapshot →
   <code>results(selection=...)</code>. The removed
-  <code>g.mesh_selection.add_nodes(..., name=...)</code> /
-  <code>from_geometric</code> two-step has <strong>no</strong> v2 successor for the
-  geometric-selection → named-set round-trip (a documented capability
-  gap — see <code>docs/api/selection.md</code>).</p>
+  <code>g.mesh_selection.add_nodes(..., name=...)</code> / <code>from_geometric</code>
+  two-step keeps its capability via the retained 2-call route
+  (<code>g.model.select(...).to_physical(name)</code> →
+  <code>g.mesh_selection.from_physical(...)</code>); only the one-call ergonomic
+  was lost (incomplete-unification Gap 1 — see
+  <a href="../api/selection/"><code>api/selection.md</code></a>).</p>
 <h3 id="breaking-gmesh_selection-box-is-now-half-open-by-default">BREAKING — <code>g.mesh_selection</code> box is now half-open by default<a class="headerlink" href="#breaking-gmesh_selection-box-is-now-half-open-by-default" title="Permanent link">&para;</a></h3>
 <p><code>g.mesh_selection.add_nodes(in_box=)</code>, <code>add_elements(in_box=)</code>, and
 <code>filter_set(in_box=)</code> (the <code>_mesh_filters.nodes_in_box</code> engine)

@@ -3160,17 +3160,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#fluent-selection-nodesselect-elementsselect" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fluent selection — .nodes.select() / .elements.select()
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#apeGmsh.mesh.FEMData" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4368,17 +4357,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#fluent-selection-nodesselect-elementsselect" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fluent selection — .nodes.select() / .elements.select()
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#apeGmsh.mesh.FEMData" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4909,31 +4887,7 @@
 
 
 <h1 id="fem-broker-femdata">FEM Broker — <code>FEMData</code><a class="headerlink" href="#fem-broker-femdata" title="Permanent link">&para;</a></h1>
-<p>Solver-agnostic snapshot returned by <code>g.mesh.queries.get_fem_data(dim)</code>.
-Composite of <code>.nodes</code>, <code>.elements</code>, <code>.info</code>, <code>.inspect</code>, <code>.mesh_selection</code>.
-The <code>.physical</code>, <code>.loads</code>, <code>.masses</code>, <code>.constraints</code>, and <code>.sp</code> views
-are reached through <code>.nodes.*</code> / <code>.elements.*</code> rather than living
-directly on <code>FEMData</code>.</p>
-<p>Also surfaces <code>snapshot_id</code> plus <code>to_native_h5</code> / <code>from_native_h5</code> /
-<code>from_mpco_model</code> for binding and round-tripping with Results.</p>
-<h2 id="fluent-selection-nodesselect-elementsselect">Fluent selection — <code>.nodes.select()</code> / <code>.elements.select()</code><a class="headerlink" href="#fluent-selection-nodesselect-elementsselect" title="Permanent link">&para;</a></h2>
-<p><code>fem.nodes.select(...)</code> and <code>fem.elements.select(...)</code> are the FEM
-broker entries of the unified, daisy-chainable
-<a href="../selection/">selection idiom</a>. They are <strong>additive</strong> — <code>fem.nodes.get</code>
-and <code>fem.elements.get</code> / <code>.resolve</code> are unchanged. <code>.select()</code> accepts
-the <strong>same selectors</strong> as <code>.get</code> (plus <code>ids=</code>), and <code>.result()</code> returns
-the <strong>same type</strong> <code>.get</code> returns (<code>NodeResult</code> / <code>GroupResult</code>).</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">top</span> <span class="o">=</span> <span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Body&quot;</span><span class="p">)</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="o">.</span><span class="n">in_box</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>                  <span class="c1"># half-open [lo, hi)</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">.</span><span class="n">result</span><span class="p">())</span>                                     <span class="c1"># -&gt; NodeResult</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">both</span> <span class="o">=</span> <span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">ids</span><span class="o">=</span><span class="n">a</span><span class="p">)</span> <span class="o">|</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">ids</span><span class="o">=</span><span class="n">b</span><span class="p">))</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
-</span></code></pre></div>
-<p>Node/element chains are the <strong>point family</strong> — <code>in_box</code> is half-open
-<code>[lo, hi)</code> by default; <code>inclusive=True</code> restores the closed box.
-Element spatial verbs operate on element centroids. See
-<a href="../selection/">Selection</a> for the full idiom.</p>
+<p>Solver-agnostic snapshot returned by <code>g.mesh.queries.get_fem_data(dim)</code>.</p>
 
 
 <div class="doc doc-object doc-module">

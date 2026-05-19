@@ -9079,7 +9079,8 @@
 <h1 id="session-apegmsh">Session — <code>apeGmsh</code><a class="headerlink" href="#session-apegmsh" title="Permanent link">&para;</a></h1>
 <p>The top-level session object. Owns a single Gmsh kernel and wires
 all composites (<code>model</code>, <code>mesh</code>, <code>parts</code>, <code>constraints</code>, <code>loads</code>,
-<code>masses</code>, <code>opensees</code>, …).</p>
+<code>masses</code>, …). The OpenSees bridge is <strong>not</strong> a session composite —
+import it explicitly via <code>from apeGmsh.opensees import apeSees</code>.</p>
 <h2 id="package">Package<a class="headerlink" href="#package" title="Permanent link">&para;</a></h2>
 
 
