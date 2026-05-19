@@ -278,32 +278,46 @@ removal). Map every old call to its v2 successor:
 | `fem.nodes.get(...)` `for nid, xyz in …` iteration | `for nid, xyz in fem.nodes.select(...):` (the `MeshSelection` iterates `(id, payload)`); `.result()` preserves the documented terminal shape |
 | Retained (NOT removed — do not migrate) | `g.mesh_selection.add` / `from_physical` / `filter_set` / `sort_set` / `union` / `intersection` / `difference`; the typed `results.<sub>.get(component=)` reader; the `core._selection.Selection` / `viz.Selection` classes |
 
-## Known capability gaps
+## Incomplete unification — pending v2 successors
 
-Two removed capabilities have **no v2 successor**. This is an
-owner-ratified consequence of full removal (the SC-12 disposition
-class: a removed capability with no successor is documented here, not
-re-introduced):
+v2's mandate was **unification** (collapse the divergent selection
+surface into one idiom), **not** capability reduction. Two capabilities
+came out of the removal without a v2-idiom equivalent. They are **not
+accepted permanent gaps** — they are *incomplete unification* and are
+owed v2-native successors (form / scope / priority planned; see
+[ADR 0017](../../src/apeGmsh/opensees/architecture/decisions/0017-selection-gaps-are-incomplete-unification.md)
+and `docs/plans/selection-gaps-v3.md`). The earlier "SC-12 accepted
+gap" framing was an over-application of a precedent meant for *redundant*
+removals to a *unique-capability* removal; corrected here by owner
+decision (2026-05-19).
 
 1. **Geometric-selection → named mesh-selection
    (`g.mesh_selection.from_geometric` + `viz.Selection.to_mesh_*`).**
-   Both ends were removed; there is no v2 path that turns a geometry
-   pick into a persisted named mesh-selection. `.save_as(name)` is
-   **live-mesh-engine only** and persists the *current chain's ids*, not
-   a geometry round-trip. Nearest manual workaround: resolve the
-   geometry to ids yourself, then `g.mesh_selection.add(dim, ids,
-   name=)` — this is **not** equivalent to the removed
-   geometric-selection round-trip.
+   Both ends were removed. **The capability is not lost** — it survives
+   as two retained calls (`g.model.select(...).to_physical(name)` then
+   `g.mesh_selection.from_physical(dim, name, ms_name=)`, or
+   `g.mesh_selection.add(dim, ids, name=)`). What was lost is the
+   *one-call* "arbitrary geometric pick → named persistent
+   mesh-selection with no physical group in between" (`.save_as(name)`
+   is **live-mesh-engine only** and persists the *current chain's ids*,
+   not a geometry round-trip). Open question: whether that one-call
+   ergonomic is worth a v2-idiom shorthand on the entity terminal —
+   ergonomics, not a functionality loss.
 2. **The `SelectionComposite` filter grammar
    (`g.model.selection.select_*(labels=fnmatch / kinds= /
    length|area|volume_range= / predicate= / exclude_tags= / physical= /
-   at_point=)`).** `EntitySelection` (`g.model.select(...)`) exposes
-   only spatial verbs + set algebra + `to_label`/`to_physical`/
-   `to_dataframe`/`result`; it has **no** declarative filter-grammar
-   equivalent. (The retained `viz.Selection.filter()` still exposes a
-   similar grammar, but it is the *viewer pick-result* type reached only
-   from a viewer pick — it is **not** a `g.model.select(...)` migration
-   path.)
+   at_point=)`).** This is a genuine **unique-capability** loss:
+   `EntitySelection` (`g.model.select(...)`) exposes only spatial verbs
+   + set algebra + `to_label`/`to_physical`/`to_dataframe`/`result` and
+   has **no** declarative entity-attribute filter equivalent. The filter
+   *engine* still exists (`viz.Selection.filter()`), but only on the
+   *viewer pick-result* path — that programmatic-vs-interactive
+   asymmetry **is itself the kind of inconsistency v2 exists to
+   eliminate**, so a v2-native successor on `EntitySelection`
+   (composing with the existing verbs/set-algebra; **not** a resurrected
+   `SelectionComposite`) is **planned**, not declined. The deleted
+   `tests/test_selection_filters.py` (33 tests, recoverable from git) is
+   its behavioural floor.
 
 ## Behavior changes (already shipped)
 
