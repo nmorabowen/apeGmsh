@@ -772,10 +772,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#11-the-five-query-entry-points" class="md-nav__link">
+  <a href="#11-seeding" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.1 The five query entry points
+        1.1 Seeding
       
     </span>
   </a>
@@ -783,10 +783,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#12-the-filter-vocabulary" class="md-nav__link">
+  <a href="#12-the-verb-surface-and-a-capability-gap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.2 The filter vocabulary
+        1.2 The verb surface (and a capability gap)
       
     </span>
   </a>
@@ -794,10 +794,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#13-working-with-a-selection" class="md-nav__link">
+  <a href="#13-set-algebra" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.3 Working with a Selection
+        1.3 Set algebra
       
     </span>
   </a>
@@ -805,10 +805,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#14-topology-helpers" class="md-nav__link">
+  <a href="#14-topology-queries" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.4 Topology helpers
+        1.4 Topology queries
       
     </span>
   </a>
@@ -927,10 +927,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#33-meshselectionsetfrom_geometric-the-one-step-bridge" class="md-nav__link">
+  <a href="#33-the-one-step-from_geometric-bridge-removed-capability-gap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3.3 MeshSelectionSet.from_geometric(...) — the one-step bridge
+        3.3 The one-step from_geometric bridge — REMOVED (capability gap)
       
     </span>
   </a>
@@ -4105,10 +4105,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#11-the-five-query-entry-points" class="md-nav__link">
+  <a href="#11-seeding" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.1 The five query entry points
+        1.1 Seeding
       
     </span>
   </a>
@@ -4116,10 +4116,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#12-the-filter-vocabulary" class="md-nav__link">
+  <a href="#12-the-verb-surface-and-a-capability-gap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.2 The filter vocabulary
+        1.2 The verb surface (and a capability gap)
       
     </span>
   </a>
@@ -4127,10 +4127,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#13-working-with-a-selection" class="md-nav__link">
+  <a href="#13-set-algebra" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.3 Working with a Selection
+        1.3 Set algebra
       
     </span>
   </a>
@@ -4138,10 +4138,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#14-topology-helpers" class="md-nav__link">
+  <a href="#14-topology-queries" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1.4 Topology helpers
+        1.4 Topology queries
       
     </span>
   </a>
@@ -4260,10 +4260,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#33-meshselectionsetfrom_geometric-the-one-step-bridge" class="md-nav__link">
+  <a href="#33-the-one-step-from_geometric-bridge-removed-capability-gap" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3.3 MeshSelectionSet.from_geometric(...) — the one-step bridge
+        3.3 The one-step from_geometric bridge — REMOVED (capability gap)
       
     </span>
   </a>
@@ -4349,7 +4349,7 @@
 <tbody>
 <tr>
 <td>Geometric selection</td>
-<td><code>g.model.selection</code></td>
+<td><code>g.model.select(...)</code></td>
 <td>BRep / OCC entities — points, curves, surfaces, volumes</td>
 <td><strong>Before</strong> <code>g.mesh.generation.generate()</code></td>
 <td><em>indirectly</em>, via <code>fem.nodes.physical</code> or <code>fem.mesh_selection</code></td>
@@ -4371,120 +4371,135 @@
 results, and the live mesh:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;box&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">in_box</span><span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span><span class="o">.</span><span class="n">on_plane</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>   <span class="c1"># geometry</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">in_box</span><span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span>                             <span class="c1"># broker</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">in_box</span><span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">in_box</span><span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span><span class="o">.</span><span class="n">values</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_z&quot;</span><span class="p">)</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">select</span><span class="p">()</span><span class="o">.</span><span class="n">in_box</span><span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span><span class="o">.</span><span class="n">on_plane</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>      <span class="c1"># live mesh</span>
 </span></code></pre></div>
 <p>Every <code>.select()</code> returns a chain with the same verbs
-(<code>.in_box / .in_sphere / .on_plane / .nearest_to / .where</code>), the same
-set algebra (<code>| &amp; - ^</code> and <code>.union / .intersect / .difference</code>), and a
-domain terminal — <code>.result()</code> everywhere, except results which reads
-with <code>.get(component=, time=, stage=)</code>. Name resolution inside
+(<code>.in_box / .in_sphere / .on_plane / .crossing_plane / .nearest_to /
+.where</code>), the same set algebra (<code>| &amp; - ^</code> and
+<code>.union / .intersect / .difference</code>), and a domain terminal —
+<code>.result()</code> everywhere, except results which reads with
+<code>.values(component=, time=, stage=)</code>. Name resolution inside
 <code>.select()</code> is <strong>never re-implemented</strong>: it delegates to the same
-contract-locked resolver the matching <code>.get()</code> already uses, so
-<code>select(...).result()</code> is id-for-id identical to <code>get(...)</code>.</p>
+contract-locked resolver, so the resolved selection is exactly what
+the locked resolution contract returns.</p>
 <blockquote>
-<p>[!note] <code>.select()</code> is <strong>additive</strong> — the old ways still work
-Everything else in this guide (<code>g.model.selection.select_*</code>,
-<code>g.model.queries.select(on=/crossing=)</code>, <code>g.mesh_selection.add_*</code>,
-the <code>Selection</code> set algebra, the bridges) is <strong>unchanged and fully
-supported</strong>. <code>.select()</code> sits <em>beside</em> the legacy surface, it does
-not replace or wrap it. A facade was deliberately not built (it was
-proven structurally impossible) — there is exactly one new canonical
-idiom and the old ways persist by design. Reach for <code>.select()</code> for
-new fluent code; keep the legacy entry points where they already fit.
-The maintainer invariants behind this live in
+<p>[!warning] <code>.select()</code> is the <strong>only</strong> selection surface (v2 removed the rest)
+Selection-unification v2 <strong>hard-removed</strong> the entire legacy surface:
+<code>g.model.selection</code> / <code>g.model.selection.select_*</code>
+(<code>SelectionComposite</code>), <code>g.model.queries.select(on=/crossing=)</code> /
+<code>queries.line</code> / <code>queries.select_all*</code>, <code>g.mesh_selection.add_nodes</code>
+/ <code>add_elements</code> / <code>from_geometric</code>,
+<code>fem.nodes/elements.get/get_ids/get_coords/resolve</code>, and the chain
+<code>results.*.select(...).get(...)</code> terminal. There is <strong>no shim</strong> —
+calling them raises <code>AttributeError</code> / <code>ImportError</code>. Use <code>.select()</code>
+exclusively. The <code>core._selection.Selection</code> and <code>viz.Selection</code>
+<em>classes</em> are retained <strong>by architecture</strong> (the <code>.result()</code> payload
+and the viewer pick-result type respectively); only their package
+exports were dropped. Two capability gaps have no v2 successor — see
+§3.3 and §1.2. The maintainer invariants live in
 <a href="../guide_selection_chain/">The Selection Chain</a>.</p>
 </blockquote>
 <h2 id="1-geometric-selection-the-occ-side">1. Geometric selection — the OCC side<a class="headerlink" href="#1-geometric-selection-the-occ-side" title="Permanent link">&para;</a></h2>
-<p>The geometric selection composite is attached to the model as <code>g.model.selection</code>. It is a <em>query engine</em> over the currently synchronised OCC topology. Every call returns a frozen <code>Selection</code> snapshot that behaves like a mathematical set with some refinement and conversion helpers attached.</p>
-<h3 id="11-the-five-query-entry-points">1.1 The five query entry points<a class="headerlink" href="#11-the-five-query-entry-points" title="Permanent link">&para;</a></h3>
-<p>There is one method per BRep dimension plus an <code>all</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">sel</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">pts</span>  <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_points</span><span class="p">(</span><span class="o">**</span><span class="n">filters</span><span class="p">)</span>      <span class="c1"># dim = 0</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">crvs</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_curves</span><span class="p">(</span><span class="o">**</span><span class="n">filters</span><span class="p">)</span>      <span class="c1"># dim = 1</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">srfs</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_surfaces</span><span class="p">(</span><span class="o">**</span><span class="n">filters</span><span class="p">)</span>    <span class="c1"># dim = 2</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">vols</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_volumes</span><span class="p">(</span><span class="o">**</span><span class="n">filters</span><span class="p">)</span>     <span class="c1"># dim = 3</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">any_</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_all</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span> <span class="o">**</span><span class="n">filters</span><span class="p">)</span> <span class="c1"># across all dims</span>
+<p>The entity-selection entry is <code>g.model.select(target, *, dim=)</code>. It is
+a <em>query engine</em> over the currently synchronised OCC topology and
+returns an <code>EntitySelection</code> — a daisy-chainable chain==terminal.
+<code>.result()</code> yields the retained <code>Selection</code> payload (a frozen
+<code>(dim, tag)</code> set with refinement / conversion helpers).</p>
+<h3 id="11-seeding">1.1 Seeding<a class="headerlink" href="#11-seeding" title="Permanent link">&para;</a></h3>
+<p><code>select()</code> takes a name (label / physical-group / part), an explicit
+<code>(dim, tag)</code> set, or nothing-plus-<code>dim=</code> for <em>every</em> entity at a
+dimension:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">faces</span>   <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;TopFaces&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>   <span class="c1"># by PG / label / part</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">all_vol</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>               <span class="c1"># every volume</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">subset</span>  <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">([(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">)])</span>    <span class="c1"># explicit dimtags</span>
 </span></code></pre></div>
-<p>The composite implicitly calls <code>gmsh.model.occ.synchronize()</code> before querying, so you do not have to remember to sync yourself — but the geometry has to actually exist in the OCC kernel for the query to see it.</p>
-<h3 id="12-the-filter-vocabulary">1.2 The filter vocabulary<a class="headerlink" href="#12-the-filter-vocabulary" title="Permanent link">&para;</a></h3>
-<p>All query methods take the same keyword-argument vocabulary. Filters are <strong>AND-combined</strong>, so passing several at once narrows the result.</p>
-<p><strong>Identity filters</strong></p>
+<p>Name resolution delegates verbatim to the contract-locked geometry
+resolver (label → physical group → part); <code>select()</code> re-implements no
+tier logic and adds no scoping of its own. The OCC kernel is
+synchronised implicitly before querying.</p>
+<h3 id="12-the-verb-surface-and-a-capability-gap">1.2 The verb surface (and a capability gap)<a class="headerlink" href="#12-the-verb-surface-and-a-capability-gap" title="Permanent link">&para;</a></h3>
+<p><code>EntitySelection</code> composes spatial verbs, set-algebra, and direct
+terminals:</p>
 <ul>
-<li><code>tags=[...]</code> / <code>exclude_tags=[...]</code> — keep or drop by raw entity tag</li>
-<li><code>labels="col_*"</code> — glob match against apeGmsh's registry labels (labels are the <code>name=...</code> you attach when creating geometry)</li>
-<li><code>kinds="box"</code> — match against the kind recorded by the geometry factory (<code>"box"</code>, <code>"cylinder"</code>, <code>"disk"</code>, ...)</li>
-<li><code>physical="fixed"</code> — members of a physical group by name or tag</li>
+<li><code>.in_box(lo, hi)</code> — gmsh BRep containment (closed; <code>inclusive=</code>
+  raises <code>TypeError</code> — it is point-family only)</li>
+<li><code>.in_sphere(center, radius)</code> — bbox-centre distance test</li>
+<li><code>.on_plane(point, normal, *, tol)</code> — all 8 bbox corners within <code>tol</code></li>
+<li><code>.crossing_plane(spec, *, tol, mode)</code> — <code>on</code> / <code>crossing</code> /
+  <code>not_on</code> / <code>not_crossing</code> straddle (<code>spec</code> is an axis dict, a
+  2/3-point list, or <code>m.model.queries.plane(...)</code>)</li>
+<li><code>.nearest_to(point, n=)</code> / <code>.where(predicate)</code></li>
+<li>set-algebra <code>| &amp; - ^</code> and <code>.union / .intersect / .difference</code></li>
+<li>terminals <code>.to_label(name)</code> / <code>.to_physical(name)</code> /
+  <code>.to_dataframe()</code> / <code>.result()</code></li>
 </ul>
-<p><strong>Spatial filters</strong></p>
-<ul>
-<li><code>in_box=(x0, y0, z0, x1, y1, z1)</code> — delegates to <code>getEntitiesInBoundingBox</code></li>
-<li><code>in_sphere=(cx, cy, cz, r)</code> — centroid distance test</li>
-<li><code>on_plane=("z", 0.0, 1e-6)</code> — entity's bounding box touches an axis-aligned plane</li>
-<li><code>on_axis=("z", 1e-6)</code> — entity centroid lies on a coordinate axis</li>
-<li><code>at_point=(x, y, z, atol)</code> — entity bounding box contains the point</li>
-</ul>
-<p><strong>Metric ranges</strong></p>
-<ul>
-<li><code>length_range=(lo, hi)</code> — dim=1 only, uses <code>occ.getMass</code></li>
-<li><code>area_range=(lo, hi)</code> — dim=2 only</li>
-<li><code>volume_range=(lo, hi)</code> — dim=3 only</li>
-</ul>
-<p><strong>Orientation (curves only)</strong></p>
-<ul>
-<li><code>horizontal=True</code> — curve lies in a plane normal to z</li>
-<li><code>vertical=True</code> — curve is parallel to z</li>
-<li><code>aligned=("x", 5.0)</code> — parallel to the given axis within <code>atol_deg</code></li>
-</ul>
-<p><strong>Escape hatch</strong></p>
-<ul>
-<li><code>predicate=lambda dim, tag: ...</code> — arbitrary Python predicate evaluated last</li>
-</ul>
-<p>A typical use after importing an IGES frame:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">sel</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">columns</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_curves</span><span class="p">(</span><span class="n">vertical</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">beams</span>   <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_curves</span><span class="p">(</span><span class="n">horizontal</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">length_range</span><span class="o">=</span><span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">12.0</span><span class="p">))</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">base</span>    <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_points</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">))</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="nb">print</span><span class="p">(</span><span class="n">columns</span><span class="p">)</span>   <span class="c1"># &lt;Selection dim=1 n=24 [C1, C2, …]&gt;</span>
+<p>After <code>.result()</code> the <code>Selection</code> payload additionally offers the
+position predicates <code>.select(on=/crossing=/not_on=/not_crossing=,
+tol=)</code>, the direction filters <code>.parallel_to(...)</code> (curves) /
+<code>.normal_along(...)</code> (surfaces), <code>.tags()</code>, and the same set-algebra.</p>
+<blockquote>
+<p>[!warning] Capability gap — the rich filter grammar has no successor
+The removed <code>SelectionComposite.select_*</code> exposed a rich
+keyword-filter grammar (<code>labels=</code> fnmatch, <code>kinds=</code>,
+<code>length/area/volume_range=</code>, <code>predicate=fn</code>, <code>exclude_tags=</code>,
+<code>physical=</code>, <code>at_point=</code>, <code>on_axis=</code>, <code>horizontal=</code>/<code>vertical=</code>/
+<code>aligned=</code>). <code>EntitySelection</code> has <strong>no</strong> equivalent — only the
+spatial verbs, set-ops, and <code>.to_*</code> terminals above. The retained
+<code>viz.Selection.filter()</code> carries that grammar but is
+<strong>viewer-pick-only</strong>, not a <code>g.model.select</code> migration path. For the
+common cases: use <code>dim=</code> seeding + spatial verbs; resolve a named
+physical group / label directly; or <code>.where(predicate)</code> /
+<code>.result().parallel_to(...)</code> for orientation.</p>
+</blockquote>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Vertical column curves on the x = 0 wall, named as a physical group</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;frame&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="o">.</span><span class="n">parallel_to</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">)</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">on</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;x&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">})</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;left_columns&quot;</span><span class="p">))</span>
 </span></code></pre></div>
-<h3 id="13-working-with-a-selection">1.3 Working with a <code>Selection</code><a class="headerlink" href="#13-working-with-a-selection" title="Permanent link">&para;</a></h3>
-<p>A <code>Selection</code> is an immutable snapshot but supports rich manipulation. Set algebra uses the normal Python operators:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">all_curves</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_curves</span><span class="p">()</span>
+<h3 id="13-set-algebra">1.3 Set algebra<a class="headerlink" href="#13-set-algebra" title="Permanent link">&para;</a></h3>
+<p>Set algebra uses the normal Python operators on either the chain or
+the <code>Selection</code> payload:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">all_curves</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">diagonals</span>  <span class="o">=</span> <span class="n">all_curves</span> <span class="o">-</span> <span class="n">columns</span> <span class="o">-</span> <span class="n">beams</span>      <span class="c1"># set difference</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">edges</span>      <span class="o">=</span> <span class="n">columns</span> <span class="o">|</span> <span class="n">beams</span>                   <span class="c1"># union</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">corners</span>    <span class="o">=</span> <span class="n">columns</span> <span class="o">&amp;</span> <span class="n">sel</span><span class="o">.</span><span class="n">select_curves</span><span class="p">(</span><span class="n">in_box</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mi">100</span><span class="p">))</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">corners</span>    <span class="o">=</span> <span class="n">columns</span> <span class="o">&amp;</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">in_box</span><span class="p">(</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mi">100</span><span class="p">))</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 </span></code></pre></div>
-<p>Refinement re-applies filters to an existing set without re-running the full universe query:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">short_cols</span> <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">length_range</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">))</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">leftmost</span>   <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">sorted_by</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">limit</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+<p><code>Selection</code> subclasses <code>list</code>, so <code>|</code>/<code>&amp;</code>/<code>-</code>/<code>^</code> (set-with-dedup),
+not <code>+</code> (list concat), are the combining operators.</p>
+<h3 id="14-topology-queries">1.4 Topology queries<a class="headerlink" href="#14-topology-queries" title="Permanent link">&para;</a></h3>
+<p>Cross-dimensional topology queries live on <code>g.model.queries</code> (the
+removed <code>boundary_of</code>/<code>adjacent_to</code>/<code>closest_to</code> helpers have no
+direct successor; use these instead):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Boundary entities — delegates to gmsh.model.getBoundary</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">faces_of_block</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">boundary</span><span class="p">(</span><span class="n">block_vol_tag</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>  <span class="c1"># -&gt; Selection</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Volumes adjacent to a set (share a boundary entity)</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">adj_vols</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">adjacencies</span><span class="p">(</span><span class="n">some_vol_tag</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c1"># Nearest entities to a point: g.model.select(dim=N).nearest_to(p, n=)</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">pin_points</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">nearest_to</span><span class="p">((</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">),</span> <span class="n">n</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Geometry helpers work on the whole set:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">columns</span><span class="o">.</span><span class="n">bbox</span><span class="p">()</span>      <span class="c1"># (xmin, ymin, zmin, xmax, ymax, zmax)</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">columns</span><span class="o">.</span><span class="n">centers</span><span class="p">()</span>   <span class="c1"># ndarray(N, 3) — entity centroids</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">columns</span><span class="o">.</span><span class="n">masses</span><span class="p">()</span>    <span class="c1"># ndarray(N,)  — length/area/volume per entity</span>
-</span></code></pre></div>
-<h3 id="14-topology-helpers">1.4 Topology helpers<a class="headerlink" href="#14-topology-helpers" title="Permanent link">&para;</a></h3>
-<p>Some queries do not fit the filter vocabulary because they cross dimensions. For those, the composite exposes three helpers:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Boundary of a set — delegates to gmsh.model.getBoundary</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">faces_of_block</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">boundary_of</span><span class="p">(</span><span class="n">block_volumes</span><span class="p">)</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Entities of dim_target whose boundary touches the source set</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">bounding_volumes</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">adjacent_to</span><span class="p">(</span><span class="n">some_surfaces</span><span class="p">,</span> <span class="n">dim_target</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1"># Nearest-n entities to a point</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="n">pin_points</span> <span class="o">=</span> <span class="n">sel</span><span class="o">.</span><span class="n">closest_to</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
-</span></code></pre></div>
-<p><code>boundary_of</code> and <code>adjacent_to</code> are the right way to get "the surfaces of this block" or "the volumes that share this interface surface" — they respect the OCC topology instead of guessing from bounding boxes.</p>
+<p><code>g.model.queries.boundary</code> / <code>adjacencies</code> respect the OCC topology
+instead of guessing from bounding boxes.</p>
 <h3 id="15-persisting-a-geometric-selection">1.5 Persisting a geometric selection<a class="headerlink" href="#15-persisting-a-geometric-selection" title="Permanent link">&para;</a></h3>
-<p>A geometric <code>Selection</code> by itself is just a tuple of <code>DimTag</code>s held in Python. To make it survive outside the current selection session, promote it to a <strong>physical group</strong>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">columns</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;columns&quot;</span><span class="p">)</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">beams</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;beams&quot;</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="mi">101</span><span class="p">)</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">base</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;fixed_support&quot;</span><span class="p">)</span>
+<p>An <code>EntitySelection</code> / <code>Selection</code> is just <code>(dim, tag)</code>s held in
+Python. To make it survive meshing, register it — either as a <strong>Tier-2
+physical group</strong> (carried into the msh/vtu output and visible to other
+tools) or a <strong>Tier-1 label</strong> (<code>_label:</code>-prefixed, boolean-op-stable):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;Columns&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;columns&quot;</span><span class="p">)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;Beams&quot;</span><span class="p">,</span>   <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">to_label</span><span class="p">(</span><span class="s2">&quot;beams&quot;</span><span class="p">)</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="s2">&quot;fixed_support&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>This calls <code>g.physical.add(dim, tags, name=...)</code> for you and returns the physical-group tag. Physical groups are the <em>only</em> mechanism that carries named entity groupings through the mesher and into the msh/vtu outputs, so any selection you want the solver to see should be promoted before <code>g.mesh.generation.generate()</code>.</p>
+<p><code>.to_physical</code> calls <code>g.physical.add(dim, tags, name=...)</code>;
+<code>.to_label</code> calls <code>g.session.labels.add(...)</code>. Physical groups are the
+<em>only</em> mechanism that carries named entity groupings through the
+mesher into the msh/vtu outputs, so anything the solver must see
+should be promoted before <code>g.mesh.generation.generate()</code>. (Tier-1 and
+Tier-2 are <strong>separate registries that are never merged</strong> — ADR 0015.)</p>
 <h2 id="2-mesh-selection-the-post-mesh-side">2. Mesh selection — the post-mesh side<a class="headerlink" href="#2-mesh-selection-the-post-mesh-side" title="Permanent link">&para;</a></h2>
 <p>Once <code>g.mesh.generation.generate(dim)</code> has run, the picture changes. The BRep entities are still there, but solvers need to talk about <strong>node IDs and element IDs</strong>. That is what <code>g.mesh_selection</code> is for.</p>
 <p><code>MeshSelectionSet</code> has the same identity contract as physical groups — a <code>(dim, tag)</code> key plus an optional <code>name</code> — but <code>dim</code> now means "dimensionality of the selected mesh entities":</p>
@@ -4495,196 +4510,195 @@ The maintainer invariants behind this live in
 <li><code>dim=3</code> → 3-D element set (tets / hexes)</li>
 </ul>
 <h3 id="21-spatial-queries-on-mesh-entities">2.1 Spatial queries on mesh entities<a class="headerlink" href="#21-spatial-queries-on-mesh-entities" title="Permanent link">&para;</a></h3>
-<p>The two creation methods mirror the OCC side but work on mesh data:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="c1"># Node sets — filters work on node coordinates</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">base</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_nodes</span><span class="p">(</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">on_plane</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">),</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">name</span>     <span class="o">=</span> <span class="s2">&quot;base&quot;</span><span class="p">,</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="p">)</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="n">interior</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_nodes</span><span class="p">(</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="n">in_box</span>   <span class="o">=</span> <span class="p">(</span><span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="n">name</span>     <span class="o">=</span> <span class="s2">&quot;core_nodes&quot;</span><span class="p">,</span>
-</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="p">)</span>
-</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>
-</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="n">top5</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_nodes</span><span class="p">(</span>
-</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>    <span class="n">closest_to</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">),</span>
-</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>    <span class="n">count</span>      <span class="o">=</span> <span class="mi">5</span><span class="p">,</span>
-</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>    <span class="n">name</span>       <span class="o">=</span> <span class="s2">&quot;roof_monitor&quot;</span><span class="p">,</span>
-</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="p">)</span>
-</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>
-</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="c1"># Element sets — filters work on element centroids (in_box) or</span>
-</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="c1"># on &quot;all nodes lie on plane&quot; (on_plane)</span>
-</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a><span class="n">slab</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_elements</span><span class="p">(</span>
-</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>    <span class="n">dim</span>      <span class="o">=</span> <span class="mi">2</span><span class="p">,</span>
-</span><span id="__span-8-24"><a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>    <span class="n">on_plane</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">),</span>
-</span><span id="__span-8-25"><a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>    <span class="n">name</span>     <span class="o">=</span> <span class="s2">&quot;slab_surf&quot;</span><span class="p">,</span>
-</span><span id="__span-8-26"><a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a><span class="p">)</span>
-</span><span id="__span-8-27"><a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>
-</span><span id="__span-8-28"><a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a><span class="n">core</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_elements</span><span class="p">(</span>
-</span><span id="__span-8-29"><a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>    <span class="n">dim</span>    <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
-</span><span id="__span-8-30"><a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>    <span class="n">in_box</span> <span class="o">=</span> <span class="p">(</span><span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span>
-</span><span id="__span-8-31"><a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>    <span class="n">name</span>   <span class="o">=</span> <span class="s2">&quot;core_solid&quot;</span><span class="p">,</span>
-</span><span id="__span-8-32"><a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a><span class="p">)</span>
+<p><code>g.mesh_selection.select(...)</code> returns a point-family <code>MeshSelection</code>;
+the live-engine terminal <code>.save_as(name)</code> registers it as a named set
+(the removed <code>add_nodes</code> / <code>add_elements</code> spatial registrars have no
+direct equivalent — this is the replacement):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="c1"># Node sets — spatial verbs work on node coordinates</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">base</span> <span class="o">=</span> <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">select</span><span class="p">()</span>                       <span class="c1"># node level</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="s2">&quot;base&quot;</span><span class="p">))</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="n">interior</span> <span class="o">=</span> <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">select</span><span class="p">()</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="o">.</span><span class="n">in_box</span><span class="p">((</span><span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">))</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>    <span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="s2">&quot;core_nodes&quot;</span><span class="p">))</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="n">top5</span> <span class="o">=</span> <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">select</span><span class="p">()</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    <span class="o">.</span><span class="n">nearest_to</span><span class="p">((</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">),</span> <span class="n">n</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>    <span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="s2">&quot;roof_monitor&quot;</span><span class="p">))</span>
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="c1"># Element sets — verbs work on element centroids</span>
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="n">slab</span> <span class="o">=</span> <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="s2">&quot;element&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>    <span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span>
+</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>    <span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="s2">&quot;slab_surf&quot;</span><span class="p">))</span>
+</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>
+</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="n">core</span> <span class="o">=</span> <span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="s2">&quot;element&quot;</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>    <span class="o">.</span><span class="n">in_box</span><span class="p">((</span><span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">))</span>
+</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>    <span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="s2">&quot;core_solid&quot;</span><span class="p">))</span>
 </span></code></pre></div>
-<p>Each creation call returns the allocated tag. Tags are auto-allocated per-dim and independent from physical-group tags.</p>
+<p><code>.save_as</code> returns the chain (so it stays fluent); the named set's tag
+is auto-allocated per-dim, independent from physical-group tags.</p>
 <blockquote>
-<p>[!warning] <code>in_box</code> default changed (S2): now half-open
-As of the selection-unification work, <code>g.mesh_selection</code>'s <code>in_box</code>
-filter is <strong>half-open on the upper side</strong> by default
-(<code>xmin &lt;= xyz &lt; xmax</code> per axis), matching the <code>results</code> side which
-was already half-open. Previously it was closed-closed. A coordinate
-exactly on an upper bound is now <strong>excluded</strong> so adjacent boxes do
-not double-count a shared face. Pass <code>inclusive=True</code> to
-<code>add_nodes</code> / <code>add_elements</code> / <code>filter_set</code> to restore the old
-closed-closed behaviour. See <a href="../MIGRATION_v1/">MIGRATION_v1</a>.</p>
+<p>[!warning] point-family <code>in_box</code> is half-open (S2)
+The point-family <code>.in_box(lo, hi)</code> is <strong>half-open on the upper side</strong>
+by default (<code>xmin &lt;= xyz &lt; xmax</code> per axis), matching the <code>results</code>
+side. A coordinate exactly on an upper bound is <strong>excluded</strong> so
+adjacent boxes do not double-count a shared face. Pass
+<code>.in_box(lo, hi, inclusive=True)</code> for the closed <code>[lo, hi]</code> box (the
+retained <code>filter_set(..., inclusive=True)</code> does the same). See
+<a href="../MIGRATION_v1/">MIGRATION_v1</a>.</p>
 </blockquote>
 <h3 id="22-explicit-lists-and-predicates">2.2 Explicit lists and predicates<a class="headerlink" href="#22-explicit-lists-and-predicates" title="Permanent link">&para;</a></h3>
-<p>If you already know the IDs — for example, from a solver query or from a post-processing pipeline — you can register them directly:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="mi">12</span><span class="p">,</span> <span class="mi">18</span><span class="p">,</span> <span class="mi">22</span><span class="p">,</span> <span class="mi">41</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;instr_nodes&quot;</span><span class="p">)</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="n">elem_id_list</span><span class="p">,</span>      <span class="n">name</span><span class="o">=</span><span class="s2">&quot;damage_zone&quot;</span><span class="p">)</span>
+<p>If you already know the IDs — for example, from a solver query or from a post-processing pipeline — you can register them directly with the retained <code>add</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="mi">12</span><span class="p">,</span> <span class="mi">18</span><span class="p">,</span> <span class="mi">22</span><span class="p">,</span> <span class="mi">41</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;instr_nodes&quot;</span><span class="p">)</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="n">elem_id_list</span><span class="p">,</span>      <span class="n">name</span><span class="o">=</span><span class="s2">&quot;damage_zone&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>For anything the built-in filters do not cover, pass a <code>predicate</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">above_z</span><span class="p">(</span><span class="n">coords</span><span class="p">):</span>              <span class="c1"># coords is (N, 3)</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="k">return</span> <span class="n">coords</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">5.0</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_nodes</span><span class="p">(</span><span class="n">predicate</span><span class="o">=</span><span class="n">above_z</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;upper_half&quot;</span><span class="p">)</span>
+<p>For anything the spatial verbs do not cover, use <code>.where(predicate)</code>
+on the chain:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">above_z</span><span class="p">(</span><span class="n">coords</span><span class="p">):</span>              <span class="c1"># coords is (N, 3)</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="k">return</span> <span class="n">coords</span><span class="p">[:,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">5.0</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">select</span><span class="p">()</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">above_z</span><span class="p">)</span><span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="s2">&quot;upper_half&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="23-refining-and-combining-sets">2.3 Refining and combining sets<a class="headerlink" href="#23-refining-and-combining-sets" title="Permanent link">&para;</a></h3>
 <p>Once a set exists you can refine it into a new set, sort its entries in place, or combine sets with set algebra:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Refine base -&gt; keep only the rightmost corner</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">rhs_base</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">filter_set</span><span class="p">(</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">base</span><span class="p">,</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">in_box</span><span class="o">=</span><span class="p">(</span><span class="mf">4.9</span><span class="p">,</span> <span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">5.1</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">),</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;rhs_base&quot;</span><span class="p">,</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="p">)</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="c1"># Sort entries along x for deterministic iteration</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">sort_set</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">base</span><span class="p">,</span> <span class="n">by</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">)</span>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="c1"># Set algebra (unions, intersections, differences)</span>
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="n">corner</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">intersection</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">base</span><span class="p">,</span> <span class="n">rhs_base</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;rhs_base_corner&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># Refine base -&gt; keep only the rightmost corner</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">rhs_base</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">filter_set</span><span class="p">(</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">base</span><span class="p">,</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">in_box</span><span class="o">=</span><span class="p">(</span><span class="mf">4.9</span><span class="p">,</span> <span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">5.1</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">),</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;rhs_base&quot;</span><span class="p">,</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="p">)</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="c1"># Sort entries along x for deterministic iteration</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">sort_set</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">base</span><span class="p">,</span> <span class="n">by</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">)</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="c1"># Set algebra (unions, intersections, differences)</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="n">corner</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">intersection</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">base</span><span class="p">,</span> <span class="n">rhs_base</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;rhs_base_corner&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <h3 id="24-introspection">2.4 Introspection<a class="headerlink" href="#24-introspection" title="Permanent link">&para;</a></h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>                     <span class="c1"># DataFrame of every set</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_all</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>                <span class="c1"># [(0, 1), (0, 2), ...]</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;base&quot;</span><span class="p">)</span>            <span class="c1"># 1</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>               <span class="c1"># {&#39;tags&#39;: ..., &#39;coords&#39;: ...}</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_elements</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>            <span class="c1"># {&#39;element_ids&#39;: ..., &#39;connectivity&#39;: ...}</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>            <span class="c1"># per-entry DataFrame</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>                     <span class="c1"># DataFrame of every set</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_all</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>                <span class="c1"># [(0, 1), (0, 2), ...]</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;base&quot;</span><span class="p">)</span>            <span class="c1"># 1</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>               <span class="c1"># {&#39;tags&#39;: ..., &#39;coords&#39;: ...}</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_elements</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>            <span class="c1"># {&#39;element_ids&#39;: ..., &#39;connectivity&#39;: ...}</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">to_dataframe</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>            <span class="c1"># per-entry DataFrame</span>
 </span></code></pre></div>
 <p>The <code>get_nodes</code> / <code>get_elements</code> return shapes are <strong>identical</strong> to the ones returned by <code>g.physical</code>; that is the whole point — downstream code never has to care which source a group came from.</p>
 <h2 id="3-bridging-the-two-systems">3. Bridging the two systems<a class="headerlink" href="#3-bridging-the-two-systems" title="Permanent link">&para;</a></h2>
 <p>Geometric and mesh selections are complementary, not alternatives. Real workflows use both, and apeGmsh gives you three explicit bridges.</p>
 <h3 id="31-selectionto_physical-geometric-physical-group">3.1 <code>Selection.to_physical(...)</code> — geometric → physical group<a class="headerlink" href="#31-selectionto_physical-geometric-physical-group" title="Permanent link">&para;</a></h3>
 <p>The simplest bridge. It writes an OCC selection into Gmsh's physical-group table so the mesher sees it and the msh/vtu output carries it. This is the standard way to make a geometric selection persist across meshing:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_points</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">))</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;base&quot;</span><span class="p">)</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="c1"># Now fem.nodes.physical will contain &#39;base&#39;</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;base&quot;</span><span class="p">)</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1"># Now fem.nodes.physical will contain &#39;base&#39;</span>
 </span></code></pre></div>
 <h3 id="32-meshselectionsetfrom_physical-physical-group-mesh-selection">3.2 <code>MeshSelectionSet.from_physical(...)</code> — physical group → mesh selection<a class="headerlink" href="#32-meshselectionsetfrom_physical-physical-group-mesh-selection" title="Permanent link">&para;</a></h3>
 <p>The reverse direction — take an existing physical group and materialise it as a mesh selection of node IDs:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_physical</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">name_or_tag</span><span class="o">=</span><span class="s2">&quot;base&quot;</span><span class="p">,</span> <span class="n">ms_name</span><span class="o">=</span><span class="s2">&quot;base_nodes&quot;</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_physical</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">name_or_tag</span><span class="o">=</span><span class="s2">&quot;base&quot;</span><span class="p">,</span> <span class="n">ms_name</span><span class="o">=</span><span class="s2">&quot;base_nodes&quot;</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Why would you want this? Because a physical group lives in Gmsh's world — it is still geometry-flavoured. Converting it to a mesh selection gives you the cached node array and makes it addressable uniformly next to your other mesh selections.</p>
-<h3 id="33-meshselectionsetfrom_geometric-the-one-step-bridge">3.3 <code>MeshSelectionSet.from_geometric(...)</code> — the one-step bridge<a class="headerlink" href="#33-meshselectionsetfrom_geometric-the-one-step-bridge" title="Permanent link">&para;</a></h3>
-<p>This is the workhorse bridge. It takes a geometric <code>Selection</code> (pre-mesh) and builds a mesh selection out of it <strong>after the mesh has been generated</strong>, without requiring you to create a physical group first:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Pre-mesh: build the geometric query</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">top_faces</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_surfaces</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mf">10.0</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">))</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="c1"># Mesh</span>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
-</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># Post-mesh: extract the corresponding node set</span>
-</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_geometric</span><span class="p">(</span>
-</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>    <span class="n">top_faces</span><span class="p">,</span>
-</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>    <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;nodes&quot;</span><span class="p">,</span>              <span class="c1"># or &quot;elements&quot;</span>
-</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;roof_nodes&quot;</span><span class="p">,</span>
-</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="p">)</span>
+<h3 id="33-the-one-step-from_geometric-bridge-removed-capability-gap">3.3 The one-step <code>from_geometric</code> bridge — REMOVED (capability gap)<a class="headerlink" href="#33-the-one-step-from_geometric-bridge-removed-capability-gap" title="Permanent link">&para;</a></h3>
+<blockquote>
+<p>[!warning] No v2 successor
+<code>MeshSelectionSet.from_geometric(...)</code> (and its
+<code>Selection.to_mesh_nodes()</code> / <code>to_mesh_elements()</code> backing) — the
+one-step "geometric entity selection → named mesh selection without
+a physical group" bridge — was <strong>removed</strong> by selection-unification
+v2 along with <code>viz.Selection.to_mesh_*</code>. There is <strong>no direct v2
+replacement</strong> (a documented capability gap).</p>
+</blockquote>
+<p>The remaining bridge is <strong><code>to_physical</code> + <code>from_physical</code></strong> (§3.1 →
+§3.2): promote the geometric selection to a physical group pre-mesh,
+then materialise that physical group as a mesh selection post-mesh:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Pre-mesh: geometric selection -&gt; physical group</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mf">10.0</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="s2">&quot;roof_faces&quot;</span><span class="p">)</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="c1"># Mesh</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="c1"># Post-mesh: physical group -&gt; mesh selection</span>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_physical</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">name_or_tag</span><span class="o">=</span><span class="s2">&quot;roof_faces&quot;</span><span class="p">,</span>
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>                               <span class="n">ms_name</span><span class="o">=</span><span class="s2">&quot;roof_nodes&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Under the hood this calls <code>top_faces.to_mesh_nodes()</code> (or <code>.to_mesh_elements()</code>), which uses <code>gmsh.model.mesh.getNodes(dim, tag, includeBoundary=True)</code> on each entity in the selection and deduplicates.</p>
-<p>Two rules of thumb:</p>
-<ul>
-<li>Use <strong><code>to_physical</code> + <code>from_physical</code></strong> when you want the group to appear in the msh/vtu output or be visible to another tool.</li>
-<li>Use <strong><code>from_geometric</code></strong> when the group is purely an internal handle and you just want the mesh IDs on the apeGmsh side.</li>
-</ul>
+<p>This costs one extra physical group versus the removed one-step path,
+but it is the only supported route and also makes the group visible to
+the msh/vtu output and other tools.</p>
 <h2 id="4-selection-on-the-fem-broker">4. Selection on the FEM broker<a class="headerlink" href="#4-selection-on-the-fem-broker" title="Permanent link">&para;</a></h2>
 <p>When you call <code>g.mesh.queries.get_fem_data(dim=...)</code>, apeGmsh captures a frozen snapshot of the current state: nodes, elements, physical groups, mesh selections, constraints, loads, and masses. The broker then becomes the single object you hand to a solver adapter.</p>
 <p>Selections show up on the broker under two mirror accessors with the same API:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">physical</span>   <span class="c1"># PhysicalGroupSet  — snapshot of Gmsh physical groups</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span>   <span class="c1"># MeshSelectionStore — snapshot of g.mesh_selection</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">physical</span>   <span class="c1"># PhysicalGroupSet  — snapshot of Gmsh physical groups</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span>   <span class="c1"># MeshSelectionStore — snapshot of g.mesh_selection</span>
 </span></code></pre></div>
 <p>Both are immutable and both expose the same query methods. The broker-side classes live in <code>apeGmsh.mesh.FEMData.PhysicalGroupSet</code> and <code>apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore</code>, and they share this contract (note: physical groups are accessed via <code>fem.nodes.physical</code>):</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">store</span><span class="o">.</span><span class="n">get_all</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                 <span class="c1"># list of (dim, tag)</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">store</span><span class="o">.</span><span class="n">get_name</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>              <span class="c1"># &quot;base&quot;</span>
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="n">store</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="s2">&quot;base&quot;</span><span class="p">)</span>            <span class="c1"># 1</span>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">store</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>                       <span class="c1"># DataFrame</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="n">store</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>             <span class="c1"># {&#39;tags&#39;: ndarray, &#39;coords&#39;: ndarray(N,3)}</span>
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="n">store</span><span class="o">.</span><span class="n">get_elements</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>          <span class="c1"># {&#39;element_ids&#39;: ndarray, &#39;connectivity&#39;: ndarray(E,npe)}</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">store</span><span class="o">.</span><span class="n">get_all</span><span class="p">(</span><span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>                 <span class="c1"># list of (dim, tag)</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">store</span><span class="o">.</span><span class="n">get_name</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>              <span class="c1"># &quot;base&quot;</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="n">store</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="s2">&quot;base&quot;</span><span class="p">)</span>            <span class="c1"># 1</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">store</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>                       <span class="c1"># DataFrame</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">store</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>             <span class="c1"># {&#39;tags&#39;: ndarray, &#39;coords&#39;: ndarray(N,3)}</span>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="n">store</span><span class="o">.</span><span class="n">get_elements</span><span class="p">(</span><span class="n">dim</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>          <span class="c1"># {&#39;element_ids&#39;: ndarray, &#39;connectivity&#39;: ndarray(E,npe)}</span>
 </span></code></pre></div>
 <p>This is the <code>FEMData</code> source-agnostic contract in action: a constraint handler or load applicator can receive either a <code>fem.nodes.physical</code> key or a <code>fem.mesh_selection</code> key and use exactly the same code to resolve it to node or element IDs.</p>
 <h3 id="41-a-complete-round-trip">4.1 A complete round-trip<a class="headerlink" href="#41-a-complete-round-trip" title="Permanent link">&para;</a></h3>
 <p>Here is what the two sides look like in one session, so you can see where everything lands on the broker:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;selection_demo&quot;</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
-</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="c1"># --- Geometry (pre-mesh) -------------------------------------------</span>
-</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;blk&quot;</span><span class="p">)</span>
-</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span>
-</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>
-</span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="c1"># Geometric selection → physical group (survives meshing)</span>
-</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_surfaces</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">))</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;base&quot;</span><span class="p">)</span>
-</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_surfaces</span><span class="p">(</span><span class="n">on_plane</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mf">1e-3</span><span class="p">))</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;top&quot;</span><span class="p">)</span>
-</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>
-</span><span id="__span-18-13"><a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="c1"># Geometric selection → mesh selection bridge (prepared, not yet run)</span>
-</span><span id="__span-18-14"><a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="n">monitor_curves</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">selection</span><span class="o">.</span><span class="n">select_curves</span><span class="p">(</span>
-</span><span id="__span-18-15"><a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a>    <span class="n">vertical</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-18-16"><a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>    <span class="n">in_box</span><span class="o">=</span><span class="p">(</span><span class="o">-</span><span class="mf">0.1</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.1</span><span class="p">,</span> <span class="o">-</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">10.1</span><span class="p">),</span>
-</span><span id="__span-18-17"><a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a><span class="p">)</span>
-</span><span id="__span-18-18"><a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a>
-</span><span id="__span-18-19"><a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a><span class="c1"># --- Meshing -------------------------------------------------------</span>
-</span><span id="__span-18-20"><a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-18-21"><a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a>
-</span><span id="__span-18-22"><a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a><span class="c1"># --- Mesh selection (post-mesh) ------------------------------------</span>
-</span><span id="__span-18-23"><a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a><span class="c1"># Spatial query directly on mesh nodes</span>
-</span><span id="__span-18-24"><a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">add_nodes</span><span class="p">(</span>
-</span><span id="__span-18-25"><a id="__codelineno-18-25" name="__codelineno-18-25" href="#__codelineno-18-25"></a>    <span class="n">in_sphere</span><span class="o">=</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">),</span>
-</span><span id="__span-18-26"><a id="__codelineno-18-26" name="__codelineno-18-26" href="#__codelineno-18-26"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;core_probe&quot;</span><span class="p">,</span>
-</span><span id="__span-18-27"><a id="__codelineno-18-27" name="__codelineno-18-27" href="#__codelineno-18-27"></a><span class="p">)</span>
-</span><span id="__span-18-28"><a id="__codelineno-18-28" name="__codelineno-18-28" href="#__codelineno-18-28"></a>
-</span><span id="__span-18-29"><a id="__codelineno-18-29" name="__codelineno-18-29" href="#__codelineno-18-29"></a><span class="c1"># Bridge the pre-mesh geometric selection into the mesh world</span>
-</span><span id="__span-18-30"><a id="__codelineno-18-30" name="__codelineno-18-30" href="#__codelineno-18-30"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_geometric</span><span class="p">(</span><span class="n">monitor_curves</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;nodes&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;monitor&quot;</span><span class="p">)</span>
-</span><span id="__span-18-31"><a id="__codelineno-18-31" name="__codelineno-18-31" href="#__codelineno-18-31"></a>
-</span><span id="__span-18-32"><a id="__codelineno-18-32" name="__codelineno-18-32" href="#__codelineno-18-32"></a><span class="c1"># Pull a physical group in as a mesh selection too, if you need a</span>
-</span><span id="__span-18-33"><a id="__codelineno-18-33" name="__codelineno-18-33" href="#__codelineno-18-33"></a><span class="c1"># uniform handle for downstream code</span>
-</span><span id="__span-18-34"><a id="__codelineno-18-34" name="__codelineno-18-34" href="#__codelineno-18-34"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_physical</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">name_or_tag</span><span class="o">=</span><span class="s2">&quot;top&quot;</span><span class="p">,</span> <span class="n">ms_name</span><span class="o">=</span><span class="s2">&quot;top_nodes&quot;</span><span class="p">)</span>
-</span><span id="__span-18-35"><a id="__codelineno-18-35" name="__codelineno-18-35" href="#__codelineno-18-35"></a>
-</span><span id="__span-18-36"><a id="__codelineno-18-36" name="__codelineno-18-36" href="#__codelineno-18-36"></a><span class="c1"># --- FEM broker ----------------------------------------------------</span>
-</span><span id="__span-18-37"><a id="__codelineno-18-37" name="__codelineno-18-37" href="#__codelineno-18-37"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-18-38"><a id="__codelineno-18-38" name="__codelineno-18-38" href="#__codelineno-18-38"></a>
-</span><span id="__span-18-39"><a id="__codelineno-18-39" name="__codelineno-18-39" href="#__codelineno-18-39"></a><span class="c1"># Physical groups from Gmsh</span>
-</span><span id="__span-18-40"><a id="__codelineno-18-40" name="__codelineno-18-40" href="#__codelineno-18-40"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>
-</span><span id="__span-18-41"><a id="__codelineno-18-41" name="__codelineno-18-41" href="#__codelineno-18-41"></a><span class="n">base_nodes</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;base&quot;</span><span class="p">))</span>
-</span><span id="__span-18-42"><a id="__codelineno-18-42" name="__codelineno-18-42" href="#__codelineno-18-42"></a>
-</span><span id="__span-18-43"><a id="__codelineno-18-43" name="__codelineno-18-43" href="#__codelineno-18-43"></a><span class="c1"># Mesh selections from apeGmsh</span>
-</span><span id="__span-18-44"><a id="__codelineno-18-44" name="__codelineno-18-44" href="#__codelineno-18-44"></a><span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>
-</span><span id="__span-18-45"><a id="__codelineno-18-45" name="__codelineno-18-45" href="#__codelineno-18-45"></a><span class="n">monitor</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;monitor&quot;</span><span class="p">))</span>
-</span><span id="__span-18-46"><a id="__codelineno-18-46" name="__codelineno-18-46" href="#__codelineno-18-46"></a><span class="n">core</span>    <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;core_probe&quot;</span><span class="p">))</span>
-</span><span id="__span-18-47"><a id="__codelineno-18-47" name="__codelineno-18-47" href="#__codelineno-18-47"></a>
-</span><span id="__span-18-48"><a id="__codelineno-18-48" name="__codelineno-18-48" href="#__codelineno-18-48"></a><span class="c1"># Same dict shape from either side</span>
-</span><span id="__span-18-49"><a id="__codelineno-18-49" name="__codelineno-18-49" href="#__codelineno-18-49"></a><span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">monitor</span><span class="p">[</span><span class="s2">&quot;tags&quot;</span><span class="p">],</span> <span class="n">monitor</span><span class="p">[</span><span class="s2">&quot;coords&quot;</span><span class="p">]):</span>
-</span><span id="__span-18-50"><a id="__codelineno-18-50" name="__codelineno-18-50" href="#__codelineno-18-50"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;selection_demo&quot;</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="c1"># --- Geometry (pre-mesh) -------------------------------------------</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">&quot;blk&quot;</span><span class="p">)</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="c1"># Geometric selection → physical group (survives meshing)</span>
+</span><span id="__span-16-10"><a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">),</span>  <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;base&quot;</span><span class="p">)</span>
+</span><span id="__span-16-11"><a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">10</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-3</span><span class="p">)</span><span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;top&quot;</span><span class="p">)</span>
+</span><span id="__span-16-12"><a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a>
+</span><span id="__span-16-13"><a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a><span class="c1"># Geometric selection → physical group, pre-mesh (the from_geometric</span>
+</span><span id="__span-16-14"><a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a><span class="c1"># one-step bridge was removed — promote to a PG and pull it back below)</span>
+</span><span id="__span-16-15"><a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">in_box</span><span class="p">((</span><span class="o">-</span><span class="mf">0.1</span><span class="p">,</span><span class="o">-</span><span class="mf">0.1</span><span class="p">,</span><span class="o">-</span><span class="mf">0.1</span><span class="p">),</span> <span class="p">(</span><span class="mf">0.1</span><span class="p">,</span><span class="mf">0.1</span><span class="p">,</span><span class="mf">10.1</span><span class="p">))</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span><span id="__span-16-16"><a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>    <span class="o">.</span><span class="n">parallel_to</span><span class="p">(</span><span class="s2">&quot;z&quot;</span><span class="p">)</span>                       <span class="c1"># vertical curves (no filter grammar)</span>
+</span><span id="__span-16-17"><a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a>    <span class="o">.</span><span class="n">to_physical</span><span class="p">(</span><span class="s2">&quot;monitor_curves&quot;</span><span class="p">))</span>
+</span><span id="__span-16-18"><a id="__codelineno-16-18" name="__codelineno-16-18" href="#__codelineno-16-18"></a>
+</span><span id="__span-16-19"><a id="__codelineno-16-19" name="__codelineno-16-19" href="#__codelineno-16-19"></a><span class="c1"># --- Meshing -------------------------------------------------------</span>
+</span><span id="__span-16-20"><a id="__codelineno-16-20" name="__codelineno-16-20" href="#__codelineno-16-20"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-16-21"><a id="__codelineno-16-21" name="__codelineno-16-21" href="#__codelineno-16-21"></a>
+</span><span id="__span-16-22"><a id="__codelineno-16-22" name="__codelineno-16-22" href="#__codelineno-16-22"></a><span class="c1"># --- Mesh selection (post-mesh) ------------------------------------</span>
+</span><span id="__span-16-23"><a id="__codelineno-16-23" name="__codelineno-16-23" href="#__codelineno-16-23"></a><span class="c1"># Spatial query directly on mesh nodes</span>
+</span><span id="__span-16-24"><a id="__codelineno-16-24" name="__codelineno-16-24" href="#__codelineno-16-24"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">select</span><span class="p">()</span><span class="o">.</span><span class="n">in_sphere</span><span class="p">((</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">),</span> <span class="mf">1.0</span><span class="p">)</span><span class="o">.</span><span class="n">save_as</span><span class="p">(</span><span class="s2">&quot;core_probe&quot;</span><span class="p">)</span>
+</span><span id="__span-16-25"><a id="__codelineno-16-25" name="__codelineno-16-25" href="#__codelineno-16-25"></a>
+</span><span id="__span-16-26"><a id="__codelineno-16-26" name="__codelineno-16-26" href="#__codelineno-16-26"></a><span class="c1"># Bridge the pre-mesh geometric selection in via its physical group</span>
+</span><span id="__span-16-27"><a id="__codelineno-16-27" name="__codelineno-16-27" href="#__codelineno-16-27"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_physical</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">name_or_tag</span><span class="o">=</span><span class="s2">&quot;monitor_curves&quot;</span><span class="p">,</span>
+</span><span id="__span-16-28"><a id="__codelineno-16-28" name="__codelineno-16-28" href="#__codelineno-16-28"></a>                               <span class="n">ms_name</span><span class="o">=</span><span class="s2">&quot;monitor&quot;</span><span class="p">)</span>
+</span><span id="__span-16-29"><a id="__codelineno-16-29" name="__codelineno-16-29" href="#__codelineno-16-29"></a>
+</span><span id="__span-16-30"><a id="__codelineno-16-30" name="__codelineno-16-30" href="#__codelineno-16-30"></a><span class="c1"># Pull another physical group in as a mesh selection too, for a</span>
+</span><span id="__span-16-31"><a id="__codelineno-16-31" name="__codelineno-16-31" href="#__codelineno-16-31"></a><span class="c1"># uniform downstream handle</span>
+</span><span id="__span-16-32"><a id="__codelineno-16-32" name="__codelineno-16-32" href="#__codelineno-16-32"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">from_physical</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">name_or_tag</span><span class="o">=</span><span class="s2">&quot;top&quot;</span><span class="p">,</span> <span class="n">ms_name</span><span class="o">=</span><span class="s2">&quot;top_nodes&quot;</span><span class="p">)</span>
+</span><span id="__span-16-33"><a id="__codelineno-16-33" name="__codelineno-16-33" href="#__codelineno-16-33"></a>
+</span><span id="__span-16-34"><a id="__codelineno-16-34" name="__codelineno-16-34" href="#__codelineno-16-34"></a><span class="c1"># --- FEM broker ----------------------------------------------------</span>
+</span><span id="__span-16-35"><a id="__codelineno-16-35" name="__codelineno-16-35" href="#__codelineno-16-35"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-16-36"><a id="__codelineno-16-36" name="__codelineno-16-36" href="#__codelineno-16-36"></a>
+</span><span id="__span-16-37"><a id="__codelineno-16-37" name="__codelineno-16-37" href="#__codelineno-16-37"></a><span class="c1"># Physical groups from Gmsh</span>
+</span><span id="__span-16-38"><a id="__codelineno-16-38" name="__codelineno-16-38" href="#__codelineno-16-38"></a><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>
+</span><span id="__span-16-39"><a id="__codelineno-16-39" name="__codelineno-16-39" href="#__codelineno-16-39"></a><span class="n">base_nodes</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">tag</span><span class="o">=</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="s2">&quot;base&quot;</span><span class="p">))</span>
+</span><span id="__span-16-40"><a id="__codelineno-16-40" name="__codelineno-16-40" href="#__codelineno-16-40"></a>
+</span><span id="__span-16-41"><a id="__codelineno-16-41" name="__codelineno-16-41" href="#__codelineno-16-41"></a><span class="c1"># Mesh selections from apeGmsh</span>
+</span><span id="__span-16-42"><a id="__codelineno-16-42" name="__codelineno-16-42" href="#__codelineno-16-42"></a><span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span>
+</span><span id="__span-16-43"><a id="__codelineno-16-43" name="__codelineno-16-43" href="#__codelineno-16-43"></a><span class="n">monitor</span> <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;monitor&quot;</span><span class="p">))</span>
+</span><span id="__span-16-44"><a id="__codelineno-16-44" name="__codelineno-16-44" href="#__codelineno-16-44"></a><span class="n">core</span>    <span class="o">=</span> <span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_nodes</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">fem</span><span class="o">.</span><span class="n">mesh_selection</span><span class="o">.</span><span class="n">get_tag</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;core_probe&quot;</span><span class="p">))</span>
+</span><span id="__span-16-45"><a id="__codelineno-16-45" name="__codelineno-16-45" href="#__codelineno-16-45"></a>
+</span><span id="__span-16-46"><a id="__codelineno-16-46" name="__codelineno-16-46" href="#__codelineno-16-46"></a><span class="c1"># Same dict shape from either side</span>
+</span><span id="__span-16-47"><a id="__codelineno-16-47" name="__codelineno-16-47" href="#__codelineno-16-47"></a><span class="k">for</span> <span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">monitor</span><span class="p">[</span><span class="s2">&quot;tags&quot;</span><span class="p">],</span> <span class="n">monitor</span><span class="p">[</span><span class="s2">&quot;coords&quot;</span><span class="p">]):</span>
+</span><span id="__span-16-48"><a id="__codelineno-16-48" name="__codelineno-16-48" href="#__codelineno-16-48"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">nid</span><span class="p">,</span> <span class="n">xyz</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Notice that once you are on the broker, the code never branches on where a group came from. It reaches into <code>fem.nodes.physical</code> or <code>fem.mesh_selection</code> with the same call signature and gets back the same <code>{'tags': ..., 'coords': ...}</code> dict. That uniformity is what lets solver adapters stay short.</p>
 <h2 id="5-mental-model-and-rules-of-thumb">5. Mental model and rules of thumb<a class="headerlink" href="#5-mental-model-and-rules-of-thumb" title="Permanent link">&para;</a></h2>
 <p>It is worth stepping back from the API and keeping a few principles in mind.</p>
-<p><strong>Choose the side that matches the question you are asking.</strong> If the thing you want to refer to is a geometric feature of the CAD — a named face, a column line, an import label — start on the OCC side with <code>g.model.selection</code>. The queries survive remeshing, they are cheap to re-run, and promoting to a physical group gets them into the output file. If the thing you want to refer to only makes sense after discretisation — "the five nodes closest to the sensor", "all elements whose centroid lies inside this damage box" — start on the mesh side with <code>g.mesh_selection</code>.</p>
+<p><strong>Choose the side that matches the question you are asking.</strong> If the thing you want to refer to is a geometric feature of the CAD — a named face, a column line, an import label — start on the OCC side with <code>g.model.select(...)</code>. The queries survive remeshing, they are cheap to re-run, and promoting to a physical group gets them into the output file. If the thing you want to refer to only makes sense after discretisation — "the five nodes closest to the sensor", "all elements whose centroid lies inside this damage box" — start on the mesh side with <code>g.mesh_selection</code>.</p>
 <p><strong>Let physical groups carry the named geometry across the mesher.</strong> That is what they were designed for, and that is what the msh/vtu writers and every third-party post-processor expect. If your workflow exports the mesh to another tool, the groups must be physical groups.</p>
 <p><strong>Use mesh selections as the apeGmsh-internal handle.</strong> They are where spatial, topology-blind, or post-processing-derived queries live. They are also the only system that cleanly expresses set algebra over node and element IDs.</p>
 <p><strong>Do not create both sides for the same concept unless you need to.</strong> Either promote a geometric selection to a physical group (and let <code>fem.nodes.physical</code> carry it), or bridge it into a mesh selection (and let <code>fem.mesh_selection</code> carry it). Both directions are supported, but maintaining two mirror handles for the same concept is just extra book-keeping.</p>

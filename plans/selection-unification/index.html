@@ -4002,7 +4002,23 @@
 
 
 <h1 id="selection-resolution-unification-hardened-plan">Selection / Resolution Unification — Hardened Plan<a class="headerlink" href="#selection-resolution-unification-hardened-plan" title="Permanent link">&para;</a></h1>
-<p>Status: <strong>S3 DONE (S3a–S3e + S3f landed); S5 pending</strong></p>
+<blockquote>
+<p>[!warning] SUPERSEDED — see
+<a href="../selection-unification-v2/"><code>selection-unification-v2.md</code></a>
+This v1 plan is retained only as the historical S0–S3 record. Its
+<em>technical hard truths</em> (FP-1/FP-2/FP-4) remain true and were
+re-stated as HT1–HT10 in v2; but its <strong>conclusions</strong> —
+"facade preserved / keep both <code>Selection</code> classes / <code>.select()</code> is
+additive, nothing removed / non-negotiable backward-compat" — were
+<strong>explicitly REVERSED</strong> by the project owner. v1's S5 was reframed
+and delivered as v2 P0–P4: full removal of the legacy selection
+surface (no shim), one idiom with two terminals on one spatial
+kernel, two ratified capability gaps. For the current, authoritative
+plan, status, ADR and migration table, read <strong>v2</strong> (and ADR 0016).
+v1 §9 is left intact (live source still cross-references it).</p>
+</blockquote>
+<p>Status: <strong>SUPERSEDED by selection-unification-v2.md</strong> (v1 record:
+S3 DONE (S3a–S3e + S3f landed); S5 reframed → v2 P0–P4, COMPLETE)</p>
 <p>Phase ledger (commit hashes):</p>
 <table>
 <thead>

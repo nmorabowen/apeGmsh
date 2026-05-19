@@ -3809,15 +3809,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#v160-unified-select-fluent-selection-half-open-mesh-box-loadsmasses-fail-loud" class="md-nav__link">
+  <a href="#v160-selection-unification-v2-one-select-idiom-legacy-selection-surface-removed-breaking-half-open-mesh-box-loadsmasses-fail-loud" class="md-nav__link">
     <span class="md-ellipsis">
       
-        v1.6.0 — Unified .select() fluent selection · half-open mesh box · loads/masses fail-loud
+        v1.6.0 — Selection-unification v2: one .select() idiom · legacy selection surface REMOVED (BREAKING) · half-open mesh box · loads/masses fail-loud
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="v1.6.0 — Unified .select() fluent selection · half-open mesh box · loads/masses fail-loud">
+    <nav class="md-nav" aria-label="v1.6.0 — Selection-unification v2: one .select() idiom · legacy selection surface REMOVED (BREAKING) · half-open mesh box · loads/masses fail-loud">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4757,15 +4757,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#v160-unified-select-fluent-selection-half-open-mesh-box-loadsmasses-fail-loud" class="md-nav__link">
+  <a href="#v160-selection-unification-v2-one-select-idiom-legacy-selection-surface-removed-breaking-half-open-mesh-box-loadsmasses-fail-loud" class="md-nav__link">
     <span class="md-ellipsis">
       
-        v1.6.0 — Unified .select() fluent selection · half-open mesh box · loads/masses fail-loud
+        v1.6.0 — Selection-unification v2: one .select() idiom · legacy selection surface REMOVED (BREAKING) · half-open mesh box · loads/masses fail-loud
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="v1.6.0 — Unified .select() fluent selection · half-open mesh box · loads/masses fail-loud">
+    <nav class="md-nav" aria-label="v1.6.0 — Selection-unification v2: one .select() idiom · legacy selection surface REMOVED (BREAKING) · half-open mesh box · loads/masses fail-loud">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -5691,19 +5691,28 @@
 
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
-<h2 id="v160-unified-select-fluent-selection-half-open-mesh-box-loadsmasses-fail-loud">v1.6.0 — Unified <code>.select()</code> fluent selection · half-open mesh box · loads/masses fail-loud<a class="headerlink" href="#v160-unified-select-fluent-selection-half-open-mesh-box-loadsmasses-fail-loud" title="Permanent link">&para;</a></h2>
-<p>Selection / resolution unification. A single <strong>daisy-chainable
-<code>.select()</code> idiom</strong> is added at all four levels — geometry, the live
-mesh, the FEM broker, and results — so spatial selection composes the
-same way everywhere instead of four hand-mirrored APIs. The change is
-<strong>additive</strong>: every existing selection method —
-<code>fem.nodes.get(pg=)</code>, <code>fem.elements.get</code> / <code>.resolve</code>,
-<code>results.*</code> <code>.get</code> / <code>.in_box</code> / <code>.nearest_to</code> / <code>.on_plane</code>,
-<code>g.mesh_selection.add_nodes</code> / <code>add_elements</code> / <code>filter_set</code>,
-<code>g.model.queries.select</code>, <code>g.model.selection.select_*</code>, and the two
-legacy <code>Selection</code> classes — keeps working unchanged. <code>.select()</code> is
-the one canonical <em>new</em> idiom and sits beside the old ones — it is not
-a replacement or a facade over them.</p>
+<h2 id="v160-selection-unification-v2-one-select-idiom-legacy-selection-surface-removed-breaking-half-open-mesh-box-loadsmasses-fail-loud">v1.6.0 — Selection-unification v2: one <code>.select()</code> idiom · legacy selection surface REMOVED (BREAKING) · half-open mesh box · loads/masses fail-loud<a class="headerlink" href="#v160-selection-unification-v2-one-select-idiom-legacy-selection-surface-removed-breaking-half-open-mesh-box-loadsmasses-fail-loud" title="Permanent link">&para;</a></h2>
+<p>Selection / resolution unification (<strong>v2</strong>). A single
+<strong>daisy-chainable <code>.select()</code> idiom</strong> is now the <em>only</em> selection idiom
+at all four levels — geometry, the live mesh, the FEM broker, and
+results. This is a <strong>BREAKING</strong> change: the legacy selection surface
+was <strong>removed with no deprecation shim</strong> (project-owner-ratified full
+removal — v1's backward-compat constraint was explicitly dropped).
+Removed: <code>fem.nodes.get</code> / <code>fem.elements.get</code> / <code>.resolve</code> (the
+selection accessors), the <code>results.*.select(...).values()</code> chain path,
+<code>g.mesh_selection.add_nodes</code> / <code>add_elements</code> / <code>from_geometric</code>,
+<code>g.model.queries.select</code> / <code>queries.line</code> / <code>select_all*</code>,
+<code>g.model.selection</code> (<code>SelectionComposite</code>), the four legacy <code>*Chain</code>
+modules + <code>GeometryChain</code>, and the <code>Selection</code> / <code>SelectionComposite</code>
+package exports. The classes <code>core._selection.Selection</code> and
+<code>viz.Selection</code> are <strong>retained by architecture</strong> as internal
+terminal-payload / viewer-pick-result types — <strong>not</strong> user entry
+points; only their exports were dropped.</p>
+<p><strong>Migrate every legacy call</strong> per the old→v2 table and the two
+<strong>known capability gaps</strong> (geometric-selection → named mesh-selection;
+the <code>SelectionComposite</code> filter grammar — both have <em>no</em> v2 successor)
+in <a href="docs/api/selection.md"><code>docs/api/selection.md</code></a> and
+<a href="src/apeGmsh/opensees/architecture/decisions/0016-selection-unification-v2-complete.md">ADR 0016</a>.</p>
 <p>Two behavior changes ride along. The <code>g.mesh_selection</code> box filter
 moves <strong>closed → half-open</strong> by default to match the results side
 (<strong>breaking</strong> — see below; <code>inclusive=True</code> restores the old closed
@@ -5720,41 +5729,41 @@ returning a chain that composes fluently:</p>
 <thead>
 <tr>
 <th>Entry point</th>
-<th>Chain</th>
-<th>Family</th>
 <th>Terminal</th>
+<th>Family</th>
+<th>Result</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>g.model.select(target, *, dim=)</code></td>
-<td><code>GeometryChain</code></td>
+<td><code>EntitySelection</code></td>
 <td>entity</td>
-<td><code>.result()</code> → legacy <code>Selection</code> (<code>.to_label/.to_physical/.tags</code> unchanged)</td>
+<td><code>.to_label</code>/<code>.to_physical</code>/<code>.to_dataframe</code>/<code>.result()</code> (→ the retained <code>Selection</code> payload)</td>
 </tr>
 <tr>
 <td><code>fem.nodes.select(...)</code></td>
-<td><code>NodeChain</code></td>
+<td><code>MeshSelection</code></td>
 <td>point</td>
-<td><code>.result()</code> → <code>NodeResult</code> (same as <code>fem.nodes.get(...)</code>)</td>
+<td><code>.result()</code> → <code>NodeResult</code>; <code>.ids</code>/<code>.coords</code></td>
 </tr>
 <tr>
 <td><code>fem.elements.select(...)</code></td>
-<td><code>ElementChain</code></td>
+<td><code>MeshSelection</code></td>
 <td>point</td>
-<td><code>.result()</code> → <code>GroupResult</code> (same as <code>fem.elements.get(...)</code>)</td>
+<td><code>.groups()</code>/<code>.result()</code>/<code>.resolve()</code> → <code>GroupResult</code></td>
 </tr>
 <tr>
 <td><code>results.nodes.select(...)</code> / <code>results.elements.select(...)</code></td>
-<td><code>ResultChain</code></td>
+<td><code>MeshSelection</code></td>
 <td>point</td>
-<td><code>.get(component=, time=, stage=)</code> → slab (same as <code>results.&lt;level&gt;.get(...)</code>)</td>
+<td><code>.values(component=, time=, stage=)</code> → slab (forwards onto the retained <code>results.&lt;level&gt;.get(...)</code> reader)</td>
 </tr>
 <tr>
 <td><code>g.mesh_selection.select(*, level=, dim=, ids=, name=)</code></td>
-<td><code>MeshSelectionChain</code></td>
+<td><code>MeshSelection</code></td>
 <td>point</td>
-<td><code>.result()</code> → same dict as <code>get_nodes/get_elements</code>; <code>.ids</code></td>
+<td><code>.result()</code> → same dict as <code>get_nodes/get_elements</code>; <code>.ids</code>; <code>.save_as(name)</code> (live-mesh only)</td>
 </tr>
 </tbody>
 </table>
@@ -5798,22 +5807,29 @@ returning a chain that composes fluently:</p>
     box, expanded by <code>Geometry.Tolerance</code> ≈ 1e-8). There is no
     half-open notion, so passing <code>inclusive=</code> (or any keyword)
     <strong>raises <code>TypeError</code></strong> rather than being silently ignored. For
-    an exact geometric on/crossing predicate use the unchanged
-    <code>g.model.queries.select(on=/crossing=)</code>.</li>
+    an exact geometric on/crossing predicate use
+    <code>g.model.select(target).crossing_plane(spec, mode="on"|"crossing")</code>
+    (the v2 successor; <code>g.model.queries.select</code> was removed).</li>
 </ul>
 <p>The two families share verb <em>names</em> and set algebra but never
   share <code>.in_box</code> behavior; do not assume a cross-family result is
   identical.
-- The legacy <code>Selection</code> classes (<code>core/_selection.Selection</code>,
-  <code>viz/Selection.Selection</code>) are <strong>byte-unchanged terminals</strong> —
-  <code>GeometryChain.result()</code> returns the same <code>core</code> <code>Selection</code> the
-  legacy <code>queries.select(...)</code> produces, so existing <code>.to_label()</code> /
-  <code>.to_physical()</code> chains keep working.
-- <strong>Persistence is query-only by design.</strong> Chains are ephemeral
-  query objects — there is no <code>.save_as</code>. Named, round-tripping
-  persistence stays the pre-mesh path
-  <code>g.mesh_selection.add_nodes(..., name=...)</code> → FEMData snapshot →
-  <code>results(selection=...)</code> (unchanged).</p>
+- The classes <code>core/_selection.Selection</code> and <code>viz/Selection.Selection</code>
+  are <strong>retained by architecture</strong> (the <code>EntitySelection.result()</code>
+  terminal payload and the viewer pick-result type, respectively) —
+  structurally distinct internal types, <strong>not</strong> user entry points;
+  only their package exports were dropped.
+  <code>g.model.select(...).result()</code> returns the retained <code>core</code>
+  <code>Selection</code> payload (<code>.to_label</code> / <code>.to_physical</code> / <code>.to_dataframe</code>
+  are also direct terminals).
+- <strong>Named persistence is <code>.save_as(name)</code></strong> on a <code>MeshSelection</code>
+  (<strong>live-mesh engine only</strong>), or the retained explicit-ids registrar
+  <code>g.mesh_selection.add(dim, ids, name=)</code> → FEMData snapshot →
+  <code>results(selection=...)</code>. The removed
+  <code>g.mesh_selection.add_nodes(..., name=...)</code> /
+  <code>from_geometric</code> two-step has <strong>no</strong> v2 successor for the
+  geometric-selection → named-set round-trip (a documented capability
+  gap — see <code>docs/api/selection.md</code>).</p>
 <h3 id="breaking-gmesh_selection-box-is-now-half-open-by-default">BREAKING — <code>g.mesh_selection</code> box is now half-open by default<a class="headerlink" href="#breaking-gmesh_selection-box-is-now-half-open-by-default" title="Permanent link">&para;</a></h3>
 <p><code>g.mesh_selection.add_nodes(in_box=)</code>, <code>add_elements(in_box=)</code>, and
 <code>filter_set(in_box=)</code> (the <code>_mesh_filters.nodes_in_box</code> engine)

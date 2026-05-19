@@ -4202,16 +4202,17 @@ intersects.</p>
 <blockquote>
 <p>[!note] Fluent alternative: <code>g.model.select(...).in_box(...)</code>
 For daisy-chainable entity selection, <code>g.model.select()</code> returns the
-unified <code>GeometryChain</code> (entity family) whose <code>.in_box / .in_sphere /
-.on_plane / .nearest_to / .where</code> verbs compose and support set
-algebra (<code>| &amp; - ^</code>). Its <code>.in_box</code> delegates to
+unified <code>EntitySelection</code> (entity family) whose <code>.in_box / .in_sphere
+/ .on_plane / .crossing_plane / .nearest_to / .where</code> verbs compose
+and support set algebra (<code>| &amp; - ^</code>). Its <code>.in_box</code> delegates to
 <code>getEntitiesInBoundingBox</code> (BRep bbox-<strong>containment</strong>, closed; the
 point-family half-open / <code>inclusive=</code> knob does <strong>not</strong> exist here
-and passing it raises <code>TypeError</code>). This is <strong>additive</strong> — every
-query method on this page, and the legacy
-<code>g.model.queries.select(on=/crossing=)</code> predicate selector, are
-unchanged and still the right tool for exact geometric predicates.
-See <a href="../guide_selection/">Selection in apeGmsh</a> §0 and the maintainer
+and passing it raises <code>TypeError</code>). For an exact geometric predicate
+use <code>.on_plane(...)</code> / <code>.crossing_plane(spec, mode=...)</code>; the former
+<code>g.model.queries.select(on=/crossing=)</code> predicate selector has been
+<strong>removed</strong> (its behaviour is folded into those verbs). Every other
+query method on this page is unchanged. See
+<a href="../guide_selection/">Selection in apeGmsh</a> §0 and the maintainer
 page <a href="../guide_selection_chain/">The Selection Chain</a>.</p>
 </blockquote>
 <h2 id="9-model-registry">9. Model registry<a class="headerlink" href="#9-model-registry" title="Permanent link">&para;</a></h2>

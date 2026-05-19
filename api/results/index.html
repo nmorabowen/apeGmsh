@@ -5623,20 +5623,18 @@
 <h2 id="fluent-selection-nodesselect-elementsselect">Fluent selection — <code>.nodes.select()</code> / <code>.elements.select()</code><a class="headerlink" href="#fluent-selection-nodesselect-elementsselect" title="Permanent link">&para;</a></h2>
 <p><code>results.nodes.select(...)</code> and <code>results.elements.select(...)</code> are the
 results entries of the unified, daisy-chainable
-<a href="../selection/">selection idiom</a>. They are <strong>additive</strong> — the existing
-<code>.get</code> / <code>.in_box</code> / <code>.nearest_to</code> / <code>.on_plane</code> helpers are unchanged.
-<code>.select()</code> returns a
-<a class="autorefs autorefs-internal" title="apeGmsh.results._result_chain.ResultChain" href="../selection/#apeGmsh.results._result_chain.ResultChain"><code>ResultChain</code></a> (point
-family); the terminal is <code>.get(component=...)</code>, returning the <strong>same
-slab</strong> (<code>NodeSlab</code> / <code>ElementSlab</code>) with id/value parity to
-<code>results.&lt;level&gt;.get(...)</code>.</p>
+<a href="../selection/">selection idiom</a>. <code>.select()</code> returns a
+<a class="autorefs autorefs-internal" title="apeGmsh.mesh._mesh_selection.MeshSelection" href="../selection/#apeGmsh.mesh._mesh_selection.MeshSelection"><code>MeshSelection</code></a> (point
+family); the terminal is <code>.values(component=...)</code>, which forwards to
+the <strong>retained</strong> <code>results.&lt;level&gt;.get(...)</code> reader and returns the
+same slab (<code>NodeSlab</code> / <code>ElementSlab</code>) with id/value parity.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">slab</span> <span class="o">=</span> <span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="o">.</span><span class="n">in_box</span><span class="p">(</span><span class="n">lo</span><span class="p">,</span> <span class="n">hi</span><span class="p">)</span>                                <span class="c1"># half-open [lo, hi)</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="o">.</span><span class="n">on_plane</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">tol</span><span class="o">=</span><span class="mf">1e-6</span><span class="p">)</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">))</span>              <span class="c1"># -&gt; NodeSlab</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">.</span><span class="n">values</span><span class="p">(</span><span class="n">component</span><span class="o">=</span><span class="s2">&quot;displacement_x&quot;</span><span class="p">))</span>           <span class="c1"># -&gt; NodeSlab</span>
 </span></code></pre></div>
 <p>A bare results selection needs a component — <code>.result()</code> raises
-<code>RuntimeError</code>; use <code>.get(component=...)</code>. Element spatial verbs
+<code>RuntimeError</code>; use <code>.values(component=...)</code>. Element spatial verbs
 operate on element centroids.</p>
 <div class="admonition warning">
 <p class="admonition-title">S5 — formerly-silent results paths now raise</p>

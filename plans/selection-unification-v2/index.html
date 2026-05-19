@@ -3813,6 +3813,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="2. The keystone (the whole game)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-p1-k-pre-flight-corrections-execution-map-ratified-before-any-move" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 P1-K pre-flight corrections (execution-map; ratified before any move)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3911,6 +3928,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#61-p2-pre-flight-corrections-ratified-before-any-p2-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 P2 pre-flight corrections (ratified before any P2 execution)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#p2-i-the-idiom-additive-own-pr" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3933,10 +3961,43 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#p3-full-removal-spatial-dedup-breaking-gated-own-pr" class="md-nav__link">
+  <a href="#62-p3-pre-flight-corrections-ratified-before-any-p3-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
-        P3 — full removal + spatial dedup (BREAKING; gated; own PR)
+        6.2 P3 pre-flight corrections (ratified before any P3 execution)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p3-k-delegation-collapse-spatial-unify-behaviour-invisible-own-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3-K — delegation-collapse + spatial unify (behaviour-INVISIBLE; own PR)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p3-r-full-removal-caller-migration-breaking-gated-own-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3-R — full removal + caller migration (BREAKING; gated; own PR)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#p3-s-new-idiom-spatial-regression-pins-own-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        P3-S — new-idiom spatial regression pins (own PR)
       
     </span>
   </a>
@@ -4002,8 +4063,11 @@
 
 
 <h1 id="selection-resolution-unification-v2-hardened-plan">Selection / Resolution Unification v2 — Hardened Plan<a class="headerlink" href="#selection-resolution-unification-v2-hardened-plan" title="Permanent link">&para;</a></h1>
-<p>Status: <strong>DESIGN RATIFIED — implementation not started.</strong> Supersedes the
-scope conclusions of <code>docs/plans/selection-unification.md</code> (v1).</p>
+<p>Status: <strong>P0–P2-G SHIPPED &amp; LANDED ON <code>main</code>; P3 (breaking, split in
+two) + P4 remaining.</strong> Supersedes the scope conclusions of
+<code>docs/plans/selection-unification.md</code> (v1). The §6 ledger + the note
+directly under it are authoritative (refreshed 2026-05-18 to
+independently verified reality; the old "all pending" was stale).</p>
 <p>Author: head-engineer adjudication of a 4-wave red/blue adversarial
 exercise (3× RED Opus + 1× BLUE Opus + adjudication), 2026-05-17/18.</p>
 <blockquote>
@@ -4049,12 +4113,13 @@ legacy surface removed. Concretely, ratified by the project owner:</p>
 </ol>
 <hr />
 <h2 id="2-the-keystone-the-whole-game">2. The keystone (the whole game)<a class="headerlink" href="#2-the-keystone-the-whole-game" title="Permanent link">&para;</a></h2>
-<p><code>NodeResult</code> (<code>mesh/FEMData.py:76-134</code>), <code>ElementGroup</code> /
-<code>GroupResult</code> (<code>mesh/_element_types.py:211-313</code>, <code>:15</code> self-declared
-leaf) are <strong>lightweight, dependency-free numpy payloads</strong>. <strong>Relocate
-those three into <code>apeGmsh/_kernel/</code></strong> alongside the pure
-defs/records/resolver layer. This single move closes three independent
-findings at once:</p>
+<p><code>NodeResult</code> (<code>mesh/FEMData.py:76-134</code>), <code>ElementGroup</code>
+(<code>mesh/_element_types.py:156-225</code>) / <code>GroupResult</code> (<code>:232-392</code>,
+<code>:15</code> self-declared leaf; the coupled <code>resolve_type_filter</code>
+<code>:399-440</code> moves with them) are <strong>lightweight, dependency-free numpy
+payloads</strong>. <strong>Relocate that triad into <code>apeGmsh/_kernel/</code></strong> alongside
+the pure defs/records/resolver layer. This single move closes three
+independent findings at once:</p>
 <ul>
 <li><strong>HT1 (RED-1 FATAL) dissolves.</strong> <code>_record_set.py</code>'s only non-pure
   tie is the deferred <code>:469 from .FEMData import NodeResult</code> inside
@@ -4078,6 +4143,47 @@ findings at once:</p>
 problem, and the iteration contract simultaneously is the signal that
 this is the correct layering. <strong>P1-K is the highest-leverage phase;
 everything else is conventional once it lands.</strong></p>
+<h3 id="21-p1-k-pre-flight-corrections-execution-map-ratified-before-any-move">2.1 P1-K pre-flight corrections (execution-map; ratified before any move)<a class="headerlink" href="#21-p1-k-pre-flight-corrections-execution-map-ratified-before-any-move" title="Permanent link">&para;</a></h3>
+<p>An exhaustive read-only execution-map + cycle pre-flight (the contract
+the relocation follows) corrected the plan <strong>before any file moved</strong>.
+Recorded explicitly so the move set is complete and the source-of-truth
+matches HEAD:</p>
+<ul>
+<li><strong>(1) Stale line numbers → corrected to HEAD</strong> (above): <code>ElementGroup</code>
+  <code>:156-225</code>, <code>GroupResult</code> <code>:232-392</code> (not <code>:211-313</code>).</li>
+<li><strong>(2) The keystone is a closed <em>four</em>-symbol triad.</strong>
+  <code>GroupResult.get()</code> calls <code>resolve_type_filter</code>
+  (<code>_element_types.py:399-440</code>), which reads <code>ElementGroup</code>
+  attributes — <code>NodeResult</code>+<code>ElementGroup</code>+<code>GroupResult</code>+
+  <code>resolve_type_filter</code> move together to <code>_kernel/payloads.py</code>.
+  <code>ElementTypeInfo</code>/<code>make_type_info</code>/alias machinery <strong>stay</strong> in
+  <code>mesh/_element_types.py</code> (no back-edge — it never calls the moved
+  trio).</li>
+<li><strong>(3) STOP-condition resolved — <code>_consistent_quadrature.py</code> joins
+  the move set.</strong> <code>mesh/_load_resolver.py</code> imports
+  <code>mesh/_consistent_quadrature.py</code> at 4 deferred sites
+  (<code>:412/441/472/503</code>). Relocating <code>_load_resolver</code>→<code>_kernel</code> without
+  it re-forms a <code>_kernel→mesh</code> up-edge — the exact cycle P1-K deletes.
+  <code>_consistent_quadrature.py</code> is <strong>pure</strong> (numpy-only, zero
+  <code>apeGmsh.*</code> imports — verified) → relocate to
+  <code>_kernel/_consistent_quadrature.py</code>, rewrite the 4 sites to
+  <code>from .._consistent_quadrature import …</code>. With this addition the
+  pre-flight finds <strong>no surviving (c)-class up-edge</strong>: every move-set
+  cross-package import is DISSOLVED (target co-relocates) or
+  ALLOWED-DOWNWARD (<code>apeGmsh.fem</code>, HT10).</li>
+<li><strong>(4) Internal re-export decision (Option i — forced by the gate).</strong>
+  <code>mesh/FEMData.py</code> keeps <code>from .._kernel.payloads import NodeResult</code>;
+  <code>mesh/_element_types.py</code> keeps a downward
+  <code>from .._kernel.payloads import ElementGroup, GroupResult,
+  resolve_type_filter</code> re-export. Legal <code>mesh→_kernel</code> <strong>downward</strong>
+  edge (the intended direction) and <em>mandatory</em> — the P1-K gate
+  requires the contract tests + all P0-C pins <strong>byte-unchanged</strong>, and
+  some import these via their <code>apeGmsh.mesh.*</code> paths. This is an
+  internal import-path facade, <strong>not</strong> the user-facing backward-compat
+  the v2 mandate forbids; flagged as a P3/P4 internal-cleanup
+  candidate (sweep with the legacy surface). Full file:line repoint
+  list + topological order live in the execution-map (§A–§E).</li>
+</ul>
 <hr />
 <h2 id="3-hard-truths-source-proven-future-implementers-must-not-re-trip-these">3. Hard truths (source-proven; future implementers must not re-trip these)<a class="headerlink" href="#3-hard-truths-source-proven-future-implementers-must-not-re-trip-these" title="Permanent link">&para;</a></h2>
 <table>
@@ -4123,8 +4229,8 @@ everything else is conventional once it lands.</strong></p>
 <tr>
 <td><strong>HT6</strong></td>
 <td>the two <code>Selection</code> classes are <strong>structurally irreconcilable</strong> (<code>list</code> subclass <code>.tags()</code> <em>method</em> vs frozen <code>__slots__</code> <code>.tags</code> <em>property</em>); <code>viz.Selection</code> is <strong>public-exported</strong> + viewer-constructed</td>
-<td><code>core/_selection.py:361</code>; <code>viz/Selection.py:99-154</code>; <code>apeGmsh/__init__.py:79,187-188</code>; <code>model_viewer.py:1671</code>, <code>mesh_viewer.py:1454</code></td>
-<td>Removal is a real <strong>migration</strong> (P3), not a reconcile. v1's "keep both" was backward-compat-driven; no longer binds.</td>
+<td><code>core/_selection.py:436</code> (HEAD; was <code>:361</code>); <code>viz/Selection.py:99-160</code>; <code>apeGmsh/__init__.py:79,187-188</code>; <code>model_viewer.py:1669-71</code>, <code>mesh_viewer.py:1454-56</code></td>
+<td>They were <strong>never the same removal target</strong> (RED/BLUE G2/SC-8, source-verified, owner-re-ratified 2026-05-18). Only <code>viz.Selection</code>'s <strong>package exports</strong> are dropped (P3-R); the <strong><code>viz.Selection</code> class is retained</strong> as the viewer pick-result type, and <strong><code>core/_selection.Selection</code> is retained</strong> as the <code>EntitySelection</code>/<code>GeometryChain</code> <code>.result()</code> terminal payload (R-v2-8 — entity-side parallel of R-v2-4). Retained <em>by architecture</em>, not backward-compat.</td>
 </tr>
 <tr>
 <td><strong>HT7</strong></td>
@@ -4140,7 +4246,7 @@ everything else is conventional once it lands.</strong></p>
 </tr>
 <tr>
 <td><strong>HT9</strong></td>
-<td><code>GeometryChain</code> lacks the <code>crossing</code> straddle mode <strong>and</strong> the 2-point <code>Line</code> primitive that legacy <code>queries.select</code> has (~60 test sites)</td>
+<td><code>GeometryChain</code> lacks the <code>crossing</code> straddle mode <strong>and</strong> the 2-point <code>Line</code> primitive that legacy <code>queries.select</code> has (parity battery = <strong>122 occurrences / 9 files</strong>, not ~60 — §6.1)</td>
 <td><code>_chain.py:47-50 REQUIRED_VERBS</code>; <code>core/_selection.py:93-125</code> (<code>Line</code>), <code>:132-194</code> (<code>_parse_primitive</code>: dict→Plane, 2pts→Line, 3pts→Plane; <code>on</code>/<code>crossing</code>/<code>not_*</code>)</td>
 <td>P2-G: add <code>crossing_plane</code> + <code>Line</code>/2-point verbs <strong>before</strong> legacy removal; parity-test vs the ~60 sites.</td>
 </tr>
@@ -4188,10 +4294,23 @@ reviewed-flips are anchored to fact:</p>
   multi-named-selector union is a <strong>P3 fail-loud candidate</strong>; any P3
   text must say "<code>ids=</code> is exclusive vs named selectors; multiple
   <em>named</em> selectors currently UNION" — never "passing both raises".</li>
+<li><strong>(c) The results-side removal target is the chain <code>.values()</code>, NOT
+  the typed composite reader</strong> (RED/BLUE G5, source-verified). The
+  typed <code>results.&lt;nodes|elements|gauss|fibers|layers|line_stations|
+  springs&gt;.get(component=, ids=, pg=, label=, selection=)</code> reader
+  (<code>results/_composites.py:700,922,957,991,1031,1077,1113</code> →
+  <code>Results._reader.read_{nodes,elements,…}</code> + <code>_resolve_{node,
+  element}_ids</code> <code>:277</code>) is the <strong>RETAINED</strong> documented public reader.
+  Only the <em>chain</em> terminal (<code>results.*.select(...).values()</code> →
+  <code>ResultChain.get</code> → <code>host.get</code> <code>_result_chain.py:308-315</code>) is
+  removed. Any P3 text saying "<code>results.*.get(component=)</code> is removed"
+  means <strong>the chain <code>.values()</code> path only</strong> — <code>MeshSelection.values()</code>
+  is repointed onto the retained reader in P3-K (SC-2).</li>
 </ul>
-<p>Neither reconciliation changes the ratified architecture or scope —
-both refine HT2 / correct a mental-model error and add two
-characterized behaviors to the P3 fail-loud review set.</p>
+<p>(a)/(b) are P0-C reconciliations; (c) is a RED/BLUE scope
+clarification. None changes the ratified architecture — (a)/(b) refine
+HT2 / correct a mental-model error and add two characterized behaviors
+to the P3 fail-loud review set; (c) corrects a removal-scope conflation.</p>
 <hr />
 <h2 id="4-architecture">4. Architecture<a class="headerlink" href="#4-architecture" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>apeGmsh/_kernel/                 [NEW root-leaf pkg; stdlib/numpy/gmsh + apeGmsh.fem only]
@@ -4237,56 +4356,124 @@ must not be folded into <code>spatial.py</code>.</p>
   pure relocation; <strong>no resolver/spatial dedup in P1-K</strong>.</li>
 <li><strong>R-v2-7</strong> <code>.save_as(name)</code> + <code>crossing_plane</code>/<code>Line</code> verbs folded
   into the idiom (P2-I / P2-G).</li>
+<li><strong>R-v2-8</strong> <code>core/_selection.Selection</code> is the entity-side <code>.result()</code>
+  identity-alias terminal payload (<code>core/_selection.py:1368</code>/<code>:1039</code>) —
+  the exact parallel of R-v2-4's element payload — <strong>RETAINED, never
+  removed</strong>. The <code>viz.Selection</code> <em>class</em> is likewise retained as the
+  viewer pick-result type; P3-R drops only the <strong>package exports</strong> of
+  both. Retained <em>by architecture</em>, not backward-compat (RED/BLUE
+  G2/SC-8, source-verified; <strong>owner-re-ratified 2026-05-18</strong>).</li>
 </ul>
 <hr />
 <h2 id="6-phase-ledger">6. Phase ledger<a class="headerlink" href="#6-phase-ledger" title="Permanent link">&para;</a></h2>
-<p>Order: <strong>P0-T ∥ P0-C → P1-K → (P2-I ∥ P2-G) → P3 → P4.</strong> P0 blocking.</p>
+<p>Order: <strong>P0-T ∥ P0-C → P1-K → P2-I → P2-G → P3-K → P3-R → P3-S →
+P4.</strong> P0 blocking. (<code>P2-I ∥ P2-G</code> was REFUTED — sequential, see §6.1
+STOP-1. The monolithic "P3" / "two-PR split" was REFUTED — 3-unit
+sequence, see §6.2 SC-1..SC-5.)</p>
 <table>
 <thead>
 <tr>
 <th>Phase</th>
 <th>Status</th>
 <th>Commit</th>
+<th>PR</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>P0-T</td>
-<td>pending</td>
-<td>—</td>
+<td><strong>SHIPPED</strong></td>
+<td><code>732fc50</code></td>
+<td>#245</td>
 </tr>
 <tr>
 <td>P0-C</td>
-<td>pending</td>
-<td>—</td>
+<td><strong>SHIPPED</strong></td>
+<td><code>732fc50</code></td>
+<td>#245</td>
 </tr>
 <tr>
 <td>P1-K</td>
-<td>pending</td>
-<td>—</td>
+<td><strong>SHIPPED</strong></td>
+<td><code>adc0c72</code></td>
+<td>#249</td>
 </tr>
 <tr>
 <td>P2-I</td>
-<td>pending</td>
-<td>—</td>
+<td><strong>SHIPPED</strong></td>
+<td><code>caaea3c</code></td>
+<td>#251</td>
 </tr>
 <tr>
 <td>P2-G</td>
-<td>pending</td>
-<td>—</td>
+<td><strong>SHIPPED</strong></td>
+<td><code>b427e5f</code></td>
+<td>#252</td>
 </tr>
 <tr>
-<td>P3</td>
-<td>pending</td>
-<td>—</td>
+<td>P3-K</td>
+<td><strong>SHIPPED &amp; MERGED</strong> — invisible delegation-collapse + spatial unify</td>
+<td><code>a696bb0</code></td>
+<td>#254</td>
+</tr>
+<tr>
+<td>P3-R</td>
+<td><strong>SHIPPED &amp; MERGED</strong> — BREAKING removal (exports only; classes retained) + caller migration + <code>_mesh_filters</code> flip + dependent-test rewrite</td>
+<td><code>49033ed</code></td>
+<td>#255</td>
+</tr>
+<tr>
+<td>P3-S</td>
+<td><strong>SHIPPED</strong> — additive new-idiom spatial regression pins (4 gaps; M-CORRECTION-P3S)</td>
+<td><code>44a9087</code></td>
+<td>#256</td>
 </tr>
 <tr>
 <td>P4</td>
-<td>pending</td>
+<td><strong>IN PROGRESS</strong> — docs / ADR 0016 / skill / memory + the two ratified capability gaps (M-CORRECTION-P4)</td>
 <td>—</td>
+<td>this PR</td>
 </tr>
 </tbody>
 </table>
+<blockquote>
+<p>[!note] Ledger authoritative as of 2026-05-18 (was stale "all pending")
+<strong>All additive phases shipped and LANDED ON <code>main</code>.</strong> Each of the 4 v2
+PRs merged into its <em>parent feature branch</em> not <code>main</code> (only #245/P0
+reached <code>main</code> directly); the stranded-but-intact cumulative tip was
+then landed via <strong>PR #253</strong> (<code>guppi/sel-v2-p2i</code> → <code>main</code>, merge
+<code>63a4312</code>), reconciling the independent <code>origin/main</code> divergence
+(#247/#248/<strong>#250 <code>fix(tests): field-based kw_only</code></strong>) into history.
+<strong>Head-engineer independent post-#253 re-verification (2026-05-18, on
+merged <code>63a4312</code>, env-trap honoured, <code>apeGmsh.__file__</code> under the
+worktree):</strong> full suite <strong>5909 passed / 64 skipped / 0 failed</strong>
+(exceeds the 5907/64/0 pre-divergence baseline by +2 additive/#250
+test deltas; zero regressions). The 4 byte-unchanged proof files
+(<code>test_resolution_contract</code>, <code>test_target_resolution</code>,
+<code>test_pin_resolution_v2</code>, <code>test_pin_spatial_v2</code>) are <strong>byte-identical
+<code>git diff 732fc50..63a4312</code> (empty)</strong> and green; <code>test_import_dag_polarity</code>
+green. #250's collision risk is <strong>disproven</strong> — it edited
+<code>tests/opensees/contract/*</code> (the OpenSees primitive contract suite),
+<strong>not</strong> the selection <code>tests/test_resolution_contract.py</code>. <code>63a4312</code>
+is a verified P3 base; P3 branches off it. The earlier owner-ratified
+"split in two" was <strong>REFUTED by the P3 pre-flight</strong> (5 source-proven
+FATALs, head-reverified — §6.2): P2-I shipped <code>MeshSelection</code> as a
+delegating shell over the legacy chains, so collapse==spatial-unify
+and 3 proof files call deleted symbols. <strong>Owner re-ratified
+2026-05-18 a 3-unit sequence P3-K → P3-R → P3-S</strong> (§6.2). The
+adversarial <strong>RED/BLUE pass on the §6.2 plan is COMPLETE</strong> (4 RED +
+1 BLUE, head-adjudicated, key claims source-verified): 13/14 findings
+conceded, 3-unit structure defended. <strong>Owner re-ratified 2026-05-18
+two architecture-surface corrections:</strong> (i) <code>core/_selection.Selection</code>
+RETAINED as the <code>EntitySelection</code> <code>.result()</code> terminal payload
+(R-v2-8, entity-side parallel of R-v2-4); (ii) SC-8 = the
+<code>viz.Selection</code> <em>class</em> retained as the viewer pick-result type —
+P3-R drops only the <strong>package exports</strong> of both, not the classes.
+Phase count unchanged (3-unit); P3-S rescoped to additive new-idiom
+regression pins (the behaviour-changing <code>_mesh_filters</code> flip moved
+into P3-R as a same-commit production+assertion diff). P3-R gated on
+a committed caller-migration artifact (§6.3, RED/BLUE m6).</p>
+</blockquote>
 <h3 id="p0-t-tripwire-hardening-blocking-additive">P0-T — tripwire hardening (blocking, additive)<a class="headerlink" href="#p0-t-tripwire-hardening-blocking-additive" title="Permanent link">&para;</a></h3>
 <p>Add <code>_kernel</code> <strong>and</strong> <code>fem</code> to <code>tests/test_import_dag_polarity.py:31
 PKGS</code>; re-derive <code>BASELINE</code> on untouched HEAD (no relocation yet) so
@@ -4305,12 +4492,19 @@ on HEAD; zero production edits.</p>
 <h3 id="p1-k-the-keystone-relayer-behaviour-invisible-own-pr">P1-K — the keystone relayer (behaviour-INVISIBLE; own PR)<a class="headerlink" href="#p1-k-the-keystone-relayer-behaviour-invisible-own-pr" title="Permanent link">&para;</a></h3>
 <p>Create <code>apeGmsh/_kernel/</code>. Relocate, as a <strong>pure module move</strong> (no
 behaviour change, no resolver merge, no spatial merge, no
-<code>tolerate_wrong_dim</code>): <code>NodeResult</code>/<code>ElementGroup</code>/<code>GroupResult</code> →
-<code>_kernel/payloads.py</code>; <code>core.{loads,masses,constraints}.defs</code>;
-<code>mesh.records._*</code>; the 3 resolvers + <code>_constraint_resolver/</code>;
-<code>_record_set.py</code> (rewrite <code>:469</code>→<code>_kernel</code>); the 3 <code>Labels</code>
-predicates → <code>_kernel/_label_prefix.py</code>. Repoint <code>PhysicalGroups.py:10</code>,
-<code>core/Labels.py</code> internals, the 3 composites, <code>FEMData.py:58-61</code>.
+<code>tolerate_wrong_dim</code>) — per the §2.1 corrections and the execution-map
+§A–§E: the keystone triad <code>NodeResult</code>/<code>ElementGroup</code>/<code>GroupResult</code>/
+<code>resolve_type_filter</code> → <code>_kernel/payloads.py</code>;
+<code>core.{loads,masses,constraints}.defs</code>; <code>mesh.records._*</code>; the 3
+resolvers + <code>_constraint_resolver/</code>; <strong><code>_consistent_quadrature.py</code></strong>
+(§2.1-(3)); <code>_record_set.py</code> (rewrite <code>:469</code>→<code>_kernel</code>); the 3
+<code>Labels</code> predicates → <code>_kernel/_label_prefix.py</code>;
+<code>apeGmsh/_chain.py</code>→<code>_kernel/chain.py</code>. Repoint every consumer per
+execution-map §B (the 3 composites, <code>FEMData.py:58-65</code>,
+<code>PhysicalGroups.py:10</code>, <code>core/Labels.py</code> internals, the 5 chain
+imports, all deferred/test sites); keep the §2.1-(4) Option-i
+<code>mesh→_kernel</code> downward re-exports so the invisibility-proof tests
+stay byte-unchanged.
 <strong>Gate:</strong> widened tripwire green, BASELINE updated <strong>in the same
 commit</strong> (the relocation diff <em>is</em> the reviewed decision —
 <code>test_import_dag_polarity.py:18-20</code>); <code>test_resolution_contract.py</code> +
@@ -4319,6 +4513,59 @@ P0-C pins unchanged</strong> (this is the proof of invisibility);
 <code>import apeGmsh</code> clean with <code>apeGmsh.__file__</code> under the worktree.
 Closes HT1, HT4, R3-B. Rollback: the move is one reviewable diff;
 revert the PR.</p>
+<h3 id="61-p2-pre-flight-corrections-ratified-before-any-p2-execution">6.1 P2 pre-flight corrections (ratified before any P2 execution)<a class="headerlink" href="#61-p2-pre-flight-corrections-ratified-before-any-p2-execution" title="Permanent link">&para;</a></h3>
+<p>An exhaustive read-only P2 execution-map + contract pre-flight found
+the plan prose wrong a third time. Corrected <strong>before any P2 file
+changed</strong>; the locks below are same-commit reviewed-diffs (identical
+discipline to the import BASELINE and §2.1/§3.1):</p>
+<ul>
+<li><strong>STOP-1 — <code>P2-I ∥ P2-G</code> is unsafe; mandated order is P2-I → P2-G.</strong>
+  <code>_kernel/chain.py:91-116</code> <code>__init_subclass__</code> enforces
+  <code>REQUIRED_VERBS</code> at <strong>import time</strong> on every concrete chain. The
+  instant P2-G appends <code>crossing_plane</code>, every chain lacking it (5
+  legacy + 2 new) raises <code>TypeError</code> at <code>import apeGmsh</code>. So: <strong>P2-I
+  first</strong> (no <code>REQUIRED_VERBS</code> touch). <strong>P2-G second, internally
+  ordered:</strong> (1) add a <em>base concrete</em> <code>SelectionChain.crossing_plane</code>
+  (+ <code>Line</code>/2-point verb) delegating to a new hook, <strong>point family
+  raising loud</strong> (the <code>GeometryChain.in_box</code> <code>inclusive=</code>→<code>TypeError</code>
+  precedent — entity-only, never silent <code>[]</code>); (2) override on
+  <code>EntitySelection</code> (+ legacy <code>GeometryChain</code> for through-P3 parity);
+  (3) <strong>only then</strong> append to <code>REQUIRED_VERBS</code>. <code>crossing_plane</code> is a
+  <code>REQUIRED_VERBS</code> <strong>verb</strong>, <strong>never</strong> a <code>_REQUIRED_HOOKS</code> entry.</li>
+<li><strong>STOP-2 — P2-I is NOT purely additive.</strong> The 5 <code>.select()</code> host
+  hooks (<code>core/Model.py:236</code>, <code>mesh/FEMData.py:310/964</code>,
+  <code>results/_composites.py:618/678/891</code>, <code>mesh/MeshSelectionSet.py:834</code>)
+  must <strong>return the new types</strong> (legacy 5 <code>*Chain</code> left
+  defined-but-unwired; P3 deletes them). Same-commit reviewed-diffs the
+  plan's P2-I gate omitted: (a) <code>tests/test_selection_idiom.py</code>
+  <code>_EXPECTED_CHAINS</code> is an <strong>equality</strong> lock → 5→7; (b)
+  <code>test_point_family_laws</code> must unpack <code>(id,_)</code> once
+  <code>MeshSelection.__iter__</code> yields <code>(id,payload)</code> (the ratified HT8
+  design — set-algebra is unaffected, it works on <code>_items</code>; only the
+  public <code>__iter__</code> presentation changes); (c) <code>type(x) is
+  &lt;LegacyChain&gt;</code> identity assertions in <code>test_fem_chain.py</code> /
+  <code>test_result_chain.py</code> / <code>test_result_chain_subcomposites.py</code> /
+  <code>test_geometry_chain.py</code> / <code>test_mesh_selection_chain.py</code> break at
+  <strong>P2-I</strong> (not P3) — update/xfail-with-P3-marker same-commit. The
+  23+ <code>(id,payload)</code> production callers go through <code>.get()</code>
+  (<code>NodeResult</code>/<code>GroupResult</code>, <strong>not</strong> repointed) — untouched.</li>
+<li><strong>Placement.</strong> <code>EntitySelection</code> → <code>core/_selection.py</code> (beside
+  <code>GeometryChain</code>; no new edge). <code>MeshSelection</code> → <strong>new leaf
+  <code>mesh/_mesh_selection.py</code></strong> (mirrors <code>_node_chain.py</code>): eager
+  <code>from .._kernel.chain import SelectionChain</code> only, payloads deferred.
+  Adds <strong>one</strong> declared same-commit BASELINE triple
+  <code>("mesh","_kernel","mesh/_mesh_selection.py")</code> — the <em>same downward
+  polarity already frozen</em>; <strong>no <code>core↔mesh</code> triple, no deferred edge
+  flips eager</strong>. ("P2 additive ⇒ BASELINE unchanged" was imprecise.)</li>
+<li><strong><code>EntitySelection.to_dataframe()</code> is NEW</strong> (legacy
+  <code>core/_selection.Selection</code> has none; only <code>viz/Selection</code> does) —
+  implement <strong>locally</strong>, no <code>viz</code> import (R8), session via
+  <code>self._engine</code>. <code>.to_label</code>→<code>session.labels.add</code> (Tier-1,
+  <code>_label:</code>); <code>.to_physical</code>→<code>session.physical.add</code> (Tier-2 raw) —
+  ADR-locked non-merge (R-v2-3).</li>
+<li><strong>Parity battery = 122 occurrences / 9 files</strong> (lead
+  <code>tests/test_selection.py</code> 59), not HT9's "~60".</li>
+</ul>
 <h3 id="p2-i-the-idiom-additive-own-pr">P2-I — the idiom (additive; own PR)<a class="headerlink" href="#p2-i-the-idiom-additive-own-pr" title="Permanent link">&para;</a></h3>
 <p><code>EntitySelection</code> + <code>MeshSelection</code> as <code>SelectionChain</code> subclasses on
 the P1-K kernel. <code>MeshSelection.__iter__</code> overridden → <code>(id,payload)</code>
@@ -4330,44 +4577,498 @@ the spawning sub-composite's typed <code>.get</code> (the locked
 <code>test_result_chain_subcomposites.py</code> fail-loud invariant). <code>.result()</code>
 = identity alias. <code>EntitySelection.to_label</code>/<code>.to_physical</code> per
 R-v2-3 + ADR; <code>.to_dataframe()</code>. Legacy <code>Selection</code> classes
-<strong>byte-unchanged</strong> here (removal is P3). <strong>Gate:</strong> new idiom
+<strong>byte-unchanged</strong> here (removal is P3). Repoints the 5 <code>.select()</code>
+host hooks to return the new types (§6.1 STOP-2). <strong>Gate:</strong> new idiom
 daisy-chains at all levels (smoke); 23+ <code>(id,payload)</code> callers green
-unchanged; ADR committed; tripwire green every commit. Closes HT8,
-R3-A, R3-4.</p>
+unchanged (they go via <code>.get()</code>, untouched); ADR committed; the four
+proof tests byte-unchanged; <strong>same-commit</strong> locks per §6.1 STOP-2
+(<code>test_selection_idiom._EXPECTED_CHAINS</code> 5→7, <code>test_point_family_laws</code>
+pair-unpack, the 5 identity-assertion files) + the one declared
+BASELINE triple for <code>mesh/_mesh_selection.py</code>. Closes HT8, R3-A, R3-4.</p>
 <h3 id="p2-g-geometry-predicate-completion-additive-own-pr">P2-G — geometry predicate completion (additive; own PR)<a class="headerlink" href="#p2-g-geometry-predicate-completion-additive-own-pr" title="Permanent link">&para;</a></h3>
 <p>Add <code>crossing_plane(point,normal,*,tol)</code> + a <code>Line</code>/2-point verb path
-to <code>EntitySelection</code> (entity family) and to <code>_chain.py
+to <code>EntitySelection</code> (entity family) and to <code>_kernel/chain.py
 REQUIRED_VERBS</code>; port <code>core/_selection.py:166-194</code> on/crossing/not_<em>
-(8-BB-corner) semantics into the entity hooks. </em><em>Gate:</em><em> parity test —
+(8-BB-corner) + <code>Line</code> semantics into the entity hooks. </em><em>Internally
+ordered per §6.1 STOP-1</em><em> (base concrete verb + point-family loud-raise
+→ entity override → append to <code>REQUIRED_VERBS</code> last; <code>import apeGmsh</code>
+green at every intra-PR commit). </em><em>Gate:</em><em> parity test —
 <code>EntitySelection</code> crossing/line/not_</em> == legacy <code>queries.select</code>
-across the ~60 existing crossing/line sites; <code>__init_subclass__</code>
-enforces the new verbs. Closes HT9. (Must land <strong>before</strong> P3 removes
-legacy <code>queries.select</code>.)</p>
-<h3 id="p3-full-removal-spatial-dedup-breaking-gated-own-pr">P3 — full removal + spatial dedup (BREAKING; gated; own PR)<a class="headerlink" href="#p3-full-removal-spatial-dedup-breaking-gated-own-pr" title="Permanent link">&para;</a></h3>
-<p>Gated precondition: P2-I/P2-G shipped; <strong>zero internal callers</strong> of
-each removed symbol (re-run the blast-radius census). Delete: both
-<code>Selection</code> classes, <code>queries.select</code>+<code>select_all*</code>,
-<code>g.model.selection.*</code>, <code>fem.*.get/get_ids/resolve</code>,
-<code>g.mesh_selection.add_*/from_*</code>, the 5 legacy chains; drop <code>Selection</code>/
-<code>SelectionComposite</code> from <code>apeGmsh.__init__.__all__</code>; repoint the
-viewer <code>.selection</code> property + public export to <code>EntitySelection</code>.
-Migrate the ~35 load-bearing src callers (opensees/viewers/cuts/
-results). Unify the 6 spatial copies → <code>_kernel/spatial.py</code> as
-<strong>pinned reviewed flips</strong> (each flip = a P0-C pin diff in the same
-commit; absorbs ratified v1-S5 item 3). Rewrite ~7 legacy test files +
-the two guide docs. <strong>Gate:</strong> full suite green; no legacy symbol
-importable; every spatial flip is a reviewed pin diff. Closes HT6,
-HT7, R-v2-1.</p>
+across the <strong>122-site / 9-file</strong> parity battery (§6.1);
+<code>__init_subclass__</code> enforces the new verbs on all 7 concrete chains;
+<code>test_selection_idiom.test_identical_public_verb_surface</code> carves
+<code>crossing_plane</code> into the family-specific-signature exception
+(same-commit, the <code>in_box</code> template). Closes HT9. (Must land <strong>before</strong>
+P3 removes legacy <code>queries.select</code>.)</p>
+<h3 id="62-p3-pre-flight-corrections-ratified-before-any-p3-execution">6.2 P3 pre-flight corrections (ratified before any P3 execution)<a class="headerlink" href="#62-p3-pre-flight-corrections-ratified-before-any-p3-execution" title="Permanent link">&para;</a></h3>
+<p>An exhaustive read-only P3 execution-map + cycle/contract pre-flight
+found the plan prose wrong a <strong>fourth</strong> time — and unlike §2.1/§3.1/§6.1
+(stale lines / mental-model refinements) this one is <strong>architectural</strong>:
+it invalidates the monolithic "P3" <em>and</em> the owner's first "two-PR
+split". Corrected <strong>before any P3 file changed</strong>; the head-engineer
+independently re-verified every FATAL at HEAD <code>63a4312</code> source; the
+owner re-ratified the 3-unit sequence 2026-05-18.</p>
+<p><strong>Root cause (one error, same class as the prior three):</strong> the plan's
+P3 prose was written against an <em>imagined</em> post-P2-I architecture, not
+the one <strong>P2-I actually shipped</strong>. P2-I's <code>MeshSelection</code>
+(<code>mesh/_mesh_selection.py:30-38</code> docstring; <code>_delegate()</code> <code>:112-144</code>)
+is a thin <strong>engine-polymorphic delegating shell</strong> — it constructs a
+fresh legacy <code>NodeChain</code>/<code>ElementChain</code>/<code>ResultChain</code>/
+<code>MeshSelectionChain</code> and routes <em>every</em> per-engine hook to it
+(<code>_coords_of</code> <code>:151</code>, <code>_spatial_*</code> <code>:154-163</code>, <code>__iter__</code> <code>:211</code>,
+<code>connectivity</code> <code>:256</code>, <code>groups</code> <code>:277</code>, <code>values</code> <code>:310-312</code>,
+<code>_materialize</code> <code>:377</code>). The shipped docstring itself says "<em>Those
+legacy chains stay defined-and-importable through P2-I (P3 deletes
+them)</em>" — P2-I <strong>deliberately deferred the collapse to P3</strong>; the
+plan's "the 5 chains are defined-but-unwired, delete them" is false at
+source.</p>
+<p>STOP-conditions (all head-re-verified at HEAD source):</p>
+<ul>
+<li><strong>SC-1 FATAL</strong> — the surviving v2 <code>MeshSelection</code> is wired to 4 of
+  the 5 legacy chains via <code>_delegate()</code>
+  (<code>mesh/_mesh_selection.py:112-163</code>); load-bearing, not unwired. Only
+  <code>GeometryChain</code> (<code>core/_selection.py:852</code>) is genuinely unwired.</li>
+<li><strong>SC-2 FATAL→ADDRESSED-IN-P3-K</strong> (RED/BLUE, source-verified) —
+  <code>MeshSelection.values()</code> (<code>:310-312</code>) → <code>ResultChain.get</code> →
+  <code>host.get(...)</code> (<code>results/_result_chain.py:308-315</code>). <code>host.get</code> is
+  the <strong>typed sub-composite reader</strong> (<code>results/_composites.py:700,922,
+  957,991,1031,1077,1113</code> → <code>Results._reader.read_{nodes,elements,…}</code></li>
+<li><code>_resolve_{node,element}_ids</code> <code>:277</code>) — the <strong>RETAINED</strong> documented
+  public reader, <strong>not</strong> a removal target. Only the <em>chain</em> terminal
+  (<code>results.*.select(...).values()</code>/<code>ResultChain.get</code>) is removed. P3-K
+  repoints <code>MeshSelection.values()</code> to call the spawning sub-composite
+  <code>host.get(ids=list(self._items),component=,time=,stage=,**extra)</code>
+  <strong>directly</strong> (the identical call <code>ResultChain.get</code> already makes), so
+  the v2 results terminal survives chain deletion. The §6.2/§6 prose
+  "<code>results.*.get(component=)</code> is removed" means the <strong>chain
+  <code>.values()</code> path only</strong> (see §3.1(c)).</li>
+<li><strong>SC-3 FATAL</strong> — 3 of 4 byte-unchanged proof files exercise removed
+  symbols: <code>test_target_resolution.py:62-64,82-83</code> +
+  <code>test_pin_resolution_v2.py</code> (17 sites) call <code>fem.*.get</code>;
+  <code>test_pin_spatial_v2.py:63,141</code> calls <code>g.mesh_selection.add_nodes</code>.
+  Only <code>test_resolution_contract.py</code> is removal-safe (uses
+  <code>g.constraints.resolve</code>, not <code>fem.*.resolve</code>). §7 invariant 1 (byte-
+  unchanged through removal) is <strong>unsatisfiable as written</strong> → rescoped
+  in §7.</li>
+<li><strong>SC-4 FATAL</strong> — the "PR-A remove / PR-B spatial-dedup" seam does not
+  exist at source: deleting the 4 wired chains <em>requires</em> giving
+  <code>MeshSelection</code> its own spatial+materialise kernel, which <strong>is</strong> the
+  spatial unification — same edit at <code>_mesh_selection.py:112-163</code>.</li>
+<li><strong>SC-5 FATAL</strong> — <code>fem.elements.select(element_type=|dim=|partition=)</code>
+  runs <code>self.get(...).ids</code> (<code>mesh/FEMData.py:962-973</code>); the v2 element
+  host hook calls the deleted <code>.get</code>.</li>
+<li><strong>SC-6 SERIOUS</strong> — <code>results/_composites.py:139,264</code> +
+  <code>_result_chain.py:196</code> (spatial targets) call the <code>fem.elements.
+  resolve</code> removed in P3-R — confirms the SC-4 entanglement.</li>
+<li><strong>SC-7 SERIOUS→MINOR (RED/BLUE-resolved, source-verified)</strong> —
+  <code>core/Model.py:260</code> <code>viewer()</code> → <code>self.selection.picker(**kwargs)</code>;
+  <code>Model.preview</code> (<code>:289</code>) calls <code>preview_model</code>, <strong>not</strong> <code>.picker</code>
+  (dropped from SC-7's affected list). <code>SelectionComposite.picker</code>
+  (<code>viz/Selection.py:645-651</code>) only constructs+shows
+  <code>ModelViewer(parent=self._parent,model=self._model,…)</code> — it does not
+  use the <code>Selection</code> class. <strong>Resolution:</strong> inline <code>Model.viewer()</code> →
+  <code>ModelViewer(parent=self._parent,model=self,**kwargs);p.show();return p</code>
+  (mechanical; P3-R).</li>
+<li><strong>SC-8 SERIOUS→RESOLVED (RED/BLUE, owner-re-ratified 2026-05-18)</strong> —
+  both <code>model_viewer.py:1669-71</code> and <code>mesh_viewer.py:1454-56</code> construct
+  <strong><code>viz.Selection</code></strong> (<code>Selection(picks,self._parent)</code>), NOT
+  <code>EntitySelection</code>/<code>core.Selection</code>; <code>MeshViewer</code> has no <code>_Queries</code>
+  reachable at all (built <code>MeshViewer(self._parent)</code>, <code>mesh/Mesh.py:207</code>).
+  <strong>Resolution: the <code>viz.Selection</code> class is RETAINED</strong> as the viewer
+  pick-result type (structurally distinct from <code>core.Selection</code>, HT6);
+  P3-R drops ONLY its package exports (<code>viz/__init__.py:2,4</code>,
+  <code>apeGmsh/__init__.py:79,187-188</code>). <strong>No viewer API change, no repoint.</strong></li>
+<li><strong>SC-9 SERIOUS (P3-K-blocking, same-commit)</strong> —
+  <code>tests/test_import_dag_polarity.py:196-200</code> spike-imports
+  <code>apeGmsh.mesh._node_chain</code> + asserts <code>NodeChain.FAMILY=="point"</code>;
+  BASELINE carries the <strong>4 deleted-chain triples</strong> <code>:84</code>
+  <code>("mesh","_kernel","mesh/_elem_chain.py")</code>, <code>:87</code>
+  <code>(…,"mesh/_mesh_selection_chain.py")</code>, <code>:88</code>
+  <code>(…,"mesh/_node_chain.py")</code>, <code>:89</code>
+  <code>("results","_kernel","results/_result_chain.py")</code> (one is
+  <code>results→_kernel</code>). P3-K deletes those modules → the §7-invariant
+  tripwire breaks unless the 4 BASELINE rows + the <code>_node_chain</code>
+  spike-import are rewritten <strong>in the P3-K commit</strong> (reviewed diff).</li>
+<li><strong>SC-10 SERIOUS</strong> — census scope: removed symbols referenced by
+  <strong>~75 test files</strong>, not "~7"; ~40+ are <code>results.*.get(component=)</code>
+  consumers. P3-R test-rewrite is an order of magnitude beyond the old
+  estimate. Census re-runs must use ripgrep-backed Grep, <strong>not
+  <code>git grep -E</code></strong> (silently under-reports on Git-for-Windows).</li>
+<li><strong>SC-11 MINOR (flip bound to P3-R)</strong> — <code>mesh/_mesh_filters.py</code> has
+  <strong>two</strong> silent-row-0 sites (<code>:159</code> <code>element_centroids</code> <em>and</em> <code>:215</code>
+  <code>elements_on_plane</code>). <code>_mesh_filters</code> is imported <strong>only</strong> by
+  <code>mesh/MeshSelectionSet.py:35</code> (used <code>:239,308,314,317,636,643,885,
+  935</code>) — the removal-target <code>g.mesh_selection.add_*</code> surface; <strong>no
+  chain imports it</strong> (verified). The <code>:159</code>+<code>:215</code> silent→fail-loud
+  flip is therefore a <strong>production+assertion reviewed diff bound to
+  P3-R</strong> (inseparable from the <code>MeshSelectionSet</code>/<code>add_*</code> removal),
+  <strong>both sites in the same phase</strong> — NOT a P3-S assertion-only flip.</li>
+<li><strong>SC-12 MINOR</strong> — <code>g.mesh_selection.add_*/from_*</code> have <strong>zero PROD
+  src callers</strong> (gate passes) but <code>from_geometric</code> consumes
+  <code>viz.Selection.to_mesh_*</code>; P3-R removes both ends and the
+  "geometric-selection → named mesh-selection" capability has no v2
+  replacement (<code>.save_as</code> is live-engine-only) — a user-facing gap to
+  document in P4, not an internal blocker.</li>
+</ul>
+<p><strong>Spatial inventory (HT7 corrections, re-derived at HEAD; RED/BLUE):</strong>
+the 4 point-chain <code>_spatial_*</code> kernels are <strong>byte-identical</strong> at source
+(de-dup is observably free); the only genuinely-divergent copy is
+<code>mesh/_mesh_filters.py</code> (axis-aligned <code>nodes_on_plane</code> <code>:23-43</code>; silent
+row-0 <code>:159</code> <em>and</em> <code>:215</code>), consumed <strong>solely by the removal-target
+<code>MeshSelectionSet</code></strong> (no chain) → P3-K leaves <code>_mesh_filters.*</code>
+<strong>byte-untouched</strong> as oracle (invisibility holds).
+<code>results/_composites._element_centroids</code> (<code>:123-149</code>) is <strong>already
+fail-loud at HEAD</strong> (the <code>_result_chain.py:25-29</code> "np.clip silent"
+docstrings are stale). <code>test_pin_spatial_v2.py</code> has exactly <strong>2 pins</strong>,
+<strong>both observing only the removal-target surface</strong>: Pin 1
+(<code>g.mesh_selection.add_nodes</code> <code>:63,141-142</code> + direct
+<code>_flt.nodes_on_plane</code> <code>:151</code>); Pin 2 (direct <code>_flt.element_centroids</code>
+<code>:220-222</code>). Both are byte-unchanged <strong>through P3-K</strong> (oracle untouched)
+and <strong>rewritten/retired in P3-R</strong> when their surface is removed (the
+<code>_mesh_filters</code> flip is the P3-R production+assertion diff, SC-11). The
+genuinely-new <code>_kernel/spatial.py</code> behaviour is <strong>re-pinned in P3-S via
+the NEW idiom</strong> <code>g.mesh_selection.select(...).on_plane(point,normal,
+tol=)</code> / element-level <code>.coords</code> (<code>MeshSelectionSet.py:715</code>→<code>:849</code>;
+<code>_kernel/chain.py:171</code>,<code>:128</code>).</p>
+<h3 id="p3-k-delegation-collapse-spatial-unify-behaviour-invisible-own-pr">P3-K — delegation-collapse + spatial unify (behaviour-INVISIBLE; own PR)<a class="headerlink" href="#p3-k-delegation-collapse-spatial-unify-behaviour-invisible-own-pr" title="Permanent link">&para;</a></h3>
+<p>The real keystone P2-I deferred. Make <code>MeshSelection</code> self-contained:
+relocate the per-engine <code>_coords_of</code>/<code>_spatial_*</code>/<code>_materialize</code> bodies
+out of <code>NodeChain</code>/<code>ElementChain</code>/<code>ResultChain</code>/<code>MeshSelectionChain</code>
+into <code>MeshSelection</code> + <strong>one</strong> unified <code>_kernel/spatial.py</code>
+(point/normal/tol family + fail-loud centroid) — a <strong>NEW kernel for the
+relocated chain payloads only</strong>; <code>_mesh_filters.*</code> is <strong>byte-untouched</strong>
+(no chain consumes it — SC-11). Element payload via the relocated
+<code>GroupResult</code>/<code>ElementGroup</code>, <strong>preserving <code>_groups</code> insertion-order</strong>
+in materialise (RED/BLUE m4 — else <code>.resolve()</code> row-order drifts).
+Repoint <code>MeshSelection.values()</code> (<code>mesh/_mesh_selection.py:310-312</code>) to
+call the <strong>retained</strong> sub-composite <code>host.get(...)</code> directly (SC-2).
+<code>EntitySelection._materialize</code> keeps its standalone
+<code>Selection(list(self._items),_queries=self._engine)</code> line
+(<code>core/_selection.py:1368</code>) — <code>core/_selection.Selection</code> is the
+<strong>RETAINED</strong> entity terminal payload (R-v2-8; no entity-side collapse —
+it is not a delegation). Remove <code>MeshSelection._delegate()</code> + its 4
+deferred chain imports. <strong>P3-K deletes NOTHING</strong> (Phase-0 refinement,
+<code>selection-unification-v2-p3k-execmap.md</code>): the 4 chain modules +
+<code>GeometryChain</code> + the <code>_ResultChainEngine</code>/<code>_LiveMeshEngine</code> adapters +
+<code>engine_for</code> are left <strong>defined-but-dead</strong> (still importable; their own
+tests pass byte-unchanged since the chain bodies are untouched). The
+chain/adapter deletion + BASELINE 4-triple delta + spike rewrite + the
+~10 chain-specific test-file disposition all <strong>move to P3-R</strong> — deleting
+them in P3-K would collection-error ~10 test files (all top-level-import
+the chain modules), contaminating the invisibility proof; deferral makes
+P3-K a strictly invisible <strong>2-file diff</strong> (<code>mesh/_mesh_selection.py</code> +
+new <code>_kernel/spatial.py</code>), mirroring the P1-K precedent (pure
+relocation; removals deferred). <strong>P0-C spatial pins stay pinned — NO
+flips here.</strong> The legacy <em>removal-target</em> surface stays present,
+untouched, as the differential <strong>oracle</strong>. <strong>Gate (P1-K-style
+invisibility proof):</strong> <code>git diff --name-only 63a4312</code> = exactly those
+<strong>2 files</strong>; full suite == <strong>5909/64/0</strong> (zero delta); <strong>all 4 proof
+files byte-unchanged</strong> (oracle present → differentially proves the
+collapse byte-faithful); all P0-C pins green; <code>test_import_dag_polarity</code>
+green with <strong>BASELINE unchanged</strong> (no deletions → no triple removed);
+<code>apeGmsh.__file__</code> under the worktree; no legacy removal-target symbol
+touched. <strong>Record the P3-K oracle run</strong> (<code>tests/_p3k_oracle/</code>: serialize
+the legacy-surface outputs P3-R proof-rewrites verify against). P3-K
+execution must first re-confirm at source that no chain imports
+<code>_mesh_filters</code> (verified Phase-0: only <code>MeshSelectionSet.py:35</code>).
+Rollback: revert the 2-file diff. Severs SC-1/SC-2/SC-4 runtime
+entanglement (+ the SC-6 collapse + the structural half of HT7); the
+file deletion that <em>closes</em> them is P3-R. <strong>SC-5's
+<code>ElementComposite.select</code>→<code>self.get</code> knot (<code>FEMData.py:962-973</code>) is
+NOT severed by P3-K</strong> — P3-K's invisible 2-file scope cannot/should not
+touch <code>FEMData.py</code>; SC-5 is <strong>removal-coupled → resolved in P3-R</strong>
+(§6.3 M-STOP-1, head-verified at source).</p>
+<h3 id="p3-r-full-removal-caller-migration-breaking-gated-own-pr">P3-R — full removal + caller migration (BREAKING; gated; own PR)<a class="headerlink" href="#p3-r-full-removal-caller-migration-breaking-gated-own-pr" title="Permanent link">&para;</a></h3>
+<p>Gated precondition: P3-K shipped &amp; green; <strong>FRESH zero-PROD-caller
+census re-run</strong> (ripgrep-backed, not <code>git grep -E</code> — SC-10); <strong>the
+committed P3-R caller-migration contract
+<code>selection-unification-v2-p3r-callers.md</code> authored &amp; owner-reviewed</strong>
+(RED/BLUE m6; supersedes the ephemeral "pre-flight §2 map"). That
+contract's <strong>§0 M-STOP-1/2/3 + M-MINOR-a/b + M-CORRECTION are mandatory
+same-commit P3-R actions</strong> the prose below under-specified — in
+particular <strong>M-STOP-1</strong>: factor a private
+<code>FEMData._filtered_groups(...)</code> and rewire <code>ElementComposite.select</code>'s
+aux-branch (<code>FEMData.py:962-973</code>) off <code>self.get</code> <strong>before/with</strong> the
+<code>get</code> deletion (else <code>fem.elements.select(element_type=|dim=|partition=)</code>
+— the migration target — breaks); <strong>M-STOP-2</strong>: delete
+<code>core/Model.py:89-90</code> (eager <code>SelectionComposite</code> instantiation);
+<strong>M-STOP-3</strong>: rewire all <strong>3</strong> <code>fem.elements.resolve</code> sites
+(<code>_mesh_selection.py:267</code>, <code>_composites.py:139,264</code>) via direct
+per-type group iteration. Hard-remove
+(no shim/alias — R-v2-1): the <strong>public exports</strong> <code>viz/__init__.py:2,4</code>
++ <code>apeGmsh/__init__.py:79,187-188</code> (the <strong>classes stay defined</strong> —
+<code>viz.Selection</code> = retained viewer pick-result type per SC-8;
+<code>core/_selection.Selection</code> = retained <code>EntitySelection</code> terminal
+payload per R-v2-8); the <code>queries.select</code>/<code>select_all*</code>/<code>queries.line</code>
+<strong>method bodies</strong> (<code>core/_model_queries.py:603-640,669-794</code>) and rewrite
+its <code>:15</code> import to <strong>exactly <code>from ._selection import Plane</code></strong> (the
+sole symbol referenced by surviving code — the retained <code>_Queries.plane</code>
+@:585/:596/:597; <code>Selection</code>/<code>_select_impl</code>/<code>Line</code> are referenced only
+by removed methods. The symbol <em>definitions</em> in <code>core/_selection.py</code>
+are untouched — load-bearing for retained <code>Selection.select</code>/
+<code>EntitySelection</code>/P2-G. RED-3/BLUE/head-reverified; see
+<code>selection-unification-v2-p3r-callers.md</code> §0 M-CORRECTION REVISED);
+<code>SelectionComposite</code>; <code>fem.*.get/get_ids/get_coords/resolve</code>; the chain
+<code>results.*.select(...).values()</code>/<code>ResultChain.get</code> path;
+<code>g.mesh_selection.add_*/from_*</code>; <strong>the 4 dead chain modules +
+<code>GeometryChain</code></strong> (P3-K left them defined-but-dead — Phase-0 deferral).
+<strong>Same-commit chain-deletion bundle (moved from P3-K):</strong> relocate
+<code>_ResultChainEngine</code>/<code>engine_for</code> → new pure <code>results/_result_engine.py</code>
+(repoint the 3 deferred sites <code>_composites.py:614,686,907</code>),
+<code>_LiveMeshEngine</code>/<code>engine_for</code> → new pure <code>mesh/_live_engine.py</code>
+(repoint <code>MeshSelectionSet.py:814</code>); remove the 4 BASELINE triples
+<code>test_import_dag_polarity.py:84/87/88/89</code>
+(<code>_elem_chain</code>/<code>_mesh_selection_chain</code>/<code>_node_chain</code>/<code>_result_chain</code>) +
+rewrite the spike <code>:197,200</code> (<code>_node_chain</code>/<code>NodeChain</code> →
+<code>_mesh_selection</code>/<code>MeshSelection</code>); dispose the ~10 chain-specific test
+files (rewrite-to-<code>MeshSelection</code> where behaviour-bearing / delete where
+chain-identity-only; <code>test_selection_idiom._EXPECTED_CHAINS</code> 7→2
+<code>{EntitySelection, MeshSelection}</code>); rewire the one SC-6
+<code>fem.elements.resolve</code> centroid site onto a non-removed path. Inline
+<code>Model.viewer()</code> → <code>ModelViewer(parent=self._parent,model=self,
+**kwargs)</code> (SC-7; <code>Model.preview</code> untouched). Migrate every PROD caller
+per the §6.3 artifact (broker <code>fem.*.get</code> →
+<code>fem.*.select(...).ids/.groups()/.result()</code>; results <code>.values()</code> →
+retained <code>results.&lt;sub&gt;.get(...)</code>; <strong>enumerate cuts/(4):
+<code>_drift.py:446</code>,<code>_planes.py:214</code>,<code>_defs.py:201</code>,<code>_polygons.py:183</code>;
+transcoders/(2-3): <code>_recorder.py:861,870,871</code>; opensees/(4):
+<code>node.py:314</code>,<code>_orientation.py:359</code>,<code>build.py:323,345</code> — keep their
+surrounding <code>try/except (KeyError,ValueError)</code> around <code>.select()</code>,
+RED/BLUE m3</strong>). Flip <code>_mesh_filters.py:159</code>+<code>:215</code> silent-row-0 →
+fail-loud <strong>here</strong> (production+assertion same-commit diff — SC-11).
+Rewrite <code>test_target_resolution.py</code> + <code>test_pin_resolution_v2.py</code> +
+both <code>test_pin_spatial_v2.py</code> pins (SC-3; their surfaces removed here)
+<strong>same-PR, each new assertion verified equal to the recorded P3-K
+oracle</strong> (or, for the <code>_mesh_filters</code> flip, an explicit reviewed
+legacy→fail-loud diff); the ~75-file cascade (SC-10) + the two guide
+docs. <strong>Gate:</strong> full suite green; <strong>no legacy removal-target symbol
+importable</strong> (assert <code>ImportError</code>); <code>test_resolution_contract.py</code>
+still byte-unchanged (SC-3 — removal-safe); rewritten proof tests
+behaviour-equal to the recorded P3-K oracle; import-DAG BASELINE +
+tripwire green (same-commit reviewed diff). §7 invariant 1 formally
+rescoped here. Closes HT6, R-v2-1, and SC-3/SC-7/SC-8/SC-10/SC-11/SC-12.</p>
+<h3 id="p3-s-new-idiom-spatial-regression-pins-own-pr">P3-S — new-idiom spatial regression pins (own PR)<a class="headerlink" href="#p3-s-new-idiom-spatial-regression-pins-own-pr" title="Permanent link">&para;</a></h3>
+<p>P3-R already removed both <code>test_pin_spatial_v2.py</code> pins' observation
+APIs and flipped <code>_mesh_filters.py:159</code>+<code>:215</code> (the behaviour-changing
+diff lives in P3-R, inseparable from the <code>g.mesh_selection.add_*</code>
+removal — SC-11/RED/BLUE G6-G7). P3-S adds <strong>new</strong> paired regression
+pins asserting the unified <code>_kernel/spatial.py</code> fail-loud centroid +
+<code>(point,normal,tol)</code> plane behaviour <strong>via the new idiom</strong>
+<code>g.mesh_selection.select(...).on_plane(point,normal,tol=)</code> and
+element-level <code>.coords</code> (<code>MeshSelectionSet.py:715</code>→<code>:849</code>;
+<code>_kernel/chain.py:171</code>,<code>:128</code>) — never silent drift (§7). Absorbs
+ratified v1-S5 item 3. <strong>Gate:</strong> full suite green; every new spatial
+behaviour is a reviewed pin with a paired regression test; no
+behaviour change beyond P3-R's already-reviewed flipped sites. Closes
+HT7 and the spatial half of R-v2-5.</p>
+<blockquote>
+<p>[!note] P3-S precision reconciliation (2026-05-19 — M-CORRECTION
+class: head-resolvable, owner-INFORMED via this note + the §7 touch
+below + <code>selection-unification-v2-p3r-callers.md</code> §0 M-CORRECTION-P3S
++ the P3-S PR body + the memory note; <strong>NOT</strong> owner-re-ratified —
+reverses no R-v2-x, no phase-structure change; same disposition class
+as the §6.3 §0 M-CORRECTION / SC-12 precedent. Owner explicitly
+confirmed the reshaped scope 2026-05-19.) Pre-flight census + 3×RED +
+1×BLUE + head re-verification at HEAD <code>fab558f</code> (P3-R merged):
+1. <strong>Precision fix to the P3-S prose above.</strong> "the unified
+   <code>_kernel/spatial.py</code> fail-loud centroid" is imprecise: at HEAD only
+   the plane/box/sphere <strong>mask math</strong> is unified in
+   <code>_kernel/spatial.py</code> (<code>:74-86</code> <code>plane_mask</code>/<code>box_mask</code>/
+   <code>sphere_mask</code>; the module docstring <code>:34-38</code> explicitly states the
+   element-centroid <code>_coords_of</code> source "stays per-engine in
+   <code>MeshSelection</code>" and the <code>_mesh_filters</code> centroid unification "is a
+   P3-R concern, not P3-K"). The <strong>fail-loud centroid is the
+   per-engine <code>MeshSelection._centroid_map_live</code></strong>
+   (<code>mesh/_mesh_selection.py:329-356</code>, <code>KeyError</code> at <code>:346-352</code>
+   "…not in the live mesh node set — refusing to compute a corrupted
+   centroid (fail loud)."), reached by element-level <code>.coords</code>
+   (<code>:478-486</code> → <code>_coords_of</code> <code>:385-395</code> → <code>_coords_of_live</code>
+   <code>:358-382</code>). Read P3-S as: assert, <strong>via the new idiom only</strong>, that
+   (a) element <code>.coords</code> yields the per-engine fail-loud centroid
+   value (never silent row-0) and (b) <code>.on_plane</code> runs the unified
+   <code>_kernel/spatial.py</code> <code>(point,normal,tol)</code> <code>plane_mask</code>.
+2. <strong>Direct <code>_kernel.spatial</code> unit pins are rejected</strong> (RED-2): the
+   P3-S mechanism is the new idiom <code>g.mesh_selection.select(...)</code>
+   <strong>exclusively</strong> — three committed artifacts name it and never a
+   kernel-unit path (this P3-S text <code>:719-722</code>; the superseded-spec
+   <code>:586-589</code>; the in-repo charter <code>tests/test_pin_spatial_v2.py:21-25</code>).
+   No <code>from apeGmsh._kernel import spatial</code> in the new file; no
+   <code>_kernel/*</code> math-leaf unit-test precedent exists in the suite.
+3. <strong>The literal box/sphere/plane + fail-loud-centroid-via-<code>.in_box</code>
+   pins are ALREADY green at HEAD</strong> (<code>tests/test_mesh_selection_chain.py</code>
+   <code>:222-336</code>, <code>:432-449</code> — the P3-R rewrites; head-verified zero
+   <code>.coords</code> in that file and the only suite-wide selection-<code>.coords</code>
+   assertion is <code>tests/test_fem_chain.py:357-358</code>, node-level
+   shape/dtype only). P3-S therefore adds <strong>only the four
+   source-proven successor gaps</strong>, never duplicates, in one additive
+   file <code>tests/test_pin_spatial_kernel_v2.py</code> (zero <code>src/</code> change,
+   zero edits to existing tests; existing green literals re-used as
+   oracles): <strong>PIN 1</strong> element-<code>.coords</code> centroid value + a
+   <code>.coords</code>-triggered fail-loud regression (Gap D — the <em>only</em>
+   element-<code>.coords</code> value pin in the suite; the existing <code>:432-449</code>
+   fail-loud is via <code>.in_box</code>, head-verified, so the <code>.coords</code> entry
+   path is genuinely additive); <strong>PIN 2</strong> element-<code>on_plane</code> <strong>frozen
+   id-set</strong> replacing the cardinality-only <code>len()==4</code> at
+   <code>test_mesh_selection_chain.py:209</code> (Gap C — the §7 silent-drift
+   hole); <strong>PIN 3</strong> <code>&lt;=tol</code> plane <strong>boundary</strong> via the live idiom
+   (Gap E); <strong>PIN 4</strong> <strong>non-unit normal</strong> normalisation via the live
+   idiom (Gap F).
+4. <strong>Head-caught corrections to the executor contract (trust-nothing,
+   at source).</strong> PIN 4 must <strong>replicate the existing-oracle chain
+   prefix</strong> <code>select().in_box((0,0,0),(1,1,1)).on_plane(...)</code> and vary
+   <em>only</em> the normal to non-unit — the <code>[2,12,17,25]</code> literal at
+   <code>test_mesh_selection_chain.py:222-231</code> is the half-open-box-prefixed
+   z=0 <strong>subset</strong>, NOT the full 9-node z=0 plane that a box-less
+   <code>select().on_plane(...)</code> yields (head-verified at source; the full
+   z=0 plane is only <code>len()==9</code>-pinned at <code>:185-195</code>). PIN 3 freezes
+   its boundary id-set via the plan-endorsed <strong>proof-file/p2g freeze
+   pattern</strong> (empirical capture once under the env trap + a documented
+   structural derivation from the {0,0.5,1}³ lattice), never a
+   self-referential assertion.
+5. <strong>Stale citations corrected.</strong> P3-S's <code>MeshSelectionSet.py:715</code>→
+   <code>:849</code> is pre-P3-R numbering; at HEAD <code>MeshSelectionSet.select</code> is
+   <code>:511-645</code> (symbol unchanged, returns <code>MeshSelection</code>).
+   <code>_kernel/chain.py:171</code> = <code>on_plane(self,point,normal,*,tol)</code>
+   (<code>tol</code> keyword-only, <strong>no default</strong> — every call passes <code>tol=</code>);
+   <code>:128</code> = the abstract <code>_spatial_plane</code> stub (impl
+   <code>mesh/_mesh_selection.py:416</code>). <code>_kernel/chain.py</code> is the surviving
+   <code>SelectionChain</code> base, <strong>not</strong> a P3-R-deleted module.</p>
+</blockquote>
 <h3 id="p4-docs-adr-memory">P4 — docs / ADR / memory<a class="headerlink" href="#p4-docs-adr-memory" title="Permanent link">&para;</a></h3>
 <p>Supersede <code>selection-unification.md</code>; ADR for the label/PG
 non-merge + the <code>_kernel</code> boundary; tighten the
 <code>MeshSelectionSet.py:741-742</code> axis-aligned-vs-generalized docstring;
-update apegmsh-helper skill selection section; update MEMORY entries.</p>
+update apegmsh-helper skill selection section; update MEMORY entries.
+Document the SC-12 capability gap (no v2 "geometric-selection → named
+mesh-selection" path replacing <code>from_geometric</code>/<code>viz.Selection.
+to_mesh_*</code>) and the rescoped §7 invariant 1.</p>
+<blockquote>
+<p>[!note] P4 scope reconciliation (2026-05-19 — M-CORRECTION-P4
+class: head-resolvable, owner-INFORMED via this note +
+<code>selection-unification-v2-p3r-callers.md</code> §0 M-CORRECTION-P4 + the P4
+PR body + the memory note; <strong>NOT</strong> owner-re-ratified — every item
+resolves by following the repo's <em>own documented rules</em> (ADR
+append-only; fix the CI-deployed published lie); reverses no R-v2-x,
+no phase-structure change). Read-only pre-flight census + head
+re-verification at HEAD (P3-R merged + P3-S):
+1. <strong>P4-A is NOT "src docstrings only" (FATAL prompt-scope miss).</strong>
+   The worklist also includes the <strong>published mkdocs tree</strong>:
+   <code>docs/api/selection.md</code> (in <code>mkdocs.yml</code> nav <code>:196</code>; <code>mkdocstrings</code>
+   <code>:96</code>) whose type table <code>:27-32</code> carries <strong>build-breaking dead
+   autorefs</strong> into the five P3-R-deleted modules
+   (<code>[GeometryChain][apeGmsh.core._selection.GeometryChain]</code>,
+   <code>…_mesh_selection_chain.MeshSelectionChain</code>, <code>…_node_chain.NodeChain</code>,
+   <code>…_elem_chain.ElementChain</code>, <code>…_result_chain.ResultChain</code>) and
+   <code>:14-15</code> teaches removed <code>add_nodes</code>/<code>queries.select</code>/
+   <code>selection.select_*</code> as live; the other <code>docs/api/*.md</code>;
+   <code>internal_docs/guide_selection.md</code> / <code>guide_selection_chain.md</code> /
+   <code>guide_queries.md</code> / <code>MIGRATION_v1.md</code>; and the
+   <code>.claude/skills/apegmsh-helper/SKILL.md</code> selection sections (§1.3/
+   §1.4/§7/§8/§9 teach the entire removed surface as "unchanged").
+   <code>.github/workflows/docs.yml</code> runs <code>mkdocs gh-deploy</code> on push to
+   <code>main</code> (paths incl. <code>docs/**</code>,<code>internal_docs/**</code>,<code>src/**</code>) → the
+   lie is <strong>republished on merge</strong>; fixing it is correctness-mandatory
+   (deploy-on-merge, non-strict — not a PR-blocking gate, but a P4
+   acceptance goal: mkdocs build clean / no dead autorefs).
+2. <strong>ADR: add 0016, do NOT edit 0015 (prompt path + verb both wrong).</strong>
+   ADR 0015 exists at
+   <code>src/apeGmsh/opensees/architecture/decisions/0015-label-pg-separate-registries-kernel-leaf.md</code>
+   (there is <strong>no</strong> <code>docs/adr/</code>), Status "Accepted … Phase P2-I", and
+   is stale (future-tense chain deletion; cites the P3-R-deleted
+   <code>tests/test_p2i_parity.py</code>). It already covers the ratified
+   label/PG non-merge + <code>_kernel</code> leaf. The ADR
+   <code>decisions/README.md:7-8</code> mandates <strong>append-only</strong> ("write a new
+   ADR that supersedes it; do not edit history"). P4 therefore adds
+   <strong>ADR 0016</strong> (v2-completion: chains removed; <code>core/_selection.
+   Selection</code> + <code>viz.Selection</code> classes RETAINED per R-v2-8/SC-8;
+   <code>MeshSelection</code> self-contained on <code>_kernel/spatial.py</code>; the two
+   capability gaps) + its README index row; 0015 is left as the
+   historical P2-I record. "Finalize/extend ADR 0015" is reinterpreted
+   per the repo's own append-only governance.
+3. <strong>The single suite-delta tripwire (STOP — S-1).</strong> Exactly ONE
+   pinned stale token suite-wide: the <code>from_geometric</code> substring in
+   <code>src/apeGmsh/mesh/MeshSelectionSet.py</code> <code>_seed_ids_by_name</code>'s
+   <code>KeyError</code> (≈<code>:498-506</code>) is asserted by
+   <code>tests/test_mesh_selection_chain_name_seed.py:227</code>
+   (<code>assert "from_physical" in msg and "from_geometric" in msg</code>).
+   <strong>P4 leaves <code>MeshSelectionSet.py</code> byte-untouched</strong> (its stale
+   strings are already classed "P4/optional cosmetic" by §6.3 §0
+   RED-2 MINOR; the message legitimately surfaces the <em>retained</em>
+   <code>from_physical</code> register-then-select route — the cosmetic gain is
+   not worth the suite-delta blast radius). No doctest collection
+   exists (<code>pyproject.toml:65</code> addopts has <strong>no</strong> <code>--doctest-modules</code>)
+   → every <em>other</em> docstring/string fix is inherently suite-safe; the
+   §7 zero-suite-delta invariant holds iff <code>MeshSelectionSet.py</code>
+   <code>:498-506</code> is untouched.
+4. <strong>Re-derive every seed at HEAD; the prompt/§6.2 line refs shifted
+   (P3-R deletions).</strong> e.g. <code>core/_selection.Selection</code> terminal
+   <code>:1368</code>/<code>:1039</code>→<code>:1127</code>/<code>:1139</code>; <code>Selection</code> class still <code>:436</code>;
+   <code>MeshSelectionSet.select</code> <code>:511</code> (docstring <code>:580-591</code>),
+   <code>from_physical</code> <code>:337</code> (RETAINED). LEAVE the naive-sweep false
+   positives: <code>apeGmsh/__init__.py</code> <code>SelectionPicker=ModelViewer</code>
+   (viewer alias), <code>viz/__init__.py:3-5</code> / <code>core/_model_queries.py:15-21</code>
+   / <code>mesh/_live_engine.py</code> / <code>results/_result_engine.py</code> provenance,
+   <code>viewers/ui/_filter_view_tabs.py</code> <code>_select_all</code> (Qt). <code>GeometryChain</code>
+   is <strong>DELETED</strong> → a removed name in docs. The <em>retained</em> <code>Selection</code>
+   class's own docstrings that reference removed <code>queries.select</code> ARE
+   stale-fix (fix the reference, keep the class).
+5. <strong>The migration table (highest-value artifact — head-owned, RED-checked).</strong>
+   Two non-obvious rows the prompt under-specifies: (i)
+   <code>g.mesh_selection.add_*</code> → <code>.select(...).save_as</code> is <strong>live-engine
+   only</strong>; the durable explicit-ids successor is the RETAINED
+   <code>g.mesh_selection.add(dim,ids,name=)</code>. (ii) "<code>results.*.get(
+   component=)</code> removed" is the <strong>chain <code>.values()</code> path only</strong> — the
+   typed <code>results.&lt;sub&gt;.get(component=)</code> reader is RETAINED and is
+   <em>itself</em> the successor (§3.1(c)). The two gaps confirmed at source:
+   SC-12 (<code>from_geometric</code>/<code>viz.Selection.to_mesh_*</code> — both ends
+   removed, no successor); the <code>SelectionComposite.select_*</code> filter
+   grammar (<code>labels=</code>/<code>kinds=</code>/<code>*_range=</code>/<code>predicate=</code>/<code>exclude_tags=</code>
+   /<code>physical=</code>/<code>at_point=</code>) — <code>EntitySelection</code> has <strong>no</strong> filter-
+   grammar successor (the retained <code>viz.Selection.filter()</code> is
+   viewer-pick-only, <strong>not</strong> a <code>g.model.select</code> migration path —
+   state precisely to avoid implying a false successor). Migration
+   table + both gaps go in <code>docs/api/selection.md</code> (published,
+   user-first) + a <code>docs/changelog.md</code> BREAKING entry; the
+   engineering record stays here + in ADR 0016.
+6. <strong>§7 invariant 1</strong> is already rescoped in §7 — P4 finalizes the
+   wording past-tense (P3-R + P3-S done); it is an internal
+   test-invariant and stays in this plan, <strong>not</strong> in user docs.
+7. <strong>Memory:</strong> the stale <code>MEMORY.md</code> index entry (the P3-resume line)
+   + <code>project_selection_api_deprecation.md</code> → final state, both gaps,
+   program-COMPLETE. Exclude <code>.claude/_p3s_*</code> / <code>_p4_*</code> scratch +
+   <code>.claude/settings.local.json</code> from the P4 PR.</p>
+</blockquote>
 <hr />
 <h2 id="7-invariants-that-must-hold-at-every-commit">7. Invariants that must hold at every commit<a class="headerlink" href="#7-invariants-that-must-hold-at-every-commit" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>tests/test_resolution_contract.py</code> + <code>tests/test_target_resolution.py</code>
-  (20) green; <strong>byte-unchanged through P1-K</strong> (invisibility proof).</li>
+<li><code>tests/test_resolution_contract.py</code> byte-unchanged <strong>through P3-K
+  and P3-R</strong> (exercises no removed symbol — §6.2 SC-3/§4b; the
+  through-removal invisibility proof). <code>tests/test_target_resolution.py</code></li>
+<li><code>tests/test_pin_resolution_v2.py</code> byte-unchanged <strong>through P3-K
+  only</strong>; P3-R rewrites them same-PR behaviour-identical, each new
+  assertion verified equal to the recorded P3-K oracle.
+  <code>tests/test_pin_spatial_v2.py</code> byte-unchanged <strong>through P3-K</strong> (both
+  pins observe only the removal-target surface); <strong>rewritten/retired in
+  P3-R</strong> (its <code>_mesh_filters</code>/<code>add_*</code> surface removed there), with
+  new-idiom regression successors added in P3-S. All four green every
+  commit (§6.2 SC-3 — the program-wide "byte-unchanged through P3" was
+  unsatisfiable and is formally rescoped here). <strong>FINAL (P4):</strong> the
+  invariant held at every commit — <code>test_resolution_contract.py</code>
+  byte-unchanged through P3-K/P3-R/P3-S (and P4, docs-only); the two
+  proof files oracle-equal post-P3-R; <code>test_pin_spatial_v2.py</code> is the
+  P3-R SC-11 <code>_mesh_filters</code> fail-loud reviewed pin; the P3-S
+  new-idiom successors are <code>tests/test_pin_spatial_kernel_v2.py</code>
+  (5 reviewed pins, frozen literals). P4 changed no test
+  (docs/skill/ADR/memory only) so the bar is unchanged.</li>
+<li>P3-S's "new-idiom regression successors" (the bullet above) are
+  pinned <strong>exclusively through <code>g.mesh_selection.select(...)</code></strong> — NOT a
+  direct <code>_kernel.spatial</code> import (the §6.2 P3-S 2026-05-19
+  M-CORRECTION); each is a reviewed assertion + a paired regression,
+  and the element-<code>on_plane</code> centroid pin is a <strong>frozen id-set</strong> (not a
+  cardinality check) so a cardinality-preserving centroid corruption
+  cannot drift silently. The fail-loud centroid is the per-engine
+  <code>MeshSelection._centroid_map_live</code>, not <code>_kernel/spatial.py</code> (which
+  unifies only the box/sphere/plane mask math).</li>
 <li><code>tests/test_import_dag_polarity.py</code> (widened <code>PKGS</code> incl.
   <code>_kernel</code>+<code>fem</code>) green every commit; <code>BASELINE</code> changes only as an
   explicit same-commit reviewed diff.</li>
@@ -4395,8 +5096,12 @@ update apegmsh-helper skill selection section; update MEMORY entries.</p>
 <li><code>_constraint_resolver/_geom.py</code> (non-matching-mesh tie projection).</li>
 <li>Any backward-compat shim, deprecation-window, or <code>select→get</code>
   aliasing beyond the single <code>.result()</code> identity alias (R-v2-2).</li>
-<li>Reviving v1's "facade preserved / keep both Selections" — that was
-  backward-compat-driven and is explicitly reversed.</li>
+<li>Reviving v1's "facade preserved / keep both Selections" <em>as a
+  backward-compat facade</em> — that was backward-compat-driven and is
+  explicitly reversed. (Distinct from R-v2-8: <code>core/_selection.Selection</code></li>
+<li>the <code>viz.Selection</code> class are retained as <strong>terminal payload /
+  pick-result types by architecture</strong>, not as a compat facade — only
+  their package exports are dropped.)</li>
 </ul>
 
 
