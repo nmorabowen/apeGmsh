@@ -1,12 +1,19 @@
 # ModelData — vanilla-OpenSees `model.h5` orientation enrichment
 
-**Status:** Implementation complete on branch
-`guppi/nervous-mclaren-58fbd3` (May 2026); awaiting commit/PR. Flips
-to "Shipped" once the PR lands.  C1–C6 acceptance gates green; full
-H5/femdata/viewer/cuts suite passes (181 tests; 32 new). Design
-ratified by ADR 0018 after a blue/red adversarial exercise (1× BLUE
-Opus + 1× RED Opus + head-engineer synthesis). Every load-bearing
-claim below is cited at source so it can be re-checked.
+**Status:** **Shipped May 2026.** P1 (the `ModelData` writer) merged
+in PR [#262](https://github.com/nmorabowen/apeGmsh/pull/262); post-merge
+selection-v2 migration + AST guard in PR
+[#264](https://github.com/nmorabowen/apeGmsh/pull/264); **P2** (the
+consumer-side wiring — `Results.viewer(model_h5=)` as the unified
+pointer, auto-resolve of `results._path`, branched scene builder,
+subprocess `--model-h5` forwarding) merged on branch
+`feat/viewer-model-h5-enrichment`. Full
+H5/femdata/viewer/cuts gate passes (1302 tests; +13 new across P1+P2).
+Design ratified by ADR 0018 after a blue/red adversarial exercise
+(1× BLUE Opus + 1× RED Opus + head-engineer synthesis); the P2
+subprocess decision (forward vs refuse) ran the same red/blue
+exercise — see the merge PR body for that synthesis. Every
+load-bearing claim below is cited at source so it can be re-checked.
 
 This phase lets a user who writes their OpenSees model **by hand**
 (vanilla openseespy, no `apeSees` typed primitives) produce the
@@ -181,13 +188,20 @@ Each commit is independently green; the feature is usable after C3.
 
 ## 4. Out of scope (explicit)
 
-- **P2 — non-native consumption.** A `Results.from_recorders` /
-  `from_mpco` instance cannot today consume a side `model.h5`'s
-  transforms; `model_h5=` on `Results.viewer()` is cuts-only
-  (`results/Results.py:441-443`). Confirmed parked by the owner
-  (`project_mpco_no_vecxz`). `ModelData`'s INV-16 byte-equivalence is
-  precisely the guarantee that lets a future P2 consume its output
-  with zero `ModelData` awareness — P2 is unblocked, not built here.
+- **P2 — non-native consumption. Shipped May 2026** on branch
+  `feat/viewer-model-h5-enrichment`. The viewer wires the
+  `/opensees/transforms` + `/opensees/element_meta` pair into the
+  post-solve scene via `ResultsViewer`'s auto-resolve of
+  `results._path` (`viewers/data/_h5_probe.py::has_opensees_orientation`
+  → branched `ViewerData.from_h5` at `results_viewer.py:268-287`),
+  generalising the existing `Results.viewer(model_h5=)` from a
+  cuts-only kwarg to the unified consumer-side pointer for both
+  cuts and orientation. INV-16's byte-equivalence is the guarantee
+  that lets P2 consume `ModelData` output with zero `ModelData`
+  awareness — exactly as predicted in P1's design. See the merge PR
+  and ADR 0018 Consequences/Positive for the four-commit
+  decomposition (probe + resolver, scene-builder branch + subprocess
+  forwarding, parity test + docs, ADR/scope flip).
 - Any `/opensees` zone other than transforms + element_meta
   (materials, sections, patterns, recorders, analysis) — INV-10.
 - Tap / interception authoring — rejected in ADR 0018 (alt 1).
