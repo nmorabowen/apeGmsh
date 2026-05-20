@@ -427,6 +427,21 @@ one writer in `H5Emitter`):
   `_TransformRecord` + per-element `_ElementRecord`s; the on-disk
   layout below is identical (single source of truth, INV-1 / INV-3).
 
+**Consumer-side pointer.** `Results.viewer(model_h5=)` is the unified
+consumer for this zone (and for `/opensees/cuts`).  Explicit
+`model_h5=` wins; otherwise the post-solve `ResultsViewer`
+auto-resolves `results._path` itself when it was opened from disk via
+`Results.from_native` AND the file probes positive for both
+`/opensees/transforms` and `/opensees/element_meta`
+(`viewers/data/_h5_probe.py::has_opensees_orientation`).
+`ViewerData.from_h5` then carries per-element `vecxz` into the scene
+via `view.elements.vecxz_for(eid)`.  Producer-agnostic — INV-16's
+byte-equivalent output means the consumer needs zero `ModelData`
+awareness.  Recorder / MPCO files lack `/opensees/`, so the probe
+naturally excludes them and any non-default layout still needs an
+explicit `model_h5=` (forwarded into the subprocess on
+`blocking=False` via `--model-h5`).
+
 ## `/opensees/beam_integration`
 
 One group per `beamIntegration` call.  Keyed by `{type}_{tag}`

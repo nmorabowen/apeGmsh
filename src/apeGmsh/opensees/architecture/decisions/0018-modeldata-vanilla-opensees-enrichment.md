@@ -173,6 +173,18 @@ viewer / future P2 read path needs zero `ModelData` awareness.
   refactors are unconstrained by this secondary feature.
 - Byte-equivalent output → `ModelData` is invisible to the viewer and
   to any future P2 consumer; no read-path branching on provenance.
+- **P2 shipped (May 2026).** The viewer-side consumer ratifies this
+  ADR's INV-16 (byte-equivalent output) by needing zero `ModelData`
+  awareness. `ResultsViewer` auto-resolves `results._path` into a
+  branched `ViewerData.from_h5` scene whenever the file carries the
+  `/opensees/transforms` + `/opensees/element_meta` pair (probe at
+  `viewers/data/_h5_probe.py::has_opensees_orientation`, using
+  H5Lexists per `project_h5py_optional_child_get_hazard` / PR #261).
+  Explicit `Results.viewer(model_h5=)` overrides the auto-resolve and
+  is forwarded into the spawned subprocess via `--model-h5` on
+  `blocking=False`. See [modeldata-enrichment-scope.md](../modeldata-enrichment-scope.md)
+  §4 (P2 row flipped to shipped) and the merge PR for the four-commit
+  decomposition.
 - Lean: one public class, one new `H5Emitter` method, one bounded
   refactor, one inject method.
 - Eliminates a duplicate of the already-subtle stub-teardown +

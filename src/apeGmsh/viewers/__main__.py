@@ -34,6 +34,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--title", default=None,
         help="Window title (defaults to 'Results — <filename>').",
     )
+    parser.add_argument(
+        "--model-h5", dest="model_h5", default=None,
+        help=(
+            "Path to a model.h5 carrying OpenSees enrichment (cuts "
+            "and/or /opensees/transforms + /opensees/element_meta for "
+            "per-element orientation). When omitted, the viewer "
+            "auto-resolves the results file itself if it carries the "
+            "orientation zone (ADR 0018). Forwarded from "
+            "Results.viewer(blocking=False, model_h5=...)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     path = Path(args.path)
@@ -42,7 +53,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
 
     results = _open_results(path)
-    results.viewer(blocking=True, title=args.title)
+    results.viewer(
+        blocking=True, title=args.title, model_h5=args.model_h5,
+    )
     return 0
 
 

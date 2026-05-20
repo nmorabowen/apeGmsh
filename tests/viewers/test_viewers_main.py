@@ -27,8 +27,8 @@ class _StubResults:
         self.path = path
         self.viewer_calls: list[tuple[Any, ...]] = []
 
-    def viewer(self, *, blocking: bool = True, title=None):
-        self.viewer_calls.append((blocking, title))
+    def viewer(self, *, blocking: bool = True, title=None, model_h5=None):
+        self.viewer_calls.append((blocking, title, model_h5))
         return None
 
 
@@ -99,8 +99,10 @@ def test_main_passes_title(tmp_path: Path, stub_readers):
     def _fake_native(path):
         r = _StubResults(Path(path))
         # Replace with a viewer that records kwargs
-        def viewer(*, blocking=True, title=None):
-            stash.append({"blocking": blocking, "title": title})
+        def viewer(*, blocking=True, title=None, model_h5=None):
+            stash.append({
+                "blocking": blocking, "title": title, "model_h5": model_h5,
+            })
         r.viewer = viewer
         return r
 
@@ -113,7 +115,9 @@ def test_main_passes_title(tmp_path: Path, stub_readers):
         mod._open_results = original
 
     assert code == 0
-    assert stash == [{"blocking": True, "title": "My Title"}]
+    assert stash == [
+        {"blocking": True, "title": "My Title", "model_h5": None},
+    ]
 
 
 def test_main_invokes_viewer_blocking(tmp_path: Path, stub_readers):
@@ -125,7 +129,7 @@ def test_main_invokes_viewer_blocking(tmp_path: Path, stub_readers):
 
     def _fake_native(path):
         r = _StubResults(Path(path))
-        def viewer(*, blocking=True, title=None):
+        def viewer(*, blocking=True, title=None, model_h5=None):
             stash.append(blocking)
         r.viewer = viewer
         return r
@@ -140,3 +144,69 @@ def test_main_invokes_viewer_blocking(tmp_path: Path, stub_readers):
 
     assert code == 0
     assert stash == [True]
+
+
+# =====================================================================
+# --model-h5 forwarding (P2 / ADR 0018)
+# =====================================================================
+
+def test_main_forwards_model_h5(tmp_path: Path, stub_readers):
+    """`--model-h5 <path>` arrives at ``results.viewer(model_h5=...)``."""
+    fpath = tmp_path / "run.h5"
+    fpath.write_bytes(b"")
+    model_path = tmp_path / "frame.model.h5"
+    model_path.write_bytes(b"")
+
+    stash: list[dict] = []
+
+    def _fake_native(path):
+        r = _StubResults(Path(path))
+        def viewer(*, blocking=True, title=None, model_h5=None):
+            stash.append({
+                "blocking": blocking, "title": title, "model_h5": model_h5,
+            })
+        r.viewer = viewer
+        return r
+
+    import apeGmsh.viewers.__main__ as mod
+    original = mod._open_results
+    mod._open_results = lambda p: _fake_native(p)
+    try:
+        code = main([str(fpath), "--model-h5", str(model_path)])
+    finally:
+        mod._open_results = original
+
+    assert code == 0
+    assert len(stash) == 1
+    assert stash[0]["blocking"] is True
+    assert stash[0]["title"] is None
+    # __main__ forwards the raw string from argparse — normalisation is
+    # the downstream ResultsViewer / ViewerData.from_h5's job.
+    assert stash[0]["model_h5"] == str(model_path)
+
+
+def test_main_omits_model_h5_when_flag_absent(tmp_path: Path, stub_readers):
+    """No ``--model-h5`` → ``viewer(model_h5=None)``, never a spurious empty
+    string. The auto-resolve in ``ResultsViewer.__init__`` then kicks in."""
+    fpath = tmp_path / "run.h5"
+    fpath.write_bytes(b"")
+
+    stash: list[dict] = []
+
+    def _fake_native(path):
+        r = _StubResults(Path(path))
+        def viewer(*, blocking=True, title=None, model_h5=None):
+            stash.append({"model_h5": model_h5})
+        r.viewer = viewer
+        return r
+
+    import apeGmsh.viewers.__main__ as mod
+    original = mod._open_results
+    mod._open_results = lambda p: _fake_native(p)
+    try:
+        code = main([str(fpath)])
+    finally:
+        mod._open_results = original
+
+    assert code == 0
+    assert stash == [{"model_h5": None}]

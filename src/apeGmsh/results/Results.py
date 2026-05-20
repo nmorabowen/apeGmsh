@@ -439,8 +439,17 @@ class Results:
             cuts programmatically via ``director.add_section_cut`` on
             the spawned viewer once it exposes IPC.
         model_h5
-            Path to the ``model.h5`` the cuts were built against.
-            Required when ``cuts`` is non-empty; ignored otherwise.
+            Path to a ``model.h5`` that carries OpenSees enrichment:
+            ``/opensees/cuts`` (for section-cut tag mapping) and / or
+            ``/opensees/transforms`` + ``/opensees/element_meta`` (for
+            per-element beam orientation, ADR 0018). When omitted and
+            ``self`` was opened from disk via :meth:`from_native`, the
+            viewer auto-resolves the results file itself as the
+            orientation source if it carries those zones; cuts
+            auto-load still requires an explicit ``model_h5=``.
+            Forwarded into the subprocess on ``blocking=False`` via
+            ``--model-h5`` so the auto-resolve also fires there for
+            non-default layouts.
 
         Returns
         -------
@@ -458,7 +467,9 @@ class Results:
             print("[skip viewer] APEGMSH_SKIP_VIEWER set")
             return None
         if not blocking:
-            handle = self._spawn_viewer_subprocess(title=title)
+            handle = self._spawn_viewer_subprocess(
+                title=title, model_h5=model_h5,
+            )
             # The subprocess opens its own NativeReader against the
             # path; the parent kernel's reader is no longer needed for
             # rendering. Close it here so the user can re-run a capture
@@ -484,8 +495,21 @@ class Results:
             model_h5=model_h5,
         ).show()
 
-    def _spawn_viewer_subprocess(self, *, title: Optional[str]):
-        """Launch ``python -m apeGmsh.viewers <path>`` and return the Popen."""
+    def _spawn_viewer_subprocess(
+        self,
+        *,
+        title: Optional[str],
+        model_h5: Optional[Any] = None,
+    ):
+        """Launch ``python -m apeGmsh.viewers <path>`` and return the Popen.
+
+        ``model_h5`` — when non-None — is forwarded as ``--model-h5
+        <path>`` so the spawned viewer can resolve OpenSees orientation
+        / cuts enrichment against a file other than ``self._path``.
+        ``cuts=`` is *not* forwarded (live ``SectionCutDef`` objects
+        don't survive an argv hop; that needs real IPC — separate
+        future work, see ``viewer()`` docstring).
+        """
         import subprocess
         import sys
         if self._path is None:
@@ -498,6 +522,8 @@ class Results:
         args = [sys.executable, "-m", "apeGmsh.viewers", str(self._path)]
         if title is not None:
             args.extend(["--title", title])
+        if model_h5 is not None:
+            args.extend(["--model-h5", str(model_h5)])
         return subprocess.Popen(args)
 
     # ------------------------------------------------------------------
