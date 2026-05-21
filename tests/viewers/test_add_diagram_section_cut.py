@@ -17,6 +17,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.conftest import _stub_model_h5_path
+
 
 _FIXTURE = Path("tests/fixtures/results/elasticFrame.mpco")
 
@@ -34,7 +36,7 @@ def director():
         pytest.skip(f"Missing fixture: {_FIXTURE}")
     from apeGmsh.results import Results
     from apeGmsh.viewers.diagrams._director import ResultsDirector
-    return ResultsDirector(Results.from_mpco(_FIXTURE))
+    return ResultsDirector(Results.from_mpco(_FIXTURE, model_h5=_stub_model_h5_path()))
 
 
 def _set_kind(dlg, kind_id: str) -> None:
@@ -147,10 +149,15 @@ def test_switching_back_restores_results_rows(qapp, director):
 # =====================================================================
 
 def test_model_h5_autofills_from_director(qapp, director, tmp_path):
+    """Phase 8 — the deprecated ``set_model_h5`` verb is gone.
+
+    The director's internal ``_bind_model_h5`` helper is the only
+    remaining path-binder; it carries the same autofill semantics.
+    """
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
     fake = tmp_path / "model.h5"
     fake.write_bytes(b"")          # touch — content irrelevant for the prefill check
-    director.set_model_h5(fake)
+    director._bind_model_h5(fake)
     dlg = AddDiagramDialog(director, parent=None)
     assert dlg._cut_model_h5_edit.text() == str(fake)
 
@@ -325,7 +332,7 @@ def test_missing_file_marks_error(qapp, director, tmp_path):
 # v4-5 — Source toggle (file vs h5) + h5-cut dropdown
 # =====================================================================
 
-def _make_minimal_h5(path, *, schema_version="2.5.0"):
+def _make_minimal_h5(path, *, schema_version="2.6.0"):
     import h5py
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")

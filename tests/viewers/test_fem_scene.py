@@ -34,11 +34,14 @@ from apeGmsh.mesh.FEMData import (
 )
 from apeGmsh.results import Results
 from apeGmsh.viewers.scene.fem_scene import (
+
     GMSH_LINEAR,
     GMSH_LINEAR_FALLBACK,
     build_fem_scene,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 _FIXTURES = Path("tests/fixtures/results")
 
@@ -94,7 +97,7 @@ def elastic_frame_results():
     path = _FIXTURES / "elasticFrame.mpco"
     if not path.exists():
         pytest.skip(f"Missing fixture: {path}")
-    return Results.from_mpco(path)
+    return Results.from_mpco(path, model_h5=_stub_model_h5_path())
 
 
 @pytest.fixture
@@ -102,7 +105,7 @@ def zl_springs_results():
     path = _FIXTURES / "zl_springs.mpco"
     if not path.exists():
         pytest.skip(f"Missing fixture: {path}")
-    return Results.from_mpco(path)
+    return Results.from_mpco(path, model_h5=_stub_model_h5_path())
 
 
 def test_mpco_elastic_frame_substrate_has_cells(elastic_frame_results):

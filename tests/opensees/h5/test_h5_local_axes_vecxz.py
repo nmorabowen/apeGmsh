@@ -88,9 +88,12 @@ def test_element_local_axes_vecxz_end_to_end(tmp_path: Path) -> None:
         np.testing.assert_allclose(vecxz[1], [1.0, 0.0, 0.0])
 
         # transform_arrays exposes the datasets transforms() omits.
-        names = list(model.transforms())
-        assert names, "no /opensees/transforms group emitted"
-        arr = model.transform_arrays(names[0])
+        # Phase 8 / ADR 0019 — typed accessor returns records; the
+        # transform-group name on disk is ``{type_token}_{tag}``.
+        records = model.transforms()
+        assert records, "no /opensees/transforms group emitted"
+        first = records[0]
+        arr = model.transform_arrays(f"{first.type_token}_{first.tag}")
         np.testing.assert_allclose(
             np.asarray(arr["per_element_vecxz"]).reshape(-1, 3)[0],
             [1.0, 0.0, 0.0],

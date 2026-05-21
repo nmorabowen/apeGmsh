@@ -42,7 +42,12 @@ from apeGmsh.opensees.emitter import h5_reader
 
 
 def test_schema_version_is_2_5_0() -> None:
-    assert SCHEMA_VERSION == "2.5.0"
+    # Phase 6 (ADR 0021) bumped minor 2.5.0 → 2.6.0 for the additive
+    # /meta/lineage sub-group.  Phase 7b (ADR 0022) bumped to 2.7.0
+    # for the additive /opensees/constraints/ group.  The test name
+    # is left at the legacy form to keep test discovery stable across
+    # CI runs.
+    assert SCHEMA_VERSION == "2.7.0"
 
 
 def test_schema_2_5_0_writes_to_meta(tmp_path: Path) -> None:
@@ -50,7 +55,7 @@ def test_schema_2_5_0_writes_to_meta(tmp_path: Path) -> None:
     out = tmp_path / "x.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.5.0"
+        assert f["meta"].attrs["schema_version"] == "2.7.0"
 
 
 # ---------------------------------------------------------------------------
@@ -205,13 +210,16 @@ class TestRecordersReader:
     def test_reader_synthesizes_kind_typed_for_legacy_archives(
         self, tmp_path: Path,
     ) -> None:
-        """Legacy 2.0.0 / 2.1.0 / 2.2.0 archives wrote no ``kind`` attr.
-        The reader synthesizes ``kind="typed"`` so callers can branch
-        uniformly on the field."""
+        """Pre-2.3.0 archives wrote no ``kind`` attr.  The reader
+        synthesizes ``kind="typed"`` so callers can branch uniformly on
+        the field.  Per ADR 0023 the two-version window only accepts
+        the previous minor and the current minor — the test pins the
+        version one minor below the current writer (the previous-minor
+        slot of the two-version window)."""
         out = tmp_path / "legacy.h5"
         with h5py.File(out, "w") as f:
             meta = f.create_group("meta")
-            meta.attrs["schema_version"] = "2.2.0"
+            meta.attrs["schema_version"] = "2.6.0"
             meta.attrs["snapshot_id"] = "x"
             meta.attrs["model_name"] = "x"
             meta.attrs["ndm"] = 3
@@ -223,7 +231,10 @@ class TestRecordersReader:
             g.attrs["file"] = "out.out"
         with h5_reader.open(str(out)) as model:
             recorders = model.recorders()
-            assert recorders["Node_0"]["kind"] == "typed"
+            # Phase 8 / ADR 0019 — typed record exposes the schema
+            # ``kind`` attr ("typed" / "declared") via ``kind_label``.
+            assert len(recorders) == 1
+            assert recorders[0].kind_label == "typed"
 
     def test_reader_returns_both_kinds(
         self, tmp_path: Path,
@@ -247,9 +258,10 @@ class TestRecordersReader:
         e.write(str(out))
         with h5_reader.open(str(out)) as model:
             recorders = model.recorders()
-            kinds = {name: r["kind"] for name, r in recorders.items()}
-        # First call became Node_0 (typed); the declared fan-out became Node_1.
-        assert kinds == {"Node_0": "typed", "Node_1": "declared"}
+            # Two recorders, one typed (no decl context) + one declared.
+            labels = sorted(r.kind_label for r in recorders)
+        # First call typed; the declared fan-out is declared.
+        assert labels == ["declared", "typed"]
 
 
 # ---------------------------------------------------------------------------
@@ -309,18 +321,17 @@ class TestBridgeIntegration:
 
         with h5_reader.open(str(out)) as model:
             recorders = model.recorders()
-        kinds = {r["kind"] for r in recorders.values()}
+        # Phase 8 / ADR 0019 — typed records expose the schema ``kind``
+        # attr via ``kind_label``; declaration metadata via ``decl_context``.
+        kinds = {r.kind_label for r in recorders}
         assert kinds == {"typed", "declared"}
-        # Find the declared record and verify metadata threading.
-        declared = [r for r in recorders.values() if r["kind"] == "declared"]
+        declared = [r for r in recorders if r.kind_label == "declared"]
         assert declared, "expected at least one declared record"
         d = declared[0]
-        assert d["declaration_name"] == "default"
-        assert d["record_name"] == "middle"
-        assert d["category"] == "nodes"
-        comps = [
-            s.decode() if isinstance(s, bytes) else str(s)
-            for s in d["components"]
-        ]
+        assert d.decl_context is not None
+        assert d.decl_context.declaration_name == "default"
+        assert d.decl_context.record_name == "middle"
+        assert d.decl_context.category == "nodes"
+        comps = list(d.decl_context.components)
         # ndm=3 ⇒ displacement → x, y, z.
         assert comps == ["displacement_x", "displacement_y", "displacement_z"]

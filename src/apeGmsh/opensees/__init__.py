@@ -28,11 +28,13 @@ from __future__ import annotations
 from .apesees import apeSees
 from .model_data import ModelData
 from .node import Node, NodeSet
+from .opensees_model import OpenSeesModel
 from ._orientation import AlongBeam, Cartesian, Cylindrical, Spherical
 
 __all__ = [
     "apeSees",
     "ModelData",
+    "OpenSeesModel",
     "Node",
     "NodeSet",
     "AlongBeam",

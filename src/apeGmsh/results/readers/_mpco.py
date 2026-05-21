@@ -171,6 +171,16 @@ class MPCOReader:
         self._fem_cache = FEMData.from_mpco_model(model_grp)
         return self._fem_cache
 
+    def opensees_model(self):
+        """MPCO files carry no ``/opensees/`` zone — always ``None``.
+
+        Per the ``project_mpco_no_vecxz`` memory and ADR 0020's
+        MPCO-third-party-file case: the broker handle on a Results
+        opened from MPCO is wired through the ``model_h5=`` kwarg on
+        :meth:`Results.from_mpco`, not synthesised from the MPCO file.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Component discovery
     # ------------------------------------------------------------------

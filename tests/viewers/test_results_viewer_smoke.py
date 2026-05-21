@@ -19,6 +19,8 @@ from apeGmsh.results.writers import NativeWriter
 from apeGmsh.viewers.results_viewer import ResultsViewer
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fixtures
@@ -50,7 +52,7 @@ def small_results(g, tmp_path: Path):
             },
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 # =====================================================================

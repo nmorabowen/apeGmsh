@@ -39,8 +39,12 @@ def test_make_record_dtype_outer_compound_shape() -> None:
 
 def test_node_pair_payload_fields() -> None:
     dt = node_pair_payload_dtype()
+    # ``name`` (utf-8) added in neutral schema 2.5.0 (Phase 2,
+    # additive); old 2.4.0 files lack the trailing field and the
+    # reader probes presence.
     assert dt.names == (
         "master_node", "slave_node", "dofs", "offset", "penalty_stiffness",
+        "name",
     )
     assert dt["master_node"] == np.dtype(np.int64)
     assert dt["offset"].shape == (3,)
@@ -50,6 +54,7 @@ def test_node_group_payload_fields() -> None:
     dt = node_group_payload_dtype()
     assert dt.names == (
         "master_node", "slave_nodes", "dofs", "offsets", "plane_normal",
+        "name",
     )
     assert dt["plane_normal"].shape == (3,)
 
@@ -59,6 +64,7 @@ def test_interpolation_payload_fields() -> None:
     assert dt.names == (
         "slave_node", "master_nodes", "weights", "dofs",
         "projected_point", "parametric_coords",
+        "name",
     )
     assert dt["projected_point"].shape == (3,)
     assert dt["parametric_coords"].shape == (2,)
@@ -74,6 +80,7 @@ def test_surface_coupling_payload_fields() -> None:
         "sr_slave_nodes", "sr_master_counts", "sr_master_nodes",
         "sr_weights", "sr_dof_counts", "sr_dofs",
         "sr_projected", "sr_parametric",
+        "name",
     )
     assert dt["mortar_operator_shape"].shape == (2,)
 
@@ -83,29 +90,32 @@ def test_node_to_surface_payload_fields() -> None:
     assert dt.names == (
         "master_node", "slave_nodes", "phantom_nodes",
         "phantom_coords", "dofs",
+        "name",
     )
 
 
 def test_nodal_load_payload_fields() -> None:
     dt = nodal_load_payload_dtype()
-    assert dt.names == ("node_id", "force_xyz", "moment_xyz")
+    assert dt.names == ("node_id", "force_xyz", "moment_xyz", "name")
     assert dt["force_xyz"].shape == (3,)
     assert dt["moment_xyz"].shape == (3,)
 
 
 def test_element_load_payload_fields() -> None:
     dt = element_load_payload_dtype()
-    assert dt.names == ("element_id", "load_type", "params_json")
+    assert dt.names == ("element_id", "load_type", "params_json", "name")
 
 
 def test_sp_payload_fields() -> None:
     dt = sp_payload_dtype()
-    assert dt.names == ("node_id", "dof", "value", "is_homogeneous")
+    assert dt.names == (
+        "node_id", "dof", "value", "is_homogeneous", "name",
+    )
 
 
 def test_mass_payload_fields() -> None:
     dt = mass_payload_dtype()
-    assert dt.names == ("node_id", "mass")
+    assert dt.names == ("node_id", "mass", "name")
     assert dt["mass"].shape == (6,)
 
 
@@ -132,6 +142,7 @@ def test_node_pair_record_roundtrips_through_h5() -> None:
             np.array([1, 2, 3], dtype=np.int64),
             (0.5, 1.0, -0.25),           # offset
             float("nan"),                # penalty_stiffness (absent)
+            "",                          # name (2.5.0; empty = unset)
         ),
     )
     out = _h5_roundtrip(rows)
@@ -149,8 +160,8 @@ def test_node_pair_record_roundtrips_through_h5() -> None:
 def test_sp_record_roundtrips_through_h5() -> None:
     dt = make_record_dtype(sp_payload_dtype())
     rows = np.empty(2, dtype=dt)
-    rows[0] = ("node", "5", "sp", (5, 1, 0.0, 1))
-    rows[1] = ("node", "5", "sp", (5, 3, 0.002, 0))
+    rows[0] = ("node", "5", "sp", (5, 1, 0.0, 1, ""))
+    rows[1] = ("node", "5", "sp", (5, 3, 0.002, 0, ""))
     out = _h5_roundtrip(rows)
     assert int(out[0]["payload"]["is_homogeneous"]) == 1
     assert float(out[1]["payload"]["value"]) == 0.002
@@ -161,7 +172,7 @@ def test_mass_record_roundtrips_through_h5() -> None:
     rows = np.empty(1, dtype=dt)
     rows[0] = (
         "node", "7", "mass",
-        (7, (100.0, 100.0, 100.0, 0.0, 0.0, 0.0)),
+        (7, (100.0, 100.0, 100.0, 0.0, 0.0, 0.0), ""),
     )
     out = _h5_roundtrip(rows)
     np.testing.assert_array_equal(
@@ -177,7 +188,7 @@ def test_nodal_load_payload_with_nan_for_absent_moment() -> None:
     nan = float("nan")
     rows[0] = (
         "node", "12", "nodal",
-        (12, (1.0e3, 0.0, 0.0), (nan, nan, nan)),
+        (12, (1.0e3, 0.0, 0.0), (nan, nan, nan), ""),
     )
     out = _h5_roundtrip(rows)
     assert np.isnan(out[0]["payload"]["moment_xyz"]).all()
@@ -198,7 +209,7 @@ def test_node_group_vlen_offsets_packed_flat() -> None:
     dofs = np.array([1, 2, 3], dtype=np.int64)
     rows[0] = (
         "node", "10", "rigid_diaphragm",
-        (10, slaves, dofs, offsets_flat, (nan, nan, 1.0)),
+        (10, slaves, dofs, offsets_flat, (nan, nan, 1.0), ""),
     )
     out = _h5_roundtrip(rows)
     payload = out[0]["payload"]

@@ -16,11 +16,11 @@ places at the root of ``model.h5``:
 * ``/loads/{kind}/{pattern}``  — per-pattern load records.
 * ``/masses``              — per-node mass vectors.
 
-The companion ``mesh/_femdata_native_io.py`` writes a FEMData snapshot
-under a ``/model/`` SUB-group inside results files — different layout,
-different consumer (master plan §7 Q2: "Keep both").  ``_femdata_h5_io``
-targets the ROOT of a fresh model.h5; ``_femdata_native_io`` targets a
-named sub-group inside an existing results file.
+Per ADR 0020 (Phase 4 cleanup, May 2026) the same rich layout is also
+embedded under a ``/model/`` sub-group inside composed ``results.h5``
+files via :func:`write_neutral_zone_into_group`.  This module is now
+the single neutral-zone writer; the only difference between root and
+sub-group embeds is the parent passed in.
 
 Public entry points:
 
@@ -66,9 +66,11 @@ if TYPE_CHECKING:
 __all__ = [
     "NEUTRAL_SCHEMA_VERSION",
     "read_fem_h5",
+    "read_neutral_zone_from_group",
     "write_fem_h5",
     "write_meta",
     "write_neutral_zone",
+    "write_neutral_zone_into_group",
 ]
 
 
@@ -79,10 +81,30 @@ __all__ = [
 #: (`2.1.0 → 2.2.0`).  Phase 8.7 commit 2 added the
 #: ``/mesh_selections/`` neutral-zone group, mirroring
 #: ``/physical_groups`` for post-mesh selection sets
-#: (`2.3.0 → 2.4.0`).  Broker-only files (no `/opensees/...`) still
-#: stamp the current minor — the field is additive and old readers
-#: tolerate its absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.4.0"
+#: (`2.3.0 → 2.4.0`).
+#:
+#: v2.5.0 (May 2026, Phase 2 of the major architectural refactor):
+#: additive — adds the ``name`` field to every record payload dtype
+#: (constraints, loads, masses), the new ``/partitions/`` and
+#: ``/parts/`` neutral-zone groups, and reader-side verification of
+#: ``/meta/snapshot_id`` against the recomputed hash.  Per ADR 0023
+#: (per-zone-schema-versioning), readers in the two-version window
+#: accept 2.4.x and 2.5.x; 2.4.0 files silently lack the new
+#: ``name`` fields and the new groups (reader probes presence per
+#: payload field and per group).
+#:
+#: v2.6.0 (May 2026, Phase 6 of the major architectural refactor):
+#: additive — adds the ``/meta/lineage/`` sub-group (per ADR 0021
+#: §"Surface — warn, not raise") carrying the git-style hash chain
+#: ``fem_hash → model_hash → results_hash``.  Per ADR 0023's
+#: two-version reader window, readers tolerate 2.5.x and 2.6.x;
+#: 2.5.x files silently lack the lineage sub-group (legacy-file
+#: warning surfaces at the :class:`Lineage` layer, never raises).
+#:
+#: Broker-only files (no `/opensees/...`) still stamp the current
+#: minor — the field is additive and old readers tolerate its
+#: absence.
+NEUTRAL_SCHEMA_VERSION: str = "2.6.0"
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +125,14 @@ def write_fem_h5(
 
     No ``/opensees/`` content is emitted — absent enrichment is the
     right "no solver" signal.
+
+    Phase 6 (ADR 0021) — stamps ``/meta/lineage/fem_hash`` after the
+    neutral zone is written.  Lazy import keeps the apeGmsh.mesh
+    import-time graph free of apeGmsh.opensees.
     """
     import h5py
+
+    from ..opensees._internal.lineage import write_lineage_attrs
 
     with h5py.File(path, "w") as f:
         write_meta(
@@ -115,6 +143,46 @@ def write_fem_h5(
             ndf=ndf,
         )
         write_neutral_zone(fem, f)
+        # ADR 0021 lineage — broker-only files carry just ``fem_hash``
+        # (no ``/opensees/`` ⇒ no ``model_hash``).  The fem snapshot
+        # is authoritative; recompute happens at read time per the
+        # warn-not-raise contract.
+        if "meta" in f:
+            try:
+                fem_hash = str(fem.snapshot_id)
+            except Exception:
+                fem_hash = ""
+            if fem_hash:
+                write_lineage_attrs(f["meta"], fem_hash=fem_hash)
+
+
+def write_neutral_zone_into_group(
+    fem: "FEMData",
+    parent: Any,
+    *,
+    schema_version: str = NEUTRAL_SCHEMA_VERSION,
+    model_name: str = "",
+    apegmsh_version: str = "",
+    ndf: int = 0,
+) -> None:
+    """Write ``meta`` + neutral zone as children of ``parent``.
+
+    The composed-results pattern (ADR 0020) embeds a FEMData snapshot
+    under ``/model/`` of a ``results.h5``.  This helper accepts an
+    open ``h5py.Group`` (the ``/model/`` sub-group) and writes the
+    same rich layout :func:`write_fem_h5` writes to the file root —
+    only the prefix differs.  ``write_fem_h5(path)`` itself uses
+    ``parent = h5py.File(...)`` and so produces byte-identical output
+    when this helper is given the same fem and ``parent = file``.
+    """
+    write_meta(
+        fem, parent,
+        schema_version=schema_version,
+        model_name=model_name,
+        apegmsh_version=apegmsh_version,
+        ndf=ndf,
+    )
+    write_neutral_zone(fem, parent)
 
 
 def write_meta(
@@ -130,9 +198,21 @@ def write_meta(
 
     Caller-owned so the bridge can supply its own ``ndf`` /
     ``schema_version``.  Broker-only writes pass ``ndf=0``.
+
+    Per ADR 0023 (per-zone schema versioning, Phase 7a) this also
+    stamps ``/meta/neutral_schema_version`` as the neutral-zone-specific
+    marker.  The envelope ``/meta/schema_version`` is preserved for
+    one-key legacy readers; the bridge composer may later overwrite the
+    envelope with its own ``SCHEMA_VERSION`` so envelope readers see
+    "whichever wrote last" (single-stamp era semantics).
     """
     meta = f.create_group("meta")
     meta.attrs["schema_version"] = schema_version
+    # ADR 0023 §"Three per-zone version stamps" — per-zone neutral key,
+    # independent of the envelope. Broker-only files carry just this
+    # key; composed files add ``opensees_schema_version`` in
+    # ``_compose_model_h5``.
+    meta.attrs["neutral_schema_version"] = schema_version
     meta.attrs["apeGmsh_version"] = apegmsh_version
     meta.attrs["created_iso"] = datetime.now(tz=timezone.utc).isoformat()
     meta.attrs["ndm"] = int(_derive_ndm(fem))
@@ -153,6 +233,8 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_physical_groups(fem, f)
     _write_labels(fem, f)
     _write_mesh_selections(fem, f)
+    _write_partitions(fem, f)
+    _write_parts(fem, f)
     _write_constraints(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
@@ -316,6 +398,84 @@ def _write_mesh_selections(fem: "FEMData", f: Any) -> None:
                 # MeshSelectionStore.get_elements() raises "no element
                 # data".  Rows align 1:1 with element_ids.
                 sub.create_dataset("connectivity", data=conn)
+
+
+def _write_partitions(fem: "FEMData", f: Any) -> None:
+    """Write ``/partitions/{id}/{node_ids, element_ids}`` for each partition.
+
+    Sourced from :attr:`NodeComposite._partitions` — populated by
+    ``_fem_factory`` when the mesh was extracted from a partitioned
+    Gmsh session.  Omitted when the snapshot has no partitions
+    (absence is the right "not partitioned" signal on disk; matches
+    the omit-empty-groups convention).
+
+    Added in neutral schema 2.5.0 (Phase 2 of the major refactor) so
+    ``fem.partitions`` / ``select(partition=k)`` survive the H5
+    round-trip.  Per ADR 0023's two-version window, readers in 2.4.x
+    silently lack this group.
+    """
+    parts = getattr(fem.nodes, "_partitions", None) or {}
+    if not parts:
+        return
+
+    parent = f.create_group("partitions")
+    for pid in sorted(parts.keys()):
+        pdata = parts[pid]
+        sub = parent.create_group(str(int(pid)))
+        sub.attrs["id"] = int(pid)
+        node_ids = np.asarray(
+            sorted(int(x) for x in pdata.get("node_ids", [])),
+            dtype=np.int64,
+        )
+        elem_ids = np.asarray(
+            sorted(int(x) for x in pdata.get("element_ids", [])),
+            dtype=np.int64,
+        )
+        sub.create_dataset("node_ids", data=node_ids)
+        sub.create_dataset("element_ids", data=elem_ids)
+
+
+def _write_parts(fem: "FEMData", f: Any) -> None:
+    """Write ``/parts/{label}/{node_ids, element_ids}`` for each Part label.
+
+    Sourced from :attr:`NodeComposite._part_node_map` (and
+    :attr:`ElementComposite._part_elem_map`) — populated by
+    ``_fem_factory`` from the apeGmsh ``parts`` registry.  The two
+    maps are written together as the union of label keys; a label
+    may have only nodes (no elements) and vice-versa.  Omitted when
+    both maps are empty.
+
+    Added in neutral schema 2.5.0 (Phase 2 of the major refactor) so
+    ``fem.nodes.select(target=part_label)`` / ``fem.elements.select
+    (target=part_label)`` survive the H5 round-trip.  Per ADR 0023's
+    two-version window, readers in 2.4.x silently lack this group.
+    """
+    node_map = getattr(fem.nodes, "_part_node_map", None) or {}
+    elem_map = getattr(fem.elements, "_part_elem_map", None) or {}
+    if not node_map and not elem_map:
+        return
+
+    parent = f.create_group("parts")
+    labels = sorted(set(node_map.keys()) | set(elem_map.keys()))
+    seen_safe: set[str] = set()
+    for label in labels:
+        safe = label.replace("/", "_")
+        if safe in seen_safe:
+            safe = f"{safe}__{labels.index(label)}"
+        seen_safe.add(safe)
+
+        sub = parent.create_group(safe)
+        sub.attrs["label"] = label
+        nids = np.asarray(
+            sorted(int(x) for x in node_map.get(label, set())),
+            dtype=np.int64,
+        )
+        eids = np.asarray(
+            sorted(int(x) for x in elem_map.get(label, set())),
+            dtype=np.int64,
+        )
+        sub.create_dataset("node_ids", data=nids)
+        sub.create_dataset("element_ids", data=eids)
 
 
 def _write_named_index_at_root(
@@ -554,6 +714,7 @@ def _encode_node_pair(rec: Any) -> tuple[Any, ...]:
         np.asarray(rec.dofs, dtype=np.int64),
         offset_arr,
         penalty,
+        rec.name or "",
     )
 
 
@@ -576,6 +737,7 @@ def _encode_node_group(rec: Any) -> tuple[Any, ...]:
         np.asarray(rec.dofs, dtype=np.int64),
         offsets_flat,
         plane_arr,
+        rec.name or "",
     )
 
 
@@ -603,6 +765,7 @@ def _encode_interpolation(rec: Any) -> tuple[Any, ...]:
         np.asarray(rec.dofs, dtype=np.int64),
         pp_arr,
         pc_arr,
+        rec.name or "",
     )
 
 
@@ -665,6 +828,7 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         np.asarray(sr_dofs, dtype=np.int64),
         np.asarray(sr_projected, dtype=np.float64),
         np.asarray(sr_parametric, dtype=np.float64),
+        rec.name or "",
     )
 
 
@@ -680,6 +844,7 @@ def _encode_node_to_surface(rec: Any) -> tuple[Any, ...]:
         np.asarray(rec.phantom_nodes, dtype=np.int64),
         coords_flat,
         np.asarray(rec.dofs, dtype=np.int64),
+        rec.name or "",
     )
 
 
@@ -731,7 +896,7 @@ def _write_nodal_loads(parent: Any, load_set: Any) -> None:
             rows[i] = (
                 "node", str(int(rec.node_id)), "nodal",
                 (int(rec.node_id), tuple(float(x) for x in force),
-                 tuple(float(x) for x in moment)),
+                 tuple(float(x) for x in moment), rec.name or ""),
             )
         safe = str(pattern).replace("/", "_") or "default"
         parent.create_dataset(safe, data=rows)
@@ -748,7 +913,8 @@ def _write_element_loads(parent: Any, load_set: Any) -> None:
             params_json = json.dumps(rec.params, default=_json_default)
             rows[i] = (
                 "element", str(int(rec.element_id)), "element",
-                (int(rec.element_id), str(rec.load_type), params_json),
+                (int(rec.element_id), str(rec.load_type), params_json,
+                 rec.name or ""),
             )
         safe = str(pattern).replace("/", "_") or "default"
         parent.create_dataset(safe, data=rows)
@@ -765,6 +931,7 @@ def _write_sp_loads(parent: Any, sp_set: Any) -> None:
             (
                 int(rec.node_id), int(rec.dof),
                 float(rec.value), int(bool(rec.is_homogeneous)),
+                rec.name or "",
             ),
         )
     parent.create_dataset("default", data=rows)
@@ -800,7 +967,7 @@ def _write_masses(fem: "FEMData", f: Any) -> None:
             mass_tuple = mass_tuple + (0.0,) * (6 - len(mass_tuple))
         rows[i] = (
             "node", str(int(rec.node_id)), "mass",
-            (int(rec.node_id), mass_tuple),
+            (int(rec.node_id), mass_tuple, rec.name or ""),
         )
     f.create_dataset("masses", data=rows)
 
@@ -815,7 +982,7 @@ def _write_masses(fem: "FEMData", f: Any) -> None:
 # that ``apeGmsh(save_to=...)`` round-trips through.
 
 
-def read_fem_h5(path: str) -> "FEMData":
+def read_fem_h5(path: str, *, root: str = "/") -> "FEMData":
     """Reconstruct a :class:`FEMData` from a root-layout ``model.h5``.
 
     Inverse of :func:`write_fem_h5`.  Reads the seven neutral-zone
@@ -830,6 +997,13 @@ def read_fem_h5(path: str) -> "FEMData":
     path : str
         Path to a model.h5 written by ``g.save()``,
         ``apeGmsh(save_to=...)``, or :func:`write_fem_h5`.
+    root : str, default ``"/"``
+        Sub-group root inside ``path`` to read from.  Default reads a
+        standalone ``model.h5`` (rich layout at the file root).  Per
+        ADR 0020, composed ``results.h5`` files carry the same rich
+        layout under ``/model/``; pass ``root="/model"`` to rehydrate
+        from there.  Backcompat: the default produces byte-identical
+        behaviour to the pre-refactor implementation.
 
     Raises
     ------
@@ -839,124 +1013,224 @@ def read_fem_h5(path: str) -> "FEMData":
         If ``/meta`` is missing.
     """
     import h5py
+
+    with h5py.File(path, "r") as f:
+        # Resolve the sub-group root.  ``/`` keeps the existing
+        # file-root behaviour byte-identical.
+        if root in ("", "/"):
+            parent = f
+            label = path
+        else:
+            key = root.lstrip("/")
+            if key not in f:
+                from apeGmsh.opensees.emitter.h5_reader import (
+                    MalformedH5Error,
+                )
+                raise MalformedH5Error(
+                    f"{path}: missing sub-group {root!r}; not a "
+                    "composed apeGmsh results.h5"
+                )
+            parent = f[key]
+            label = f"{path}{root}"
+        return read_neutral_zone_from_group(parent, label=label)
+
+
+def read_neutral_zone_from_group(
+    parent: Any,
+    *,
+    label: str = "<h5 group>",
+) -> "FEMData":
+    """Rebuild a :class:`FEMData` from an open HDF5 group.
+
+    Mirrors the inverse of :func:`write_neutral_zone_into_group`:
+    expects ``meta`` + neutral-zone children directly under
+    ``parent``.  ``label`` is a display string used only in error
+    messages (typically the file path plus sub-group root).
+    """
     from apeGmsh.opensees.emitter.h5_reader import (
         MalformedH5Error,
         SchemaVersionError,
     )
+    from apeGmsh.opensees._internal.schema_version import (
+        NEUTRAL,
+        read_zone_version,
+        reader_version,
+        validate_zone_version,
+    )
 
     from ._element_types import ElementGroup, ElementTypeInfo, make_type_info
     from ._group_set import LabelSet, PhysicalGroupSet
-    from .FEMData import ElementComposite, FEMData, MeshInfo, NodeComposite
+    from .FEMData import (
+        ElementComposite, FEMData, MeshInfo, NodeComposite,
+        _compute_bandwidth,
+    )
 
-    with h5py.File(path, "r") as f:
-        # -- meta + schema check --
-        if "meta" not in f:
-            raise MalformedH5Error(
-                f"{path}: missing /meta group; not an apeGmsh model.h5"
+    # -- meta + schema check (ADR 0023 two-version window) --
+    if "meta" not in parent:
+        raise MalformedH5Error(
+            f"{label}: missing /meta group; not an apeGmsh model.h5"
+        )
+    meta_attrs = parent["meta"].attrs
+    if "schema_version" not in meta_attrs or not str(
+        meta_attrs["schema_version"]
+    ):
+        raise MalformedH5Error(
+            f"{label}: /meta/schema_version attribute is empty"
+        )
+    try:
+        file_version = read_zone_version(meta_attrs, NEUTRAL)
+    except ValueError as exc:
+        raise MalformedH5Error(
+            f"{label}: /meta schema-version attr is not "
+            f"semver-shaped: {exc}"
+        ) from exc
+    if file_version is None:
+        raise MalformedH5Error(
+            f"{label}: /meta carries no neutral zone version"
+        )
+    try:
+        validate_zone_version(
+            file_version, reader_version(NEUTRAL), zone=NEUTRAL,
+        )
+    except SchemaVersionError as exc:
+        raise SchemaVersionError(f"{label}: {exc}") from None
+
+    # -- nodes --
+    nodes_grp = parent["nodes"]
+    node_ids = np.asarray(nodes_grp["ids"][...], dtype=np.int64)
+    node_coords = np.asarray(nodes_grp["coords"][...], dtype=np.float64)
+
+    # -- elements (per-type subgroups) --
+    element_groups: dict[int, ElementGroup] = {}
+    types_meta: list[ElementTypeInfo] = []
+    elem_grp = parent["elements"] if "elements" in parent else None
+    if elem_grp is not None:
+        for type_name in sorted(elem_grp.keys()):
+            sub = elem_grp[type_name]
+            if not hasattr(sub, "keys"):
+                continue
+            ids = np.asarray(sub["ids"][...], dtype=np.int64)
+            conn = np.asarray(sub["connectivity"][...], dtype=np.int64)
+            attrs = sub.attrs
+            npe = int(
+                attrs.get("npe", conn.shape[1] if conn.ndim == 2 else 0)
             )
-        version = str(f["meta"].attrs.get("schema_version", ""))
-        if not version:
-            raise MalformedH5Error(
-                f"{path}: /meta/schema_version attribute is empty"
+            info = make_type_info(
+                code=int(attrs.get("code", 0)),
+                gmsh_name=str(attrs.get("gmsh_name", type_name)),
+                dim=int(attrs.get("dim", 0)),
+                order=int(attrs.get("order", 1)),
+                npe=npe,
+                count=ids.shape[0],
             )
-        try:
-            major = int(version.split(".", 1)[0])
-        except ValueError as exc:
-            raise MalformedH5Error(
-                f"{path}: /meta/schema_version {version!r} is not "
-                "semver-shaped"
-            ) from exc
-        if major != 2:
-            raise SchemaVersionError(
-                f"{path}: schema_version={version} (major {major}) is "
-                "not supported by read_fem_h5 (expected major 2)"
+            types_meta.append(info)
+            element_groups[info.code] = ElementGroup(
+                element_type=info, ids=ids, connectivity=conn,
             )
 
-        # -- nodes --
-        nodes_grp = f["nodes"]
-        node_ids = np.asarray(nodes_grp["ids"][...], dtype=np.int64)
-        node_coords = np.asarray(nodes_grp["coords"][...], dtype=np.float64)
+    # -- physical_groups + labels (root-level union of node + elem sides) --
+    node_pgs, elem_pgs = _read_named_index_at_root(
+        parent["physical_groups"] if "physical_groups" in parent else None
+    )
+    node_labels, elem_labels = _read_named_index_at_root(
+        parent["labels"] if "labels" in parent else None
+    )
 
-        # -- elements (per-type subgroups) --
-        element_groups: dict[int, ElementGroup] = {}
-        types_meta: list[ElementTypeInfo] = []
-        elem_grp = f.get("elements")
-        if elem_grp is not None:
-            for type_name in sorted(elem_grp.keys()):
-                sub = elem_grp[type_name]
-                if not hasattr(sub, "keys"):
-                    continue
-                ids = np.asarray(sub["ids"][...], dtype=np.int64)
-                conn = np.asarray(sub["connectivity"][...], dtype=np.int64)
-                attrs = sub.attrs
-                npe = int(
-                    attrs.get("npe", conn.shape[1] if conn.ndim == 2 else 0)
+    # -- mesh_selections --
+    mesh_selection = _read_mesh_selections(
+        parent["mesh_selections"] if "mesh_selections" in parent else None
+    )
+
+    # -- partitions (neutral schema 2.5.0; absent in 2.4.0 files) --
+    partitions = _read_partitions(
+        parent["partitions"] if "partitions" in parent else None
+    )
+
+    # -- parts (neutral schema 2.5.0; absent in 2.4.0 files) --
+    part_node_map, part_elem_map = _read_parts(
+        parent["parts"] if "parts" in parent else None
+    )
+
+    # -- constraints (split node-side vs element-side by record type) --
+    # node_xyz lets _decode_node_to_surface re-derive the exact
+    # rigid-beam offsets (phantom_coord − master_coord).
+    node_xyz = {
+        int(t): node_coords[i]
+        for i, t in enumerate(node_ids.tolist())
+    }
+    node_constraints, elem_constraints = _read_constraints(
+        parent["constraints"] if "constraints" in parent else None,
+        node_xyz,
+    )
+
+    # -- loads --
+    nodal_loads, element_loads, sp_records = _read_loads(
+        parent["loads"] if "loads" in parent else None
+    )
+
+    # -- masses --
+    mass_records = _read_masses(
+        parent["masses"] if "masses" in parent else None
+    )
+
+    # -- assemble composites --
+    nodes = NodeComposite(
+        node_ids=node_ids,
+        node_coords=node_coords,
+        physical=PhysicalGroupSet(node_pgs),
+        labels=LabelSet(node_labels),
+        constraints=node_constraints,
+        loads=nodal_loads,
+        sp=sp_records,
+        masses=mass_records,
+        partitions=partitions or None,
+        part_node_map=part_node_map or None,
+    )
+    elements = ElementComposite(
+        groups=element_groups,
+        physical=PhysicalGroupSet(elem_pgs),
+        labels=LabelSet(elem_labels),
+        constraints=elem_constraints,
+        loads=element_loads,
+        partitions=partitions or None,
+        part_elem_map=part_elem_map or None,
+    )
+    info = MeshInfo(
+        n_nodes=len(node_ids),
+        n_elems=sum(len(g) for g in element_groups.values()),
+        # Recomputed from connectivity (B3): the writer never
+        # stored bandwidth, so we derive it deterministically from
+        # the reloaded per-type groups — matches what from_gmsh
+        # would compute for the same connectivity.
+        bandwidth=_compute_bandwidth(element_groups),
+        types=types_meta,
+    )
+    rebuilt = FEMData(
+        nodes=nodes, elements=elements, info=info,
+        mesh_selection=mesh_selection,
+    )
+
+    # B4 — verify /meta/snapshot_id matches the recomputed hash
+    # of the rebuilt FEM.  Per ADR 0021, FEM round-trip integrity
+    # is a hard guarantee: /meta/snapshot_id must equal the
+    # recomputed hash of the rebuilt FEM.  (Lineage CHAIN mismatch
+    # is warn-not-raise, a separate surface.)
+    # Probe with ``in`` rather than ``Group.get`` per the h5py
+    # optional-child .get() hazard noted in
+    # ``project_h5py_optional_child_get_hazard``.
+    if "snapshot_id" in parent["meta"].attrs:
+        stored = str(parent["meta"].attrs["snapshot_id"])
+        if stored:
+            recomputed = rebuilt.snapshot_id
+            if recomputed != stored:
+                raise MalformedH5Error(
+                    f"{label}: /meta/snapshot_id mismatch — "
+                    f"stored={stored!r}, recomputed={recomputed!r}. "
+                    "The neutral zone has been corrupted or "
+                    "tampered with since the file was written."
                 )
-                info = make_type_info(
-                    code=int(attrs.get("code", 0)),
-                    gmsh_name=str(attrs.get("gmsh_name", type_name)),
-                    dim=int(attrs.get("dim", 0)),
-                    order=int(attrs.get("order", 1)),
-                    npe=npe,
-                    count=ids.shape[0],
-                )
-                types_meta.append(info)
-                element_groups[info.code] = ElementGroup(
-                    element_type=info, ids=ids, connectivity=conn,
-                )
 
-        # -- physical_groups + labels (root-level union of node + elem sides) --
-        node_pgs, elem_pgs = _read_named_index_at_root(f.get("physical_groups"))
-        node_labels, elem_labels = _read_named_index_at_root(f.get("labels"))
-
-        # -- mesh_selections --
-        mesh_selection = _read_mesh_selections(f.get("mesh_selections"))
-
-        # -- constraints (split node-side vs element-side by record type) --
-        # node_xyz lets _decode_node_to_surface re-derive the exact
-        # rigid-beam offsets (phantom_coord − master_coord).
-        node_xyz = {
-            int(t): node_coords[i]
-            for i, t in enumerate(node_ids.tolist())
-        }
-        node_constraints, elem_constraints = _read_constraints(
-            f.get("constraints"), node_xyz
-        )
-
-        # -- loads --
-        nodal_loads, element_loads, sp_records = _read_loads(f.get("loads"))
-
-        # -- masses --
-        mass_records = _read_masses(f.get("masses"))
-
-        # -- assemble composites --
-        nodes = NodeComposite(
-            node_ids=node_ids,
-            node_coords=node_coords,
-            physical=PhysicalGroupSet(node_pgs),
-            labels=LabelSet(node_labels),
-            constraints=node_constraints,
-            loads=nodal_loads,
-            sp=sp_records,
-            masses=mass_records,
-        )
-        elements = ElementComposite(
-            groups=element_groups,
-            physical=PhysicalGroupSet(elem_pgs),
-            labels=LabelSet(elem_labels),
-            constraints=elem_constraints,
-            loads=element_loads,
-        )
-        info = MeshInfo(
-            n_nodes=len(node_ids),
-            n_elems=sum(len(g) for g in element_groups.values()),
-            bandwidth=0,            # not round-tripped (writer doesn't store it)
-            types=types_meta,
-        )
-        return FEMData(
-            nodes=nodes, elements=elements, info=info,
-            mesh_selection=mesh_selection,
-        )
+    return rebuilt
 
 
 def _read_named_index_at_root(
@@ -1011,6 +1285,74 @@ def _read_named_index_at_root(
         elem_dict[(dim, tag)] = elem_info
 
     return node_dict, elem_dict
+
+
+def _read_partitions(
+    parent: Any,
+) -> dict[int, dict]:
+    """Reconstruct the per-partition node/element membership dict.
+
+    Inverse of :func:`_write_partitions`.  Returns an empty dict when
+    ``/partitions`` is absent (legacy 2.4.0 files) — the FEM
+    composites then resolve as un-partitioned, matching pre-2.5.0
+    behaviour.
+    """
+    if parent is None:
+        return {}
+    result: dict[int, dict] = {}
+    for key in parent.keys():
+        sub = parent[key]
+        if not hasattr(sub, "keys"):
+            continue
+        # Prefer the integer id attr; fall back to the group name
+        # (which the writer sets to ``str(int(pid))``).
+        attrs = sub.attrs
+        if "id" in attrs:
+            pid = int(attrs["id"])
+        else:
+            pid = int(key)
+        nids = (
+            np.asarray(sub["node_ids"][...], dtype=np.int64)
+            if "node_ids" in sub
+            else np.array([], dtype=np.int64)
+        )
+        eids = (
+            np.asarray(sub["element_ids"][...], dtype=np.int64)
+            if "element_ids" in sub
+            else np.array([], dtype=np.int64)
+        )
+        result[pid] = {"node_ids": nids, "element_ids": eids}
+    return result
+
+
+def _read_parts(
+    parent: Any,
+) -> tuple[dict[str, set[int]], dict[str, set[int]]]:
+    """Reconstruct the Part-label maps written by :func:`_write_parts`.
+
+    Returns ``(part_node_map, part_elem_map)``.  Either side may be
+    empty for a given label when that label only had nodes (or only
+    elements) at FEM-build time.  Returns ``({}, {})`` when
+    ``/parts`` is absent (legacy 2.4.0 files).
+    """
+    node_map: dict[str, set[int]] = {}
+    elem_map: dict[str, set[int]] = {}
+    if parent is None:
+        return node_map, elem_map
+    for key in parent.keys():
+        sub = parent[key]
+        if not hasattr(sub, "keys"):
+            continue
+        label = str(sub.attrs.get("label", key))
+        if "node_ids" in sub:
+            nids = np.asarray(sub["node_ids"][...], dtype=np.int64)
+            if nids.size > 0:
+                node_map[label] = {int(x) for x in nids}
+        if "element_ids" in sub:
+            eids = np.asarray(sub["element_ids"][...], dtype=np.int64)
+            if eids.size > 0:
+                elem_map[label] = {int(x) for x in eids}
+    return node_map, elem_map
 
 
 def _read_mesh_selections(parent: Any):
@@ -1118,26 +1460,35 @@ def _read_constraints(
 
         payload_fields = set(rows.dtype["payload"].names or ())
 
-        if payload_fields == NODE_PAIR_FIELDS:
+        # Dispatch via subset match: every EXPECTED field-set is the
+        # CORE minimum (pre-2.5.0 fields).  Newer files (2.5.0+) add
+        # the optional ``name`` field; SurfaceCoupling also adds the
+        # ``sr_*`` slave-records fields (presence-detected by its
+        # decoder).  Subset matching keeps both old and new files
+        # dispatching to the right decoder.  The unique core field on
+        # each kind (e.g. ``slave_node`` vs ``slave_nodes``,
+        # ``phantom_nodes`` vs ``offsets``) keeps the subset match
+        # unambiguous.
+        if NODE_PAIR_FIELDS <= payload_fields:
             for row in rows:
                 node_records.append(_decode_node_pair(row, NodePairRecord))
-        elif payload_fields == NODE_GROUP_FIELDS:
+        elif NODE_GROUP_FIELDS <= payload_fields:
             for row in rows:
                 node_records.append(_decode_node_group(row, NodeGroupRecord))
-        elif payload_fields == INTERPOLATION_FIELDS:
+        elif INTERPOLATION_FIELDS <= payload_fields:
             for row in rows:
                 elem_records.append(
                     _decode_interpolation(row, InterpolationRecord)
                 )
         elif SURFACE_COUPLING_FIELDS <= payload_fields:
-            # Subset (not ==): newer files add sr_* slave_records
-            # fields; mortar_operator_shape is unique to this record so
-            # the subset match stays unambiguous and back-compatible.
+            # Subset already; mortar_operator_shape is unique to this
+            # record so the subset match stays unambiguous and
+            # back-compatible across the 2.4.x → 2.5.x bump.
             for row in rows:
                 elem_records.append(
                     _decode_surface_coupling(row, SurfaceCouplingRecord)
                 )
-        elif payload_fields == NODE_TO_SURFACE_FIELDS:
+        elif NODE_TO_SURFACE_FIELDS <= payload_fields:
             for row in rows:
                 node_records.append(
                     _decode_node_to_surface(
@@ -1180,10 +1531,28 @@ def _opt_scalar(value: float) -> float | None:
     return v
 
 
+def _opt_name(payload: Any) -> str | None:
+    """Decode the optional payload ``name`` field.
+
+    Neutral schema 2.5.0 adds ``name`` to every record dtype.  Old
+    2.4.0 files lack the field — probe ``dtype.names`` (not h5py
+    ``Group.get``; this is a payload sub-dtype) and fall back to
+    ``None``.  Empty stored string round-trips back to ``None`` to
+    preserve the ``name: str | None`` semantics on the record
+    dataclasses.
+    """
+    names = payload.dtype.names or ()
+    if "name" not in names:
+        return None
+    raw = _str(payload["name"])
+    return raw or None
+
+
 def _decode_node_pair(row: Any, cls: type) -> Any:
     p = row["payload"]
     return cls(
         kind=_kind(row),
+        name=_opt_name(p),
         master_node=int(p["master_node"]),
         slave_node=int(p["slave_node"]),
         dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
@@ -1203,6 +1572,7 @@ def _decode_node_group(row: Any, cls: type) -> Any:
     )
     return cls(
         kind=_kind(row),
+        name=_opt_name(p),
         master_node=int(p["master_node"]),
         slave_nodes=[int(x) for x in slaves],
         dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
@@ -1217,6 +1587,7 @@ def _decode_interpolation(row: Any, cls: type) -> Any:
     weights = weights_flat if weights_flat.size > 0 else None
     return cls(
         kind=_kind(row),
+        name=_opt_name(p),
         slave_node=int(p["slave_node"]),
         master_nodes=[
             int(x) for x in np.asarray(p["master_nodes"]).reshape(-1)
@@ -1282,6 +1653,7 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
 
     return cls(
         kind=_kind(row),
+        name=_opt_name(p),
         master_nodes=[
             int(x) for x in np.asarray(p["master_nodes"]).reshape(-1)
         ],
@@ -1340,6 +1712,7 @@ def _decode_node_to_surface(
 
     return cls(
         kind=_kind(row),
+        name=_opt_name(p),
         master_node=master,
         slave_nodes=slaves,
         phantom_nodes=phantoms,
@@ -1367,8 +1740,8 @@ def _read_loads(
     if parent is None:
         return nodal, element, sp
 
-    nodal_grp = parent.get("nodal")
-    if nodal_grp is not None:
+    if "nodal" in parent:
+        nodal_grp = parent["nodal"]
         for pattern_safe in nodal_grp.keys():
             ds = nodal_grp[pattern_safe]
             rows = np.atleast_1d(ds[...])
@@ -1382,13 +1755,14 @@ def _read_loads(
                 )
                 nodal.append(NodalLoadRecord(
                     pattern=_str(pattern_safe),
+                    name=_opt_name(p),
                     node_id=int(p["node_id"]),
                     force_xyz=force if any(np.isfinite(force)) else None,
                     moment_xyz=moment if any(np.isfinite(moment)) else None,
                 ))
 
-    elem_grp = parent.get("element")
-    if elem_grp is not None:
+    if "element" in parent:
+        elem_grp = parent["element"]
         for pattern_safe in elem_grp.keys():
             ds = elem_grp[pattern_safe]
             rows = np.atleast_1d(ds[...])
@@ -1398,13 +1772,14 @@ def _read_loads(
                 params = json.loads(params_str) if params_str else {}
                 element.append(ElementLoadRecord(
                     pattern=_str(pattern_safe),
+                    name=_opt_name(p),
                     element_id=int(p["element_id"]),
                     load_type=_str(p["load_type"]),
                     params=params,
                 ))
 
-    sp_grp = parent.get("sp")
-    if sp_grp is not None:
+    if "sp" in parent:
+        sp_grp = parent["sp"]
         for pattern_safe in sp_grp.keys():
             ds = sp_grp[pattern_safe]
             rows = np.atleast_1d(ds[...])
@@ -1412,6 +1787,7 @@ def _read_loads(
                 p = row["payload"]
                 sp.append(SPRecord(
                     pattern=_str(pattern_safe) if pattern_safe != "default" else "default",
+                    name=_opt_name(p),
                     node_id=int(p["node_id"]),
                     dof=int(p["dof"]),
                     value=float(p["value"]),
@@ -1444,5 +1820,6 @@ def _read_masses(ds: Any) -> list[Any]:
         out.append(MassRecord(
             node_id=int(p["node_id"]),
             mass=tuple(float(x) for x in mass_arr),
+            name=_opt_name(p),
         ))
     return out

@@ -8,15 +8,18 @@ Construction
 ------------
 ::
 
-    # Native HDF5 (apeGmsh-produced or domain capture)
-    results = Results.from_native("run.h5")
-    results = Results.from_native("run.h5", fem=fem)   # explicit bind
+    # Native HDF5 (apeGmsh-produced or domain capture).  Phase 8
+    # (ADR 0020) — ``model=`` is required at every constructor.
+    from apeGmsh.opensees import OpenSeesModel
 
-    # MPCO HDF5 (Phase 3)
-    results = Results.from_mpco("run.mpco")
+    model = OpenSeesModel.from_h5("model.h5")  # or the same file as results
+    results = Results.from_native("run.h5", model=model)
 
-    # Recorder transcoder (Phase 6)
-    results = Results.from_recorders(spec, output_dir="out/", fem=fem)
+    # MPCO HDF5 — ``model_h5=`` is required (sibling model.h5 path).
+    results = Results.from_mpco("run.mpco", model_h5="model.h5")
+
+    # Recorder transcoder (Phase 6) — ``model=`` is required.
+    results = Results.from_recorders(spec, output_dir="out/", fem=fem, model=model)
 
 Stage scoping
 -------------
@@ -40,8 +43,32 @@ Bind contract
 -------------
 A results file embeds (native) or synthesizes (MPCO) a ``FEMData``
 snapshot tagged with a ``snapshot_id``. Calling ``.bind(other_fem)``
-validates the candidate's hash matches and swaps it in (useful when
-re-using session-side labels and Parts).
+swaps it in (useful when re-using session-side labels and Parts);
+no hash validation is performed.
+
+OpenSeesModel chain (ADR 0020 INV-1, Phase 8 — required)
+--------------------------------------------------------
+``Results`` carries an :class:`OpenSeesModel` broker handle exposed
+via :attr:`Results.model`. The chain forward is
+
+::
+
+    results.model     -> OpenSeesModel
+    results.model.fem -> FEMData         (the same neutral zone)
+    results.lineage   -> Lineage         (fem_hash + model_hash chain)
+
+Since the Phase 8 prune of the major architectural refactor, every
+:class:`Results` constructor owns the chain — passing ``model=`` is
+required, missing supply raises :class:`TypeError`. See ADR 0020
+INV-1 for the structural-pairing contract this enforces.
+
+Module-import discipline
+------------------------
+:class:`apeGmsh.opensees.opensees_model.OpenSeesModel` is referenced
+under ``TYPE_CHECKING`` only and imported lazily inside the method
+bodies that need it. This keeps the import-DAG polarity tested by
+``tests/test_import_dag_polarity.py`` intact and avoids dragging
+``apeGmsh.opensees`` into the ``apeGmsh.results`` eager graph.
 """
 from __future__ import annotations
 
@@ -50,7 +77,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from numpy import ndarray
 
-from ._bind import resolve_bound_fem
+from ._bind import _resolve_fem, resolve_bound_model
 from ._composites import (
     ElementResultsComposite,
     NodeResultsComposite,
@@ -60,6 +87,8 @@ from .readers._protocol import ResultsReader, StageInfo
 
 if TYPE_CHECKING:
     from ..mesh.FEMData import FEMData
+    from ..opensees._internal.lineage import Lineage
+    from ..opensees.opensees_model import OpenSeesModel
     from .plot import ResultsPlot
 
 
@@ -70,6 +99,20 @@ class _Sentinel:
 
 
 _SENTINEL = _Sentinel()
+
+
+_MODEL_REQUIRED_MESSAGE = (
+    "model= is required. Pass model=OpenSeesModel.from_h5(...) at "
+    "construction. Required since the Phase 8 prune of the major "
+    "architectural refactor."
+)
+
+
+_MODEL_H5_REQUIRED_MESSAGE = (
+    "model_h5= is required. Pass model_h5='model.h5' (sibling model "
+    "archive) at construction. Required since the Phase 8 prune of "
+    "the major architectural refactor."
+)
 
 
 class Results:
@@ -92,11 +135,17 @@ class Results:
         fem: "Optional[FEMData]" = None,
         stage_id: Optional[str] = None,
         path: Optional[Path] = None,
+        model: "OpenSeesModel",
     ) -> None:
         self._reader = reader
         self._fem = fem
         self._stage_id = stage_id
         self._path = path
+        # ADR 0020 INV-1 (Phase 8 prune) — ``_model`` is required and
+        # never None.  The three public constructors validate the
+        # contract and raise :class:`TypeError` on missing supply;
+        # internal callers (``_derive``) propagate the existing handle.
+        self._model = model
         self._stages_cache: Optional[list[StageInfo]] = None
 
         # Composites
@@ -115,17 +164,32 @@ class Results:
         path: str | Path,
         *,
         fem: "Optional[FEMData]" = None,
+        model: "Optional[OpenSeesModel]" = None,
     ) -> "Results":
         """Open an apeGmsh native HDF5 results file.
 
+        Phase 8 (ADR 0020 INV-1) — ``model=`` is required. Missing
+        supply raises :class:`TypeError`. Pass
+        ``model=OpenSeesModel.from_h5(path_to_model_h5)`` (often the
+        same path as ``path`` when the file is a Composed-file
+        per ADR 0020).
+
         If ``fem`` is omitted, the embedded ``/model/`` snapshot is
-        used as the bound FEMData. If ``fem`` is provided and the file
-        embeds a snapshot, the two ``snapshot_id`` hashes must match.
+        used as the bound FEMData.
         """
+        if model is None:
+            raise TypeError(_MODEL_REQUIRED_MESSAGE)
         from .readers._native import NativeReader
         reader = NativeReader(path)
-        bound_fem = resolve_bound_fem(reader, fem)
-        return cls(reader, fem=bound_fem, path=Path(path))
+        bound_fem = _resolve_fem(reader, fem)
+        bound_model = resolve_bound_model(reader, model)
+        # ``resolve_bound_model`` always returns ``model`` here since
+        # we just asserted it is non-None, but route through the helper
+        # to keep the resolution semantics in one place.
+        assert bound_model is not None
+        return cls(
+            reader, fem=bound_fem, path=Path(path), model=bound_model,
+        )
 
     @classmethod
     def from_recorders(
@@ -139,8 +203,16 @@ class Results:
         stage_kind: str = "transient",
         file_format: str = "out",
         stage_id: str | None = None,
+        model: "Optional[OpenSeesModel]" = None,
     ) -> "Results":
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
+
+        Phase 8 (ADR 0020 INV-1) — ``model=`` is required. Missing
+        supply raises :class:`TypeError`. The model's ``/opensees/``
+        zone is embedded into the transcoded native h5 (the
+        Composed-file pattern); downstream
+        :meth:`Results.from_native` then auto-resolves the broker
+        from the same file.
 
         Parses the ``.out`` / ``.xml`` files emitted at
         ``output_dir`` (matching what ``spec.emit_recorders(...)`` or
@@ -164,6 +236,8 @@ class Results:
         in the spec are skipped with a note. The capture flow
         (Phase 7) handles modal recorders.
         """
+        if model is None:
+            raise TypeError(_MODEL_REQUIRED_MESSAGE)
         from .schema._versions import PARSER_VERSION
         from .transcoders import RecorderTranscoder
         from .writers import _cache
@@ -195,16 +269,24 @@ class Results:
         cached_h5, _ = _cache.cache_paths(cache_dir, key)
 
         if not cached_h5.exists():
+            # Materialise the model's ``/opensees/`` zone alongside the
+            # transcoded results.  ``OpenSeesModel.to_h5`` (the public,
+            # schema-authority-respecting writer) shapes the source;
+            # NativeWriter copies the ``/opensees/`` group at open
+            # time (Composed-file pattern, ADR 0020 INV-3 preserved).
+            model_h5_src: Path = cached_h5.with_suffix(".model.h5")
+            model.to_h5(model_h5_src)
             transcoder = RecorderTranscoder(
                 spec, out_dir, cached_h5, fem,
                 stage_name=stage_name,
                 stage_kind=stage_kind,
                 file_format=file_format,
                 stage_id=stage_id,
+                model_h5_src=model_h5_src,
             )
             transcoder.run()
 
-        return cls.from_native(cached_h5, fem=fem)
+        return cls.from_native(cached_h5, fem=fem, model=model)
 
     @classmethod
     def from_mpco(
@@ -213,8 +295,16 @@ class Results:
         *,
         fem: "Optional[FEMData]" = None,
         merge_partitions: bool = True,
+        model_h5: "Optional[str | Path]" = None,
     ) -> "Results":
         """Open a STKO ``.mpco`` HDF5 results file.
+
+        Phase 8 (ADR 0020 INV-1) — ``model_h5=`` is required. Missing
+        supply raises :class:`TypeError`. The broker is loaded via
+        :meth:`OpenSeesModel.from_h5` and attached to the resulting
+        :class:`Results`; INV-3 — the broker is held *in memory only*
+        (no derived ``results.h5`` is written copying the
+        ``/opensees/`` zone in).
 
         Single-file mode (default for non-partitioned analyses): pass
         the path of one ``.mpco`` file. Synthesizes a partial FEMData
@@ -236,6 +326,8 @@ class Results:
         and read only the file at ``path`` even if it follows the
         ``.part-N`` naming convention.
         """
+        if model_h5 is None:
+            raise TypeError(_MODEL_H5_REQUIRED_MESSAGE)
         from .readers._mpco import MPCOReader
         from .readers._mpco_multi import (
             MPCOMultiPartitionReader, discover_partition_files,
@@ -259,8 +351,14 @@ class Results:
                 reader = MPCOMultiPartitionReader(discovered)
             else:
                 reader = MPCOReader(discovered[0])
-        bound_fem = resolve_bound_fem(reader, fem)
-        return cls(reader, fem=bound_fem, path=anchor)
+        bound_fem = _resolve_fem(reader, fem)
+        # Per INV-3, this is an in-memory rehydrate from the sibling
+        # file; we never copy the zone into a derived h5.
+        from ..opensees.opensees_model import OpenSeesModel
+        bound_model = OpenSeesModel.from_h5(model_h5)
+        return cls(
+            reader, fem=bound_fem, path=anchor, model=bound_model,
+        )
 
     # ------------------------------------------------------------------
     # FEM access & binding
@@ -271,6 +369,115 @@ class Results:
         """The bound FEMData snapshot, or None if not bound."""
         return self._fem
 
+    @property
+    def model(self) -> "OpenSeesModel":
+        """The bound :class:`OpenSeesModel` broker.
+
+        Phase 8 (ADR 0020 INV-1) — always non-None on a constructed
+        :class:`Results`.  The chain-forward handle from which the
+        OpenSeesModel and its embedded FEMData can be reached.
+        """
+        return self._model
+
+    @property
+    def lineage(self) -> "Lineage":
+        """Phase-6 lineage chain — git-style ``fem → model → results``.
+
+        ADR 0021 defines a three-link hash chain ``fem_hash →
+        model_hash → results_hash`` where each layer's hash includes
+        its parent's hash (one-directional, tamper-evident).
+        Mismatches between stored and recomputed hashes surface as
+        ``[lineage] ...`` warnings in :attr:`Lineage.warnings`; they
+        never raise from this property (INV-2).
+
+        Phase-8 derivation order:
+
+        1. Inherit ``fem_hash`` + ``model_hash`` + accumulated
+           warnings from :attr:`model.lineage` (the broker
+           recomputes against the same file).
+        2. Read the stored ``/meta/lineage/results_hash`` via the
+           reader's ``results_lineage_attrs`` helper and recompute
+           from ``/stages/...`` via ``recompute_results_hash``;
+           append a drift warning on mismatch.
+
+        Readers that don't implement the Phase-6 result-layer
+        protocol methods are tolerated via ``getattr`` cushions:
+        their lineage stays at the model layer, no warning emitted.
+        """
+        from ..opensees._internal.lineage import (
+            WARNING_PREFIX,
+            Lineage,
+        )
+
+        # Layer 1: inherit from the bound OpenSeesModel.
+        base = self._model.lineage
+        warnings = list(base.warnings)
+        fem_hash = base.fem_hash
+        model_hash = base.model_hash
+
+        # Layer 2: layer the results_hash on top.  Reader protocol
+        # extension is optional — older readers (MPCO) silently lack
+        # the helpers; their lineage stays at the model layer.
+        results_hash: "str | None" = None
+        get_stored = getattr(self._reader, "results_lineage_attrs", None)
+        recompute = getattr(self._reader, "recompute_results_hash", None)
+        if get_stored is not None and recompute is not None:
+            try:
+                stored = get_stored()
+            except Exception:
+                stored = (None, None, None)
+            stored_fem, stored_model, stored_results = stored
+            # Drift checks at the result-layer envelope.
+            if stored_fem is not None and fem_hash and stored_fem != fem_hash:
+                warnings.append(
+                    WARNING_PREFIX
+                    + "fem hash mismatch between Results and OpenSeesModel: "
+                    f"results-file stamp {stored_fem!r} != "
+                    f"OpenSeesModel.lineage.fem_hash {fem_hash!r}"
+                )
+            if (
+                stored_model is not None
+                and model_hash is not None
+                and stored_model != model_hash
+            ):
+                warnings.append(
+                    WARNING_PREFIX
+                    + "model hash mismatch between Results and OpenSeesModel: "
+                    f"results-file stamp {stored_model!r} != "
+                    f"OpenSeesModel.lineage.model_hash {model_hash!r}"
+                )
+            # Recompute results_hash from /stages/ and compare to
+            # the stamped value.  When the model_hash link is
+            # absent (bridge-only files, recorder-only runs) we
+            # chain on empty — same as the writer.
+            try:
+                recomputed_results = recompute(model_hash or "")
+            except Exception as exc:
+                recomputed_results = None
+                warnings.append(
+                    WARNING_PREFIX
+                    + f"results_hash recompute failed: {exc!r}"
+                )
+            results_hash = recomputed_results
+            if (
+                stored_results is not None
+                and recomputed_results is not None
+                and stored_results != recomputed_results
+            ):
+                warnings.append(
+                    WARNING_PREFIX
+                    + "results layer drift: stored results_hash="
+                    f"{stored_results!r} != recomputed "
+                    f"{recomputed_results!r}"
+                )
+
+        return Lineage(
+            fem_hash=fem_hash,
+            model_hash=model_hash,
+            results_hash=results_hash,
+            warnings=tuple(warnings),
+        )
+
     def bind(self, fem: "FEMData") -> "Results":
         """Re-bind to ``fem``.
 
@@ -280,7 +487,7 @@ class Results:
         with a results file from the same run is the user's
         responsibility.
         """
-        bound = resolve_bound_fem(self._reader, fem)
+        bound = _resolve_fem(self._reader, fem)
         return self._derive(fem=bound)
 
     # ------------------------------------------------------------------
@@ -402,7 +609,6 @@ class Results:
         restore_session: "bool | str" = "prompt",
         save_session: bool = True,
         cuts: "Optional[Any]" = None,
-        model_h5: "Optional[Any]" = None,
     ):
         """Open the post-solve results viewer.
 
@@ -432,24 +638,11 @@ class Results:
             Optional sequence of :class:`apeGmsh.cuts.SectionCutDef`
             instances to render as Layers at boot. Each cut becomes a
             new ``SectionCutDiagram`` in the active geometry's
-            ``"Section cuts"`` composition (created if absent). Requires
-            ``model_h5`` so OpenSees tags can be mapped back to FEM
-            eids — pass it alongside ``cuts``. Subprocess launches
-            (``blocking=False``) currently ignore this argument; build
-            cuts programmatically via ``director.add_section_cut`` on
-            the spawned viewer once it exposes IPC.
-        model_h5
-            Path to a ``model.h5`` that carries OpenSees enrichment:
-            ``/opensees/cuts`` (for section-cut tag mapping) and / or
-            ``/opensees/transforms`` + ``/opensees/element_meta`` (for
-            per-element beam orientation, ADR 0018). When omitted and
-            ``self`` was opened from disk via :meth:`from_native`, the
-            viewer auto-resolves the results file itself as the
-            orientation source if it carries those zones; cuts
-            auto-load still requires an explicit ``model_h5=``.
-            Forwarded into the subprocess on ``blocking=False`` via
-            ``--model-h5`` so the auto-resolve also fires there for
-            non-default layouts.
+            ``"Section cuts"`` composition (created if absent).
+            Subprocess launches (``blocking=False``) currently ignore
+            this argument; build cuts programmatically via
+            ``director.add_section_cut`` on the spawned viewer once it
+            exposes IPC.
 
         Returns
         -------
@@ -467,9 +660,7 @@ class Results:
             print("[skip viewer] APEGMSH_SKIP_VIEWER set")
             return None
         if not blocking:
-            handle = self._spawn_viewer_subprocess(
-                title=title, model_h5=model_h5,
-            )
+            handle = self._spawn_viewer_subprocess(title=title)
             # The subprocess opens its own NativeReader against the
             # path; the parent kernel's reader is no longer needed for
             # rendering. Close it here so the user can re-run a capture
@@ -492,20 +683,15 @@ class Results:
             restore_session=restore_session,
             save_session=save_session,
             cuts=cuts,
-            model_h5=model_h5,
         ).show()
 
     def _spawn_viewer_subprocess(
         self,
         *,
         title: Optional[str],
-        model_h5: Optional[Any] = None,
     ):
         """Launch ``python -m apeGmsh.viewers <path>`` and return the Popen.
 
-        ``model_h5`` — when non-None — is forwarded as ``--model-h5
-        <path>`` so the spawned viewer can resolve OpenSees orientation
-        / cuts enrichment against a file other than ``self._path``.
         ``cuts=`` is *not* forwarded (live ``SectionCutDef`` objects
         don't survive an argv hop; that needs real IPC — separate
         future work, see ``viewer()`` docstring).
@@ -522,8 +708,6 @@ class Results:
         args = [sys.executable, "-m", "apeGmsh.viewers", str(self._path)]
         if title is not None:
             args.extend(["--title", title])
-        if model_h5 is not None:
-            args.extend(["--model-h5", str(model_h5)])
         return subprocess.Popen(args)
 
     # ------------------------------------------------------------------
@@ -607,11 +791,15 @@ class Results:
         *,
         fem=_SENTINEL,
         stage_id=_SENTINEL,
+        model=_SENTINEL,
     ) -> "Results":
         """Create a copy of this Results with a few fields overridden.
 
         Sharing the underlying reader (and stages cache) avoids
-        re-opening the file or re-listing stages.
+        re-opening the file or re-listing stages. Propagates
+        ``_model`` through stage / mode derivation so
+        ``results.stage("grav").model`` returns the same broker as
+        ``results.model``.
         """
         new = Results.__new__(Results)
         new._reader = self._reader
@@ -620,6 +808,9 @@ class Results:
             self._stage_id if isinstance(stage_id, _Sentinel) else stage_id
         )
         new._path = self._path
+        new._model = (
+            self._model if isinstance(model, _Sentinel) else model
+        )
         new._stages_cache = self._stages_cache
         new.nodes = NodeResultsComposite(new)
         new.elements = ElementResultsComposite(new)

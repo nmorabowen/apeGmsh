@@ -265,7 +265,10 @@ def render_fixture(name: str, path: Path) -> list[tuple[str, str, Optional[str]]
         print(f"  fixture missing — skipping")
         return [(f"{name}_substrate", "SKIP", "fixture missing")]
 
-    results = Results.from_mpco(path)
+    # Phase 8: ``model_h5=`` required.  Use the sibling model.h5
+    # convention if it's on disk; otherwise this fixture isn't usable.
+    sibling = path.with_suffix(".model.h5")
+    results = Results.from_mpco(path, model_h5=sibling)
     fem = results.fem
     scene = build_fem_scene(fem)
     print(

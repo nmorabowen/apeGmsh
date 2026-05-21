@@ -15,6 +15,15 @@ through Director methods.
 
 Observer chain is **UI -> Director -> Diagrams**. A diagram never
 calls ``director.set_step(...)``; that would create a feedback loop.
+
+Phase 8 (ADR 0020) — :meth:`set_model` is the chain-forward binder
+that accepts an :class:`OpenSeesModel` handle (cuts iteration source).
+The director keeps a ``_model_h5`` file path internally for the
+:class:`FemToOpsTagMap` build (still path-based by current contract),
+bound through the private :meth:`_bind_model_h5` helper at viewer
+boot / session restore.  AST guard (ADR 0014 INV-2): the
+``OpenSeesModel`` type is referenced only under ``TYPE_CHECKING`` with
+a string annotation, never imported at module level.
 """
 from __future__ import annotations
 
@@ -44,6 +53,13 @@ if TYPE_CHECKING:
     from apeGmsh.viewers.data import ViewerData
     from ._base import Diagram
     from ..scene.fem_scene import FEMSceneData
+    # AST guard (ADR 0014 INV-2) — :class:`OpenSeesModel` is referenced
+    # only as a string in annotations. The module is NEVER imported
+    # at all from ``viewers/`` (not even under ``TYPE_CHECKING``); the
+    # ``set_model`` parameter is duck-typed. Annotations use the
+    # qualified string ``"apeGmsh.opensees.opensees_model.OpenSeesModel"``
+    # so static checkers can still resolve the type without breaking
+    # the AST scan at ``tests/test_viewers_pure_h5_consumer.py``.
 
 
 class TimeMode(str, Enum):
@@ -89,11 +105,19 @@ class ResultsDirector:
         self._geometries = GeometryManager()
 
         # Section-cut tag-map state. Populated lazily on first
-        # ``tag_map`` access after a path is set via :meth:`set_model_h5`.
-        # The map translates :class:`SectionCutDef.element_ids`
-        # (OpenSees tags) into FEM eids the viewer's FEMData can use.
+        # ``tag_map`` access after a path is set via the internal
+        # :meth:`_bind_model_h5`.  The map translates
+        # :class:`SectionCutDef.element_ids` (OpenSees tags) into FEM
+        # eids the viewer's FEMData can use.
         self._model_h5: Optional[Path] = None
         self._tag_map_cache: "Optional[FemToOpsTagMap]" = None
+
+        # Chain-forward handle.  The OpenSeesModel (when supplied via
+        # :meth:`set_model`) is the source for
+        # :meth:`load_cuts_from_h5` iteration; the ``_model_h5`` path
+        # above is still used for the :class:`FemToOpsTagMap` build.
+        # AST guard: duck-typed storage, no runtime import.
+        self._opensees_model: "Optional[Any]" = None
 
         # Combined-stage state. ``_combined_active`` mirrors the
         # public ``stage_id == COMBINED_STAGE_ID`` view; ``_real_stages``
@@ -192,16 +216,44 @@ class ResultsDirector:
     # Section-cut tag map (cuts subpackage integration)
     # ------------------------------------------------------------------
 
-    def set_model_h5(self, path: "Optional[str | Path]") -> None:
-        """Point the director at a ``model.h5`` for OpenSees-tag bridging.
+    def set_model(
+        self, opensees_model: "Optional[Any]",
+    ) -> None:
+        """Bind an :class:`OpenSeesModel` for cuts iteration.
 
-        Required before adding any ``SectionCutDef`` layer — the cut's
-        ``element_ids`` are OpenSees tags but the viewer's FEMData
-        speaks FEM eids. Setting the path drops the cached
-        :class:`FemToOpsTagMap` so the next access re-reads the file.
+        The chain-forward handle (duck-typed per ADR 0014 INV-2; no
+        runtime import of ``apeGmsh.opensees.opensees_model``) feeds
+        :meth:`load_cuts_from_h5`, which iterates
+        ``opensees_model.cuts()`` / ``opensees_model.sweeps()`` instead
+        of re-walking the file.
 
-        Passing ``None`` clears the binding (subsequent cut adds will
-        raise).
+        The :class:`FemToOpsTagMap` is still built from a file path
+        via :meth:`_bind_model_h5` (still path-based today).
+
+        Pass ``None`` to clear the bound handle.
+        """
+        self._opensees_model = opensees_model
+
+    @property
+    def opensees_model(self) -> "Optional[Any]":
+        """The bound :class:`OpenSeesModel` handle, or ``None``.
+
+        Annotation is ``Any`` to keep the AST scan at
+        ``tests/test_viewers_pure_h5_consumer.py`` happy (the
+        ``OpenSeesModel`` class is NEVER imported into ``viewers/``,
+        not even under ``TYPE_CHECKING``; callers use duck-typed
+        access to ``om.cuts()`` / ``om.sweeps()`` — see ADR 0014
+        INV-2).
+        """
+        return self._opensees_model
+
+    def _bind_model_h5(self, path: "Optional[str | Path]") -> None:
+        """Internal path-binding hook used by viewer-internal callers
+        that need the tag_map file path.
+
+        Phase 8 (ADR 0020) collapsed the public ``set_model_h5``
+        deprecated alias.  Cuts auto-load and session restore call
+        this private helper directly.
         """
         new_path = Path(path) if path is not None else None
         if new_path == self._model_h5:
@@ -218,7 +270,7 @@ class ResultsDirector:
         """Lazy-built :class:`FemToOpsTagMap` for the current ``model_h5``.
 
         Returns ``None`` when no ``model_h5`` has been set. The first
-        access after :meth:`set_model_h5` opens the file via
+        access after :meth:`_bind_model_h5` opens the file via
         :meth:`FemToOpsTagMap.from_h5`; subsequent accesses reuse the
         cached map. Propagates any reader exception so callers see the
         underlying error (missing file, schema mismatch, …).
@@ -268,9 +320,9 @@ class ResultsDirector:
             Override the :class:`SectionCutStyle`. Defaults to one
             wrapping ``cut`` with the standard colors.
         model_h5
-            Convenience — equivalent to a prior ``set_model_h5(path)``
-            call. Set once for the first cut, then omit for subsequent
-            adds against the same run.
+            Convenience — bind a ``model.h5`` path for the
+            :class:`FemToOpsTagMap`.  Set once for the first cut, then
+            omit for subsequent adds against the same run.
 
         Returns
         -------
@@ -278,12 +330,13 @@ class ResultsDirector:
             The attached :class:`SectionCutDiagram` instance.
         """
         if model_h5 is not None:
-            self.set_model_h5(model_h5)
+            self._bind_model_h5(model_h5)
         tag_map = self.tag_map
         if tag_map is None:
             raise RuntimeError(
                 "add_section_cut: no model.h5 bound. Pass model_h5= "
-                "to this call, or set director.set_model_h5(path) first."
+                "to this call, or set director.set_model(opensees_model) "
+                "first."
             )
 
         from ._base import DiagramSpec
@@ -336,28 +389,37 @@ class ResultsDirector:
         return diagram
 
     def load_cuts_from_h5(self) -> "list[Diagram]":
-        """Read ``/opensees/cuts/`` and ``/opensees/sweeps/`` from
-        ``model_h5`` and attach each as a Diagram (Layer).
+        """Read ``/opensees/cuts/`` and ``/opensees/sweeps/`` and attach
+        each as a Diagram (Layer).
 
         v4 of the apeGmsh.cuts roadmap — cuts persisted in ``model.h5``
         flow back into the viewer through this hook. Returns the list
         of attached diagrams (standalone cuts first in writer order,
         followed by each sweep's fan-out flattened in sweep order).
 
-        Caller must set ``model_h5`` first (typically through
-        :meth:`set_model_h5` or by passing ``model_h5=`` to
-        :class:`ResultsViewer`). Pre-v4 files (no ``/opensees/cuts/``)
-        produce an empty result — read_cuts_and_sweeps returns
-        ``((), ())`` without raising.
+        The cuts source is the bound :class:`OpenSeesModel` handle
+        when available (:meth:`set_model`); otherwise falls back to
+        reading ``model_h5`` directly via :func:`read_cuts_and_sweeps`.
+        The :class:`FemToOpsTagMap` still requires ``model_h5`` to be
+        bound (path-based today).
+
+        Pre-v4 files (no ``/opensees/cuts/``) produce an empty result.
         """
-        if self._model_h5 is None:
-            raise RuntimeError(
-                "load_cuts_from_h5: no model.h5 bound. Call "
-                "director.set_model_h5(path) first, or pass "
-                "model_h5= to ResultsViewer(...)."
-            )
-        from apeGmsh.cuts import read_cuts_and_sweeps
-        cuts, sweeps = read_cuts_and_sweeps(self._model_h5)
+        if self._opensees_model is not None:
+            # Chain-forward path — cuts iteration via the handle.
+            # The tag_map still needs a file path (path-based by
+            # current contract); the bind requirement is enforced by
+            # ``add_section_cut`` downstream.
+            cuts = tuple(self._opensees_model.cuts())
+            sweeps = tuple(self._opensees_model.sweeps())
+        else:
+            if self._model_h5 is None:
+                raise RuntimeError(
+                    "load_cuts_from_h5: no cuts source bound. Call "
+                    "director.set_model(opensees_model) first."
+                )
+            from apeGmsh.cuts import read_cuts_and_sweeps
+            cuts, sweeps = read_cuts_and_sweeps(self._model_h5)
         attached: list = []
         for cut in cuts:
             attached.append(self.add_section_cut(cut))
@@ -385,7 +447,8 @@ class ResultsDirector:
         ``f"{prefix}[{i}]"``).
         """
         if model_h5 is not None:
-            self.set_model_h5(model_h5)
+            # Internal binder — see ``add_section_cut`` for rationale.
+            self._bind_model_h5(model_h5)
         diagrams: list = []
         for i, cut in enumerate(sweep):
             cut_label = (

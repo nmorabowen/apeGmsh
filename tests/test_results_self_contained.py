@@ -13,6 +13,8 @@ import numpy as np
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5
+
 
 def test_native_file_self_contained_after_session_ends(g, tmp_path: Path) -> None:
     """Build a small model, write results, then end the session and read."""
@@ -39,7 +41,7 @@ def test_native_file_self_contained_after_session_ends(g, tmp_path: Path) -> Non
     del fem
 
     # Open as a fresh user with no apeGmsh session in scope here.
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         assert r.fem is not None
         assert r.fem.snapshot_id == snapshot_before
         # PG queries work — even though we never had to bind anything.
@@ -64,7 +66,7 @@ def test_native_file_without_embedded_fem_works_for_id_queries(
                                    np.array([[0.1, 0.2, 0.3]])})
         w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         # No fem → r.fem is None.
         assert r.fem is None
         # ID-based query works.
@@ -92,7 +94,7 @@ def test_inspect_summary_includes_fem_and_stages(g, tmp_path: Path) -> None:
                                    np.zeros((1, len(fem.nodes.ids)))})
         w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         s = r.inspect.summary()
         assert "FEM" in s
         assert "snapshot_id=" in s

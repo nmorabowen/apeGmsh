@@ -28,14 +28,45 @@ class RecordingEmitter:
     def model(self, *, ndm: int, ndf: int) -> None:
         self.calls.append(("model", (), {"ndm": ndm, "ndf": ndf}))
 
-    def node(self, tag: int, *coords: float) -> None:
-        self.calls.append(("node", (tag, *coords), {}))
+    def node(
+        self, tag: int, *coords: float, ndf: int | None = None,
+    ) -> None:
+        kwargs: dict[str, Any] = {}
+        if ndf is not None:
+            kwargs["ndf"] = ndf
+        self.calls.append(("node", (tag, *coords), kwargs))
 
     def fix(self, tag: int, *dofs: int) -> None:
         self.calls.append(("fix", (tag, *dofs), {}))
 
     def mass(self, tag: int, *values: float) -> None:
         self.calls.append(("mass", (tag, *values), {}))
+
+    # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
+
+    def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
+        self.calls.append(("equalDOF", (master, slave, *dofs), {}))
+
+    def rigidLink(self, kind: str, master: int, slave: int) -> None:
+        self.calls.append(("rigidLink", (kind, master, slave), {}))
+
+    def rigidDiaphragm(
+        self, perp_dir: int, master: int, *slaves: int,
+    ) -> None:
+        self.calls.append(
+            ("rigidDiaphragm", (perp_dir, master, *slaves), {})
+        )
+
+    def embeddedNode(
+        self, ele_tag: int, embedding_ele: int,
+        *args: int | float,
+    ) -> None:
+        self.calls.append(
+            ("embeddedNode", (ele_tag, embedding_ele, *args), {})
+        )
+
+    def mp_constraint_comment(self, name: str) -> None:
+        self.calls.append(("mp_constraint_comment", (name,), {}))
 
     # -- Constitutive ----------------------------------------------------
     def uniaxialMaterial(

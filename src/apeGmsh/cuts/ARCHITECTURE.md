@@ -738,14 +738,17 @@ SectionCutDef / SectionSweepDef
 **Reader / viewer auto-load:**
 
 ```
-ResultsViewer(model_h5=path)
+results = Results.from_native(path, model=OpenSeesModel.from_h5(path))
+results.viewer()
     │
     │  show()
     ▼
-1. Director created; set_model_h5(path) called
+1. Director created; director.set_model(results.model);
+   director._bind_model_h5(results._path) called
 2. If pending_cuts is empty:
      director.load_cuts_from_h5()
-       └─ read_cuts_and_sweeps(path) → (cuts, sweeps)
+       └─ iterate results.model.cuts() / .sweeps()  (or
+           read_cuts_and_sweeps(path) as fallback)
        └─ for cut in cuts:   self.add_section_cut(cut)
        └─ for sweep in sweeps: self.add_section_cut_sweep(sweep)
 3. Else (kwarg-wins): apply pending_cuts; ignore /opensees/cuts/
@@ -828,7 +831,7 @@ The byte-for-byte round-trip is the real check. One test file per layer:
 | `test_pre_v4_forward_compat` | Open existing pre-v4 model.h5 (no `/opensees/cuts/`); reader returns `((), ())` |
 | `test_append_after_ape_h5` | Full pipeline: `ape.h5(path)` then `persist_to_h5(path, cuts=...)`. File parses through `h5_reader.open` AND `FemToOpsTagMap.from_h5`; cuts read back |
 | `test_ape_h5_with_cuts_kwarg` | `ape.h5(path, cuts=...)` produces the same on-disk shape as `ape.h5(path)` + `persist_to_h5(path, cuts=...)` |
-| `test_director_load_cuts_from_h5` | After `set_model_h5` + `load_cuts_from_h5()`, registry has one Diagram per cut + one per sweep cut |
+| `test_director_load_cuts_from_h5` | After `set_model` + `_bind_model_h5` + `load_cuts_from_h5()`, registry has one Diagram per cut + one per sweep cut |
 | `test_viewer_autoload` | `results.viewer(model_h5=p)` with no `cuts=` kwarg auto-loads |
 | `test_viewer_kwarg_wins` | `results.viewer(model_h5=p, cuts=[c_override])` ignores `/opensees/cuts/`; only `c_override` attaches |
 | `test_dialog_source_h5_mode` | Source=h5, valid model.h5 with one cut → dropdown lists it, OK enabled |

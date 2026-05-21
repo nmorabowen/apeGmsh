@@ -22,10 +22,21 @@ The deliberate ``*_open`` / ``*_close`` pairs (``section_open`` /
 Tcl curly-brace block dialect against openseespy's stateful
 "current section / pattern" dialect. Each concrete emitter handles
 its own dialect.
+
+**Architecture event — ADR 0022 (Phase 7b, May 2026).** The Protocol
+was widened with five MP-constraint methods (``equalDOF``,
+``rigidLink``, ``rigidDiaphragm``, ``embeddedNode``,
+``mp_constraint_comment``) closing the §3.3 deferral so
+``apeSees(fem).tcl(p)`` finally produces a runnable deck for models
+declaring ``g.constraints.rigid_diaphragm(...)`` /
+``g.constraints.tied_contact(...)`` etc. The H5 emitter additionally
+gained an ``ndf=`` kwarg on :meth:`node` (additive, default ``None``)
+to express the per-node DOF override used for the 6-DOF phantom nodes
+in mixed-ndf models.
 """
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol
 
 
 class Emitter(Protocol):
@@ -37,9 +48,30 @@ class Emitter(Protocol):
 
     # -- Model -----------------------------------------------------------
     def model(self, *, ndm: int, ndf: int) -> None: ...
-    def node(self, tag: int, *coords: float) -> None: ...
+    def node(
+        self, tag: int, *coords: float, ndf: int | None = None,
+    ) -> None: ...
     def fix(self, tag: int, *dofs: int) -> None: ...
     def mass(self, tag: int, *values: float) -> None: ...
+
+    # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
+    # Five methods closing the §3.3 deferral. Build-time fan-out in
+    # ``opensees._internal.build.emit_mp_constraints`` calls these after
+    # element emission and before pattern emission (INV-5). Phantom
+    # nodes from ``NodeToSurfaceRecord`` are emitted via ``node(...,
+    # ndf=6)`` before any constraint references them (INV-3).
+    def equalDOF(self, master: int, slave: int, *dofs: int) -> None: ...
+    def rigidLink(
+        self, kind: Literal["beam", "bar"], master: int, slave: int,
+    ) -> None: ...
+    def rigidDiaphragm(
+        self, perp_dir: int, master: int, *slaves: int,
+    ) -> None: ...
+    def embeddedNode(
+        self, ele_tag: int, embedding_ele: int,
+        *args: int | float,
+    ) -> None: ...
+    def mp_constraint_comment(self, name: str) -> None: ...
 
     # -- Constitutive ----------------------------------------------------
     def uniaxialMaterial(

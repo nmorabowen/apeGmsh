@@ -54,24 +54,24 @@ def test_apesees_h5_writes_valid_file(tmp_path: Path) -> None:
         # FEMStub (no `snapshot_id`, no PhysicalGroupSet), so the
         # broker zone is skipped — the file is bridge-only.
         # Material + section + transform + beamIntegration round-tripped.
-        mats = model.materials()
-        assert "uniaxial" in mats
-        assert any(
-            attrs.get("type") == "Steel02"
-            for attrs in mats["uniaxial"].values()
-        )
+        # Phase 8 / ADR 0019 — typed accessors return immutable record lists.
+        by_family = model.materials_by_family()
+        assert "uniaxial" in by_family
+        assert any(m.type_token == "Steel02" for m in by_family["uniaxial"])
         sections = model.sections()
         assert sections, "no /sections group emitted"
-        assert any(
-            attrs.get("type") == "Fiber" for attrs in sections.values()
-        )
+        assert any(s.type_token == "Fiber" for s in sections)
         transforms = model.transforms()
         assert transforms
-        # Pattern with series_ref resolved.
-        patterns = model.patterns()
-        assert patterns
-        first_pattern = next(iter(patterns.values()))
-        assert first_pattern.get("series_ref", "").startswith("/opensees/time_series/")
+        # Pattern with series_ref resolved. The typed reader peels
+        # ``series_ref`` from the on-disk attrs into the record's
+        # ``args`` tuple via ``params``; verifying the dataset shape
+        # directly keeps the test resilient to record-field renames.
+        patterns_grp = model.handle["opensees/patterns"]
+        assert len(patterns_grp) >= 1
+        first_pattern_name = next(iter(patterns_grp))
+        series_ref = patterns_grp[first_pattern_name].attrs.get("series_ref", "")
+        assert str(series_ref).startswith("/opensees/time_series/")
         # /meta/snapshot_id is always present (may be empty for stub
         # FEM snapshots that don't compute one).
         meta = model.meta()

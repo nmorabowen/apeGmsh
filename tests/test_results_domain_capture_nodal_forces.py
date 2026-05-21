@@ -29,6 +29,8 @@ from apeGmsh.results.capture.spec import (
     ResolvedDomainCaptureSpec,
 )
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fake ops with element-response support
@@ -64,17 +66,8 @@ class _MockFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset("ids", data=np.asarray(self.nodes.ids, dtype=np.int64))
-        n.create_dataset(
-            "coords", data=np.asarray(self.nodes.coords, dtype=np.float64),
-        )
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 def _spec_with(*records, snapshot_id) -> ResolvedDomainCaptureSpec:
@@ -177,7 +170,7 @@ class TestElasticBeam3dGlobalCapture:
                 cap.step(t=t)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab_fx = s.elements.get(component="nodal_resisting_force_x")
             # 2 elements × 2 nodes × 2 steps.
@@ -225,7 +218,7 @@ class TestElasticBeam3dLocalCapture:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab_n = s.elements.get(
                 component="nodal_resisting_force_local_x",
@@ -269,7 +262,7 @@ class TestElasticBeam2dGlobalCapture:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab_fx = s.elements.get(component="nodal_resisting_force_x")
             np.testing.assert_array_equal(slab_fx.values[0, 0], [10.0, 40.0])
@@ -308,7 +301,7 @@ class TestMixedClassCapture:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(component="nodal_resisting_force_x")
         # 2 elements × 2 nodes (one group per class internally, but the
@@ -407,7 +400,7 @@ class TestMixedCategoriesAllPhases:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             es = s.elements.get(component="nodal_resisting_force_x")
             assert es.values.shape == (1, 1, 2)

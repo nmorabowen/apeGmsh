@@ -18,6 +18,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.conftest import _stub_model_h5_path
+
 
 _DEFAULT_TCL_LAUNCHERS = [
     r"C:\Program Files\El Ladruno OpenSees\opensees_ladruno.bat",
@@ -143,7 +145,7 @@ def test_tet_stress_full_cycle(tmp_path: Path) -> None:
 
     # ── Read element stress through the new code path ───────────────
     from apeGmsh.results import Results
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         assert len(r.stages) >= 1
         s = r.stage(r.stages[0].id)
 
@@ -170,7 +172,7 @@ def test_tet_stress_full_cycle(tmp_path: Path) -> None:
         assert abs(szz) > 1e3, f"σ_zz too small to be plausible: {szz}"
 
     # ── Sanity: filtering by element ID still works on real files ───
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s = r.stage(r.stages[0].id)
         # Filter to an ID that does not exist → empty slab.
         empty = s.elements.gauss.get(

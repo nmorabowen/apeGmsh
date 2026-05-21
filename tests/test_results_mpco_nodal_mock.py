@@ -19,6 +19,7 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_nodal_io as _mn
 from apeGmsh.opensees._response_catalog import (
+
     ELE_TAG_ElasticBeam2d,
     ELE_TAG_ElasticBeam3d,
     ELE_TAG_ElasticTimoshenkoBeam2d,
@@ -26,6 +27,8 @@ from apeGmsh.opensees._response_catalog import (
     ELE_TAG_ModElasticBeam2d,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 # =====================================================================
 # Synthetic MPCO file builder
@@ -252,7 +255,7 @@ def eb2d_global_mpco(tmp_path: Path) -> Path:
 
 class TestReadGlobalForce3D:
     def test_force_x_full_read(self, eb3d_global_mpco: Path) -> None:
-        with Results.from_mpco(eb3d_global_mpco) as r:
+        with Results.from_mpco(eb3d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(component="nodal_resisting_force_x")
         # 2 elements, 2 nodes per element, 2 steps.
@@ -274,7 +277,7 @@ class TestReadGlobalForce3D:
         self, eb3d_global_mpco: Path,
     ) -> None:
         # Mz is k=5 in (Px, Py, Pz, Mx, My, Mz).
-        with Results.from_mpco(eb3d_global_mpco) as r:
+        with Results.from_mpco(eb3d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(component="nodal_resisting_moment_z")
         # k=5: t=0,e=0,n=0 → 5; t=0,e=1,n=1 → 115.
@@ -286,7 +289,7 @@ class TestReadGlobalForce3D:
         self, eb3d_global_mpco: Path,
     ) -> None:
         # globalForce-only bucket: localForce component has no data.
-        with Results.from_mpco(eb3d_global_mpco) as r:
+        with Results.from_mpco(eb3d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(component="nodal_resisting_force_local_x")
         assert slab.values.shape[1:] == (0, 0)
@@ -294,7 +297,7 @@ class TestReadGlobalForce3D:
     def test_element_id_filter(
         self, eb3d_global_mpco: Path,
     ) -> None:
-        with Results.from_mpco(eb3d_global_mpco) as r:
+        with Results.from_mpco(eb3d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(
                 component="nodal_resisting_force_x",
@@ -308,7 +311,7 @@ class TestReadGlobalForce3D:
     def test_element_id_filter_empty(
         self, eb3d_global_mpco: Path,
     ) -> None:
-        with Results.from_mpco(eb3d_global_mpco) as r:
+        with Results.from_mpco(eb3d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(
                 component="nodal_resisting_force_x",
@@ -322,7 +325,7 @@ class TestReadLocalForce3D:
         self, eb3d_global_and_local_mpco: Path,
     ) -> None:
         # The reader routes the canonical name to the localForce bucket.
-        with Results.from_mpco(eb3d_global_and_local_mpco) as r:
+        with Results.from_mpco(eb3d_global_and_local_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab_loc = s.elements.get(
                 component="nodal_resisting_force_local_x",
@@ -339,7 +342,7 @@ class TestReadLocalForce3D:
         # Local layout: (N, Vy, Vz, T, My, Mz) → (force_x, force_y, force_z,
         # moment_x, moment_y, moment_z) under the apeGmsh canonical names.
         # So nodal_resisting_moment_local_x maps to T (k=3), value = 2003 + n*10.
-        with Results.from_mpco(eb3d_global_and_local_mpco) as r:
+        with Results.from_mpco(eb3d_global_and_local_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(component="nodal_resisting_moment_local_x")
         np.testing.assert_array_equal(slab.values[0, 0], [2003.0, 2013.0])
@@ -347,7 +350,7 @@ class TestReadLocalForce3D:
 
 class TestReadGlobalForce2D:
     def test_force_y_2d(self, eb2d_global_mpco: Path) -> None:
-        with Results.from_mpco(eb2d_global_mpco) as r:
+        with Results.from_mpco(eb2d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(component="nodal_resisting_force_y")
         assert slab.values.shape == (1, 1, 2)
@@ -355,7 +358,7 @@ class TestReadGlobalForce2D:
         np.testing.assert_array_equal(slab.values[0, 0], [101.0, 111.0])
 
     def test_moment_z_2d(self, eb2d_global_mpco: Path) -> None:
-        with Results.from_mpco(eb2d_global_mpco) as r:
+        with Results.from_mpco(eb2d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(component="nodal_resisting_moment_z")
         # Mz is k=2 in 2D layout.
@@ -363,7 +366,7 @@ class TestReadGlobalForce2D:
 
     def test_force_z_not_in_2d(self, eb2d_global_mpco: Path) -> None:
         # 2D ElasticBeam2d has no force_z component.
-        with Results.from_mpco(eb2d_global_mpco) as r:
+        with Results.from_mpco(eb2d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.get(component="nodal_resisting_force_z")
         assert slab.values.shape[1:] == (0, 0)
@@ -375,7 +378,7 @@ class TestReadGlobalForce2D:
 
 class TestAvailableComponents:
     def test_global_only(self, eb3d_global_mpco: Path) -> None:
-        with Results.from_mpco(eb3d_global_mpco) as r:
+        with Results.from_mpco(eb3d_global_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             comps = set(s.elements.available_components())
         # All 6 global names present; no local.
@@ -388,7 +391,7 @@ class TestAvailableComponents:
             assert n not in comps
 
     def test_global_and_local(self, eb3d_global_and_local_mpco: Path) -> None:
-        with Results.from_mpco(eb3d_global_and_local_mpco) as r:
+        with Results.from_mpco(eb3d_global_and_local_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             comps = set(s.elements.available_components())
         # Both frames' components should appear.

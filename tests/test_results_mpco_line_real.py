@@ -20,6 +20,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import _stub_model_h5_path
+
 
 _DEFAULT_TCL_LAUNCHERS = [
     r"C:\Program Files\El Ladruno OpenSees\opensees_ladruno.bat",
@@ -106,7 +108,7 @@ def test_force_beam_3d_aggregated_section(tmp_path: Path) -> None:
     assert mpco_path.exists(), f"MPCO file not produced.\n{combined}"
 
     from apeGmsh.results import Results
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         assert len(r.stages) >= 1
         s = r.stage(r.stages[0].id)
 
@@ -194,7 +196,7 @@ def test_force_beam_3d_bare_section(tmp_path: Path) -> None:
     assert mpco_path.exists()
 
     from apeGmsh.results import Results
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s = r.stage(r.stages[0].id)
         comps = set(s.elements.line_stations.available_components())
 

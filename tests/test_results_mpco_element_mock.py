@@ -17,6 +17,7 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.opensees._response_catalog import (
+
     ELE_TAG_FourNodeTetrahedron,
     ELE_TAG_TenNodeTetrahedron,
     IntRule,
@@ -24,6 +25,8 @@ from apeGmsh.opensees._response_catalog import (
     lookup,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 # =====================================================================
 # Synthetic MPCO file builder
@@ -227,7 +230,7 @@ def tet2_mpco(tmp_path: Path) -> Path:
 
 class TestFourNodeTetStress:
     def test_full_read_stress_xx(self, tet1_mpco: Path) -> None:
-        with Results.from_mpco(tet1_mpco) as r:
+        with Results.from_mpco(tet1_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(component="stress_xx")
             # 2 elements × 1 GP = 2 columns; 2 steps.
@@ -239,7 +242,7 @@ class TestFourNodeTetStress:
             )
 
     def test_element_index_and_natural_coords(self, tet1_mpco: Path) -> None:
-        with Results.from_mpco(tet1_mpco) as r:
+        with Results.from_mpco(tet1_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(component="stress_xx")
             np.testing.assert_array_equal(slab.element_index, [10, 20])
@@ -251,7 +254,7 @@ class TestFourNodeTetStress:
 
     def test_all_six_components_distinct(self, tet1_mpco: Path) -> None:
         """Each component returns its own column, never mixed."""
-        with Results.from_mpco(tet1_mpco) as r:
+        with Results.from_mpco(tet1_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             seen: dict[float, str] = {}
             for k, name in enumerate([
@@ -266,7 +269,7 @@ class TestFourNodeTetStress:
             assert len(seen) == 6
 
     def test_filter_by_element_ids(self, tet1_mpco: Path) -> None:
-        with Results.from_mpco(tet1_mpco) as r:
+        with Results.from_mpco(tet1_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(
                 component="stress_yy", ids=np.array([20]),
@@ -277,13 +280,13 @@ class TestFourNodeTetStress:
             np.testing.assert_array_equal(slab.values, [[101.0], [111.0]])
 
     def test_time_slice_single_step(self, tet1_mpco: Path) -> None:
-        with Results.from_mpco(tet1_mpco) as r:
+        with Results.from_mpco(tet1_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(component="stress_xx", time=0)
             assert slab.values.shape == (1, 2)
 
     def test_available_components_lists_stress(self, tet1_mpco: Path) -> None:
-        with Results.from_mpco(tet1_mpco) as r:
+        with Results.from_mpco(tet1_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             comps = set(s.elements.gauss.available_components())
             for name in [
@@ -293,7 +296,7 @@ class TestFourNodeTetStress:
                 assert name in comps
 
     def test_unknown_component_returns_empty(self, tet1_mpco: Path) -> None:
-        with Results.from_mpco(tet1_mpco) as r:
+        with Results.from_mpco(tet1_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             # 'displacement_x' has no gauss-token mapping.
             slab = s.elements.gauss.get(component="displacement_x")
@@ -306,7 +309,7 @@ class TestFourNodeTetStress:
 
 class TestTenNodeTetStress:
     def test_shapes(self, tet2_mpco: Path) -> None:
-        with Results.from_mpco(tet2_mpco) as r:
+        with Results.from_mpco(tet2_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(component="stress_xx")
             # 2 elements × 4 GPs = 8 columns; 3 steps.
@@ -315,7 +318,7 @@ class TestTenNodeTetStress:
             assert slab.natural_coords.shape == (8, 3)
 
     def test_element_index_repeats_per_gp(self, tet2_mpco: Path) -> None:
-        with Results.from_mpco(tet2_mpco) as r:
+        with Results.from_mpco(tet2_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(component="stress_xx")
             # Element 100 covers cols 0..3, element 200 covers cols 4..7.
@@ -324,7 +327,7 @@ class TestTenNodeTetStress:
             )
 
     def test_natural_coords_tiled_per_element(self, tet2_mpco: Path) -> None:
-        with Results.from_mpco(tet2_mpco) as r:
+        with Results.from_mpco(tet2_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(component="stress_xx")
             alpha = (5.0 + 3.0 * math.sqrt(5.0)) / 20.0
@@ -349,7 +352,7 @@ class TestTenNodeTetStress:
         (component-slowest instead of GP-slowest), this would expose
         it immediately.
         """
-        with Results.from_mpco(tet2_mpco) as r:
+        with Results.from_mpco(tet2_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             # stress_yy (ki=1), step t=2, element e=0 (cols 0..3 hold GPs 0..3).
             slab = s.elements.gauss.get(component="stress_yy")
@@ -399,7 +402,7 @@ class TestMetaValidation:
         finally:
             f.close()
 
-        with Results.from_mpco(path) as r:
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             with pytest.raises(ValueError, match="NUM_COLUMNS"):
                 s.elements.gauss.get(component="stress_xx")
@@ -424,7 +427,7 @@ class TestBucketFiltering:
         finally:
             f.close()
 
-        with Results.from_mpco(path) as r:
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(component="stress_xx")
             assert slab.values.shape == (1, 0)
@@ -447,7 +450,7 @@ class TestBucketFiltering:
         finally:
             f.close()
 
-        with Results.from_mpco(path) as r:
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.gauss.get(component="stress_xx")
             assert slab.values.shape == (1, 0)

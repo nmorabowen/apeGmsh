@@ -15,6 +15,8 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # MeshSelectionStore lookup methods (unit level)
@@ -118,7 +120,7 @@ def test_results_nodes_get_by_selection(g, tmp_path: Path) -> None:
     expected_ids = set(int(n) for n in fem.mesh_selection.node_ids("top"))
     assert expected_ids, "fixture invariant: 'top' selection is non-empty"
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(selection="top", component="displacement_x")
         got_ids = set(int(n) for n in slab.node_ids)
         assert got_ids == expected_ids
@@ -159,7 +161,7 @@ def test_results_elements_get_by_selection(g, tmp_path: Path) -> None:
         )
         w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.elements.gauss.get(selection="top_slab", component="stress_xx")
         got_eids = set(int(e) for e in slab.element_index)
         expected = set(int(e) for e in elem_ids)
@@ -201,7 +203,7 @@ def test_selector_combined_with_ids_raises(g, tmp_path: Path) -> None:
         )
         w.end_stage()
 
-    with Results.from_native(path, fem=fem) as r:
+    with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
         with pytest.raises(ValueError, match="not multiple"):
             r.nodes.get(ids=[1, 2], selection="base",
                         component="displacement_x")
@@ -238,7 +240,7 @@ def test_unknown_selection_raises(g, tmp_path: Path) -> None:
         )
         w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         with pytest.raises(KeyError, match="No mesh selection"):
             r.nodes.get(selection="nope", component="displacement_x")
 
@@ -276,7 +278,7 @@ def test_two_selections_union(g, tmp_path: Path) -> None:
         )
         w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(
             selection=["bottom", "top"], component="displacement_x",
         )

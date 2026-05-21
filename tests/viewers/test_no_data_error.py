@@ -27,6 +27,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _stub_model_h5_path
+
 
 _FRAME = Path("tests/fixtures/results/elasticFrame.mpco")
 _SPRINGS = Path("tests/fixtures/results/zl_springs.mpco")
@@ -46,7 +48,7 @@ def headless_plotter():
 def test_line_force_raises_nodata_for_unknown_component(headless_plotter):
     if not _FRAME.exists():
         pytest.skip(f"Missing fixture: {_FRAME}")
-    r = Results.from_mpco(_FRAME)
+    r = Results.from_mpco(_FRAME, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     scene = build_fem_scene(s.fem)
 
@@ -66,7 +68,7 @@ def test_line_force_raises_nodata_on_fixture_with_no_line_stations(
     """zl_springs.mpco has no beam line-station data."""
     if not _SPRINGS.exists():
         pytest.skip(f"Missing fixture: {_SPRINGS}")
-    r = Results.from_mpco(_SPRINGS)
+    r = Results.from_mpco(_SPRINGS, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     scene = build_fem_scene(s.fem)
 
@@ -87,7 +89,7 @@ def test_line_force_raises_nodata_on_fixture_with_no_line_stations(
 def test_contour_raises_nodata_for_missing_nodal_component(headless_plotter):
     if not _FRAME.exists():
         pytest.skip(f"Missing fixture: {_FRAME}")
-    r = Results.from_mpco(_FRAME)
+    r = Results.from_mpco(_FRAME, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     scene = build_fem_scene(s.fem)
 
@@ -109,7 +111,7 @@ def test_spring_force_raises_nodata_when_no_springs(headless_plotter):
     """elasticFrame.mpco has no zero-length spring elements."""
     if not _FRAME.exists():
         pytest.skip(f"Missing fixture: {_FRAME}")
-    r = Results.from_mpco(_FRAME)
+    r = Results.from_mpco(_FRAME, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     scene = build_fem_scene(s.fem)
 
@@ -131,7 +133,7 @@ def test_registry_rolls_back_on_attach_failure(headless_plotter):
     """If attach raises, the diagram must not stay in the registry."""
     if not _FRAME.exists():
         pytest.skip(f"Missing fixture: {_FRAME}")
-    r = Results.from_mpco(_FRAME)
+    r = Results.from_mpco(_FRAME, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     scene = build_fem_scene(s.fem)
 

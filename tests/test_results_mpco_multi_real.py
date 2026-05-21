@@ -22,6 +22,8 @@ from apeGmsh.results.readers._mpco_multi import (
 )
 from apeGmsh.results.readers._protocol import ResultLevel
 
+from tests.conftest import _stub_model_h5_path
+
 
 _DEFAULT_EXAMPLES = Path(
     r"C:\Users\nmora\Github\STKO_to_python\stko_results_examples"
@@ -59,7 +61,7 @@ def part0_path() -> Path:
 
 @pytest.fixture
 def merged_results(part0_path: Path):
-    r = Results.from_mpco(str(part0_path))   # auto-detect both partitions
+    r = Results.from_mpco(str(part0_path), model_h5=_stub_model_h5_path())   # auto-detect both partitions
     yield r
     r._reader.close()
 
@@ -207,8 +209,9 @@ class TestCrossPartitionParity:
         produce the same fiber-stress values for that element."""
         single = Results.from_mpco(
             str(part0_path), merge_partitions=False,
+        model_h5=_stub_model_h5_path()
         )
-        merged = Results.from_mpco(str(part0_path))   # auto-merge
+        merged = Results.from_mpco(str(part0_path), model_h5=_stub_model_h5_path())   # auto-merge
 
         s_slab = single.elements.fibers.get(
             component="fiber_stress", time=1500, ids=[8],

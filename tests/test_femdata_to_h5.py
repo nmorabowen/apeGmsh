@@ -151,7 +151,12 @@ def test_to_h5_writes_meta(tmp_path: Path) -> None:
     fem.to_h5(str(out), model_name="demo")
     with h5py.File(out, "r") as f:
         assert "meta" in f
-        assert f["meta"].attrs["schema_version"] == "2.4.0"
+        # Phase 2 bumped neutral 2.4.0 → 2.5.0 (additive: ``name``
+        # field on every record dtype, /partitions/, /parts/,
+        # snapshot_id verified on read).  Phase 6 (ADR 0021) bumped
+        # again 2.5.0 → 2.6.0 for the additive /meta/lineage
+        # sub-group.
+        assert f["meta"].attrs["schema_version"] == "2.6.0"
         assert int(f["meta"].attrs["ndm"]) == 2  # max element dim
         assert f["meta"].attrs["model_name"] == "demo"
 
@@ -394,3 +399,229 @@ def test_to_h5_omits_mesh_selections_when_absent(tmp_path: Path) -> None:
     fem.to_h5(str(out))
     with h5py.File(out, "r") as f:
         assert "mesh_selections" not in f
+
+
+# =====================================================================
+# Phase 2 — B1: ``name`` field round-trips on every record dtype
+# =====================================================================
+
+
+def test_to_h5_preserves_constraint_name(tmp_path: Path) -> None:
+    """Constraint records carry their pre-mesh ``name`` through to_h5.
+
+    Audit gap B1: every record dataclass under ``_kernel/records/*.py``
+    has a ``name: str | None`` field but the on-disk payload dtypes
+    silently dropped it.  v2.5.0 adds ``name`` to every payload dtype
+    so ``fem.inspect.constraint_summary()`` shows the source hint
+    after a round-trip.
+    """
+    fem = _make_fem()
+    out = tmp_path / "names.h5"
+    fem.to_h5(str(out))
+
+    from apeGmsh.mesh.FEMData import FEMData
+    rebuilt = FEMData.from_h5(str(out))
+
+    by_kind = {r.kind: r for r in rebuilt.nodes.constraints}
+    assert by_kind[ConstraintKind.EQUAL_DOF].name == "weld"
+    assert by_kind[ConstraintKind.RIGID_DIAPHRAGM].name == "floor1"
+
+
+def test_to_h5_preserves_load_name(tmp_path: Path) -> None:
+    """NodalLoad / ElementLoad records carry ``name`` through to_h5."""
+    # Build a small FEM with named loads.
+    node_ids = np.array([1, 2], dtype=np.int64)
+    node_coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float64)
+    tri_info = make_type_info(
+        code=2, gmsh_name="Triangle 3", dim=2, order=1, npe=3, count=1,
+    )
+    tri_group = ElementGroup(
+        element_type=tri_info, ids=np.array([10], dtype=np.int64),
+        connectivity=np.array([[1, 2, 1]], dtype=np.int64),
+    )
+    nl_named = NodalLoadRecord(
+        node_id=2, force_xyz=(100.0, 0.0, 0.0), moment_xyz=None,
+        pattern="gravity", name="point_load_A",
+    )
+    el_named = ElementLoadRecord(
+        element_id=10, load_type="surfacePressure",
+        params={"pressure": -100.0},
+        pattern="gravity", name="roof_pressure",
+    )
+    sp_named = SPRecord(
+        node_id=1, dof=3, value=0.0, is_homogeneous=True,
+        pattern="default", name="fixed_base",
+    )
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        loads=[nl_named], sp=[sp_named],
+    )
+    elements = ElementComposite(
+        groups={2: tri_group},
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        loads=[el_named],
+    )
+    fem = FEMData(
+        nodes=nodes, elements=elements,
+        info=MeshInfo(n_nodes=2, n_elems=1, bandwidth=1, types=[tri_info]),
+    )
+
+    out = tmp_path / "load_names.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    rebuilt_nl = list(rebuilt.nodes.loads)
+    assert len(rebuilt_nl) == 1
+    assert rebuilt_nl[0].name == "point_load_A"
+    rebuilt_el = list(rebuilt.elements.loads)
+    assert len(rebuilt_el) == 1
+    assert rebuilt_el[0].name == "roof_pressure"
+    rebuilt_sp = list(rebuilt.nodes.sp)
+    assert len(rebuilt_sp) == 1
+    assert rebuilt_sp[0].name == "fixed_base"
+
+
+def test_to_h5_preserves_mass_name(tmp_path: Path) -> None:
+    """MassRecord carries ``name`` through to_h5."""
+    node_ids = np.array([1, 2], dtype=np.int64)
+    node_coords = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float64)
+    m_named = MassRecord(
+        node_id=2, mass=(50.0, 50.0, 50.0, 0.0, 0.0, 0.0),
+        name="lumped_floor",
+    )
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        masses=[m_named],
+    )
+    elements = ElementComposite(
+        groups={}, physical=PhysicalGroupSet({}), labels=LabelSet({}),
+    )
+    fem = FEMData(
+        nodes=nodes, elements=elements,
+        info=MeshInfo(n_nodes=2, n_elems=0, bandwidth=0, types=[]),
+    )
+
+    out = tmp_path / "mass_names.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    rebuilt_m = list(rebuilt.nodes.masses)
+    assert len(rebuilt_m) == 1
+    assert rebuilt_m[0].name == "lumped_floor"
+
+
+# =====================================================================
+# Phase 2 — B2: ``/partitions/`` group written when partitioned
+# =====================================================================
+
+
+def test_to_h5_writes_partitions(tmp_path: Path) -> None:
+    """Partitioned FEMData emits ``/partitions/{id}/...`` groups.
+
+    Audit gap B2 (write side): the writer didn't emit partitions or
+    parts.  v2.5.0 adds ``/partitions/{id}/node_ids`` +
+    ``/partitions/{id}/element_ids`` for each partition; absence
+    means the mesh wasn't partitioned (omit-empty-groups).
+    """
+    node_ids = np.array([1, 2, 3, 4], dtype=np.int64)
+    node_coords = np.array([
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0], [1.0, 1.0, 0.0],
+    ], dtype=np.float64)
+    tri_info = make_type_info(
+        code=2, gmsh_name="Triangle 3", dim=2, order=1, npe=3, count=2,
+    )
+    tri_group = ElementGroup(
+        element_type=tri_info, ids=np.array([10, 11], dtype=np.int64),
+        connectivity=np.array([[1, 2, 3], [2, 4, 3]], dtype=np.int64),
+    )
+    partitions = {
+        1: {
+            "node_ids": np.array([1, 2, 3], dtype=np.int64),
+            "element_ids": np.array([10], dtype=np.int64),
+        },
+        2: {
+            "node_ids": np.array([2, 3, 4], dtype=np.int64),
+            "element_ids": np.array([11], dtype=np.int64),
+        },
+    }
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        partitions=partitions,
+    )
+    elements = ElementComposite(
+        groups={2: tri_group},
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        partitions=partitions,
+    )
+    fem = FEMData(
+        nodes=nodes, elements=elements,
+        info=MeshInfo(n_nodes=4, n_elems=2, bandwidth=2, types=[tri_info]),
+    )
+
+    out = tmp_path / "partitions.h5"
+    fem.to_h5(str(out))
+    with h5py.File(out, "r") as f:
+        assert "partitions" in f
+        keys = sorted(f["partitions"].keys())
+        assert keys == ["1", "2"]
+        np.testing.assert_array_equal(
+            f["partitions/1/node_ids"][:], [1, 2, 3])
+        np.testing.assert_array_equal(
+            f["partitions/1/element_ids"][:], [10])
+        np.testing.assert_array_equal(
+            f["partitions/2/node_ids"][:], [2, 3, 4])
+        np.testing.assert_array_equal(
+            f["partitions/2/element_ids"][:], [11])
+
+
+def test_to_h5_writes_parts(tmp_path: Path) -> None:
+    """FEM with parts maps emits ``/parts/{label}/...`` groups."""
+    node_ids = np.array([1, 2, 3], dtype=np.int64)
+    node_coords = np.array([
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0],
+    ], dtype=np.float64)
+    tri_info = make_type_info(
+        code=2, gmsh_name="Triangle 3", dim=2, order=1, npe=3, count=0,
+    )
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        part_node_map={"slab_A": {1, 2}, "slab_B": {3}},
+    )
+    elements = ElementComposite(
+        groups={}, physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        part_elem_map={"slab_A": {10}},
+    )
+    fem = FEMData(
+        nodes=nodes, elements=elements,
+        info=MeshInfo(n_nodes=3, n_elems=0, bandwidth=0, types=[tri_info]),
+    )
+
+    out = tmp_path / "parts.h5"
+    fem.to_h5(str(out))
+    with h5py.File(out, "r") as f:
+        assert "parts" in f
+        assert sorted(f["parts"].keys()) == ["slab_A", "slab_B"]
+        np.testing.assert_array_equal(
+            f["parts/slab_A/node_ids"][:], [1, 2])
+        np.testing.assert_array_equal(
+            f["parts/slab_A/element_ids"][:], [10])
+        np.testing.assert_array_equal(
+            f["parts/slab_B/node_ids"][:], [3])
+        # slab_B had no elements → empty element_ids dataset
+        np.testing.assert_array_equal(
+            f["parts/slab_B/element_ids"][:], [])
+
+
+def test_to_h5_omits_partitions_and_parts_when_empty(tmp_path: Path) -> None:
+    """A non-partitioned FEM with no parts has neither group."""
+    fem = _make_fem()
+    out = tmp_path / "no_parts.h5"
+    fem.to_h5(str(out))
+    with h5py.File(out, "r") as f:
+        assert "partitions" not in f
+        assert "parts" not in f

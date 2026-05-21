@@ -22,6 +22,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.conftest import _open_model_from_h5
+
 openseespy = pytest.importorskip(
     "openseespy.opensees", reason="openseespy required",
 )
@@ -40,15 +42,8 @@ class _MinimalFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        nodes_grp = group.create_group("nodes")
-        nodes_grp.create_dataset("ids", data=self.nodes.ids)
-        nodes_grp.create_dataset("coords", data=self.nodes.coords)
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 # =====================================================================
@@ -176,7 +171,7 @@ def test_force_beam_fiber_capture(tmp_path: Path) -> None:
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(cap_path, fem=fem) as r:
+    with Results.from_native(cap_path, fem=fem, model=_open_model_from_h5(cap_path)) as r:
         slab = r.elements.fibers.get(component="fiber_stress")
         # 1 element × 3 IPs × 9 fibers = 27 fiber rows; 3 time steps.
         assert slab.values.shape == (3, 27)
@@ -261,7 +256,7 @@ def test_disp_beam_fiber_capture(tmp_path: Path) -> None:
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(cap_path, fem=fem) as r:
+    with Results.from_native(cap_path, fem=fem, model=_open_model_from_h5(cap_path)) as r:
         slab = r.elements.fibers.get(component="fiber_stress")
         # 1 element × 3 IPs × 9 fibers = 27 cols; 2 steps.
         assert slab.values.shape == (2, 27)
@@ -319,7 +314,7 @@ def test_geometry_matches_section_definition(tmp_path: Path) -> None:
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(cap_path, fem=fem) as r:
+    with Results.from_native(cap_path, fem=fem, model=_open_model_from_h5(cap_path)) as r:
         slab = r.elements.fibers.get(component="fiber_stress")
         # First IP has 9 fibers — same y/z grid we built.
         gp0 = slab.gp_index == 0

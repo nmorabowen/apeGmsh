@@ -1203,13 +1203,27 @@ class FEMData:
                          remove_orphans=remove_orphans)
 
     @classmethod
-    def from_h5(cls, path: str) -> "FEMData":
+    def from_h5(cls, path: str, *, root: str = "/") -> "FEMData":
         """Load a :class:`FEMData` snapshot from a root-layout ``model.h5``.
 
         Inverse of :meth:`to_h5`.  Reads the seven neutral-zone groups
         plus ``/meta`` and rebuilds nodes, elements (per type),
         physical groups, labels, mesh selections, constraints, loads,
         and masses — everything the writer round-trips.
+
+        Parameters
+        ----------
+        path : str
+            Path to a model.h5 written by :meth:`to_h5`, ``g.save()``,
+            or ``apeSees(fem).h5(path)``.
+        root : str, default ``"/"``
+            Sub-group root inside ``path`` to read from.  Default
+            rehydrates from the file root (standalone ``model.h5``
+            shape).  Per ADR 0020 (Phase 4 cleanup), composed
+            ``results.h5`` files carry the same rich layout under
+            ``/model/``; pass ``root="/model"`` to rehydrate from a
+            composed file.  Backcompat: ``root="/"`` produces
+            byte-identical behaviour to the pre-refactor reader.
 
         Use this to resume a session-saved model in a later script::
 
@@ -1222,18 +1236,27 @@ class FEMData:
             apeSees(fem).h5("m.h5")     # enrich with /opensees/...
         """
         from ._femdata_h5_io import read_fem_h5
-        return read_fem_h5(path)
+        return read_fem_h5(path, root=root)
 
     def to_native_h5(self, group) -> None:
         """Embed this FEMData into an open HDF5 group (``/model/``).
 
         Used by ``NativeWriter`` to snapshot the geometry alongside
-        results. The reconstructed FEMData (via ``from_native_h5``)
+        results.  The reconstructed FEMData (via ``from_native_h5``)
         will produce the same ``snapshot_id`` — this is the linking
         contract for ``Results.bind()``.
+
+        Phase 4 cleanup (ADR 0020): writes the rich neutral-zone
+        layout :func:`write_fem_h5` produces at the file root, but
+        under ``group`` instead.  The composed ``results.h5`` thus
+        carries ``/model/meta``, ``/model/nodes``, ``/model/elements``,
+        etc. — the same layout :func:`read_fem_h5(path, root="/model")`
+        rehydrates from.  This eliminates the ``/opensees_archive/``
+        zone that the previous lean embedding required to round-trip
+        the full :class:`OpenSeesModel`.
         """
-        from ._femdata_native_io import write_fem_to_h5
-        write_fem_to_h5(self, group)
+        from ._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group)
 
     def to_h5(
         self,
@@ -1266,13 +1289,19 @@ class FEMData:
     def from_native_h5(cls, group) -> "FEMData":
         """Reconstruct a FEMData from its embedded ``/model/`` group.
 
-        The reconstructed object carries nodes, elements (per type),
-        physical groups, and labels. Loads/masses/constraints are not
-        round-tripped (they don't affect ``snapshot_id`` and the
-        viewer doesn't need them).
+        Phase 4 cleanup (ADR 0020): production writers (:meth:`to_native_h5`
+        via :class:`NativeWriter`) embed the rich neutral zone — full
+        constraints, loads, masses, mesh selections and partitions
+        round-trip alongside nodes/elements/PGs.  ``snapshot_id`` of
+        the rebuilt FEM matches the source's ``/meta/snapshot_id``
+        attribute (the linking contract :class:`Results.bind` relies
+        on).
         """
-        from ._femdata_native_io import read_fem_from_h5
-        return read_fem_from_h5(group)
+        from ._femdata_h5_io import read_neutral_zone_from_group
+
+        return read_neutral_zone_from_group(
+            group, label=getattr(group, "name", "<h5 group>"),
+        )
 
     @classmethod
     def from_mpco_model(cls, group) -> "FEMData":

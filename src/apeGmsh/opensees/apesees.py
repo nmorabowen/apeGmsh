@@ -29,6 +29,7 @@ from ._internal.build import (
     FixRecord,
     MassRecord,
     emit_element_spec,
+    emit_mp_constraints,
     emit_pattern_spec,
     emit_recorder_spec,
     emit_transform_specs,
@@ -150,6 +151,53 @@ def _kind_of(prim: Primitive) -> str:
         f"Primitive {type(prim).__name__} does not inherit from any "
         f"recognized family base (UniaxialMaterial, Section, ...)."
     )
+
+
+def _fem_has_mp_constraints(fem: "FEMData") -> bool:
+    """True iff the FEM snapshot carries any MP-constraint records.
+
+    Used by the Phase 8 Transformation auto-emit (the fold-in to
+    address the Phase 7b footgun where the default ``Plain`` handler
+    silently ignores MP constraints).  Returns True when any of:
+
+    * ``fem.nodes.constraints`` carries ANY records (``equal_dof``,
+      ``rigid_beam`` / ``rigid_rod`` / ``rigid_body`` /
+      ``rigid_diaphragm`` / ``kinematic_coupling`` /
+      ``node_to_surface``).
+    * ``fem.elements.constraints.interpolations()`` yields any
+      records (``tie`` / ``distributing`` / ``tied_contact`` /
+      ``mortar`` / ``embedded``).
+
+    Returns False when neither composite exists or both are empty
+    (defensive on test stubs that don't carry the full broker shape).
+    """
+    nodes = getattr(fem, "nodes", None)
+    node_constraints = (
+        getattr(nodes, "constraints", None) if nodes is not None else None
+    )
+    if node_constraints is not None:
+        try:
+            for _rec in node_constraints:
+                return True
+        except TypeError:
+            # Not iterable — defensive on stubs without __iter__.
+            pass
+
+    elements = getattr(fem, "elements", None)
+    surface_constraints = (
+        getattr(elements, "constraints", None)
+        if elements is not None
+        else None
+    )
+    if surface_constraints is not None:
+        interps = getattr(surface_constraints, "interpolations", None)
+        if interps is not None:
+            try:
+                for _rec in interps():
+                    return True
+            except TypeError:
+                pass
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +387,30 @@ class BuiltModel:
         # run with no bridge ``ops.pattern`` primitive.
         self._emit_broker_loads(emitter, tags)
 
+        # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Runs strictly
+        # between element emission and pattern emission: element tags
+        # must exist (constraints reference them; ASDEmbeddedNodeElement
+        # references the embedding element), and DOFs must be
+        # consolidated before patterns push ``ops.load(node, ...)`` on
+        # them (equalDOF collapses pairs of DOFs into one).  Includes
+        # the phantom-node pre-step that emits ``node(tag, *xyz, ndf=6)``
+        # before any constraint references the phantom (INV-3).
+        emit_mp_constraints(emitter, self.fem)
+
+        # 7c. Auto-emit constraint handler when MP constraints are
+        # present (Phase 8 fold-in).  Default OpenSees handler is
+        # ``Plain``, which silently ignores MP constraints — the
+        # footgun surfaced in Phase 7b.  Two surfaces:
+        #
+        # * User declared NO handler + MP constraints present →
+        #   auto-emit ``Transformation`` + ``UserWarning``.
+        # * User explicitly declared ``Plain`` + MP constraints
+        #   present → ``UserWarning`` (different message); the
+        #   user's choice is respected (Plain already emitted by the
+        #   pre_element pass).
+        # * Any other explicit handler → no warning, no auto-emit.
+        self._maybe_auto_emit_constraint_handler(emitter, pre_element)
+
         # 8. Patterns + recorders (post-element).
         for p in post_element:
             tag = self.tag_for[id(p)]
@@ -418,6 +490,83 @@ class BuiltModel:
         if self.ndf == 6:
             return (fx, fy, fz, mx, my, mz)
         return (fx, fy, fz, mx, my, mz)[: self.ndf]
+
+    # -- Auto-emit constraint handler (Phase 8 fold-in) ----------------
+
+    def _maybe_auto_emit_constraint_handler(
+        self,
+        emitter: Emitter,
+        pre_element: "list[Primitive]",
+    ) -> None:
+        """Auto-emit ``constraints("Transformation")`` when MP
+        constraints are present in the FEM AND the user did not
+        explicitly declare a constraint handler.
+
+        Addresses the Phase 7b footgun: the default OpenSees handler
+        ``Plain`` silently ignores ``equalDOF`` / ``rigidLink`` /
+        ``rigidDiaphragm`` / surface-coupling records.
+
+        Behaviour matrix (Phase 8 fold-in):
+
+        +--------------------------------+-------------------------------+
+        | User declared handler          | MP constraints present?       |
+        +--------------------------------+-------------------------------+
+        | (none)                         | yes -> auto-emit Transformation |
+        |                                |        + UserWarning            |
+        +--------------------------------+-------------------------------+
+        | ``Plain``                      | yes -> UserWarning (different   |
+        |                                |        message; user's choice   |
+        |                                |        respected, Plain already |
+        |                                |        emitted)                 |
+        +--------------------------------+-------------------------------+
+        | ``Penalty`` / ``Transformation``| no warning, no auto-emit       |
+        | / ``Lagrange``                 |                               |
+        +--------------------------------+-------------------------------+
+        | (any)                          | no MP -> no-op                  |
+        +--------------------------------+-------------------------------+
+        """
+        if not _fem_has_mp_constraints(self.fem):
+            return
+
+        # Find any user-declared ConstraintHandler in pre_element.
+        # (Constraint handlers go to pre_element because they're not
+        # Pattern or Recorder.)
+        from .analysis.constraint_handler import Plain as ConstraintsPlain
+
+        import warnings as _warnings
+
+        declared_handler: "ConstraintHandler | None" = None
+        for p in pre_element:
+            if isinstance(p, ConstraintHandler):
+                declared_handler = p
+                break
+
+        if declared_handler is None:
+            # No user-declared handler — auto-emit Transformation.
+            _warnings.warn(
+                "MP constraints are present in the model (equalDOF, "
+                "rigidLink, rigidDiaphragm, or surface couplings). "
+                "Auto-emitting 'Transformation' constraint handler. "
+                "To override, explicitly declare ops.constraints.X() "
+                "before build().",
+                UserWarning,
+                stacklevel=2,
+            )
+            emitter.constraints("Transformation")
+            return
+
+        if isinstance(declared_handler, ConstraintsPlain):
+            # User explicitly declared Plain + MP constraints present.
+            # Plain is already emitted (pre_element pass); just warn.
+            _warnings.warn(
+                "MP constraints present but Plain handler explicitly "
+                "declared — MP constraints will be silently ignored. "
+                "Did you mean Transformation/Lagrange/Penalty?",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+        # Any other explicit handler — no warning, no auto-emit.
 
 
 # ---------------------------------------------------------------------------
@@ -741,7 +890,10 @@ class apeSees:
             Optional sequence of :class:`apeGmsh.cuts.SectionCutDef`
             to persist under ``/opensees/cuts/cut_{i}``.  Each cut
             travels with the model definition; the viewer auto-loads
-            them on the next ``results.viewer(model_h5=path)``.
+            them from the file the next time ``Results.viewer(...)``
+            is opened against a results.h5 carrying the same
+            ``/opensees/`` zone (Phase 8 / ADR 0020 Composed-file
+            pattern).
         sweeps
             Optional sequence of :class:`apeGmsh.cuts.SectionSweepDef`
             to persist under ``/opensees/sweeps/sweep_{i}``.  Each

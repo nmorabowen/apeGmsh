@@ -1,6 +1,6 @@
 """Real MPCO fiber-section reads — DispBeamColumn3d frame.
 
-Drives ``Results.from_mpco(...)`` against the ``dispBeamCol`` example
+Drives ``Results.from_mpco(..., model_h5=_stub_model_h5_path())`` against the ``dispBeamCol`` example
 shipped in the ``STKO_to_python`` companion repo. The Tcl source is
 mirrored under ``tests/fixtures/results/dispBeamCol_tcl/`` for
 in-tree reference; the .mpco binary lives next to it (out-of-tree)
@@ -34,6 +34,8 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.results.readers._protocol import ResultLevel
+
+from tests.conftest import _stub_model_h5_path
 
 
 # =====================================================================
@@ -82,7 +84,7 @@ def mpco_path() -> Path:
 
 @pytest.fixture
 def results(mpco_path: Path):
-    r = Results.from_mpco(str(mpco_path), merge_partitions=False)
+    r = Results.from_mpco(str(mpco_path), merge_partitions=False, model_h5=_stub_model_h5_path())
     yield r
     r._reader.close()
 

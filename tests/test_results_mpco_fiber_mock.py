@@ -17,11 +17,14 @@ from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_fiber_io as _mfiber
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.opensees._response_catalog import (
+
     ELE_TAG_DispBeamColumn3d,
     ELE_TAG_ForceBeamColumn3d,
     IntRule,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 # =====================================================================
 # Synthetic MPCO file builder
@@ -526,7 +529,7 @@ class TestReadFiberBucketSlab:
 
 class TestReadFibersEndToEnd:
     def test_results_elements_fibers_get(self, simple_fiber_mpco) -> None:
-        results = Results.from_mpco(str(simple_fiber_mpco["path"]))
+        results = Results.from_mpco(str(simple_fiber_mpco["path"]), model_h5=_stub_model_h5_path())
         slab = results.elements.fibers.get(component="fiber_stress")
         assert slab.values.shape == (2, 24)
         assert slab.element_index.shape == (24,)
@@ -538,7 +541,7 @@ class TestReadFibersEndToEnd:
     def test_available_components_lists_stress_only(
         self, simple_fiber_mpco,
     ) -> None:
-        results = Results.from_mpco(str(simple_fiber_mpco["path"]))
+        results = Results.from_mpco(str(simple_fiber_mpco["path"]), model_h5=_stub_model_h5_path())
         comps = results._reader.available_components(
             results._reader.stages()[0].id, ResultLevel.FIBERS,
         )
@@ -546,7 +549,7 @@ class TestReadFibersEndToEnd:
         results._reader.close()
 
     def test_filter_via_facade(self, simple_fiber_mpco) -> None:
-        results = Results.from_mpco(str(simple_fiber_mpco["path"]))
+        results = Results.from_mpco(str(simple_fiber_mpco["path"]), model_h5=_stub_model_h5_path())
         slab = results.elements.fibers.get(
             component="fiber_stress",
             ids=[11],

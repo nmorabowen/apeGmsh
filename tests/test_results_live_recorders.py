@@ -22,6 +22,8 @@ from apeGmsh.results.spec._resolved import (
     ResolvedRecorderSpec,
 )
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fake ops module — records calls, returns sequential tags
@@ -565,7 +567,7 @@ def test_skips_fiber_record_with_warning(tmp_path: Path) -> None:
 
 def test_emit_filename_matches_from_recorders_lookup(tmp_path: Path) -> None:
     """The filename LiveRecorders writes to MUST match what
-    Results.from_recorders(stage_id=...) looks for. Tested via the
+    Results.from_recorders(stage_id=..., model=_open_model_from_h5(stage_id=...)) looks for. Tested via the
     shared helpers (no actual ops or transcoder run)."""
     from apeGmsh.results.writers._cache import list_source_files
 

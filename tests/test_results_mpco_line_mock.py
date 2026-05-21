@@ -17,6 +17,7 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_line_io as _mline
 from apeGmsh.opensees._response_catalog import (
+
     ELE_TAG_DispBeamColumn3d,
     ELE_TAG_ForceBeamColumn2d,
     ELE_TAG_ForceBeamColumn3d,
@@ -26,6 +27,8 @@ from apeGmsh.opensees._response_catalog import (
     resolve_layout_from_gp_x,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 # =====================================================================
 # Synthetic MPCO file builder
@@ -328,7 +331,7 @@ def fbc2d_bare_3ip_mpco(tmp_path: Path) -> Path:
 
 class TestForceBeamColumn3dAggregated:
     def test_axial_force_full_read(self, fbc3d_aggregated_5ip_mpco: Path) -> None:
-        with Results.from_mpco(fbc3d_aggregated_5ip_mpco) as r:
+        with Results.from_mpco(fbc3d_aggregated_5ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
             # 2 elements × 5 IPs = 10 stations, 2 steps.
@@ -349,7 +352,7 @@ class TestForceBeamColumn3dAggregated:
     ) -> None:
         # axial_force is component k=0 in (P, Mz, My, T, Vy, Vz) order.
         # Synthetic encoding: ki * 1000 + t * 100 + e * 10 + g.
-        with Results.from_mpco(fbc3d_aggregated_5ip_mpco) as r:
+        with Results.from_mpco(fbc3d_aggregated_5ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         # ki=0; t=0,e=0,g=0..4 then t=0,e=1,g=0..4
@@ -367,7 +370,7 @@ class TestForceBeamColumn3dAggregated:
         # shear_z (Vz) is the LAST column (k=5) of the (P,Mz,My,T,Vy,Vz)
         # layout — verifies we route names correctly through the
         # resolved component_layout.
-        with Results.from_mpco(fbc3d_aggregated_5ip_mpco) as r:
+        with Results.from_mpco(fbc3d_aggregated_5ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="shear_z")
         # ki=5; t=0,e=0,g=0 → 5000.
@@ -381,7 +384,7 @@ class TestForceBeamColumn3dAggregated:
         self, fbc3d_aggregated_5ip_mpco: Path,
     ) -> None:
         # bending_moment_y is k=2 (My).
-        with Results.from_mpco(fbc3d_aggregated_5ip_mpco) as r:
+        with Results.from_mpco(fbc3d_aggregated_5ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="bending_moment_y")
         # ki=2 → 2000 + t*100 + e*10 + g.
@@ -391,7 +394,7 @@ class TestForceBeamColumn3dAggregated:
     def test_element_id_filter(
         self, fbc3d_aggregated_5ip_mpco: Path,
     ) -> None:
-        with Results.from_mpco(fbc3d_aggregated_5ip_mpco) as r:
+        with Results.from_mpco(fbc3d_aggregated_5ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(
                 component="axial_force",
@@ -404,7 +407,7 @@ class TestForceBeamColumn3dAggregated:
     def test_element_id_filter_empty(
         self, fbc3d_aggregated_5ip_mpco: Path,
     ) -> None:
-        with Results.from_mpco(fbc3d_aggregated_5ip_mpco) as r:
+        with Results.from_mpco(fbc3d_aggregated_5ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(
                 component="axial_force",
@@ -416,7 +419,7 @@ class TestForceBeamColumn3dAggregated:
 
 class TestForceBeamColumn3dBareSection:
     def test_axial_force(self, fbc3d_bare_3ip_mpco: Path) -> None:
-        with Results.from_mpco(fbc3d_bare_3ip_mpco) as r:
+        with Results.from_mpco(fbc3d_bare_3ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         # 1 element × 3 IPs = 3 stations, 1 step.
@@ -431,7 +434,7 @@ class TestForceBeamColumn3dBareSection:
 
     def test_torsion_picks_4th_column(self, fbc3d_bare_3ip_mpco: Path) -> None:
         # Bare section is (P, Mz, My, T) — torsion is k=3.
-        with Results.from_mpco(fbc3d_bare_3ip_mpco) as r:
+        with Results.from_mpco(fbc3d_bare_3ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="torsion")
         # ki=3 → 3000.
@@ -442,7 +445,7 @@ class TestForceBeamColumn3dBareSection:
     ) -> None:
         # Bare 3D fiber section has no shear → component absent from
         # the resolved layout → empty slab.
-        with Results.from_mpco(fbc3d_bare_3ip_mpco) as r:
+        with Results.from_mpco(fbc3d_bare_3ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="shear_y")
         assert slab.values.shape == (1, 0)
@@ -450,7 +453,7 @@ class TestForceBeamColumn3dBareSection:
 
 class TestForceBeamColumn2d:
     def test_axial_force(self, fbc2d_bare_3ip_mpco: Path) -> None:
-        with Results.from_mpco(fbc2d_bare_3ip_mpco) as r:
+        with Results.from_mpco(fbc2d_bare_3ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         assert slab.values.shape == (1, 3)
@@ -458,7 +461,7 @@ class TestForceBeamColumn2d:
 
     def test_bending_moment_z(self, fbc2d_bare_3ip_mpco: Path) -> None:
         # 2D bare section is (P, Mz) — Mz is k=1.
-        with Results.from_mpco(fbc2d_bare_3ip_mpco) as r:
+        with Results.from_mpco(fbc2d_bare_3ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="bending_moment_z")
         np.testing.assert_array_equal(slab.values[0], [1000.0, 1001.0, 1002.0])
@@ -466,7 +469,7 @@ class TestForceBeamColumn2d:
     def test_shear_y_not_in_2d_bare_returns_empty(
         self, fbc2d_bare_3ip_mpco: Path,
     ) -> None:
-        with Results.from_mpco(fbc2d_bare_3ip_mpco) as r:
+        with Results.from_mpco(fbc2d_bare_3ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="shear_y")
         assert slab.values.shape == (1, 0)
@@ -684,7 +687,7 @@ class TestEmptySlabReturns:
         )
         f.close()
         # File has MODEL/ELEMENTS but no section.force group.
-        with Results.from_mpco(path) as r:
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         assert slab.values.shape == (1, 0)
@@ -694,7 +697,7 @@ class TestEmptySlabReturns:
     ) -> None:
         # ``stress_xx`` has no line-stations routing → empty slab even
         # when the file does have line-stations buckets.
-        with Results.from_mpco(fbc3d_aggregated_5ip_mpco) as r:
+        with Results.from_mpco(fbc3d_aggregated_5ip_mpco, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="stress_xx")
         assert slab.values.shape == (2, 0)
@@ -753,7 +756,7 @@ class TestMultiBucketStitching:
         finally:
             f.close()
 
-        with Results.from_mpco(path) as r:
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         # 2 elements × 5 IPs + 1 element × 3 IPs = 13 stations.
@@ -797,7 +800,7 @@ class TestDispBeamColumnReadable:
             )
         finally:
             f.close()
-        with Results.from_mpco(path) as r:
+        with Results.from_mpco(path, model_h5=_stub_model_h5_path()) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         assert slab.values.shape == (1, 3)

@@ -280,6 +280,8 @@ def _read_sweep_from_group(g: "h5py.Group") -> SectionSweepDef:
 
 def read_cuts_and_sweeps(
     path: str | Path,
+    *,
+    meta_path: str = "meta",
 ) -> tuple[tuple[SectionCutDef, ...], tuple[SectionSweepDef, ...]]:
     """Read ``/opensees/cuts/`` and ``/opensees/sweeps/`` from ``model.h5``.
 
@@ -292,11 +294,21 @@ def read_cuts_and_sweeps(
     :class:`SectionSweepDef` through their public constructors, so
     ``__post_init__`` validation runs on every read.
 
+    Parameters
+    ----------
+    path
+        HDF5 file path.
+    meta_path
+        Forwarded to :func:`h5_reader.open` for the schema validation.
+        Default ``"meta"`` reads ``/meta`` at root.  Pass
+        ``"model/meta"`` for ADR 0020 composed results files where the
+        bridge meta lives under ``/model/``.
+
     Raises
     ------
     SchemaVersionError
-        If ``/meta/schema_version`` major != 2 (propagated from the
-        underlying reference reader).
+        If ``schema_version`` at ``meta_path`` has major != 2
+        (propagated from the underlying reference reader).
     FileNotFoundError, MalformedH5Error
         Propagated from
         :func:`apeGmsh.opensees.emitter.h5_reader.open`.
@@ -306,7 +318,7 @@ def read_cuts_and_sweeps(
     cuts: tuple[SectionCutDef, ...] = ()
     sweeps: tuple[SectionSweepDef, ...] = ()
 
-    with h5_reader.open(str(path)) as model:
+    with h5_reader.open(str(path), meta_path=meta_path) as model:
         f = model.handle
         cuts_group = f.get("opensees/cuts")
         if cuts_group is not None:

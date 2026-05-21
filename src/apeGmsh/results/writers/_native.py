@@ -35,6 +35,23 @@ Usage
                       node_ids=ids,
                       components={"displacement_x": shape_x[None, :], ...})
         w.end_stage()
+
+Composed-file pattern (Phase 4, ADR 0020)
+-----------------------------------------
+``open(..., model_h5_src=path)`` embeds a copy of the ``/opensees/``
+zone from an existing ``model.h5`` into the same results file. The
+copy happens at open time, **not at close**: h5py file fragmentation
+is materially worse when the bulk lands during the close fsync, and
+the resulting layout is ``/meta`` → ``/model`` (neutral) →
+``/opensees/`` → ``/stages/...`` (results data appended during the
+run). The caller (typically :meth:`Results.from_recorders` with
+``model=`` or :class:`DomainCapture` with ``bridge=``) is responsible
+for materialising the source model file; ``NativeWriter`` does not
+import :mod:`apeGmsh.opensees` and stays purely h5py-side.
+
+When ``model_h5_src`` is ``None`` (today's behavior), the file
+carries only ``/meta`` + ``/model/`` + ``/stages/...`` — exactly the
+shape pre-Phase-4 readers expect.
 """
 from __future__ import annotations
 
@@ -89,8 +106,25 @@ class NativeWriter:
         source_type: str = _native.SOURCE_DOMAIN_CAPTURE,
         source_path: str = "",
         analysis_label: str = "",
+        model_h5_src: Optional[str | Path] = None,
     ) -> None:
-        """Create the file, write root attrs, embed FEMData if provided."""
+        """Create the file, write root attrs, embed FEMData if provided.
+
+        ``model_h5_src`` (Phase 4, ADR 0020) — when supplied, points at
+        an existing apeGmsh-produced ``model.h5`` whose ``/opensees/``
+        zone is copied into this results file at open time. The
+        resulting Composed file carries both ``/model/`` (neutral
+        FEMData snapshot) and ``/opensees/`` (the OpenSees-specific
+        broker zone) alongside ``/stages/...``. Downstream readers
+        auto-resolve :attr:`Results.model` from the same file.
+
+        Raises
+        ------
+        FileNotFoundError
+            ``model_h5_src`` is supplied but does not exist.
+        RuntimeError
+            ``model_h5_src`` does not carry a ``/opensees/`` group.
+        """
         import h5py
 
         if self._h5 is not None:
@@ -101,6 +135,20 @@ class NativeWriter:
 
         h5 = self._h5
         h5.attrs[_native.ATTR_SCHEMA_VERSION] = _versions.SCHEMA_VERSION
+        # ADR 0023 — per-zone marker; the envelope above bumps only on
+        # partition-shape changes, this one tracks the results-zone
+        # content shape independently. Phase 7a wires the two-version
+        # read window against this attr.
+        h5.attrs[_native.ATTR_RESULTS_SCHEMA_VERSION] = (
+            _versions.RESULTS_SCHEMA_VERSION
+        )
+        # ADR 0023 §"Three per-zone version stamps" — composed result
+        # files also carry the neutral + opensees per-zone keys at root
+        # so a reader probing the results envelope's meta can validate
+        # all three zones from one attr-map.  ``write_model`` /
+        # ``write_opensees_from`` are still optional; the corresponding
+        # per-zone keys are dropped when those zones are not present
+        # (see below — they're set lazily after the embedding calls).
         h5.attrs[_native.ATTR_SOURCE_TYPE] = source_type
         h5.attrs[_native.ATTR_SOURCE_PATH] = source_path
         h5.attrs[_native.ATTR_CREATED_AT] = (
@@ -115,12 +163,311 @@ class NativeWriter:
         if fem is not None:
             self.write_model(fem)
 
+        # Composed-file embedding — perform copy at open time, before
+        # any stage / partition data lands. h5py file fragmentation is
+        # materially worse when the bulk arrives during the close
+        # fsync (see ADR 0020 §"Negative consequences"). The natural
+        # group ordering ``/meta`` → ``/model`` → ``/opensees/`` →
+        # ``/stages/...`` is preserved by writing the OpenSees zone
+        # here, sandwiched between the broker write and the begin /
+        # write / end-stage flow that follows.
+        if model_h5_src is not None:
+            self.write_opensees_from(model_h5_src)
+
+        # ADR 0023 — forward the per-zone version stamps to the results
+        # envelope's root attrs so a reader probing the file root sees
+        # all three zones' versions in one attr-map.  Zone presence is
+        # inferred from the embedded groups (no ``/model/`` ⇒ no
+        # neutral key; no ``/opensees/`` ⇒ no opensees key).  Sources
+        # the versions from the embedded ``/model/meta`` per-zone keys
+        # (stamped by :func:`write_meta`); falls back to the current
+        # writer constants when the source lacks them (legacy
+        # ``to_native_h5`` fixtures).
+        self._stamp_root_per_zone_versions()
+
+        # ADR 0021 — stamp ``fem_hash`` + ``model_hash`` at open time,
+        # before any stage data lands.  ``results_hash`` chains in at
+        # close time (see :meth:`close`).  All three live under
+        # ``/meta/lineage/``.  Standalone-results files (no embedded
+        # ``/opensees/`` zone) carry only ``fem_hash`` here; the
+        # ``model_hash`` link stays absent.
+        self._stamp_open_lineage()
+
+    def write_opensees_from(self, model_h5_src: str | Path) -> None:
+        """Embed the bridge zone from a sibling ``model.h5`` at root.
+
+        Phase 4 cleanup (ADR 0020) — copies ``/opensees/`` verbatim
+        from the source into the Composed results file at root.  The
+        composed file shape becomes::
+
+            /meta                 (results envelope)
+            /model/               (rich FEMData neutral zone)
+            /opensees/            (bridge zone — copied here)
+            /stages/...           (results data)
+
+        Both the viewer (via :mod:`h5_reader`) and
+        :meth:`OpenSeesModel.from_h5(path, opensees_root="/opensees")`
+        read the bridge zone at root; pairing it with ``/model/`` (the
+        rich neutral zone written by :meth:`write_model`) gives the
+        ``OpenSeesModel`` rehydration path everything it needs without
+        the legacy ``/opensees_archive/`` mirror or the temp-file
+        extract dance the reader used to perform.
+
+        Idempotency: calling this twice on the same writer raises
+        :class:`RuntimeError` because ``/opensees/`` already exists.
+        Schema authority stays with :class:`apeGmsh.opensees.H5Emitter`
+        (ADR 0019 INV-3 unchanged — this method neither inspects nor
+        rewrites the zone's content; it copies bytes).
+
+        Raises
+        ------
+        FileNotFoundError
+            ``model_h5_src`` does not exist.
+        RuntimeError
+            ``/opensees/`` is missing from the source, or the writer
+            already holds a ``/opensees/`` group.
+        """
+        import h5py
+
+        h5 = self._require_open()
+        if "opensees" in h5:
+            raise RuntimeError(
+                f"NativeWriter for {self._path}: /opensees/ is "
+                f"already present in the file; cannot copy from "
+                f"{model_h5_src!s}."
+            )
+        src_path = Path(model_h5_src)
+        if not src_path.is_file():
+            raise FileNotFoundError(
+                f"NativeWriter.write_opensees_from: source model.h5 "
+                f"not found at {src_path!s}."
+            )
+        with h5py.File(str(src_path), "r") as src:
+            if "opensees" not in src:
+                raise RuntimeError(
+                    f"NativeWriter.write_opensees_from: source "
+                    f"{src_path!s} has no /opensees/ group."
+                )
+            # Bridge zone copy — pairs with the rich /model/ neutral
+            # zone (written by write_model) for the OpenSeesModel
+            # rehydrate path.  /opensees/cuts and /opensees/sweeps
+            # come along for the ride; the viewer's probe surface is
+            # the same /opensees/transforms + /opensees/element_meta
+            # pair it always was.
+            src.copy(src["opensees"], h5, name="opensees")
+            # Forward bridge-stamped meta attrs onto /model/meta.  The
+            # source model.h5's /meta carries the bridge's spatial ndf
+            # and the user's model_name; NativeWriter.write_model
+            # passed defaults (ndf=0, model_name="") to the broker
+            # because the broker doesn't know either.  Without this
+            # enrichment OpenSeesModel.from_h5(fem_root="/model") would
+            # surface those defaults instead of the bridge's values,
+            # losing parity with the standalone ``apeSees(fem).h5()``
+            # rehydrate.  ndm is inferred from transforms by the read
+            # side, so it's not forwarded here.
+            if "meta" in src and "/model/meta" in h5:
+                src_meta = src["meta"].attrs
+                dst_meta = h5["/model/meta"].attrs
+                if "ndf" in src_meta:
+                    dst_meta["ndf"] = int(src_meta["ndf"])
+                if "model_name" in src_meta:
+                    name = src_meta["model_name"]
+                    if isinstance(name, bytes):
+                        name = name.decode("utf-8", "replace")
+                    dst_meta["model_name"] = str(name)
+                # ADR 0023 — forward the source's per-zone opensees
+                # version onto /model/meta so the composed file's
+                # bridge zone has a recoverable version under the same
+                # meta scope OpenSeesModel.from_h5(fem_root="/model")
+                # probes.  Falls back to the envelope value for
+                # pre-Phase-7a source files.
+                if "opensees_schema_version" in src_meta:
+                    dst_meta["opensees_schema_version"] = str(
+                        src_meta["opensees_schema_version"]
+                    )
+                elif "schema_version" in src_meta:
+                    dst_meta["opensees_schema_version"] = str(
+                        src_meta["schema_version"]
+                    )
+
+            # Forward the source's stamped lineage (ADR 0021) onto
+            # ``/model/meta/lineage`` so :meth:`OpenSeesModel.from_h5`
+            # called against the composed file (with
+            # ``fem_root="/model"``) finds the same stored hashes
+            # ``_compose_model_h5`` wrote into the source.  Without
+            # this forward, the model-layer broker recomputes from
+            # the embedded zones but has nothing to compare against,
+            # producing a "lineage absent — legacy file" warning on
+            # every Composed-file read.
+            if (
+                "meta" in src
+                and "lineage" in src["meta"]
+                and "/model/meta" in h5
+            ):
+                src_lineage = src["meta/lineage"]
+                dst_meta_grp = h5["/model/meta"]
+                if "lineage" in dst_meta_grp:
+                    del dst_meta_grp["lineage"]
+                src.copy(src_lineage, dst_meta_grp, name="lineage")
+
     def close(self) -> None:
         if self._h5 is None:
             return
+        # ADR 0021 — stamp ``results_hash`` after every stage has
+        # landed but before the file is closed.  The chain depends on
+        # the previously-stamped ``model_hash``; bridge-only files
+        # (no ``/opensees/`` zone) skip the link silently.
+        try:
+            self._stamp_close_lineage()
+        except Exception:
+            # Lineage drift is warn-not-raise (INV-2).  A failure here
+            # means the file's lineage triple stays partial — that's
+            # the same shape a pre-Phase-6 file has, so readers cope.
+            pass
         self._h5.close()
         self._h5 = None
         self._current_stage = None
+
+    # ------------------------------------------------------------------
+    # Per-zone schema stamping (ADR 0023)
+    # ------------------------------------------------------------------
+
+    def _stamp_root_per_zone_versions(self) -> None:
+        """Forward per-zone version stamps from embedded zones to root.
+
+        Per ADR 0023 §"Three per-zone version stamps + one envelope":
+        composed result files carry three zones (neutral via ``/model/``,
+        opensees via ``/opensees/``, results via ``/stages/``); the
+        per-zone keys live at the file root so a reader probing
+        ``f.attrs`` sees all three independently.  Sources versions
+        from the embedded ``/model/meta`` group's per-zone keys
+        (stamped by :func:`apeGmsh.mesh._femdata_h5_io.write_meta` and
+        the source ``model.h5``'s bridge ``_write_meta``); falls back
+        to the current writer constants when those keys are absent
+        (legacy fixtures, pre-Phase-7a source files).
+        """
+        from ...mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
+        from ...opensees.emitter.h5 import SCHEMA_VERSION as OPENSEES_VERSION
+        from ...opensees._internal.schema_version import (
+            NEUTRAL_KEY,
+            OPENSEES_KEY,
+        )
+
+        h5 = self._require_open()
+        if "model" in h5 and "meta" in h5["model"]:
+            model_meta_attrs = h5["model/meta"].attrs
+            if NEUTRAL_KEY in model_meta_attrs:
+                h5.attrs[NEUTRAL_KEY] = str(model_meta_attrs[NEUTRAL_KEY])
+            elif "schema_version" in model_meta_attrs:
+                # Legacy single-stamp source — fall back to the envelope.
+                h5.attrs[NEUTRAL_KEY] = str(model_meta_attrs["schema_version"])
+            else:
+                h5.attrs[NEUTRAL_KEY] = NEUTRAL_SCHEMA_VERSION
+            # Source's bridge-stamped per-zone opensees key (when present).
+            if OPENSEES_KEY in model_meta_attrs:
+                h5.attrs[OPENSEES_KEY] = str(model_meta_attrs[OPENSEES_KEY])
+        if "opensees" in h5 and OPENSEES_KEY not in h5.attrs:
+            # /opensees/ was embedded but the source's /model/meta didn't
+            # carry the per-zone key (legacy/composed source).  Stamp the
+            # current writer's version — this matches the
+            # whichever-wrote-last envelope semantics for legacy readers.
+            h5.attrs[OPENSEES_KEY] = OPENSEES_VERSION
+
+    # ------------------------------------------------------------------
+    # Lineage stamping helpers (ADR 0021)
+    # ------------------------------------------------------------------
+
+    def _stamp_open_lineage(self) -> None:
+        """Stamp ``fem_hash`` + ``model_hash`` at open time.
+
+        Run after ``write_model`` and ``write_opensees_from`` so both
+        source zones are present.  Bridge-only files (no ``/model/``,
+        no ``/opensees/``) skip the corresponding links — the resulting
+        :class:`Lineage` carries empty strings / ``None`` for the
+        missing layers, matching the ADR 0021 surface.
+        """
+        from ...opensees._internal.lineage import (
+            compute_fem_hash,
+            compute_model_hash,
+            write_lineage_attrs,
+        )
+
+        h5 = self._require_open()
+        fem_hash = ""
+        model_hash: str | None = None
+        if "model" in h5:
+            try:
+                fem_hash = compute_fem_hash(h5["model"])
+            except Exception:
+                # Recompute failed (e.g. partial neutral zone).
+                # Lineage stays empty; readers will surface
+                # "lineage absent" warnings rather than crashing.
+                fem_hash = ""
+        if "opensees" in h5:
+            model_hash = compute_model_hash(fem_hash, h5["opensees"])
+        if not fem_hash and model_hash is None:
+            return
+        lineage_meta = self._require_lineage_meta_group()
+        write_lineage_attrs(
+            lineage_meta,
+            fem_hash=fem_hash if fem_hash else None,
+            model_hash=model_hash,
+        )
+
+    def _stamp_close_lineage(self) -> None:
+        """Stamp ``results_hash`` at close time.
+
+        Reads back the previously-stamped ``model_hash`` and chains it
+        with the canonical bytes of ``/stages/``.  When no
+        ``model_hash`` was stamped (bridge-only files), ``results_hash``
+        chains on an empty string — consistent with the
+        :func:`compute_results_hash` contract.
+        """
+        from ...opensees._internal.lineage import (
+            LINEAGE_GROUP,
+            compute_results_hash,
+            read_stored_lineage,
+            write_lineage_attrs,
+        )
+
+        h5 = self._require_open()
+        if _native.STAGES_GROUP[1:] not in h5:
+            return
+        stages = h5[_native.STAGES_GROUP[1:]]
+        # No model_hash was written ⇒ chain on empty (still
+        # tamper-evident at the results layer alone).
+        prior_fem = ""
+        prior_model = ""
+        if "meta" in h5 and LINEAGE_GROUP in h5["meta"]:
+            stored = read_stored_lineage(h5["meta"])
+            prior_fem = stored[0] or ""
+            prior_model = stored[1] or ""
+        results_hash = compute_results_hash(prior_model, stages)
+        lineage_meta = self._require_lineage_meta_group()
+        # Preserve the open-time fem / model hashes; only add the
+        # results link.
+        write_lineage_attrs(
+            lineage_meta,
+            fem_hash=prior_fem if prior_fem else None,
+            model_hash=prior_model if prior_model else None,
+            results_hash=results_hash,
+        )
+
+    def _require_lineage_meta_group(self):
+        """Return the ``/meta`` group for lineage stamping, creating it.
+
+        NativeWriter stores envelope info as root attrs (no ``/meta``
+        group); the lineage triple needs a structured sub-group for
+        ``read_stored_lineage`` to consume it like the standalone
+        ``model.h5`` flow does.  Idempotent — repeated calls return
+        the same group.
+        """
+        h5 = self._require_open()
+        if "meta" in h5:
+            grp = h5["meta"]
+        else:
+            grp = h5.create_group("meta")
+        return grp
 
     # ------------------------------------------------------------------
     # Embedded FEMData snapshot

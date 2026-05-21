@@ -21,6 +21,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.conftest import _open_model_from_h5
+
 
 _DEFAULT_TCL_LAUNCHERS = [
     r"C:\Program Files\El Ladruno OpenSees\opensees_ladruno.bat",
@@ -51,15 +53,8 @@ class _MinimalFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset("ids", data=self.nodes.ids)
-        n.create_dataset("coords", data=self.nodes.coords)
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 def test_elastic_beam_3d_global_and_local_three_way_agreement(
@@ -172,7 +167,7 @@ def test_elastic_beam_3d_global_and_local_three_way_agreement(
         f"unexpected unsupported: {transcoder.unsupported}"
     )
 
-    with Results.from_native(target) as r:
+    with Results.from_native(target, model=_open_model_from_h5(target)) as r:
         s = r.stage(r.stages[0].id)
         comps = set(s.elements.available_components())
         for n in ("nodal_resisting_force_x", "nodal_resisting_moment_z",

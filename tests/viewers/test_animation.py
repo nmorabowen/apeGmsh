@@ -24,6 +24,8 @@ from apeGmsh.viewers.diagrams import (
 from apeGmsh.viewers.diagrams._director import ResultsDirector
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 # The optional `animation` extra (imageio / imageio-ffmpeg) is
 # not installed in the curated CI suite; skip cleanly when absent.
 pytest.importorskip("imageio")
@@ -66,7 +68,7 @@ def animation_results(g, tmp_path: Path):
             node_ids=node_ids, components=components,
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 @pytest.fixture
@@ -119,7 +121,7 @@ def test_no_steps_raises(g, tmp_path: Path):
     path = tmp_path / "empty.h5"
     with NativeWriter(path) as w:
         w.open(fem=fem)
-    results = Results.from_native(path)
+    results = Results.from_native(path, model=_open_model_from_h5(path))
     director = ResultsDirector(results)
     plotter = pv.Plotter(off_screen=True)
     try:

@@ -16,9 +16,12 @@ from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_material_io as _mmat
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.opensees._response_catalog import (
+
     ELE_TAG_FourNodeTetrahedron, IntRule,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 # =====================================================================
 # Synthetic MPCO file builder
@@ -345,7 +348,7 @@ class TestEndToEnd:
         self, two_component_damage,
     ) -> None:
         path, eids, flat = two_component_damage
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         # Available components surfaces both per-segment canonicals.
         sid = r._reader.stages()[0].id
         comps = r._reader.available_components(sid, ResultLevel.GAUSS)
@@ -369,7 +372,7 @@ class TestEndToEnd:
         self, two_component_damage,
     ) -> None:
         path, _, _ = two_component_damage
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         slab_t = r.elements.gauss.get(component="damage_tension", time=1)
         # t=1: e=0 → 101, e=1 → 111.
         np.testing.assert_array_almost_equal(slab_t.values[0], [101.0, 111.0])
@@ -379,7 +382,7 @@ class TestEndToEnd:
         self, single_component_damage,
     ) -> None:
         path, _, _ = single_component_damage
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         sid = r._reader.stages()[0].id
         comps = r._reader.available_components(sid, ResultLevel.GAUSS)
         # Bare ``damage`` (no suffix) since META has one symbol.
@@ -397,7 +400,7 @@ class TestEndToEnd:
         # should return an empty slab — the bucket's META exposes
         # ``damage_tension`` / ``damage_compression``, not ``damage``.
         path, _, _ = two_component_damage
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         slab = r.elements.gauss.get(component="damage", time=0)
         assert slab.values.shape[1] == 0
         r._reader.close()
@@ -406,7 +409,7 @@ class TestEndToEnd:
         self, equivalent_plastic_strain_2c,
     ) -> None:
         path, _, _ = equivalent_plastic_strain_2c
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         slab_t = r.elements.gauss.get(
             component="equivalent_plastic_strain_tension", time=0,
         )

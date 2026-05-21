@@ -33,6 +33,8 @@ from apeGmsh.viewers.diagrams import (
 from apeGmsh.viewers.diagrams._styles import DiagramStyle
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 # ---------------------------------------------------------------------
 # Inline fixtures — tag-map h5 + FEMData + Results
@@ -41,7 +43,7 @@ from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 def _write_minimal_h5(
     path: Path, *, ops_to_fem: dict[int, int],
     type_token: str = "forceBeamColumn",
-    schema_version: str = "2.2.0",
+    schema_version: str = "2.6.0",
 ) -> None:
     ids = np.array(list(ops_to_fem.keys()), dtype=np.int64)
     fem_eids = np.array(list(ops_to_fem.values()), dtype=np.int64)
@@ -106,7 +108,7 @@ def cube_results(g, tmp_path: Path):
             },
         )
         w.end_stage()
-    results = Results.from_native(res_path)
+    results = Results.from_native(res_path, model=_open_model_from_h5(res_path))
     return results, fem, h5, ops_to_fem
 
 
@@ -342,11 +344,14 @@ def test_filter_fem_eids_cached_for_phase_1b(
 # ---------------------------------------------------------------------
 
 def test_director_set_model_h5_caches(cube_results):
+    """Phase 8 — ``set_model_h5`` was deleted; tag_map is cached on
+    first access after ``_bind_model_h5`` (the surviving internal
+    path-binder)."""
     from apeGmsh.viewers.diagrams import ResultsDirector
     results, _fem, h5, _ = cube_results
     director = ResultsDirector(results)
     assert director.tag_map is None    # nothing set yet
-    director.set_model_h5(h5)
+    director._bind_model_h5(h5)
     m1 = director.tag_map
     m2 = director.tag_map
     assert m1 is not None
@@ -354,12 +359,13 @@ def test_director_set_model_h5_caches(cube_results):
 
 
 def test_director_set_model_h5_to_none_clears_cache(cube_results):
+    """Phase 8 — clearing the model path resets the cached tag_map."""
     from apeGmsh.viewers.diagrams import ResultsDirector
     results, _fem, h5, _ = cube_results
     director = ResultsDirector(results)
-    director.set_model_h5(h5)
+    director._bind_model_h5(h5)
     _ = director.tag_map
-    director.set_model_h5(None)
+    director._bind_model_h5(None)
     assert director.tag_map is None
 
 

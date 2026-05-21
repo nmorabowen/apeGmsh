@@ -16,6 +16,8 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5, _stub_model_h5_path
+
 
 # =====================================================================
 # Synthetic results file + mock FEM
@@ -101,7 +103,7 @@ def _make_results_with_fem(tmp_path: Path):
         ),
     )
 
-    return Results.from_native(path, fem=fem), fem
+    return Results.from_native(path, fem=fem, model=_open_model_from_h5(path)), fem
 
 
 # =====================================================================
@@ -365,7 +367,7 @@ def test_nodes_nearest_to_without_fem_raises(tmp_path: Path) -> None:
         )
         w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         # File has no fem snapshot embedded
         if r._fem is None:
             with pytest.raises(RuntimeError, match="bound FEMData"):
@@ -589,7 +591,7 @@ def test_springs_in_box_works_when_mpco_carries_connectivity() -> None:
     if not fixture.exists():
         pytest.skip(f"Missing fixture: {fixture}")
 
-    r = Results.from_mpco(fixture)
+    r = Results.from_mpco(fixture, model_h5=_stub_model_h5_path())
     fem = r._fem
     assert [t.name for t in fem.elements.types] == ["zerolength"]
     assert sorted(int(e) for e in fem.elements.ids) == [100, 200]

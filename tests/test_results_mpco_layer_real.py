@@ -28,6 +28,8 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.results.readers._protocol import ResultLevel
 
+from tests.conftest import _stub_model_h5_path
+
 
 _DEFAULT_EXAMPLES = Path(
     r"C:\Users\nmora\Github\STKO_to_python\stko_results_examples"
@@ -66,7 +68,7 @@ def part0_path() -> Path:
 
 @pytest.fixture
 def merged_results(part0_path: Path):
-    r = Results.from_mpco(str(part0_path))   # auto-detect all 4 partitions
+    r = Results.from_mpco(str(part0_path), model_h5=_stub_model_h5_path())   # auto-detect all 4 partitions
     yield r
     r._reader.close()
 
@@ -250,6 +252,7 @@ class TestPartitionMerge:
             single = Results.from_mpco(
                 str(part0_path.parent / f"Results.part-{i}.mpco"),
                 merge_partitions=False,
+            model_h5=_stub_model_h5_path()
             )
             single_slab = single.elements.layers.get(
                 component="fiber_stress_0",

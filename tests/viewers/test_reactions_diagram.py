@@ -27,6 +27,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 @pytest.fixture
 def reactions_results(g, tmp_path: Path):
@@ -79,7 +81,7 @@ def reactions_results(g, tmp_path: Path):
             components=components,
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 @pytest.fixture

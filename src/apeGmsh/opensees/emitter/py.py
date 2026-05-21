@@ -79,14 +79,53 @@ class PyEmitter:
             _ops_call("model", "basic", "-ndm", ndm, "-ndf", ndf)
         )
 
-    def node(self, tag: int, *coords: float) -> None:
-        self._lines.append(_ops_call("node", tag, *coords))
+    def node(
+        self, tag: int, *coords: float, ndf: int | None = None,
+    ) -> None:
+        if ndf is None:
+            self._lines.append(_ops_call("node", tag, *coords))
+        else:
+            # Per-node ``-ndf`` override for mixed-ndf models (e.g. 6-DOF
+            # phantom nodes in an ndf=3 solid mesh; ADR 0022 INV-3).
+            self._lines.append(
+                _ops_call("node", tag, *coords, "-ndf", ndf)
+            )
 
     def fix(self, tag: int, *dofs: int) -> None:
         self._lines.append(_ops_call("fix", tag, *dofs))
 
     def mass(self, tag: int, *values: float) -> None:
         self._lines.append(_ops_call("mass", tag, *values))
+
+    # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
+
+    def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
+        self._lines.append(_ops_call("equalDOF", master, slave, *dofs))
+
+    def rigidLink(self, kind: str, master: int, slave: int) -> None:
+        self._lines.append(_ops_call("rigidLink", kind, master, slave))
+
+    def rigidDiaphragm(
+        self, perp_dir: int, master: int, *slaves: int,
+    ) -> None:
+        self._lines.append(
+            _ops_call("rigidDiaphragm", perp_dir, master, *slaves)
+        )
+
+    def embeddedNode(
+        self, ele_tag: int, embedding_ele: int,
+        *args: int | float,
+    ) -> None:
+        self._lines.append(
+            _ops_call(
+                "element", "ASDEmbeddedNodeElement",
+                ele_tag, embedding_ele, *args,
+            )
+        )
+
+    def mp_constraint_comment(self, name: str) -> None:
+        # Hash-comment line, matching Tcl's ``# {name}`` convention.
+        self._lines.append(f"# {name}")
 
     # -- Constitutive --------------------------------------------------------
 

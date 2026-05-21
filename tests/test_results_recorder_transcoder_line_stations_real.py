@@ -22,6 +22,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.conftest import _open_model_from_h5
+
 
 _DEFAULT_TCL_LAUNCHERS = [
     r"C:\Program Files\El Ladruno OpenSees\opensees_ladruno.bat",
@@ -74,19 +76,8 @@ class _BeamFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset(
-            "ids", data=np.asarray(self.nodes.ids, dtype=np.int64),
-        )
-        n.create_dataset(
-            "coords", data=np.asarray(self.nodes.coords, dtype=np.float64),
-        )
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
     def element_end_coords(self, eid: int) -> tuple[np.ndarray, np.ndarray]:
         n_a, n_b = self._conn[int(eid)]
@@ -223,7 +214,7 @@ def test_force_beam_3d_lobatto5_aggregated_three_way_agreement(
     )
 
     # ── Read back and assert the same physics MPCO/DomainCapture saw ─
-    with Results.from_native(target) as r:
+    with Results.from_native(target, model=_open_model_from_h5(target)) as r:
         s = r.stage(r.stages[0].id)
         comps = set(s.elements.line_stations.available_components())
         for name in (

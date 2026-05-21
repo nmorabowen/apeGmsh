@@ -14,6 +14,8 @@ from apeGmsh.results.spec._resolved import (
     ResolvedRecorderSpec,
 )
 
+from tests.conftest import _open_model_from_h5, _stub_model_h5_path
+
 
 # =====================================================================
 # Mock FEMData (real hash via compute_snapshot_id)
@@ -32,15 +34,8 @@ class _MockFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset("ids", data=self.nodes.ids)
-        n.create_dataset("coords", data=self.nodes.coords)
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 # =====================================================================
@@ -103,7 +98,7 @@ def test_transcode_single_node_record(tmp_path: Path) -> None:
     target = tmp_path / "out.h5"
     RecorderTranscoder(spec, output_dir, target, fem).run()
 
-    with Results.from_native(target, fem=fem) as r:
+    with Results.from_native(target, fem=fem, model=_open_model_from_h5(target)) as r:
         slab_x = r.nodes.get(component="displacement_x")
         assert slab_x.values.shape == (3, 3)        # 3 steps × 3 nodes
         np.testing.assert_allclose(slab_x.time, [0.0, 0.1, 0.2])
@@ -159,7 +154,7 @@ def test_transcode_two_records_disjoint_nodes(tmp_path: Path) -> None:
     target = tmp_path / "out.h5"
     RecorderTranscoder(spec, output_dir, target, fem).run()
 
-    with Results.from_native(target, fem=fem) as r:
+    with Results.from_native(target, fem=fem, model=_open_model_from_h5(target)) as r:
         # Master node IDs are the union of both records' node sets.
         slab_z = r.nodes.get(component="displacement_z")
         # 4 nodes total, 2 steps
@@ -235,7 +230,7 @@ def test_unwired_element_records_skipped_silently(tmp_path: Path) -> None:
     assert "fibers:b" in transcoder.unsupported
     assert any("MPCO-only" in str(w.message) for w in caught)
 
-    with Results.from_native(target, fem=fem) as r:
+    with Results.from_native(target, fem=fem, model=_open_model_from_h5(target)) as r:
         # Node data parsed
         np.testing.assert_allclose(
             r.nodes.get(component="displacement_x").values, [[0.5], [0.5]],
@@ -273,18 +268,22 @@ def test_from_recorders_caches_result(tmp_path: Path) -> None:
     # First call — transcodes
     with Results.from_recorders(
         spec, output_dir, fem=fem, cache_root=cache_root,
+        model=_open_model_from_h5(_stub_model_h5_path()),
     ) as r:
         slab = r.nodes.get(component="displacement_x")
         np.testing.assert_allclose(slab.values[0], [0.1, 0.2])
 
-    # Cache directory should now have one HDF5 file
-    cached = list(cache_root.glob("*.h5"))
+    # Cache directory should now have one HDF5 cache file.  Phase 8
+    # also materializes a sibling ``<key>.model.h5`` (the model zone
+    # the Composed-file pattern embeds); filter those out.
+    cached = [p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")]
     assert len(cached) == 1
     cached_mtime = cached[0].stat().st_mtime_ns
 
     # Second call — reuses cache, doesn't re-transcode
     with Results.from_recorders(
         spec, output_dir, fem=fem, cache_root=cache_root,
+        model=_open_model_from_h5(_stub_model_h5_path()),
     ) as r:
         slab = r.nodes.get(component="displacement_x")
         np.testing.assert_allclose(slab.values[0], [0.1, 0.2])
@@ -314,8 +313,13 @@ def test_cache_invalidates_on_source_change(tmp_path: Path) -> None:
     cache_root = tmp_path / "cache"
     Results.from_recorders(
         spec, output_dir, fem=fem, cache_root=cache_root,
+        model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
-    cached_files_v1 = sorted(cache_root.glob("*.h5"))
+    # Phase 8 also materializes ``<key>.model.h5`` alongside each
+    # cache entry; filter those out.
+    cached_files_v1 = sorted(
+        p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")
+    )
     assert len(cached_files_v1) == 1
     v1_key = cached_files_v1[0].stem
 
@@ -323,8 +327,11 @@ def test_cache_invalidates_on_source_change(tmp_path: Path) -> None:
     src.write_text("0.0 2.5\n0.5 3.5\n", encoding="utf-8")
     Results.from_recorders(
         spec, output_dir, fem=fem, cache_root=cache_root,
+        model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
-    cached_files_v2 = sorted(cache_root.glob("*.h5"))
+    cached_files_v2 = sorted(
+        p for p in cache_root.glob("*.h5") if not p.stem.endswith(".model")
+    )
     # Either two cached files coexist, or v1 was overwritten — at minimum
     # the new key differs from v1.
     new_keys = {f.stem for f in cached_files_v2}
@@ -357,10 +364,16 @@ def test_cache_invalidates_on_fem_change(tmp_path: Path) -> None:
     cache_root = tmp_path / "cache"
     Results.from_recorders(
         spec_a, output_dir, fem=fem_a, cache_root=cache_root,
+        model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
     Results.from_recorders(
         spec_b, output_dir, fem=fem_b, cache_root=cache_root,
+        model=_open_model_from_h5(_stub_model_h5_path()),
     ).close()
 
-    keys = {f.stem for f in cache_root.glob("*.h5")}
+    # Filter out the Phase 8 ``<key>.model.h5`` sidecars.
+    keys = {
+        f.stem for f in cache_root.glob("*.h5")
+        if not f.stem.endswith(".model")
+    }
     assert len(keys) == 2     # different fem → different cache entry

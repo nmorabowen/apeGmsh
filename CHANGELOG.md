@@ -1,5 +1,203 @@
 # Changelog
 
+## v2.0.0 — Three-broker chain: Results carries OpenSeesModel carries FEMData (BREAKING) · Composed file pattern · lineage chain · MP constraint emission shipped · per-zone schemas
+
+Major architectural refactor establishing the **FEM ⊂ Model ⊂
+Results** chain with bidirectional H5 round-trip and a git-style
+lineage DAG. 8 phases shipped sequentially over May 2026; 5864 → 6128
+baseline tests passing (+264 net new, 0 failed). Five new ADRs lock
+the architecture (0019–0023); three prior ADRs (0011, 0014, 0018)
+preserved verbatim, AST-tested.
+
+This is a **BREAKING** release — the additive-then-prune migration
+shipped all new surfaces alongside the old ones through Phases 4–7,
+then Phase 8 pruned the deprecated paths in one go. External users
+must update call sites (see Migration below).
+
+### ADDED — OpenSeesModel read-side broker (ADR 0019)
+
+A new immutable, queryable Python view over a `model.h5`'s
+`/opensees/` zone:
+
+```python
+from apeGmsh.opensees import OpenSeesModel
+
+# Standalone model.h5 (apeSees(fem).h5(p) output):
+om = OpenSeesModel.from_h5("model.h5")
+
+# Composed file (results.h5 carries /model + /opensees):
+om = OpenSeesModel.from_h5("results.h5", fem_root="/model")
+
+om.fem                  # → FEMData (lazy-imported per INV-4)
+om.materials()          # → list[MaterialRecord]    (typed records)
+om.sections()           # → list[SectionRecord]
+om.transforms()         # → list[TransformRecord]   (carries vecxz)
+om.beam_integration()   # → list[BeamIntegrationRecord]
+om.patterns()           # → list[PatternRecord]
+om.recorders()          # → list[RecorderRecord]
+om.cuts() / om.sweeps() # → list[CutRecord / SweepRecord]
+om.lineage              # → Lineage(fem_hash, model_hash, warnings)
+
+# Re-emit through any target:
+om.build("tcl", "deck.tcl")
+om.build("py", "deck.py")
+om.build("live")     # in-process openseespy
+om.to_h5("copy.h5")  # round-trip via _compose_model_h5
+```
+
+`OpenSeesModel` is the **third role** alongside `apeSees(fem)` (the
+bridge — write side, typed primitives) and `ModelData(fem)`
+(orientation-only side-feeder). ADR 0011 preserved verbatim —
+`apeSees.from_h5` does NOT exist; the read goes through a
+separate class.
+
+### ADDED — Results carries OpenSeesModel via Composed file (ADR 0020)
+
+The chain forward — `Results.model.fem`. Composed file pattern: one
+`results.h5` carries both the model and the results data:
+
+```
+results.h5
+├── /meta            envelope + per-zone schema versions + lineage
+├── /model/          rich FEMData neutral zone
+├── /opensees/       bridge zone (transforms, materials, constraints, ...)
+└── /stages/...      results data
+```
+
+Viewer reads `results.model` directly; no separate `model_h5=` kwarg
+needed (preserves ADR 0014 AST guard — viewer remains a pure h5
+consumer).
+
+### ADDED — Lineage chain replaces snapshot_id binding (ADR 0021)
+
+Git-style content-hash DAG, warn-not-raise on mismatch:
+
+```
+fem_hash      = blake2b(canonical_neutral_zone_bytes)
+model_hash    = blake2b(fem_hash || canonical_opensees_zone_bytes)
+results_hash  = blake2b(model_hash || canonical_run_zone_bytes)
+```
+
+Stored at `/meta/lineage`. `results.lineage.warnings` surfaces
+mismatches (list[str]) but never raises from a constructor.
+`results.lineage.assert_clean()` is the opt-in loud-fail.
+
+### ADDED — MP constraint emission (ADR 0022) — closes §3.3 deferral
+
+MP constraints now emit automatically into runnable Tcl/Py/Live
+decks via 5 new `Emitter` Protocol methods (`equalDOF`, `rigidLink`,
+`rigidDiaphragm`, `embeddedNode`, `mp_constraint_comment`). The
+build-time fan-out (`opensees/_internal/build.py::emit_mp_constraints`)
+walks `fem.nodes.constraints` + `fem.elements.constraints` in
+phantom-node-first order. Three integration tests run actual
+`ops.analyze()` on rigid_diaphragm / rigid_link / equalDOF / tied_contact
+fixtures to prove emitted decks converge (INV-1).
+
+The bridge auto-emits `ops.constraints.Transformation()` when MP
+constraints are present and the user has not declared a constraint
+handler — closes the "Plain silently ignores MP constraints"
+footgun. Users who explicitly want Plain still get respected; a
+UserWarning fires.
+
+### ADDED — Per-zone schema versioning (ADR 0023)
+
+Three independent semver stamps replace the racing single envelope:
+
+- `/meta/neutral_schema_version` = `"2.6.0"`
+- `/meta/opensees_schema_version` = `"2.7.0"`
+- `/meta/results_schema_version` = `"1.1.0"`
+
+Envelope `/meta/schema_version` retained for single-stamp legacy
+back-compat. Two-version reader window: reader at X.Y.Z accepts
+X.Y.* and X.(Y-1).*; refuses everything else with `SchemaVersionError`.
+
+### ADDED — `FEMData.from_h5(path, *, root="/")` parameterization
+
+The same reader handles both standalone `model.h5` (FEM at root)
+and Composed `results.h5` (FEM at `/model/`) via the `root=` kwarg.
+`OpenSeesModel.from_h5(path, *, fem_root="/", opensees_root="/opensees")`
+extends the same idea.
+
+### CHANGED — FEMData round-trip is now lossless on every record field
+
+Phase 2 closed five audit gaps:
+- `name` field on every constraint/load/mass record now round-trips
+  (was silently dropped — affected `fem.inspect.constraint_summary()` etc.)
+- `partitions` + `part_node_map` / `part_elem_map` now round-trip
+  (was lost — `fem.nodes.select(partition=k)` / `select(target=part_label)`
+  raised `KeyError` after `from_h5`)
+- `info.bandwidth` recomputed on reload (was hardcoded to 0)
+- `/meta/snapshot_id` now VERIFIED on read (was written but not
+  checked — tampered bytes now raise `MalformedH5Error`)
+- New `_assert_fem_equivalent(rebuilt, original)` parity test exercises
+  five canonical fixtures (frame, plate, mixed-dim assembly,
+  partitioned, mesh-selection) — the meta-gap that allowed B1-B4 to
+  slip through.
+
+### REMOVED (BREAKING — Phase 8 prune)
+
+- **`Results.from_native/from_mpco/from_recorders` REQUIRE `model=` /
+  `model_h5=`** — `TypeError` on missing. No more silent auto-resolve.
+- **`Results.viewer(model_h5=...)` kwarg removed** — chain flows
+  through `results.model`. CLI: `python -m apeGmsh.viewers run.h5`
+  for native files (auto-resolves); `--model-h5 PATH` required ONLY
+  for `.mpco` files (sibling pointer).
+- **`BindError` class DELETED** — lineage chain replaces it.
+- **`Director.set_model_h5(path)` public method removed** — use
+  `set_model(opensees_model)` or pass via `Results.model`. Internal
+  `_bind_model_h5(path)` private helper retained for cuts auto-load
+  and session restore.
+- **`h5_reader.materials()` / `sections()` / etc. now return typed
+  records** — the dict-style versions were deleted. Use
+  `materials_by_family()` for the family-keyed view.
+- **`EXPECTED_SCHEMA_MAJOR` constant removed** — readers use
+  per-zone validation via `_internal/schema_version.reader_version(zone)`.
+- **`_femdata_native_io.py` deleted** (439 LOC) — production paths
+  use the rich neutral-zone layout under `/model/` via the parameterized
+  `read_neutral_zone_from_group` / `write_neutral_zone_into_group`.
+
+### Migration
+
+For users with notebooks / scripts that call the old API:
+
+```python
+# 1. Add the OpenSeesModel import where you load Results
+from apeGmsh.opensees import OpenSeesModel
+
+# 2. For Composed files (apeSees(fem).h5(path) output):
+results = Results.from_native(
+    path,
+    model=OpenSeesModel.from_h5(path, fem_root="/model"),
+)
+
+# 3. For standalone model.h5 references:
+om = OpenSeesModel.from_h5(model_path)  # default fem_root="/"
+results = Results.from_native(results_path, model=om)
+
+# 4. For MPCO + sibling model.h5:
+results = Results.from_mpco(mpco_path, model_h5=sibling_model_path)
+
+# 5. Viewer — drop the model_h5= kwarg:
+results.viewer()   # NOT results.viewer(model_h5=...)
+
+# 6. Inspect lineage instead of catching BindError:
+for w in results.lineage.warnings:
+    print(f"lineage warning: {w}")
+# or opt into loud-fail:
+results.lineage.assert_clean()
+```
+
+### Deferred follow-ups (not in this release)
+
+- `embeddedNode` per-kind args formalization (`tie` / `mortar` /
+  `tied_contact` / `embedded` share one Protocol method with positional
+  packing; works for all known cases because ASDEmbeddedNodeElement
+  uses internal isoparametric interpolation).
+- Migration tool for archives outside the two-version reader window
+  (per ADR 0023 INV-5 — owed but not urgent).
+
+---
+
 ## v1.6.0 — Selection-unification v2: one `.select()` idiom · legacy selection surface REMOVED (BREAKING) · half-open mesh box · loads/masses fail-loud
 
 Selection / resolution unification (**v2**). A single

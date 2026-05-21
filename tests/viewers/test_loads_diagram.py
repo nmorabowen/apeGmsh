@@ -25,6 +25,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 @pytest.fixture
 def loads_results(g, tmp_path: Path):
@@ -58,7 +60,7 @@ def loads_results(g, tmp_path: Path):
             components=components,
         )
         w.end_stage()
-    results = Results.from_native(path)
+    results = Results.from_native(path, model=_open_model_from_h5(path))
     # Inject load records on the post-load fem object so the diagram
     # sees them (the writer doesn't persist loads to H5 today).
     from apeGmsh._kernel.records import NodalLoadRecord

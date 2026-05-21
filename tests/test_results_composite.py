@@ -14,6 +14,8 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Test fixture — synthetic native HDF5 with one stage, two components
@@ -52,7 +54,7 @@ def _make_synthetic(tmp_path: Path) -> Path:
 
 def test_single_stage_auto_resolves(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         # No explicit stage needed when there's exactly one
         slab = r.nodes.get(component="displacement_x")
         assert slab.values.shape == (4, 5)
@@ -61,14 +63,14 @@ def test_single_stage_auto_resolves(tmp_path: Path) -> None:
 
 def test_get_by_ids(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(ids=[2, 4], component="displacement_x")
         assert slab.node_ids.tolist() == [2, 4]
 
 
 def test_get_by_pg_requires_fem(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         # No fem embedded → pg= raises
         with pytest.raises(RuntimeError, match="bound FEMData"):
             r.nodes.get(pg="Top", component="displacement_x")
@@ -76,7 +78,7 @@ def test_get_by_pg_requires_fem(tmp_path: Path) -> None:
 
 def test_combining_selectors_raises(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         with pytest.raises(ValueError, match="not multiple"):
             r.nodes.get(ids=[1], pg="Top", component="displacement_x")
 
@@ -87,7 +89,7 @@ def test_combining_selectors_raises(tmp_path: Path) -> None:
 
 def test_time_int_index(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(component="displacement_x", time=2)
         assert slab.values.shape == (1, 5)
         # ux at step 2: [0, 3, 6, 9, 12]
@@ -96,7 +98,7 @@ def test_time_int_index(tmp_path: Path) -> None:
 
 def test_time_float_nearest(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(component="displacement_x", time=1.4)
         # nearest to 1.4 is index 1 (t=1.0)
         np.testing.assert_allclose(slab.time, [1.0])
@@ -104,7 +106,7 @@ def test_time_float_nearest(tmp_path: Path) -> None:
 
 def test_time_float_slice(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(
             component="displacement_x", time=slice(1.0, 3.0),
         )
@@ -118,7 +120,7 @@ def test_time_float_slice(tmp_path: Path) -> None:
 
 def test_gauss_composite(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.elements.gauss.get(component="stress_xx")
         # 2 elements * 1 GP = 2 entries
         assert slab.values.shape == (4, 2)
@@ -127,7 +129,7 @@ def test_gauss_composite(tmp_path: Path) -> None:
 
 def test_gauss_filter_by_ids(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.elements.gauss.get(ids=[20], component="stress_xx")
         assert slab.element_index.tolist() == [20]
 
@@ -157,14 +159,14 @@ def _make_two_stage(tmp_path: Path) -> Path:
 
 def test_multi_stage_no_default(tmp_path: Path) -> None:
     path = _make_two_stage(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         with pytest.raises(RuntimeError, match="Multiple stages"):
             r.nodes.get(component="displacement_x")
 
 
 def test_stage_scope_by_name(tmp_path: Path) -> None:
     path = _make_two_stage(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         gravity = r.stage("gravity")
         assert gravity.name == "gravity"
         assert gravity.kind == "static"
@@ -175,7 +177,7 @@ def test_stage_scope_by_name(tmp_path: Path) -> None:
 
 def test_stage_scope_by_id(tmp_path: Path) -> None:
     path = _make_two_stage(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         # Stage IDs are stage_0, stage_1 in write order
         s = r.stage("stage_1")
         assert s.name == "dynamic"
@@ -185,14 +187,14 @@ def test_stage_scope_by_id(tmp_path: Path) -> None:
 def test_explicit_stage_kwarg(tmp_path: Path) -> None:
     """Top-level Results lets reads pass stage= explicitly."""
     path = _make_two_stage(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(component="displacement_x", stage="dynamic")
         assert slab.values.shape == (2, 2)
 
 
 def test_unknown_stage(tmp_path: Path) -> None:
     path = _make_two_stage(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         with pytest.raises(KeyError, match="No stage matches"):
             r.stage("not_a_stage")
 
@@ -203,7 +205,7 @@ def test_unknown_stage(tmp_path: Path) -> None:
 
 def test_stage_props_raise_on_unscoped(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         with pytest.raises(AttributeError, match="stage-scoped"):
             _ = r.kind
         with pytest.raises(AttributeError, match="stage-scoped"):
@@ -212,7 +214,7 @@ def test_stage_props_raise_on_unscoped(tmp_path: Path) -> None:
 
 def test_stage_props_on_scoped(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         s = r.stage("dynamic")
         assert s.kind == "transient"
         assert s.n_steps == 4
@@ -225,7 +227,7 @@ def test_stage_props_on_scoped(tmp_path: Path) -> None:
 
 def test_available_components(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         comps = r.nodes.available_components()
         assert set(comps) == {"displacement_x", "displacement_y"}
         gcomps = r.elements.gauss.available_components()
@@ -234,7 +236,7 @@ def test_available_components(tmp_path: Path) -> None:
 
 def test_inspect_summary_runs(tmp_path: Path) -> None:
     path = _make_synthetic(tmp_path)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         s = r.inspect.summary()
         assert "Stages" in s or "stage" in s.lower()
         assert "dynamic" in s

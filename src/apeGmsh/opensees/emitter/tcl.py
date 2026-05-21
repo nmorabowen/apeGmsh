@@ -96,14 +96,56 @@ class TclEmitter:
     def model(self, *, ndm: int, ndf: int) -> None:
         self._lines.append(f"model BasicBuilder -ndm {ndm} -ndf {ndf}")
 
-    def node(self, tag: int, *coords: float) -> None:
-        self._lines.append(_join("node", tag, *coords))
+    def node(
+        self, tag: int, *coords: float, ndf: int | None = None,
+    ) -> None:
+        if ndf is None:
+            self._lines.append(_join("node", tag, *coords))
+        else:
+            # Per-node ``-ndf`` override (used for 6-DOF phantom nodes in
+            # otherwise 3-DOF models; ADR 0022 INV-3).
+            self._lines.append(
+                _join("node", tag, *coords, "-ndf", ndf)
+            )
 
     def fix(self, tag: int, *dofs: int) -> None:
         self._lines.append(_join("fix", tag, *dofs))
 
     def mass(self, tag: int, *values: float) -> None:
         self._lines.append(_join("mass", tag, *values))
+
+    # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
+
+    def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
+        self._lines.append(_join("equalDOF", master, slave, *dofs))
+
+    def rigidLink(self, kind: str, master: int, slave: int) -> None:
+        # ``rigidLink {beam|bar} $master $slave`` — kind is unquoted.
+        self._lines.append(_join("rigidLink", kind, master, slave))
+
+    def rigidDiaphragm(
+        self, perp_dir: int, master: int, *slaves: int,
+    ) -> None:
+        self._lines.append(
+            _join("rigidDiaphragm", perp_dir, master, *slaves)
+        )
+
+    def embeddedNode(
+        self, ele_tag: int, embedding_ele: int,
+        *args: int | float,
+    ) -> None:
+        # ASDEmbeddedNodeElement covers tie / tied_contact / mortar /
+        # embedded surface-coupling primitives (ADR 0022).
+        self._lines.append(
+            _join(
+                "element", "ASDEmbeddedNodeElement",
+                ele_tag, embedding_ele, *args,
+            )
+        )
+
+    def mp_constraint_comment(self, name: str) -> None:
+        # Round-trips the user's declaration label into the deck (INV-2).
+        self._lines.append(f"# {name}")
 
     # -- Constitutive --------------------------------------------------------
 

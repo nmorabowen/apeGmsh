@@ -113,6 +113,9 @@ REPRESENTATIVE_METHODS = (
     "recorder",
     "constraints", "numberer", "system", "test",
     "algorithm", "integrator", "analysis", "analyze",
+    # MP constraint methods (ADR 0022, Phase 7b)
+    "equalDOF", "rigidLink", "rigidDiaphragm",
+    "embeddedNode", "mp_constraint_comment",
 )
 
 
@@ -121,3 +124,45 @@ def test_recording_emitter_has_method(method_name: str) -> None:
     e = RecordingEmitter()
     method: Any = getattr(e, method_name, None)
     assert callable(method), f"RecordingEmitter missing method: {method_name}"
+
+
+# ---------------------------------------------------------------------------
+# MP constraint Protocol shape — Phase 7b, ADR 0022
+# ---------------------------------------------------------------------------
+
+
+def test_equalDOF_records_master_slave_dofs() -> None:
+    e = RecordingEmitter()
+    e.equalDOF(1, 2, 1, 2, 3)
+    assert e.calls == [("equalDOF", (1, 2, 1, 2, 3), {})]
+
+
+def test_rigidLink_records_kind_master_slave() -> None:
+    e = RecordingEmitter()
+    e.rigidLink("beam", 1, 2)
+    assert e.calls == [("rigidLink", ("beam", 1, 2), {})]
+
+
+def test_rigidDiaphragm_records_perp_master_slaves() -> None:
+    e = RecordingEmitter()
+    e.rigidDiaphragm(3, 100, 1, 2, 3)
+    assert e.calls == [("rigidDiaphragm", (3, 100, 1, 2, 3), {})]
+
+
+def test_embeddedNode_records_ele_tag_embedding_ele_args() -> None:
+    e = RecordingEmitter()
+    e.embeddedNode(1000, 5, 10, 20, 30)
+    assert e.calls == [("embeddedNode", (1000, 5, 10, 20, 30), {})]
+
+
+def test_mp_constraint_comment_records_name() -> None:
+    e = RecordingEmitter()
+    e.mp_constraint_comment("floor_1")
+    assert e.calls == [("mp_constraint_comment", ("floor_1",), {})]
+
+
+def test_node_accepts_ndf_kwarg_for_phantom() -> None:
+    """Per-node ``ndf=6`` override is the Phase 7b phantom-node idiom."""
+    e = RecordingEmitter()
+    e.node(99, 1.0, 2.0, 3.0, ndf=6)
+    assert e.calls == [("node", (99, 1.0, 2.0, 3.0), {"ndf": 6})]

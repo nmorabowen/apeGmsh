@@ -17,6 +17,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.conftest import _open_model_from_h5
+
 openseespy = pytest.importorskip(
     "openseespy.opensees", reason="openseespy required",
 )
@@ -36,15 +38,8 @@ class _MinimalFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        nodes_grp = group.create_group("nodes")
-        nodes_grp.create_dataset("ids", data=self.nodes.ids)
-        nodes_grp.create_dataset("coords", data=self.nodes.coords)
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 def test_force_beam_3d_lobatto5_aggregated(tmp_path: Path) -> None:
@@ -131,7 +126,7 @@ def test_force_beam_3d_lobatto5_aggregated(tmp_path: Path) -> None:
         [-1.0, -0.65465367, 0.0, 0.65465367, 1.0],
         dtype=np.float64,
     )
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         s = r.stage(r.stages[0].id)
         comps = set(s.elements.line_stations.available_components())
         for name in (
@@ -231,7 +226,7 @@ def test_force_beam_3d_disp_beam_skipped(tmp_path: Path) -> None:
 
     if skipped_eids == [1]:
         # Skipped path: no line-station data on disk.
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         assert slab.values.shape == (1, 0)
@@ -242,7 +237,7 @@ def test_force_beam_3d_disp_beam_skipped(tmp_path: Path) -> None:
             "dispBeamColumn was neither skipped nor captured — "
             "unexpected DomainCapture state."
         )
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         assert slab.values.shape == (1, 3)

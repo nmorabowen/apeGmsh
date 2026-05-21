@@ -141,13 +141,20 @@ def _open_viewer(fixture_path: Path) -> None:
     """Open the results viewer on the chosen fixture (blocks until close)."""
     # Imports kept inside the function so the script's --help / banner
     # path works without a Qt environment.
+    from apeGmsh.opensees import OpenSeesModel
     from apeGmsh.results import Results
 
     print(f"Opening: {fixture_path}\n")
     if fixture_path.suffix.lower() == ".mpco":
-        results = Results.from_mpco(fixture_path)
+        # Phase 8: ``model_h5=`` is required.  The fixture's sibling
+        # model.h5 is the usual location; bail if it's not present.
+        sibling = fixture_path.with_suffix(".model.h5")
+        results = Results.from_mpco(fixture_path, model_h5=sibling)
     else:
-        results = Results.from_native(fixture_path)
+        results = Results.from_native(
+            fixture_path,
+            model=OpenSeesModel.from_h5(fixture_path, fem_root="/model"),
+        )
 
     print(
         f"  stages : {[s.name for s in results.stages]}\n"

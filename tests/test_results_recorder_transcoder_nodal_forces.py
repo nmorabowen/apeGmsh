@@ -24,6 +24,8 @@ from apeGmsh.results.spec._resolved import (
     ResolvedRecorderSpec,
 )
 
+from tests.conftest import _open_model_from_h5
+
 
 class _MinimalFem:
     def __init__(self, node_ids: np.ndarray) -> None:
@@ -39,17 +41,8 @@ class _MinimalFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset("ids", data=np.asarray(self.nodes.ids, dtype=np.int64))
-        n.create_dataset(
-            "coords", data=np.asarray(self.nodes.coords, dtype=np.float64),
-        )
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 def _make_spec(*records, snapshot_id) -> ResolvedRecorderSpec:
@@ -167,7 +160,7 @@ class TestElasticBeam3dGlobal:
             stage_name="static", stage_kind="static",
         ).run()
 
-        with Results.from_native(target) as r:
+        with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             slab_fx = s.elements.get(component="nodal_resisting_force_x")
             assert slab_fx.values.shape == (2, 1, 2)
@@ -207,7 +200,7 @@ class TestElasticBeam3dLocal:
             spec, output_dir=tmp_path, target_path=target, fem=fem,
             stage_name="g", stage_kind="static",
         ).run()
-        with Results.from_native(target) as r:
+        with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             # k=0 (N) at n=0 → 100; n=1 → 106.
             slab_n = s.elements.get(component="nodal_resisting_force_local_x")
@@ -241,7 +234,7 @@ class TestElasticBeam2d:
             spec, output_dir=tmp_path, target_path=target, fem=fem,
             stage_name="g", stage_kind="static",
         ).run()
-        with Results.from_native(target) as r:
+        with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             slab_fx = s.elements.get(component="nodal_resisting_force_x")
             np.testing.assert_array_equal(slab_fx.values[0, 0], [10.0, 40.0])

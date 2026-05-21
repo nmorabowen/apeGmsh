@@ -19,9 +19,12 @@ from apeGmsh.results.readers._mpco_multi import (
 )
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.opensees._response_catalog import (
+
     ELE_TAG_FourNodeTetrahedron, IntRule,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 # =====================================================================
 # Synthetic partition file builder
@@ -247,7 +250,7 @@ class TestConstructionValidation:
 class TestNodeMerge:
     def test_unique_node_ids_after_merge(self, two_partitions) -> None:
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0))
+        r = Results.from_mpco(str(part0), model_h5=_stub_model_h5_path())
         slab = r.nodes.get(component="displacement_x")
         # Union: {1,2,3,4} ∪ {4,5,6,7} = {1..7} (7 unique).
         assert slab.node_ids.tolist() == [1, 2, 3, 4, 5, 6, 7]
@@ -261,7 +264,7 @@ class TestNodeMerge:
         value matches what BOTH partitions wrote (here both wrote
         ``k * 100 + 4`` so the merge is unambiguous)."""
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0))
+        r = Results.from_mpco(str(part0), model_h5=_stub_model_h5_path())
         slab = r.nodes.get(component="displacement_x")
         col = list(slab.node_ids).index(4)
         # k=0 → 4, k=1 → 104, k=2 → 204
@@ -275,7 +278,7 @@ class TestNodeMerge:
     ) -> None:
         # Node 1 is part-0-only; node 5 is part-1-only.
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0))
+        r = Results.from_mpco(str(part0), model_h5=_stub_model_h5_path())
         slab = r.nodes.get(component="displacement_x")
         for nid in (1, 5):
             col = list(slab.node_ids).index(nid)
@@ -296,7 +299,7 @@ class TestElementConcat:
         self, two_partitions,
     ) -> None:
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0))
+        r = Results.from_mpco(str(part0), model_h5=_stub_model_h5_path())
         slab = r.elements.gauss.get(component="stress_xx", time=0)
         # 1 element × 1 GP from each partition = 2 columns.
         assert slab.values.shape == (1, 2)
@@ -306,7 +309,7 @@ class TestElementConcat:
 
     def test_available_components_union(self, two_partitions) -> None:
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0))
+        r = Results.from_mpco(str(part0), model_h5=_stub_model_h5_path())
         sid = r._reader.stages()[0].id
         comps = r._reader.available_components(sid, ResultLevel.GAUSS)
         # 6 stress components from both partitions, identical layout.
@@ -322,7 +325,7 @@ class TestElementConcat:
 class TestFemMerge:
     def test_fem_has_union_of_nodes(self, two_partitions) -> None:
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0))
+        r = Results.from_mpco(str(part0), model_h5=_stub_model_h5_path())
         fem = r.fem
         assert fem is not None
         assert fem.info.n_nodes == 7  # {1..7}
@@ -333,7 +336,7 @@ class TestFemMerge:
 
     def test_fem_concatenates_elements(self, two_partitions) -> None:
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0))
+        r = Results.from_mpco(str(part0), model_h5=_stub_model_h5_path())
         fem = r.fem
         # Both partitions' 1 tet each → 2 elements after merge.
         assert fem.info.n_elems == 2
@@ -344,7 +347,7 @@ class TestFemMerge:
     ) -> None:
         # Node 4 is in both files; merged FEM should have only one row.
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0))
+        r = Results.from_mpco(str(part0), model_h5=_stub_model_h5_path())
         fem = r.fem
         ids = np.asarray(fem.nodes.ids, dtype=np.int64)
         assert int(np.sum(ids == 4)) == 1
@@ -360,7 +363,7 @@ class TestOptOut:
         self, two_partitions,
     ) -> None:
         part0, _ = two_partitions
-        r = Results.from_mpco(str(part0), merge_partitions=False)
+        r = Results.from_mpco(str(part0), merge_partitions=False, model_h5=_stub_model_h5_path())
         # Only part-0's nodes / elements visible.
         slab = r.nodes.get(component="displacement_x")
         assert sorted(slab.node_ids.tolist()) == [1, 2, 3, 4]
@@ -377,7 +380,7 @@ class TestOptOut:
 class TestExplicitList:
     def test_passing_list_uses_multi_reader(self, two_partitions) -> None:
         part0, part1 = two_partitions
-        r = Results.from_mpco([part0, part1])
+        r = Results.from_mpco([part0, part1], model_h5=_stub_model_h5_path())
         # Class-name match — pytest can pick up duplicate package
         # paths when site-packages and PYTHONPATH both shadow each
         # other. See test_results_mpco_multi_real.py for the same
@@ -389,6 +392,6 @@ class TestExplicitList:
         self, two_partitions,
     ) -> None:
         part0, _ = two_partitions
-        r = Results.from_mpco([part0])
+        r = Results.from_mpco([part0], model_h5=_stub_model_h5_path())
         assert type(r._reader).__name__ == "MPCOReader"
         r._reader.close()

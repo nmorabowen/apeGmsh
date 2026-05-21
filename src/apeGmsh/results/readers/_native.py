@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 from numpy import ndarray
 
+from ...opensees._internal.schema_version import SchemaVersionError
 from .._slabs import (
     ElementSlab,
     FiberSlab,
@@ -42,6 +43,99 @@ class NativeReader:
 
         self._path = Path(path)
         self._h5: "h5py.File" = h5py.File(self._path, "r")
+        # ADR 0023 — validate per-zone schema versions for every
+        # embedded zone (results envelope, neutral, opensees). Failure
+        # raises SchemaVersionError before any read API is offered.
+        try:
+            self._validate_per_zone_versions()
+        except Exception:
+            try:
+                self._h5.close()
+            except Exception:
+                pass
+            raise
+
+    def _validate_per_zone_versions(self) -> None:
+        """Apply the two-version window to every zone present in the file.
+
+        Per ADR 0023 §"Per-zone read validation":
+
+        * Results zone — always validated (every NativeWriter file
+          carries it).  Sources the file's version from the root
+          ``results_schema_version`` attr; falls back to the envelope
+          ``schema_version`` for legacy single-stamp files.
+        * Neutral zone — validated only if ``/model/`` is embedded.
+          Sources from ``/model/meta`` per-zone key with envelope
+          fallback to the meta's ``schema_version``.
+        * OpenSees zone — validated only if ``/opensees/`` is embedded.
+          Sources from the root ``opensees_schema_version`` attr first
+          (Phase 7a writers), then from ``/model/meta`` per-zone key,
+          then envelope fallback.
+
+        INV-3: the three windows are conjunctive but independent — a
+        mismatched neutral version refuses with neutral context;
+        opensees mismatch with opensees context.
+        """
+        from ...opensees._internal.schema_version import (
+            NEUTRAL,
+            OPENSEES,
+            RESULTS,
+            read_zone_version,
+            reader_version,
+            validate_zone_version,
+        )
+
+        h5 = self._h5
+        # Results — always present.
+        results_version = read_zone_version(h5.attrs, RESULTS)
+        if results_version is None:
+            # Legacy file with no envelope OR per-zone key — refuse.
+            raise SchemaVersionError(
+                f"{self._path}: no results-zone schema_version attr "
+                "found; not a native apeGmsh results.h5"
+            )
+        try:
+            validate_zone_version(
+                results_version, reader_version(RESULTS), zone=RESULTS,
+            )
+        except SchemaVersionError as exc:
+            raise SchemaVersionError(f"{self._path}: {exc}") from None
+
+        # Neutral — only when /model/ is embedded.
+        if "model" in h5 and "meta" in h5["model"]:
+            neutral_version = read_zone_version(
+                h5["model/meta"].attrs, NEUTRAL,
+            )
+            if neutral_version is not None:
+                try:
+                    validate_zone_version(
+                        neutral_version, reader_version(NEUTRAL),
+                        zone=NEUTRAL,
+                    )
+                except SchemaVersionError as exc:
+                    raise SchemaVersionError(
+                        f"{self._path}: {exc}"
+                    ) from None
+
+        # OpenSees — only when /opensees/ is embedded. Prefer the root
+        # per-zone key (Phase 7a forward); fall back to /model/meta's
+        # per-zone key; final fallback is the envelope at root.
+        if "opensees" in h5:
+            opensees_version = read_zone_version(h5.attrs, OPENSEES)
+            if opensees_version is None and "model" in h5 and "meta" in h5["model"]:
+                opensees_version = read_zone_version(
+                    h5["model/meta"].attrs, OPENSEES,
+                )
+            if opensees_version is not None:
+                try:
+                    validate_zone_version(
+                        opensees_version, reader_version(OPENSEES),
+                        zone=OPENSEES,
+                    )
+                except SchemaVersionError as exc:
+                    raise SchemaVersionError(
+                        f"{self._path}: {exc}"
+                    ) from None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -121,6 +215,79 @@ class NativeReader:
             return None
         from ...mesh.FEMData import FEMData
         return FEMData.from_native_h5(self._h5[_native.MODEL_GROUP[1:]])
+
+    def opensees_model(self):
+        """Return :class:`OpenSeesModel` if the file carries ``/opensees/``.
+
+        Phase 4 / ADR 0020 cleanup — silent auto-resolve from a
+        composed results file's ``/model/`` (rich FEMData neutral
+        zone) + ``/opensees/`` (bridge zone at root) pair.  Returns
+        ``None`` when the file has no ``/opensees/`` group (legacy
+        files, recorder-transcoded runs with no ``model=`` supplied,
+        or domain-capture runs with no ``bridge=``).
+
+        The legacy mirror under ``/opensees_archive/`` and the
+        temp-file extract dance are gone: parameterized readers
+        (:func:`FEMData.from_h5(path, root="/model")` plus
+        :func:`h5_reader.open(path, meta_path="model/meta")`) consume
+        the composed file directly.
+
+        Phase 6 (ADR 0021) — the returned :class:`OpenSeesModel`
+        carries its own :class:`Lineage` from
+        :meth:`OpenSeesModel.from_h5` (fem + model layers).  The
+        results-layer ``results_hash`` is layered on by
+        :attr:`Results.lineage`, which reads the stamped
+        ``/meta/lineage/results_hash`` and recomputes from
+        ``/stages/...`` for the drift check.
+        """
+        if "opensees" not in self._h5:
+            return None
+        from ...opensees.opensees_model import OpenSeesModel
+        return OpenSeesModel.from_h5(
+            str(self._path),
+            fem_root="/model",
+            opensees_root="/opensees",
+        )
+
+    def results_lineage_attrs(self) -> "tuple[str | None, str | None, str | None]":
+        """Return ``(fem_hash, model_hash, results_hash)`` from ``/meta/lineage``.
+
+        Phase 6 (ADR 0021) — the results-file lineage stamp.  Each
+        element is the string as written by :meth:`NativeWriter.close`
+        or ``None`` when absent.  Probes ``/meta/lineage`` via
+        ``name in group`` per the optional-child convention; legacy
+        files lacking the sub-group return ``(None, None, None)``.
+
+        Used by :attr:`Results.lineage` to layer the
+        ``results_hash`` link onto the
+        :attr:`OpenSeesModel.lineage` already-resolved pair, and to
+        produce the lineage drift warnings against the recomputed
+        canonical bytes.
+        """
+        from ...opensees._internal.lineage import (
+            LINEAGE_GROUP,
+            read_stored_lineage,
+        )
+
+        if "meta" not in self._h5:
+            return None, None, None
+        meta = self._h5["meta"]
+        if LINEAGE_GROUP not in meta:
+            return None, None, None
+        return read_stored_lineage(meta)
+
+    def recompute_results_hash(self, model_hash: str) -> "str | None":
+        """Recompute ``results_hash`` from the ``/stages/`` zone.
+
+        Returns ``None`` when ``/stages/`` is absent (recorder-only
+        runs with the stage group not yet materialised).  Used by
+        :attr:`Results.lineage` for the warn-not-raise drift check.
+        """
+        from ...opensees._internal.lineage import compute_results_hash
+
+        if _native.STAGES_GROUP[1:] not in self._h5:
+            return None
+        return compute_results_hash(model_hash, self._h5[_native.STAGES_GROUP[1:]])
 
     # ------------------------------------------------------------------
     # Component discovery

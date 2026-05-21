@@ -86,6 +86,8 @@ from apeGmsh.results._slabs import (
 )
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5, _stub_model_h5_path
+
 
 # =====================================================================
 # Synthetic native HDF5 (gauss/fibers/layers/line_stations) + mock FEM
@@ -220,7 +222,7 @@ def _make_native(tmp_path: Path):
         )
         w.end_stage()
 
-    return Results.from_native(path, fem=_mock_fem())
+    return Results.from_native(path, fem=_mock_fem(), model=_open_model_from_h5(path))
 
 
 # Per sub-composite: (attr, slab type, component, extra terminal kwargs)
@@ -559,7 +561,7 @@ def test_springs_select_get_parity(tmp_path):
         tmp_path / "s.mpco",
         element_ids=[10, 20, 30], n_springs=2, force_values=vals,
     )
-    r = Results.from_mpco(str(path), fem=_spring_mock_fem())
+    r = Results.from_mpco(str(path), fem=_spring_mock_fem(), model_h5=_stub_model_h5_path())
     try:
         comp = "spring_force_0"
         sub = r.elements.springs

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import _stub_model_h5_path
+
 
 _FIXTURE = Path("tests/fixtures/results/elasticFrame.mpco")
 
@@ -32,7 +34,7 @@ def director():
         pytest.skip(f"Missing fixture: {_FIXTURE}")
     from apeGmsh.results import Results
     from apeGmsh.viewers.diagrams._director import ResultsDirector
-    return ResultsDirector(Results.from_mpco(_FIXTURE))
+    return ResultsDirector(Results.from_mpco(_FIXTURE, model_h5=_stub_model_h5_path()))
 
 
 # =====================================================================
@@ -152,7 +154,7 @@ def test_component_combo_lists_spring_components_on_springs_fixture(qapp):
     from apeGmsh.viewers.diagrams._director import ResultsDirector
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
 
-    d = ResultsDirector(Results.from_mpco(spring_fixture))
+    d = ResultsDirector(Results.from_mpco(spring_fixture, model_h5=_stub_model_h5_path()))
     dlg = AddDiagramDialog(d, parent=None)
     _set_kind(dlg, "spring_force")
     items = [dlg._component_combo.itemText(i)

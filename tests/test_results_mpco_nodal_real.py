@@ -18,6 +18,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import _stub_model_h5_path
+
 
 _DEFAULT_TCL_LAUNCHERS = [
     r"C:\Program Files\El Ladruno OpenSees\opensees_ladruno.bat",
@@ -96,7 +98,7 @@ def test_elastic_beam_3d_global_and_local_force(tmp_path: Path) -> None:
     assert mpco_path.exists()
 
     from apeGmsh.results import Results
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s = r.stage(r.stages[0].id)
         comps = set(s.elements.available_components())
 

@@ -32,6 +32,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Pure shape-fn tests
@@ -141,7 +143,7 @@ def gauss_results(g, tmp_path: Path):
             components={"stress_xx": values},
         )
         w.end_stage()
-    return Results.from_native(path), eids
+    return Results.from_native(path, model=_open_model_from_h5(path)), eids
 
 
 def test_gauss_slab_global_coords_returns_correct_shape(gauss_results):

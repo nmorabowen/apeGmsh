@@ -63,6 +63,8 @@ from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5
+
 
 # The set-algebra surface that rides alongside REQUIRED_VERBS.
 _SET_ALGEBRA = (
@@ -347,7 +349,7 @@ def _make_results_with_fem(tmp_path: Path):
         nodes=nodes_ns,
         elements=elements_ns,
     )
-    return Results.from_native(path, fem=fem)
+    return Results.from_native(path, fem=fem, model=_open_model_from_h5(path))
 
 
 def _atom_ids(chain) -> list[int]:

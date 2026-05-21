@@ -148,9 +148,15 @@ ops = apeSees(fem)
 ops.model(ndm=3, ndf=3)
 ```
 
-`apeSees` has **no ingest and no auto-resolution**. Loads, masses, and
-SPs must be re-declared explicitly on `ops`. Multi-point constraint
-emission is deferred (ADR 0009).
+`apeSees` does **not auto-resolve** loads or masses: re-declare those
+explicitly on `ops` (`ops.fix`, `ops.mass`, `p.load`, `p.sp`). MP
+constraints — `equal_dof`, `rigid_link`, `rigid_diaphragm`,
+`node_to_surface`, `tie`, `tied_contact`, `mortar`, `embedded` — DO
+emit automatically (ADR 0022, May 2026). `apeSees(fem).tcl(p)` for a
+model with `g.constraints.rigid_diaphragm(...)` produces a runnable
+OpenSees deck. The bridge auto-emits `ops.constraints.Transformation()`
+when MP constraints are present and the user has not declared a
+handler explicitly.
 
 | Namespace | What it provides |
 |---|---|

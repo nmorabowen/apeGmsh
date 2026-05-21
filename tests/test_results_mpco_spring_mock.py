@@ -30,6 +30,8 @@ from apeGmsh.results.readers._mpco_spring_io import (
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.results import Results
 
+from tests.conftest import _stub_model_h5_path
+
 
 # =====================================================================
 # MPCO fixture builders
@@ -421,7 +423,7 @@ class TestResultsAPI:
             element_ids=[1, 2], n_springs=n_sp,
             force_values=np.zeros((n_steps, n_el, n_sp)),
         )
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         sid = r._reader.stages()[0].id
         comps = r._reader.available_components(sid, ResultLevel.SPRINGS)
         r._reader.close()
@@ -438,7 +440,7 @@ class TestResultsAPI:
             tmp_path / "s.mpco",
             element_ids=[1, 2, 3], n_springs=n_sp, force_values=vals,
         )
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         slab = r.elements.springs.get(component="spring_force_0")
         r._reader.close()
         assert slab.values.shape == (n_steps, n_el)
@@ -452,7 +454,7 @@ class TestResultsAPI:
             tmp_path / "s.mpco",
             element_ids=[1, 2], n_springs=n_sp, force_values=vals,
         )
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         slab = r.elements.springs.get(component="spring_force_1")
         r._reader.close()
         np.testing.assert_array_almost_equal(slab.values, vals[:, :, 1])
@@ -465,7 +467,7 @@ class TestResultsAPI:
             tmp_path / "s.mpco",
             element_ids=[1, 2], n_springs=n_sp, force_values=vals,
         )
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         slab = r.elements.springs.get(component="spring_force")
         r._reader.close()
         assert slab.values.shape == (n_steps, n_el)
@@ -479,7 +481,7 @@ class TestResultsAPI:
             element_ids=[1, 2], n_springs=n_sp,
             force_values=np.zeros((n_steps, n_el, n_sp)),
         )
-        r = Results.from_mpco(str(path))
+        r = Results.from_mpco(str(path), model_h5=_stub_model_h5_path())
         slab = r.elements.springs.get(component="spring_force_5")
         r._reader.close()
         assert slab.values.shape == (n_steps, 0)

@@ -1,6 +1,6 @@
 """Phase 11c Stage 4 — real MPCO fiber-section reads.
 
-Drives ``Results.from_mpco(...)`` against a real STKO/OpenSees output
+Drives ``Results.from_mpco(..., model_h5=_stub_model_h5_path())`` against a real STKO/OpenSees output
 file produced by a live nonlinear solid+beam analysis, in this case
 the partitioned ``solid_partition_example`` fixture from the
 ``STKO_to_python`` companion repo.
@@ -42,6 +42,8 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.results.readers._protocol import ResultLevel
+
+from tests.conftest import _stub_model_h5_path
 
 
 # =====================================================================
@@ -95,7 +97,7 @@ def results(mpco_path: Path):
     # path has its own dedicated test file
     # (``test_results_mpco_multi_real.py``) and the auto-detect path
     # would silently double the element / node counts here.
-    r = Results.from_mpco(str(mpco_path), merge_partitions=False)
+    r = Results.from_mpco(str(mpco_path), merge_partitions=False, model_h5=_stub_model_h5_path())
     yield r
     r._reader.close()
 

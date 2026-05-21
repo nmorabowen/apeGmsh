@@ -212,6 +212,16 @@ class MPCOMultiPartitionReader:
         self._fem_cache = merged
         return merged
 
+    def opensees_model(self):
+        """MPCO files carry no ``/opensees/`` zone — always ``None``.
+
+        Mirrors :meth:`MPCOReader.opensees_model`. Multi-partition
+        MPCO runs share the same constraint: the zone is unique to
+        apeGmsh-produced native files, so any model handle must be
+        threaded through ``model_h5=`` on :meth:`Results.from_mpco`.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Component discovery — union across partitions
     # ------------------------------------------------------------------

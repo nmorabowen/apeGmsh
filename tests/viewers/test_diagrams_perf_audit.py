@@ -35,6 +35,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 @pytest.fixture
 def big_solid_results(g, tmp_path: Path):
@@ -70,7 +72,7 @@ def big_solid_results(g, tmp_path: Path):
         )
         w.end_stage()
     print(f"\n[fixture] n_nodes={n_nodes} n_steps={n_steps}")
-    return Results.from_native(path), n_nodes
+    return Results.from_native(path, model=_open_model_from_h5(path)), n_nodes
 
 
 @pytest.fixture

@@ -63,7 +63,9 @@ def test_fixture_builds_and_meets_expectations(
                 f"{name}: unexpected group {group!r} present"
             )
         if "material_count_uniaxial" in expected:
-            uni = model.materials().get("uniaxial", {})
+            # Typed accessor returns a flat list; the family axis is
+            # exposed via :meth:`materials_by_family` (ADR 0019).
+            uni = model.materials_by_family().get("uniaxial", [])
             assert len(uni) == expected["material_count_uniaxial"]
         if "section_count" in expected:
             assert len(model.sections()) == expected["section_count"]

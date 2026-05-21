@@ -29,6 +29,8 @@ from apeGmsh.results.spec._resolved import (
     ResolvedRecorderSpec,
 )
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Mock fem with a duck-typed element-end-coords lookup
@@ -64,19 +66,8 @@ class _BeamFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset(
-            "ids", data=np.asarray(self.nodes.ids, dtype=np.int64),
-        )
-        n.create_dataset(
-            "coords", data=np.asarray(self.nodes.coords, dtype=np.float64),
-        )
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
     def element_end_coords(self, eid: int) -> tuple[np.ndarray, np.ndarray]:
         n_a, n_b = self._conn[int(eid)]
@@ -233,7 +224,7 @@ class TestForceBeamColumn3dAggregated:
         )
         transcoder.run()
 
-        with Results.from_native(target) as r:
+        with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
             assert slab.values.shape == (2, 5)
@@ -308,7 +299,7 @@ class TestForceBeamColumn3dBareSection:
             stage_name="static", stage_kind="static",
         ).run()
 
-        with Results.from_native(target) as r:
+        with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             ax = s.elements.line_stations.get(component="axial_force")
             np.testing.assert_array_equal(ax.values[0], [100.0, 200.0, 300.0])
@@ -360,7 +351,7 @@ class TestForceBeamColumn2dBare:
             spec, output_dir=tmp_path, target_path=target, fem=fem,
             stage_name="static", stage_kind="static",
         ).run()
-        with Results.from_native(target) as r:
+        with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             ax = s.elements.line_stations.get(component="axial_force")
             np.testing.assert_array_equal(ax.values[0], [10.0, 20.0, 30.0])
@@ -453,7 +444,7 @@ class TestMultiBucketSplit:
             stage_name="static", stage_kind="static",
         ).run()
 
-        with Results.from_native(target) as r:
+        with Results.from_native(target, model=_open_model_from_h5(target)) as r:
             s = r.stage(r.stages[0].id)
             ax = s.elements.line_stations.get(component="axial_force")
         # Both elements share Lobatto-5 (same natural coords) → one

@@ -43,6 +43,8 @@ from apeGmsh.viewers.overlays.probe_overlay import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fixture
@@ -80,7 +82,7 @@ def overlay_with_diagram(g, tmp_path: Path):
             components=components,
         )
         w.end_stage()
-    results = Results.from_native(path)
+    results = Results.from_native(path, model=_open_model_from_h5(path))
 
     plotter = pv.Plotter(off_screen=True)
     scene = build_fem_scene(results.fem)

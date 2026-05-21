@@ -88,6 +88,7 @@ class RecorderTranscoder:
         stage_kind: str = "transient",
         file_format: str = "out",
         stage_id: str | None = None,
+        model_h5_src: str | Path | None = None,
     ) -> None:
         self._spec = spec
         self._output_dir = Path(output_dir)
@@ -98,6 +99,14 @@ class RecorderTranscoder:
         self._file_format = file_format
         # Filename prefix (live-emit multi-stage runs); None means no prefix.
         self._stage_id = stage_id
+        # Phase 4 (ADR 0020) — when supplied, the path of a sibling
+        # ``model.h5`` whose ``/opensees/`` zone is composed into the
+        # transcoded results file at NativeWriter.open() time. Default
+        # None keeps the legacy two-zone (``/meta`` + ``/model``)
+        # output shape pre-Phase-4 readers already understand.
+        self._model_h5_src = (
+            None if model_h5_src is None else Path(model_h5_src)
+        )
         # Records the run() skipped — populated post-run for inspection.
         self.unsupported: list[str] = []
 
@@ -225,6 +234,7 @@ class RecorderTranscoder:
                 fem=self._fem,
                 source_type="tcl_recorders",
                 source_path=str(self._output_dir),
+                model_h5_src=self._model_h5_src,
             )
             sid = w.begin_stage(
                 name=self._stage_name,

@@ -16,6 +16,8 @@ import pytest
 
 from apeGmsh.viewers.core.results_pick_engine import PickEngine, PickMode
 
+from tests.conftest import _open_model_from_h5
+
 
 class _StubActor:
     """Minimal stand-in for a vtkProp / vtkActor."""
@@ -178,7 +180,7 @@ def _gp_setup(g, tmp_path):
             components={"stress_xx": values},
         )
         w.end_stage()
-    return Results.from_native(path), fem, eids
+    return Results.from_native(path, model=_open_model_from_h5(path)), fem, eids
 
 
 def test_gauss_diagram_registers_on_attach_unregisters_on_detach(_gp_setup):

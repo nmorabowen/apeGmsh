@@ -77,6 +77,8 @@ from apeGmsh.mesh._mesh_selection import MeshSelection
 from apeGmsh.results._slabs import ElementSlab, NodeSlab
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Synthetic results file + mock FEM (no openseespy)
@@ -189,7 +191,7 @@ def _make_results_with_fem(tmp_path: Path, *, with_selection: bool = False):
             element_ids=lambda n: np.array([10], dtype=np.int64),
         )
 
-    return Results.from_native(path, fem=fem), fem
+    return Results.from_native(path, fem=fem, model=_open_model_from_h5(path)), fem
 
 
 def _sids(seq) -> list[int]:
@@ -559,7 +561,7 @@ def test_chain_without_bound_fem_fails_loud(tmp_path):
         )
         w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         if r._fem is None:
             # select() with a named selector needs the fem to resolve;
             # explicit ids= seeds atoms but the spatial verb still needs

@@ -30,7 +30,8 @@ Attach requires a :class:`apeGmsh.cuts.FemToOpsTagMap` (built from
 ``model.h5``) to translate ``cut.element_ids`` (OpenSees tags) back
 into FEM element ids. The director carries the map; the diagram
 borrows a reference at construction. Without it, attach raises
-``RuntimeError`` with a clear pointer to ``director.set_model_h5(path)``.
+``RuntimeError`` with a clear pointer to
+``director.set_model(opensees_model)``.
 """
 from __future__ import annotations
 
@@ -105,9 +106,8 @@ class SectionCutDiagram(Diagram):
         if self._tag_map is None:
             raise RuntimeError(
                 "SectionCutDiagram.attach requires a FemToOpsTagMap. "
-                "Call director.set_model_h5(path) before adding cut "
-                "layers, or use director.add_section_cut(cut_def, "
-                "model_h5=path) which sets it implicitly."
+                "Use director.add_section_cut(cut_def, model_h5=path) "
+                "which sets it implicitly."
             )
         super().attach(plotter, view, scene)
 

@@ -61,18 +61,20 @@ def _build_minimal_ops() -> apeSees:
 # Schema bump
 # --------------------------------------------------------------------- #
 def test_apesees_h5_bumps_schema_version_to_2_5_0(tmp_path: Path) -> None:
-    """v4 file shape requires ``/meta/schema_version == "2.5.0"``.
+    """v4 file shape requires the current opensees schema version stamp.
 
     The version reflects the schema the file is written *against*, not
-    whether v4 content is actually present. A no-cuts call must still
-    stamp 2.5.0 because the writer is now the v4-shape producer.
+    whether v4 content is actually present.  Phase 6 (ADR 0021) bumped
+    to 2.6.0 for the additive ``/meta/lineage`` sub-group; Phase 7b
+    (ADR 0022) bumped to 2.7.0 for the additive
+    ``/opensees/constraints/`` group.
     """
     ops = _build_minimal_ops()
     out = tmp_path / "model.h5"
     ops.h5(str(out))
 
     with h5py.File(out, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.5.0"
+        assert f["meta"].attrs["schema_version"] == "2.7.0"
 
 
 # --------------------------------------------------------------------- #
@@ -178,6 +180,6 @@ def test_apesees_h5_with_cuts_passes_reference_reader(
     ops.h5(str(out), cuts=[cut])
 
     with h5_reader.open(str(out)) as model:
-        assert model.schema_version == "2.5.0"
+        assert model.schema_version == "2.7.0"
         violations = model.validate()
         assert violations == [], violations

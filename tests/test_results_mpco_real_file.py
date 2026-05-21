@@ -14,6 +14,8 @@ import pytest
 
 from apeGmsh.results import Results
 
+from tests.conftest import _stub_model_h5_path
+
 _FIXTURE = Path(__file__).parent / "fixtures" / "results" / "elasticFrame.mpco"
 
 
@@ -29,7 +31,7 @@ def mpco_path() -> Path:
 # =====================================================================
 
 def test_stages_discovered(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         stages = r.stages
         # The fixture has 2 model stages (one per domain change)
         assert len(stages) >= 1
@@ -37,14 +39,14 @@ def test_stages_discovered(mpco_path: Path) -> None:
 
 
 def test_stage_names_match_mpco(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         names = [s.name for s in r.stages]
         # MPCO group names are MODEL_STAGE[<stamp>]
         assert any(n.startswith("MODEL_STAGE[") for n in names)
 
 
 def test_time_vector(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s = r.stages[0]
         t = r._reader.time_vector(s.id)
         assert t.size == s.n_steps
@@ -56,7 +58,7 @@ def test_time_vector(mpco_path: Path) -> None:
 # =====================================================================
 
 def test_canonical_components_surface(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         comps = set(s0.nodes.available_components())
         # The fixture records all the standard nodal results.
@@ -74,7 +76,7 @@ def test_canonical_components_surface(mpco_path: Path) -> None:
 # =====================================================================
 
 def test_displacement_full_read(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         slab = s0.nodes.get(component="displacement_x")
         # Fixture: 12 nodes, 10 steps
@@ -85,7 +87,7 @@ def test_displacement_full_read(mpco_path: Path) -> None:
 
 def test_rotation_read_distinct_from_displacement(mpco_path: Path) -> None:
     """Rotation has its own group in MPCO and shouldn't alias displacement."""
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         d = s0.nodes.get(component="displacement_x").values
         rot = s0.nodes.get(component="rotation_x").values
@@ -94,7 +96,7 @@ def test_rotation_read_distinct_from_displacement(mpco_path: Path) -> None:
 
 
 def test_filter_by_node_ids(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         all_slab = s0.nodes.get(component="displacement_x")
         first_three = all_slab.node_ids[:3]
@@ -104,7 +106,7 @@ def test_filter_by_node_ids(mpco_path: Path) -> None:
 
 
 def test_time_slice(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         s = s0.nodes.get(component="displacement_x", time=0)
         assert s.values.shape == (1, 12)
@@ -115,7 +117,7 @@ def test_time_slice(mpco_path: Path) -> None:
 # =====================================================================
 
 def test_partial_fem_synthesized(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         fem = r.fem
         assert fem is not None
         # 12 nodes
@@ -126,7 +128,7 @@ def test_partial_fem_synthesized(mpco_path: Path) -> None:
 
 
 def test_partial_fem_has_no_labels(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         fem = r.fem
         # MPCO doesn't carry apeGmsh labels — the LabelSet is empty.
         assert fem.nodes.labels.names() == []
@@ -135,9 +137,9 @@ def test_partial_fem_has_no_labels(mpco_path: Path) -> None:
 
 def test_partial_fem_snapshot_id_is_stable(mpco_path: Path) -> None:
     """Computing snapshot_id twice on the same MPCO yields the same hash."""
-    with Results.from_mpco(mpco_path) as r1:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r1:
         h1 = r1.fem.snapshot_id
-    with Results.from_mpco(mpco_path) as r2:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r2:
         h2 = r2.fem.snapshot_id
     assert h1 == h2
 
@@ -152,14 +154,14 @@ def test_partial_fem_snapshot_id_is_stable(mpco_path: Path) -> None:
 # MPCO file is exercised by ``test_results_mpco_element_real.py``.
 
 def test_gauss_empty_when_fixture_has_no_stress(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         slab = s0.elements.gauss.get(component="stress_xx")
         assert slab.values.shape[1] == 0
 
 
 def test_fibers_empty_when_fixture_has_no_fibers(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         slab = s0.elements.fibers.get(component="fiber_stress")
         assert slab.values.shape[1] == 0

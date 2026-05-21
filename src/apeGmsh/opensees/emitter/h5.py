@@ -33,8 +33,9 @@ generated names. No Protocol extension was required.
   the same level without colliding.
 
 The reshuffle is a breaking schema change — ``SCHEMA_VERSION`` jumps
-``1.1.0 → 2.0.0`` and the reference reader's
-``EXPECTED_SCHEMA_MAJOR`` jumps ``1 → 2``.
+``1.1.0 → 2.0.0``.  Phase 7a (ADR 0023) replaced the previous
+``EXPECTED_SCHEMA_MAJOR`` constant with per-zone two-version-window
+validation in :mod:`apeGmsh.opensees._internal.schema_version`.
 
 **Schema deviation (documented).**  One place where the streaming
 Protocol cannot supply the spec-level grouping the schema asks for:
@@ -71,7 +72,6 @@ the dependency into import time for users who never call ``ops.h5()``.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -79,6 +79,30 @@ from .._internal.tag_resolution import (
     ATTR_ELEMENT_NODES,
     MISSING_FEM_ELEMENT_ID,
     current_fem_element_id,
+)
+from .._internal.typed_records import (
+    BeamIntegrationRecord as _BeamIntegrationRecord,
+    DeclContext as _DeclContext,
+    EleLoadRecord as _EleLoadRecord,
+    ElementRecord as _ElementRecord,
+    EmbeddedNodeRecord as _EmbeddedNodeRecord,
+    EqualDOFRecord as _EqualDOFRecord,
+    FiberRecord as _FiberRecord,
+    FixRecord as _FixRecord,
+    LayerRecord as _LayerRecord,
+    LoadRecord as _LoadRecord,
+    MassRecord as _MassRecord,
+    MaterialRecord as _MaterialRecord,
+    PatchRecord as _PatchRecord,
+    PatternRecord as _PatternRecord,
+    RecorderRecord as _RecorderRecord,
+    RigidDiaphragmRecord as _RigidDiaphragmRecord,
+    RigidLinkRecord as _RigidLinkRecord,
+    SPRecord as _SPRecord,
+    SectionComplexRecord as _SectionComplexRecord,
+    SectionSimpleRecord as _SectionSimpleRecord,
+    TimeSeriesRecord as _TimeSeriesRecord,
+    TransformRecord as _TransformRecord,
 )
 
 
@@ -134,7 +158,29 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     SectionSweepDef persistence (writer lives in
 #:     :mod:`apeGmsh.cuts._h5_io`).  Additive — pre-v4 readers ignore
 #:     the new groups.
-SCHEMA_VERSION: str = "2.5.0"
+#:   * 2.6.0 — Phase 6 (ADR 0021): the ``/meta/lineage/`` sub-group
+#:     is stamped alongside the bridge zone by
+#:     :func:`_compose_model_h5`.  Additive — the lineage attrs are
+#:     readable by 2.5.x consumers as opaque extra meta children
+#:     (the bridge reader ignores them; the read side surfaces a
+#:     "lineage absent" warning when the sub-group is missing on a
+#:     legacy file).  Per ADR 0023 two-version reader window, both
+#:     2.5.x and 2.6.x files are accepted.
+#:   * 2.7.0 — Phase 7b (ADR 0022): MP constraint emission fanout.
+#:     The H5 emitter gained the ``/opensees/constraints/`` group
+#:     with four compound-dtype datasets — ``equalDOF``,
+#:     ``rigidLink``, ``rigidDiaphragm``, ``embeddedNode`` — one
+#:     row per :meth:`equalDOF` / :meth:`rigidLink` /
+#:     :meth:`rigidDiaphragm` / :meth:`embeddedNode` call.  Each
+#:     dataset carries the constraint's ``name`` field (declaration
+#:     label round-trip, INV-2) and a ``phantom_node_tags`` int64
+#:     dataset records phantom-node tags written via
+#:     :meth:`node` with ``ndf=6`` so a reader can identify which
+#:     nodes were synthesized by the phantom-emit pre-step (INV-3).
+#:     Additive — old 2.6.x readers ignore the new group.  Per ADR
+#:     0023 two-version reader window, both 2.6.x and 2.7.x files
+#:     are accepted.
+SCHEMA_VERSION: str = "2.7.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -273,157 +319,13 @@ def _write_param_array(
 # ---------------------------------------------------------------------------
 # Buffered intermediate representations
 # ---------------------------------------------------------------------------
-
-@dataclass(slots=True)
-class _MaterialRecord:
-    type_token: str
-    tag: int
-    params: tuple[float | str, ...]
-
-
-@dataclass(slots=True)
-class _SectionSimpleRecord:
-    type_token: str
-    tag: int
-    params: tuple[float | str, ...]
-
-
-@dataclass(slots=True)
-class _PatchRecord:
-    kind: str
-    args: tuple[int | float, ...]
-
-
-@dataclass(slots=True)
-class _FiberRecord:
-    y: float
-    z: float
-    area: float
-    mat_tag: int
-
-
-@dataclass(slots=True)
-class _LayerRecord:
-    kind: str
-    args: tuple[int | float, ...]
-
-
-@dataclass(slots=True)
-class _SectionComplexRecord:
-    """A section opened with :meth:`section_open` and populated with
-    patches / fibers / layers before :meth:`section_close`."""
-    type_token: str
-    tag: int
-    params: tuple[float | str, ...]
-    patches: list[_PatchRecord] = field(default_factory=list)
-    fibers: list[_FiberRecord] = field(default_factory=list)
-    layers: list[_LayerRecord] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class _TransformRecord:
-    type_token: str
-    tag: int
-    vec: tuple[float, ...]
-
-
-@dataclass(slots=True)
-class _BeamIntegrationRecord:
-    type_token: str
-    tag: int
-    args: tuple[int | float | str, ...]
-
-
-@dataclass(slots=True)
-class _ElementRecord:
-    type_token: str
-    tag: int
-    args: tuple[int | float | str, ...]
-    connectivity: tuple[int, ...]
-    fem_eid: int = MISSING_FEM_ELEMENT_ID
-
-
-@dataclass(slots=True)
-class _TimeSeriesRecord:
-    type_token: str
-    tag: int
-    args: tuple[int | float | str, ...]
-
-
-@dataclass(slots=True)
-class _LoadRecord:
-    target: int
-    forces: tuple[float, ...]
-
-
-@dataclass(slots=True)
-class _SPRecord:
-    target: int
-    dof: int
-    value: float
-
-
-@dataclass(slots=True)
-class _EleLoadRecord:
-    args: tuple[int | float | str, ...]
-
-
-@dataclass(slots=True)
-class _PatternRecord:
-    """A pattern declared via :meth:`pattern_open`. ``loads`` / ``sps``
-    / ``ele_loads`` are populated only if the pattern was opened as a
-    block (``Plain`` / ``MultiSupport``); single-line patterns
-    (``UniformExcitation``) close immediately on the next non-load call
-    (the bridge calls ``pattern_close`` itself)."""
-    type_token: str
-    tag: int
-    args: tuple[int | float | str, ...]
-    loads: list[_LoadRecord] = field(default_factory=list)
-    sps: list[_SPRecord] = field(default_factory=list)
-    ele_loads: list[_EleLoadRecord] = field(default_factory=list)
-
-
-@dataclass(frozen=True, slots=True)
-class _DeclContext:
-    """Declaration metadata captured between
-    :meth:`Emitter.recorder_declaration_begin` and
-    :meth:`Emitter.recorder_declaration_end`. Attached to each
-    :class:`_RecorderRecord` emitted while a context is active, so
-    schema 2.3.0's unified ``/opensees/recorders/`` group can persist
-    the original declaration intent alongside the fan-out call.
-    """
-
-    declaration_name: str
-    record_name: str | None
-    category: str
-    components: tuple[str, ...]
-    raw: tuple[str, ...]
-    pg: tuple[str, ...]
-    label: tuple[str, ...]
-    selection: tuple[str, ...]
-    ids: tuple[int, ...] | None
-    dt: float | None
-    n_steps: int | None
-    file_root: str
-
-
-@dataclass(slots=True)
-class _RecorderRecord:
-    kind: str
-    args: tuple[int | float | str, ...]
-    decl_context: _DeclContext | None = None
-
-
-@dataclass(slots=True)
-class _FixRecord:
-    tag: int
-    dofs: tuple[int, ...]
-
-
-@dataclass(slots=True)
-class _MassRecord:
-    tag: int
-    values: tuple[float, ...]
+#
+# Phase 3 (ADR 0019) lifted the per-record dataclasses out into
+# ``apeGmsh.opensees._internal.typed_records`` so both the write path
+# (this module) and the read-side broker (``OpenSeesModel``) share one
+# definition.  The underscore-prefixed aliases above preserve the
+# private import paths that ``model_data.py`` and the test suite
+# already depend on.
 
 
 # ---------------------------------------------------------------------------
@@ -457,6 +359,22 @@ class H5Emitter:
         # Nodes — stored as parallel arrays for compact write.
         self._node_tags: list[int] = []
         self._node_coords: list[tuple[float, float, float]] = []
+        # Phantom-node tags written via ``node(tag, *xyz, ndf=6)`` —
+        # the per-node DOF override used by the phantom-emit pre-step in
+        # ``emit_mp_constraints`` (ADR 0022 INV-3).  Persisted under
+        # ``/opensees/constraints/phantom_node_tags`` so a reader can
+        # identify which nodes were synthesized.
+        self._phantom_node_tags: list[int] = []
+
+        # MP constraints (Phase 7b, ADR 0022).
+        self._equal_dofs: list[_EqualDOFRecord] = []
+        self._rigid_links: list[_RigidLinkRecord] = []
+        self._rigid_diaphragms: list[_RigidDiaphragmRecord] = []
+        self._embedded_nodes: list[_EmbeddedNodeRecord] = []
+        # Holds the user's declaration label set via
+        # ``mp_constraint_comment(name)``; consumed by the next MP
+        # constraint emit (INV-2).
+        self._pending_mp_name: str = ""
 
         # Constitutive.
         self._uniaxial: list[_MaterialRecord] = []
@@ -512,7 +430,9 @@ class H5Emitter:
         self._ndm = ndm
         self._ndf = ndf
 
-    def node(self, tag: int, *coords: float) -> None:
+    def node(
+        self, tag: int, *coords: float, ndf: int | None = None,
+    ) -> None:
         # Normalize to 3-tuple by zero-padding 2-D models.
         cs = tuple(float(c) for c in coords)
         if len(cs) == 2:
@@ -528,6 +448,12 @@ class H5Emitter:
             )
         self._node_tags.append(int(tag))
         self._node_coords.append(triple)
+        # Phantom nodes (ADR 0022 INV-3) — track tags so a reader can
+        # identify which nodes were synthesized by the phantom-emit
+        # pre-step.  The per-node ndf override is the discriminator
+        # (no other emitter path passes ``ndf=`` today).
+        if ndf is not None:
+            self._phantom_node_tags.append(int(tag))
 
     def fix(self, tag: int, *dofs: int) -> None:
         self._fixes.append(_FixRecord(tag=int(tag), dofs=tuple(int(d) for d in dofs)))
@@ -536,6 +462,69 @@ class H5Emitter:
         self._masses.append(
             _MassRecord(tag=int(tag), values=tuple(float(v) for v in values))
         )
+
+    # =====================================================================
+    # Protocol — MP constraints (ADR 0022, Phase 7b, schema 2.7.0)
+    # =====================================================================
+
+    def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
+        name = self._consume_pending_mp_name()
+        self._equal_dofs.append(
+            _EqualDOFRecord(
+                master=int(master), slave=int(slave),
+                dofs=tuple(int(d) for d in dofs),
+                name=name,
+            )
+        )
+
+    def rigidLink(self, kind: str, master: int, slave: int) -> None:
+        name = self._consume_pending_mp_name()
+        self._rigid_links.append(
+            _RigidLinkRecord(
+                kind=str(kind),
+                master=int(master), slave=int(slave),
+                name=name,
+            )
+        )
+
+    def rigidDiaphragm(
+        self, perp_dir: int, master: int, *slaves: int,
+    ) -> None:
+        name = self._consume_pending_mp_name()
+        self._rigid_diaphragms.append(
+            _RigidDiaphragmRecord(
+                perp_dir=int(perp_dir),
+                master=int(master),
+                slaves=tuple(int(s) for s in slaves),
+                name=name,
+            )
+        )
+
+    def embeddedNode(
+        self, ele_tag: int, embedding_ele: int,
+        *args: int | float,
+    ) -> None:
+        name = self._consume_pending_mp_name()
+        self._embedded_nodes.append(
+            _EmbeddedNodeRecord(
+                ele_tag=int(ele_tag),
+                embedding_ele=int(embedding_ele),
+                args=tuple(args),
+                name=name,
+            )
+        )
+
+    def mp_constraint_comment(self, name: str) -> None:
+        # Latch the declaration label; the next MP-constraint call will
+        # consume it via ``_consume_pending_mp_name`` (INV-2).  This is
+        # the H5 emitter's analogue of the Tcl/Py ``# {name}`` line.
+        self._pending_mp_name = str(name)
+
+    def _consume_pending_mp_name(self) -> str:
+        """Return-and-clear the pending mp_constraint_comment label."""
+        name = self._pending_mp_name
+        self._pending_mp_name = ""
+        return name
 
     # =====================================================================
     # Protocol — Constitutive
@@ -1017,6 +1006,7 @@ class H5Emitter:
         self._write_time_series(f)
         self._write_patterns(f)
         self._write_recorders(f)
+        self._write_constraints(f)
         self._write_analysis(f)
 
     # -- Per-group writers (split out so each step adds one) -------------
@@ -1610,6 +1600,139 @@ class H5Emitter:
                 _set_attr(g, "n_steps", ctx.n_steps)
                 _set_attr(g, "file_root", ctx.file_root)
 
+    # -- MP constraints (Phase 7b, ADR 0022, schema 2.7.0) ---------------
+
+    def _write_constraints(self, f: Any) -> None:
+        """Write ``/opensees/constraints/`` with one compound dataset per
+        MP constraint kind, plus a flat ``phantom_node_tags`` array.
+
+        Empty groups are skipped — the group is created only if at least
+        one MP constraint or phantom node was emitted.  Per ADR 0023
+        the schema bump from 2.6 → 2.7 is additive: 2.6.x readers
+        ignore the new group.
+        """
+        has_any = (
+            self._equal_dofs or self._rigid_links
+            or self._rigid_diaphragms or self._embedded_nodes
+            or self._phantom_node_tags
+        )
+        if not has_any:
+            return
+
+        import numpy as np
+
+        constraints = self._ops_group(f).create_group("constraints")
+
+        if self._phantom_node_tags:
+            constraints.create_dataset(
+                "phantom_node_tags",
+                data=np.asarray(self._phantom_node_tags, dtype=np.int64),
+            )
+
+        if self._equal_dofs:
+            self._write_constraints_equal_dof(constraints)
+        if self._rigid_links:
+            self._write_constraints_rigid_link(constraints)
+        if self._rigid_diaphragms:
+            self._write_constraints_rigid_diaphragm(constraints)
+        if self._embedded_nodes:
+            self._write_constraints_embedded_node(constraints)
+
+    def _write_constraints_equal_dof(self, parent: Any) -> None:
+        import h5py
+        import numpy as np
+
+        ndf = max(
+            int(self._ndf or 0),
+            max(len(r.dofs) for r in self._equal_dofs),
+        )
+        # ndf must be at least 1 — even a 1-DOF equalDOF needs a slot.
+        ndf = max(ndf, 1)
+        dt = np.dtype(
+            [
+                ("master", np.int64),
+                ("slave", np.int64),
+                ("dofs", np.int64, (ndf,)),
+                ("name", h5py.string_dtype(encoding="utf-8")),
+            ]
+        )
+        rows = np.empty(len(self._equal_dofs), dtype=dt)
+        for i, rec in enumerate(self._equal_dofs):
+            padded = list(rec.dofs) + [0] * (ndf - len(rec.dofs))
+            rows[i] = (rec.master, rec.slave, tuple(padded), rec.name)
+        parent.create_dataset("equalDOF", data=rows)
+
+    def _write_constraints_rigid_link(self, parent: Any) -> None:
+        import h5py
+        import numpy as np
+
+        dt = np.dtype(
+            [
+                ("kind", h5py.string_dtype(encoding="utf-8")),
+                ("master", np.int64),
+                ("slave", np.int64),
+                ("name", h5py.string_dtype(encoding="utf-8")),
+            ]
+        )
+        rows = np.empty(len(self._rigid_links), dtype=dt)
+        for i, rec in enumerate(self._rigid_links):
+            rows[i] = (rec.kind, rec.master, rec.slave, rec.name)
+        parent.create_dataset("rigidLink", data=rows)
+
+    def _write_constraints_rigid_diaphragm(self, parent: Any) -> None:
+        import h5py
+        import numpy as np
+
+        max_slaves = max(len(r.slaves) for r in self._rigid_diaphragms)
+        max_slaves = max(max_slaves, 1)
+        dt = np.dtype(
+            [
+                ("perp_dir", np.int32),
+                ("master", np.int64),
+                ("slaves", np.int64, (max_slaves,)),
+                ("n_slaves", np.int32),
+                ("name", h5py.string_dtype(encoding="utf-8")),
+            ]
+        )
+        rows = np.empty(len(self._rigid_diaphragms), dtype=dt)
+        for i, rec in enumerate(self._rigid_diaphragms):
+            padded = (
+                list(rec.slaves)
+                + [0] * (max_slaves - len(rec.slaves))
+            )
+            rows[i] = (
+                rec.perp_dir, rec.master,
+                tuple(padded), len(rec.slaves), rec.name,
+            )
+        parent.create_dataset("rigidDiaphragm", data=rows)
+
+    def _write_constraints_embedded_node(self, parent: Any) -> None:
+        import h5py
+        import numpy as np
+
+        max_args = max(len(r.args) for r in self._embedded_nodes)
+        max_args = max(max_args, 1)
+        dt = np.dtype(
+            [
+                ("ele_tag", np.int64),
+                ("embedding_ele", np.int64),
+                ("args", np.float64, (max_args,)),
+                ("n_args", np.int32),
+                ("name", h5py.string_dtype(encoding="utf-8")),
+            ]
+        )
+        rows = np.empty(len(self._embedded_nodes), dtype=dt)
+        for i, rec in enumerate(self._embedded_nodes):
+            padded = (
+                [float(v) for v in rec.args]
+                + [float("nan")] * (max_args - len(rec.args))
+            )
+            rows[i] = (
+                rec.ele_tag, rec.embedding_ele,
+                tuple(padded), len(rec.args), rec.name,
+            )
+        parent.create_dataset("embeddedNode", data=rows)
+
     # -- Analysis chain --------------------------------------------------
 
     def _write_analysis(self, f: Any) -> None:
@@ -1653,9 +1776,17 @@ class H5Emitter:
     # =====================================================================
 
     def _meta_attrs(self) -> dict[str, Any]:
-        """Return the ``/meta`` group's attributes as a dict."""
+        """Return the ``/meta`` group's attributes as a dict.
+
+        Per ADR 0023 the bridge stamps its own per-zone marker
+        ``/meta/opensees_schema_version`` alongside the legacy envelope
+        ``schema_version`` key.  Bridge-only standalone files (no broker
+        snapshot) carry only the OpenSees per-zone key; ``_compose_model_h5``
+        adds the neutral-zone key when a broker FEM was paired in.
+        """
         return {
             "schema_version": self._schema_version,
+            "opensees_schema_version": self._schema_version,
             "apeGmsh_version": self._apegmsh_version,
             "created_iso": datetime.now(tz=timezone.utc).isoformat(),
             "ndm": int(self._ndm) if self._ndm is not None else 0,

@@ -31,6 +31,8 @@ from apeGmsh.viewers.diagrams import (
 from apeGmsh.viewers.diagrams._base import NoDataError
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fixtures
@@ -99,7 +101,7 @@ def results_with_nodes_and_element_constant_gauss(g, tmp_path: Path):
             components={"stress_xx": sxx},
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 @pytest.fixture
@@ -136,7 +138,7 @@ def results_with_two_gp_gauss(g, tmp_path: Path):
             components={"stress_xx": sxx},
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 @pytest.fixture

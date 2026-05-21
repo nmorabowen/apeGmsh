@@ -441,6 +441,47 @@ release-blocker scan came back clean.
      imports).  Landed with Phase 8.7 (commit 1) as
      [decisions/0014-viewer-is-pure-h5-consumer.md](decisions/0014-viewer-is-pure-h5-consumer.md).
 
+### Closure (May 2026) — questions surfaced by the major refactor
+
+The major architectural refactor following Phase 8.8 (the `solvers/`
+delete) surfaced five additional open questions that did not exist
+under the original Phase 8 scope: the fate of the
+`Results.viewer(model_h5=)` plumbing kwarg, the long-deferred MP
+constraint emission gap (§3.3), the structural fate of the inert
+`snapshot_id` binding and the `BindError` stub, the
+single-envelope schema-version race between the neutral and bridge
+zones, and the read-side-broker concept needed to make
+*Results carries Model* feasible without violating ADR 0011.
+
+These are closed by five ADRs authored as Phase 1 of the refactor:
+
+- **OpenSeesModel concept** (read-side broker, distinct from
+  `apeSees` and from `ModelData`) →
+  [ADR 0019](decisions/0019-opensees-model-read-side-broker.md).
+- **`Results.viewer(model_h5=)` kwarg fate** (drop in Phase 5,
+  remove in Phase 8; viewer becomes file-mediated via
+  `Results.model`) →
+  [ADR 0020](decisions/0020-results-carries-opensees-model.md).
+- **Lineage / `snapshot_id`** (git-style hash chain; warn-not-raise;
+  Phase 8 deletes the inert `BindError`) →
+  [ADR 0021](decisions/0021-lineage-chain-replaces-snapshot-id.md).
+- **MP constraint emission** (closes §3.3; widens the `Emitter`
+  Protocol with `equalDOF` / `rigidLink` / `rigidDiaphragm` /
+  `embeddedNode` / `mp_constraint_comment`) →
+  [ADR 0022](decisions/0022-mp-constraint-emission-fanout.md).
+  **Status (Phase 7b, May 2026):** CLOSED.  `apeSees(fem).tcl(p)` /
+  `apeSees(fem).py(p)` / `apeSees(fem).h5(p)` for a model carrying
+  `g.constraints.rigid_diaphragm(...)` / `g.constraints.tied_contact(...)`
+  / `g.constraints.node_to_surface(...)` now produces a runnable
+  OpenSees deck — verified by
+  `tests/opensees/integration/test_runnable_deck.py` (INV-1) +
+  `tests/test_constraint_emission_phase7b.py` (~65 unit tests).
+  Schema bump `2.6.0 → 2.7.0` (ADR 0023 minor; additive
+  `/opensees/constraints/` group).  The §3.3 deferral is retired.
+- **Schema-version race** (per-zone keys; two-version reader window;
+  envelope preserved as back-compat) →
+  [ADR 0023](decisions/0023-per-zone-schema-versioning.md).
+
 ## 8. Out of scope
 
 - **Adding a second solver** (Code_Aster, Abaqus, etc.). The zone

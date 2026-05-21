@@ -28,6 +28,7 @@ from .._slabs import (
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
+    from ...opensees.opensees_model import OpenSeesModel
 
 
 class ResultLevel(Enum):
@@ -107,6 +108,22 @@ class ResultsReader(Protocol):
         - ``NativeReader``: reconstructs from ``/model/`` (always available).
         - ``MPCOReader``: synthesizes a partial FEMData from ``/MODEL/``
           (no apeGmsh labels, no Part provenance).
+        """
+        ...
+
+    def opensees_model(self) -> "Optional[OpenSeesModel]":
+        """Embedded :class:`OpenSeesModel` from the file's ``/opensees/`` zone.
+
+        Phase 4 (ADR 0020) — the Composed-file pattern. Native readers
+        auto-resolve from the file when the zone is present (silent, no
+        warning); third-party file readers (MPCO) return ``None``.
+
+        Returns
+        -------
+        OpenSeesModel | None
+            The rehydrated broker when the file carries the zone,
+            ``None`` otherwise. INV-1 — Phase 4 callers must tolerate
+            ``None``; the value becomes required only in Phase 8.
         """
         ...
 

@@ -22,7 +22,6 @@ Quick start
     for mode in results.modes:
         print(mode.mode_index, mode.frequency_hz)
 """
-from ._bind import BindError
 from ._slabs import (
     ElementSlab,
     FiberSlab,
@@ -42,8 +41,6 @@ __all__ = [
     "ResultLevel",
     "StageInfo",
     "TimeSlice",
-    # Bind error
-    "BindError",
     # Slab dataclasses (returned from .get())
     "NodeSlab",
     "ElementSlab",

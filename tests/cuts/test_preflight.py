@@ -97,7 +97,7 @@ def _write_minimal_h5(
 ) -> None:
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")
-        meta.attrs["schema_version"] = "2.2.0"
+        meta.attrs["schema_version"] = "2.6.0"
         meta.attrs["apeGmsh_version"] = "0.0.0-test"
         meta.attrs["created_iso"] = "2026-01-01T00:00:00Z"
         meta.attrs["ndm"] = 3

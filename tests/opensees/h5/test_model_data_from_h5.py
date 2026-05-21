@@ -213,7 +213,7 @@ def test_from_h5_tolerates_missing_opensees_zone(
     p = tmp_path / "meta_only.h5"
     with h5py.File(str(p), "w") as f:
         meta = f.create_group("meta")
-        meta.attrs["schema_version"] = "2.5.0"
+        meta.attrs["schema_version"] = "2.6.0"
         meta.attrs["ndm"] = 3
         meta.attrs["ndf"] = 6
         meta.attrs["model_name"] = "meta_only"

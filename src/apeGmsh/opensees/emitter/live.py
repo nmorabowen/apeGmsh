@@ -64,14 +64,47 @@ class LiveOpsEmitter:
     def model(self, *, ndm: int, ndf: int) -> None:
         self._ops.model("basic", "-ndm", ndm, "-ndf", ndf)
 
-    def node(self, tag: int, *coords: float) -> None:
-        self._ops.node(tag, *coords)
+    def node(
+        self, tag: int, *coords: float, ndf: int | None = None,
+    ) -> None:
+        if ndf is None:
+            self._ops.node(tag, *coords)
+        else:
+            # ``ops.node(tag, *xyz, '-ndf', n)`` is the openseespy idiom
+            # for the per-node DOF override (ADR 0022 INV-3).
+            self._ops.node(tag, *coords, "-ndf", ndf)
 
     def fix(self, tag: int, *dofs: int) -> None:
         self._ops.fix(tag, *dofs)
 
     def mass(self, tag: int, *values: float) -> None:
         self._ops.mass(tag, *values)
+
+    # -- MP constraints (ADR 0022, Phase 7b) -----------------------------
+
+    def equalDOF(self, master: int, slave: int, *dofs: int) -> None:
+        self._ops.equalDOF(master, slave, *dofs)
+
+    def rigidLink(self, kind: str, master: int, slave: int) -> None:
+        self._ops.rigidLink(kind, master, slave)
+
+    def rigidDiaphragm(
+        self, perp_dir: int, master: int, *slaves: int,
+    ) -> None:
+        self._ops.rigidDiaphragm(perp_dir, master, *slaves)
+
+    def embeddedNode(
+        self, ele_tag: int, embedding_ele: int,
+        *args: int | float,
+    ) -> None:
+        self._ops.element(
+            "ASDEmbeddedNodeElement", ele_tag, embedding_ele, *args,
+        )
+
+    def mp_constraint_comment(self, name: str) -> None:
+        # No-op — live execution can't carry comments. Argument exists
+        # so the Protocol shape is uniform across emitters (INV-4).
+        del name
 
     # -- Constitutive --------------------------------------------------------
 

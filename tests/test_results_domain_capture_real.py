@@ -17,6 +17,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.conftest import _open_model_from_h5
+
 openseespy = pytest.importorskip(
     "openseespy.opensees", reason="openseespy required",
 )
@@ -35,15 +37,8 @@ class _MinimalFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 3
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        nodes_grp = group.create_group("nodes")
-        nodes_grp.create_dataset("ids", data=self.nodes.ids)
-        nodes_grp.create_dataset("coords", data=self.nodes.coords)
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=3)
 
 
 def test_single_tet_static_capture(tmp_path: Path) -> None:
@@ -121,7 +116,7 @@ def test_single_tet_static_capture(tmp_path: Path) -> None:
 
     # ── Read back via Results ────────────────────────────────────────
     from apeGmsh.results import Results
-    with Results.from_native(capture_path, fem=fem) as r:
+    with Results.from_native(capture_path, fem=fem, model=_open_model_from_h5(capture_path)) as r:
         stages = r.stages
         assert len(stages) == 1
         assert stages[0].name == "static_load"
@@ -210,7 +205,7 @@ def test_single_tet_gauss_capture(tmp_path: Path) -> None:
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(capture_path, fem=fem) as r:
+    with Results.from_native(capture_path, fem=fem, model=_open_model_from_h5(capture_path)) as r:
         s = r.stage(r.stages[0].id)
 
         sxx = s.elements.gauss.get(component="stress_xx")

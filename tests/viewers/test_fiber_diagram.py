@@ -27,6 +27,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 # Per-fiber fixture scheme (n_fibers_per_gp = 4):
 #
@@ -109,7 +111,7 @@ def fiber_results(g, tmp_path: Path):
         w.end_stage()
 
     return (
-        Results.from_native(path),
+        Results.from_native(path, model=_open_model_from_h5(path)),
         line_eids, gps_per_beam, fibers_per_gp,
         eid_arr, gp_arr, y_arr, z_arr, area_arr, values,
     )

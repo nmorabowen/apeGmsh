@@ -93,7 +93,7 @@ def _write_minimal_h5(
     path: Path,
     *,
     groups: dict[str, dict[str, np.ndarray]],
-    schema_version: str = "2.2.0",
+    schema_version: str = "2.6.0",
 ) -> None:
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")

@@ -28,6 +28,8 @@ from apeGmsh.results.capture.spec import (
     ResolvedDomainCaptureSpec,
 )
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fake ops with fiber-section support
@@ -87,17 +89,8 @@ class _MockFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset("ids", data=np.asarray(self.nodes.ids, dtype=np.int64))
-        n.create_dataset(
-            "coords", data=np.asarray(self.nodes.coords, dtype=np.float64),
-        )
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 def _spec_with(*records, snapshot_id) -> ResolvedDomainCaptureSpec:
@@ -170,7 +163,7 @@ class TestSingleBeamSingleSection:
             cap.end_stage()
 
         # Read back
-        with Results.from_native(path, fem=fem) as r:
+        with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.fibers.get(component="fiber_stress")
             # 2 sections × (3 + 2) fibers wait — sec1 has 3, sec2 has 2,
@@ -240,7 +233,7 @@ class TestStressOnlyFilter:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path, fem=fem) as r:
+        with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.fibers.get(component="fiber_stress")
             np.testing.assert_allclose(slab.values, [[42.0]])
@@ -287,7 +280,7 @@ class TestMultiClassFiberCapture:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path, fem=fem) as r:
+        with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.fibers.get(component="fiber_stress")
             # 2 fibers (eid=10) + 1 fiber (eid=20) = 3 fibers total

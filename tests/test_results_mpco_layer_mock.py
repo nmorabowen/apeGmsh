@@ -15,10 +15,13 @@ from apeGmsh.results import Results
 from apeGmsh.results.readers import _mpco_layer_io as _mlayer
 from apeGmsh.results.readers._protocol import ResultLevel
 from apeGmsh.opensees._response_catalog import (
+
     ELE_TAG_ASDShellQ4,
     IntRule,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 # =====================================================================
 # Synthetic MPCO file builder
@@ -513,14 +516,14 @@ class TestReadLayerBucketSlab:
 
 class TestReadLayersEndToEnd:
     def test_results_elements_layers_get(self, simple_layer_mpco) -> None:
-        results = Results.from_mpco(str(simple_layer_mpco["path"]))
+        results = Results.from_mpco(str(simple_layer_mpco["path"]), model_h5=_stub_model_h5_path())
         slab = results.elements.layers.get(component="fiber_stress")
         assert slab.values.shape == (2, 24)
         assert slab.local_axes_quaternion.shape == (24, 4)
         results._reader.close()
 
     def test_available_components(self, simple_layer_mpco) -> None:
-        results = Results.from_mpco(str(simple_layer_mpco["path"]))
+        results = Results.from_mpco(str(simple_layer_mpco["path"]), model_h5=_stub_model_h5_path())
         comps = results._reader.available_components(
             results._reader.stages()[0].id, ResultLevel.LAYERS,
         )

@@ -26,6 +26,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 @pytest.fixture
 def vector_results(g, tmp_path: Path):
@@ -59,7 +61,7 @@ def vector_results(g, tmp_path: Path):
             components=components,
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 @pytest.fixture
@@ -354,7 +356,7 @@ def test_partial_recording_resultant_works(g, tmp_path: Path, headless_plotter):
             node_ids=node_ids, components=components,
         )
         w.end_stage()
-    results = Results.from_native(path)
+    results = Results.from_native(path, model=_open_model_from_h5(path))
 
     # Catalog should still offer a "displacement" prefix entry.
     from apeGmsh.viewers.diagrams._kind_catalog import _vector_prefixes

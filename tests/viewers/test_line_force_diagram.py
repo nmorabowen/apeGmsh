@@ -30,6 +30,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5, _stub_model_h5_path
+
 
 # =====================================================================
 # Fixture: 3-element horizontal beam with synthetic line_stations
@@ -99,7 +101,7 @@ def beam_results(g, tmp_path: Path):
         )
         w.end_stage()
 
-    results = Results.from_native(path)
+    results = Results.from_native(path, model=_open_model_from_h5(path))
     return results, line_eids, natural_coords, values
 
 
@@ -492,7 +494,7 @@ _FRAME_FIXTURE = Path("tests/fixtures/results/elasticFrame.mpco")
 def frame_results():
     if not _FRAME_FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_FRAME_FIXTURE}")
-    return Results.from_mpco(_FRAME_FIXTURE)
+    return Results.from_mpco(_FRAME_FIXTURE, model_h5=_stub_model_h5_path())
 
 
 def test_elastic_frame_attach_builds_polydata(

@@ -32,14 +32,14 @@ from apeGmsh.opensees.emitter.h5_reader import SchemaVersionError
 # Fixture builder — minimal model.h5 the reference reader accepts
 # --------------------------------------------------------------------- #
 def _make_h5_with_meta(
-    path: Path, *, schema_version: str = "2.5.0",
+    path: Path, *, schema_version: str = "2.6.0",
 ) -> None:
     """Create a minimal ``model.h5`` carrying just ``/meta/schema_version``.
 
     Mirrors the convention in ``test_tag_map.py``: only what the
     reference reader requires, nothing more. The schema version
-    defaults to ``2.5.0`` (v4) but tests for forward-compatibility
-    can pass an older 2.x string.
+    defaults to ``2.6.0`` (within the two-version window for the
+    current 2.7.0 reader); tests can pass other in-window values.
     """
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")
@@ -222,7 +222,11 @@ def test_standalone_and_sweep_coexist(tmp_path: Path) -> None:
 def test_read_missing_returns_empty(tmp_path: Path) -> None:
     """Pre-v4 file with no /opensees/cuts/ + no /opensees/sweeps/ → ((), ())."""
     path = tmp_path / "model.h5"
-    _make_h5_with_meta(path, schema_version="2.2.0")  # pre-v4 schema
+    # Pre-v4 file is one that lacks /opensees/cuts/ — its schema must
+    # still be inside the ADR 0023 two-version reader window
+    # (2.6.x / 2.7.x).  Reader-window-old fixtures are out of scope
+    # (INV-5 migration tooling).
+    _make_h5_with_meta(path, schema_version="2.6.0")  # pre-v4 schema
 
     cuts, sweeps = read_cuts_and_sweeps(path)
     assert cuts == ()
@@ -402,68 +406,75 @@ def test_persist_to_h5_empty_is_noop(tmp_path: Path) -> None:
     assert not nonexistent.exists()
 
 
-def test_persist_to_h5_appends_to_2_2_0_file_bumps_version(
+def test_persist_to_h5_appends_to_in_window_file_keeps_version(
     tmp_path: Path,
 ) -> None:
-    """2.2.0 file → /opensees/cuts/ written and schema bumped to 2.5.0."""
+    """In-window file → /opensees/cuts/ written; envelope unchanged.
+
+    Per ADR 0023 the reader window is 2.5.x / 2.6.x; files below the
+    window are refused at open time (INV-5 migration tooling).  The
+    starting fixture is at 2.6.0 — within the current two-version
+    window — so the version stays unchanged after append.
+    """
     cut = SectionCutDef(
         plane_point=(0.0, 0.0, 1.0),
         plane_normal=(0.0, 0.0, 1.0),
         element_ids=(42,),
         label="appended",
     )
-    path = tmp_path / "pre_v4.h5"
-    _make_h5_with_meta(path, schema_version="2.2.0")
+    path = tmp_path / "in_window.h5"
+    _make_h5_with_meta(path, schema_version="2.6.0")
 
     persist_to_h5(path, cuts=[cut])
 
     with h5py.File(path, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.5.0"
+        assert f["meta"].attrs["schema_version"] == "2.6.0"
         assert "opensees/cuts/cut_0" in f
 
     cuts, _ = read_cuts_and_sweeps(path)
     assert cuts == (cut,)
 
 
-def test_persist_to_h5_bumps_2_4_0_to_2_5_0(tmp_path: Path) -> None:
-    """File at 2.4.0 (pre-v4) → bumped to 2.5.0 after append.
+def test_persist_to_h5_refuses_out_of_window_file(tmp_path: Path) -> None:
+    """File below the reader window (e.g. 2.5.0) → SchemaVersionError.
 
-    2.4.0 belongs to Phase 8.7 commit 2 (`/mesh_selections/`); v4 needs
-    2.5.0 so the file's reported version reflects the presence of
-    ``/opensees/cuts/``.
+    Per ADR 0023 INV-5, archived files outside the two-version reader
+    window need migration tooling.  ``persist_to_h5`` validates via
+    :func:`h5_reader.open` and so refuses with a SchemaVersionError
+    rather than silently appending and bumping the version.
     """
+    from apeGmsh.opensees._internal.schema_version import SchemaVersionError
+
     cut = SectionCutDef(
         plane_point=(0.0, 0.0, 0.0),
         plane_normal=(0.0, 0.0, 1.0),
         element_ids=(1,),
     )
-    path = tmp_path / "pre_v4_at_2_4_0.h5"
-    _make_h5_with_meta(path, schema_version="2.4.0")
+    path = tmp_path / "below_window.h5"
+    _make_h5_with_meta(path, schema_version="2.5.0")
 
-    persist_to_h5(path, cuts=[cut])
-
-    with h5py.File(path, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.5.0"
+    with pytest.raises(SchemaVersionError):
+        persist_to_h5(path, cuts=[cut])
 
 
 def test_persist_to_h5_leaves_2_5_0_version_alone(tmp_path: Path) -> None:
-    """File already at 2.5.0 → version unchanged after append."""
+    """File already at 2.6.0 → version unchanged after append."""
     cut = SectionCutDef(
         plane_point=(0.0, 0.0, 0.0),
         plane_normal=(0.0, 0.0, 1.0),
         element_ids=(1,),
     )
     path = tmp_path / "already_v4.h5"
-    _make_h5_with_meta(path, schema_version="2.5.0")
+    _make_h5_with_meta(path, schema_version="2.6.0")
 
     persist_to_h5(path, cuts=[cut])
 
     with h5py.File(path, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.5.0"
+        assert f["meta"].attrs["schema_version"] == "2.6.0"
 
 
 def test_persist_to_h5_preserves_future_version(tmp_path: Path) -> None:
-    """Speculative 2.6.0 file → version not downgraded.
+    """Speculative 2.7.0 file → version not downgraded.
 
     Guards against the bump helper accidentally clobbering a forward-
     looking version when ``min_version`` is below the current value.
@@ -474,12 +485,12 @@ def test_persist_to_h5_preserves_future_version(tmp_path: Path) -> None:
         element_ids=(1,),
     )
     path = tmp_path / "future.h5"
-    _make_h5_with_meta(path, schema_version="2.6.0")
+    _make_h5_with_meta(path, schema_version="2.7.0")
 
     persist_to_h5(path, cuts=[cut])
 
     with h5py.File(path, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.6.0"
+        assert f["meta"].attrs["schema_version"] == "2.7.0"
 
 
 def test_persist_to_h5_overwrites_existing_cuts_group(

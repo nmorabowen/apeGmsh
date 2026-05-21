@@ -280,6 +280,7 @@ class DomainCapture:
         fem: "FEMData",
         *,
         ops: Any = None,
+        bridge: Any = None,
     ) -> None:
         self._spec = spec
         self._path = Path(path)
@@ -291,6 +292,13 @@ class DomainCapture:
         self._ndm = spec.ndm
         self._ndf = spec.ndf
         self._ops = ops    # injected for testing; lazy-loaded otherwise
+        # Phase 4 (ADR 0020) — when supplied, the live :class:`apeSees`
+        # bridge writes a sidecar ``model.h5`` at __enter__ time whose
+        # ``/opensees/`` zone is composed into the run h5 via
+        # NativeWriter (Composed-file pattern). ``None`` keeps the
+        # pre-Phase-4 single-zone (``/meta`` + ``/model/`` only)
+        # output shape.
+        self._bridge = bridge
 
         self._writer = None
         self._current_stage: Optional[str] = None
@@ -309,6 +317,10 @@ class DomainCapture:
         self._element_level_records: list = []
         # Whether any nodes record needs reactions per-step.
         self._needs_reactions: bool = False
+        # Phase 4 — sidecar model.h5 path the bridge wrote to, kept so
+        # __exit__ can clean it up after NativeWriter copied the zone
+        # into the run file.
+        self._model_h5_sidecar: Optional[Path] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -321,10 +333,23 @@ class DomainCapture:
         # enforced — it's on the user to pair the right spec with the
         # right FEMData.
         self._writer = NativeWriter(self._path)
+
+        # Phase 4 (ADR 0020) — when a bridge was passed, materialise
+        # its model.h5 alongside the run file so NativeWriter can copy
+        # the ``/opensees/`` zone into the Composed file. The sidecar
+        # is written at __enter__ time (once), then h5py-copied into
+        # the run file's ``/opensees/`` group at open() time.
+        model_h5_src: Optional[Path] = None
+        if self._bridge is not None:
+            model_h5_src = self._path.with_suffix(".model.h5")
+            self._bridge.h5(str(model_h5_src))
+            self._model_h5_sidecar = model_h5_src
+
         self._writer.open(
             fem=self._fem,
             source_type="domain_capture",
             source_path="<openseespy>",
+            model_h5_src=model_h5_src,
         )
         # Categorise records up-front
         for rec in self._spec.records:
@@ -369,6 +394,20 @@ class DomainCapture:
         if self._writer is not None:
             self._writer.close()
             self._writer = None
+        # Phase 4 (ADR 0020) — once the Composed file's ``/opensees/``
+        # zone has been written, the bridge-emitted sidecar model.h5
+        # is redundant (the run file is self-contained). Remove it so
+        # the user's directory stays clean. Tolerate missing-file: a
+        # failed __enter__ before the bridge wrote the sidecar would
+        # leave ``_model_h5_sidecar`` pointing at a non-existent path.
+        if self._model_h5_sidecar is not None:
+            try:
+                self._model_h5_sidecar.unlink(missing_ok=True)
+            except OSError:
+                # Best-effort cleanup; never let it mask a real
+                # exception from the analysis loop.
+                pass
+            self._model_h5_sidecar = None
 
     # ------------------------------------------------------------------
     # Construction paths (Phase 9 commit 5 — D8: implicit ndm/ndf)
@@ -416,6 +455,15 @@ class DomainCapture:
         -------
         DomainCapture
             Ready to be used as a context manager.
+
+        Notes
+        -----
+        Phase 4 (ADR 0020) — this entry point does not accept a
+        ``bridge=`` kwarg because there is no live bridge in scope.
+        For the Composed-file pattern with a file-based workflow,
+        the caller can pre-build the bridge themselves and pass it
+        via :meth:`DomainCapture` (the constructor) instead of
+        ``from_h5``.
         """
         from ...opensees.emitter import h5_reader
 

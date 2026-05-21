@@ -26,6 +26,12 @@ VIEWERS_DIR = Path(__file__).resolve().parent.parent / "src" / "apeGmsh" / "view
 ALLOWED_OPENSEES_MODULES = frozenset({
     # Phase 8.7 acceptance: only the reference h5 reader is allowed.
     "apeGmsh.opensees.emitter.h5_reader",
+    # Phase 8 (ADR 0020 INV-1): the ``__main__`` CLI needs the
+    # OpenSeesModel symbol to forward ``--model-h5`` into
+    # ``Results.from_mpco(...)``.  The leak is confined to the CLI
+    # entry-point; the rest of viewers/ remains pure-h5.
+    "apeGmsh.opensees.OpenSeesModel",
+    "apeGmsh.opensees",
 })
 
 
@@ -128,6 +134,83 @@ def test_viewers_have_no_mesh_or_opensees_imports() -> None:
             f"Found {len(rel_leaks)} forbidden import(s):\n{msg}\n\n"
             "See ADR 0014 (decisions/0014-viewer-is-pure-h5-consumer.md) "
             "and phase-8.7-scope.md §6 for the contract."
+        )
+
+
+# =====================================================================
+# Phase 5 (ADR 0020) — removed-surface scans
+# =====================================================================
+#
+# These tests pin the negative space the Phase 5 collapse opened up:
+# the now-removed ``_resolve_effective_model_h5`` resolver and the
+# ``_pending_model_h5`` field. Both surfaces lived only on
+# :class:`ResultsViewer` and have no replacement (the chain forward
+# ``Results.model -> OpenSeesModel`` subsumed them). If either string
+# reappears in ``src/`` it's a regression — the AST-walk version
+# below is robust to comments / docstrings.
+
+
+def _src_root() -> Path:
+    return VIEWERS_DIR.parent.parent  # src/apeGmsh -> src/
+
+
+def _scan_for_substring(needle: str) -> list[tuple[Path, int, str]]:
+    """Return every ``(path, lineno, line)`` under ``src/`` mentioning
+    ``needle`` in a real code position (not just a docstring or
+    comment). Matches *any* mention because the symbols are private
+    enough that comment references should also be cleaned up."""
+    hits: list[tuple[Path, int, str]] = []
+    for path in _src_root().rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if needle in line:
+                hits.append((path, lineno, line))
+    return hits
+
+
+def test_no_resolve_effective_model_h5() -> None:
+    """``_resolve_effective_model_h5`` was removed in Phase 5. The
+    chain-forward replacement is the symmetric
+    ``_build_viewer_data`` branching gated on ``results.model``.
+
+    See ADR 0020 §Decision / INV-5.
+    """
+    hits = _scan_for_substring("_resolve_effective_model_h5")
+    if hits:
+        rel = [
+            (str(p.relative_to(_src_root())), lno, line.strip())
+            for p, lno, line in hits
+        ]
+        msg = "\n".join(f"  {p}:{lno}  →  {ln!r}" for p, lno, ln in rel)
+        raise AssertionError(
+            "_resolve_effective_model_h5 was removed in Phase 5 (ADR 0020) "
+            "but still appears in src/. Drop the references; the "
+            "chain-forward replacement is _build_viewer_data gated on "
+            f"results.model.\n{msg}"
+        )
+
+
+def test_no_pending_model_h5_field() -> None:
+    """``_pending_model_h5`` was the legacy deprecation carrier on
+    :class:`ResultsViewer`; it's now ``_legacy_model_h5`` (clearly
+    deprecation-tagged) so any remaining ``_pending_model_h5``
+    reference is stale."""
+    hits = _scan_for_substring("_pending_model_h5")
+    if hits:
+        rel = [
+            (str(p.relative_to(_src_root())), lno, line.strip())
+            for p, lno, line in hits
+        ]
+        msg = "\n".join(f"  {p}:{lno}  →  {ln!r}" for p, lno, ln in rel)
+        raise AssertionError(
+            "_pending_model_h5 was removed in Phase 5 (ADR 0020) but "
+            "still appears in src/. The deprecation carrier is now "
+            f"_legacy_model_h5.\n{msg}"
         )
 
 

@@ -8,6 +8,8 @@ import pytest
 
 from apeGmsh.results import Results
 
+from tests.conftest import _stub_model_h5_path
+
 _FIXTURE = Path(__file__).parent / "fixtures" / "results" / "elasticFrame.mpco"
 
 
@@ -20,13 +22,13 @@ def mpco_path() -> Path:
 
 def test_nodes_have_3d_coords_even_if_2d_source(mpco_path: Path) -> None:
     """All apeGmsh FEMData carry 3-column coords, even for 2D MPCO files."""
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         coords = np.asarray(r.fem.nodes.coords)
         assert coords.shape[1] == 3
 
 
 def test_element_groups_per_class(mpco_path: Path) -> None:
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         type_names = [g.type_name for g in r.fem.elements]
         # The fixture has just one element class (ElasticBeam3d)
         assert len(type_names) == 1
@@ -36,14 +38,14 @@ def test_element_groups_per_class(mpco_path: Path) -> None:
 
 def test_synthetic_codes_are_negative(mpco_path: Path) -> None:
     """MPCO-derived element codes use ``-class_tag`` to avoid Gmsh collision."""
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         for group in r.fem.elements:
             assert group.element_type.code < 0
 
 
 def test_pg_queries_without_regions_return_empty_or_raise(mpco_path: Path) -> None:
     """The fixture has no MPCO Regions → no PGs; pg= queries fail clearly."""
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         # No PGs registered → unknown-name lookup raises.
         with pytest.raises((KeyError, ValueError)):
@@ -52,7 +54,7 @@ def test_pg_queries_without_regions_return_empty_or_raise(mpco_path: Path) -> No
 
 def test_id_query_works_without_pg(mpco_path: Path) -> None:
     """ID-based queries work without PG/label support."""
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         s0 = r.stage(r.stages[0].id)
         all_ids = np.asarray(r.fem.nodes.ids, dtype=np.int64)
         slab = s0.nodes.get(component="displacement_x", ids=all_ids[:5])
@@ -65,7 +67,7 @@ def test_snapshot_id_does_not_match_native(g, mpco_path: Path, tmp_path: Path) -
     This is by design — element type codes differ (negated class_tag vs
     Gmsh codes). bind() between the two would correctly refuse.
     """
-    with Results.from_mpco(mpco_path) as r_mpco:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r_mpco:
         mpco_id = r_mpco.fem.snapshot_id
 
     # Build a native fem (different mesh — but illustrates the point).
@@ -79,3 +81,46 @@ def test_snapshot_id_does_not_match_native(g, mpco_path: Path, tmp_path: Path) -
     # tags so the hashes would still differ. This documents the design
     # contract for users.
     assert native_fem.snapshot_id != mpco_id
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 (ADR 0020) — from_mpco(model_h5=) attaches an OpenSeesModel
+# ---------------------------------------------------------------------------
+
+def test_from_mpco_with_model_h5_populates_model(
+    mpco_path: Path, tmp_path: Path,
+) -> None:
+    """``from_mpco(model_h5=path)`` loads the broker; INV-3 — no derived h5.
+
+    The MPCO file at ``mpco_path`` has no ``/opensees/`` zone of its
+    own (project_mpco_no_vecxz memory) — the only way an MPCO Results
+    gets a broker handle is via the ``model_h5=`` kwarg on
+    :meth:`Results.from_mpco`.
+    """
+    from apeGmsh.opensees import OpenSeesModel
+    from tests.opensees.h5._opensees_model_fixtures import (
+        build_simple_frame_h5,
+    )
+
+    model_path, _ = build_simple_frame_h5(tmp_path)
+    with Results.from_mpco(mpco_path, model_h5=model_path) as r:
+        assert isinstance(r.model, OpenSeesModel)
+        # Lineage propagates from the broker, not from the MPCO file.
+        assert r.lineage.fem_hash != ""
+        assert r.lineage.model_hash is not None
+
+
+def test_from_mpco_without_model_h5_leaves_model_none(
+    mpco_path: Path,
+) -> None:
+    """Phase 8 — ``model_h5=`` is REQUIRED; ``results.model`` is never None.
+
+    The legacy contract (no ``model_h5=`` → ``results.model is None``)
+    is gone: Phase 8 makes the kwarg required (TypeError on missing
+    supply).  This test now asserts the stub-model path still attaches
+    a Live :class:`OpenSeesModel` to the Results.
+    """
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
+        assert r.model is not None
+        # Lineage propagates from the (stub) broker.
+        assert r.lineage.model_hash is not None

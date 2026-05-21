@@ -19,6 +19,8 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fixtures
@@ -76,7 +78,7 @@ def director_with_nodes_and_gauss(g, tmp_path: Path):
         w.end_stage()
 
     from apeGmsh.viewers.diagrams._director import ResultsDirector
-    return ResultsDirector(Results.from_native(path))
+    return ResultsDirector(Results.from_native(path, model=_open_model_from_h5(path)))
 
 
 # =====================================================================

@@ -18,6 +18,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.conftest import _open_model_from_h5
+
 
 _DEFAULT_TCL_LAUNCHERS = [
     r"C:\Program Files\El Ladruno OpenSees\opensees_ladruno.bat",
@@ -48,15 +50,8 @@ class _MinimalFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 3
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset("ids", data=self.nodes.ids)
-        n.create_dataset("coords", data=self.nodes.coords)
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=3)
 
 
 def test_tet_stress_full_cycle_through_transcoder(tmp_path: Path) -> None:
@@ -163,7 +158,7 @@ def test_tet_stress_full_cycle_through_transcoder(tmp_path: Path) -> None:
 
     # ── Read back ────────────────────────────────────────────────────
     from apeGmsh.results import Results
-    with Results.from_native(target) as r:
+    with Results.from_native(target, model=_open_model_from_h5(target)) as r:
         assert len(r.stages) == 1
         s = r.stage(r.stages[0].id)
 

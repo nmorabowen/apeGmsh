@@ -14,6 +14,8 @@ import pytest
 
 from apeGmsh.results import Results
 
+from tests.conftest import _stub_model_h5_path
+
 
 _FRAME = Path("tests/fixtures/results/elasticFrame.mpco")
 _SPRINGS = Path("tests/fixtures/results/zl_springs.mpco")
@@ -23,7 +25,7 @@ _SPRINGS = Path("tests/fixtures/results/zl_springs.mpco")
 def frame_stage():
     if not _FRAME.exists():
         pytest.skip(f"Missing fixture: {_FRAME}")
-    r = Results.from_mpco(_FRAME)
+    r = Results.from_mpco(_FRAME, model_h5=_stub_model_h5_path())
     return r.stage(r.stages[0].name)
 
 
@@ -77,7 +79,7 @@ def test_diagnose_marks_empty_topologies(frame_stage):
 def test_diagnose_finds_spring_components_on_springs_fixture():
     if not _SPRINGS.exists():
         pytest.skip(f"Missing fixture: {_SPRINGS}")
-    r = Results.from_mpco(_SPRINGS)
+    r = Results.from_mpco(_SPRINGS, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     report = s.inspect.diagnose("spring_force_0")
     assert "FOUND in: springs" in report
@@ -87,7 +89,7 @@ def test_diagnose_handles_explicit_stage_arg():
     """Explicit stage arg must work even when there are multiple stages."""
     if not _FRAME.exists():
         pytest.skip(f"Missing fixture: {_FRAME}")
-    r = Results.from_mpco(_FRAME)
+    r = Results.from_mpco(_FRAME, model_h5=_stub_model_h5_path())
     if len(r.stages) < 2:
         pytest.skip("fixture has only one stage")
     name = r.stages[1].name

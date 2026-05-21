@@ -33,6 +33,8 @@ from apeGmsh.viewers.diagrams import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 # Fixture: 2-D plate -> shells with N layers, M sub-GPs each.
 # value[step, row] = step * 1000 + row
@@ -101,7 +103,7 @@ def layer_results(g, tmp_path: Path):
         w.end_stage()
 
     return (
-        Results.from_native(path),
+        Results.from_native(path, model=_open_model_from_h5(path)),
         shell_eids, gps_per_shell, layers_per_gp,
         eid_arr, gp_arr, layer_arr, sub_arr, thickness_arr, values,
     )

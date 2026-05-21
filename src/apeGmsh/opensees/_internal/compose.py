@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "_compose_model_h5",
+    "_replay_into",
     "_try_write_broker_zone",
     "_override_schema_version",
     "_path_stem",
@@ -71,6 +72,11 @@ def _compose_model_h5(
     from ...cuts._h5_io import write_cuts_into
     from ...mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
     from ..emitter.h5 import SCHEMA_VERSION
+    from .lineage import (
+        compute_fem_hash,
+        compute_model_hash,
+        write_lineage_attrs,
+    )
 
     with h5py.File(path, "w") as f:
         broker_used = _try_write_broker_zone(
@@ -83,7 +89,9 @@ def _compose_model_h5(
             # Stub FEM or otherwise missing broker surface — fall back
             # to bridge-only /meta with the bridge's own SCHEMA_VERSION
             # (the file still validates; absent neutral zone is the
-            # right "no broker" signal).
+            # right "no broker" signal).  The bridge's ``_write_meta``
+            # already stamps both ``schema_version`` and
+            # ``opensees_schema_version`` per ADR 0023.
             emitter._write_meta(f)
             _override_schema_version(f, SCHEMA_VERSION)
         if snapshot_id is not None and "meta" in f:
@@ -92,10 +100,37 @@ def _compose_model_h5(
             # exact /meta/snapshot_id byte string read off the source.
             f["meta"].attrs["snapshot_id"] = snapshot_id
         emitter.write_opensees_into(f)
+        # ADR 0023 §"Three per-zone version stamps" — when the broker
+        # wrote /meta it only stamped the neutral per-zone key; the
+        # bridge now contributes /opensees/... and so we add the
+        # opensees per-zone key alongside the existing neutral one.
+        # Bridge-fallback files already have ``opensees_schema_version``
+        # stamped by ``emitter._write_meta`` so this is a no-op there.
+        if broker_used and "meta" in f:
+            f["meta"].attrs["opensees_schema_version"] = SCHEMA_VERSION
         # Empty sequences are a no-op inside write_cuts_into — neither
         # /opensees/cuts/ nor /opensees/sweeps/ is created when nothing
         # was supplied.
         write_cuts_into(f, cuts=cuts, sweeps=sweeps)
+
+        # ADR 0021 — stamp the lineage triple ``/meta/lineage/...``
+        # after every zone is written.  ``fem_hash`` is recomputed
+        # from the neutral zone (INV-1 byte-identical to
+        # ``FEMData.snapshot_id``); ``model_hash`` chains it with the
+        # canonical bytes of ``/opensees/...`` minus cuts and sweeps
+        # (INV-4).  Standalone ``model.h5`` files have no run zone
+        # ⇒ ``results_hash`` is unwritten here (NativeWriter stamps
+        # it at close time for results files).
+        if "meta" in f:
+            fem_hash = compute_fem_hash(f) if broker_used else ""
+            model_hash = None
+            if "opensees" in f:
+                model_hash = compute_model_hash(fem_hash, f["opensees"])
+            write_lineage_attrs(
+                f["meta"],
+                fem_hash=fem_hash if fem_hash else None,
+                model_hash=model_hash,
+            )
 
 
 def _try_write_broker_zone(
@@ -153,3 +188,221 @@ def _path_stem(path: str) -> str:
     base = os.path.basename(path)
     stem, _ = os.path.splitext(base)
     return stem or "model"
+
+
+def _replay_into(
+    emitter: Any,
+    *,
+    ndm: int,
+    ndf: int,
+    nodes: "Sequence[tuple[int, tuple[float, ...]]]" = (),
+    uniaxial_materials: "Sequence[Any]" = (),
+    nd_materials: "Sequence[Any]" = (),
+    simple_sections: "Sequence[Any]" = (),
+    complex_sections: "Sequence[Any]" = (),
+    transforms: "Sequence[Any]" = (),
+    beam_integrations: "Sequence[Any]" = (),
+    time_series: "Sequence[Any]" = (),
+    elements: "Sequence[Any]" = (),
+    fixes: "Sequence[Any]" = (),
+    masses: "Sequence[Any]" = (),
+    patterns: "Sequence[Any]" = (),
+    recorders: "Sequence[Any]" = (),
+    analysis_attrs: "dict[str, Any] | None" = None,
+    analyze_call: "tuple[int, float | None] | None" = None,
+) -> None:
+    """Walk a typed-record graph and re-emit it through ``emitter``.
+
+    Used by :meth:`OpenSeesModel.build` (ADR 0019) to produce
+    ``tcl`` / ``py`` / ``live`` / ``h5`` emissions from a rehydrated
+    record graph.  The single helper centralises the protocol-call
+    order — materials before sections, sections before elements,
+    time-series before patterns — so the four build targets agree on
+    a single deck shape.
+
+    The order mirrors :meth:`BuiltModel.emit` for the categories
+    :class:`OpenSeesModel` carries:
+
+      1. ``emitter.model(ndm=, ndf=)``  — model directive
+      2. ``emitter.node(tag, x, y, z)``  — every FEM node
+      3. ``emitter.uniaxialMaterial`` / ``emitter.nDMaterial``
+      4. ``emitter.section`` (simple) and the open/patch/fiber/layer/close
+         sequence (complex)
+      5. ``emitter.geomTransf``
+      6. ``emitter.beamIntegration``
+      7. ``emitter.timeSeries``
+      8. ``emitter.element``  (with ``set_element_nodes`` /
+         ``set_current_fem_element_id`` side channels for the H5 path)
+      9. ``emitter.fix`` / ``emitter.mass``
+      10. ``emitter.pattern_open`` (+ load / sp / eleLoad +
+          pattern_close)
+      11. ``emitter.recorder`` (wrapped in declaration-begin/end when
+          ``decl_context`` is present)
+      12. ``emitter.constraints`` / ``numberer`` / ``system`` /
+          ``test`` / ``algorithm`` / ``integrator`` / ``analysis``
+          + ``emitter.analyze`` if present
+
+    .. note::
+
+        **Tag identity may diverge from a fresh ``apeSees(fem).run()``**
+        (ADR 0019 INV-5).  The bridge's :class:`TagAllocator`
+        allocations are lost across H5 round-trip; this helper
+        replays exactly the tags stored in the record graph, which
+        the bridge picked deterministically — but reordering at the
+        bridge level (a future PR) could break that.  Callers who
+        need bridge-time tag stability must capture the
+        :class:`BuiltModel` from :meth:`apeSees.build` directly and
+        not round-trip through H5.
+
+    Parameters mirror :class:`apeGmsh.opensees._internal.typed_records`
+    field names; see :mod:`apeGmsh.opensees.opensees_model` for the
+    canonical instantiation pattern.
+    """
+    from .tag_resolution import set_current_fem_element_id, set_element_nodes
+
+    # 1. Model directive.
+    emitter.model(ndm=int(ndm), ndf=int(ndf))
+
+    # 2. Nodes.
+    for tag, coords in nodes:
+        emitter.node(int(tag), *(float(c) for c in coords))
+
+    # 3. Materials — uniaxial first, then nD.  ADR 0011 schema mirrors
+    # this group nesting; the emitter doesn't enforce order, but the
+    # OpenSees domain does (a section_open referencing matTag=1 needs
+    # the uniaxialMaterial 1 already present).
+    for rec in uniaxial_materials:
+        emitter.uniaxialMaterial(rec.type_token, int(rec.tag), *rec.params)
+    for rec in nd_materials:
+        emitter.nDMaterial(rec.type_token, int(rec.tag), *rec.params)
+
+    # 4. Sections — simple (Elastic / Aggregator) then complex
+    # (Fiber).  Same ordering rule: a section_open referencing a
+    # matTag needs the material registered first (already done).
+    for rec in simple_sections:
+        emitter.section(rec.type_token, int(rec.tag), *rec.params)
+    for rec in complex_sections:
+        emitter.section_open(rec.type_token, int(rec.tag), *rec.params)
+        for patch in rec.patches:
+            emitter.patch(patch.kind, *patch.args)
+        for fiber in rec.fibers:
+            emitter.fiber(fiber.y, fiber.z, fiber.area, int(fiber.mat_tag))
+        for layer in rec.layers:
+            emitter.layer(layer.kind, *layer.args)
+        emitter.section_close()
+
+    # 5. Transforms.  Schema deviation (TransformRecord docstring):
+    # one record per ``geomTransf`` call, not per spec.  Replay
+    # produces the same call shape: one ``geomTransf`` line per
+    # record's stored ``vec``.
+    for rec in transforms:
+        emitter.geomTransf(rec.type_token, int(rec.tag), *rec.vec)
+
+    # 6. Beam integration.
+    for rec in beam_integrations:
+        emitter.beamIntegration(rec.type_token, int(rec.tag), *rec.args)
+
+    # 7. Time series.
+    for rec in time_series:
+        emitter.timeSeries(rec.type_token, int(rec.tag), *rec.args)
+
+    # 8. Elements.  The H5 emitter consults two side channels for
+    # connectivity (``set_element_nodes``) and FEM element id
+    # (``set_current_fem_element_id``); driving them here keeps the
+    # H5 round-trip byte-stable AND lets Tcl / Py / Live emitters
+    # ignore the calls (their ``set_*`` helpers no-op when the attr
+    # is absent).
+    for rec in elements:
+        if rec.connectivity:
+            set_element_nodes(emitter, tuple(int(c) for c in rec.connectivity))
+        set_current_fem_element_id(emitter, int(rec.fem_eid))
+        emitter.element(rec.type_token, int(rec.tag), *rec.args)
+
+    # 9. Fix / mass (model-level).
+    for rec in fixes:
+        emitter.fix(int(rec.tag), *(int(d) for d in rec.dofs))
+    for rec in masses:
+        emitter.mass(int(rec.tag), *(float(v) for v in rec.values))
+
+    # 10. Patterns.  ``args`` are the original ``pattern_open`` args
+    # (e.g. ``(ts_tag,)`` for Plain).  Inside each pattern: loads,
+    # sps, ele_loads in the order the bridge emitted them.
+    for rec in patterns:
+        emitter.pattern_open(rec.type_token, int(rec.tag), *rec.args)
+        for load in rec.loads:
+            emitter.load(int(load.target), *load.forces)
+        for sp in rec.sps:
+            emitter.sp(int(sp.target), int(sp.dof), float(sp.value))
+        for ele_load in rec.ele_loads:
+            emitter.eleLoad(*ele_load.args)
+        emitter.pattern_close()
+
+    # 11. Recorders.  Schema 2.3.0 wraps declared recorders in a
+    # begin/end context; the helper replays the wrapping so the
+    # downstream emitter sees the same calls the bridge originally
+    # produced.  Typed primitives (``decl_context is None``) emit
+    # bare.
+    for rec in recorders:
+        ctx = rec.decl_context
+        if ctx is not None:
+            emitter.recorder_declaration_begin(
+                declaration_name=ctx.declaration_name,
+                record_name=ctx.record_name,
+                category=ctx.category,
+                components=ctx.components,
+                raw=ctx.raw,
+                pg=ctx.pg,
+                label=ctx.label,
+                selection=ctx.selection,
+                ids=ctx.ids,
+                dt=ctx.dt,
+                n_steps=ctx.n_steps,
+                file_root=ctx.file_root,
+            )
+            try:
+                emitter.recorder(rec.kind, *rec.args)
+            finally:
+                emitter.recorder_declaration_end()
+        else:
+            emitter.recorder(rec.kind, *rec.args)
+
+    # 12. Analysis chain.  ``analysis_attrs`` is the same flat dict
+    # the H5 emitter accumulates via its constraints / numberer /
+    # system / test / algorithm / integrator / analysis methods.
+    if analysis_attrs:
+        _replay_analysis_chain(emitter, analysis_attrs)
+    if analyze_call is not None:
+        steps, dt = analyze_call
+        if dt is None:
+            emitter.analyze(steps=int(steps))
+        else:
+            emitter.analyze(steps=int(steps), dt=float(dt))
+
+
+def _replay_analysis_chain(
+    emitter: Any, attrs: "dict[str, Any]",
+) -> None:
+    """Replay an analysis-chain flat dict onto ``emitter``.
+
+    Mirrors how :class:`H5Emitter` accumulates analysis-chain calls
+    into ``self._analysis_attrs`` — each key maps to one Protocol
+    method; ``<key>_args`` carries the trailing positional args when
+    present.
+    """
+    if "handler" in attrs:
+        args = attrs.get("handler_args", ())
+        emitter.constraints(attrs["handler"], *args)
+    if "numberer" in attrs:
+        emitter.numberer(attrs["numberer"])
+    if "system" in attrs:
+        emitter.system(attrs["system"], *attrs.get("system_args", ()))
+    if "test" in attrs:
+        emitter.test(attrs["test"], *attrs.get("test_args", ()))
+    if "algorithm" in attrs:
+        emitter.algorithm(attrs["algorithm"], *attrs.get("algorithm_args", ()))
+    if "integrator" in attrs:
+        emitter.integrator(
+            attrs["integrator"], *attrs.get("integrator_args", ()),
+        )
+    if "analysis" in attrs:
+        emitter.analysis(attrs["analysis"])

@@ -29,6 +29,8 @@ from apeGmsh.viewers.overlays.probe_overlay import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fixture: small results with one displacement component
@@ -64,7 +66,7 @@ def results_for_probes(g, tmp_path: Path):
             components=components,
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 @pytest.fixture

@@ -98,10 +98,14 @@ def test_embedded_fem_carries_snapshot_id_attr(g, tmp_path: Path) -> None:
     with NativeWriter(path) as w:
         w.open(fem=fem)
 
-    # Read the attr directly via h5py
+    # Read the attr directly via h5py.  Phase 4 cleanup (ADR 0020):
+    # the embedded ``/model/`` group now uses the rich neutral-zone
+    # layout, so snapshot_id lives at ``/model/meta`` attrs (not on
+    # the group itself like the old lean layout).
     with h5py.File(path, "r") as f:
         assert "/model" in f
-        sid = str(f["/model"].attrs["snapshot_id"])
+        assert "/model/meta" in f
+        sid = str(f["/model/meta"].attrs["snapshot_id"])
         assert sid == fem.snapshot_id
 
 
@@ -142,17 +146,23 @@ def test_mesh_selection_roundtrips(g, tmp_path: Path) -> None:
 
 def test_absent_optional_children_do_not_raise(g, tmp_path: Path) -> None:
     """Reading a /model that lacks the optional physical_groups /
-    labels / mesh_selection subgroups must yield empty structures, not
-    raise.
+    labels / mesh_selections subgroups must yield empty structures,
+    not raise.
 
-    Regression: ``read_fem_from_h5`` probed these optional children
-    with ``h5py.Group.get(name)``. For a *missing* name h5py resolves
+    Regression: ``read_fem_h5`` probed these optional children with
+    ``h5py.Group.get(name)``. For a *missing* name h5py resolves
     through ``h5o.open``, whose failure path on the manylinux HDF5
     build reads an uninitialised buffer and raises a
     non-deterministic ``UnicodeDecodeError`` (passed on Windows, was
     intermittently red on Linux CI) instead of the ``KeyError`` that
     ``get`` swallows. The fix probes with ``name in group``
     (``H5Lexists``), which never opens the object.
+
+    Phase 4 cleanup (ADR 0020): ``/model/`` now uses the rich neutral
+    layout, so the optional children live at ``/model/physical_groups``,
+    ``/model/labels``, ``/model/mesh_selections`` (not under
+    ``/model/nodes/`` and ``/model/elements/`` like the old lean
+    layout).
     """
     g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="box")
     g.physical.add_volume("box", name="Body")
@@ -165,15 +175,19 @@ def test_absent_optional_children_do_not_raise(g, tmp_path: Path) -> None:
         w.open(fem=fem)
 
     # Strip every optional child so the read path takes the
-    # absent-child branch for all five probes.
+    # absent-child branch for all probes.  Stripping changes the
+    # rebuilt FEM's snapshot_id (no PGs ≠ original PGs), so clear
+    # the stored attr to avoid the B4 verification mismatch — the
+    # test's contract is "absent children don't raise from the
+    # presence probes", not "stored snapshot_id survives mutation".
     with h5py.File(path, "r+") as f:
         for sub in (
-            "/model/nodes/physical_groups", "/model/nodes/labels",
-            "/model/elements/physical_groups", "/model/elements/labels",
+            "/model/physical_groups", "/model/labels",
+            "/model/mesh_selections",
         ):
             if sub in f:
                 del f[sub]
-        assert "/model/mesh_selection" not in f
+        f["/model/meta"].attrs["snapshot_id"] = ""
 
     with NativeReader(path) as r:
         fem_back = r.fem()

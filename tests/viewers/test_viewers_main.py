@@ -1,9 +1,14 @@
 """``python -m apeGmsh.viewers`` — argparse + dispatch coverage.
 
 The CLI itself can't easily run inside pytest (it would open a Qt
-window). Instead we monkeypatch ``Results.from_native`` /
-``Results.from_mpco`` and ``Results.viewer`` to capture the call shape,
-then drive ``main`` directly.
+window). Instead we monkeypatch ``_open_results`` (or its underlying
+``Results.from_native`` / ``Results.from_mpco``) and ``Results.viewer``
+to capture the call shape, then drive ``main`` directly.
+
+Phase 8 (ADR 0020 INV-1): ``Results.viewer(...)`` no longer takes
+``model_h5=``. The CLI's ``--model-h5 PATH`` is now exclusively a
+sibling-model pointer for the ``.mpco`` code path, forwarded into
+``Results.from_mpco(path, model_h5=...)``.
 """
 from __future__ import annotations
 
@@ -12,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from apeGmsh import results as results_pkg
+import apeGmsh.viewers.__main__ as main_mod
 from apeGmsh.viewers.__main__ import main
 
 
@@ -27,26 +32,31 @@ class _StubResults:
         self.path = path
         self.viewer_calls: list[tuple[Any, ...]] = []
 
-    def viewer(self, *, blocking: bool = True, title=None, model_h5=None):
-        self.viewer_calls.append((blocking, title, model_h5))
+    def viewer(self, *, blocking: bool = True, title=None):
+        self.viewer_calls.append((blocking, title))
         return None
 
 
 @pytest.fixture
-def stub_readers(monkeypatch):
-    """Patch the two Results constructors to return _StubResults."""
-    captured: dict[str, Any] = {"native": [], "mpco": []}
+def patch_open_results(monkeypatch):
+    """Patch ``_open_results`` to bypass the real readers.
 
-    def _fake_native(path):
-        captured["native"].append(Path(path))
-        return _StubResults(Path(path))
+    Returns the list of ``(path, model_h5)`` calls plus the stub
+    Results each call returned, so tests can inspect both the
+    dispatch shape and any subsequent ``viewer(...)`` invocations.
+    """
+    captured: dict[str, Any] = {
+        "calls": [],         # list[tuple[Path, Path | None]]
+        "results": [],       # list[_StubResults]
+    }
 
-    def _fake_mpco(path):
-        captured["mpco"].append(Path(path))
-        return _StubResults(Path(path))
+    def _fake_open(path: Path, model_h5):
+        stub = _StubResults(Path(path))
+        captured["calls"].append((Path(path), model_h5))
+        captured["results"].append(stub)
+        return stub
 
-    monkeypatch.setattr(results_pkg.Results, "from_native", staticmethod(_fake_native))
-    monkeypatch.setattr(results_pkg.Results, "from_mpco", staticmethod(_fake_mpco))
+    monkeypatch.setattr(main_mod, "_open_results", _fake_open)
     return captured
 
 
@@ -54,159 +64,96 @@ def stub_readers(monkeypatch):
 # Dispatch
 # =====================================================================
 
-def test_main_dispatches_h5_to_from_native(tmp_path: Path, stub_readers):
+def test_main_dispatches_h5(tmp_path: Path, patch_open_results):
     fpath = tmp_path / "run.h5"
-    fpath.write_bytes(b"")     # exists, contents irrelevant — readers stubbed
+    fpath.write_bytes(b"")
     code = main([str(fpath)])
     assert code == 0
-    assert stub_readers["native"] == [fpath]
-    assert stub_readers["mpco"] == []
+    assert patch_open_results["calls"] == [(fpath, None)]
 
 
-def test_main_dispatches_mpco_to_from_mpco(tmp_path: Path, stub_readers):
+def test_main_dispatches_mpco_with_model_h5(tmp_path: Path, patch_open_results):
     fpath = tmp_path / "run.mpco"
     fpath.write_bytes(b"")
-    code = main([str(fpath)])
+    model_h5 = tmp_path / "frame.model.h5"
+    model_h5.write_bytes(b"")
+    code = main([str(fpath), "--model-h5", str(model_h5)])
     assert code == 0
-    assert stub_readers["mpco"] == [fpath]
-    assert stub_readers["native"] == []
+    assert patch_open_results["calls"] == [(fpath, model_h5)]
 
 
-def test_main_extension_match_is_case_insensitive(tmp_path: Path, stub_readers):
-    fpath = tmp_path / "RUN.MPCO"
-    fpath.write_bytes(b"")
-    code = main([str(fpath)])
-    assert code == 0
-    assert stub_readers["mpco"] == [fpath]
-
-
-def test_main_missing_file_returns_2(tmp_path: Path, stub_readers, capsys):
+def test_main_missing_file_returns_2(tmp_path: Path, patch_open_results, capsys):
     code = main([str(tmp_path / "nope.h5")])
     assert code == 2
     err = capsys.readouterr().err
     assert "not found" in err
-    assert stub_readers["native"] == []
+    assert patch_open_results["calls"] == []
 
 
-def test_main_passes_title(tmp_path: Path, stub_readers):
+def test_main_passes_title(tmp_path: Path, patch_open_results):
     fpath = tmp_path / "run.h5"
     fpath.write_bytes(b"")
-    # Patch the stub class to capture viewer kwargs by chaining via the
-    # captured native call — both the constructor and the viewer call
-    # need to run, so we intercept the title via the stub's record.
-    stash = []
-
-    def _fake_native(path):
-        r = _StubResults(Path(path))
-        # Replace with a viewer that records kwargs
-        def viewer(*, blocking=True, title=None, model_h5=None):
-            stash.append({
-                "blocking": blocking, "title": title, "model_h5": model_h5,
-            })
-        r.viewer = viewer
-        return r
-
-    import apeGmsh.viewers.__main__ as mod
-    original = mod._open_results
-    mod._open_results = lambda p: _fake_native(p)
-    try:
-        code = main([str(fpath), "--title", "My Title"])
-    finally:
-        mod._open_results = original
-
+    code = main([str(fpath), "--title", "My Title"])
     assert code == 0
-    assert stash == [
-        {"blocking": True, "title": "My Title", "model_h5": None},
-    ]
+    assert len(patch_open_results["results"]) == 1
+    stub = patch_open_results["results"][0]
+    assert stub.viewer_calls == [(True, "My Title")]
 
 
-def test_main_invokes_viewer_blocking(tmp_path: Path, stub_readers):
+def test_main_invokes_viewer_blocking(tmp_path: Path, patch_open_results):
     """`__main__` always calls viewer(blocking=True) — it IS the subprocess."""
     fpath = tmp_path / "run.h5"
     fpath.write_bytes(b"")
-
-    stash = []
-
-    def _fake_native(path):
-        r = _StubResults(Path(path))
-        def viewer(*, blocking=True, title=None, model_h5=None):
-            stash.append(blocking)
-        r.viewer = viewer
-        return r
-
-    import apeGmsh.viewers.__main__ as mod
-    original = mod._open_results
-    mod._open_results = lambda p: _fake_native(p)
-    try:
-        code = main([str(fpath)])
-    finally:
-        mod._open_results = original
-
+    code = main([str(fpath)])
     assert code == 0
-    assert stash == [True]
+    stub = patch_open_results["results"][0]
+    assert stub.viewer_calls == [(True, None)]
 
 
 # =====================================================================
-# --model-h5 forwarding (P2 / ADR 0018)
+# --model-h5: required for .mpco, ignored for native .h5
 # =====================================================================
 
-def test_main_forwards_model_h5(tmp_path: Path, stub_readers):
-    """`--model-h5 <path>` arrives at ``results.viewer(model_h5=...)``."""
+def test_main_mpco_without_model_h5_exits_2(tmp_path: Path, capsys):
+    """`.mpco` path with no ``--model-h5`` exits 2 with a helpful message.
+
+    The ``model_h5 is None`` branch in ``_open_results`` calls
+    ``sys.exit(2)`` before any Results call, so no patching is needed
+    for the readers themselves — ``SystemExit`` propagates out of
+    ``main`` and we assert on its code.
+    """
+    fpath = tmp_path / "run.mpco"
+    fpath.write_bytes(b"")
+    with pytest.raises(SystemExit) as excinfo:
+        main([str(fpath)])
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "--model-h5" in err
+    assert ".mpco" in err
+
+
+def test_main_native_ignores_model_h5_arg(tmp_path: Path, patch_open_results):
+    """Native ``.h5`` path with ``--model-h5`` — the CLI forwards it
+    into ``_open_results``, which for native files auto-resolves the
+    model from the results file itself.  We just check the arg makes
+    it through; the auto-resolve semantics are exercised by the
+    Results test suite."""
     fpath = tmp_path / "run.h5"
     fpath.write_bytes(b"")
-    model_path = tmp_path / "frame.model.h5"
-    model_path.write_bytes(b"")
-
-    stash: list[dict] = []
-
-    def _fake_native(path):
-        r = _StubResults(Path(path))
-        def viewer(*, blocking=True, title=None, model_h5=None):
-            stash.append({
-                "blocking": blocking, "title": title, "model_h5": model_h5,
-            })
-        r.viewer = viewer
-        return r
-
-    import apeGmsh.viewers.__main__ as mod
-    original = mod._open_results
-    mod._open_results = lambda p: _fake_native(p)
-    try:
-        code = main([str(fpath), "--model-h5", str(model_path)])
-    finally:
-        mod._open_results = original
-
+    extra = tmp_path / "extra.model.h5"
+    extra.write_bytes(b"")
+    code = main([str(fpath), "--model-h5", str(extra)])
     assert code == 0
-    assert len(stash) == 1
-    assert stash[0]["blocking"] is True
-    assert stash[0]["title"] is None
-    # __main__ forwards the raw string from argparse — normalisation is
-    # the downstream ResultsViewer / ViewerData.from_h5's job.
-    assert stash[0]["model_h5"] == str(model_path)
+    # Forwarded into _open_results; the native branch in the real
+    # implementation discards it.
+    assert patch_open_results["calls"] == [(fpath, extra)]
 
 
-def test_main_omits_model_h5_when_flag_absent(tmp_path: Path, stub_readers):
-    """No ``--model-h5`` → ``viewer(model_h5=None)``, never a spurious empty
-    string. The auto-resolve in ``ResultsViewer.__init__`` then kicks in."""
-    fpath = tmp_path / "run.h5"
+def test_main_extension_match_is_case_insensitive(tmp_path: Path, patch_open_results):
+    fpath = tmp_path / "RUN.MPCO"
     fpath.write_bytes(b"")
-
-    stash: list[dict] = []
-
-    def _fake_native(path):
-        r = _StubResults(Path(path))
-        def viewer(*, blocking=True, title=None, model_h5=None):
-            stash.append({"model_h5": model_h5})
-        r.viewer = viewer
-        return r
-
-    import apeGmsh.viewers.__main__ as mod
-    original = mod._open_results
-    mod._open_results = lambda p: _fake_native(p)
-    try:
-        code = main([str(fpath)])
-    finally:
-        mod._open_results = original
-
+    model_h5 = tmp_path / "frame.model.h5"
+    model_h5.write_bytes(b"")
+    code = main([str(fpath), "--model-h5", str(model_h5)])
     assert code == 0
-    assert stash == [{"model_h5": None}]
+    assert patch_open_results["calls"] == [(fpath, model_h5)]

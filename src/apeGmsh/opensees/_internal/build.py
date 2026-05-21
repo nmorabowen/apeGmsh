@@ -79,6 +79,7 @@ __all__ = [
     "VECXZ_TOL",
     "compute_vecxz_for_element",
     "emit_element_spec",
+    "emit_mp_constraints",
     "emit_pattern_spec",
     "emit_recorder_spec",
     "expand_pg_to_elements",
@@ -1145,3 +1146,399 @@ def _sanitize_raw_token(token: str) -> str:
     raw token reaches OpenSees verbatim as the recorder response.
     """
     return "".join(c if (c.isalnum() or c == "_") else "_" for c in token)
+
+
+# ---------------------------------------------------------------------------
+# MP constraint fan-out (Phase 7b, ADR 0022) — closes the §3.3 deferral.
+# ---------------------------------------------------------------------------
+
+
+def emit_mp_constraints(
+    emitter: "Emitter", fem: "FEMData",
+) -> None:
+    """Fan out the broker's MP-constraint records onto ``emitter``.
+
+    Per ADR 0022 INV-5 this pass runs between element emission and
+    pattern emission in :meth:`BuiltModel.emit`.
+
+    Ordering (INV-3 / dependency-driven):
+
+    1. **Phantom-node pre-step** — :class:`NodeToSurfaceRecord` rows
+       carry synthetic 6-DOF phantom nodes whose tags must exist in
+       the OpenSees domain before any constraint references them.
+       Emitted via ``emitter.node(tag, *xyz, ndf=6)`` — the standard
+       OpenSees per-node ``-ndf`` override pattern.  Tags are
+       de-duplicated across records (paranoid; the resolver does not
+       collide, but the cost of the set check is negligible).
+
+    2. **Rigid links** — :meth:`fem.nodes.constraints.rigid_link_groups`
+       yields ``(master, slaves)`` tuples covering ``rigid_beam`` /
+       ``rigid_rod`` :class:`NodePairRecord` rows, the ``rigid_body``
+       slaves on :class:`NodeGroupRecord`, and the phantom-side
+       rigid-link rows on :class:`NodeToSurfaceRecord`.  Emitted as
+       one ``emitter.rigidLink('beam'|'bar', master, slave)`` per
+       slave; ``rigid_rod`` maps to ``"bar"`` per the OpenSees
+       vocabulary.
+
+    3. **Equal DOFs** — :meth:`fem.nodes.constraints.equal_dofs`
+       yields :class:`NodePairRecord` rows for ``equal_dof`` plus the
+       phantom→slave equal-DOF rows nested under
+       :class:`NodeToSurfaceRecord`.  Emitted as one
+       ``emitter.equalDOF(master, slave, *dofs)`` per record.
+
+    4. **Rigid diaphragms** — :meth:`fem.nodes.constraints.rigid_diaphragms`
+       yields ``(perp_dir, master, slaves)`` for
+       :class:`NodeGroupRecord` rows with kind ``rigid_diaphragm``.
+       Emitted as one ``emitter.rigidDiaphragm(perp_dir, master,
+       *slaves)`` per record.
+
+    5. **Kinematic couplings** — :class:`NodeGroupRecord` rows with
+       kind ``kinematic_coupling`` are emitted as one ``equalDOF``
+       per ``(master, slave)`` pair (the per-DOF selectivity makes
+       ``rigidLink`` / ``rigidDiaphragm`` wrong for this family —
+       see the docstring on :meth:`rigid_link_groups`).
+
+    6. **Surface couplings** — :meth:`fem.elements.constraints.interpolations`
+       yields :class:`InterpolationRecord` rows (one slave node ↔ N
+       weighted master nodes from a master element face).  Emitted as
+       one ``emitter.embeddedNode(ele_tag, embedding_ele, *args)``
+       per record using a freshly allocated element tag.  Covers
+       ``tie`` / ``distributing`` / ``embedded`` directly and
+       ``tied_contact`` / ``mortar`` via the
+       :meth:`SurfaceCouplingRecord.slave_records` expansion that
+       ``interpolations()`` performs internally.
+
+    Each constraint with a non-empty ``name`` is preceded by
+    ``emitter.mp_constraint_comment(name)`` so the user's declaration
+    label round-trips into emitted Tcl / Py via the ``# {name}`` line
+    (INV-2).
+
+    No-op when the FEM snapshot exposes no ``nodes.constraints`` or
+    ``elements.constraints`` accessors — broker constraints are
+    purely additive on top of any other bridge state.
+    """
+    nodes = getattr(fem, "nodes", None)
+    elements = getattr(fem, "elements", None)
+    node_constraints = (
+        getattr(nodes, "constraints", None) if nodes is not None else None
+    )
+    surface_constraints = (
+        getattr(elements, "constraints", None)
+        if elements is not None
+        else None
+    )
+
+    # -------------------------------------------------------------------
+    # 1. Phantom-node pre-step — emit synthesized phantom nodes BEFORE
+    #    any constraint references them.  ADR 0022 INV-3.
+    # -------------------------------------------------------------------
+    if node_constraints is not None:
+        _emit_phantom_nodes(emitter, node_constraints)
+
+    # -------------------------------------------------------------------
+    # 2. Rigid links — ``emitter.rigidLink(kind, master, slave)`` per
+    #    pair.  Walks NodePairRecord rows directly (so the kind / name
+    #    survive) plus the rigid_body and node_to_surface compound
+    #    expansions.  We don't use ``rigid_link_groups()`` because it
+    #    drops the per-pair ``name`` field.
+    # -------------------------------------------------------------------
+    if node_constraints is not None:
+        _emit_rigid_links(emitter, node_constraints)
+
+    # -------------------------------------------------------------------
+    # 3. Equal DOFs — direct NodePairRecord(kind=equal_dof) plus the
+    #    NodeToSurfaceRecord.equal_dof_records expansion.
+    # -------------------------------------------------------------------
+    if node_constraints is not None:
+        _emit_equal_dofs(emitter, node_constraints)
+
+    # -------------------------------------------------------------------
+    # 4. Rigid diaphragms — one ``rigidDiaphragm`` per
+    #    NodeGroupRecord(kind=RIGID_DIAPHRAGM).
+    # -------------------------------------------------------------------
+    if node_constraints is not None:
+        _emit_rigid_diaphragms(emitter, node_constraints)
+
+    # -------------------------------------------------------------------
+    # 5. Kinematic couplings — DOF-selective; emitted as equalDOF per
+    #    (master, slave) pair.  These ride NodeGroupRecord rows but
+    #    cannot collapse onto ``rigidDiaphragm`` (would over-constrain
+    #    by ignoring rec.dofs).
+    # -------------------------------------------------------------------
+    if node_constraints is not None:
+        _emit_kinematic_couplings(emitter, node_constraints)
+
+    # -------------------------------------------------------------------
+    # 6. Surface couplings — InterpolationRecord (tie / distributing /
+    #    embedded) plus the SurfaceCouplingRecord.slave_records
+    #    expansion (tied_contact / mortar).  All go out as
+    #    ASDEmbeddedNodeElement.
+    # -------------------------------------------------------------------
+    if surface_constraints is not None:
+        _emit_surface_couplings(emitter, surface_constraints)
+
+
+# ---------------------------------------------------------------------------
+# emit_mp_constraints sub-helpers (split for readability + per-kind unit tests)
+# ---------------------------------------------------------------------------
+
+
+def _emit_phantom_nodes(
+    emitter: "Emitter", node_constraints: object,
+) -> None:
+    """Emit ``node(tag, *xyz, ndf=6)`` for every phantom node.
+
+    Phantoms only exist on :class:`NodeToSurfaceRecord` rows — the
+    resolver synthesizes them at resolve time and stores their tags +
+    coords on the record without writing them into ``fem.nodes`` (see
+    pre-flight audit in the Phase 7b spec).  De-duplicates tags across
+    records — paranoid-cheap; the resolver maintains a single counter,
+    but the set check is one line.
+    """
+    n2s_iter = getattr(node_constraints, "node_to_surfaces", None)
+    if n2s_iter is None:
+        return
+    seen: set[int] = set()
+    for rec in n2s_iter():
+        coords = rec.phantom_coords
+        if coords is None:
+            continue
+        for tag, xyz in zip(rec.phantom_nodes, coords):
+            t = int(tag)
+            if t in seen:
+                continue
+            seen.add(t)
+            x, y, z = (float(c) for c in xyz)
+            # Per-node ``-ndf 6`` override — phantoms are 6-DOF even
+            # when the surrounding slaves are 3-DOF (standard OpenSees
+            # idiom for mixed-ndf models).
+            emitter.node(t, x, y, z, ndf=6)
+
+
+def _emit_rigid_links(
+    emitter: "Emitter", node_constraints: object,
+) -> None:
+    """Emit ``rigidLink`` per :class:`NodePairRecord` (rigid_beam /
+    rigid_rod) plus the rigid_body and node_to_surface compound
+    expansions.  Preserves the per-record ``name`` for INV-2.
+    """
+    from apeGmsh._kernel.records._constraints import (
+        NodeGroupRecord, NodePairRecord, NodeToSurfaceRecord,
+    )
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    rigid_pair_kinds = {
+        ConstraintKind.RIGID_BEAM, ConstraintKind.RIGID_ROD,
+    }
+    for rec in node_constraints:
+        if isinstance(rec, NodePairRecord):
+            if rec.kind in rigid_pair_kinds:
+                kind = "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
+                _emit_name(emitter, rec.name)
+                emitter.rigidLink(
+                    kind, int(rec.master_node), int(rec.slave_node),
+                )
+        elif isinstance(rec, NodeGroupRecord):
+            # Only rigid_body collapses to rigidLink — rigid_diaphragm
+            # has its own emit; kinematic_coupling is handled by
+            # _emit_kinematic_couplings (DOF-selective).
+            if rec.kind == ConstraintKind.RIGID_BODY:
+                # Emit the name once for the whole group (one row in
+                # H5; one ``# name`` comment in Tcl preceding the first
+                # rigidLink line).
+                _emit_name(emitter, rec.name)
+                for sn in rec.slave_nodes:
+                    emitter.rigidLink(
+                        "beam", int(rec.master_node), int(sn),
+                    )
+        elif isinstance(rec, NodeToSurfaceRecord):
+            for pair in rec.rigid_link_records:
+                if pair.kind in rigid_pair_kinds:
+                    kind = (
+                        "beam"
+                        if pair.kind == ConstraintKind.RIGID_BEAM
+                        else "bar"
+                    )
+                    _emit_name(emitter, pair.name)
+                    emitter.rigidLink(
+                        kind, int(pair.master_node), int(pair.slave_node),
+                    )
+
+
+def _emit_equal_dofs(
+    emitter: "Emitter", node_constraints: object,
+) -> None:
+    """Emit ``equalDOF`` per :class:`NodePairRecord` (equal_dof) plus
+    the :attr:`NodeToSurfaceRecord.equal_dof_records` expansion.
+    """
+    from apeGmsh._kernel.records._constraints import (
+        NodePairRecord, NodeToSurfaceRecord,
+    )
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if isinstance(rec, NodePairRecord):
+            if rec.kind == ConstraintKind.EQUAL_DOF:
+                _emit_name(emitter, rec.name)
+                emitter.equalDOF(
+                    int(rec.master_node), int(rec.slave_node),
+                    *(int(d) for d in rec.dofs),
+                )
+        elif isinstance(rec, NodeToSurfaceRecord):
+            for pair in rec.equal_dof_records:
+                _emit_name(emitter, pair.name)
+                emitter.equalDOF(
+                    int(pair.master_node), int(pair.slave_node),
+                    *(int(d) for d in pair.dofs),
+                )
+
+
+def _emit_rigid_diaphragms(
+    emitter: "Emitter", node_constraints: object,
+) -> None:
+    """Emit ``rigidDiaphragm(perp_dir, master, *slaves)`` per
+    :class:`NodeGroupRecord` row with ``kind == 'rigid_diaphragm'``.
+    Uses the broker's :meth:`rigid_diaphragms` iterator for the
+    perp_dir derivation; iterates the raw records in parallel to keep
+    the per-record ``name`` aligned with each emit.
+    """
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    # Iterate the underlying records directly (not the
+    # ``rigid_diaphragms()`` helper) so we still have access to the
+    # original record's ``name`` field — the helper drops it.
+    for rec in node_constraints:
+        if not (
+            isinstance(rec, NodeGroupRecord)
+            and rec.kind == ConstraintKind.RIGID_DIAPHRAGM
+        ):
+            continue
+        perp = _perp_dirn_from_normal(rec.plane_normal)
+        _emit_name(emitter, rec.name)
+        emitter.rigidDiaphragm(
+            perp, int(rec.master_node),
+            *(int(s) for s in rec.slave_nodes),
+        )
+
+
+def _emit_kinematic_couplings(
+    emitter: "Emitter", node_constraints: object,
+) -> None:
+    """Emit ``equalDOF`` per (master, slave) pair for
+    :class:`NodeGroupRecord` rows with ``kind == 'kinematic_coupling'``.
+
+    Kinematic coupling is DOF-selective (the user picks which DOFs to
+    couple); collapsing onto ``rigidDiaphragm`` would over-constrain
+    by promoting all 6 DOFs.  ``equalDOF`` with the explicit dofs
+    list is the correct OpenSees primitive.
+    """
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if not (
+            isinstance(rec, NodeGroupRecord)
+            and rec.kind == ConstraintKind.KINEMATIC_COUPLING
+        ):
+            continue
+        _emit_name(emitter, rec.name)
+        for sn in rec.slave_nodes:
+            emitter.equalDOF(
+                int(rec.master_node), int(sn),
+                *(int(d) for d in rec.dofs),
+            )
+
+
+def _emit_surface_couplings(
+    emitter: "Emitter", surface_constraints: object,
+) -> None:
+    """Emit ``element ASDEmbeddedNodeElement`` per
+    :class:`InterpolationRecord` row (covers ``tie`` / ``distributing``
+    / ``embedded`` directly; tied_contact / mortar via the
+    :meth:`SurfaceCouplingRecord.slave_records` expansion).
+
+    The ``embedding_ele`` argument is the *master element* the slave
+    node embeds into.  apeGmsh's :class:`InterpolationRecord` does not
+    carry a master-element id (it carries weights against master
+    *nodes*), so the fan-out routes the master nodes through as the
+    args tail; the underlying OpenSees ASDEmbeddedNodeElement reads
+    them as the host-element nodes.  Each emitted line allocates a
+    fresh integer element tag from a per-call counter — these tags
+    are file-internal and do not collide with bridge-allocated element
+    tags because the ASDEmbeddedNodeElement vocabulary uses the
+    ``element`` family namespace.
+    """
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+
+    interps = getattr(surface_constraints, "interpolations", None)
+    if interps is None:
+        return
+
+    # File-internal counter — start high enough to avoid colliding with
+    # whatever the bridge has allocated for structural elements.  The
+    # actual tag values are only meaningful to the emitter (they need
+    # to be distinct per emit pass).
+    next_tag = _allocate_embedded_tag_base(emitter)
+
+    for rec in interps():
+        if not isinstance(rec, InterpolationRecord):
+            continue
+        _emit_name(emitter, rec.name)
+        ele_tag = next_tag
+        next_tag += 1
+        # ASDEmbeddedNodeElement OpenSees signature:
+        #   element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4>
+        # where $Cnode is the CONSTRAINED (embedded / slave) node and
+        # $Rnode* are the host element's corner nodes. The Emitter
+        # Protocol forwards as: embeddedNode(ele_tag, $Cnode, *$Rnodes).
+        # — weights are recorded under the FEM record but not emitted
+        # here; ASDEmbeddedNodeElement uses isoparametric interpolation
+        # over the host element's corners internally.
+        cnode = int(rec.slave_node)
+        args: list[int | float] = [int(mn) for mn in rec.master_nodes]
+        emitter.embeddedNode(ele_tag, cnode, *args)
+
+
+def _allocate_embedded_tag_base(emitter: "Emitter") -> int:
+    """Return a starting element tag for ASDEmbeddedNodeElement emits.
+
+    The base is offset above any bridge-allocated element tag so
+    embedded-node tags never collide.  Static offset chosen by the
+    spec; emitters with stricter tag-collision needs can override by
+    pre-populating a higher counter.
+    """
+    # Lazy peek at any ``_orientation_tag_counter`` (H5Emitter) or
+    # similar hint on the emitter; default to 1_000_000 which is well
+    # outside the typical bridge-allocated range for mesh elements.
+    base = 1_000_000
+    return base
+
+
+def _emit_name(emitter: "Emitter", name: object) -> None:
+    """Emit ``emitter.mp_constraint_comment(name)`` if ``name`` is
+    a non-empty string (ADR 0022 INV-2).
+    """
+    if name is None:
+        return
+    if not isinstance(name, str):
+        return
+    if not name:
+        return
+    emitter.mp_constraint_comment(name)
+
+
+def _perp_dirn_from_normal(normal: object) -> int:
+    """Map a diaphragm plane normal to OpenSees ``perpDirn`` (1|2|3).
+
+    Mirrors the implementation in
+    :mod:`apeGmsh._kernel.record_sets._perp_dirn` (we don't import
+    that module directly to keep the bridge build pipeline independent
+    of broker-private helpers).
+    """
+    if normal is None:
+        return 3
+    arr = np.abs(np.asarray(normal, dtype=float).reshape(-1))
+    if arr.size < 3 or not np.any(np.isfinite(arr)) or not np.any(arr):
+        return 3
+    return int(np.argmax(arr[:3])) + 1

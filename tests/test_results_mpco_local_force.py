@@ -19,6 +19,7 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.results.readers._mpco_local_force_io import (
+
     _LocalForceBucket,
     available_components_in_local_force,
     discover_local_force_buckets,
@@ -26,6 +27,8 @@ from apeGmsh.results.readers._mpco_local_force_io import (
     read_local_force_bucket_slab,
 )
 
+
+from tests.conftest import _stub_model_h5_path
 
 _FIXTURE = Path("tests/fixtures/results/elasticFrame.mpco")
 _BRACKET = "5-ElasticBeam3d[1:0:0]"
@@ -226,7 +229,7 @@ def test_read_value_matches_raw_h5(fixture_h5):
 def test_results_available_components_includes_local_force_canonicals():
     if not _FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_FIXTURE}")
-    r = Results.from_mpco(_FIXTURE)
+    r = Results.from_mpco(_FIXTURE, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     comps = set(s.elements.line_stations.available_components())
     assert {
@@ -238,7 +241,7 @@ def test_results_available_components_includes_local_force_canonicals():
 def test_results_read_line_stations_returns_two_station_slab():
     if not _FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_FIXTURE}")
-    r = Results.from_mpco(_FIXTURE)
+    r = Results.from_mpco(_FIXTURE, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     slab = s.elements.line_stations.get(component="axial_force")
     # 10 steps × (11 elements × 2 stations)
@@ -260,7 +263,7 @@ def test_results_axial_force_constant_along_element():
     """
     if not _FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_FIXTURE}")
-    r = Results.from_mpco(_FIXTURE)
+    r = Results.from_mpco(_FIXTURE, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
     slab = s.elements.line_stations.get(component="axial_force")
     # Reshape (T, E*2) -> (T, E, 2). Internal axial is constant per
@@ -280,7 +283,7 @@ def test_results_bending_moment_slope_matches_shear():
     """
     if not _FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_FIXTURE}")
-    r = Results.from_mpco(_FIXTURE)
+    r = Results.from_mpco(_FIXTURE, model_h5=_stub_model_h5_path())
     s = r.stage(r.stages[0].name)
 
     my = s.elements.line_stations.get(component="bending_moment_y")

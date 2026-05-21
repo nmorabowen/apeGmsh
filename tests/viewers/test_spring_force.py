@@ -24,6 +24,8 @@ from apeGmsh.viewers.diagrams._spring_force import (
 )
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+from tests.conftest import _stub_model_h5_path
+
 
 _SPRING_FIXTURE = Path("tests/fixtures/results/zl_springs.mpco")
 
@@ -32,7 +34,7 @@ _SPRING_FIXTURE = Path("tests/fixtures/results/zl_springs.mpco")
 def spring_results():
     if not _SPRING_FIXTURE.exists():
         pytest.skip(f"Missing fixture: {_SPRING_FIXTURE}")
-    return Results.from_mpco(_SPRING_FIXTURE)
+    return Results.from_mpco(_SPRING_FIXTURE, model_h5=_stub_model_h5_path())
 
 
 @pytest.fixture

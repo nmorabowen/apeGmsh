@@ -32,6 +32,8 @@ from apeGmsh.results.capture.spec import (
     ResolvedDomainCaptureSpec,
 )
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fake ops with line-stations support
@@ -96,17 +98,8 @@ class _MockFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset("ids", data=np.asarray(self.nodes.ids, dtype=np.int64))
-        n.create_dataset(
-            "coords", data=np.asarray(self.nodes.coords, dtype=np.float64),
-        )
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 def _spec_with(*records, snapshot_id) -> ResolvedDomainCaptureSpec:
@@ -239,7 +232,7 @@ class TestForceBeamColumn3dCapture:
                 cap.step(t=t)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
             # 1 element × 3 IPs = 3 stations; 2 steps.
@@ -294,7 +287,7 @@ class TestForceBeamColumn3dCapture:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             ax = s.elements.line_stations.get(component="axial_force")
             np.testing.assert_array_equal(ax.values[0], [10.0, 20.0])
@@ -378,7 +371,7 @@ class TestMultiBucketCapture:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         # 3 + 5 = 8 stations.
@@ -424,7 +417,7 @@ class TestSkipBehaviours:
             assert any(eid == 5 for eid, _ in lc.skipped_elements)
 
         # Empty native file — read returns empty slab.
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             slab = s.elements.line_stations.get(component="axial_force")
         assert slab.values.shape == (1, 0)
@@ -507,7 +500,7 @@ class TestMixedCategories:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             ls = s.elements.line_stations.get(component="axial_force")
             assert ls.values.shape == (1, 2)
@@ -573,7 +566,7 @@ class TestElasticBeamSynthesis:
 
         # Slab at 2 stations × 1 element = 2 column rows per component.
         # Station 1 keeps the localForce sign; station 2 flips.
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             for comp, dof_idx in [
                 ("axial_force",       0),  # Fx
@@ -626,7 +619,7 @@ class TestElasticBeamSynthesis:
             cap.step(t=0.0)
             cap.end_stage()
 
-        with Results.from_native(path) as r:
+        with Results.from_native(path, model=_open_model_from_h5(path)) as r:
             s = r.stage(r.stages[0].id)
             for comp, dof_idx in [
                 ("axial_force",       0),

@@ -9,6 +9,8 @@ import pytest
 from apeGmsh.results import Results
 from apeGmsh.results.writers import NativeWriter
 
+from tests.conftest import _open_model_from_h5
+
 
 def _write_modes_file(tmp_path: Path, *, n_modes: int = 3) -> Path:
     path = tmp_path / "modes.h5"
@@ -35,7 +37,7 @@ def _write_modes_file(tmp_path: Path, *, n_modes: int = 3) -> Path:
 
 def test_modes_accessor_returns_scoped_results(tmp_path: Path) -> None:
     path = _write_modes_file(tmp_path, n_modes=3)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         modes = r.modes
         assert len(modes) == 3
         for m in modes:
@@ -44,7 +46,7 @@ def test_modes_accessor_returns_scoped_results(tmp_path: Path) -> None:
 
 def test_mode_indexing_and_attrs(tmp_path: Path) -> None:
     path = _write_modes_file(tmp_path, n_modes=3)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         modes = sorted(r.modes, key=lambda m: m.mode_index)
         assert [m.mode_index for m in modes] == [1, 2, 3]
         m2 = modes[1]
@@ -56,7 +58,7 @@ def test_mode_indexing_and_attrs(tmp_path: Path) -> None:
 
 def test_mode_shape_is_single_step(tmp_path: Path) -> None:
     path = _write_modes_file(tmp_path, n_modes=2)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         m1 = sorted(r.modes, key=lambda m: m.mode_index)[0]
         slab = m1.nodes.get(component="displacement_x")
         assert slab.values.shape == (1, 3)
@@ -75,7 +77,7 @@ def test_mode_props_raise_on_non_mode_stage(tmp_path: Path) -> None:
                       components={"displacement_x": np.array([[0.0]])})
         w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         s = r.stage("static")
         with pytest.raises(AttributeError, match="not 'mode'"):
             _ = s.eigenvalue
@@ -85,7 +87,7 @@ def test_mode_props_raise_on_non_mode_stage(tmp_path: Path) -> None:
 
 def test_mode_props_raise_on_unscoped(tmp_path: Path) -> None:
     path = _write_modes_file(tmp_path, n_modes=2)
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         # Unscoped → stage-scoped check fires first (correct behavior).
         with pytest.raises(AttributeError, match="stage-scoped"):
             _ = r.eigenvalue
@@ -100,7 +102,7 @@ def test_modes_empty_when_no_mode_stages(tmp_path: Path) -> None:
         w.write_nodes(sid, "partition_0", node_ids=np.array([1]),
                       components={"displacement_x": np.array([[0.0]])})
         w.end_stage()
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         assert r.modes == []
 
 
@@ -130,10 +132,72 @@ def test_mixed_stages_and_modes_in_one_file(tmp_path: Path) -> None:
                                        np.array([[float(k), float(k)]])})
             w.end_stage()
 
-    with Results.from_native(path) as r:
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
         assert len(r.stages) == 3
         assert len(r.modes) == 2
         # Non-mode stage stays accessible by name
         dyn = r.stage("dynamic")
         assert dyn.kind == "transient"
         assert dyn.n_steps == 2
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 (ADR 0020) — modes-side carries the OpenSeesModel handle
+# ---------------------------------------------------------------------------
+
+def test_modes_carry_results_model_when_zone_present(tmp_path) -> None:
+    """Mode-scoped Results share the parent's OpenSeesModel handle.
+
+    Phase 4 cleanup — when the Composed file embeds ``/opensees/``
+    (paired with the rich ``/model/`` neutral zone), ``r.modes[i].model
+    is r.model`` for every mode. Stage / mode derivation propagates
+    ``_model`` through :meth:`Results._derive`.
+    """
+    from apeGmsh.opensees import OpenSeesModel
+    from tests.opensees.h5._opensees_model_fixtures import (
+        build_simple_frame_h5,
+    )
+
+    model_path, fem = build_simple_frame_h5(tmp_path)
+    results_path = tmp_path / "modes_with_model.h5"
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    with NativeWriter(results_path) as w:
+        w.open(fem=fem, model_h5_src=model_path)
+        for k in (1, 2):
+            sid = w.begin_stage(
+                name=f"mode_{k}", kind="mode",
+                time=np.array([0.0]),
+                eigenvalue=float(k * 50.0),
+                frequency_hz=float(k * 1.0),
+                period_s=1.0 / float(k),
+                mode_index=k,
+            )
+            w.write_nodes(
+                sid, "partition_0", node_ids=node_ids,
+                components={
+                    "displacement_x": np.zeros((1, node_ids.size)),
+                },
+            )
+            w.end_stage()
+
+    with Results.from_native(results_path, model=_open_model_from_h5(results_path)) as r:
+        assert isinstance(r.model, OpenSeesModel)
+        for mode in r.modes:
+            assert mode.model is r.model
+
+
+def test_modes_have_none_model_when_zone_absent(tmp_path) -> None:
+    """Legacy modes file (no ``/opensees/``) — modes still accessible.
+
+    Phase 8 (ADR 0020 INV-1) — ``Results.model`` is REQUIRED.  The
+    helper ``_open_model_from_h5`` builds a stub :class:`OpenSeesModel`
+    when the file has no ``/opensees/`` zone (a legacy modes file).
+    Every scoped mode-instance shares the same ``r.model`` handle.
+    """
+    path = _write_modes_file(tmp_path, n_modes=2)
+    with Results.from_native(path, model=_open_model_from_h5(path)) as r:
+        # Phase 8 — every Results carries a model (stub when the file
+        # has no /opensees/ zone).
+        assert r.model is not None
+        for mode in r.modes:
+            assert mode.model is r.model

@@ -21,6 +21,8 @@ ops = openseespy
 
 from apeGmsh.opensees._response_catalog import IntRule, lookup
 
+from tests.conftest import _open_model_from_h5
+
 
 class _MinimalFem:
     def __init__(self, node_ids: np.ndarray, coords: np.ndarray) -> None:
@@ -33,15 +35,8 @@ class _MinimalFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 3
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        n = group.create_group("nodes")
-        n.create_dataset("ids", data=self.nodes.ids)
-        n.create_dataset("coords", data=self.nodes.coords)
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=3)
 
 
 # =====================================================================
@@ -161,7 +156,7 @@ def test_truss_capture_for_class(
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(capture_path, fem=fem) as r:
+    with Results.from_native(capture_path, fem=fem, model=_open_model_from_h5(capture_path)) as r:
         s = r.stage(r.stages[0].id)
         slab = s.elements.gauss.get(component="axial_force")
         # 1 element × 1 GP = 1 column.

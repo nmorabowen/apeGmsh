@@ -85,6 +85,11 @@ def node_pair_payload_dtype() -> np.dtype:
     ``rigid_rod``, ``penalty``.  ``offset`` is filled with NaN when
     the record carries no offset (e.g. ``equal_dof``);
     ``penalty_stiffness`` is NaN when not a ``penalty`` record.
+
+    The ``name`` field (added in neutral schema 2.5.0) carries the
+    pre-mesh declaration name (e.g. ``"wall_pin"``).  Empty string
+    means no name was set.  Old 2.4.0 files lack this field and the
+    reader probes it presence-detected.
     """
     return np.dtype([
         ("master_node", np.int64),
@@ -92,6 +97,7 @@ def node_pair_payload_dtype() -> np.dtype:
         ("dofs", _vlen(np.int64)),
         ("offset", np.float64, (3,)),
         ("penalty_stiffness", np.float64),
+        ("name", _utf8()),
     ])
 
 
@@ -102,6 +108,9 @@ def node_group_payload_dtype() -> np.dtype:
     ``kinematic_coupling``.  ``offsets`` is stored as a flat
     ``vlen-float64`` of length ``3 * n_slaves`` (reshape on read);
     ``plane_normal`` is NaN-filled when absent.
+
+    The ``name`` field (added in neutral schema 2.5.0) carries the
+    pre-mesh declaration name.  Old 2.4.0 files lack this field.
     """
     return np.dtype([
         ("master_node", np.int64),
@@ -109,6 +118,7 @@ def node_group_payload_dtype() -> np.dtype:
         ("dofs", _vlen(np.int64)),
         ("offsets", _vlen(np.float64)),
         ("plane_normal", np.float64, (3,)),
+        ("name", _utf8()),
     ])
 
 
@@ -118,6 +128,9 @@ def interpolation_payload_dtype() -> np.dtype:
     Used by kinds ``tie``, ``distributing``, ``embedded``.
     ``projected_point`` and ``parametric_coords`` are NaN-filled when
     absent.
+
+    The ``name`` field (added in neutral schema 2.5.0) carries the
+    pre-mesh declaration name.  Old 2.4.0 files lack this field.
     """
     return np.dtype([
         ("slave_node", np.int64),
@@ -126,6 +139,7 @@ def interpolation_payload_dtype() -> np.dtype:
         ("dofs", _vlen(np.int64)),
         ("projected_point", np.float64, (3,)),
         ("parametric_coords", np.float64, (2,)),
+        ("name", _utf8()),
     ])
 
 
@@ -164,6 +178,9 @@ def surface_coupling_payload_dtype() -> np.dtype:
         ("sr_dofs", _vlen(np.int64)),            # concat, split by dof_counts
         ("sr_projected", _vlen(np.float64)),     # 3*n_sr (NaN per missing)
         ("sr_parametric", _vlen(np.float64)),    # 2*n_sr (NaN per missing)
+        # name (neutral schema 2.5.0): pre-mesh declaration name.
+        # Old 2.4.0 files lack this field; reader probes presence.
+        ("name", _utf8()),
     ])
 
 
@@ -186,6 +203,9 @@ def node_to_surface_payload_dtype() -> np.dtype:
         ("phantom_nodes", _vlen(np.int64)),
         ("phantom_coords", _vlen(np.float64)),
         ("dofs", _vlen(np.int64)),
+        # name (neutral schema 2.5.0): pre-mesh declaration name.
+        # Old 2.4.0 files lack this field; reader probes presence.
+        ("name", _utf8()),
     ])
 
 
@@ -202,11 +222,15 @@ def nodal_load_payload_dtype() -> np.dtype:
     in the outer ``target_kind`` / ``target`` layer — every record
     set is one pattern per dataset
     (``/loads/nodal/{pattern}/``).
+
+    The ``name`` field (added in neutral schema 2.5.0) carries the
+    pre-mesh declaration name.  Old 2.4.0 files lack this field.
     """
     return np.dtype([
         ("node_id", np.int64),
         ("force_xyz", np.float64, (3,)),
         ("moment_xyz", np.float64, (3,)),
+        ("name", _utf8()),
     ])
 
 
@@ -219,11 +243,15 @@ def element_load_payload_dtype() -> np.dtype:
     compound captures the union, so we serialise it to a JSON string
     in ``params_json``.  Documented compromise; consumers parse the
     JSON or interpret per ``load_type``.
+
+    The ``name`` field (added in neutral schema 2.5.0) carries the
+    pre-mesh declaration name.  Old 2.4.0 files lack this field.
     """
     return np.dtype([
         ("element_id", np.int64),
         ("load_type", _utf8()),
         ("params_json", _utf8()),
+        ("name", _utf8()),
     ])
 
 
@@ -232,12 +260,16 @@ def sp_payload_dtype() -> np.dtype:
 
     ``is_homogeneous`` is stored as int64 (0 / 1) since HDF5
     compound types don't have a native boolean.
+
+    The ``name`` field (added in neutral schema 2.5.0) carries the
+    pre-mesh declaration name.  Old 2.4.0 files lack this field.
     """
     return np.dtype([
         ("node_id", np.int64),
         ("dof", np.int64),
         ("value", np.float64),
         ("is_homogeneous", np.int64),
+        ("name", _utf8()),
     ])
 
 
@@ -253,8 +285,12 @@ def mass_payload_dtype() -> np.dtype:
     OpenSees bridge slices to ``ndf`` when emitting ``mass``
     commands; the broker zone stores the full 6-vector so a
     consumer can pick whichever components it needs.
+
+    The ``name`` field (added in neutral schema 2.5.0) carries the
+    pre-mesh declaration name.  Old 2.4.0 files lack this field.
     """
     return np.dtype([
         ("node_id", np.int64),
         ("mass", np.float64, (6,)),
+        ("name", _utf8()),
     ])

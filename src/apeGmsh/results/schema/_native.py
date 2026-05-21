@@ -31,6 +31,7 @@ STAGES_GROUP = "/stages"
 # =====================================================================
 
 ATTR_SCHEMA_VERSION = "schema_version"
+ATTR_RESULTS_SCHEMA_VERSION = "results_schema_version"  # Phase 4 / ADR 0023
 ATTR_SOURCE_TYPE = "source_type"        # "tcl_recorders" | "domain_capture" | ...
 ATTR_SOURCE_PATH = "source_path"
 ATTR_CREATED_AT = "created_at"

@@ -24,6 +24,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.conftest import _stub_model_h5_path
+
 openseespy = pytest.importorskip(
     "openseespy.opensees", reason="openseespy required",
 )
@@ -104,15 +106,8 @@ def test_openseespy_full_cycle(tmp_path: Path) -> None:
             return compute_snapshot_id(self)
 
         def to_native_h5(self, group):
-            group.attrs["snapshot_id"] = self.snapshot_id
-            group.attrs["ndm"] = 3
-            group.attrs["ndf"] = 3
-            group.attrs["model_name"] = ""
-            group.attrs["units"] = ""
-            n = group.create_group("nodes")
-            n.create_dataset("ids", data=self.nodes.ids)
-            n.create_dataset("coords", data=self.nodes.coords)
-            group.create_group("elements")
+            from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+            write_neutral_zone_into_group(self, group, ndf=3)
 
     fem = _Fem()
 
@@ -157,7 +152,7 @@ def test_openseespy_full_cycle(tmp_path: Path) -> None:
 
     # ── Read the MPCO file via Phase 3's MPCOReader ──────────────────
     from apeGmsh.results import Results
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         # MPCO synthesises its own partial fem; we don't bind to ours.
         assert len(r.stages) >= 1
         # Pick the first stage and verify displacement_z
@@ -278,7 +273,7 @@ def test_tcl_subprocess_full_cycle(tmp_path: Path) -> None:
 
     # ── Read back via Phase 3's MPCOReader ───────────────────────────
     from apeGmsh.results import Results
-    with Results.from_mpco(mpco_path) as r:
+    with Results.from_mpco(mpco_path, model_h5=_stub_model_h5_path()) as r:
         assert len(r.stages) >= 1
         s = r.stage(r.stages[0].id)
         slab = s.nodes.get(component="displacement_z")

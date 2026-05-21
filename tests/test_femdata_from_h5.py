@@ -435,6 +435,37 @@ def test_round_trip_sp_records(tmp_path: Path) -> None:
     assert pre.node_id == 4 and pre.dof == 1 and pre.value == pytest.approx(0.05)
 
 
+def test_loads_zone_with_missing_subgroups(tmp_path: Path) -> None:
+    """``/loads/`` may exist with only some of ``{nodal,element,sp}``.
+
+    Per memory ``project_h5py_optional_child_get_hazard``, the reader
+    must probe optional sub-groups with ``name in parent`` (H5Lexists),
+    not ``Group.get(name)``.  This test removes the ``element`` and
+    ``sp`` sub-groups from a freshly written file, then asserts
+    ``from_h5`` loads cleanly — no ``AttributeError`` from a ``None``
+    returned by ``Group.get``, no spurious entries.
+    """
+    fem = _make_full_fem()
+    out = tmp_path / "rt.h5"
+    fem.to_h5(str(out))
+
+    # Excise the element + sp sub-groups, leaving /loads/nodal/ alone.
+    with h5py.File(str(out), "r+") as f:
+        assert "loads" in f
+        assert "nodal" in f["loads"]
+        assert "element" in f["loads"]
+        assert "sp" in f["loads"]
+        del f["loads/element"]
+        del f["loads/sp"]
+
+    rebuilt = FEMData.from_h5(str(out))
+
+    # Nodal loads survive untouched; element + sp collections are empty.
+    assert len(list(rebuilt.nodes.loads)) == 2
+    assert len(list(rebuilt.elements.loads)) == 0
+    assert len(list(rebuilt.nodes.sp)) == 0
+
+
 def test_round_trip_masses(tmp_path: Path) -> None:
     fem = _make_full_fem()
     out = tmp_path / "rt.h5"
@@ -445,6 +476,35 @@ def test_round_trip_masses(tmp_path: Path) -> None:
     m4 = rebuilt.nodes.masses.by_node(4)
     assert m4 is not None
     assert m4.mass == (100.0, 100.0, 100.0, 0.0, 0.0, 0.0)
+
+
+# =====================================================================
+# Phase 6 / ADR 0021 — INV-1: ``fem.snapshot_id`` byte-identical to
+# the stamped ``/meta/lineage/fem_hash``.
+# =====================================================================
+
+
+def test_from_h5_lineage_fem_hash_matches_snapshot_id(tmp_path: Path) -> None:
+    """The reloaded ``FEMData.snapshot_id`` matches the stamped
+    ``/meta/lineage/fem_hash``.
+
+    Phase 6 (ADR 0021) INV-1: the lineage chain's ``fem_hash`` value
+    is byte-identical to today's ``snapshot_id`` semantics for the
+    same FEMData.  Both paths converge.
+    """
+    fem = _make_full_fem()
+    out = tmp_path / "rt.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+    with h5py.File(str(out), "r") as f:
+        assert "meta" in f
+        assert "lineage" in f["meta"]
+        stamp = f["meta/lineage"].attrs["fem_hash"]
+        if isinstance(stamp, bytes):
+            stamp = stamp.decode("utf-8", "replace")
+    assert rebuilt.snapshot_id == str(stamp)
+    # And matches the original fem too.
+    assert rebuilt.snapshot_id == fem.snapshot_id
 
 
 def test_round_trip_mesh_selections(tmp_path: Path) -> None:
@@ -580,7 +640,10 @@ def test_wrong_schema_major_raises(tmp_path: Path) -> None:
         meta = f.create_group("meta")
         meta.attrs["schema_version"] = "1.0.0"
 
-    with pytest.raises(SchemaVersionError, match="major 1"):
+    # ADR 0023 — SchemaVersionError message includes the file's version
+    # and the reader's supported range; major mismatch surfaces as
+    # "different major" with the upgrade-path text.
+    with pytest.raises(SchemaVersionError, match="different major"):
         FEMData.from_h5(str(out))
 
 
@@ -608,3 +671,574 @@ def test_session_save_then_from_h5(tmp_path: Path) -> None:
         rebuilt.nodes.physical.get_name(d, t)
         for d, t in rebuilt.nodes.physical.get_all()
     ]
+
+
+# =====================================================================
+# Phase 2 — B2: partitions + parts round-trip
+# =====================================================================
+
+
+def _make_partitioned_fem() -> FEMData:
+    """Hand-built FEMData with two partitions and one Part label."""
+    node_ids = np.array([1, 2, 3, 4], dtype=np.int64)
+    node_coords = np.array([
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0], [1.0, 1.0, 0.0],
+    ], dtype=np.float64)
+    tri_info = make_type_info(
+        code=2, gmsh_name="Triangle 3", dim=2, order=1, npe=3, count=2,
+    )
+    tri_group = ElementGroup(
+        element_type=tri_info, ids=np.array([10, 11], dtype=np.int64),
+        connectivity=np.array([[1, 2, 3], [2, 4, 3]], dtype=np.int64),
+    )
+    partitions = {
+        1: {
+            "node_ids": np.array([1, 2, 3], dtype=np.int64),
+            "element_ids": np.array([10], dtype=np.int64),
+        },
+        2: {
+            "node_ids": np.array([2, 3, 4], dtype=np.int64),
+            "element_ids": np.array([11], dtype=np.int64),
+        },
+    }
+    part_node_map = {"slab_A": {1, 2}, "slab_B": {3, 4}}
+    part_elem_map = {"slab_A": {10}, "slab_B": {11}}
+
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        partitions=partitions, part_node_map=part_node_map,
+    )
+    elements = ElementComposite(
+        groups={2: tri_group},
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        partitions=partitions, part_elem_map=part_elem_map,
+    )
+    return FEMData(
+        nodes=nodes, elements=elements,
+        info=MeshInfo(n_nodes=4, n_elems=2, bandwidth=2, types=[tri_info]),
+    )
+
+
+def test_round_trip_partitions(tmp_path: Path) -> None:
+    """Partitions round-trip through to_h5 / from_h5.
+
+    Audit gap B2: without persistence, ``fem.partitions`` returns []
+    on reload and ``select(partition=k)`` raises ``KeyError``.
+    """
+    fem = _make_partitioned_fem()
+    out = tmp_path / "partitions.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    assert rebuilt.partitions == [1, 2]
+    assert rebuilt.nodes.partitions == [1, 2]
+    assert rebuilt.elements.partitions == [1, 2]
+
+    sel = rebuilt.nodes.select(partition=1)
+    np.testing.assert_array_equal(
+        sorted(int(x) for x in sel.ids), [1, 2, 3],
+    )
+    sel_e = rebuilt.elements.select(partition=1)
+    np.testing.assert_array_equal(
+        sorted(int(x) for x in sel_e.ids), [10],
+    )
+
+
+def test_round_trip_parts(tmp_path: Path) -> None:
+    """Part labels round-trip and ``select(target=part_label)`` resolves.
+
+    Audit gap B2 (parts side): ``select(target=part_label)`` raised
+    ``KeyError`` after reload because the part maps weren't
+    persisted.
+    """
+    fem = _make_partitioned_fem()
+    out = tmp_path / "parts.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+
+    nodes_A = rebuilt.nodes.select(target="slab_A")
+    np.testing.assert_array_equal(
+        sorted(int(x) for x in nodes_A.ids), [1, 2],
+    )
+    elems_A = rebuilt.elements.select(target="slab_A")
+    np.testing.assert_array_equal(
+        sorted(int(x) for x in elems_A.ids), [10],
+    )
+
+    nodes_B = rebuilt.nodes.select(target="slab_B")
+    np.testing.assert_array_equal(
+        sorted(int(x) for x in nodes_B.ids), [3, 4],
+    )
+    elems_B = rebuilt.elements.select(target="slab_B")
+    np.testing.assert_array_equal(
+        sorted(int(x) for x in elems_B.ids), [11],
+    )
+
+
+# =====================================================================
+# Phase 2 — B3: bandwidth recomputed on read
+# =====================================================================
+
+
+def test_bandwidth_recomputed_on_read(tmp_path: Path) -> None:
+    """``info.bandwidth`` is recomputed from connectivity on reload.
+
+    Audit gap B3: pre-v2.5.0 reader hardcoded ``bandwidth=0``.  The
+    writer never stored it; the new reader derives it
+    deterministically from the reloaded per-type groups.
+    """
+    fem = _make_full_fem()
+    # The fixture's bandwidth value is fed to MeshInfo as a constant;
+    # the real bandwidth derived from the connectivity is the one
+    # _compute_bandwidth returns.  Compute the expected value the
+    # same way from_gmsh would.
+    from apeGmsh.mesh.FEMData import _compute_bandwidth
+    groups = {g.element_type.code: g for g in fem.elements}
+    expected = _compute_bandwidth(groups)
+    assert expected > 0  # sanity: the fixture has non-trivial connectivity
+
+    out = tmp_path / "bw.h5"
+    fem.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+    assert rebuilt.info.bandwidth == expected
+
+
+# =====================================================================
+# Phase 2 — B4: snapshot_id verified on read
+# =====================================================================
+
+
+def test_snapshot_id_verified_on_read(tmp_path: Path) -> None:
+    """A tampered neutral zone raises ``MalformedH5Error`` on read.
+
+    Audit gap B4 / ADR 0021: FEM round-trip integrity is a hard
+    guarantee.  ``/meta/snapshot_id`` is now verified against the
+    recomputed hash of the rebuilt FEM; mismatch → raise.
+    """
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+
+    fem = _make_full_fem()
+    out = tmp_path / "tamper.h5"
+    fem.to_h5(str(out))
+
+    # Tamper directly with one node's coords.  The recomputed
+    # snapshot_id will not match the stored one.
+    with h5py.File(out, "r+") as f:
+        coords = f["nodes/coords"][...]
+        coords[0] = coords[0] + np.array([1.0, 0.0, 0.0])
+        f["nodes/coords"][...] = coords
+
+    with pytest.raises(MalformedH5Error, match="snapshot_id mismatch"):
+        FEMData.from_h5(str(out))
+
+
+# =====================================================================
+# Phase 2 — backcompat: 2.4.0 files (no name / partitions / parts)
+# =====================================================================
+
+
+def _make_legacy_2_4_0_h5(path: Path) -> None:
+    """Write a synthetic 2.4.0 file with the OLD payload dtype (no name)."""
+    import h5py
+    from apeGmsh.mesh._record_h5 import make_record_dtype
+
+    old_dt = make_record_dtype(np.dtype([
+        ("master_node", np.int64),
+        ("slave_node", np.int64),
+        ("dofs", h5py.vlen_dtype(np.dtype(np.int64))),
+        ("offset", np.float64, (3,)),
+        ("penalty_stiffness", np.float64),
+    ]))
+
+    with h5py.File(path, "w") as f:
+        meta = f.create_group("meta")
+        # Per ADR 0023 fixture must be inside the two-version reader
+        # window (2.6.x / 2.7.x); the test exercises legacy
+        # empty-snapshot_id semantics, not pre-window file handling.
+        meta.attrs["schema_version"] = "2.6.0"
+        meta.attrs["apeGmsh_version"] = ""
+        meta.attrs["created_iso"] = "2025-01-01T00:00:00+00:00"
+        meta.attrs["ndm"] = 1
+        meta.attrs["ndf"] = 0
+        # Empty snapshot_id → reader skips verification (legacy semantic)
+        meta.attrs["snapshot_id"] = ""
+        meta.attrs["model_name"] = "legacy"
+
+        nodes = f.create_group("nodes")
+        nodes.create_dataset("ids", data=np.array([1, 2], dtype=np.int64))
+        nodes.create_dataset(
+            "coords",
+            data=np.array([[0.0, 0, 0], [1.0, 0, 0]], dtype=np.float64),
+        )
+        f.create_group("elements")
+
+        rows = np.empty(1, dtype=old_dt)
+        rows[0] = (
+            "node", "2", "equal_dof",
+            (1, 2, np.array([1, 2, 3], dtype=np.int64),
+             (float("nan"),) * 3, float("nan")),
+        )
+        f.create_group("constraints").create_dataset(
+            "equal_dof", data=rows,
+        )
+
+
+def test_legacy_2_4_0_file_reads_without_name(tmp_path: Path) -> None:
+    """A 2.4.0 file with the OLD payload dtype still reads.
+
+    Per ADR 0023's two-version window, the 2.5.0 reader accepts
+    2.4.x files: missing ``name`` field → decoded as ``None``;
+    absent ``/partitions/`` / ``/parts/`` groups → unpartitioned
+    FEM with no part maps.
+    """
+    out = tmp_path / "legacy_2_4_0.h5"
+    _make_legacy_2_4_0_h5(out)
+    rebuilt = FEMData.from_h5(str(out))
+
+    assert len(rebuilt.nodes.constraints) == 1
+    rec = rebuilt.nodes.constraints[0]
+    assert rec.name is None
+    assert rec.master_node == 1
+    assert rec.slave_node == 2
+    assert rec.dofs == [1, 2, 3]
+
+    # No partitions and no parts on a legacy file.
+    assert rebuilt.partitions == []
+
+
+# =====================================================================
+# Phase 2 — B7: end-to-end parity (rebuilt vs original)
+# =====================================================================
+
+
+def _assert_fem_equivalent(rebuilt: FEMData, original: FEMData) -> None:
+    """Field-level equivalence between ``from_h5(to_h5(fem))`` and ``fem``.
+
+    Covers every surface the writer touches: nodes, elements
+    (per-type), info, all constraint kinds (including ``name``),
+    all load kinds, masses, mesh_selections, partitions / parts,
+    PG / label membership.
+    """
+    # Nodes ────────────────────────────────────────────────────
+    np.testing.assert_array_equal(
+        np.asarray(rebuilt.nodes.ids, dtype=np.int64),
+        np.asarray(original.nodes.ids, dtype=np.int64),
+    )
+    np.testing.assert_allclose(rebuilt.nodes.coords, original.nodes.coords)
+
+    # Elements per type ───────────────────────────────────────
+    rb_groups = {g.element_type.code: g for g in rebuilt.elements}
+    or_groups = {g.element_type.code: g for g in original.elements}
+    assert set(rb_groups) == set(or_groups)
+    for code, g_o in or_groups.items():
+        g_r = rb_groups[code]
+        np.testing.assert_array_equal(g_r.ids, g_o.ids)
+        np.testing.assert_array_equal(g_r.connectivity, g_o.connectivity)
+
+    # MeshInfo ────────────────────────────────────────────────
+    assert rebuilt.info.n_nodes == original.info.n_nodes
+    assert rebuilt.info.n_elems == original.info.n_elems
+    assert rebuilt.info.bandwidth == original.info.bandwidth
+    rb_type_names = sorted(t.name for t in rebuilt.info.types)
+    or_type_names = sorted(t.name for t in original.info.types)
+    assert rb_type_names == or_type_names
+
+    # Constraints — both node-side and element-side, by kind ───
+    def _records_by_kind(seq):
+        d: dict[str, list] = {}
+        for r in seq:
+            d.setdefault(r.kind, []).append(r)
+        return d
+
+    rb_nc = _records_by_kind(rebuilt.nodes.constraints)
+    or_nc = _records_by_kind(original.nodes.constraints)
+    assert set(rb_nc) == set(or_nc)
+    for k in or_nc:
+        assert len(rb_nc[k]) == len(or_nc[k]), f"node constraint {k}: count differs"
+        # Field-by-field equality including ``name``.
+        for r_r, r_o in zip(rb_nc[k], or_nc[k]):
+            assert r_r.name == r_o.name, f"{k}: name {r_r.name!r} != {r_o.name!r}"
+
+    rb_ec = _records_by_kind(rebuilt.elements.constraints)
+    or_ec = _records_by_kind(original.elements.constraints)
+    assert set(rb_ec) == set(or_ec)
+    for k in or_ec:
+        assert len(rb_ec[k]) == len(or_ec[k])
+        for r_r, r_o in zip(rb_ec[k], or_ec[k]):
+            assert r_r.name == r_o.name
+
+    # Loads ───────────────────────────────────────────────────
+    assert sorted(rebuilt.nodes.loads.patterns()) == sorted(
+        original.nodes.loads.patterns())
+    for pat in original.nodes.loads.patterns():
+        rb = rebuilt.nodes.loads.by_pattern(pat)
+        org = original.nodes.loads.by_pattern(pat)
+        assert len(rb) == len(org)
+        for r_r, r_o in zip(rb, org):
+            assert r_r.node_id == r_o.node_id
+            assert r_r.name == r_o.name
+
+    assert sorted(rebuilt.elements.loads.patterns()) == sorted(
+        original.elements.loads.patterns())
+    for pat in original.elements.loads.patterns():
+        rb = rebuilt.elements.loads.by_pattern(pat)
+        org = original.elements.loads.by_pattern(pat)
+        assert len(rb) == len(org)
+        for r_r, r_o in zip(rb, org):
+            assert r_r.element_id == r_o.element_id
+            assert r_r.name == r_o.name
+
+    # SP records ──────────────────────────────────────────────
+    rb_sp = list(rebuilt.nodes.sp)
+    or_sp = list(original.nodes.sp)
+    assert len(rb_sp) == len(or_sp)
+    for r_r, r_o in zip(rb_sp, or_sp):
+        assert r_r.node_id == r_o.node_id
+        assert r_r.dof == r_o.dof
+        assert r_r.name == r_o.name
+
+    # Masses ──────────────────────────────────────────────────
+    rb_m = list(rebuilt.nodes.masses)
+    or_m = list(original.nodes.masses)
+    assert len(rb_m) == len(or_m)
+    for r_r, r_o in zip(rb_m, or_m):
+        assert r_r.node_id == r_o.node_id
+        assert r_r.name == r_o.name
+
+    # PG / Label memberships ──────────────────────────────────
+    assert list(sorted(rebuilt.nodes.physical.get_all())) == list(
+        sorted(original.nodes.physical.get_all()))
+    assert list(sorted(rebuilt.nodes.labels.get_all())) == list(
+        sorted(original.nodes.labels.get_all()))
+
+    # Partitions ──────────────────────────────────────────────
+    assert rebuilt.partitions == original.partitions
+    for pid in original.partitions:
+        rb_ids = sorted(int(x) for x in rebuilt.nodes.select(partition=pid).ids)
+        or_ids = sorted(int(x) for x in original.nodes.select(partition=pid).ids)
+        assert rb_ids == or_ids
+
+    # Snapshot ID is the strongest single contract — if everything
+    # above matches, this should match too.
+    assert rebuilt.snapshot_id == original.snapshot_id
+
+
+def _fixture_simple_frame() -> FEMData:
+    """3D frame: nodes + line2 elements + a fixed-base SP."""
+    node_ids = np.array([1, 2, 3], dtype=np.int64)
+    node_coords = np.array([
+        [0.0, 0.0, 0.0], [0.0, 0.0, 3.0], [0.0, 3.0, 3.0],
+    ], dtype=np.float64)
+    line_info = make_type_info(
+        code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=2,
+    )
+    line_group = ElementGroup(
+        element_type=line_info, ids=np.array([10, 11], dtype=np.int64),
+        connectivity=np.array([[1, 2], [2, 3]], dtype=np.int64),
+    )
+    sp_base = SPRecord(
+        node_id=1, dof=1, value=0.0, is_homogeneous=True,
+        pattern="default", name="base_fix",
+    )
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        sp=[sp_base],
+    )
+    elements = ElementComposite(
+        groups={1: line_group},
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+    )
+    return FEMData(
+        nodes=nodes, elements=elements,
+        info=MeshInfo(n_nodes=3, n_elems=2, bandwidth=1, types=[line_info]),
+    )
+
+
+def _fixture_plate() -> FEMData:
+    """2D plate: triangle3 mesh + an element pressure load."""
+    node_ids = np.array([1, 2, 3, 4], dtype=np.int64)
+    node_coords = np.array([
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+    ], dtype=np.float64)
+    tri_info = make_type_info(
+        code=2, gmsh_name="Triangle 3", dim=2, order=1, npe=3, count=2,
+    )
+    tri_group = ElementGroup(
+        element_type=tri_info, ids=np.array([10, 11], dtype=np.int64),
+        connectivity=np.array([[1, 2, 3], [1, 3, 4]], dtype=np.int64),
+    )
+    el_load = ElementLoadRecord(
+        element_id=10, load_type="surfacePressure",
+        params={"pressure": -100.0, "direction": "normal"},
+        pattern="dead", name="self_weight",
+    )
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+    )
+    elements = ElementComposite(
+        groups={2: tri_group},
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        loads=[el_load],
+    )
+    return FEMData(
+        nodes=nodes, elements=elements,
+        info=MeshInfo(n_nodes=4, n_elems=2, bandwidth=3, types=[tri_info]),
+    )
+
+
+def _fixture_mixed_dim() -> FEMData:
+    """Mixed-dim mesh: line2 + triangle3 + a tie constraint."""
+    node_ids = np.array([1, 2, 3, 4, 5], dtype=np.int64)
+    node_coords = np.array([
+        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+        [0.5, 0.5, 0.5],
+    ], dtype=np.float64)
+    line_info = make_type_info(
+        code=1, gmsh_name="Line 2", dim=1, order=1, npe=2, count=1,
+    )
+    tri_info = make_type_info(
+        code=2, gmsh_name="Triangle 3", dim=2, order=1, npe=3, count=1,
+    )
+    line_group = ElementGroup(
+        element_type=line_info, ids=np.array([10], dtype=np.int64),
+        connectivity=np.array([[1, 5]], dtype=np.int64),
+    )
+    tri_group = ElementGroup(
+        element_type=tri_info, ids=np.array([20], dtype=np.int64),
+        connectivity=np.array([[2, 3, 4]], dtype=np.int64),
+    )
+    tie = InterpolationRecord(
+        kind=ConstraintKind.TIE, name="beam_to_plate",
+        slave_node=5, master_nodes=[2, 3, 4],
+        weights=np.array([0.34, 0.33, 0.33]),
+        dofs=[1, 2, 3],
+        projected_point=np.array([0.6, 0.6, 0.0]),
+        parametric_coords=np.array([0.3, 0.3]),
+    )
+    nodes = NodeComposite(
+        node_ids=node_ids, node_coords=node_coords,
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+    )
+    elements = ElementComposite(
+        groups={1: line_group, 2: tri_group},
+        physical=PhysicalGroupSet({}), labels=LabelSet({}),
+        constraints=[tie],
+    )
+    return FEMData(
+        nodes=nodes, elements=elements,
+        info=MeshInfo(
+            n_nodes=5, n_elems=2, bandwidth=4,
+            types=[line_info, tri_info],
+        ),
+    )
+
+
+def _fixture_partitioned() -> FEMData:
+    """Partitioned plate — wraps the shared partitioned fixture."""
+    return _make_partitioned_fem()
+
+
+def _fixture_mesh_selection() -> FEMData:
+    """FEM with mesh_selections carried through round-trip."""
+    from apeGmsh.mesh.MeshSelectionSet import MeshSelectionStore
+
+    fem = _fixture_plate()
+    fem.mesh_selection = MeshSelectionStore({
+        (2, 1): {
+            "name": "plate_face",
+            "node_ids": np.array([1, 2, 3, 4], dtype=np.int64),
+            "node_coords": fem.nodes.coords,
+            "element_ids": np.array([10, 11], dtype=np.int64),
+            "connectivity": np.array(
+                [[1, 2, 3], [1, 3, 4]], dtype=np.int64),
+        },
+    })
+    return fem
+
+
+@pytest.mark.parametrize(
+    "fixture_id, builder",
+    [
+        ("simple_frame", _fixture_simple_frame),
+        ("plate", _fixture_plate),
+        ("mixed_dim", _fixture_mixed_dim),
+        ("partitioned", _fixture_partitioned),
+        ("mesh_selection", _fixture_mesh_selection),
+    ],
+)
+def test_round_trip_join_equivalent(
+    fixture_id: str, builder, tmp_path: Path,
+) -> None:
+    """End-to-end: ``from_h5(to_h5(fem))`` is field-level equivalent to ``fem``.
+
+    Audit gap B7 (the meta-gap): every prior round-trip test
+    compared the rebuilt FEMData against a hand-built fixture.  No
+    test compared rebuilt vs the live ``from_gmsh(g)`` it came
+    from.  This parametrized parity test covers 5 canonical
+    fixtures so any future "writer drops X" or "reader skips Y"
+    regression surfaces structurally.
+    """
+    original = builder()
+    out = tmp_path / f"rt_{fixture_id}.h5"
+    original.to_h5(str(out))
+    rebuilt = FEMData.from_h5(str(out))
+    _assert_fem_equivalent(rebuilt, original)
+
+
+# =====================================================================
+# Parameterized sub-group root (ADR 0020 / Phase 4 cleanup)
+# =====================================================================
+
+
+def test_from_h5_with_root_kwarg(tmp_path: Path) -> None:
+    """``FEMData.from_h5(path, root='/embedded/model')`` reads the rich
+    neutral zone from a sub-group root.
+
+    Phase 4 cleanup (ADR 0020) — composed ``results.h5`` files embed
+    the FEMData rich neutral zone under ``/model/`` rather than at the
+    file root.  The ``root=`` kwarg lets one reader handle both
+    layouts.  Verified by writing the SAME ``write_fem_h5`` content
+    under a custom sub-group root and asserting field-level
+    equivalence to a standalone (``root="/"``) version.
+    """
+    from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+
+    fem = _make_full_fem()
+    nested = tmp_path / "nested.h5"
+    with h5py.File(nested, "w") as f:
+        sub = f.create_group("embedded/model")
+        write_neutral_zone_into_group(
+            fem, sub, model_name="nested_demo",
+        )
+
+    rebuilt = FEMData.from_h5(str(nested), root="/embedded/model")
+
+    standalone = tmp_path / "standalone.h5"
+    fem.to_h5(str(standalone), model_name="nested_demo")
+    rebuilt_root = FEMData.from_h5(str(standalone))
+
+    _assert_fem_equivalent(rebuilt, rebuilt_root)
+
+
+def test_from_h5_default_root_backcompat(tmp_path: Path) -> None:
+    """``FEMData.from_h5(path)`` (no ``root=``) keeps byte-identical
+    behaviour to the pre-Phase-4 reader.
+
+    Existing call sites must work unchanged — the parameterisation
+    is additive.
+    """
+    fem = _make_full_fem()
+    out = tmp_path / "rt.h5"
+    fem.to_h5(str(out), model_name="rt")
+
+    # Both calls reach the same internal reader path; the default
+    # is ``root="/"``.
+    a = FEMData.from_h5(str(out))
+    b = FEMData.from_h5(str(out), root="/")
+    _assert_fem_equivalent(a, b)

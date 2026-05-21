@@ -27,6 +27,8 @@ from apeGmsh.viewers.diagrams import (
     TimeMode,
 )
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fixture: tiny native Results with two stages
@@ -72,7 +74,7 @@ def two_stage_results(g, tmp_path: Path):
             },
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 @pytest.fixture
@@ -101,7 +103,7 @@ def one_stage_results(g, tmp_path: Path):
             },
         )
         w.end_stage()
-    return Results.from_native(path)
+    return Results.from_native(path, model=_open_model_from_h5(path))
 
 
 # =====================================================================
@@ -350,7 +352,7 @@ def test_bind_without_fem_raises(tmp_path, g):
             components={"displacement_x": np.zeros((1, n_nodes))},
         )
         w.end_stage()
-    r = Results.from_native(path)
+    r = Results.from_native(path, model=_open_model_from_h5(path))
     r._fem = None    # force the unbound state
     d = ResultsDirector(r)
     with pytest.raises(RuntimeError):

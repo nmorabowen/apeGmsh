@@ -1,21 +1,27 @@
 """ResultsViewer — the post-solve interactive viewer.
 
 Opens against a :class:`Results` instance and renders the bound
-``FEMData`` mesh. Phase 0 ships the scaffolding only — substrate mesh,
-time scrubber, stages tab, empty diagrams tab. Concrete diagrams
-(contour, deformed shape, line force, …) arrive in subsequent phases.
+``FEMData`` mesh.
 
 Parallel to :class:`MeshViewer` (pre-solve) and :class:`ModelViewer`
 (BRep geometry). Reuses the same ``viewers/scene/``, ``viewers/core/``,
 and ``viewers/ui/`` infrastructure where possible.
 
+Phase 8 (ADR 0020 INV-1) — :class:`Results` carries the
+:class:`OpenSeesModel` natively via :attr:`Results.model` (always
+non-None post-prune).  The viewer reads structural data from the
+chain-forward handle; cuts auto-load and orientation auto-resolve
+are gated on ``results.model`` (always populated).
+
 Usage::
 
     from apeGmsh import Results
+    from apeGmsh.opensees import OpenSeesModel
 
-    results = Results.from_native("run.h5")
+    model = OpenSeesModel.from_h5("model.h5")
+    results = Results.from_native("run.h5", model=model)
     results.viewer()                       # blocks until window closes
-    results.viewer(blocking=False)         # subprocess (Phase 6+)
+    results.viewer(blocking=False)         # subprocess
 """
 from __future__ import annotations
 
@@ -87,7 +93,6 @@ class ResultsViewer:
         restore_session: "bool | str" = "prompt",
         save_session: bool = True,
         cuts: "Optional[Sequence[SectionCutDef]]" = None,
-        model_h5: "Optional[str | Path]" = None,
     ) -> None:
         if results.fem is None:
             raise RuntimeError(
@@ -104,22 +109,6 @@ class ResultsViewer:
         # after the registry is bound, so the cut Layers attach against
         # a live plotter + scene like any other diagram added at boot.
         self._pending_cuts: tuple = tuple(cuts) if cuts else ()
-        self._pending_model_h5: Optional[Path] = (
-            Path(model_h5) if model_h5 is not None else None
-        )
-        # Effective ``model_h5`` for scene-side orientation: explicit
-        # kwarg wins; otherwise fall back to ``results._path`` when the
-        # results were opened from disk AND the file carries the
-        # OpenSees orientation zone (``/opensees/transforms`` +
-        # ``/opensees/element_meta``). Producer-agnostic — both the
-        # bridge writer and ``ModelData`` produce a byte-equivalent
-        # zone (ADR 0018 INV-16) so a single seam covers both. Distinct
-        # from ``_pending_model_h5`` (which still drives the director's
-        # cuts wiring + auto-load — P2 does not touch that opt-in
-        # path).
-        self._effective_model_h5: Optional[Path] = self._resolve_effective_model_h5(
-            results=results, explicit=self._pending_model_h5,
-        )
 
         # Populated in show()
         self._director: "ResultsDirector | None" = None
@@ -253,43 +242,25 @@ class ResultsViewer:
             log_error("init", "ResultsViewer.show", exc)
             raise
 
-    @staticmethod
-    def _resolve_effective_model_h5(
-        *,
-        results: "Results",
-        explicit: Optional[Path],
-    ) -> Optional[Path]:
-        """Compute the ``model_h5`` actually used to build the scene.
+    def _build_viewer_data(self):
+        """Build the :class:`ViewerData` scene snapshot.
 
-        Resolution order:
-
-        1. **Explicit** ``model_h5=`` kwarg (whatever the user passed)
-           wins unconditionally — even if the path doesn't exist or
-           the file lacks the orientation zone. Downstream
-           :meth:`ViewerData.from_h5` raises clearly in that case.
-        2. **Auto-fallback** to ``results._path`` when the results were
-           opened from disk AND the file carries the
-           ``/opensees/transforms`` + ``/opensees/element_meta`` pair
-           (the byte-equivalent zone produced by both ``apeSees.h5()``
-           and ``ModelData.write``).
-        3. ``None`` otherwise — the live ``ViewerData.from_fem(fem)``
-           path runs as before, degrading to default orientation
-           (graceful, never crashes — INV-11 of ADR 0018).
-
-        Recorder / MPCO files don't carry ``/opensees/``, so the probe
-        naturally excludes them and any non-default layout still needs
-        an explicit ``model_h5=``.
+        Phase 8 (ADR 0020 INV-1) — :attr:`Results.model` is always
+        non-None.  When ``results._path`` carries ``/opensees/``
+        (Composed-file pattern, the typical Phase-8 landing), build
+        from the file via :meth:`ViewerData.from_h5`; otherwise fall
+        back to the live :meth:`ViewerData.from_fem` path (degraded
+        orientation per ADR 0018 INV-11).
         """
-        if explicit is not None:
-            return explicit
-        results_path = getattr(results, "_path", None)
-        if results_path is None:
-            return None
+        from .data import ViewerData
         from .data._h5_probe import has_opensees_orientation
-        candidate = Path(results_path)
-        if has_opensees_orientation(candidate):
-            return candidate
-        return None
+        results_path = getattr(self._results, "_path", None)
+        if (
+            results_path is not None
+            and has_opensees_orientation(Path(results_path))
+        ):
+            return ViewerData.from_h5(str(results_path))
+        return ViewerData.from_fem(self._results.fem)
 
     def _show_impl(self, *, maximized: bool = True):
         """The actual show() body — see :meth:`show` for the trap wrapper."""
@@ -314,23 +285,21 @@ class ResultsViewer:
         self._director = director
 
         # ── FEM scene ───────────────────────────────────────────────
-        # When an effective ``model_h5`` is available (explicit kwarg
-        # or auto-resolved against ``results._path`` for a from_native
-        # results file carrying the OpenSees orientation zone), build
-        # the snapshot through ``ViewerData.from_h5`` so per-element
-        # ``vecxz`` populates ``view.elements._vecxz_by_eid``.
-        # Otherwise the live ``from_fem`` path runs as before and
-        # diagrams degrade to the structural-default orientation
-        # (ADR 0018 INV-11; vecxz_for graceful-degrade contract).
+        # Phase 8 (ADR 0020 INV-1) — ``results.model`` is always
+        # populated; the file-mediated read via
+        # :meth:`ViewerData.from_h5` is the primary structural-
+        # enrichment path (ADR 0014 INV-2 — the viewer never imports
+        # ``OpenSeesModel`` directly; it consumes through
+        # ``h5_reader``).  Falls back to :meth:`ViewerData.from_fem`
+        # when the results file lacks the ``/opensees/`` zone (ADR
+        # 0018 INV-11 graceful degrade).
+        #
         # Producer-agnostic — ``apeSees(fem).h5()`` and
         # ``ModelData(fem).write()`` produce byte-equivalent zones
         # (ADR 0018 INV-16) so this seam covers both.
         fem = self._results.fem
         assert fem is not None    # validated in __init__
-        if self._effective_model_h5 is not None:
-            view = ViewerData.from_h5(str(self._effective_model_h5))
-        else:
-            view = ViewerData.from_fem(fem)
+        view = self._build_viewer_data()
         scene = build_fem_scene(view)
         self._scene = scene
         # PickEngine actor inventory — set on the scene before any
@@ -1419,14 +1388,15 @@ class ResultsViewer:
             pass
 
     def _apply_pending_cuts(self) -> None:
-        """Wire ``cuts=`` and ``model_h5=`` constructor arguments into the
-        director immediately after the registry binds to a live plotter.
+        """Wire ``cuts=`` constructor kwarg and the symmetric
+        cuts/orientation auto-load into the director immediately after
+        the registry binds to a live plotter.
 
-        v4 of the apeGmsh.cuts roadmap adds an auto-load branch: when
-        ``cuts=`` was not supplied but ``model_h5=`` was, any cuts /
-        sweeps persisted under ``/opensees/cuts/`` and
-        ``/opensees/sweeps/`` are read and attached automatically.
-        Explicit ``cuts=`` wins over h5 persistence — that's the
+        Phase 8 (ADR 0020 INV-1 / INV-5) — cuts auto-load is gated on
+        ``results.model`` (always populated post-prune). When the
+        results file carries ``/opensees/cuts/`` and
+        ``/opensees/sweeps/``, they are read and attached
+        automatically. Explicit ``cuts=`` wins over h5 persistence —
         kwarg-precedence contract from ARCHITECTURE.md H14.
 
         Failures here are logged but non-fatal — a malformed cut
@@ -1436,15 +1406,48 @@ class ResultsViewer:
         """
         if self._director is None:
             return
-        if not self._pending_cuts and self._pending_model_h5 is None:
-            return
+        from .data._h5_probe import has_opensees_orientation
         from ._log import log_action, log_error
-        if self._pending_model_h5 is not None:
+        # Resolve the file path the director should bind for FemToOps
+        # tag mapping.  Phase 8: ``results._path`` is the canonical
+        # source (Composed-file pattern carries ``/opensees/``).
+        results_path = getattr(self._results, "_path", None)
+        bind_path: Optional[Path] = None
+        if (
+            results_path is not None
+            and has_opensees_orientation(Path(results_path))
+        ):
+            bind_path = Path(results_path)
+        # Whether auto-load should fire (no explicit cuts; cuts
+        # source present).
+        model = self._results.model
+        has_persisted_cuts = (
+            len(model.cuts()) > 0 or len(model.sweeps()) > 0
+        )
+        # Early-out: nothing to do.
+        if (
+            not self._pending_cuts
+            and bind_path is None
+            and not has_persisted_cuts
+        ):
+            return
+        # Bind the director's model handle.  Two surfaces wired here:
+        #
+        # * ``set_model(results.model)`` — chain-forward (cuts
+        #   iteration source).
+        # * ``_bind_model_h5(path)`` — internal path binder used for
+        #   the :class:`FemToOpsTagMap` (still path-based today).
+        try:
+            self._director.set_model(self._results.model)
+        except Exception as exc:
+            log_error("init", "ResultsViewer.set_model", exc)
+        if bind_path is not None:
             try:
-                self._director.set_model_h5(self._pending_model_h5)
+                self._director._bind_model_h5(bind_path)
             except Exception as exc:
-                log_error("init", "ResultsViewer.set_model_h5", exc)
+                log_error("init", "ResultsViewer._bind_model_h5", exc)
         if self._pending_cuts:
+            # Explicit cuts kwarg — wins over auto-load (H14).
             for i, cut in enumerate(self._pending_cuts):
                 try:
                     self._director.add_section_cut(cut)
@@ -1455,16 +1458,15 @@ class ResultsViewer:
                         error=type(exc).__name__,
                     )
                     log_error("init", f"ResultsViewer.cut[{i}]", exc)
-        elif self._pending_model_h5 is not None:
-            # No explicit cuts kwarg — auto-load from /opensees/cuts/
-            # and /opensees/sweeps/ (empty result if the file is
-            # pre-v4 or carries no cuts).
+        elif has_persisted_cuts and bind_path is not None:
+            # Auto-load — gated on ``results.model`` carrying cuts
+            # (INV-5).  Requires a bound file path for the tag_map.
             try:
                 self._director.load_cuts_from_h5()
             except Exception as exc:
                 log_action(
                     "session", "section_cut_autoload_failed",
-                    model_h5=str(self._pending_model_h5),
+                    model_h5=str(bind_path),
                     error=type(exc).__name__,
                 )
                 log_error("init", "ResultsViewer.load_cuts_from_h5", exc)
@@ -1614,10 +1616,11 @@ class ResultsViewer:
                 ))
 
             fem = self._results.fem
-            # ``director.model_h5`` is populated by ``set_model_h5`` /
-            # the ``results.viewer(model_h5=...)`` boot kwarg. Emitting
-            # it as part of the session lets restore rebuild the
-            # FemToOpsTagMap that SectionCutDiagram layers need.
+            # ``director.model_h5`` is populated by the internal
+            # path binder used at boot for the FemToOpsTagMap (still
+            # path-based today).  Emitting it as part of the session
+            # lets restore rebuild the FemToOpsTagMap that
+            # SectionCutDiagram layers need.
             model_h5_path = getattr(self._director, "model_h5", None)
             save_session(
                 specs=specs,
@@ -1709,10 +1712,12 @@ class ResultsViewer:
         # Restore the section-cut tag-map binding BEFORE constructing
         # any layers — a SectionCutDiagram needs ``tag_map=`` at
         # construction time to translate OpenSees tags back to FEM eids.
+        # Routes through the internal path binder used by the tag_map
+        # (still path-based today).
         session_model_h5 = getattr(session, "model_h5", None)
         if session_model_h5:
             try:
-                self._director.set_model_h5(session_model_h5)
+                self._director._bind_model_h5(session_model_h5)
             except Exception as exc:
                 from ._failures import report
                 report(

@@ -19,6 +19,8 @@ from apeGmsh.results.capture.spec import (
     ResolvedDomainCaptureSpec,
 )
 
+from tests.conftest import _open_model_from_h5
+
 
 # =====================================================================
 # Fake ops module (deterministic returns)
@@ -98,20 +100,8 @@ class _MockFem:
         return compute_snapshot_id(self)
 
     def to_native_h5(self, group) -> None:
-        # Minimal embedded snapshot — node IDs + coords + snapshot_id attr.
-        group.attrs["snapshot_id"] = self.snapshot_id
-        group.attrs["ndm"] = 3
-        group.attrs["ndf"] = 6
-        group.attrs["model_name"] = ""
-        group.attrs["units"] = ""
-        nodes_grp = group.create_group("nodes")
-        nodes_grp.create_dataset(
-            "ids", data=np.asarray(self.nodes.ids, dtype=np.int64),
-        )
-        nodes_grp.create_dataset(
-            "coords", data=np.asarray(self.nodes.coords, dtype=np.float64),
-        )
-        group.create_group("elements")
+        from apeGmsh.mesh._femdata_h5_io import write_neutral_zone_into_group
+        write_neutral_zone_into_group(self, group, ndf=6)
 
 
 def _make_spec(*records, snapshot_id, ndm=3, ndf=6):
@@ -152,7 +142,7 @@ def test_node_capture_displacement(tmp_path: Path) -> None:
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(path, fem=fem) as r:
+    with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(component="displacement_x")
         np.testing.assert_allclose(slab.values, [[0.1, 0.2, 0.3]])
         np.testing.assert_allclose(slab.time, [0.5])
@@ -184,7 +174,7 @@ def test_multi_step_capture(tmp_path: Path) -> None:
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(path, fem=fem) as r:
+    with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(component="displacement_x")
         np.testing.assert_allclose(slab.values, [
             [0.0, 0.0],
@@ -226,7 +216,7 @@ def test_reaction_triggers_reactions_call(tmp_path: Path) -> None:
     assert fake.reactions_called == 2
 
     from apeGmsh.results import Results
-    with Results.from_native(path, fem=fem) as r:
+    with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
         slab = r.nodes.get(component="reaction_force_x")
         np.testing.assert_allclose(slab.values, [[-100.0], [-100.0]])
 
@@ -285,7 +275,7 @@ def test_two_stage_capture(tmp_path: Path) -> None:
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(path, fem=fem) as r:
+    with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
         stages = r.stages
         names = sorted(s.name for s in stages)
         assert names == ["dynamic", "gravity"]
@@ -334,7 +324,7 @@ def test_modal_capture(tmp_path: Path) -> None:
         cap.capture_modes()
 
     from apeGmsh.results import Results
-    with Results.from_native(path, fem=fem) as r:
+    with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
         modes = sorted(r.modes, key=lambda m: m.mode_index)
         assert len(modes) == 2
         assert modes[0].mode_index == 1
@@ -367,7 +357,7 @@ def test_modal_capture_with_rotational_dofs(tmp_path: Path) -> None:
         cap.capture_modes()
 
     from apeGmsh.results import Results
-    with Results.from_native(path, fem=fem) as r:
+    with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
         m = r.modes[0]
         assert "displacement_x" in m.nodes.available_components()
         assert "rotation_x" in m.nodes.available_components()
@@ -422,10 +412,11 @@ def test_domain_capture_from_h5(tmp_path: Path) -> None:
     from apeGmsh.results.capture import DomainCaptureSpec
 
     # Forge a minimal bridge-shaped model.h5 with ndm/ndf in /meta.
+    # ADR 0023 — fixture inside the two-version reader window (2.6.x).
     model_path = tmp_path / "model.h5"
     with h5py.File(model_path, "w") as f:
         meta = f.create_group("meta")
-        meta.attrs["schema_version"] = "2.2.0"
+        meta.attrs["schema_version"] = "2.6.0"
         meta.attrs["ndm"] = 3
         meta.attrs["ndf"] = 6
         meta.attrs["snapshot_id"] = "stub-snapshot"
@@ -448,7 +439,7 @@ def test_domain_capture_from_h5(tmp_path: Path) -> None:
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(output, fem=fem) as r:
+    with Results.from_native(output, fem=fem, model=_open_model_from_h5(output)) as r:
         np.testing.assert_allclose(
             r.nodes.get(component="displacement_x").values, [[0.1]],
         )

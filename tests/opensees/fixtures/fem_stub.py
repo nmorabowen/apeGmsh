@@ -287,6 +287,97 @@ class _ElementsStub:
         )
 
 
+class _ConstraintsStub:
+    """Stand-in for a constraint set (NodeConstraintSet or
+    SurfaceConstraintSet).
+
+    Carries a flat list of records and mirrors the broker's typed
+    iterators :meth:`pairs` / :meth:`equal_dofs` /
+    :meth:`rigid_link_groups` / :meth:`rigid_diaphragms` /
+    :meth:`node_to_surfaces` / :meth:`stiff_beam_groups` /
+    :meth:`phantom_nodes` (node side) and :meth:`interpolations` /
+    :meth:`couplings` (surface side).  Implementation copied from
+    :mod:`apeGmsh._kernel.record_sets` so the bridge build pipeline
+    sees the same surface in tests as in production.
+    """
+
+    def __init__(self, records: list | None = None) -> None:
+        self._records: list = list(records) if records else []
+
+    def __iter__(self):
+        return iter(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __bool__(self) -> bool:
+        return len(self._records) > 0
+
+    def by_kind(self, kind: str) -> list:
+        return [r for r in self._records if getattr(r, "kind", None) == kind]
+
+    # ── Node-side iterators ────────────────────────────────────
+
+    def pairs(self):
+        from apeGmsh._kernel.records._constraints import (
+            NodeGroupRecord, NodePairRecord, NodeToSurfaceRecord,
+        )
+        for rec in self._records:
+            if isinstance(rec, NodePairRecord):
+                yield rec
+            elif isinstance(rec, NodeGroupRecord):
+                yield from rec.expand_to_pairs()
+            elif isinstance(rec, NodeToSurfaceRecord):
+                yield from rec.expand()
+
+    def node_to_surfaces(self):
+        from apeGmsh._kernel.records._constraints import NodeToSurfaceRecord
+        for rec in self._records:
+            if isinstance(rec, NodeToSurfaceRecord):
+                yield rec
+
+    def equal_dofs(self):
+        from apeGmsh._kernel.records._constraints import (
+            NodePairRecord, NodeToSurfaceRecord,
+        )
+        from apeGmsh._kernel.records._kinds import ConstraintKind
+        for rec in self._records:
+            if (
+                isinstance(rec, NodePairRecord)
+                and rec.kind == ConstraintKind.EQUAL_DOF
+            ):
+                yield rec
+            elif isinstance(rec, NodeToSurfaceRecord):
+                yield from rec.equal_dof_records
+
+    def rigid_diaphragms(self):
+        from apeGmsh._kernel.records._constraints import NodeGroupRecord
+        from apeGmsh._kernel.records._kinds import ConstraintKind
+        from apeGmsh._kernel.record_sets import _perp_dirn
+        for rec in self._records:
+            if (
+                isinstance(rec, NodeGroupRecord)
+                and rec.kind == ConstraintKind.RIGID_DIAPHRAGM
+            ):
+                yield (
+                    _perp_dirn(rec.plane_normal),
+                    int(rec.master_node),
+                    [int(s) for s in rec.slave_nodes],
+                )
+
+    # ── Surface-side iterators ─────────────────────────────────
+
+    def interpolations(self):
+        from apeGmsh._kernel.records._constraints import (
+            InterpolationRecord, SurfaceCouplingRecord,
+        )
+        for rec in self._records:
+            if isinstance(rec, InterpolationRecord):
+                yield rec
+            elif isinstance(rec, SurfaceCouplingRecord):
+                yield from rec.slave_records
+
+
 class FEMStub:
     """Hand-rolled FEMData-shaped fixture for Phase-4 tests."""
 
@@ -299,6 +390,31 @@ class FEMStub:
         self.nodes = nodes
         self.elements = elements
         self.mesh_selection = mesh_selection
+        # Phase 7b — constraint sub-composites.  Tests that exercise
+        # the MP-constraint emission pass populate these via
+        # :meth:`add_node_constraints` / :meth:`add_surface_constraints`.
+        # Default-empty so existing tests that don't touch constraints
+        # see a vacant surface (the build pipeline no-ops on empty
+        # constraint sets).
+        self.nodes.constraints = _ConstraintsStub()
+        self.elements.constraints = _ConstraintsStub()
+
+    def add_node_constraints(self, records: list) -> None:
+        """Install a list of node-side constraint records.
+
+        Records may mix :class:`NodePairRecord`, :class:`NodeGroupRecord`,
+        and :class:`NodeToSurfaceRecord`.  The build pipeline walks
+        them via the typed iterators on :class:`_ConstraintsStub`.
+        """
+        self.nodes.constraints = _ConstraintsStub(records)
+
+    def add_surface_constraints(self, records: list) -> None:
+        """Install a list of element-side surface-coupling records.
+
+        Records may mix :class:`InterpolationRecord` and
+        :class:`SurfaceCouplingRecord`.
+        """
+        self.elements.constraints = _ConstraintsStub(records)
 
 
 def make_two_node_beam() -> FEMStub:
