@@ -4619,9 +4619,15 @@ interactive windows.</p>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </span></code></pre></div>
-<p><code>apeSees</code> has <strong>no ingest and no auto-resolution</strong>. Loads, masses, and
-SPs must be re-declared explicitly on <code>ops</code>. Multi-point constraint
-emission is deferred (ADR 0009).</p>
+<p><code>apeSees</code> does <strong>not auto-resolve</strong> loads or masses: re-declare those
+explicitly on <code>ops</code> (<code>ops.fix</code>, <code>ops.mass</code>, <code>p.load</code>, <code>p.sp</code>). MP
+constraints — <code>equal_dof</code>, <code>rigid_link</code>, <code>rigid_diaphragm</code>,
+<code>node_to_surface</code>, <code>tie</code>, <code>tied_contact</code>, <code>mortar</code>, <code>embedded</code> — DO
+emit automatically (ADR 0022, May 2026). <code>apeSees(fem).tcl(p)</code> for a
+model with <code>g.constraints.rigid_diaphragm(...)</code> produces a runnable
+OpenSees deck. The bridge auto-emits <code>ops.constraints.Transformation()</code>
+when MP constraints are present and the user has not declared a
+handler explicitly.</p>
 <table>
 <thead>
 <tr>
