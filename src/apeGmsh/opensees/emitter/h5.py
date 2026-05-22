@@ -999,6 +999,16 @@ class H5Emitter:
         self._analyze_call = (int(steps), None if dt is None else float(dt))
         return 0
 
+    def eigen(
+        self, num_modes: int, *, solver: str = "-genBandArpack",
+    ) -> list[float]:
+        # ``eigen`` is a runtime one-shot retrieval — not part of the
+        # model definition the H5 archive captures.  No-op here; the
+        # bridge's ``apeSees.eigen(...)`` drives a LiveOpsEmitter
+        # directly and never routes through H5.
+        del num_modes, solver
+        return []
+
     # =====================================================================
     # Output — write the buffered model to disk
     # =====================================================================

@@ -282,3 +282,9 @@ class PyEmitter:
         else:
             self._lines.append(_ops_call("analyze", steps, dt))
         return 0
+
+    def eigen(
+        self, num_modes: int, *, solver: str = "-genBandArpack",
+    ) -> list[float]:
+        self._lines.append(_ops_call("eigen", solver, num_modes))
+        return []

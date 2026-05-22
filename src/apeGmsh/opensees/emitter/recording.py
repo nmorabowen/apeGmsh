@@ -216,3 +216,11 @@ class RecordingEmitter:
     def analyze(self, *, steps: int, dt: float | None = None) -> int:
         self.calls.append(("analyze", (), {"steps": steps, "dt": dt}))
         return 0
+
+    def eigen(
+        self, num_modes: int, *, solver: str = "-genBandArpack",
+    ) -> list[float]:
+        self.calls.append(
+            ("eigen", (), {"num_modes": num_modes, "solver": solver}),
+        )
+        return []

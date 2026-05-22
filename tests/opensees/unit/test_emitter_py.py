@@ -45,6 +45,19 @@ def test_mass_emits_values() -> None:
     assert _payload(e) == ["ops.mass(2, 50.0, 50.0, 50.0, 0.0, 0.0, 0.0)"]
 
 
+def test_eigen_default_solver_emits_ops_call() -> None:
+    e = PyEmitter()
+    rc = e.eigen(5)
+    assert rc == []
+    assert _payload(e) == ["ops.eigen('-genBandArpack', 5)"]
+
+
+def test_eigen_custom_solver_passed_through() -> None:
+    e = PyEmitter()
+    e.eigen(3, solver="-fullGenLapack")
+    assert _payload(e) == ["ops.eigen('-fullGenLapack', 3)"]
+
+
 def test_uniaxial_material_quotes_type_token() -> None:
     e = PyEmitter()
     e.uniaxialMaterial("Steel02", 1, 420e6, 200e9, 0.01, 20.0, 0.925, 0.15)

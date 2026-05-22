@@ -45,6 +45,19 @@ def test_mass_emits_values() -> None:
     assert _stripped(e) == ["mass 2 50.0 50.0 50.0 0.0 0.0 0.0"]
 
 
+def test_eigen_default_solver_emits_genbandarpack() -> None:
+    e = TclEmitter()
+    rc = e.eigen(5)
+    assert rc == []
+    assert _stripped(e) == ["eigen -genBandArpack 5"]
+
+
+def test_eigen_custom_solver_passed_through() -> None:
+    e = TclEmitter()
+    e.eigen(3, solver="-fullGenLapack")
+    assert _stripped(e) == ["eigen -fullGenLapack 3"]
+
+
 def test_uniaxial_material_emits_type_token_and_params() -> None:
     e = TclEmitter()
     e.uniaxialMaterial("Steel02", 1, 420e6, 200e9, 0.01, 20.0, 0.925, 0.15)

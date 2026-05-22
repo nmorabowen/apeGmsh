@@ -259,6 +259,16 @@ class LiveOpsEmitter:
             ret = self._ops.analyze(steps, dt)
         return int(ret)
 
+    def eigen(
+        self, num_modes: int, *, solver: str = "-genBandArpack",
+    ) -> list[float]:
+        # openseespy: ``ops.eigen(solver, num_modes)`` returns a list of
+        # eigenvalues ``λ_i = ω_i²``. Modal shapes are queried separately
+        # via ``ops.nodeEigenvector(node_tag, mode_idx)`` — see
+        # :class:`apeGmsh.opensees.analysis.eigen.EigenResult`.
+        values: Any = self._ops.eigen(solver, num_modes)
+        return [float(v) for v in values]
+
     # -- Direct accessor for tests / diagnostics ----------------------------
 
     @property
