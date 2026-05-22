@@ -4974,6 +4974,7 @@ alter stiffness.</p>
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.core.Part</span><span class="w"> </span><span class="kn">import</span> <span class="n">Part</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenSeesModel</span>
 
 <span class="c1"># Geometry / instancing</span>
 <span class="n">L</span>      <span class="o">=</span> <span class="mf">3.0</span>                     <span class="c1"># column height</span>
@@ -5001,6 +5002,7 @@ import openseespy.opensees as ops
 from apeGmsh import apeGmsh, Results
 from apeGmsh.core.Part import Part
 from apeGmsh.results.spec import Recorders
+from apeGmsh.opensees import OpenSeesModel
 
 # Geometry / instancing
 L      = 3.0                     # column height
@@ -5518,11 +5520,15 @@ post-hoc filtering on the FEM coordinates.</p>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span>
     <span class="n">spec</span><span class="p">,</span> <span class="n">out_dir</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">"static"</span><span class="p">,</span>
+    <span class="c1"># TODO: v2.0 migration — supply a real model.h5 path for OpenSeesModel.from_h5(...)</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">),</span>
 <span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-9">results = Results.from_recorders(
     spec, out_dir, fem=fem, stage_id="static",
+    # TODO: v2.0 migration — supply a real model.h5 path for OpenSeesModel.from_h5(...)
+    model=OpenSeesModel.from_h5("model.h5"),
 )
 print(results.inspect.summary())</div>
 </div>

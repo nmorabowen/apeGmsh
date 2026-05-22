@@ -4990,6 +4990,7 @@ what they did at recorder-declaration time.</li>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenSeesModel</span>
 
 <span class="c1"># Tiny cantilever, same physics as slot 02.</span>
 <span class="n">L</span> <span class="o">=</span> <span class="mf">3.0</span>
@@ -5007,6 +5008,7 @@ import openseespy.opensees as ops
 
 from apeGmsh import apeGmsh, Results
 from apeGmsh.results.spec import Recorders
+from apeGmsh.opensees import OpenSeesModel
 
 # Tiny cantilever, same physics as slot 02.
 L = 3.0
@@ -5585,10 +5587,18 @@ confirm they're identical.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span><span class="n">results_path</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span>
+    <span class="n">results_path</span><span class="p">,</span>
+    <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="n">results_path</span><span class="p">),</span>
+<span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-10">results = Results.from_native(results_path, fem=fem)
+<div class="clipboard-copy-txt" id="cell-10">results = Results.from_native(
+    results_path,
+    fem=fem,
+    model=OpenSeesModel.from_h5(results_path),
+)
 print(results.inspect.summary())</div>
 </div>
 </div>
