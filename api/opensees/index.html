@@ -3633,6 +3633,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#apeGmsh.opensees.recorder.MPCO--note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Note
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4943,6 +4954,17 @@
     <span class="md-ellipsis">
       
         Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.opensees.recorder.MPCO--note" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Note
       
     </span>
   </a>
@@ -6591,10 +6613,14 @@ methods take the same kwargs and call <code>self._bridge._register(Cls(...))</co
 emits them after the topology + analysis chain so that each <code>recorder</code>
 command sees fully-allocated node and element tags.</p>
 <p>The <code>pg=</code> form (physical-group fan-out into node/element tags) is
-declared on the type signatures for forward-compatibility but
-:meth:<code>_emit</code> raises :class:<code>NotImplementedError</code> until the Phase 4
-build pipeline materializes the FEM-snapshot lookup. Recorders
-constructed today supply explicit <code>nodes=</code> / <code>elements=</code> lists.</p>
+materialized at build time by
+:func:<code>apeGmsh.opensees._internal.build.emit_recorder_spec</code>, which
+resolves <code>pg</code> through the FEM snapshot, rewrites the spec to its
+explicit <code>nodes=</code> / <code>elements=</code> form via :func:<code>dataclasses.replace</code>,
+and then delegates to <code>_emit</code>. End users drive this through
+<code>apeSees(fem).tcl(...) / .py(...) / .run()</code> — never call <code>_emit</code>
+directly with a <code>pg</code> spec, which raises :class:<code>NotImplementedError</code>
+as a defense-in-depth guard.</p>
 <h4 id="apeGmsh.opensees.recorder--opensees-command-shapes">OpenSees command shapes<a class="headerlink" href="#apeGmsh.opensees.recorder--opensees-command-shapes" title="Permanent link">&para;</a></h4>
 <p>::</p>
 <div class="language-text highlight"><pre><span></span><code>recorder Node    -file fname [-time] [-dT dT] [-node n...]
@@ -6657,9 +6683,10 @@ include the simulation-time column in the output file. The default
               -dof d1 d2 ... response
 </code></pre></div>
 <p>Exactly one of <code>nodes=</code> (explicit list) or <code>pg=</code> (physical-group
-label) must be supplied; the build pipeline (Phase 4) materializes
-the <code>pg=</code> form into a concrete node-tag list. Until then, the
-<code>pg=</code> path raises :class:<code>NotImplementedError</code> from :meth:<code>_emit</code>.</p>
+label) must be supplied. The bridge build pipeline materializes the
+<code>pg=</code> form against the FEM snapshot before driving <code>_emit</code>;
+direct <code>_emit</code> calls on a <code>pg=</code> spec raise
+:class:<code>NotImplementedError</code> as a defense-in-depth guard.</p>
 <h5 id="apeGmsh.opensees.recorder.Node--parameters">Parameters<a class="headerlink" href="#apeGmsh.opensees.recorder.Node--parameters" title="Permanent link">&para;</a></h5>
 <p>file
     Output file path.
@@ -6670,7 +6697,8 @@ nodes
     Explicit tuple of node tags. Mutually exclusive with <code>pg</code>.
 pg
     Physical-group label whose nodes the recorder targets.
-    Mutually exclusive with <code>nodes</code>. Build-pipeline only.
+    Mutually exclusive with <code>nodes</code>. Resolved by the bridge
+    build pipeline at emit time.
 dofs
     DOF indices (1-based, OpenSees convention). At least one
     required.
@@ -6744,7 +6772,10 @@ case is <code>("globalForce",)</code> or <code>("stresses",)</code>; element typ
 that nest responses (e.g. fiber sections) take multi-token forms
 such as <code>("section", "1", "force")</code>.</p>
 <p>Exactly one of <code>elements=</code> (explicit list) or <code>pg=</code> (physical-
-group label) must be supplied; <code>pg=</code> is deferred to Phase 4.</p>
+group label) must be supplied. <code>pg=</code> is resolved against the FEM
+snapshot by the bridge build pipeline before driving <code>_emit</code>;
+direct <code>_emit</code> calls on a <code>pg=</code> spec raise
+:class:<code>NotImplementedError</code> as a defense-in-depth guard.</p>
 <h5 id="apeGmsh.opensees.recorder.Element--parameters">Parameters<a class="headerlink" href="#apeGmsh.opensees.recorder.Element--parameters" title="Permanent link">&para;</a></h5>
 <p>file
     Output file path.
@@ -6754,7 +6785,8 @@ elements
     Explicit tuple of element tags. Mutually exclusive with <code>pg</code>.
 pg
     Physical-group label whose elements the recorder targets.
-    Mutually exclusive with <code>elements</code>. Build-pipeline only.
+    Mutually exclusive with <code>elements</code>. Resolved by the bridge
+    build pipeline at emit time.
 dT
     Optional cadence — record only every <code>dT</code> simulation
     seconds. <code>None</code> records every step.
@@ -6804,7 +6836,7 @@ time_format
   </span>
 
 <a href="#apeGmsh.opensees.recorder.MPCO" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">MPCO</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">file</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">nodal_responses</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span> <span class="n">elem_responses</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span> <span class="n">dT</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nsteps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">MPCO</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">file</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">nodal_responses</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span> <span class="n">elem_responses</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span> <span class="n">dT</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nsteps</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nodes</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nodes_pg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">elements</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">elements_pg</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">_region_tag</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
@@ -6818,6 +6850,7 @@ time_format
 <div class="language-text highlight"><pre><span></span><code>recorder mpco fname.mpco [-N nodal_responses...]
                          [-E elem_responses...]
                          [-T dt $dt | -T nsteps $n]
+                         [-R $regTag]
 </code></pre></div>
 <p>The MPCO recorder captures the full response tensor for each
 requested token (no per-DOF selection at write time); STKO /
@@ -6826,6 +6859,15 @@ apeGmsh consumers filter at read time. At least one of
 <p>Cadence is selected by exactly one of <code>dT</code> (seconds) or
 <code>nsteps</code> (analysis steps). Supplying both raises <code>ValueError</code>;
 supplying neither records every analysis step.</p>
+<p><strong>Filtering</strong> — MPCO records the whole model by default. To
+restrict output to a subset of nodes/elements, supply any of
+<code>nodes=</code> / <code>nodes_pg=</code> / <code>elements=</code> / <code>elements_pg=</code>:
+the build pipeline auto-emits an OpenSees <code>region $tag -node ...
+-ele ...</code> command before the recorder and passes <code>-R $tag</code> to
+MPCO. <code>nodes=</code> is mutually exclusive with <code>nodes_pg=</code>; the
+same applies to the element pair. When all four are <code>None</code>
+(the default) MPCO records the whole model and no region is
+emitted.</p>
 <h5 id="apeGmsh.opensees.recorder.MPCO--parameters">Parameters<a class="headerlink" href="#apeGmsh.opensees.recorder.MPCO--parameters" title="Permanent link">&para;</a></h5>
 <p>file
     Output <code>.mpco</code> (HDF5) file path.
@@ -6841,7 +6883,29 @@ dT
     with <code>nsteps</code>.
 nsteps
     Optional step-based cadence (every N analysis steps).
-    Mutually exclusive with <code>dT</code>.</p>
+    Mutually exclusive with <code>dT</code>.
+nodes
+    Explicit tuple of node tags to include in the region filter.
+    Mutually exclusive with <code>nodes_pg</code>.
+nodes_pg
+    Physical-group label whose nodes the region filter targets.
+    Mutually exclusive with <code>nodes</code>. Resolved by the bridge
+    build pipeline at emit time.
+elements
+    Explicit tuple of element tags to include in the region
+    filter. Mutually exclusive with <code>elements_pg</code>.
+elements_pg
+    Physical-group label whose elements the region filter
+    targets. Mutually exclusive with <code>elements</code>. Resolved by
+    the bridge build pipeline at emit time.</p>
+<h5 id="apeGmsh.opensees.recorder.MPCO--note">Note<a class="headerlink" href="#apeGmsh.opensees.recorder.MPCO--note" title="Permanent link">&para;</a></h5>
+<p>The bridge does not interpret <code>-R</code>-bearing MPCO arg tails when
+<code>_emit</code> is called directly (outside the build pipeline); the
+<code>pg=</code> form is materialised by
+:func:<code>apeGmsh.opensees._internal.build.emit_recorder_spec</code>,
+which resolves selectors, allocates a region tag, emits the
+region, and replaces the spec via :func:<code>dataclasses.replace</code>
+with explicit <code>nodes=</code>/<code>elements=</code> before driving <code>_emit</code>.</p>
 
 
 
