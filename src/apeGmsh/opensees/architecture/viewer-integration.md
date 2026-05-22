@@ -73,14 +73,38 @@ into an element-detail panel.
 
 Schema version check (mandatory):
 
+Per [ADR 0023](decisions/0023-per-zone-schema-versioning.md) the
+single `/meta/schema_version` stamp has been split into three
+per-zone keys — `/meta/neutral_schema_version`,
+`/meta/opensees_schema_version`, `/meta/results_schema_version` —
+each validated independently against a **two-version reader window**
+(current minor + one prior).  The viewer wants the OpenSees zone
+when reading `model.h5`:
+
 ```python
-major = int(f["/meta"].attrs["schema_version"].split(".")[0])
-if major != EXPECTED_MAJOR:
-    raise SchemaVersionError(
-        f"model.h5 schema v{major}.x.y is not supported by this "
-        f"viewer (expected v{EXPECTED_MAJOR}.x.y)"
-    )
+from apeGmsh.opensees._internal.schema_version import (
+    OPENSEES, SchemaVersionError,
+    read_zone_version, reader_version, validate_zone_version,
+)
+
+attrs = f["/meta"].attrs
+file_version = read_zone_version(attrs, OPENSEES)   # honours envelope fallback
+if file_version is None:
+    raise SchemaVersionError("no opensees version stamp in /meta")
+validate_zone_version(file_version, reader_version(OPENSEES), zone=OPENSEES)
 ```
+
+`reader_version(OPENSEES)` returns the writer's current
+`SCHEMA_VERSION` so reader and writer cannot drift.
+`validate_zone_version` raises `SchemaVersionError` when the file's
+zone version is outside the two-version window — too old (needs
+migration tooling) or too new (newer than this reader knows).
+Patch-version drift inside the window is silently tolerated.
+
+The viewer team can borrow `apeGmsh.opensees.emitter.h5_reader.open()`
+which performs the validation internally; the snippet above is the
+"do it yourself" form for teams that don't want the full reader
+surface.
 
 ## Optional reads → UI features
 

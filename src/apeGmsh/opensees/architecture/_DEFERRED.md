@@ -16,9 +16,13 @@ real model needs them.
 Held for later, in priority order:
 
 1. **`.region(name)`** — assign the node to an OpenSees Region
-   for damping, recorders, etc.
-2. **`.disp_history()`** — pull recorder output for this node
-   after analysis.
+   for damping, recorders, etc.  The `Emitter.region()` Protocol
+   method shipped with ADR 0024; the typed-primitive surface
+   re-uses it.
+2. **`.disp_history()` / `.element.disp_history()`** — pull recorder
+   output for a node or element after analysis.  Requires a
+   registered :class:`Recorder` matching the query; the typed
+   query layer composes over the existing Recorders system.
 3. **`.get_reaction()`** — query post-analysis reaction forces.
 4. **`.coupled_dofs()`** — list MP_Constraints that touch this node
    (rigid links, equal_dof, etc.).
@@ -58,33 +62,12 @@ Held for later:
   users who need this drop to live mode and write the loop
   themselves: `bm = ops.build(); bm.run_live(analysis=None)`.
 
-## Nodal capability `.disp_history` and `.element.disp_history`
-
-Pulls back recorder output. Requires a registered `Recorder`
-matching the query. Lives in the existing Recorders system; we
-expose a typed query layer once the bridge is shipped.
-
 ## Multi-pattern aggregation
 
 `Pattern` instances aggregate their loads after the `with` block
 closes. A future capability is cross-pattern queries on a Node:
 "show me every load this node has received across all patterns."
 Defer until users ask.
-
-## `H5Emitter` implementation
-
-The schema and viewer contract are settled
-([h5-schema.md](h5-schema.md), [viewer-integration.md](viewer-integration.md),
-[ADR 0011](decisions/0011-h5-as-fourth-emit-target.md)). The
-implementation rides with the other emitters when the bridge
-skeletons land:
-
-- Implement `apeGmsh.opensees.emitter.h5.H5Emitter` against the
-  Protocol in `emitter/base.py`.
-- `apeSees.h5(path)` convenience method on the bridge.
-- Test fixtures listed in `viewer-integration.md` § "Test fixtures."
-- Reference reader (validation, schema-version check) shipped in
-  the bridge package for the viewer team to borrow.
 
 ## ANSYS / Code_Aster / JSON emit targets
 
