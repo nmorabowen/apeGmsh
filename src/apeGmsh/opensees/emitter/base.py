@@ -40,6 +40,21 @@ filter its output via OpenSees ``region $tag -node ... -ele ...`` +
 ``-R $tag``.  Auto-emitted by the build pipeline when
 ``ops.recorder.MPCO(nodes_pg=..., elements_pg=...)`` is declared.
 Schema bumped 2.7.0 → 2.8.0 for the new ``/opensees/regions/`` zone.
+
+**Architecture event — ADR 0025 (late-May 2026).** The Protocol was
+widened with one new method (:meth:`eigen`) so the bridge can drive
+one-shot modal extractions via OpenSees ``eigen [solver] $numModes``.
+Unlike the stepped ``analyze`` driver, ``eigen`` requires no
+preceding ``analysis <Type>`` chain and returns eigenvalues directly
+to the caller — the live emitter returns ``list[float]`` while Tcl /
+py emit the line and return an empty list; H5 / recording are no-op
+/ record.  Driven by :meth:`apeGmsh.opensees.apeSees.eigen`, a bridge
+driver method parallel to ``analyze``; wraps the eigenvalues in an
+:class:`apeGmsh.opensees.analysis.eigen.EigenResult` carrying derived
+``omega`` / ``freq`` / ``periods`` and a lazy ``mode_shape(node,
+mode)`` accessor over ``ops.nodeEigenvector``.  No schema bump — the
+H5 emitter no-ops on ``eigen`` because the call is a runtime
+retrieval, not a model-definition declaration.
 """
 from __future__ import annotations
 
