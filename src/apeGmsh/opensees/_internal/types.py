@@ -23,7 +23,10 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from apeGmsh.mesh.FEMData import FEMData
+
     from ..emitter.base import Emitter
+    from .tag_allocator import TagAllocator
 
 
 __all__ = [
@@ -174,7 +177,40 @@ class Pattern(Primitive):
 # ---------------------------------------------------------------------------
 
 class Recorder(Primitive):
-    """Abstract base for ``recorder <Type>`` primitives."""
+    """Abstract base for ``recorder <Type>`` primitives.
+
+    Recorders may carry build-time selectors (``pg=``, ``nodes_pg=``,
+    ``elements_pg=``) that must be resolved against the FEM before
+    ``_emit`` runs.  :meth:`materialize` is the hook each concrete
+    recorder overrides to do that resolution; the default returns
+    ``self`` unchanged (no resolution needed).  Recorders that
+    require auxiliary OpenSees declarations (e.g. MPCO's
+    ``region`` line) emit them on the supplied ``emitter`` from
+    inside ``materialize`` and return a clone of themselves with
+    the build-time selectors cleared and any tag fields populated.
+    """
+
+    def materialize(
+        self,
+        emitter: "Emitter",
+        fem: "FEMData",
+        tags: "TagAllocator | None",
+    ) -> "Recorder":
+        """Resolve build-time selectors against the FEM.
+
+        Default no-op for recorders that carry no ``pg=``-style
+        selectors (e.g. a ``Node`` recorder built with explicit
+        ``nodes=``).  Concrete subclasses override to fan out
+        ``pg``/``nodes_pg``/``elements_pg`` into explicit id lists
+        and, when applicable, emit auxiliary declarations
+        (MPCO emits a ``region`` line) on ``emitter``.
+
+        The returned recorder must satisfy its own ``_emit`` contract
+        directly — i.e. with no remaining ``pg=`` form set.  ``tags``
+        is the bridge's :class:`TagAllocator`; recorders that need
+        a fresh tag (e.g. MPCO's region tag) allocate from it.
+        """
+        return self
 
 
 # ---------------------------------------------------------------------------

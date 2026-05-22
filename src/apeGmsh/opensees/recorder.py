@@ -46,7 +46,7 @@ include the simulation-time column in the output file. The default
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from .._vocabulary import (
@@ -64,6 +64,9 @@ from .._vocabulary import (
 from ._internal.types import Primitive, Recorder
 
 if TYPE_CHECKING:
+    from apeGmsh.mesh.FEMData import FEMData
+
+    from ._internal.tag_allocator import TagAllocator
     from .emitter.base import Emitter
 
 
@@ -151,6 +154,18 @@ class Node(Recorder):
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
 
+    def materialize(
+        self,
+        emitter: "Emitter",
+        fem: "FEMData",
+        tags: "TagAllocator | None",
+    ) -> "Node":
+        if self.pg is None:
+            return self
+        from ._internal.build import expand_pg_to_nodes
+        node_ids = expand_pg_to_nodes(fem, self.pg)
+        return replace(self, pg=None, nodes=node_ids)
+
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[int | float | str] = ["-file", self.file]
         if self.dT is not None:
@@ -160,10 +175,9 @@ class Node(Recorder):
         if self.nodes is not None:
             args += ["-node", *self.nodes]
         else:
-            # pg → node fan-out is owned by ``emit_recorder_spec`` in
-            # ``apeGmsh.opensees._internal.build``; that helper rewrites
-            # the spec via ``dataclasses.replace`` before calling here.
-            # Reaching this branch means someone bypassed the bridge.
+            # pg → node fan-out is owned by :meth:`Node.materialize`;
+            # the bridge calls it before _emit. Reaching this branch
+            # means someone bypassed the bridge.
             raise NotImplementedError(
                 "Node recorder pg= must be resolved by the bridge "
                 "build pipeline. Drive emission through "
@@ -245,6 +259,21 @@ class Element(Recorder):
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
 
+    def materialize(
+        self,
+        emitter: "Emitter",
+        fem: "FEMData",
+        tags: "TagAllocator | None",
+    ) -> "Element":
+        if self.pg is None:
+            return self
+        from ._internal.build import expand_pg_to_elements
+        # Element recorders accept element ids only, not connectivity.
+        elem_ids = tuple(
+            eid for eid, _conn in expand_pg_to_elements(fem, self.pg)
+        )
+        return replace(self, pg=None, elements=elem_ids)
+
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[int | float | str] = ["-file", self.file]
         if self.dT is not None:
@@ -254,10 +283,9 @@ class Element(Recorder):
         if self.elements is not None:
             args += ["-ele", *self.elements]
         else:
-            # pg → element fan-out is owned by ``emit_recorder_spec`` in
-            # ``apeGmsh.opensees._internal.build``; that helper rewrites
-            # the spec via ``dataclasses.replace`` before calling here.
-            # Reaching this branch means someone bypassed the bridge.
+            # pg → element fan-out is owned by :meth:`Element.materialize`;
+            # the bridge calls it before _emit. Reaching this branch
+            # means someone bypassed the bridge.
             raise NotImplementedError(
                 "Element recorder pg= must be resolved by the bridge "
                 "build pipeline. Drive emission through "
@@ -424,6 +452,120 @@ class MPCO(Recorder):
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
+
+    def materialize(
+        self,
+        emitter: "Emitter",
+        fem: "FEMData",
+        tags: "TagAllocator | None",
+    ) -> "MPCO":
+        """Resolve filter selectors against the FEM and emit the region.
+
+        Whole-model recording (no filter selectors) is a no-op pass-
+        through.  When any of ``nodes`` / ``nodes_pg`` / ``elements`` /
+        ``elements_pg`` is set, this method:
+
+        1. Resolves ``*_pg`` to explicit id tuples via the bridge's
+           PG-expansion helpers; refuses empty resolutions with
+           :class:`BridgeError` (an empty OpenSees region is rejected
+           at runtime).
+        2. Allocates one fresh region tag from ``tags`` (must be
+           supplied — the bridge build pipeline forwards the
+           ``TagAllocator``).
+        3. Emits one ``region $tag -node ... -ele ...`` line on
+           ``emitter``.
+        4. Returns a clone with the filter selectors cleared and
+           ``_region_tag`` populated, so the subsequent ``_emit``
+           appends ``-R $tag`` to the MPCO command.
+        """
+        node_filter = self.nodes is not None or self.nodes_pg is not None
+        elem_filter = (
+            self.elements is not None or self.elements_pg is not None
+        )
+        if not (node_filter or elem_filter):
+            return self
+
+        from ._internal.build import (
+            BridgeError,
+            expand_pg_to_elements,
+            expand_pg_to_nodes,
+        )
+
+        if tags is None:
+            raise BridgeError(
+                "MPCO with nodes=/elements=/nodes_pg=/elements_pg= filter "
+                "requires a TagAllocator on emit_recorder_spec(..., tags=); "
+                "the bridge build pipeline supplies one — tests that "
+                "bypass the bridge must pass it explicitly."
+            )
+
+        # Resolve node-side selector.
+        node_ids: tuple[int, ...] = ()
+        if self.nodes_pg is not None:
+            node_ids = expand_pg_to_nodes(fem, self.nodes_pg)
+            if not node_ids:
+                raise BridgeError(
+                    f"MPCO recorder filter: nodes_pg={self.nodes_pg!r} "
+                    "resolved to zero nodes against the FEM snapshot. "
+                    "An empty region is rejected by OpenSees at runtime; "
+                    "check the PG name spelling and that the PG was "
+                    "populated before get_fem_data."
+                )
+        elif self.nodes is not None:
+            node_ids = tuple(int(n) for n in self.nodes)
+            if not node_ids:
+                raise BridgeError(
+                    "MPCO recorder filter: nodes=() is empty.  An empty "
+                    "region is rejected by OpenSees at runtime; supply a "
+                    "non-empty tuple or drop the nodes= kwarg."
+                )
+
+        # Resolve element-side selector.
+        elem_ids: tuple[int, ...] = ()
+        if self.elements_pg is not None:
+            elem_ids = tuple(
+                eid for eid, _conn in expand_pg_to_elements(fem, self.elements_pg)
+            )
+            if not elem_ids:
+                raise BridgeError(
+                    f"MPCO recorder filter: elements_pg={self.elements_pg!r} "
+                    "resolved to zero elements against the FEM snapshot. "
+                    "An empty region is rejected by OpenSees at runtime; "
+                    "check the PG name spelling and that elements were "
+                    "registered against it before get_fem_data."
+                )
+        elif self.elements is not None:
+            elem_ids = tuple(int(e) for e in self.elements)
+            if not elem_ids:
+                raise BridgeError(
+                    "MPCO recorder filter: elements=() is empty.  An "
+                    "empty region is rejected by OpenSees at runtime; "
+                    "supply a non-empty tuple or drop the elements= kwarg."
+                )
+
+        # Allocate one region tag for this MPCO recorder and emit it.
+        # One ``region`` command can carry both ``-node`` and ``-ele``
+        # flags; MPCO's ``-R`` then filters both nodal and element
+        # results.  At least one of node_ids / elem_ids is guaranteed
+        # non-empty (empty-resolution branches above raise before we
+        # get here, and __post_init__ already verified at least one
+        # selector was supplied).
+        region_tag = tags.allocate("region")
+        region_args: list[int | float | str] = []
+        if node_ids:
+            region_args += ["-node", *node_ids]
+        if elem_ids:
+            region_args += ["-ele", *elem_ids]
+        emitter.region(region_tag, *region_args)
+
+        return replace(
+            self,
+            nodes_pg=None,
+            elements_pg=None,
+            nodes=node_ids if node_ids else None,
+            elements=elem_ids if elem_ids else None,
+            _region_tag=region_tag,
+        )
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         # ``pg=`` selectors must be materialised by the build pipeline

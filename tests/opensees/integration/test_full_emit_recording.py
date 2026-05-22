@@ -323,12 +323,10 @@ def test_mpco_empty_nodes_pg_raises_bridge_error() -> None:
 def test_mpco_empty_explicit_nodes_raises_bridge_error() -> None:
     """Build-pipeline guard catches the empty-tuple edge case that
     construction-time validation does not (an MPCO with nodes=() and
-    matching response set construction-validates but the build
+    matching response set construction-validates but the materialize
     pipeline must still refuse the empty region)."""
     from dataclasses import replace
-    from apeGmsh.opensees._internal.build import (
-        BridgeError, _emit_mpco_with_region,
-    )
+    from apeGmsh.opensees._internal.build import BridgeError
     from apeGmsh.opensees._internal.tag_allocator import TagAllocator
     from apeGmsh.opensees.recorder import MPCO as _MPCO
     from tests.opensees.fixtures.fem_stub import (
@@ -353,10 +351,7 @@ def test_mpco_empty_explicit_nodes_raises_bridge_error() -> None:
     spec = replace(spec, nodes=())
 
     with pytest.raises(BridgeError, match=r"nodes=\(\) is empty"):
-        _emit_mpco_with_region(
-            spec, RecordingEmitter(), tag=1, fem=fem,
-            tags=TagAllocator(),
-        )
+        spec.materialize(RecordingEmitter(), fem, TagAllocator())
 
 
 def test_mpco_without_filter_emits_no_region() -> None:

@@ -101,10 +101,15 @@ OpenSees rejects an empty region at runtime, so emitting a bare
 
 ### Build-pipeline fan-out
 
-A new helper `_emit_mpco_with_region` lives in
-`opensees/_internal/build.py`. The `emit_recorder_spec` dispatcher
-branches into it whenever the MPCO spec carries any of the four
-filter selectors. The helper:
+`emit_recorder_spec` in `opensees/_internal/build.py` is a 3-line
+dispatcher: a `RecorderDeclaration` branch and a single call to
+`spec.materialize(emitter, fem, tags)._emit(emitter, tag)`.  Every
+recorder primitive carries its own `materialize(emitter, fem, tags) ->
+Recorder` hook (the default on `Recorder` returns `self` unchanged;
+`Node` / `Element` resolve `pg=`; `MPCO` resolves the four filter
+selectors and emits the region).
+
+`MPCO.materialize` does the following when any filter selector is set:
 
 1. Resolves `nodes_pg` / `elements_pg` via the existing
    `expand_pg_to_nodes` / `expand_pg_to_elements` helpers, copies
@@ -116,9 +121,10 @@ filter selectors. The helper:
 3. Emits `emitter.region(tag, *args)` once. The args list carries
    `-node n1 n2 ...` when nodes are present, `-ele e1 e2 ...` when
    elements are present, and both when both sides are populated.
-4. Replays the MPCO spec via `dataclasses.replace` with the
-   selectors cleared and `_region_tag=$tag` populated; the
-   recorder's `_emit` then appends `-R $tag` to the MPCO command.
+4. Returns the spec via `dataclasses.replace` with the selectors
+   cleared and `_region_tag=$tag` populated; the dispatcher then
+   calls `_emit` on the returned spec which appends `-R $tag` to
+   the MPCO command.
 
 The bridge's `BuiltModel.emit` passes its `TagAllocator` through to
 `emit_recorder_spec(..., tags=tags)` — this is the only difference
@@ -163,9 +169,9 @@ accessor + replay can be re-introduced at that point.
   storage in OpenSees, so this namespace is independent of
   elements / sections / materials.
 - **INV-3** — MPCO with **any** filter selector goes through
-  `_emit_mpco_with_region`; the recorder's own `_emit` refuses
-  with `NotImplementedError` if reached directly with `pg=` still
-  set (defense-in-depth against bypass of the build pipeline).
+  `MPCO.materialize`; the recorder's own `_emit` refuses with
+  `NotImplementedError` if reached directly with `pg=` still set
+  (defense-in-depth against bypass of the build pipeline).
 - **INV-4** — A region's contents are *not* inferred at re-emit
   time; the `params` payload persisted under `/opensees/regions/`
   is replayed verbatim. The replay is byte-stable for any pair of
