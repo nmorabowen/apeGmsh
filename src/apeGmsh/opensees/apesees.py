@@ -28,6 +28,7 @@ from ._internal.build import (
     BridgeError,
     FixRecord,
     MassRecord,
+    RegionAssignmentRecord,
     emit_element_spec,
     emit_mp_constraints,
     emit_pattern_spec,
@@ -230,15 +231,22 @@ class BuiltModel:
     fix_records, mass_records
         Model-level constraint and mass directives collected through
         ``apeSees.fix`` / ``apeSees.mass``.
+    region_records
+        Named-region assignments collected through ``apeSees.region``
+        (and the ``Node.region`` / ``NodeSet.region`` shortcuts).
+        Multiple records sharing the same ``name`` are merged at emit
+        time into a single ``region $tag -node ...`` command with one
+        freshly-allocated tag.
     """
 
-    primitives:    tuple[Primitive, ...]
-    tag_for:       dict[int, int]
-    ndm:           int
-    ndf:           int
-    fem:           "FEMData"
-    fix_records:   tuple[FixRecord, ...]
-    mass_records:  tuple[MassRecord, ...]
+    primitives:      tuple[Primitive, ...]
+    tag_for:         dict[int, int]
+    ndm:             int
+    ndf:             int
+    fem:             "FEMData"
+    fix_records:     tuple[FixRecord, ...]
+    mass_records:    tuple[MassRecord, ...]
+    region_records:  tuple[RegionAssignmentRecord, ...]
 
     def emit(self, emitter: Emitter) -> int:
         """Drive ``emitter`` over the model, returning ``analyze``'s exit value.
@@ -380,6 +388,13 @@ class BuiltModel:
         self._emit_fixes(emitter)
         self._emit_masses(emitter)
 
+        # 7-bis. Named-region assignments collected through
+        # ``apeSees.region(name=...)`` / ``Node.region(name=...)``.
+        # Emitted before patterns and recorders so a future
+        # ``recorder.X(region="damping")`` lookup or a Rayleigh damping
+        # directive can reference the region by tag.
+        self._emit_regions(emitter, tags)
+
         # 7a. Broker nodal loads (ADR 0001 — the bridge reads
         # ``fem.nodes.loads`` directly). These come from session-side
         # ``g.loads.*`` declarations; the records carry a pattern name
@@ -438,6 +453,36 @@ class BuiltModel:
         for rec in self.mass_records:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 emitter.mass(node_tag, *rec.values)
+
+    def _emit_regions(self, emitter: Emitter, tags: TagAllocator) -> None:
+        """Fan named-region assignments out into ``emitter.region`` calls.
+
+        Groups records by name in first-seen order; within each name,
+        merges all member nodes (across PG resolution and explicit
+        tuples) into a single ordered, deduped tuple; allocates one
+        ``"region"`` tag per name; emits one ``region $tag -node ...``
+        line per name.
+
+        Multiple records with the same name dedupe by node tag; node
+        order within the emitted ``-node`` list is first-seen across
+        records.
+        """
+        if not self.region_records:
+            return
+        by_name: dict[str, list[int]] = {}
+        seen_per_name: dict[str, set[int]] = {}
+        for rec in self.region_records:
+            bucket = by_name.setdefault(rec.name, [])
+            seen = seen_per_name.setdefault(rec.name, set())
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                if node_tag not in seen:
+                    seen.add(node_tag)
+                    bucket.append(node_tag)
+        for name, node_list in by_name.items():
+            if not node_list:
+                continue
+            tag = tags.allocate("region")
+            emitter.region(tag, "-node", *node_list)
 
     def _resolve_node_target(
         self, pg: str | None, nodes: tuple[int, ...] | None,
@@ -621,6 +666,7 @@ class apeSees:
         self._ndf: int | None = None
         self._fix_records: list[FixRecord] = []
         self._mass_records: list[MassRecord] = []
+        self._region_records: list[RegionAssignmentRecord] = []
         # Resolve the sentinel: unset → Cartesian() (Z-up). Explicit
         # None disables the auto-default (2D models).
         if isinstance(default_orientation, _UnsetType):
@@ -755,6 +801,43 @@ class apeSees:
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
         self._mass_records.append(
             MassRecord(pg=pg, nodes=nodes_tuple, values=tuple(values)),
+        )
+
+    def region(
+        self,
+        *,
+        name: str,
+        pg: str | None = None,
+        nodes: Iterable[int | Node] | None = None,
+    ) -> None:
+        """Assign nodes to a named OpenSees Region.
+
+        Each ``name`` collects all nodes registered against it
+        (across multiple calls, across explicit ``nodes=`` and
+        ``pg=`` resolutions) and emits a single
+        ``region $tag -node n1 n2 ...`` line at build time with a
+        freshly allocated region tag.  Useful for damping
+        assignments and any future recorder that filters by region.
+
+        Exactly one of ``pg`` / ``nodes`` must be supplied; ``nodes``
+        accepts a mix of plain integer tags and :class:`Node`
+        instances (matching :meth:`fix` / :meth:`mass`).
+
+        End users typically call this through :meth:`Node.region` or
+        :meth:`NodeSet.region` rather than directly.
+        """
+        if not name:
+            raise ValueError("apeSees.region: name= must be non-empty.")
+        if (pg is None) == (nodes is None):
+            raise ValueError(
+                "apeSees.region: supply exactly one of pg= or nodes= "
+                f"(got pg={pg!r}, nodes={nodes!r})."
+            )
+        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        self._region_records.append(
+            RegionAssignmentRecord(
+                name=str(name), pg=pg, nodes=nodes_tuple,
+            ),
         )
 
     def analyze(self, *, steps: int, dt: float | None = None) -> int:
@@ -1033,6 +1116,7 @@ class apeSees:
             fem=self._fem,
             fix_records=tuple(self._fix_records),
             mass_records=tuple(self._mass_records),
+            region_records=tuple(self._region_records),
         )
 
     # -- Internal helpers ------------------------------------------------

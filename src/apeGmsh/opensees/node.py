@@ -98,6 +98,17 @@ class Node:
         """Attach lumped nodal mass at this node."""
         self._bridge.mass(nodes=(self.tag,), values=values)
 
+    def region(self, name: str) -> None:
+        """Assign this node to the named OpenSees Region.
+
+        Multiple ``.region(name)`` calls with the same ``name`` (from
+        any node or set) accumulate into one ``region $tag -node ...``
+        line at build time, with a freshly allocated tag.
+        ``Emitter.region()`` (ADR 0024) is the underlying Protocol
+        method.
+        """
+        self._bridge.region(name=name, nodes=(self.tag,))
+
     # -- Container conveniences ---------------------------------------------
 
     def __int__(self) -> int:
@@ -167,6 +178,19 @@ class NodeSet:
         self._bridge.mass(
             nodes=tuple(n.tag for n in self._nodes),
             values=values,
+        )
+
+    def region(self, name: str) -> None:
+        """Assign every node in the set to the named OpenSees Region.
+
+        Equivalent to one ``apeSees.region(name=..., nodes=tags)`` call
+        with the set's tags; see :meth:`Node.region`.
+        """
+        if not self._nodes:
+            return
+        self._bridge.region(
+            name=name,
+            nodes=tuple(n.tag for n in self._nodes),
         )
 
     # -- Container protocol --------------------------------------------------

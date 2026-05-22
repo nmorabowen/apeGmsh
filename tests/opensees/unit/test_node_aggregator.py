@@ -335,3 +335,167 @@ class TestBridgeFixMassWithNodes:
 
         rec = ops._mass_records[0]
         assert rec.nodes == (2, 4)
+
+
+# ===========================================================================
+# Region — Node.region / NodeSet.region / apeSees.region
+# ===========================================================================
+
+class TestNodeRegion:
+    """Node.region(name) routes through the bridge into a
+    :class:`RegionAssignmentRecord`.  At emit time the bridge merges
+    members by name into one ``region $tag -node ...`` line per name.
+    """
+
+    def test_node_region_records_via_bridge(self) -> None:
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        ops.nodes.get(tag=1).region("damping")
+
+        assert len(ops._region_records) == 1
+        rec = ops._region_records[0]
+        assert rec.name == "damping"
+        assert rec.pg is None
+        assert rec.nodes == (1,)
+
+    def test_nodeset_region_records_via_bridge(self) -> None:
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        ops.nodes.get(pg="Base").region("supports")
+
+        assert len(ops._region_records) == 1
+        rec = ops._region_records[0]
+        assert rec.name == "supports"
+        assert rec.pg is None
+        assert rec.nodes == (1, 3)
+
+    def test_empty_nodeset_region_is_inert(self) -> None:
+        from tests.opensees.fixtures.fem_stub import (
+            FEMStub, _ElementsStub, _NodesStub,
+        )
+        nodes = _NodesStub(
+            ids=[1], coords=[(0.0, 0.0, 0.0)], node_pgs={"Empty": []},
+        )
+        elements = _ElementsStub(elem_pgs={})
+        fem = FEMStub(nodes=nodes, elements=elements)
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        ops.nodes.get(pg="Empty").region("empty")
+        assert ops._region_records == []
+
+    def test_apesees_region_with_pg(self) -> None:
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        ops.region(name="top", pg="Top")
+
+        assert len(ops._region_records) == 1
+        rec = ops._region_records[0]
+        assert rec.name == "top"
+        assert rec.pg == "Top"
+        assert rec.nodes is None
+
+    def test_apesees_region_accepts_node_instances(self) -> None:
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        ops.region(
+            name="mixed",
+            nodes=(ops.nodes.get(tag=2), 4),
+        )
+
+        rec = ops._region_records[0]
+        assert rec.nodes == (2, 4)
+
+    def test_apesees_region_requires_pg_xor_nodes(self) -> None:
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="exactly one of"):
+            ops.region(name="x")  # neither
+        with pytest.raises(ValueError, match="exactly one of"):
+            ops.region(name="x", pg="Top", nodes=(2,))  # both
+
+    def test_apesees_region_requires_nonempty_name(self) -> None:
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="name= must be non-empty"):
+            ops.region(name="", nodes=(2,))
+
+
+class TestRegionEmitFanOut:
+    """The build pipeline merges region records by name into one
+    ``emitter.region`` call per name (one freshly allocated tag,
+    de-duped node list in first-seen order).
+    """
+
+    def test_two_nodes_same_name_emit_one_region(self) -> None:
+        from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        ops.nodes.get(tag=1).region("damping")
+        ops.nodes.get(tag=2).region("damping")
+
+        rec = RecordingEmitter()
+        ops.build().emit(rec)
+        region_calls = [c for c in rec.calls if c[0] == "region"]
+        assert len(region_calls) == 1
+        _, args, _ = region_calls[0]
+        # args = (tag, '-node', 1, 2)
+        tag, flag, *node_tags = args
+        assert isinstance(tag, int) and tag > 0
+        assert flag == "-node"
+        assert tuple(node_tags) == (1, 2)
+
+    def test_two_names_emit_two_regions_with_distinct_tags(self) -> None:
+        from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        ops.nodes.get(pg="Base").region("supports")
+        ops.nodes.get(pg="Top").region("loaded")
+
+        rec = RecordingEmitter()
+        ops.build().emit(rec)
+        region_calls = [c for c in rec.calls if c[0] == "region"]
+        assert len(region_calls) == 2
+        tags = [c[1][0] for c in region_calls]
+        assert len(set(tags)) == 2  # distinct
+        # Insertion order: "supports" first, then "loaded".
+        first_nodes = tuple(region_calls[0][1][2:])
+        second_nodes = tuple(region_calls[1][1][2:])
+        assert first_nodes == (1, 3)  # Base
+        assert second_nodes == (2, 4)  # Top
+
+    def test_duplicate_nodes_dedupe_within_name(self) -> None:
+        from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        # Node 1 is in Base; mention it twice in two ways.
+        ops.nodes.get(tag=1).region("damping")
+        ops.nodes.get(pg="Base").region("damping")  # includes node 1 again
+
+        rec = RecordingEmitter()
+        ops.build().emit(rec)
+        region_calls = [c for c in rec.calls if c[0] == "region"]
+        assert len(region_calls) == 1
+        node_tags = tuple(region_calls[0][1][2:])
+        # First-seen order: 1 (from .region(tag=1)), then the new
+        # member from Base (3); node 1 from Base is skipped (dedup).
+        assert node_tags == (1, 3)
+
+    def test_no_region_records_emits_no_region(self) -> None:
+        from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+        fem = make_two_column_frame()
+        ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+        ops.model(ndm=3, ndf=6)
+        rec = RecordingEmitter()
+        ops.build().emit(rec)
+        assert [c for c in rec.calls if c[0] == "region"] == []

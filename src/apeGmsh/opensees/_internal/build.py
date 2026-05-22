@@ -131,6 +131,23 @@ class MassRecord:
     values: tuple[float, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class RegionAssignmentRecord:
+    """One ``apeSees.region(name=...)`` directive — assigns nodes to a
+    named OpenSees Region.
+
+    Either ``pg`` or ``nodes`` is non-None (validated at the call site).
+    Multiple records sharing the same ``name`` accumulate into one
+    ``region $tag -node n1 n2 ...`` line at emit time: members merge by
+    name, one tag is allocated per name, duplicates within a name are
+    de-duped while preserving first-seen order.
+    """
+
+    name: str
+    pg: str | None
+    nodes: tuple[int, ...] | None
+
+
 # ---------------------------------------------------------------------------
 # Topological ordering
 # ---------------------------------------------------------------------------
