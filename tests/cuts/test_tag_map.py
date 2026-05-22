@@ -18,6 +18,8 @@ import pytest
 
 from apeGmsh.cuts import FemToOpsTagMap
 
+from tests.fixtures.schema import OPENSEES_CURRENT
+
 
 # --------------------------------------------------------------------- #
 # Inline fixture builder — minimal model.h5 with element_meta + fem_eids
@@ -26,7 +28,7 @@ def _write_minimal_h5(
     path: Path,
     *,
     groups: dict[str, dict[str, np.ndarray]],
-    schema_version: str = "2.8.0",
+    schema_version: str = OPENSEES_CURRENT,
 ) -> None:
     """Write the smallest h5 that the reference reader accepts.
 
@@ -216,7 +218,7 @@ def test_missing_fem_eids_dataset_raises_helpful(tmp_path: Path) -> None:
     h5 = tmp_path / "model.h5"
     with h5py.File(h5, "w") as f:
         meta = f.create_group("meta")
-        meta.attrs["schema_version"] = "2.8.0"
+        meta.attrs["schema_version"] = OPENSEES_CURRENT
         em = f.create_group("opensees/element_meta")
         g = em.create_group("forceBeamColumn")
         g.attrs["type"] = "forceBeamColumn"

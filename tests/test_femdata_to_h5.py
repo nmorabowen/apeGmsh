@@ -22,6 +22,7 @@ from apeGmsh.mesh.FEMData import (
 )
 from apeGmsh._kernel.records._constraints import NodeGroupRecord, NodePairRecord
 from apeGmsh._kernel.records._kinds import ConstraintKind
+from tests.fixtures.schema import NEUTRAL_CURRENT
 from apeGmsh._kernel.records._loads import (
     ElementLoadRecord,
     NodalLoadRecord,
@@ -156,7 +157,7 @@ def test_to_h5_writes_meta(tmp_path: Path) -> None:
         # snapshot_id verified on read).  Phase 6 (ADR 0021) bumped
         # again 2.5.0 → 2.6.0 for the additive /meta/lineage
         # sub-group.
-        assert f["meta"].attrs["schema_version"] == "2.6.0"
+        assert f["meta"].attrs["schema_version"] == NEUTRAL_CURRENT
         assert int(f["meta"].attrs["ndm"]) == 2  # max element dim
         assert f["meta"].attrs["model_name"] == "demo"
 

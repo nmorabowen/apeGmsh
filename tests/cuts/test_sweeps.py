@@ -20,6 +20,8 @@ import pytest
 
 from apeGmsh.cuts import SectionCutDef, SectionSweepDef, plane_horizontal
 
+from tests.fixtures.schema import OPENSEES_CURRENT
+
 
 # --------------------------------------------------------------------- #
 # Stubs + h5 helper — same shape as test_builders.py
@@ -116,7 +118,7 @@ def _write_minimal_h5(
 ) -> None:
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")
-        meta.attrs["schema_version"] = "2.8.0"
+        meta.attrs["schema_version"] = OPENSEES_CURRENT
         meta.attrs["apeGmsh_version"] = "0.0.0-test"
         meta.attrs["created_iso"] = "2026-01-01T00:00:00Z"
         meta.attrs["ndm"] = 3

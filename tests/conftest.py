@@ -109,7 +109,6 @@ def _stub_opensees_model() -> Any:
         _masses=(),
         _patterns=(),
         _recorders=(),
-        _regions=(),
         _analysis_attrs=MappingProxyType({}),
         _analyze_call=None,
         _cuts=(),

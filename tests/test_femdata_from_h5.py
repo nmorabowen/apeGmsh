@@ -37,6 +37,8 @@ from apeGmsh._kernel.records._loads import (
 )
 from apeGmsh._kernel.records._masses import MassRecord
 
+from tests.fixtures.schema import NEUTRAL_CURRENT
+
 
 # =====================================================================
 # Builder — every record type covered
@@ -857,7 +859,7 @@ def _make_legacy_2_4_0_h5(path: Path) -> None:
         # Per ADR 0023 fixture must be inside the two-version reader
         # window (2.6.x / 2.7.x); the test exercises legacy
         # empty-snapshot_id semantics, not pre-window file handling.
-        meta.attrs["schema_version"] = "2.6.0"
+        meta.attrs["schema_version"] = NEUTRAL_CURRENT
         meta.attrs["apeGmsh_version"] = ""
         meta.attrs["created_iso"] = "2025-01-01T00:00:00+00:00"
         meta.attrs["ndm"] = 1

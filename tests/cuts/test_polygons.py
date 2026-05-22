@@ -24,6 +24,8 @@ from apeGmsh.cuts._polygons import (
     _project_to_basis,
 )
 
+from tests.fixtures.schema import OPENSEES_CURRENT
+
 
 # --------------------------------------------------------------------- #
 # Stubs (same shape as test_builders.py / test_sweeps.py)
@@ -79,7 +81,7 @@ class _StubFEM:
 def _write_minimal_h5(path: Path, *, groups: dict[str, dict[str, np.ndarray]]) -> None:
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")
-        meta.attrs["schema_version"] = "2.8.0"
+        meta.attrs["schema_version"] = OPENSEES_CURRENT
         meta.attrs["apeGmsh_version"] = "0.0.0-test"
         meta.attrs["created_iso"] = "2026-01-01T00:00:00Z"
         meta.attrs["ndm"] = 3

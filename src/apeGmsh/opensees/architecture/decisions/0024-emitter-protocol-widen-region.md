@@ -125,7 +125,7 @@ The bridge's `BuiltModel.emit` passes its `TagAllocator` through to
 in the build orchestration. Other recorder kinds (Node, Element,
 MPCO without filters, RecorderDeclaration) ignore the kwarg.
 
-### H5 round-trip — `/opensees/regions/` zone
+### H5 zone — write-side only
 
 The `H5Emitter.region()` method appends a `RegionRecord` to an
 internal buffer; `_write_regions(f)` persists each as a
@@ -143,10 +143,16 @@ both 2.8.x and 2.9.x files are accepted at the OPENSEES zone.  Old
 2.8.x readers ignore the new group and lose only the filter
 round-trip.
 
-The read side adds `RegionRecord` accessor on `OpenSeesModel`
-(`om.regions() -> list[RegionRecord]`) and `_replay_into` re-emits
-the regions in the order they were persisted, before recorders so
-the MPCO `-R $tag` reference is valid in the rebuilt deck.
+**The read side is deliberately deferred.**  Regions have a single
+consumer today — MPCO `-R $tag` filtering — and that consumer
+regenerates them from `nodes_pg` / `elements_pg` on every emit. A
+round-trip accessor (`om.regions()`) plus a replay step in
+`_replay_into` would round-trip data we always regenerate; the
+initial implementation shipped both but the follow-up audit rolled
+the read-side surface back.  The H5 group remains as a write-side
+debugging artifact; if a second consumer emerges (Rayleigh damping
+by region, element load patterns scoped to a region, ...) the
+accessor + replay can be re-introduced at that point.
 
 ## Invariants
 
@@ -177,15 +183,18 @@ the MPCO `-R $tag` reference is valid in the rebuilt deck.
 - LHS-scaling for MPCO output: filtered output drops 218 MB → ~5 MB
   per pushover on the Cerro Lindo workload, ~400 GB → ~10 GB at
   N=1800.
-- The H5 round-trip closure (`/opensees/regions/` zone + read
-  accessor + replay) means MPCO+pg models survive
-  `apeSees(fem).h5(p)` → `OpenSeesModel.from_h5(p).build("tcl", q)`
-  without losing the filter — the dangling-`-R` failure mode is
-  closed.
-- `model_hash` includes the regions bytes (regions are *not* in
-  `MODEL_HASH_EXCLUDED_CHILDREN`); round-trip determinism is
-  required for lineage to remain clean. The replay step preserves
-  byte order, so this is satisfied.
+- The H5 zone (`/opensees/regions/`) is write-side only; the read
+  surface (`om.regions()` accessor and `_replay_into` replay step)
+  is deferred until a second consumer materializes. MPCO+pg models
+  driven through `apeSees(fem)` get their region declared and the
+  MPCO line correctly carries `-R $tag` on the first build; the H5
+  round-trip case (`OpenSeesModel.from_h5(p).build("tcl", q)`) is
+  the deferred branch.
+- `regions` is in `MODEL_HASH_EXCLUDED_CHILDREN` alongside `cuts`
+  and `sweeps`: the broker does not load the zone, so a
+  `from_h5 → to_h5` cycle produces a file without regions and
+  `model_hash` would otherwise drift. Excluding the group keeps
+  lineage clean across the cycle.
 - ADR 0023's per-zone schema versioning policy is followed (additive
   new zone → minor bump 2.8.0 → 2.9.0).
 - The `region()` Protocol method is general-purpose; future use
@@ -203,6 +212,6 @@ the MPCO `-R $tag` reference is valid in the rebuilt deck.
   applied here).
 - ADR 0021 — Lineage chain (the model_hash determinism this ADR
   preserves through the replay step).
-- ADR 0019 — `OpenSeesModel` read-side broker (the
-  `om.regions()` accessor follows the same per-record-kind
-  pattern as `om.materials()`, `om.sections()`, etc.).
+- ADR 0019 — `OpenSeesModel` read-side broker (the regions
+  read-surface would follow the same per-record-kind pattern as
+  `om.materials()`, `om.sections()`, etc. when the trigger arrives).

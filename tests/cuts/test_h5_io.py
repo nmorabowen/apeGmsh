@@ -27,12 +27,14 @@ from apeGmsh.cuts._h5_io import (
 )
 from apeGmsh.opensees.emitter.h5_reader import SchemaVersionError
 
+from tests.fixtures.schema import OPENSEES_CURRENT
+
 
 # --------------------------------------------------------------------- #
 # Fixture builder — minimal model.h5 the reference reader accepts
 # --------------------------------------------------------------------- #
 def _make_h5_with_meta(
-    path: Path, *, schema_version: str = "2.8.0",
+    path: Path, *, schema_version: str = OPENSEES_CURRENT,
 ) -> None:
     """Create a minimal ``model.h5`` carrying just ``/meta/schema_version``.
 
@@ -226,7 +228,7 @@ def test_read_missing_returns_empty(tmp_path: Path) -> None:
     # still be inside the ADR 0023 two-version reader window
     # (2.7.x / 2.8.x).  Reader-window-old fixtures are out of scope
     # (INV-5 migration tooling).
-    _make_h5_with_meta(path, schema_version="2.8.0")  # pre-v4 schema
+    _make_h5_with_meta(path, schema_version=OPENSEES_CURRENT)  # pre-v4 schema
 
     cuts, sweeps = read_cuts_and_sweeps(path)
     assert cuts == ()
@@ -423,12 +425,12 @@ def test_persist_to_h5_appends_to_in_window_file_keeps_version(
         label="appended",
     )
     path = tmp_path / "in_window.h5"
-    _make_h5_with_meta(path, schema_version="2.8.0")
+    _make_h5_with_meta(path, schema_version=OPENSEES_CURRENT)
 
     persist_to_h5(path, cuts=[cut])
 
     with h5py.File(path, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.8.0"
+        assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
         assert "opensees/cuts/cut_0" in f
 
     cuts, _ = read_cuts_and_sweeps(path)
@@ -465,12 +467,12 @@ def test_persist_to_h5_leaves_2_5_0_version_alone(tmp_path: Path) -> None:
         element_ids=(1,),
     )
     path = tmp_path / "already_v4.h5"
-    _make_h5_with_meta(path, schema_version="2.8.0")
+    _make_h5_with_meta(path, schema_version=OPENSEES_CURRENT)
 
     persist_to_h5(path, cuts=[cut])
 
     with h5py.File(path, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.8.0"
+        assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
 
 
 def test_persist_to_h5_preserves_future_version(tmp_path: Path) -> None:
@@ -486,12 +488,12 @@ def test_persist_to_h5_preserves_future_version(tmp_path: Path) -> None:
         element_ids=(1,),
     )
     path = tmp_path / "future.h5"
-    _make_h5_with_meta(path, schema_version="2.8.0")
+    _make_h5_with_meta(path, schema_version=OPENSEES_CURRENT)
 
     persist_to_h5(path, cuts=[cut])
 
     with h5py.File(path, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.8.0"
+        assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
 
 
 def test_persist_to_h5_overwrites_existing_cuts_group(

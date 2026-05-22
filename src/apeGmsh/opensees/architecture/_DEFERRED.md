@@ -105,3 +105,28 @@ classes via introspection.
 (in-plane radial / circumferential axes). Today the build step
 raises if `orientation=` is supplied with `ndm=2`. Lift the restriction
 when we add 2-D-specific tests.
+
+## Recorder Materializer protocol — deferred until trigger
+
+`emit_recorder_spec` in `_internal/build.py` currently has 4 isinstance
+branches (RecorderDeclaration / Node+pg / Element+pg / MPCO+selectors)
+plus the `_region_tag` underscore-prefix-on-frozen-dataclass channel
+used by `dataclasses.replace` to pass build-time state through MPCO.
+When the recorder dispatch grows to a 5th branch (e.g. a Drift
+recorder, an EnvelopeNode recorder, or any new `pg=`-style selector
+on an existing recorder), refactor to a `Recorder.materialize(fem,
+tags) -> Recorder` hook on each primitive.  `emit_recorder_spec`
+then collapses to a 3-line dispatcher:
+
+    def emit_recorder_spec(spec, emitter, tag, fem, *, tags=None):
+        if isinstance(spec, RecorderDeclaration):
+            return _emit_recorder_declaration(spec, emitter, fem)
+        spec.materialize(fem, tags)._emit(emitter, tag)
+
+Side benefit: the `_region_tag` channel becomes a normal field set
+inside `MPCORecorder.materialize()` — co-located with the only code
+that writes it, no more `dataclasses.replace` indirection.
+
+Estimated cost when triggered: ~80 LOC across recorder primitives +
+build pipeline. Risk: low.  DO NOT refactor speculatively — wait for
+the trigger.

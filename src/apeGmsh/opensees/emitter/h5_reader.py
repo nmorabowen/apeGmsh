@@ -46,7 +46,6 @@ from .._internal.typed_records import (
     MaterialRecord,
     PatternRecord,
     RecorderRecord,
-    RegionRecord,
     SectionComplexRecord,
     SectionSimpleRecord,
     TimeSeriesRecord,
@@ -556,34 +555,6 @@ class H5Model:
             return out
         for name in ops["recorders"]:
             out.append(self._recorder_record(ops["recorders"][name]))
-        return out
-
-    def regions(self) -> list[RegionRecord]:
-        """Return every ``/opensees/regions/{name}`` group as a typed
-        record.
-
-        Schema 2.8.0 (ADR 0024) — regions are auto-emitted by the MPCO
-        recorder fan-out when ``nodes_pg=`` / ``elements_pg=`` is
-        supplied; each region group carries an integer ``tag``
-        attribute and a ``params`` dataset replaying the raw OpenSees
-        flag tail (``-node ...``, ``-ele ...``, etc.).  Order matches
-        H5 iteration order which mirrors write order
-        (``region_000``, ``region_001``, ...).
-        """
-        out: list[RegionRecord] = []
-        if "opensees" not in self._f:
-            return out
-        ops = self._f["opensees"]
-        if "regions" not in ops:
-            return out
-        for name in ops["regions"]:
-            g = ops["regions"][name]
-            attrs = _attrs_as_dict(g)
-            params = self._read_param_array(g, "params")
-            out.append(RegionRecord(
-                tag=int(attrs.get("tag", 0)),
-                args=tuple(params),
-            ))
         return out
 
     # -- Private decoders for the typed accessors -----------------------

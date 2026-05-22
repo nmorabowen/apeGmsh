@@ -42,6 +42,7 @@ from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 from apeGmsh.opensees.section.fiber import FiberPoint
 
+from tests.fixtures.schema import OPENSEES_CURRENT
 from tests.opensees.fixtures.fem_stub import make_two_column_frame
 
 
@@ -788,13 +789,13 @@ class TestH5SchemaIntegration:
         # bumped to 2.8.0 (separately); ADR 0024 (region() Protocol
         # widening) bumped to 2.9.0.
         from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION
-        assert SCHEMA_VERSION == "2.9.0"
+        assert SCHEMA_VERSION == OPENSEES_CURRENT
         e = H5Emitter()
         out = tmp_path / "x.h5"
         e.write(str(out))
         with h5py.File(out, "r") as f:
-            assert f["meta"].attrs["schema_version"] == "2.9.0"
-            assert f["meta"].attrs["opensees_schema_version"] == "2.9.0"
+            assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
+            assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
 
     def test_reader_window_accepts_2_8_and_2_9(self, tmp_path: Path) -> None:
         """The 2-version window for OpenSees zone is now 2.8.x — 2.9.x

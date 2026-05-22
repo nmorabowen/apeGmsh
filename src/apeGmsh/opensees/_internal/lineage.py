@@ -78,8 +78,13 @@ WARNING_PREFIX: str = "[lineage] "
 #: Children of ``/opensees/`` excluded from :func:`compute_model_hash`
 #: (INV-4).  Cuts and sweeps are user-attached post-hoc artifacts; a
 #: cut-edit workflow must not produce lineage warnings on every
-#: viewer open.
-MODEL_HASH_EXCLUDED_CHILDREN: frozenset[str] = frozenset({"cuts", "sweeps"})
+#: viewer open.  ``regions`` are derived from ``nodes_pg`` /
+#: ``elements_pg`` on every MPCO emit and not loaded by the broker,
+#: so ``from_h5 → to_h5`` cycles produce files without regions; we
+#: must elide them to keep ``model_hash`` stable across the round-trip.
+MODEL_HASH_EXCLUDED_CHILDREN: frozenset[str] = frozenset(
+    {"cuts", "sweeps", "regions"}
+)
 
 #: blake2b digest size — matches today's ``snapshot_id`` (16 bytes ⇒
 #: 32 hex chars).

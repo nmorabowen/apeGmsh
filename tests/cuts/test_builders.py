@@ -23,6 +23,8 @@ import pytest
 
 from apeGmsh.cuts import SectionCutDef
 
+from tests.fixtures.schema import OPENSEES_CURRENT
+
 
 # --------------------------------------------------------------------- #
 # Inline fixtures: stub FEMData + minimal model.h5
@@ -93,7 +95,7 @@ def _write_minimal_h5(
     path: Path,
     *,
     groups: dict[str, dict[str, np.ndarray]],
-    schema_version: str = "2.8.0",
+    schema_version: str = OPENSEES_CURRENT,
 ) -> None:
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")

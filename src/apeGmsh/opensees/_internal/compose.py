@@ -208,7 +208,6 @@ def _replay_into(
     masses: "Sequence[Any]" = (),
     patterns: "Sequence[Any]" = (),
     recorders: "Sequence[Any]" = (),
-    regions: "Sequence[Any]" = (),
     analysis_attrs: "dict[str, Any] | None" = None,
     analyze_call: "tuple[int, float | None] | None" = None,
 ) -> None:
@@ -337,15 +336,6 @@ def _replay_into(
         for ele_load in rec.ele_loads:
             emitter.eleLoad(*ele_load.args)
         emitter.pattern_close()
-
-    # 10b. Regions (ADR 0024, schema 2.8.0).  Replayed BEFORE recorders
-    # so MPCO ``-R $tag`` references are valid in the rebuilt deck.
-    # Auto-emitted by the bridge's MPCO recorder fan-out
-    # (``nodes_pg=`` / ``elements_pg=``); on round-trip the persisted
-    # RegionRecord(tag, args) is replayed verbatim — no PG
-    # re-resolution against the snapshot, no tag re-allocation.
-    for rec in regions:
-        emitter.region(int(rec.tag), *rec.args)
 
     # 11. Recorders.  Schema 2.3.0 wraps declared recorders in a
     # begin/end context; the helper replays the wrapping so the

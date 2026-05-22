@@ -87,7 +87,6 @@ from ._internal.typed_records import (
     MaterialRecord,
     PatternRecord,
     RecorderRecord,
-    RegionRecord,
     SectionComplexRecord,
     SectionSimpleRecord,
     TimeSeriesRecord,
@@ -141,7 +140,6 @@ class OpenSeesModel:
     _masses: tuple[MassRecord, ...]
     _patterns: tuple[PatternRecord, ...]
     _recorders: tuple[RecorderRecord, ...]
-    _regions: tuple[RegionRecord, ...]
     _analysis_attrs: Mapping[str, Any]
     _analyze_call: "tuple[int, float | None] | None"
     _cuts: tuple["SectionCutDef", ...]
@@ -249,7 +247,6 @@ class OpenSeesModel:
             time_series = tuple(model.time_series())
             patterns = tuple(model.patterns())
             recorders = tuple(model.recorders())
-            regions = tuple(model.regions())
 
             elements = cls._load_elements(model)
             fixes, masses = cls._load_bcs(model)
@@ -278,7 +275,6 @@ class OpenSeesModel:
             _masses=masses,
             _patterns=patterns,
             _recorders=recorders,
-            _regions=regions,
             _analysis_attrs=MappingProxyType(dict(analysis_attrs)),
             _analyze_call=analyze_call,
             _cuts=tuple(cuts),
@@ -347,7 +343,6 @@ class OpenSeesModel:
             _masses=tuple(emitter._masses),
             _patterns=tuple(emitter._patterns_complete),
             _recorders=tuple(emitter._recorders),
-            _regions=tuple(emitter._regions),
             _analysis_attrs=MappingProxyType(dict(emitter._analysis_attrs)),
             _analyze_call=emitter._analyze_call,
             _cuts=tuple(cuts),
@@ -560,18 +555,6 @@ class OpenSeesModel:
         ``decl_context``.
         """
         return self._recorders
-
-    def regions(self) -> tuple[RegionRecord, ...]:
-        """Return every ``region`` call (ADR 0024, schema 2.8.0).
-
-        Regions are auto-emitted by the MPCO recorder fan-out when
-        ``nodes_pg=`` / ``elements_pg=`` is supplied; each carries an
-        integer ``tag`` plus the raw OpenSees flag tail in ``args``
-        (``-node n1 n2 ...``, ``-ele e1 e2 ...``, etc.).  Replayed by
-        :meth:`build` *before* recorders so MPCO ``-R $tag``
-        references are valid in the re-emitted deck.
-        """
-        return self._regions
 
     def elements(self) -> tuple[ElementRecord, ...]:
         """Return every ``element`` call.
@@ -820,7 +803,6 @@ class OpenSeesModel:
             masses=self._masses,
             patterns=self._patterns,
             recorders=self._recorders,
-            regions=self._regions,
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
         )
@@ -931,7 +913,6 @@ class OpenSeesModel:
             masses=self._masses,
             patterns=self._patterns,
             recorders=self._recorders,
-            regions=self._regions,
             analysis_attrs=dict(self._analysis_attrs),
             analyze_call=self._analyze_call,
         )

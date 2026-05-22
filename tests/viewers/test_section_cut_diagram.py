@@ -34,6 +34,7 @@ from apeGmsh.viewers.diagrams._styles import DiagramStyle
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
 from tests.conftest import _open_model_from_h5
+from tests.fixtures.schema import OPENSEES_CURRENT
 
 
 # ---------------------------------------------------------------------
@@ -43,7 +44,7 @@ from tests.conftest import _open_model_from_h5
 def _write_minimal_h5(
     path: Path, *, ops_to_fem: dict[int, int],
     type_token: str = "forceBeamColumn",
-    schema_version: str = "2.8.0",
+    schema_version: str = OPENSEES_CURRENT,
 ) -> None:
     ids = np.array(list(ops_to_fem.keys()), dtype=np.int64)
     fem_eids = np.array(list(ops_to_fem.values()), dtype=np.int64)

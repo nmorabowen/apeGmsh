@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from tests.conftest import _stub_model_h5_path
+from tests.fixtures.schema import OPENSEES_CURRENT
 
 
 _FIXTURE = Path("tests/fixtures/results/elasticFrame.mpco")
@@ -332,7 +333,7 @@ def test_missing_file_marks_error(qapp, director, tmp_path):
 # v4-5 — Source toggle (file vs h5) + h5-cut dropdown
 # =====================================================================
 
-def _make_minimal_h5(path, *, schema_version="2.8.0"):
+def _make_minimal_h5(path, *, schema_version=OPENSEES_CURRENT):
     import h5py
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")
