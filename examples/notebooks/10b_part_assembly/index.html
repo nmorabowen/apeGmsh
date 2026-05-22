@@ -4973,7 +4973,8 @@ alter stiffness.</p>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.core.Part</span><span class="w"> </span><span class="kn">import</span> <span class="n">Part</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.capture</span><span class="w"> </span><span class="kn">import</span> <span class="n">DomainCaptureSpec</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenSeesModel</span>
 
 <span class="c1"># Geometry / instancing</span>
@@ -5001,7 +5002,8 @@ import openseespy.opensees as ops
 
 from apeGmsh import apeGmsh, Results
 from apeGmsh.core.Part import Part
-from apeGmsh.results.spec import Recorders
+from apeGmsh.opensees import apeSees
+from apeGmsh.results.capture import DomainCaptureSpec
 from apeGmsh.opensees import OpenSeesModel
 
 # Geometry / instancing
@@ -5168,6 +5170,8 @@ print(f"parts registered: {g.parts.labels()}")</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
 <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
+<span class="n">opb</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+<span class="n">opb</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"mesh: </span><span class="si">{</span><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="o">.</span><span class="n">n_nodes</span><span class="si">}</span><span class="s2"> nodes, </span><span class="si">{</span><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="o">.</span><span class="n">n_elems</span><span class="si">}</span><span class="s2"> elements"</span><span class="p">)</span>
 <span class="k">for</span> <span class="n">lbl</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">labels</span><span class="p">()):</span>
     <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">lbl</span><span class="p">)</span><span class="o">.</span><span class="n">ids</span><span class="p">))</span>
@@ -5176,6 +5180,8 @@ print(f"parts registered: {g.parts.labels()}")</div>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-4">g.mesh.generation.generate(1)
 fem = g.mesh.queries.get_fem_data()
+opb = apeSees(fem)
+opb.model(ndm=3, ndf=6)
 print(f"mesh: {fem.info.n_nodes} nodes, {fem.info.n_elems} elements")
 for lbl in sorted(g.parts.labels()):
     n = len(list(fem.nodes.get(target=lbl).ids))
@@ -5378,24 +5384,20 @@ all the way through.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">recorders</span> <span class="o">=</span> <span class="n">Recorders</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">spec</span> <span class="o">=</span> <span class="n">DomainCaptureSpec</span><span class="p">(</span><span class="n">opensees</span><span class="o">=</span><span class="n">opb</span><span class="p">)</span>
 
 <span class="k">for</span> <span class="n">lbl</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">g</span><span class="o">.</span><span class="n">parts</span><span class="o">.</span><span class="n">labels</span><span class="p">()):</span>
-    <span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
         <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">],</span> <span class="n">label</span><span class="o">=</span><span class="n">lbl</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="sa">f</span><span class="s2">"u_</span><span class="si">{</span><span class="n">lbl</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
     <span class="p">)</span>
-
-<span class="n">spec</span> <span class="o">=</span> <span class="n">recorders</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">recorders = Recorders()
+<div class="clipboard-copy-txt" id="cell-7">spec = DomainCaptureSpec(opensees=opb)
 
 for lbl in sorted(g.parts.labels()):
-    recorders.nodes(
+    spec.nodes(
         components=["displacement"], label=lbl, name=f"u_{lbl}",
     )
-
-spec = recorders.resolve(fem, ndm=3, ndf=6)
 print(spec)</div>
 </div>
 </div>
@@ -5434,13 +5436,12 @@ print(spec)</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">workdir</span>
 <span class="n">OUT</span> <span class="o">=</span> <span class="n">workdir</span><span class="p">()</span>
-<span class="n">out_dir</span> <span class="o">=</span> <span class="n">OUT</span> <span class="o">/</span> <span class="s2">"recorders"</span>
-<span class="k">if</span> <span class="n">out_dir</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
-    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">out_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.out"</span><span class="p">):</span>
-        <span class="n">f</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span>
+<span class="n">results_path</span> <span class="o">=</span> <span class="n">OUT</span> <span class="o">/</span> <span class="s2">"capture.h5"</span>
+<span class="k">if</span> <span class="n">results_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+    <span class="n">results_path</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span>
 
-<span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">emit_recorders</span><span class="p">(</span><span class="n">out_dir</span><span class="p">)</span> <span class="k">as</span> <span class="n">live</span><span class="p">:</span>
-    <span class="n">live</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">"static"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"static"</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">opb</span><span class="o">.</span><span class="n">domain_capture</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="n">results_path</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
+    <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">"static"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"static"</span><span class="p">)</span>
 
     <span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s2">"BandGeneral"</span><span class="p">)</span>
     <span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="p">(</span><span class="s2">"Plain"</span><span class="p">)</span>
@@ -5450,22 +5451,20 @@ print(spec)</div>
     <span class="n">ops</span><span class="o">.</span><span class="n">integrator</span><span class="p">(</span><span class="s2">"LoadControl"</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
     <span class="n">ops</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="s2">"Static"</span><span class="p">)</span>
     <span class="n">ops</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">cap</span><span class="o">.</span><span class="n">step</span><span class="p">(</span><span class="n">t</span><span class="o">=</span><span class="n">ops</span><span class="o">.</span><span class="n">getTime</span><span class="p">())</span>
 
-    <span class="n">live</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
+    <span class="n">cap</span><span class="o">.</span><span class="n">end_stage</span><span class="p">()</span>
 
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"recorder output → </span><span class="si">{</span><span class="n">out_dir</span><span class="si">}</span><span class="s2">/"</span><span class="p">)</span>
-<span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">out_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.out"</span><span class="p">)):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span><span class="si">}</span><span class="s2"> B)"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"capture -&gt; </span><span class="si">{</span><span class="n">results_path</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">results_path</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span><span class="o">/</span><span class="mi">1024</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> KB)"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-8">from apeGmsh import workdir
 OUT = workdir()
-out_dir = OUT / "recorders"
-if out_dir.exists():
-    for f in out_dir.glob("*.out"):
-        f.unlink()
+results_path = OUT / "capture.h5"
+if results_path.exists():
+    results_path.unlink()
 
-with spec.emit_recorders(out_dir) as live:
-    live.begin_stage("static", kind="static")
+with opb.domain_capture(spec, path=results_path) as cap:
+    cap.begin_stage("static", kind="static")
 
     ops.system("BandGeneral")
     ops.numberer("Plain")
@@ -5475,12 +5474,11 @@ with spec.emit_recorders(out_dir) as live:
     ops.integrator("LoadControl", 1.0)
     ops.analysis("Static")
     ops.analyze(1)
+    cap.step(t=ops.getTime())
 
-    live.end_stage()
+    cap.end_stage()
 
-print(f"recorder output → {out_dir}/")
-for f in sorted(out_dir.glob("*.out")):
-    print(f"  {f.name}  ({f.stat().st_size} B)")</div>
+print(f"capture -&gt; {results_path} ({results_path.stat().st_size/1024:.1f} KB)")</div>
 </div>
 </div>
 </div>
@@ -5518,17 +5516,15 @@ post-hoc filtering on the FEM coordinates.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_recorders</span><span class="p">(</span>
-    <span class="n">spec</span><span class="p">,</span> <span class="n">out_dir</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">stage_id</span><span class="o">=</span><span class="s2">"static"</span><span class="p">,</span>
-    <span class="c1"># TODO: v2.0 migration — supply a real model.h5 path for OpenSeesModel.from_h5(...)</span>
-    <span class="n">model</span><span class="o">=</span><span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">"model.h5"</span><span class="p">),</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results</span> <span class="o">=</span> <span class="n">Results</span><span class="o">.</span><span class="n">from_native</span><span class="p">(</span>
+    <span class="n">results_path</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span>
+    <span class="n">model</span><span class="o">=</span><span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="n">results_path</span><span class="p">),</span>
 <span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">results</span><span class="o">.</span><span class="n">inspect</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-9">results = Results.from_recorders(
-    spec, out_dir, fem=fem, stage_id="static",
-    # TODO: v2.0 migration — supply a real model.h5 path for OpenSeesModel.from_h5(...)
-    model=OpenSeesModel.from_h5("model.h5"),
+<div class="clipboard-copy-txt" id="cell-9">results = Results.from_native(
+    results_path, fem=fem,
+    model=OpenSeesModel.from_h5(results_path),
 )
 print(results.inspect.summary())</div>
 </div>

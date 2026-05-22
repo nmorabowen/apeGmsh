@@ -4989,7 +4989,8 @@ what they did at recorder-declaration time.</li>
 <span class="kn">import</span><span class="w"> </span><span class="nn">openseespy.opensees</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">ops</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span><span class="p">,</span> <span class="n">Results</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.spec</span><span class="w"> </span><span class="kn">import</span> <span class="n">Recorders</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.results.capture</span><span class="w"> </span><span class="kn">import</span> <span class="n">DomainCaptureSpec</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenSeesModel</span>
 
 <span class="c1"># Tiny cantilever, same physics as slot 02.</span>
@@ -5007,7 +5008,8 @@ import numpy as np
 import openseespy.opensees as ops
 
 from apeGmsh import apeGmsh, Results
-from apeGmsh.results.spec import Recorders
+from apeGmsh.opensees import apeSees
+from apeGmsh.results.capture import DomainCaptureSpec
 from apeGmsh.opensees import OpenSeesModel
 
 # Tiny cantilever, same physics as slot 02.
@@ -5183,10 +5185,14 @@ print(g.physical.summary())</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
 <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>
+<span class="n">opb</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+<span class="n">opb</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"mesh: </span><span class="si">{</span><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="o">.</span><span class="n">n_nodes</span><span class="si">}</span><span class="s2"> nodes, </span><span class="si">{</span><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="o">.</span><span class="n">n_elems</span><span class="si">}</span><span class="s2"> elements"</span><span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-4">g.mesh.generation.generate(1)
 fem = g.mesh.queries.get_fem_data()
+opb = apeSees(fem)
+opb.model(ndm=3, ndf=6)
 print(f"mesh: {fem.info.n_nodes} nodes, {fem.info.n_elems} elements")</div>
 </div>
 </div>
@@ -5319,6 +5325,8 @@ apart.</p>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">g</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span>   <span class="p">[</span><span class="n">p_mid</span><span class="p">],</span> <span class="s2">"clash"</span><span class="p">)</span>        <span class="c1"># label  -&gt; p_mid</span>
 <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="p">[</span><span class="n">p_tip</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">"clash"</span><span class="p">)</span>   <span class="c1"># PG     -&gt; p_tip</span>
 <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">()</span>       <span class="c1"># refresh broker</span>
+<span class="n">opb</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+<span class="n">opb</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"target='clash' -&gt; </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="s1">'clash'</span><span class="p">)</span><span class="o">.</span><span class="n">ids</span><span class="p">)</span><span class="si">}</span><span class="s2">   (label wins)"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"label='clash'  -&gt; </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">n</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">fem</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s1">'clash'</span><span class="p">)</span><span class="o">.</span><span class="n">ids</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
@@ -5327,6 +5335,8 @@ apart.</p>
 <div class="clipboard-copy-txt" id="cell-6">g.labels.add(0,   [p_mid], "clash")        # label  -&gt; p_mid
 g.physical.add(0, [p_tip], name="clash")   # PG     -&gt; p_tip
 fem = g.mesh.queries.get_fem_data()       # refresh broker
+opb = apeSees(fem)
+opb.model(ndm=3, ndf=6)
 
 print(f"target='clash' -&gt; {sorted(int(n) for n in fem.nodes.get(target='clash').ids)}   (label wins)")
 print(f"label='clash'  -&gt; {sorted(int(n) for n in fem.nodes.get(label='clash').ids)}")
@@ -5460,28 +5470,24 @@ the namespaces transparent on the read side.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">recorders</span> <span class="o">=</span> <span class="n">Recorders</span><span class="p">()</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">spec</span> <span class="o">=</span> <span class="n">DomainCaptureSpec</span><span class="p">(</span><span class="n">opensees</span><span class="o">=</span><span class="n">opb</span><span class="p">)</span>
 
-<span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
+<span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
     <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"reaction_force"</span><span class="p">],</span> <span class="n">pg</span><span class="o">=</span><span class="s2">"base_pg"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"R_base"</span><span class="p">,</span>
 <span class="p">)</span>
-<span class="n">recorders</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
+<span class="n">spec</span><span class="o">.</span><span class="n">nodes</span><span class="p">(</span>
     <span class="n">components</span><span class="o">=</span><span class="p">[</span><span class="s2">"displacement"</span><span class="p">],</span> <span class="n">label</span><span class="o">=</span><span class="s2">"tip"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"u_tip"</span><span class="p">,</span>
 <span class="p">)</span>
-
-<span class="n">spec</span> <span class="o">=</span> <span class="n">recorders</span><span class="o">.</span><span class="n">resolve</span><span class="p">(</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-8">recorders = Recorders()
+<div class="clipboard-copy-txt" id="cell-8">spec = DomainCaptureSpec(opensees=opb)
 
-recorders.nodes(
+spec.nodes(
     components=["reaction_force"], pg="base_pg", name="R_base",
 )
-recorders.nodes(
+spec.nodes(
     components=["displacement"], label="tip", name="u_tip",
 )
-
-spec = recorders.resolve(fem, ndm=3, ndf=6)
 print(spec)</div>
 </div>
 </div>
@@ -5524,7 +5530,7 @@ print(spec)</div>
 <span class="k">if</span> <span class="n">results_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
     <span class="n">results_path</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span>
 
-<span class="k">with</span> <span class="n">spec</span><span class="o">.</span><span class="n">capture</span><span class="p">(</span><span class="n">results_path</span><span class="p">,</span> <span class="n">fem</span><span class="o">=</span><span class="n">fem</span><span class="p">,</span> <span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
+<span class="k">with</span> <span class="n">opb</span><span class="o">.</span><span class="n">domain_capture</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">path</span><span class="o">=</span><span class="n">results_path</span><span class="p">)</span> <span class="k">as</span> <span class="n">cap</span><span class="p">:</span>
     <span class="n">cap</span><span class="o">.</span><span class="n">begin_stage</span><span class="p">(</span><span class="s2">"static"</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">"static"</span><span class="p">)</span>
     <span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="s2">"BandGeneral"</span><span class="p">);</span> <span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="p">(</span><span class="s2">"Plain"</span><span class="p">);</span> <span class="n">ops</span><span class="o">.</span><span class="n">constraints</span><span class="p">(</span><span class="s2">"Plain"</span><span class="p">)</span>
     <span class="n">ops</span><span class="o">.</span><span class="n">test</span><span class="p">(</span><span class="s2">"NormUnbalance"</span><span class="p">,</span> <span class="mf">1e-10</span><span class="p">,</span> <span class="mi">10</span><span class="p">);</span> <span class="n">ops</span><span class="o">.</span><span class="n">algorithm</span><span class="p">(</span><span class="s2">"Linear"</span><span class="p">)</span>
@@ -5541,7 +5547,7 @@ results_path = OUT / "capture.h5"
 if results_path.exists():
     results_path.unlink()
 
-with spec.capture(results_path, fem=fem, ndm=3, ndf=6) as cap:
+with opb.domain_capture(spec, path=results_path) as cap:
     cap.begin_stage("static", kind="static")
     ops.system("BandGeneral"); ops.numberer("Plain"); ops.constraints("Plain")
     ops.test("NormUnbalance", 1e-10, 10); ops.algorithm("Linear")

@@ -6027,12 +6027,23 @@ UserWarning fires.</p>
 <p>Three independent semver stamps replace the racing single envelope:</p>
 <ul>
 <li><code>/meta/neutral_schema_version</code> = <code>"2.6.0"</code></li>
-<li><code>/meta/opensees_schema_version</code> = <code>"2.7.0"</code></li>
+<li><code>/meta/opensees_schema_version</code> = <code>"2.8.0"</code></li>
 <li><code>/meta/results_schema_version</code> = <code>"1.1.0"</code></li>
 </ul>
 <p>Envelope <code>/meta/schema_version</code> retained for single-stamp legacy
 back-compat. Two-version reader window: reader at X.Y.Z accepts
 X.Y.<em> and X.(Y-1).</em>; refuses everything else with <code>SchemaVersionError</code>.</p>
+<p>The opensees zone shipped at <code>2.7.0</code> for the additive
+<code>/opensees/constraints/</code> group, then bumped to <code>2.8.0</code> for a
+follow-up field rename: the second compound-dtype column of
+<code>/opensees/constraints/embeddedNode</code> was <code>embedding_ele</code> in 2.7.0
+(a misnomer — the stored value is the constrained / slave node id,
+not an element id) and is <code>cnode</code> from 2.8.0 onward (matches the
+OpenSees <code>$Cnode</code> vocabulary). Same rename rippled through the
+<code>Emitter.embeddedNode</code> Protocol parameter name and the
+<code>EmbeddedNodeRecord</code> dataclass field. Two-version reader window
+accepts both 2.7.x and 2.8.x files; the column name is
+version-dependent.</p>
 <h3 id="added-femdatafrom_h5path-root-parameterization">ADDED — <code>FEMData.from_h5(path, *, root="/")</code> parameterization<a class="headerlink" href="#added-femdatafrom_h5path-root-parameterization" title="Permanent link">&para;</a></h3>
 <p>The same reader handles both standalone <code>model.h5</code> (FEM at root)
 and Composed <code>results.h5</code> (FEM at <code>/model/</code>) via the <code>root=</code> kwarg.
