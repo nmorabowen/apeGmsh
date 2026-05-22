@@ -559,6 +559,28 @@ def emit_transform_specs(
                 transf._emit(emitter, own_tag)
             continue
 
+        # Guard: orientation= is meaningless in OpenSees 2-D.  The
+        # 2-D ``geomTransf <Type> $tag`` command takes no trailing
+        # vecxz argument; if we proceed into the fan-out with ndm=2,
+        # the emitter would silently produce the 3-D form (three
+        # extra floats) which OpenSees rejects at parse time.
+        # Refuse loudly with a clear message instead of producing
+        # invalid output.  Lifting this restriction (supporting
+        # in-plane Cylindrical(axis=(0,0,1)) etc.) is tracked in
+        # ``architecture/_DEFERRED.md`` § "Cylindrical / Spherical
+        # in 2-D models".
+        if ndm == 2:
+            raise BridgeError(
+                f"geomTransf {type(transf).__name__}: orientation= is "
+                "not supported with ndm=2 (OpenSees 2-D transforms "
+                "take no vecxz argument). Drop the orientation= "
+                "kwarg, or construct the bridge with "
+                "``apeSees(fem, default_orientation=None)`` so the "
+                "default Cartesian is not auto-applied.  See "
+                "architecture/_DEFERRED.md § \"Cylindrical / Spherical "
+                "in 2-D models\" for the planned lift."
+            )
+
         # FEM-aware orientations (e.g. AlongBeam) declare a bind_fem
         # hook that materializes any FEM-derived state (reference-curve
         # segments, tangents) into the orientation instance before

@@ -898,6 +898,37 @@ def test_2d_geomtransf_emits_bare_form_without_vecxz() -> None:
     assert len(args) == 2, f"expected bare 2-D geomTransf, got {args!r}"
 
 
+def test_2d_geomtransf_with_orientation_raises_bridgeerror() -> None:
+    """``orientation=`` on a 2-D model used to silently produce an
+    invalid Tcl deck (``geomTransf Linear $tag $x $y $z`` — the 3-D
+    form with a vecxz tail, which OpenSees rejects at parse time).
+    The bridge now refuses with a clear :class:`BridgeError` at
+    build time so the failure mode is loud, not silent.
+
+    The lift to actually support 2-D Cylindrical (in-plane
+    radial/circumferential) is tracked in
+    ``architecture/_DEFERRED.md`` § "Cylindrical / Spherical in
+    2-D models".
+    """
+    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees.transform import Cylindrical
+
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+
+    transf = ops.geomTransf.Linear(
+        orientation=Cylindrical(axis=(0.0, 0.0, 1.0)),
+    )
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf, A=0.01, E=200e9, Iz=1e-4,
+    )
+
+    bm = ops.build()
+    with pytest.raises(BridgeError, match=r"orientation= is not supported with ndm=2"):
+        bm.emit(RecordingEmitter())
+
+
 def test_orientation_transform_collinear_elements_share_one_geomtransf() -> None:
     """When multiple elements share the same vecxz under an
     orientation, only one ``geomTransf`` line is emitted and reused
