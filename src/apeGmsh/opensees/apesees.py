@@ -93,6 +93,8 @@ if TYPE_CHECKING:
     from apeGmsh.results.capture._domain import DomainCapture
     from apeGmsh.results.capture.spec import DomainCaptureSpec
 
+    from .analysis.eigen import EigenResult
+
 
 __all__ = ["apeSees", "BuiltModel"]
 
@@ -778,6 +780,68 @@ class apeSees:
         bm.emit(live_emitter)
         result: int = int(live_emitter.analyze(steps=steps, dt=dt))
         return result
+
+    def eigen(
+        self,
+        num_modes: int,
+        *,
+        solver: str = "-genBandArpack",
+    ) -> "EigenResult":
+        """Build + emit + run a one-shot ``eigen`` solve via the live emitter.
+
+        Builds a :class:`BuiltModel`, drives a
+        :class:`~apeGmsh.opensees.emitter.live.LiveOpsEmitter` end-to-
+        end (model + nodes + elements + bcs + mass), then issues the
+        single ``eigen`` call and returns an :class:`EigenResult`
+        carrying the eigenvalues plus a back-reference to the live
+        emitter for lazy mode-shape access.
+
+        Unlike :meth:`analyze`, ``eigen`` does NOT require an analysis
+        chain (constraints / numberer / system / test / algorithm /
+        integrator / analysis): it only needs the assembled stiffness
+        and mass matrices.
+
+        Parameters
+        ----------
+        num_modes
+            Number of modes to compute. Must be ``>= 1``.
+        solver
+            OpenSees eigen-solver flag, one of ``-genBandArpack``
+            (default), ``-symmBandLapack``, ``-fullGenLapack``,
+            ``-frequency``, ``-standard``. Passed through verbatim to
+            ``ops.eigen(solver, num_modes)``.
+
+        Returns
+        -------
+        EigenResult
+            Carries ``eigenvalues`` (``λ_i = ω_i²``) plus derived
+            ``omega`` / ``freq`` / ``periods`` and a
+            :meth:`EigenResult.mode_shape` accessor.
+
+        Raises
+        ------
+        ValueError
+            If ``num_modes < 1``.
+        """
+        if num_modes < 1:
+            raise ValueError(
+                f"apeSees.eigen: num_modes must be >= 1, got {num_modes}."
+            )
+
+        # Local imports — keep openseespy + numpy out of bridge import
+        # time for Tcl/Py/H5-only users.
+        from .analysis.eigen import EigenResult
+        from .emitter.live import LiveOpsEmitter
+        import numpy as np
+
+        bm = self.build()
+        live_emitter = LiveOpsEmitter(wipe=True)
+        bm.emit(live_emitter)
+        values = live_emitter.eigen(num_modes, solver=solver)
+        return EigenResult(
+            eigenvalues=np.asarray(values, dtype=np.float64),
+            _live=live_emitter,
+        )
 
     def tcl(
         self,

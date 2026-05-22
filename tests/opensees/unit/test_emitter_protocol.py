@@ -113,6 +113,8 @@ REPRESENTATIVE_METHODS = (
     "recorder",
     "constraints", "numberer", "system", "test",
     "algorithm", "integrator", "analysis", "analyze",
+    # Eigen — one-shot, returns values from live emitter.
+    "eigen",
     # MP constraint methods (ADR 0022, Phase 7b)
     "equalDOF", "rigidLink", "rigidDiaphragm",
     "embeddedNode", "mp_constraint_comment",
@@ -159,6 +161,23 @@ def test_mp_constraint_comment_records_name() -> None:
     e = RecordingEmitter()
     e.mp_constraint_comment("floor_1")
     assert e.calls == [("mp_constraint_comment", ("floor_1",), {})]
+
+
+def test_eigen_records_num_modes_and_solver_default() -> None:
+    e = RecordingEmitter()
+    rc = e.eigen(5)
+    assert rc == []
+    assert e.calls == [
+        ("eigen", (), {"num_modes": 5, "solver": "-genBandArpack"}),
+    ]
+
+
+def test_eigen_records_custom_solver() -> None:
+    e = RecordingEmitter()
+    e.eigen(3, solver="-fullGenLapack")
+    assert e.calls == [
+        ("eigen", (), {"num_modes": 3, "solver": "-fullGenLapack"}),
+    ]
 
 
 def test_node_accepts_ndf_kwarg_for_phantom() -> None:
