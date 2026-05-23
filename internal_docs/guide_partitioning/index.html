@@ -82,7 +82,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#apegmsh-mesh-partitioning-and-renumbering" class="md-skip">
+        <a href="#apegmsh-mesh-partitioning" class="md-skip">
           Skip to content
         </a>
       
@@ -721,10 +721,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-why-renumber" class="md-nav__link">
+  <a href="#1-overview" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Why renumber
+        1. Overview
       
     </span>
   </a>
@@ -732,10 +732,60 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-simple-renumbering" class="md-nav__link">
+  <a href="#2-two-flavors-of-partitioning" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Simple renumbering
+        2. Two flavors of partitioning
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Two flavors of partitioning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flavor-a-gmsh-native-element-count-balance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flavor A — Gmsh-native (element-count balance)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flavor-b-weighted-sum-of-weights-balance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flavor B — Weighted (sum-of-weights balance)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-which" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to use which
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-recipe-1-gmsh-native-partitioning-into-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Recipe 1 — Gmsh-native partitioning into 4
       
     </span>
   </a>
@@ -743,10 +793,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-rcm-renumbering" class="md-nav__link">
+  <a href="#4-recipe-2-weighted-partitioning-with-pymetis" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. RCM renumbering
+        4. Recipe 2 — Weighted partitioning with pymetis
       
     </span>
   </a>
@@ -754,10 +804,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-parameters" class="md-nav__link">
+  <a href="#5-hdf5-round-trip-and-post-processing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Parameters
+        5. HDF5 round-trip and post-processing
       
     </span>
   </a>
@@ -765,10 +815,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-mesh-partitioning-for-mpi" class="md-nav__link">
+  <a href="#6-viewer-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Mesh partitioning (for MPI)
+        6. Viewer integration
       
     </span>
   </a>
@@ -776,10 +826,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-public-api" class="md-nav__link">
+  <a href="#7-cross-partition-constraints-adr-0027" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Public API
+        7. Cross-partition constraints (ADR 0027)
       
     </span>
   </a>
@@ -787,10 +837,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-standalone-numberer" class="md-nav__link">
+  <a href="#8-single-process-vs-openseesmp" class="md-nav__link">
     <span class="md-ellipsis">
       
-        7. Standalone Numberer
+        8. Single-process vs OpenSeesMP
       
     </span>
   </a>
@@ -798,10 +848,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-best-practices" class="md-nav__link">
+  <a href="#9-gotchas-and-known-limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Best practices
+        9. Gotchas and known limitations
       
     </span>
   </a>
@@ -809,10 +859,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#10-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        See also
+        10. Reference
       
     </span>
   </a>
@@ -3948,10 +3998,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#1-why-renumber" class="md-nav__link">
+  <a href="#1-overview" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Why renumber
+        1. Overview
       
     </span>
   </a>
@@ -3959,10 +4009,60 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#2-simple-renumbering" class="md-nav__link">
+  <a href="#2-two-flavors-of-partitioning" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Simple renumbering
+        2. Two flavors of partitioning
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Two flavors of partitioning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flavor-a-gmsh-native-element-count-balance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flavor A — Gmsh-native (element-count balance)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flavor-b-weighted-sum-of-weights-balance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flavor B — Weighted (sum-of-weights balance)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-which" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to use which
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-recipe-1-gmsh-native-partitioning-into-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Recipe 1 — Gmsh-native partitioning into 4
       
     </span>
   </a>
@@ -3970,10 +4070,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#3-rcm-renumbering" class="md-nav__link">
+  <a href="#4-recipe-2-weighted-partitioning-with-pymetis" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. RCM renumbering
+        4. Recipe 2 — Weighted partitioning with pymetis
       
     </span>
   </a>
@@ -3981,10 +4081,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#4-parameters" class="md-nav__link">
+  <a href="#5-hdf5-round-trip-and-post-processing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Parameters
+        5. HDF5 round-trip and post-processing
       
     </span>
   </a>
@@ -3992,10 +4092,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#5-mesh-partitioning-for-mpi" class="md-nav__link">
+  <a href="#6-viewer-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Mesh partitioning (for MPI)
+        6. Viewer integration
       
     </span>
   </a>
@@ -4003,10 +4103,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#6-public-api" class="md-nav__link">
+  <a href="#7-cross-partition-constraints-adr-0027" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. Public API
+        7. Cross-partition constraints (ADR 0027)
       
     </span>
   </a>
@@ -4014,10 +4114,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#7-standalone-numberer" class="md-nav__link">
+  <a href="#8-single-process-vs-openseesmp" class="md-nav__link">
     <span class="md-ellipsis">
       
-        7. Standalone Numberer
+        8. Single-process vs OpenSeesMP
       
     </span>
   </a>
@@ -4025,10 +4125,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#8-best-practices" class="md-nav__link">
+  <a href="#9-gotchas-and-known-limitations" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. Best practices
+        9. Gotchas and known limitations
       
     </span>
   </a>
@@ -4036,10 +4136,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#see-also" class="md-nav__link">
+  <a href="#10-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        See also
+        10. Reference
       
     </span>
   </a>
@@ -4066,144 +4166,641 @@
   
 
 
-<h1 id="apegmsh-mesh-partitioning-and-renumbering">apeGmsh mesh partitioning and renumbering<a class="headerlink" href="#apegmsh-mesh-partitioning-and-renumbering" title="Permanent link">&para;</a></h1>
-<p>A guide to mesh partitioning for parallel solvers and node/element
-renumbering for bandwidth reduction.</p>
+<h1 id="apegmsh-mesh-partitioning">apeGmsh mesh partitioning<a class="headerlink" href="#apegmsh-mesh-partitioning" title="Permanent link">&para;</a></h1>
+<p>A guide to driving OpenSeesMP from apeGmsh — decomposing a mesh into
+ranks, watching that decomposition flow through <code>FEMData</code> into the
+<code>apeSees</code> bridge, and reading the resulting partitioned <code>model.h5</code>
+back into a viewer.</p>
 <p>Grounded in the current source:</p>
 <ul>
-<li><code>src/apeGmsh/mesh/_mesh_partitioning.py</code> — <code>_Partitioning</code> sub-composite</li>
-<li><code>src/apeGmsh/solvers/Numberer.py</code> — renumbering algorithms</li>
+<li><code>src/apeGmsh/mesh/_mesh_partitioning.py</code> — <code>_Partitioning</code> sub-composite,
+  <code>PartitionInfo</code> return value, weighted-backend dispatch</li>
+<li><code>src/apeGmsh/_kernel/records/_partitions.py</code> — <code>PartitionRecord</code></li>
+<li><code>src/apeGmsh/_kernel/record_sets.py</code> — <code>PartitionSet</code></li>
+<li><code>src/apeGmsh/opensees/apesees.py::_maybe_auto_emit_parallel_numberer</code>
+  — INV-5 auto-emit policy</li>
+<li><code>src/apeGmsh/opensees/emitter/tcl.py::partition_open</code> /
+  <code>partition_close</code> — per-rank Tcl brackets + <code>getPID</code> shim</li>
+<li><code>src/apeGmsh/opensees/emitter/h5.py</code> — schema 2.10.0
+  <code>/opensees/partitions/partition_NN/</code> groups</li>
+<li><code>src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md</code>
+  — replication policy</li>
 </ul>
-<p>All snippets assume a meshed model:</p>
+<p>All snippets assume an open session:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">g</span> <span class="o">=</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;demo&quot;</span><span class="p">)</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">g</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span><span class="o">.</span><span class="n">add_box</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># ... geometry, parts, mesh ...</span>
 </span></code></pre></div>
-<h2 id="1-why-renumber">1. Why renumber<a class="headerlink" href="#1-why-renumber" title="Permanent link">&para;</a></h2>
-<p>Gmsh assigns node and element tags as it meshes. These tags are
-typically non-contiguous (gaps from deleted entities, merged nodes)
-and unordered (no spatial locality). This causes two problems:</p>
-<ol>
-<li><strong>Sparse arrays</strong> — if max_tag = 50000 but you only have 10000
-   nodes, solver arrays waste 5× memory.</li>
-<li><strong>High bandwidth</strong> — the stiffness matrix has nonzero entries
-   wherever two nodes share an element. If adjacent nodes have
-   tags far apart, the bandwidth is large and direct solvers are
-   slow.</li>
-</ol>
-<p>Renumbering solves both: contiguous IDs (no gaps) and optionally
-bandwidth-reducing orderings.</p>
-<h2 id="2-simple-renumbering">2. Simple renumbering<a class="headerlink" href="#2-simple-renumbering" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;simple&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span></code></pre></div>
-<p><code>method="simple"</code> assigns contiguous IDs starting from <code>base</code>:
-- Nodes: 1, 2, 3, ..., N
-- Elements: 1, 2, ..., E</p>
-<p>The ordering is whatever Gmsh's internal traversal produces — no
-bandwidth optimization. Use this when you just need contiguous IDs
-(e.g., for OpenSees which requires base=1).</p>
-<h2 id="3-rcm-renumbering">3. RCM renumbering<a class="headerlink" href="#3-rcm-renumbering" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Bandwidth: </span><span class="si">{</span><span class="n">fem</span><span class="o">.</span><span class="n">info</span><span class="o">.</span><span class="n">bandwidth</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span></code></pre></div>
-<p><code>method="rcm"</code> uses the Reverse Cuthill-McKee algorithm to
-minimize the semi-bandwidth of the stiffness matrix. This is the
-gold standard for direct solvers (Cholesky, LDL^T) — lower
-bandwidth means less fill-in, less memory, faster factorization.</p>
-<p><strong>How much does it help?</strong> For a typical 3D tet mesh, RCM reduces
-the bandwidth by 3-10× compared to the natural ordering. For
-structured hex meshes, the improvement is smaller (the natural
-ordering is already decent).</p>
-<p><strong>When to use RCM:</strong>
-- Direct solvers (sparse Cholesky, LDL^T) — always
-- Iterative solvers (CG, GMRES) — usually helps with ILU
-  preconditioner
-- Explicit dynamics — no benefit (diagonal mass matrix)</p>
-<h2 id="4-parameters">4. Parameters<a class="headerlink" href="#4-parameters" title="Permanent link">&para;</a></h2>
+<p>This guide focuses on <strong>mesh partitioning for parallel solvers</strong>
+(OpenSeesMP). For node/element <strong>renumbering</strong> (bandwidth reduction
+via RCM / Hilbert / METIS-ordering) see the same composite's
+<code>renumber()</code> method, documented in <code>guide_meshing.md</code> §
+"Renumbering".</p>
+<h2 id="1-overview">1. Overview<a class="headerlink" href="#1-overview" title="Permanent link">&para;</a></h2>
+<p>Mesh partitioning splits a single mesh into <code>N</code> non-overlapping
+sub-domains so that one OpenSeesMP rank can own each sub-domain.
+A structural engineer reaches for it for one of three reasons:</p>
+<ul>
+<li><strong>Drive OpenSeesMP.</strong> Large nonlinear models (millions of elements,
+  fiber sections at every Gauss point, history-dependent materials)
+  factor faster on a distributed sparse-direct solver like Mumps
+  than on a single-process direct solver. Partitioning is the
+  prerequisite for shipping the model to <code>mpiexec -np N OpenSeesMP
+  model.tcl</code>.</li>
+<li><strong>Decompose a large model.</strong> Even on one machine, splitting a
+  model into K ranks via MPI on K cores often beats single-process
+  OpenSees because OpenSeesMP's Mumps backend is genuinely parallel
+  (whereas single-process OpenSees serialises the factor).</li>
+<li><strong>Get per-rank result subsets.</strong> The partitioning information is
+  persisted into the broker (<code>fem.partitions</code>) and into the emitted
+  <code>model.h5</code> zone (<code>/opensees/partitions/</code>). Post-processing can
+  iterate rank-by-rank for memory-constrained reads.</li>
+</ul>
+<p>Partition data flows through three layers of apeGmsh:</p>
 <table>
 <thead>
 <tr>
-<th>Parameter</th>
-<th>Default</th>
-<th>Meaning</th>
+<th>Layer</th>
+<th>Symbol</th>
+<th>What it holds</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>dim</code></td>
-<td>2</td>
-<td>Element dimension for adjacency graph</td>
+<td><strong>Mesh</strong></td>
+<td><code>g.mesh.partitioning</code></td>
+<td>The Gmsh <code>gmsh.model.mesh.partition(N)</code> action. Returns a <code>PartitionInfo</code> with per-rank element counts and (when weighted) per-rank weight sums.</td>
 </tr>
 <tr>
-<td><code>method</code></td>
-<td><code>"rcm"</code></td>
-<td><code>"simple"</code> (contiguous), <code>"rcm"</code>, <code>"hilbert"</code>, or <code>"metis"</code></td>
+<td><strong>Broker</strong></td>
+<td><code>fem.partitions</code></td>
+<td>A <code>PartitionSet</code> yielding <code>PartitionRecord(id, node_ids, element_ids, weight_sum)</code> per rank. Also feeds <code>fem.nodes.select(partition=N)</code> / <code>fem.elements.select(partition=N)</code>.</td>
 </tr>
 <tr>
-<td><code>base</code></td>
-<td>1</td>
-<td>Starting ID. 1 for OpenSees/Abaqus, 0 for C-style</td>
+<td><strong>Bridge</strong></td>
+<td><code>apeSees(fem).tcl / .py / .h5</code></td>
+<td>When <code>len(fem.partitions) &gt; 1</code>, every emitter brackets per-rank content in <code>partition_open(K)</code> / <code>partition_close()</code> blocks (<code>if {[getPID] == K} { ... }</code> in Tcl, <code>if getPID() == K:</code> in Python, <code>/opensees/partitions/partition_NN/</code> groups in HDF5).</td>
 </tr>
 </tbody>
 </table>
-<h2 id="5-mesh-partitioning-for-mpi">5. Mesh partitioning (for MPI)<a class="headerlink" href="#5-mesh-partitioning-for-mpi" title="Permanent link">&para;</a></h2>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">partition</span><span class="p">(</span><span class="n">n_parts</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+<p>Single-partition models (<code>len(fem.partitions) &lt;= 1</code>) emit
+byte-identical output to a non-partitioned model — partitioning is
+opt-in and zero-cost when not used.</p>
+<h2 id="2-two-flavors-of-partitioning">2. Two flavors of partitioning<a class="headerlink" href="#2-two-flavors-of-partitioning" title="Permanent link">&para;</a></h2>
+<p><code>g.mesh.partitioning.partition(n_parts, *, weights=None, backend=None)</code>
+dispatches to one of two backends based on whether you supply
+weights:</p>
+<h3 id="flavor-a-gmsh-native-element-count-balance">Flavor A — Gmsh-native (element-count balance)<a class="headerlink" href="#flavor-a-gmsh-native-element-count-balance" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">info</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">partition</span><span class="p">(</span><span class="n">n_parts</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Splits the mesh into <code>n_parts</code> sub-domains using METIS graph
-partitioning. This creates Gmsh partition entities that can be
-exported to separate mesh files for parallel solvers.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Remove partitioning (restore monolithic mesh)</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">unpartition</span><span class="p">()</span>
+<p>Calls Gmsh's built-in METIS binding (<code>gmsh.model.mesh.partition(N)</code>)
+directly. Balances by <strong>element count</strong> — every rank gets roughly
+the same number of elements, irrespective of how expensive each
+element is to solve. No optional dependencies. The default.</p>
+<h3 id="flavor-b-weighted-sum-of-weights-balance">Flavor B — Weighted (sum-of-weights balance)<a class="headerlink" href="#flavor-b-weighted-sum-of-weights-balance" title="Permanent link">&para;</a></h3>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">weights</span> <span class="o">=</span> <span class="p">[</span><span class="o">...</span><span class="p">]</span>            <span class="c1"># one float per element, ordered as below</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">info</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">partition</span><span class="p">(</span><span class="n">n_parts</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">weights</span><span class="o">=</span><span class="n">weights</span><span class="p">)</span>
 </span></code></pre></div>
-<p><strong>When to use:</strong>
-- MPI-parallel OpenSees runs
-- Domain decomposition methods
-- Parallel mesh export (each partition → separate file)</p>
-<h2 id="6-public-api">6. Public API<a class="headerlink" href="#6-public-api" title="Permanent link">&para;</a></h2>
-<p><code>renumber()</code> is the only public entry point on <code>_Partitioning</code>. It handles
-both nodes and elements in a single call; the per-step helpers
-(<code>_renumber_nodes_simple</code>, <code>_renumber_elements_simple</code>) are private and
-should not be invoked directly.</p>
-<h2 id="7-standalone-numberer">7. Standalone Numberer<a class="headerlink" href="#7-standalone-numberer" title="Permanent link">&para;</a></h2>
-<p>For renumbering a FEMData object without modifying the Gmsh model:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">Numberer</span>
+<p>Builds the element dual graph from Gmsh's connectivity in apeGmsh,
+calls an external METIS binding (<code>pymetis</code> by default, or
+<code>networkx-metis</code>), and pushes the assignment back into Gmsh via
+<code>partition_explicit(...)</code> so downstream consumers (the FEMData
+broker, the h5 round-trip, the apeSees bridge) see the same model
+state as the native path.</p>
+<p>Weight ordering: the <code>weights</code> sequence must match
+<code>gmsh.model.mesh.getElements(dim=-1, tag=-1)</code> traversal order — every
+element across every dimension, in Gmsh's native iteration. Length
+mismatch raises <code>ValueError</code>.</p>
+<h3 id="when-to-use-which">When to use which<a class="headerlink" href="#when-to-use-which" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Flavor</th>
+<th>Backend</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>A</strong> (default)</td>
+<td>Gmsh-native METIS</td>
+<td>Elastic linear or modestly nonlinear models where per-element cost is roughly uniform. Tetrahedra-only or hex-only meshes. Any model that fits in memory on a single process and you just want MPI speedup.</td>
+</tr>
+<tr>
+<td><strong>B</strong> (weighted)</td>
+<td><code>pymetis</code> / <code>networkx-metis</code></td>
+<td>Fiber-section beam-columns mixed with elastic beams (the fiber elements cost ~10–100× more per Gauss point). Mixed solid + shell models where solid cells dominate. Any model where the per-element factor cost varies by orders of magnitude.</td>
+</tr>
+<tr>
+<td><strong>B</strong> with <code>weights=None</code>, explicit backend</td>
+<td><code>pymetis</code></td>
+<td>Force the external path for backend testing without supplying weights — unit weights are used, same balance as Flavor A.</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>partition_explicit(n_parts, elem_tags, parts)</code> method is also
+available for callers that already have a vector of rank assignments
+(e.g. from a custom load-balancer or a domain-decomposition heuristic
+you trust more than METIS for your problem class). It bypasses both
+flavors and writes the assignment straight into Gmsh.</p>
+<h2 id="3-recipe-1-gmsh-native-partitioning-into-4">3. Recipe 1 — Gmsh-native partitioning into 4<a class="headerlink" href="#3-recipe-1-gmsh-native-partitioning-into-4" title="Permanent link">&para;</a></h2>
+<p>A complete pipeline: build a simple frame, partition it into 4
+ranks, inspect the broker view, and emit a <code>.tcl</code> deck.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeSees</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;recipe1&quot;</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">gm</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">geometry</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="c1"># Two-storey, four-column space frame: corner points at z=0/H1/H2.</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">H</span> <span class="o">=</span> <span class="mf">3.0</span>  <span class="c1"># storey height</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">L</span> <span class="o">=</span> <span class="mf">5.0</span>  <span class="c1"># bay</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">base</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>        <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    <span class="p">]</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    <span class="n">floor1</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>        <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">H</span><span class="p">),</span> <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">H</span><span class="p">),</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>        <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">H</span><span class="p">),</span> <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="n">H</span><span class="p">),</span>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>    <span class="p">]</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>    <span class="n">floor2</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>        <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">H</span><span class="p">),</span> <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">H</span><span class="p">),</span>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>        <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">L</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">H</span><span class="p">),</span> <span class="n">gm</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">L</span><span class="p">,</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">H</span><span class="p">),</span>
+</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>    <span class="p">]</span>
+</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>
+</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>    <span class="n">cols</span><span class="p">,</span> <span class="n">beams</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+</span><span id="__span-3-24"><a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>    <span class="k">for</span> <span class="n">floor</span> <span class="ow">in</span> <span class="p">(</span><span class="n">floor1</span><span class="p">,</span> <span class="n">floor2</span><span class="p">):</span>
+</span><span id="__span-3-25"><a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>        <span class="n">prev</span> <span class="o">=</span> <span class="n">base</span> <span class="k">if</span> <span class="n">floor</span> <span class="ow">is</span> <span class="n">floor1</span> <span class="k">else</span> <span class="n">floor1</span>
+</span><span id="__span-3-26"><a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">4</span><span class="p">):</span>
+</span><span id="__span-3-27"><a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>            <span class="n">cols</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">gm</span><span class="o">.</span><span class="n">add_line</span><span class="p">(</span><span class="n">prev</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">floor</span><span class="p">[</span><span class="n">i</span><span class="p">]))</span>
+</span><span id="__span-3-28"><a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">4</span><span class="p">):</span>
+</span><span id="__span-3-29"><a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>            <span class="n">beams</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">gm</span><span class="o">.</span><span class="n">add_line</span><span class="p">(</span><span class="n">floor</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">floor</span><span class="p">[(</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="mi">4</span><span class="p">]))</span>
+</span><span id="__span-3-30"><a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>
+</span><span id="__span-3-31"><a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_curve</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Columns&quot;</span><span class="p">)</span>
+</span><span id="__span-3-32"><a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_curve</span><span class="p">(</span><span class="n">beams</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Beams&quot;</span><span class="p">)</span>
+</span><span id="__span-3-33"><a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a>    <span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">)</span>
+</span><span id="__span-3-34"><a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a>
+</span><span id="__span-3-35"><a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">sizing</span><span class="o">.</span><span class="n">set_global_size</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+</span><span id="__span-3-36"><a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-3-37"><a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">&quot;simple&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-3-38"><a id="__codelineno-3-38" name="__codelineno-3-38" href="#__codelineno-3-38"></a>
+</span><span id="__span-3-39"><a id="__codelineno-3-39" name="__codelineno-3-39" href="#__codelineno-3-39"></a>    <span class="c1"># &gt;&gt;&gt; partition into 4 ranks (Flavor A) &lt;&lt;&lt;</span>
+</span><span id="__span-3-40"><a id="__codelineno-3-40" name="__codelineno-3-40" href="#__codelineno-3-40"></a>    <span class="n">info</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">partition</span><span class="p">(</span><span class="n">n_parts</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+</span><span id="__span-3-41"><a id="__codelineno-3-41" name="__codelineno-3-41" href="#__codelineno-3-41"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">info</span><span class="p">)</span>                       <span class="c1"># PartitionInfo(4 parts: P1:N, P2:N, ...)</span>
+</span><span id="__span-3-42"><a id="__codelineno-3-42" name="__codelineno-3-42" href="#__codelineno-3-42"></a>
+</span><span id="__span-3-43"><a id="__codelineno-3-43" name="__codelineno-3-43" href="#__codelineno-3-43"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-3-44"><a id="__codelineno-3-44" name="__codelineno-3-44" href="#__codelineno-3-44"></a>
+</span><span id="__span-3-45"><a id="__codelineno-3-45" name="__codelineno-3-45" href="#__codelineno-3-45"></a><span class="c1"># Inspect the broker view.</span>
+</span><span id="__span-3-46"><a id="__codelineno-3-46" name="__codelineno-3-46" href="#__codelineno-3-46"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;len(fem.partitions) = </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">fem</span><span class="o">.</span><span class="n">partitions</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-3-47"><a id="__codelineno-3-47" name="__codelineno-3-47" href="#__codelineno-3-47"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">fem</span><span class="o">.</span><span class="n">partitions</span><span class="p">:</span>
+</span><span id="__span-3-48"><a id="__codelineno-3-48" name="__codelineno-3-48" href="#__codelineno-3-48"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  rank </span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">n_elements</span><span class="si">}</span><span class="s2"> elements, &quot;</span>
+</span><span id="__span-3-49"><a id="__codelineno-3-49" name="__codelineno-3-49" href="#__codelineno-3-49"></a>          <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">n_nodes</span><span class="si">}</span><span class="s2"> nodes&quot;</span><span class="p">)</span>
+</span><span id="__span-3-50"><a id="__codelineno-3-50" name="__codelineno-3-50" href="#__codelineno-3-50"></a>
+</span><span id="__span-3-51"><a id="__codelineno-3-51" name="__codelineno-3-51" href="#__codelineno-3-51"></a><span class="c1"># Drive apeSees and emit the partitioned Tcl deck.</span>
+</span><span id="__span-3-52"><a id="__codelineno-3-52" name="__codelineno-3-52" href="#__codelineno-3-52"></a><span class="n">ops</span> <span class="o">=</span> <span class="n">apeSees</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-3-53"><a id="__codelineno-3-53" name="__codelineno-3-53" href="#__codelineno-3-53"></a><span class="n">ops</span><span class="o">.</span><span class="n">model</span><span class="p">(</span><span class="n">ndm</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
+</span><span id="__span-3-54"><a id="__codelineno-3-54" name="__codelineno-3-54" href="#__codelineno-3-54"></a><span class="n">t</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">geomTransf</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">vecxz</span><span class="o">=</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">))</span>
+</span><span id="__span-3-55"><a id="__codelineno-3-55" name="__codelineno-3-55" href="#__codelineno-3-55"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span>
+</span><span id="__span-3-56"><a id="__codelineno-3-56" name="__codelineno-3-56" href="#__codelineno-3-56"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Columns&quot;</span><span class="p">,</span> <span class="n">transf</span><span class="o">=</span><span class="n">t</span><span class="p">,</span>
+</span><span id="__span-3-57"><a id="__codelineno-3-57" name="__codelineno-3-57" href="#__codelineno-3-57"></a>    <span class="n">A</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="mf">200e9</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">Iy</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">G</span><span class="o">=</span><span class="mf">80e9</span><span class="p">,</span> <span class="n">J</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-3-58"><a id="__codelineno-3-58" name="__codelineno-3-58" href="#__codelineno-3-58"></a><span class="p">)</span>
+</span><span id="__span-3-59"><a id="__codelineno-3-59" name="__codelineno-3-59" href="#__codelineno-3-59"></a><span class="n">t2</span> <span class="o">=</span> <span class="n">ops</span><span class="o">.</span><span class="n">geomTransf</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">vecxz</span><span class="o">=</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">))</span>
+</span><span id="__span-3-60"><a id="__codelineno-3-60" name="__codelineno-3-60" href="#__codelineno-3-60"></a><span class="n">ops</span><span class="o">.</span><span class="n">element</span><span class="o">.</span><span class="n">elasticBeamColumn</span><span class="p">(</span>
+</span><span id="__span-3-61"><a id="__codelineno-3-61" name="__codelineno-3-61" href="#__codelineno-3-61"></a>    <span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Beams&quot;</span><span class="p">,</span> <span class="n">transf</span><span class="o">=</span><span class="n">t2</span><span class="p">,</span>
+</span><span id="__span-3-62"><a id="__codelineno-3-62" name="__codelineno-3-62" href="#__codelineno-3-62"></a>    <span class="n">A</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">E</span><span class="o">=</span><span class="mf">200e9</span><span class="p">,</span> <span class="n">Iz</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">Iy</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span> <span class="n">G</span><span class="o">=</span><span class="mf">80e9</span><span class="p">,</span> <span class="n">J</span><span class="o">=</span><span class="mf">1e-4</span><span class="p">,</span>
+</span><span id="__span-3-63"><a id="__codelineno-3-63" name="__codelineno-3-63" href="#__codelineno-3-63"></a><span class="p">)</span>
+</span><span id="__span-3-64"><a id="__codelineno-3-64" name="__codelineno-3-64" href="#__codelineno-3-64"></a><span class="n">ops</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Base&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+</span><span id="__span-3-65"><a id="__codelineno-3-65" name="__codelineno-3-65" href="#__codelineno-3-65"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;frame_partitioned.tcl&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Run it under OpenSeesMP:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>mpiexec<span class="w"> </span>-np<span class="w"> </span><span class="m">4</span><span class="w"> </span>OpenSeesMP<span class="w"> </span>frame_partitioned.tcl
+</span></code></pre></div>
+<p>The emitted <code>frame_partitioned.tcl</code> carries the partitioning shape:</p>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c"># (header — model, materials, transforms, etc. — at indent 0)</span>
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">numb</span> <span class="o">=</span> <span class="n">Numberer</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">nm</span> <span class="o">=</span> <span class="n">numb</span><span class="o">.</span><span class="n">renumber</span><span class="p">(</span><span class="n">method</span><span class="o">=</span><span class="s2">&quot;rcm&quot;</span><span class="p">,</span> <span class="n">base</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># → NumberedMesh</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="nb">print</span><span class="p">(</span><span class="n">nm</span><span class="p">)</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nb">info</span><span class="w"> </span>procs<span class="w"> </span>getPID<span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="k">}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="k">proc</span><span class="w"> </span>getPID<span class="w"> </span><span class="k">{}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">}</span><span class="w"> </span><span class="k">}</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">1</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="c"># rank 1 owns these nodes / elements</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">12</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">1.5</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">13</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">2.25</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">    </span><span class="nv">...</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nv">element</span><span class="w"> </span>elasticBeamColumn<span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mi">12</span><span class="w"> </span><span class="mi">13</span><span class="w"> </span><span class="mf">0.01</span><span class="w"> </span>...<span class="w"> </span><span class="mi">1</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span><span class="nv">...</span>
+</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="k">}</span>
+</span><span id="__span-5-13"><a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>
+</span><span id="__span-5-14"><a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">2</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+</span><span id="__span-5-15"><a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="nv">...</span>
+</span><span id="__span-5-16"><a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="k">}</span>
+</span><span id="__span-5-17"><a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>
+</span><span id="__span-5-18"><a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">3</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+</span><span id="__span-5-19"><a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="w">    </span><span class="nv">...</span>
+</span><span id="__span-5-20"><a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="k">}</span>
+</span><span id="__span-5-21"><a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>
+</span><span id="__span-5-22"><a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">4</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+</span><span id="__span-5-23"><a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="w">    </span><span class="nv">...</span>
+</span><span id="__span-5-24"><a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="k">}</span>
+</span><span id="__span-5-25"><a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>
+</span><span id="__span-5-26"><a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="c"># Analysis chain — emitted GLOBALLY outside every rank block.</span>
+</span><span id="__span-5-27"><a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a><span class="nv">constraints</span><span class="w"> </span>Transformation
+</span><span id="__span-5-28"><a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a><span class="nv">numberer</span><span class="w"> </span>ParallelPlain
+</span><span id="__span-5-29"><a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="nv">system</span><span class="w"> </span>Mumps
+</span><span id="__span-5-30"><a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a><span class="nv">test</span><span class="w"> </span>NormDispIncr<span class="w"> </span><span class="mf">1.0</span>e-6<span class="w"> </span><span class="mi">25</span>
+</span><span id="__span-5-31"><a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a><span class="nv">algorithm</span><span class="w"> </span>KrylovNewton
+</span><span id="__span-5-32"><a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="nv">integrator</span><span class="w"> </span>LoadControl<span class="w"> </span><span class="mf">1.0</span>
+</span><span id="__span-5-33"><a id="__codelineno-5-33" name="__codelineno-5-33" href="#__codelineno-5-33"></a><span class="nv">analysis</span><span class="w"> </span>Static
+</span><span id="__span-5-34"><a id="__codelineno-5-34" name="__codelineno-5-34" href="#__codelineno-5-34"></a><span class="nv">analyze</span><span class="w"> </span><span class="mi">1</span>
 </span></code></pre></div>
-<h2 id="8-best-practices">8. Best practices<a class="headerlink" href="#8-best-practices" title="Permanent link">&para;</a></h2>
+<p>Three structural features worth noting:</p>
 <ol>
-<li>
-<p><strong>Always renumber before <code>get_fem_data()</code></strong> — the FEM broker
-   captures whatever IDs exist at extraction time. Renumber first
-   so the broker has clean, contiguous, optimized IDs.</p>
-</li>
-<li>
-<p><strong>Use <code>base=1</code> for OpenSees</strong> — OpenSees expects 1-based node/
-   element tags. <code>base=0</code> is for C-style solvers.</p>
-</li>
-<li>
-<p><strong>Use <code>method="rcm"</code> for direct solvers</strong> — the bandwidth
-   reduction is free (runs in milliseconds) and can speed up
-   factorization by orders of magnitude.</p>
-</li>
-<li>
-<p><strong>Call renumber only once</strong> — renumbering mutates the Gmsh model.
-   Calling it twice produces correct but redundant work.</p>
-</li>
+<li><strong><code>proc getPID</code> shim emitted exactly once</strong> at the top of the file.
+   This makes the deck runnable under single-process OpenSees too
+   (which has no <code>getPID</code>); the shim returns 0 so only rank 0's block
+   executes. See § 8.</li>
+<li><strong>One <code>if {[getPID] == K}</code> block per rank.</strong> Per-rank content
+   sits inside the block; foreign nodes (declared because a rank's
+   constraint references a node it doesn't own — see § 7) are
+   declared with <code>node &lt;tag&gt; ... -ndf 6</code> before the constraint line.</li>
+<li><strong>Analysis chain lives globally</strong> (outside every rank block). Per
+   ADR 0027 INV-5, <code>numberer ParallelPlain</code> and <code>system Mumps</code> are
+   auto-emitted when <code>len(fem.partitions) &gt; 1</code>.</li>
 </ol>
-<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<h2 id="4-recipe-2-weighted-partitioning-with-pymetis">4. Recipe 2 — Weighted partitioning with pymetis<a class="headerlink" href="#4-recipe-2-weighted-partitioning-with-pymetis" title="Permanent link">&para;</a></h2>
+<p>Install the optional backend:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>pip<span class="w"> </span>install<span class="w"> </span>apeGmsh<span class="o">[</span>partition-pymetis<span class="o">]</span>
+</span></code></pre></div>
+<p>Windows note: <code>pymetis</code> has no PyPI Windows wheel. Use conda-forge
+instead — <code>conda install -c conda-forge pymetis</code>. Or skip Flavor B
+on Windows and use Flavor A (which goes through the bundled Gmsh
+binding).</p>
+<p>Then weight the partition. The most common case is mixing
+fiber-section beams (expensive) with elastic beams (cheap):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># Same frame fixture as Recipe 1 — partition step replaced.</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># Suppose the columns use fiber sections and the beams are elastic;</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="c1"># fiber elements cost ~10× more per solve step.</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">fem_preview</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">col_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">fem_preview</span><span class="o">.</span><span class="n">elements</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;Columns&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">ids</span><span class="p">)</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="c1"># Weight vector ordered as Gmsh&#39;s flat element traversal.</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="kn">import</span><span class="w"> </span><span class="nn">gmsh</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="n">all_tags</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">4</span><span class="p">):</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>    <span class="n">_</span><span class="p">,</span> <span class="n">etags_list</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">getElements</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="n">d</span><span class="p">,</span> <span class="n">tag</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>    <span class="k">for</span> <span class="n">etags</span> <span class="ow">in</span> <span class="n">etags_list</span><span class="p">:</span>
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>        <span class="n">all_tags</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">etags</span><span class="p">)</span>
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="n">weights</span> <span class="o">=</span> <span class="p">[</span><span class="mf">10.0</span> <span class="k">if</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">col_ids</span> <span class="k">else</span> <span class="mf">1.0</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">all_tags</span><span class="p">]</span>
+</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>
+</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="n">info</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">partition</span><span class="p">(</span>
+</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>    <span class="n">n_parts</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">weights</span><span class="o">=</span><span class="n">weights</span><span class="p">,</span>                         <span class="c1"># pymetis by default</span>
+</span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="p">)</span>
+</span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a><span class="nb">print</span><span class="p">(</span><span class="n">info</span><span class="p">)</span>
+</span><span id="__span-7-21"><a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a><span class="c1"># PartitionInfo(4 parts: P1:N1, P2:N2, ...; weights[P1:W, P2:W, ...])</span>
+</span><span id="__span-7-22"><a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>
+</span><span id="__span-7-23"><a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a><span class="k">assert</span> <span class="n">info</span><span class="o">.</span><span class="n">weights_per_partition</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+</span><span id="__span-7-24"><a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a><span class="n">spread</span> <span class="o">=</span> <span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">weights_per_partition</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+</span><span id="__span-7-25"><a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>          <span class="o">-</span> <span class="nb">min</span><span class="p">(</span><span class="n">info</span><span class="o">.</span><span class="n">weights_per_partition</span><span class="o">.</span><span class="n">values</span><span class="p">()))</span>
+</span><span id="__span-7-26"><a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;weight spread = </span><span class="si">{</span><span class="n">spread</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">  (target: small)&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p><code>PartitionInfo.weights_per_partition</code> is populated whenever
+<code>weights=</code> was passed; it stays <code>None</code> for Flavor A.</p>
+<p>Backend override (rare):</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">partitioning</span><span class="o">.</span><span class="n">partition</span><span class="p">(</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">n_parts</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span> <span class="n">weights</span><span class="o">=</span><span class="n">weights</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="s2">&quot;networkx-metis&quot;</span><span class="p">,</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="p">)</span>
+</span></code></pre></div>
+<p>Backend dispatch rules (from <code>_mesh_partitioning.py</code>):</p>
+<table>
+<thead>
+<tr>
+<th><code>weights</code></th>
+<th><code>backend</code></th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>None</code></td>
+<td><code>None</code></td>
+<td>Gmsh-native METIS (Flavor A)</td>
+</tr>
+<tr>
+<td><code>None</code></td>
+<td><code>"gmsh"</code></td>
+<td>Gmsh-native METIS (explicit)</td>
+</tr>
+<tr>
+<td><code>None</code></td>
+<td><code>"pymetis"</code></td>
+<td>pymetis, <code>vwgt = ones(N)</code></td>
+</tr>
+<tr>
+<td><code>None</code></td>
+<td><code>"networkx-metis"</code></td>
+<td>networkx-metis, unit weights</td>
+</tr>
+<tr>
+<td>sequence</td>
+<td><code>None</code></td>
+<td>pymetis (default for weighted)</td>
+</tr>
+<tr>
+<td>sequence</td>
+<td><code>"pymetis"</code></td>
+<td>pymetis with the given weights</td>
+</tr>
+<tr>
+<td>sequence</td>
+<td><code>"networkx-metis"</code></td>
+<td>networkx-metis with weights</td>
+</tr>
+<tr>
+<td>sequence</td>
+<td><code>"gmsh"</code></td>
+<td><code>ValueError</code> — no vwgt API</td>
+</tr>
+</tbody>
+</table>
+<h2 id="5-hdf5-round-trip-and-post-processing">5. HDF5 round-trip and post-processing<a class="headerlink" href="#5-hdf5-round-trip-and-post-processing" title="Permanent link">&para;</a></h2>
+<p><code>ops.h5(path)</code> writes the bridge's canonical <code>model.h5</code>. When
+<code>len(fem.partitions) &gt; 1</code>, the bridge populates the schema 2.10.0
+partition zone:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/meta                                 (carries opensees=2.10.0)
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>/opensees/...                         (nodes, elements, materials, ...)
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>/opensees/partitions/                 (n_partitions = N attr)
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>  partition_01/
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    element_ids        int64 (n_elem_rank_1,)
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    node_ids           int64 (n_node_rank_1,)   # native + foreign decls
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    boundary_node_ids  int64 (n_boundary_1,)    # shared with another rank
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    @rank              = 1
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    @n_elements        = ...
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    @n_nodes           = ...
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>  partition_02/
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    ...
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>/opensees/element_meta/{type_token}/
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>  partition_ids        int64 (n_elem_of_type,)  # parallel to other columns
+</span></code></pre></div>
+<p>The new parallel <code>partition_ids</code> column on every
+<code>element_meta/{type}/</code> group lets a reader filter elements by rank
+in O(N) without re-reading the partition groups. Sentinel <code>-1</code>
+marks any element emitted outside a partition block (i.e. before
+the first <code>partition_open</code> call — used for global-scope elements,
+which today is empty in the partition path).</p>
+<p>Read it back:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees</span><span class="w"> </span><span class="kn">import</span> <span class="n">OpenSeesModel</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">om</span> <span class="o">=</span> <span class="n">OpenSeesModel</span><span class="o">.</span><span class="n">from_h5</span><span class="p">(</span><span class="s2">&quot;frame_partitioned.h5&quot;</span><span class="p">)</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="nb">print</span><span class="p">(</span><span class="n">om</span><span class="o">.</span><span class="n">_fem</span><span class="o">.</span><span class="n">partitions</span><span class="p">)</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="c1"># PartitionSet(4 partitions, ids=[1, 2, 3, 4])</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">om</span><span class="o">.</span><span class="n">_fem</span><span class="o">.</span><span class="n">partitions</span><span class="p">:</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">rec</span><span class="p">)</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="c1"># PartitionRecord(id=1, n_nodes=12, n_elements=10)</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="c1"># ...</span>
+</span></code></pre></div>
+<p><code>OpenSeesModel.from_h5</code> rehydrates the broker via
+<code>FEMData.from_h5(...)</code>, which restores <code>fem.partitions</code>. The
+<code>PartitionSet</code> round-trips losslessly.</p>
+<p>For lower-level access — the bridge-emitted per-rank emit log
+(which includes foreign-declared nodes from cross-partition MP
+constraints) — use the <code>H5Model</code> reader directly:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.opensees.emitter</span><span class="w"> </span><span class="kn">import</span> <span class="n">h5_reader</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="k">with</span> <span class="n">h5_reader</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;frame_partitioned.h5&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">model</span><span class="p">:</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="k">for</span> <span class="n">rec</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">partitions</span><span class="p">():</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rank </span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">rank</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">element_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> elements, &quot;</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>              <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">boundary_node_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> boundary nodes&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Schema version: <strong>opensees 2.10.0</strong> (per ADR 0023 two-version reader
+window — 2.9.x readers still open 2.10.x files, ignoring the new
+partition zone).</p>
+<h2 id="6-viewer-integration">6. Viewer integration<a class="headerlink" href="#6-viewer-integration" title="Permanent link">&para;</a></h2>
+<p>The interactive Qt mesh viewer surfaces partition assignment in
+three places:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh.viewers.data._viewer_data</span><span class="w"> </span><span class="kn">import</span> <span class="n">ViewerData</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">view</span> <span class="o">=</span> <span class="n">ViewerData</span><span class="o">.</span><span class="n">from_fem</span><span class="p">(</span><span class="n">fem</span><span class="p">)</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">view</span><span class="o">=</span><span class="n">view</span><span class="p">)</span>
+</span></code></pre></div>
+<ol>
+<li><strong>ColorMode "Partition"</strong> — the Display tab's colour-mode
+   selector adds a <code>"Partition"</code> entry. Selecting it colours each
+   element by its owning rank (one stable colour per partition id),
+   matching the per-entity dispatch shape used by the outline tree
+   below.</li>
+<li><strong>Outline tree "Partitions" section</strong> — when the
+   <code>ViewerData</code> carries partition labelling, the outline tree
+   shows a "Partitions" header alongside Element Types, Parts,
+   Loads, Masses. Toggling a row hides/shows every element on that
+   rank.</li>
+<li><strong>Boundary-node overlay</strong> — under the Partitions section is a
+   single "Boundary nodes" row. Toggling it draws a marker on every
+   node that is shared between at least two ranks (the same set
+   that lands in the H5 <code>boundary_node_ids</code> dataset). Useful for
+   diagnosing whether a cross-partition MP constraint is going to
+   replicate (see § 7).</li>
+</ol>
+<p>Single-partition meshes hide the "Partitions" section entirely —
+the outline tree adapts to whatever labelling the snapshot carries.</p>
+<h2 id="7-cross-partition-constraints-adr-0027">7. Cross-partition constraints (ADR 0027)<a class="headerlink" href="#7-cross-partition-constraints-adr-0027" title="Permanent link">&para;</a></h2>
+<p>When you declare a multi-point constraint at session time and the
+partitioner later places the master and slave on different ranks,
+the bridge follows the policy in ADR 0027:</p>
 <ul>
-<li><code>guide_meshing.md</code> — mesh generation and sizing</li>
-<li><code>guide_fem_broker.md</code> — extracting FEM data after renumbering</li>
-<li><code>guide_opensees.md</code> — OpenSees model building</li>
+<li><strong>Replicate the constraint on every owning rank.</strong> The exact
+  same <code>rigidDiaphragm</code> / <code>rigidLink</code> / <code>equalDOF</code> line is emitted
+  inside every owning rank's <code>if {[getPID] == K}</code> block, byte-for-byte
+  identical across ranks (INV-1).</li>
+<li><strong>Declare foreign node tags before the constraint line.</strong> If
+  rank K's block references a node tag K does not natively own, the
+  bridge emits <code>node &lt;tag&gt; &lt;x&gt; &lt;y&gt; &lt;z&gt; -ndf 6</code> on K's block before
+  the constraint line (INV-2). The coordinates and <code>ndf</code> come from
+  the broker — identical to those used on the natively-owning rank.</li>
+<li><strong>Phantom nodes get broker-deterministic tags</strong> (INV-3). When a
+  <code>node_to_surface</code> constraint synthesises phantom nodes at
+  build time, those tags and coordinates come from one canonical
+  allocator and are the same scalar on every rank that hosts a
+  constraint referencing them.</li>
+</ul>
+<p><code>embeddedNode</code> (ASDEmbeddedNodeElement) is the one exception:
+because it carries an element tag, <strong>element ownership wins</strong> — the
+constraint is emitted only on the rank that owns the host element,
+with the embedded node declared as foreign there.</p>
+<p>Concrete example. The three-storey frame from Recipe 1 with a
+rigid-floor diaphragm per storey:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Session-time declaration BEFORE the partition step.</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_point</span><span class="p">([</span><span class="n">master_node_floor_1</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;MasterF1&quot;</span><span class="p">)</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">g</span><span class="o">.</span><span class="n">physical</span><span class="o">.</span><span class="n">add_point</span><span class="p">(</span><span class="n">floor_1_corner_points</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;FloorF1&quot;</span><span class="p">)</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">rigid_diaphragm</span><span class="p">(</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">master_label</span><span class="o">=</span><span class="s2">&quot;MasterF1&quot;</span><span class="p">,</span> <span class="n">slave_label</span><span class="o">=</span><span class="s2">&quot;FloorF1&quot;</span><span class="p">,</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    <span class="n">plane_normal</span><span class="o">=</span><span class="p">(</span><span class="mf">0.</span><span class="p">,</span> <span class="mf">0.</span><span class="p">,</span> <span class="mf">1.</span><span class="p">),</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>    <span class="n">constrained_dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">6</span><span class="p">],</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;floor_1&quot;</span><span class="p">,</span>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="p">)</span>
+</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="c1"># ... repeat for floor_2, floor_3 ...</span>
+</span></code></pre></div>
+<p>With 4 ranks, the floor corners typically scatter across multiple
+ranks (the corners are far apart in the dual graph). The emitted
+deck contains the same <code>rigidDiaphragm</code> line on every rank that
+owns at least one slave corner:</p>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">1</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">    </span><span class="nv">...</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="c"># Foreign-node declarations for nodes rank 1 does not own.</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">11</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">    </span><span class="c"># MP-comment + rigidDiaphragm (byte-identical across owning ranks).</span>
+</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">    </span><span class="c"># constraint floor_1</span>
+</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">    </span><span class="nv">rigidDiaphragm</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mi">11</span>
+</span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="k">}</span>
+</span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">2</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+</span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="w">    </span><span class="nv">...</span>
+</span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
+</span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
+</span><span id="__span-14-16"><a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="w">    </span><span class="c"># constraint floor_1</span>
+</span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="w">    </span><span class="nv">rigidDiaphragm</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mi">11</span>
+</span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="k">}</span>
+</span></code></pre></div>
+<p>Both rank 1 and rank 2 emit the <strong>same</strong> <code>rigidDiaphragm 3 5 7 9 11</code>
+line; whichever ranks natively own which slaves, the foreign-side
+ranks declare the missing nodes before the line. The OpenSeesMP
+constraint handler dedupes equivalent declarations at solve time —
+the redundancy is correctness-preserving, not a foot-gun.</p>
+<p>This means a model whose load path depends on cross-partition rigid
+diaphragms produces the <strong>same answer</strong> under OpenSeesMP as under
+single-process OpenSees — the diaphragm coupling is preserved.</p>
+<h2 id="8-single-process-vs-openseesmp">8. Single-process vs OpenSeesMP<a class="headerlink" href="#8-single-process-vs-openseesmp" title="Permanent link">&para;</a></h2>
+<p>The <code>proc getPID</code> shim in § 3 makes a partitioned deck syntactically
+parseable under single-process OpenSees:</p>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nb">info</span><span class="w"> </span>procs<span class="w"> </span>getPID<span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="k">}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="k">proc</span><span class="w"> </span>getPID<span class="w"> </span><span class="k">{}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">}</span><span class="w"> </span><span class="k">}</span>
+</span></code></pre></div>
+<p>If the runtime is single-process OpenSees (no MPI loaded), <code>getPID</code>
+is unbound, the shim defines it to return 0, and only the rank-0
+block executes. Other ranks' blocks are skipped by the
+<code>if {[getPID] == K}</code> gate.</p>
+<blockquote>
+<p><strong>Current limitation (subject to change).</strong> Today —
+<code>apesees.py::_maybe_auto_emit_parallel_numberer</code>, commit
+<code>c9a8b2c</code> — when <code>len(fem.partitions) &gt; 1</code> the bridge
+<strong>unconditionally</strong> emits <code>numberer ParallelPlain</code> + <code>system
+Mumps</code> at the global scope. Those two commands are MP-only;
+single-process OpenSees rejects them with
+<code>No Numberer type exists, Plain, RCM only</code>. The shim handles the
+per-rank brackets but not the global analysis chain.</p>
+<p>Practical consequence: as of <code>c9a8b2c</code>, partitioned decks ship
+<strong>OpenSeesMP-runnable only.</strong> To run a partitioned deck under
+single-process OpenSees today, override before emit:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">UmfPack</span><span class="p">()</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># ... rest of analysis chain ...</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>     <span class="c1"># MP-incompatible-user-choice warning fires</span>
+</span></code></pre></div>
+<p>The bridge fires a <code>UserWarning</code> ("serial numberer 'RCM' explicitly
+declared … OpenSeesMP requires a parallel numberer") because your
+override is no longer MP-compatible; that is by design — you've
+opted into a single-process deck.</p>
+<p>A runtime-conditional fix is in flight on
+<code>feat/inv5-runtime-conditional</code> (task #17). When it lands, the
+bridge will emit a <code>catch</code> / try-except fallback that picks
+<code>ParallelPlain</code> / <code>Mumps</code> under MPI and <code>RCM</code> / <code>UmfPack</code>
+otherwise, so a single deck runs under both. Re-check this section
+against <code>_maybe_auto_emit_parallel_numberer</code> after that branch
+merges.</p>
+</blockquote>
+<p>The shim itself, by contrast, has been stable since P4 and is not
+expected to change.</p>
+<h2 id="9-gotchas-and-known-limitations">9. Gotchas and known limitations<a class="headerlink" href="#9-gotchas-and-known-limitations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>1-based partition IDs.</strong> Gmsh emits partition tags as <code>1..N</code>,
+  not <code>0..N-1</code>. The matching <code>if {[getPID] == K}</code> blocks in the
+  emitted Tcl also use 1-based ranks (matching Gmsh / <code>fem.partitions</code>).
+  <strong>However</strong>, OpenSeesMP's <code>getPID</code> returns 0-based ranks. The
+  bridge currently emits ranks as they land from <code>fem.partitions</code>
+  (1-based); under <code>mpiexec -np 4</code> only ranks that match the
+  emitted block IDs execute. If you are surprised by silent
+  no-execution on some ranks, this is the place to check —
+  prefer iterating <code>for rec in fem.partitions:</code> over hard-coding
+  rank IDs in your post-processing scripts.</p>
+</li>
+<li>
+<p><strong><code>pymetis</code> has no PyPI Windows wheel.</strong> Install via
+  <code>conda install -c conda-forge pymetis</code>, or use Flavor A which
+  routes through the bundled Gmsh binding (no extra deps).</p>
+</li>
+<li>
+<p><strong><code>networkx-metis</code> is not on PyPI under any name.</strong> The upstream
+  is source-install only:
+  <code>pip install git+https://github.com/networkx/networkx-metis.git</code>.
+  Captured as <code>partition-networkx</code> extra but
+  <code>pip install apeGmsh[partition-networkx]</code> installs only the
+  <code>networkx</code> graph library — <code>nxmetis</code> itself must be installed
+  separately.</p>
+</li>
+<li>
+<p><strong>MPCO recorder regions emit globally.</strong> Per ADR 0027 §"Regions
+  interaction" the spec is that a recorder region's <code>element_ids</code>
+  / <code>node_ids</code> should be <strong>intersected</strong> with per-rank ownership
+  before emission. That per-rank intersection is <strong>not yet
+  implemented</strong> — it is tracked as a follow-up (internally task
+  #15). Until it lands, MPCO recorder regions are emitted once
+  globally; per-rank <code>.mpco</code> files all carry the same
+  <code>-R $tag</code> filter, and any post-processing has to do the
+  intersection on the read side.</p>
+</li>
+<li>
+<p><strong>Per-node <code>ndf</code> metadata is not yet on the broker.</strong> Foreign
+  node declarations under cross-partition replication (§ 7) use
+  the model-wide <code>ndf</code> declared via <code>ops.model(ndm=, ndf=)</code>.
+  This is fine for the homogeneous-ndf models apeGmsh supports
+  today (one <code>ndf</code> per session). Mixed-ndf models — <code>ndf=3</code> solid
+  nodes coexisting with <code>ndf=6</code> beam nodes in the same broker —
+  are not yet supported; tracked as task #16.</p>
+</li>
+<li>
+<p><strong><code>partition()</code> after <code>renumber()</code> is the canonical order.</strong>
+  Call <code>g.mesh.partitioning.renumber(dim=, method="simple",
+  base=1)</code> first, so the broker captures contiguous 1-based tags;
+  then <code>partition(N)</code>. Partitioning is a labelling pass over an
+  already-numbered model — it does not renumber.</p>
+</li>
+<li>
+<p><strong><code>unpartition()</code> restores monolithic state.</strong> After a partition
+  call, <code>g.mesh.partitioning.unpartition()</code> removes the partition
+  structure and the next <code>get_fem_data()</code> produces a broker with
+  <code>len(fem.partitions) == 0</code>. The emitter then writes byte-identical
+  output to a never-partitioned model.</p>
+</li>
+</ul>
+<h2 id="10-reference">10. Reference<a class="headerlink" href="#10-reference" title="Permanent link">&para;</a></h2>
+<ul>
+<li>ADR 0027 — Cross-partition MP-constraint emission policy
+  (<code>src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md</code>).
+  Defines INV-1 / INV-2 / INV-3 / INV-4 / INV-5 for partitioned
+  emission.</li>
+<li>ADR 0023 — Per-zone schema versioning
+  (<code>src/apeGmsh/opensees/architecture/decisions/0023-per-zone-schema-versioning.md</code>).
+  The opensees <code>2.9.0 → 2.10.0</code> bump driven by the partition zone
+  follows the additive-minor rule + two-version reader window.</li>
+<li>ADR 0024 — Emitter Protocol widening for regions
+  (<code>src/apeGmsh/opensees/architecture/decisions/0024-emitter-protocol-widen-region.md</code>).
+  The per-rank intersection rule in § 9 sits on top of ADR 0024's
+  filtering machinery.</li>
+<li>ADR 0026 — H5ModelReader Protocol contract
+  (<code>src/apeGmsh/opensees/architecture/decisions/0026-h5modelreader-protocol-contract.md</code>).
+  Defines the read-side surface that <code>H5Model.partitions()</code> slots
+  into.</li>
+<li><code>guide_meshing.md</code> — mesh generation, renumbering (RCM /
+  Hilbert / METIS-ordering).</li>
+<li><code>guide_fem_broker.md</code> — <code>FEMData</code> snapshot lifecycle; how
+  <code>fem.partitions</code> is built from the same private dicts that power
+  <code>fem.nodes.select(partition=N)</code>.</li>
+<li><code>guide_opensees.md</code> — the <code>apeSees</code> bridge: typed namespaces,
+  emit verbs, recorder declarations. Partition-aware emission is
+  transparent — every code path in that guide works unchanged
+  under partitioning.</li>
 </ul>
 
 
