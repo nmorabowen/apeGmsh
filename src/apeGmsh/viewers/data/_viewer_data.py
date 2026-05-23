@@ -140,19 +140,38 @@ class ViewerData:
         Performs the reader's schema version check on open.  The file
         is closed before this method returns — :class:`ViewerData` holds
         only decoded arrays / row tuples, no live h5py handle.
+
+        Shim over :meth:`from_reader` for path-only callers — ADR 0026
+        widens the canonical factory to accept any H5ModelReader.
         """
         from apeGmsh.opensees.emitter import h5_reader
-        with h5_reader.open(path) as model:
-            return cls.from_h5_model(model)
+        with h5_reader.open(path) as reader:
+            return cls.from_reader(reader)
 
     @classmethod
-    def from_h5_model(cls, model: Any) -> "ViewerData":
-        """Build a :class:`ViewerData` from an already-open
-        :class:`apeGmsh.opensees.emitter.h5_reader.H5Model`.
+    def from_reader(cls, reader: Any) -> "ViewerData":
+        """Build a :class:`ViewerData` from any H5ModelReader-conforming
+        reader (ADR 0026 PR7-c).
 
-        For callers that already opened the file (e.g. to read
-        ``/opensees/`` enrichment alongside).  Does not close the model.
+        Accepts any object exposing the read surface used by this
+        decoder: ``meta()``, ``nodes()``, ``physical_groups()``,
+        ``labels()``, ``mesh_selections()``, ``loads()``, ``masses()``,
+        ``constraints()``, plus the per-element bridge accessors
+        :meth:`element_local_axes_vecxz` and the element-group decoder
+        underpinnings.  ``apeGmsh.opensees.emitter.h5_reader.H5Model``
+        satisfies the contract natively; foreign-format adapters
+        (LS-DYNA d3plot, xDMF, Exodus, MPCO-with-sibling) implement
+        the same Protocol to plug in without touching ``viewers/``.
+
+        Does NOT close the reader — lifecycle is the caller's
+        responsibility (typical pattern: open in a ``with`` block;
+        long-lived ResultsDirector ownership lands in PR7-d).
         """
+        # Local alias preserves the existing body, which references
+        # ``model`` throughout.  The Protocol-typed parameter name
+        # (``reader``) is what shows in IDE tooltips and the public
+        # contract; the alias is purely body-internal.
+        model = reader
         meta = model.meta()
         snapshot_id = str(meta.get("snapshot_id", "") or "")
         nodes_dict = model.nodes()
@@ -230,6 +249,18 @@ class ViewerData:
             nodes=nodes,
             elements=elements,
         )
+
+    # ------------------------------------------------------------------
+    # Back-compat alias
+    # ------------------------------------------------------------------
+    #
+    # ``from_h5_model`` was the pre-ADR-0026 name when the contract
+    # was "an open h5_reader.H5Model".  The Protocol generalisation
+    # to ``from_reader`` widens the accepted type without changing
+    # the body.  Alias retained to avoid breaking any out-of-tree
+    # caller that might have grabbed the old name; remove in a
+    # follow-up once the deprecation cycle ends.
+    from_h5_model = from_reader
 
 
 # =====================================================================

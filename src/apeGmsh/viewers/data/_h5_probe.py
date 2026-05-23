@@ -32,24 +32,24 @@ def has_opensees_orientation(path: _PathLike) -> bool:
 
     A missing or unreadable file returns ``False`` without raising —
     the caller's contract is "should I auto-resolve?", not "is this
-    file healthy?". The downstream
-    :func:`apeGmsh.viewers.data.ViewerData.from_h5` path performs the
-    real schema check on open.
+    file healthy?".
+
+    ADR 0026 PR7-c — the probe logic now lives on
+    :meth:`apeGmsh.opensees.emitter.h5_reader.H5Model.has_opensees_orientation`
+    (the method on an already-open reader).  This standalone function
+    is a thin shim for path-only callers: it confirms the file exists
+    and is openable as raw h5py (the cheap probe — no schema
+    validation), then defers to the same group-membership check.
+
+    Producer-agnostic: both the bridge writer (``apeSees(fem).h5()``)
+    and :class:`apeGmsh.opensees.ModelData` write the same
+    byte-equivalent zone (ADR 0018 INV-16), so the probe needs no
+    provenance check — it asks the file directly.
 
     Parameters
     ----------
     path
         Filesystem path to a candidate ``model.h5``.
-
-    Notes
-    -----
-    Existence of *both* groups is the contract — having transforms but
-    not element_meta (or vice versa) cannot resolve a vecxz at all
-    (the reader's join requires both, ``h5_reader.py:309-310``). The
-    probe stays cheap: it checks for the groups, not their contents,
-    so a file with the zones but only ``-1`` sentinel rows still gets
-    a ``True`` here and degrades gracefully inside ``from_h5``
-    (ADR 0018 INV-11 — "write+degrade on nothing-injected").
     """
     p = Path(path)
     if not p.is_file():
@@ -60,6 +60,12 @@ def has_opensees_orientation(path: _PathLike) -> bool:
         return False
     try:
         with h5py.File(str(p), "r") as f:
+            # The single-source-of-truth membership check.  Keeping it
+            # at raw-h5py rather than ``h5_reader.open`` preserves the
+            # original "no schema validation, no SchemaVersionError"
+            # contract — a stale or wrong-version file still returns
+            # ``True`` if both groups are present, matching the
+            # method's behaviour on an open reader.
             return "opensees/transforms" in f and "opensees/element_meta" in f
     except (OSError, KeyError):
         # Not a valid HDF5 file, or any low-level read failure — the
