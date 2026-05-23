@@ -74,12 +74,17 @@ class ConstraintsTabPanel:
         view: "ViewerData | None" = None,
         *,
         on_kinds_changed: Callable[[set[str]], None] | None = None,
+        overlay_model: Any = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
         self._constraints = constraints_composite
         self._view = view
         self._on_kinds_changed = on_kinds_changed
+        # PR5 — see LoadsTabPanel for the design.
+        self._overlay_model = overlay_model
+        if overlay_model is not None:
+            overlay_model.subscribe(self._sync_from_overlay_model)
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -322,6 +327,27 @@ class ConstraintsTabPanel:
             return
         if self._on_kinds_changed:
             self._on_kinds_changed(self.active_kinds())
+
+    def _sync_from_overlay_model(self) -> None:
+        """Refresh kind checkboxes to match the OverlayVisibilityModel.
+
+        PR5 — symmetric with the LoadsTabPanel and outline-tree
+        sync methods.  ``_suppress_signal`` blocks the
+        ``itemChanged`` round-trip.
+        """
+        if self._overlay_model is None:
+            return
+        from qtpy.QtCore import Qt
+        constraint_kinds = self._overlay_model.constraint_kinds
+        self._suppress_signal = True
+        try:
+            for name, item in self._kind_items.items():
+                target = (Qt.CheckState.Checked if name in constraint_kinds
+                          else Qt.CheckState.Unchecked)
+                if item.checkState(0) != target:
+                    item.setCheckState(0, target)
+        finally:
+            self._suppress_signal = False
 
     # ── External view update ──────────────────────────────────
 

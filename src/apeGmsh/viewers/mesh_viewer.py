@@ -425,10 +425,31 @@ class MeshViewer:
         # surface drove it.
         from .ui._mesh_outline_tree import MeshOutlineTree
         from .ui._dock_registry import DockSpec
+        from .core.overlay_visibility import OverlayVisibilityModel
         parts_reg = getattr(self._parent, 'parts', None)
         loads_comp = getattr(self._parent, 'loads', None)
         mass_comp = getattr(self._parent, 'masses', None)
         constraints_comp = getattr(self._parent, 'constraints', None)
+
+        # ── Overlay visibility model — PR5 / D2 closure ─────────────
+        # Single source of truth for {load_patterns, constraint_kinds,
+        # mass_visible} across the outline-tree eye-icons and the
+        # right-side tab checkboxes.  Pre-PR5 each surface held its
+        # own snapshot computed off Qt widget state — alternating
+        # writes caused the overlay to flip to whichever surface fired
+        # last.  Now both surfaces write to the model; the model
+        # dedups (idempotent setters) and fans out to the rebuild
+        # callbacks below.
+        self._overlay_model = OverlayVisibilityModel()
+        self._overlay_model.subscribe(
+            lambda: self._rebuild_loads_overlay(self._overlay_model.load_patterns)
+        )
+        self._overlay_model.subscribe(
+            lambda: self._rebuild_mass_overlay(self._overlay_model.mass_visible)
+        )
+        self._overlay_model.subscribe(
+            lambda: self._rebuild_constraints_overlay(self._overlay_model.constraint_kinds)
+        )
 
         # Map outline row kinds to the right-side tab names whose
         # contents serve as the property editor for that row type.
@@ -457,10 +478,17 @@ class MeshViewer:
             loads_composite=loads_comp,
             mass_composite=mass_comp,
             constraints_composite=constraints_comp,
-            on_load_patterns_changed=self._rebuild_loads_overlay,
-            on_mass_visibility_changed=self._rebuild_mass_overlay,
-            on_constraint_kinds_changed=self._rebuild_constraints_overlay,
+            # PR5 — both writers go through ``self._overlay_model``;
+            # the legacy ``on_*_changed`` callbacks route writes into
+            # the model rather than calling ``_rebuild_*`` directly.
+            # Passing ``overlay_model=`` ALSO subscribes the outline
+            # to model changes so tab-checkbox writes refresh the
+            # outline's eye-icons (cross-surface UI sync).
+            on_load_patterns_changed=self._overlay_model.set_load_patterns,
+            on_mass_visibility_changed=self._overlay_model.set_mass_visible,
+            on_constraint_kinds_changed=self._overlay_model.set_constraint_kinds,
             on_row_focused=_on_outline_row_focused,
+            overlay_model=self._overlay_model,
         )
         outline_dock = win.add_extension_dock(DockSpec(
             dock_id="dock_mesh_outline",
@@ -633,13 +661,18 @@ class MeshViewer:
         from .ui.mass_tab import MassTabPanel
         from .ui.constraints_tab import ConstraintsTabPanel
 
+        # PR5 — tab checkboxes write into ``self._overlay_model``,
+        # which fans out to ``_rebuild_*`` through its observer chain.
+        # Identical wiring to the outline tree above: both surfaces
+        # now share one source of truth.
         loads_comp = getattr(self._parent, 'loads', None)
         if loads_comp is not None:
             self._loads_tab = LoadsTabPanel(
                 loads_comp, view=self._view,
-                on_patterns_changed=self._rebuild_loads_overlay,
+                on_patterns_changed=self._overlay_model.set_load_patterns,
                 on_force_scale=self._on_force_scale,
                 on_moment_scale=self._on_moment_scale,
+                overlay_model=self._overlay_model,
             )
             win.add_tab("Loads", self._loads_tab.widget)
 
@@ -647,7 +680,8 @@ class MeshViewer:
         if mass_comp is not None:
             self._mass_tab = MassTabPanel(
                 mass_comp, view=self._view,
-                on_overlay_changed=self._rebuild_mass_overlay,
+                on_overlay_changed=self._overlay_model.set_mass_visible,
+                overlay_model=self._overlay_model,
             )
             win.add_tab("Mass", self._mass_tab.widget)
 
@@ -655,7 +689,8 @@ class MeshViewer:
         if constraints_comp is not None:
             self._constraints_tab = ConstraintsTabPanel(
                 constraints_comp, view=self._view,
-                on_kinds_changed=self._rebuild_constraints_overlay,
+                on_kinds_changed=self._overlay_model.set_constraint_kinds,
+                overlay_model=self._overlay_model,
             )
             win.add_tab("Constraints", self._constraints_tab.widget)
 
@@ -1206,25 +1241,23 @@ class MeshViewer:
 
     def _on_force_scale(self, v: float) -> None:
         self._overlay_scales['force_arrow'] = v
-        if self._loads_tab is not None:
-            self._rebuild_loads_overlay(self._loads_tab.active_patterns())
+        # PR5 — read overlay state from the model, not the tab's
+        # widget snapshot (the model is the single source of truth).
+        self._rebuild_loads_overlay(self._overlay_model.load_patterns)
 
     def _on_moment_scale(self, v: float) -> None:
         self._overlay_scales['moment_arrow'] = v
-        if self._loads_tab is not None:
-            self._rebuild_loads_overlay(self._loads_tab.active_patterns())
+        self._rebuild_loads_overlay(self._overlay_model.load_patterns)
 
     def _on_overlay_scale(self, key: str, mult: float) -> None:
         self._overlay_scales[key] = mult
-        if key in ('force_arrow', 'moment_arrow') and self._loads_tab is not None:
-            self._rebuild_loads_overlay(self._loads_tab.active_patterns())
-        elif key == 'mass_sphere' and self._mass_tab is not None:
-            show_cb = getattr(self._mass_tab, '_show_cb', None)
-            if show_cb is not None:
-                self._rebuild_mass_overlay(show_cb.isChecked())
-        elif key.startswith('constraint') and self._constraints_tab is not None:
+        if key in ('force_arrow', 'moment_arrow'):
+            self._rebuild_loads_overlay(self._overlay_model.load_patterns)
+        elif key == 'mass_sphere':
+            self._rebuild_mass_overlay(self._overlay_model.mass_visible)
+        elif key.startswith('constraint'):
             self._rebuild_constraints_overlay(
-                self._constraints_tab.active_kinds()
+                self._overlay_model.constraint_kinds
             )
         elif key == 'tangent_normal_arrow' and self._mesh_tn_overlay is not None:
             from .ui.preferences_manager import PREFERENCES as _PREF

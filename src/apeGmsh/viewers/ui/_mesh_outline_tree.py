@@ -123,6 +123,7 @@ class MeshOutlineTree:
             Callable[[set[str]], None]
         ] = None,
         on_row_focused: Optional[Callable[[str, Any], None]] = None,
+        overlay_model: Any = None,
     ) -> None:
         QtCore, _, QtWidgets = _qt()
         self._scene = scene
@@ -136,6 +137,14 @@ class MeshOutlineTree:
         self._on_load_patterns_changed = on_load_patterns_changed
         self._on_mass_visibility_changed = on_mass_visibility_changed
         self._on_constraint_kinds_changed = on_constraint_kinds_changed
+        # PR5 — optional :class:`OverlayVisibilityModel`.  When
+        # supplied, the outline subscribes to model changes and
+        # refreshes its eye-icons to match the model state.  This
+        # closes the cross-surface UI sync gap: a tab checkbox write
+        # now visually updates the corresponding outline eye-icon.
+        # Back-compat: ``None`` → behaviour unchanged (legacy callbacks
+        # are the only path).
+        self._overlay_model = overlay_model
         # Generic row-focused signal — fires for every selectable row
         # with ``(kind, payload)``. Viewers map kinds to tab names and
         # call ``win.focus_tab(...)`` to reveal the property editor.
@@ -214,6 +223,46 @@ class MeshOutlineTree:
         self._refresh_loads()
         self._refresh_masses()
         self._refresh_constraints()
+        # PR5 — wire UI sync to the OverlayVisibilityModel after the
+        # rows exist.  Subscribed once; subsequent writes from the
+        # tab panels propagate here automatically.
+        if self._overlay_model is not None and not getattr(
+            self, "_overlay_model_wired", False,
+        ):
+            self._overlay_model.subscribe(self._sync_from_overlay_model)
+            self._overlay_model_wired = True
+
+    def _sync_from_overlay_model(self) -> None:
+        """Refresh eye-icon visual state from the OverlayVisibilityModel.
+
+        For load_pattern / constraint_kind rows: ROLE_VISIBLE =
+        (payload in model.{load_patterns | constraint_kinds}).
+        For the mass row: ROLE_VISIBLE = model.mass_visible.
+
+        The repaint is triggered via ``viewport().update()``; the
+        eye-icon delegate reads ROLE_VISIBLE on paint.  No signal
+        round-trip — ROLE_VISIBLE is a data role, not a widget state.
+        """
+        if self._overlay_model is None:
+            return
+        load_patterns = self._overlay_model.load_patterns
+        for i in range(self._group_loads.childCount()):
+            row = self._group_loads.child(i)
+            if row.data(0, _ROLE_KIND) == "load_pattern":
+                payload = row.data(0, _ROLE_PAYLOAD)
+                row.setData(0, ROLE_VISIBLE, payload in load_patterns)
+        mass_visible = self._overlay_model.mass_visible
+        for i in range(self._group_masses.childCount()):
+            row = self._group_masses.child(i)
+            if row.data(0, _ROLE_KIND) == "mass":
+                row.setData(0, ROLE_VISIBLE, mass_visible)
+        constraint_kinds = self._overlay_model.constraint_kinds
+        for i in range(self._group_constraints.childCount()):
+            row = self._group_constraints.child(i)
+            if row.data(0, _ROLE_KIND) == "constraint_kind":
+                payload = row.data(0, _ROLE_PAYLOAD)
+                row.setData(0, ROLE_VISIBLE, payload in constraint_kinds)
+        self._tree.viewport().update()
 
     def _refresh_groups(self) -> None:
         QtCore, QtGui, QtWidgets = _qt()

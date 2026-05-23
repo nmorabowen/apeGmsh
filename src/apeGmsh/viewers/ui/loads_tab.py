@@ -71,12 +71,21 @@ class LoadsTabPanel:
         on_patterns_changed: Callable[[set[str]], None] | None = None,
         on_force_scale: Callable[[float], None] | None = None,
         on_moment_scale: Callable[[float], None] | None = None,
+        overlay_model: Any = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
         self._loads = loads_composite
         self._view = view
         self._on_patterns_changed = on_patterns_changed
+        # PR5 — when supplied, the tab subscribes to model changes
+        # and syncs its pattern checkboxes to match.  Combined with
+        # the symmetric subscription on the outline tree, this is
+        # what closes the documented "alternating writes flip the
+        # overlay" oscillation (D2 / _mesh_outline_tree.py:96-104).
+        self._overlay_model = overlay_model
+        if overlay_model is not None:
+            overlay_model.subscribe(self._sync_from_overlay_model)
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -299,6 +308,32 @@ class LoadsTabPanel:
             return
         if self._on_patterns_changed:
             self._on_patterns_changed(self.active_patterns())
+
+    def _sync_from_overlay_model(self) -> None:
+        """Refresh pattern checkboxes to match the OverlayVisibilityModel.
+
+        PR5 — symmetric with
+        :meth:`MeshOutlineTree._sync_from_overlay_model`.  When the
+        outline writes a pattern set, this method updates THIS tab's
+        checkboxes so both surfaces stay visually consistent.
+        ``_suppress_signal`` blocks the resulting ``itemChanged``
+        callback that would otherwise re-write the same state to
+        the model (which would no-op via idempotent setters, but
+        avoiding the round-trip is cleaner).
+        """
+        if self._overlay_model is None:
+            return
+        from qtpy.QtCore import Qt
+        load_patterns = self._overlay_model.load_patterns
+        self._suppress_signal = True
+        try:
+            for name, item in self._pattern_items.items():
+                target = (Qt.CheckState.Checked if name in load_patterns
+                          else Qt.CheckState.Unchecked)
+                if item.checkState(0) != target:
+                    item.setCheckState(0, target)
+        finally:
+            self._suppress_signal = False
 
     # ── External view update ───────────────────────────────────
 
