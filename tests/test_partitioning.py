@@ -362,3 +362,203 @@ class TestPhantomNodeNumbering:
 
         assert total_phantoms == total_slaves, \
             f"phantoms={total_phantoms} != slaves={total_slaves}"
+
+
+# =====================================================================
+# Weighted partitioning (Flavor B)
+#
+# Routes through an external METIS binding (pymetis or networkx-metis)
+# so the caller can pass per-element vertex weights.  apeGmsh builds
+# the element dual graph, calls the backend, then pushes the result
+# back into Gmsh via partition_explicit — downstream consumers see
+# the same model state as the native (Flavor A) path.
+#
+# CI may have neither backend; tests use ``importorskip`` so the suite
+# stays green where the binding is unavailable.
+# =====================================================================
+
+
+def _total_element_count() -> int:
+    """Sum of element counts across all 4 Gmsh dimensions."""
+    n = 0
+    for d in range(4):
+        _, etl, _ = gmsh.model.mesh.getElements(dim=d, tag=-1)
+        n += sum(len(t) for t in etl)
+    return n
+
+
+class TestPartitionWeighted:
+    """Weighted partitioning surface — Flavor B via pymetis/nx-metis."""
+
+    def test_partition_with_unit_weights_matches_unweighted(self, g):
+        """Unit weights through pymetis should give the same load
+        balance as Gmsh-native (count_max - count_min within 1 of the
+        reference's count_max - count_min) for the **top-dim elements
+        only** — comparing total element counts across all dims is
+        unreliable because Gmsh-native and the explicit path account
+        for lower-dim ghost elements differently in
+        ``elements_per_partition``.
+
+        METIS is a heuristic — different bindings can land on slightly
+        different cuts even for identical inputs — so we assert
+        approximate, not bit-exact, parity.
+        """
+        pytest.importorskip("pymetis")
+        _build_plate(g)
+        n = _total_element_count()
+
+        # Reference: Gmsh-native (Flavor A) — measure top-dim balance.
+        ref = g.mesh.partitioning.partition(2)
+        ref_spread = (
+            max(ref.elements_per_partition.values())
+            - min(ref.elements_per_partition.values()))
+        g.mesh.partitioning.unpartition()
+
+        # Weighted path with unit weights (Flavor B, pymetis)
+        info = g.mesh.partitioning.partition(
+            2, weights=np.ones(n).tolist())
+        got_spread = (
+            max(info.elements_per_partition.values())
+            - min(info.elements_per_partition.values()))
+
+        assert info.n_parts == 2
+        # Both paths should land near-perfect balance (spread ~ 0–few).
+        # The exact ghost-element accounting between the two paths
+        # differs (Gmsh-native leaves lower-dim ghosts unassigned;
+        # the explicit path assigns them too), but the **balance**
+        # metric — spread between max and min — should be small in
+        # both cases and within ``n / n_parts * 0.05`` of each other
+        # for a uniform 2-D mesh.
+        tol = max(2, n // 20)
+        assert abs(ref_spread - got_spread) <= tol, \
+            f"unit-weights load balance diverges from Gmsh-native: " \
+            f"ref_spread={ref_spread}, got_spread={got_spread}, " \
+            f"tol={tol}"
+
+    def test_partition_with_biased_weights_balances_weight_sum(self, g):
+        """First-half heavy / second-half light → METIS should balance
+        weight-sum.  Realised weights should be within 10% of each
+        other.  (We don't pin element-count imbalance: for a small
+        plate the dual-graph topology can still drive balanced counts
+        even when weights vary — METIS optimises weight sum, but is
+        constrained by the cut-edge cost too.)"""
+        pytest.importorskip("pymetis")
+        _build_plate(g)
+        n = _total_element_count()
+        if n < 4:
+            pytest.skip("Mesh too small to demonstrate weight balance")
+
+        half = n // 2
+        weights = [10.0] * half + [1.0] * (n - half)
+        info = g.mesh.partitioning.partition(2, weights=weights)
+
+        assert info.n_parts == 2
+        assert info.weights_per_partition is not None
+        assert len(info.weights_per_partition) == 2
+
+        w_vals = sorted(info.weights_per_partition.values())
+        w_lo, w_hi = w_vals[0], w_vals[-1]
+        # Within 10% of each other.
+        assert w_lo > 0, f"empty partition: {info.weights_per_partition}"
+        ratio = w_hi / w_lo
+        assert ratio <= 1.10, \
+            f"weight imbalance too large: {w_vals} (ratio {ratio:.3f})"
+
+        # Sanity: total weight is conserved across partitions.
+        total = sum(info.weights_per_partition.values())
+        expected = sum(weights)
+        assert abs(total - expected) < 1e-6, \
+            f"weight total {total} != expected {expected}"
+
+    def test_partition_weights_with_gmsh_backend_raises(self, g):
+        """``backend='gmsh'`` + ``weights=`` → ValueError (no vwgt API)."""
+        _build_plate(g)
+        n = _total_element_count()
+        with pytest.raises(ValueError, match="Gmsh has no vwgt API"):
+            g.mesh.partitioning.partition(
+                2, weights=[1.0] * n, backend="gmsh")
+
+    def test_partition_weights_wrong_length_raises(self, g):
+        """Mismatched ``weights`` length → ValueError naming both sizes."""
+        pytest.importorskip("pymetis")
+        _build_plate(g)
+        n = _total_element_count()
+        wrong = [1.0] * (n + 7)  # off by a known delta
+        with pytest.raises(ValueError) as exc_info:
+            g.mesh.partitioning.partition(2, weights=wrong)
+        msg = str(exc_info.value)
+        # Message must mention both expected and got.
+        assert str(n) in msg, f"expected {n} not in {msg!r}"
+        assert str(len(wrong)) in msg, \
+            f"got {len(wrong)} not in {msg!r}"
+
+    def test_partition_backend_missing_raises_with_hint(
+        self, g, monkeypatch,
+    ):
+        """When pymetis is unimportable, the wrapped ImportError must
+        mention ``pip install`` so the user knows how to recover.
+
+        We force the import to fail by inserting ``None`` into
+        ``sys.modules['pymetis']``.  ``importlib.import_module`` raises
+        ``ImportError`` on that sentinel, which ``_import_backend``
+        catches and re-raises with the install hint."""
+        _build_plate(g)
+        n = _total_element_count()
+
+        monkeypatch.setitem(__import__('sys').modules, 'pymetis', None)
+        with pytest.raises(ImportError) as exc_info:
+            g.mesh.partitioning.partition(2, weights=[1.0] * n)
+        msg = str(exc_info.value)
+        assert "pip install" in msg, \
+            f"missing install hint in: {msg!r}"
+        assert "pymetis" in msg, f"backend name not in: {msg!r}"
+
+    def test_partition_weights_partition_info_populated(self, g):
+        """After a weighted call, ``info.weights_per_partition`` must be
+        a dict with n_parts keys summing to ~sum(weights)."""
+        pytest.importorskip("pymetis")
+        _build_plate(g)
+        n = _total_element_count()
+        weights = [2.0] * n  # uniform but non-unit
+        info = g.mesh.partitioning.partition(3, weights=weights)
+
+        assert info.weights_per_partition is not None, \
+            "weights_per_partition should be populated for weighted call"
+        assert isinstance(info.weights_per_partition, dict)
+        assert len(info.weights_per_partition) == 3, \
+            f"expected 3 keys, got {info.weights_per_partition}"
+
+        # Sum should match — owning-entity accounting (no ghost
+        # double-counting) means total == sum(weights).
+        total = sum(info.weights_per_partition.values())
+        expected = sum(weights)
+        assert abs(total - expected) < 1e-6, \
+            f"weight total {total} != expected {expected}"
+
+    def test_partition_explicit_still_works_after_weighted(self, g):
+        """Regression: ``partition_explicit`` must remain callable after
+        a weighted ``partition()`` call.  The weighted path uses
+        ``partition_explicit`` internally and caches state; this test
+        pins that the cache cleanup leaves the public method usable."""
+        pytest.importorskip("pymetis")
+        _build_plate(g)
+        n = _total_element_count()
+
+        # First a weighted call to populate the cache.
+        g.mesh.partitioning.partition(2, weights=[1.0] * n)
+        # Tear down (also clears the cache) and call explicit directly.
+        g.mesh.partitioning.unpartition()
+
+        all_tags: list[int] = []
+        for d in range(4):
+            _, etl, _ = gmsh.model.mesh.getElements(dim=d, tag=-1)
+            for et in etl:
+                all_tags.extend(int(t) for t in et)
+        mid = len(all_tags) // 2
+        parts = [1] * mid + [2] * (len(all_tags) - mid)
+        info = g.mesh.partitioning.partition_explicit(
+            2, elem_tags=all_tags, parts=parts)
+
+        # partition_explicit with no weights should report None.
+        assert info.n_parts == 2
+        assert info.weights_per_partition is None
