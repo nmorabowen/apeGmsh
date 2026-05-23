@@ -734,7 +734,8 @@ def test_round_trip_partitions(tmp_path: Path) -> None:
     fem.to_h5(str(out))
     rebuilt = FEMData.from_h5(str(out))
 
-    assert rebuilt.partitions == [1, 2]
+    # P2: ``fem.partitions`` is a :class:`PartitionSet` — check ids.
+    assert rebuilt.partitions.ids == [1, 2]
     assert rebuilt.nodes.partitions == [1, 2]
     assert rebuilt.elements.partitions == [1, 2]
 
@@ -907,7 +908,7 @@ def test_legacy_2_4_0_file_reads_without_name(tmp_path: Path) -> None:
     assert rec.dofs == [1, 2, 3]
 
     # No partitions and no parts on a legacy file.
-    assert rebuilt.partitions == []
+    assert len(rebuilt.partitions) == 0
 
 
 # =====================================================================
@@ -1016,8 +1017,10 @@ def _assert_fem_equivalent(rebuilt: FEMData, original: FEMData) -> None:
         sorted(original.nodes.labels.get_all()))
 
     # Partitions ──────────────────────────────────────────────
-    assert rebuilt.partitions == original.partitions
-    for pid in original.partitions:
+    # P2: compare the integer-id lists; ``fem.partitions`` is a
+    # :class:`PartitionSet` so equality is on ``.ids``.
+    assert rebuilt.partitions.ids == original.partitions.ids
+    for pid in original.partitions.ids:
         rb_ids = sorted(int(x) for x in rebuilt.nodes.select(partition=pid).ids)
         or_ids = sorted(int(x) for x in original.nodes.select(partition=pid).ids)
         assert rb_ids == or_ids

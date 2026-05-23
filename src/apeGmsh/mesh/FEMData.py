@@ -59,7 +59,9 @@ from ._group_set import (
 from .._kernel.record_sets import (
     NodeConstraintSet, SurfaceConstraintSet,
     NodalLoadSet, SPSet, ElementLoadSet, MassSet,
+    PartitionSet,
 )
+from .._kernel.records._partitions import PartitionRecord
 from ._element_types import ElementTypeInfo
 from .._kernel.payloads import (
     NodeResult, ElementGroup, GroupResult,
@@ -1140,10 +1142,32 @@ class FEMData:
         # mesh/_mesh_selection.NODES_REF_ATTR.
         elements._apegmsh_nodes_ref = nodes
 
-    @property
-    def partitions(self) -> list[int]:
-        """Sorted list of partition IDs."""
-        return self.nodes.partitions
+        # ── Partitions composite ─────────────────────────────
+        # ``fem.partitions`` is a :class:`PartitionSet` (P2 broker
+        # composite) built once from the same dicts the extractor
+        # already populated on ``nodes._partitions`` /
+        # ``elements._partitions``.  Those private back-stores are
+        # left untouched — they still power ``select(partition=N)``;
+        # this set is a Python-side ergonomic layer only.
+        node_parts: dict[int, dict] = getattr(nodes, "_partitions", {}) or {}
+        elem_parts: dict[int, dict] = (
+            getattr(elements, "_partitions", {}) or {})
+        pids = sorted(set(node_parts.keys()) | set(elem_parts.keys()))
+        records: dict[int, PartitionRecord] = {}
+        empty_i64 = np.array([], dtype=np.int64)
+        for pid in pids:
+            n_ids = np.asarray(
+                node_parts.get(pid, {}).get("node_ids", empty_i64),
+                dtype=np.int64,
+            )
+            e_ids = np.asarray(
+                elem_parts.get(pid, {}).get("element_ids", empty_i64),
+                dtype=np.int64,
+            )
+            records[int(pid)] = PartitionRecord(
+                id=int(pid), node_ids=n_ids, element_ids=e_ids,
+            )
+        self.partitions: PartitionSet = PartitionSet(records)
 
     @property
     def snapshot_id(self) -> str:

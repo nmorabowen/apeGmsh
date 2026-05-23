@@ -177,7 +177,11 @@ class TestFEMDataPartitions:
     def test_unpartitioned_has_empty_partitions(self, g):
         _build_plate(g)
         fem = g.mesh.queries.get_fem_data(dim=2)
-        assert fem.partitions == []
+        # ``fem.partitions`` is now a :class:`PartitionSet` (P2);
+        # the per-composite ``.partitions`` accessors stay
+        # ``list[int]``.
+        assert len(fem.partitions) == 0
+        assert fem.partitions.ids == []
         assert fem.nodes.partitions == []
         assert fem.elements.partitions == []
 
@@ -193,7 +197,9 @@ class TestFEMDataPartitions:
         fem = g.mesh.queries.get_fem_data(dim=2)
         if not fem.partitions:
             pytest.skip("Partitioning did not produce queryable partitions")
-        p = fem.partitions[0]
+        # P2: ``fem.partitions`` yields :class:`PartitionRecord` — use
+        # ``.ids`` for the integer tag.
+        p = fem.partitions.ids[0]
         # selection-unification v2 P3-R: ``fem.nodes.get(partition=)``
         # is removed; ``fem.nodes.select(partition=)`` is the migration
         # target (P-NODE — same _resolve_nodes + _intersect_partition,
@@ -208,7 +214,7 @@ class TestFEMDataPartitions:
         fem = g.mesh.queries.get_fem_data(dim=2)
         if not fem.partitions:
             pytest.skip("Partitioning did not produce queryable partitions")
-        p = fem.partitions[0]
+        p = fem.partitions.ids[0]
         # P3-R: ``fem.elements.get(partition=)`` removed →
         # ``fem.elements.select(partition=)``; the terminal id count is
         # the element count (P-ELEM-IDS).
@@ -223,8 +229,9 @@ class TestFEMDataPartitions:
             pytest.skip("Partitioning did not produce queryable partitions")
         all_ids = set(int(e) for e in fem.elements.ids)
         union = set()
-        for p in fem.partitions:
-            eids = fem.elements.select(partition=p).ids   # P3-R: was .get
+        # P2: iterating ``fem.partitions`` yields :class:`PartitionRecord`.
+        for rec in fem.partitions:
+            eids = fem.elements.select(partition=rec.id).ids
             union.update(int(e) for e in eids)
         assert union == all_ids
 
@@ -245,7 +252,7 @@ class TestFEMDataPartitions:
         fem = g.mesh.queries.get_fem_data(dim=2)
         if not fem.partitions or "Plate" not in fem.nodes.physical:
             pytest.skip("PG or partition not available")
-        p = fem.partitions[0]
+        p = fem.partitions.ids[0]
         # Intersection should be <= each set
         # P3-R: ``fem.nodes.get(...)`` removed → ``.select(...)`` (the
         # pg= / partition= / pg=+partition= selectors are identical —
@@ -275,7 +282,7 @@ class TestFEMDataPartitions:
         fem = g.mesh.queries.get_fem_data(dim=2)
         if not fem.partitions:
             pytest.skip("No partitions")
-        p = fem.partitions[0]
+        p = fem.partitions.ids[0]
         ids = fem.nodes.select(partition=p).ids
         assert len(ids) > 0
         # the partition id set is a subset of the full node universe
@@ -562,3 +569,131 @@ class TestPartitionWeighted:
         # partition_explicit with no weights should report None.
         assert info.n_parts == 2
         assert info.weights_per_partition is None
+
+
+# =====================================================================
+# P2 — PartitionRecord + PartitionSet composite
+# =====================================================================
+
+class TestPartitionSetComposite:
+    """Pins the broker-side ``fem.partitions`` :class:`PartitionSet`."""
+
+    def test_fem_partitions_is_partition_set(self, g):
+        _build_plate(g)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        from apeGmsh._kernel.record_sets import PartitionSet
+        assert isinstance(fem.partitions, PartitionSet)
+
+    def test_partition_record_has_id_node_ids_element_ids(self, g):
+        _build_plate(g)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        if not fem.partitions:
+            pytest.skip("Partitioning did not produce queryable partitions")
+        from apeGmsh._kernel.records import PartitionRecord
+        rec = next(iter(fem.partitions))
+        assert isinstance(rec, PartitionRecord)
+        assert isinstance(rec.id, int)
+        assert isinstance(rec.node_ids, np.ndarray)
+        assert isinstance(rec.element_ids, np.ndarray)
+        assert rec.node_ids.dtype == np.int64
+        assert rec.element_ids.dtype == np.int64
+        # The optional weight_sum field defers to P1 — always None here.
+        assert rec.weight_sum is None
+
+    def test_partition_set_iteration_yields_records_in_id_order(self, g):
+        _build_plate(g)
+        g.mesh.partitioning.partition(3)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        if not fem.partitions:
+            pytest.skip("Partitioning did not produce queryable partitions")
+        from apeGmsh._kernel.records import PartitionRecord
+        ids_in_iter = []
+        for rec in fem.partitions:
+            assert isinstance(rec, PartitionRecord)
+            ids_in_iter.append(rec.id)
+        assert ids_in_iter == sorted(ids_in_iter)
+        assert ids_in_iter == fem.partitions.ids
+
+    def test_partition_set_getitem_by_id(self, g):
+        _build_plate(g)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        if not fem.partitions:
+            pytest.skip("Partitioning did not produce queryable partitions")
+        pid = fem.partitions.ids[0]
+        rec = fem.partitions[pid]
+        assert rec.id == pid
+
+    def test_partition_set_getitem_missing_raises_keyerror(self, g):
+        _build_plate(g)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        with pytest.raises(KeyError, match="Partition 9999 not found"):
+            _ = fem.partitions[9999]
+
+    def test_partition_set_contains(self, g):
+        _build_plate(g)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        if not fem.partitions:
+            pytest.skip("Partitioning did not produce queryable partitions")
+        pid = fem.partitions.ids[0]
+        assert pid in fem.partitions
+        assert 9999 not in fem.partitions
+        # Non-coercible values are False, not a raise.
+        assert "not-an-int" not in fem.partitions
+
+    def test_partition_set_len(self, g):
+        _build_plate(g)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        # ``len`` matches the number of unique partition ids in the
+        # union of the node/element back-stores.
+        n_node_pids = len(set(fem.nodes._partitions.keys()))
+        n_elem_pids = len(set(fem.elements._partitions.keys()))
+        expected = len(set(fem.nodes._partitions.keys()) |
+                       set(fem.elements._partitions.keys()))
+        assert len(fem.partitions) == expected
+        # Sanity: both child stores agree (single source of truth).
+        assert n_node_pids == n_elem_pids
+
+    def test_partition_record_n_nodes_and_n_elements(self, g):
+        _build_plate(g)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        if not fem.partitions:
+            pytest.skip("Partitioning did not produce queryable partitions")
+        for rec in fem.partitions:
+            assert rec.n_nodes == rec.node_ids.size
+            assert rec.n_elements == rec.element_ids.size
+            assert rec.n_nodes > 0
+            assert rec.n_elements > 0
+
+    def test_select_partition_n_still_works(self, g):
+        """Regression: ``select(partition=N)`` still hits the
+        per-composite back-stores after the P2 broker rewire."""
+        _build_plate(g)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        if not fem.partitions:
+            pytest.skip("Partitioning did not produce queryable partitions")
+        for rec in fem.partitions:
+            sel_nodes = fem.nodes.select(partition=rec.id)
+            sel_elems = fem.elements.select(partition=rec.id)
+            # IDs from the selector must match the record's arrays.
+            assert sorted(int(x) for x in sel_nodes.ids) == \
+                sorted(int(x) for x in rec.node_ids)
+            assert sorted(int(x) for x in sel_elems.ids) == \
+                sorted(int(x) for x in rec.element_ids)
+
+    def test_unpartitioned_fem_has_empty_partition_set(self, g):
+        _build_plate(g)
+        fem = g.mesh.queries.get_fem_data(dim=2)
+        from apeGmsh._kernel.record_sets import PartitionSet
+        assert isinstance(fem.partitions, PartitionSet)
+        assert len(fem.partitions) == 0
+        assert not fem.partitions
+        assert list(fem.partitions) == []
+        assert fem.partitions.ids == []

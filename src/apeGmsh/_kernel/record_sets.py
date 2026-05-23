@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     )
     from apeGmsh._kernel.records._loads import NodalLoadRecord, ElementLoadRecord, SPRecord  # noqa: F401
     from apeGmsh._kernel.records._masses import MassRecord  # noqa: F401
+    from apeGmsh._kernel.records._partitions import PartitionRecord  # noqa: F401
 
 
 # =====================================================================
@@ -952,3 +953,76 @@ class ElementLoadSet(_RecordSetBase["ElementLoadRecord"]):
         n_pats = len(self.patterns())
         return (f"ElementLoadSet({len(self._records)} records, "
                 f"{n_pats} pattern(s))")
+
+
+# =====================================================================
+# PartitionSet — composite for fem.partitions
+# =====================================================================
+
+class PartitionSet:
+    """Composite over :class:`PartitionRecord` instances on ``fem.partitions``.
+
+    Built once in :meth:`FEMData.__init__` from the same dicts already
+    held on :attr:`NodeComposite._partitions` and
+    :attr:`ElementComposite._partitions` — the back-stores that power
+    ``fem.{nodes,elements}.select(partition=N)``.  Those private dicts
+    are untouched; this set is a Python-side ergonomic layer only.
+
+    Records are stored in **ascending partition id order**.  Iteration
+    yields :class:`PartitionRecord` instances (not the raw ``int`` IDs
+    the pre-composite ``fem.partitions`` property used to yield) — a
+    deliberate clean break.  Use :attr:`ids` if you only need the
+    integer tags::
+
+        for pid in fem.partitions.ids:
+            ...
+
+        for record in fem.partitions:
+            print(record.id, record.n_nodes, record.n_elements)
+    """
+
+    def __init__(self, records: dict[int, "PartitionRecord"]) -> None:
+        # Sort by partition id so iteration is deterministic regardless
+        # of insertion order on the input dict.
+        self._records: dict[int, "PartitionRecord"] = dict(
+            sorted(records.items()))
+
+    # ── Properties ──────────────────────────────────────────
+
+    @property
+    def ids(self) -> list[int]:
+        """Sorted list of partition IDs (legacy ``fem.partitions`` shape)."""
+        return list(self._records.keys())
+
+    # ── Dunder ──────────────────────────────────────────────
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __bool__(self) -> bool:
+        return bool(self._records)
+
+    def __iter__(self) -> Iterator["PartitionRecord"]:
+        """Yield :class:`PartitionRecord` in ascending id order."""
+        return iter(self._records.values())
+
+    def __getitem__(self, pid: int) -> "PartitionRecord":
+        """Look up a partition by id.  Raises ``KeyError`` on miss."""
+        try:
+            return self._records[int(pid)]
+        except KeyError:
+            available = list(self._records.keys())
+            raise KeyError(
+                f"Partition {pid} not found. Available: {available}"
+            ) from None
+
+    def __contains__(self, pid: object) -> bool:
+        try:
+            return int(pid) in self._records  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+
+    def __repr__(self) -> str:
+        if not self._records:
+            return "PartitionSet(empty)"
+        return f"PartitionSet({len(self._records)} partitions, ids={self.ids})"

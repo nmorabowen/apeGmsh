@@ -71,6 +71,7 @@ from ._loads import (
     SPRecord,
 )
 from ._masses import MassRecord
+from ._partitions import PartitionRecord
 
 
 __all__ = [
@@ -109,6 +110,8 @@ __all__ = [
     "SPRecord",
     # Mass records
     "MassRecord",
+    # Partition records
+    "PartitionRecord",
 ]
 
 
