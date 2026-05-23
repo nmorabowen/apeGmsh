@@ -36,6 +36,44 @@ if TYPE_CHECKING:
     from .ui.mesh_tabs import MeshInfoTab
 
 
+def _needs_fem_for_overlays(parent: Any) -> bool:
+    """Return True iff at least one populated overlay composite hangs
+    off ``parent``.
+
+    Used by :meth:`MeshViewer.show` to gate the expensive
+    ``parent.mesh.queries.get_fem_data()`` build (~2.7 s on a 600 k-
+    node mesh).  The broker is only consumed by the loads / mass /
+    constraints tabs and their rebuild callbacks; if no composite
+    carries any defs, the tabs render nothing and the broker is
+    pure waste.
+
+    PR6 — pre-fix the gate checked composite *existence*
+    (``getattr(parent, c) is not None``); an empty composite the
+    user instantiated but never populated tripped the gate and cost
+    the full broker build for zero overlay output.  This helper
+    checks the ``*_defs`` population counts, which is the same gate
+    the tab builders apply later.
+
+    Duck-typed: any object whose ``loads`` / ``masses`` /
+    ``constraints`` attribute exposes a list-shaped
+    ``load_defs`` / ``mass_defs`` / ``constraint_defs`` works.
+    Returning False is the cheap, mesh-only fast path.
+    """
+    _defs_attr = (
+        ("loads", "load_defs"),
+        ("masses", "mass_defs"),
+        ("constraints", "constraint_defs"),
+    )
+    for comp_name, defs_name in _defs_attr:
+        comp = getattr(parent, comp_name, None)
+        if comp is None:
+            continue
+        defs = getattr(comp, defs_name, None)
+        if defs:  # non-empty list/tuple
+            return True
+    return False
+
+
 class MeshViewer:
     """Interactive mesh viewer with element/node picking.
 
@@ -325,14 +363,9 @@ class MeshViewer:
             # ``get_fem_data`` builds the full FEMData broker (~2.7 s on
             # a 600 k-node mesh). Its only consumer is ``self._view``,
             # which feeds the loads / mass / constraints tabs and their
-            # rebuild callbacks — and those tabs are only created when
-            # the matching composite exists. For a mesh-only model
-            # (no loads/mass/constraints) the broker is pure waste, so
-            # skip it unless something will actually read it.
-            _needs_fem = any(
-                getattr(self._parent, _c, None) is not None
-                for _c in ("loads", "masses", "constraints")
-            )
+            # rebuild callbacks. Skip it for mesh-only models — see
+            # :func:`_needs_fem_for_overlays`.
+            _needs_fem = _needs_fem_for_overlays(self._parent)
             if _needs_fem:
                 try:
                     fem = self._parent.mesh.queries.get_fem_data(
