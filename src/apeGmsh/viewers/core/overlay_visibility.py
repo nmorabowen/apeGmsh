@@ -32,13 +32,17 @@ from typing import Callable
 class OverlayVisibilityModel:
     """Canonical state for mesh.viewer overlay visibility.
 
-    Three fields:
+    Four fields:
 
     * ``load_patterns: frozenset[str]`` — names of load patterns
       currently rendered (LoadsTabPanel + Loads outline section).
     * ``constraint_kinds: frozenset[str]`` — kinds (e.g. ``"rigid_link"``,
       ``"node_to_surface"``) currently rendered.
     * ``mass_visible: bool`` — single flag for the mass overlay.
+    * ``boundary_nodes_visible: bool`` — single flag for the
+      cross-partition boundary-node glyph overlay (schema 2.10.0 /
+      ADR 0027).  Toggled by the "Boundary nodes" row in the outline
+      tree's Partitions section.
 
     Setters are idempotent: setting a value equal to the current one
     does NOT fire observers.  This is what breaks the
@@ -48,15 +52,16 @@ class OverlayVisibilityModel:
 
     Observers receive zero arguments.  Subscribers read the model's
     public attributes for the new state (typically only one of the
-    three fields changes per write, but observers don't need to know
+    four fields changes per write, but observers don't need to know
     which one — ``_rebuild_*`` calls are cheap enough to refire all
-    three on any change).
+    four on any change).
     """
 
     __slots__ = (
         "_load_patterns",
         "_constraint_kinds",
         "_mass_visible",
+        "_boundary_nodes_visible",
         "_observers",
     )
 
@@ -64,6 +69,7 @@ class OverlayVisibilityModel:
         self._load_patterns: frozenset[str] = frozenset()
         self._constraint_kinds: frozenset[str] = frozenset()
         self._mass_visible: bool = False
+        self._boundary_nodes_visible: bool = False
         self._observers: list[Callable[[], None]] = []
 
     # ------------------------------------------------------------------
@@ -81,6 +87,10 @@ class OverlayVisibilityModel:
     @property
     def mass_visible(self) -> bool:
         return self._mass_visible
+
+    @property
+    def boundary_nodes_visible(self) -> bool:
+        return self._boundary_nodes_visible
 
     def set_load_patterns(self, patterns) -> None:
         new = frozenset(patterns)
@@ -101,6 +111,13 @@ class OverlayVisibilityModel:
         if new == self._mass_visible:
             return
         self._mass_visible = new
+        self._fire()
+
+    def set_boundary_nodes_visible(self, visible: bool) -> None:
+        new = bool(visible)
+        if new == self._boundary_nodes_visible:
+            return
+        self._boundary_nodes_visible = new
         self._fire()
 
     # ------------------------------------------------------------------

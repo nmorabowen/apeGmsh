@@ -123,6 +123,7 @@ class MeshOutlineTree:
         on_constraint_kinds_changed: Optional[
             Callable[[set[str]], None]
         ] = None,
+        on_boundary_nodes_changed: Optional[Callable[[bool], None]] = None,
         on_row_focused: Optional[Callable[[str, Any], None]] = None,
         overlay_model: Any = None,
         view: "ViewerData | None" = None,
@@ -139,6 +140,7 @@ class MeshOutlineTree:
         self._on_load_patterns_changed = on_load_patterns_changed
         self._on_mass_visibility_changed = on_mass_visibility_changed
         self._on_constraint_kinds_changed = on_constraint_kinds_changed
+        self._on_boundary_nodes_changed = on_boundary_nodes_changed
         # PR2 — optional ViewerData for partition-aware outline rows
         # (ADR 0027). When supplied AND the view carries partition
         # labelling, the Partitions section is populated. ``None`` /
@@ -271,6 +273,12 @@ class MeshOutlineTree:
             row = self._group_masses.child(i)
             if row.data(0, _ROLE_KIND) == "mass":
                 row.setData(0, ROLE_VISIBLE, mass_visible)
+        # PR3 — boundary-nodes row lives under the Partitions group.
+        boundary_visible = self._overlay_model.boundary_nodes_visible
+        for i in range(self._group_partitions.childCount()):
+            row = self._group_partitions.child(i)
+            if row.data(0, _ROLE_KIND) == "boundary_nodes":
+                row.setData(0, ROLE_VISIBLE, boundary_visible)
         constraint_kinds = self._overlay_model.constraint_kinds
         for i in range(self._group_constraints.childCount()):
             row = self._group_constraints.child(i)
@@ -365,25 +373,39 @@ class MeshOutlineTree:
         self._rank_to_brep.clear()
 
         view = self._view
-        if view is None or not view.elements.has_partitions:
+        if view is None:
             self._group_partitions.setHidden(True)
             return
 
         # Dominant-rank reduction per entity.  Mirrors the controller's
         # ``_partition_idle`` so the outline row a user sees aligns
-        # with the colour they see in PARTITION mode.
-        for dt, eids in self._scene.brep_to_elems.items():
-            ranks: list[int] = []
-            for eid in eids:
-                r = view.elements.partition_for(int(eid))
-                if r is not None:
-                    ranks.append(int(r))
-            if not ranks:
-                continue
-            dominant = max(set(ranks), key=ranks.count)
-            self._rank_to_brep.setdefault(dominant, []).append(dt)
+        # with the colour they see in PARTITION mode.  Skipped when the
+        # view carries no per-element rank labelling; the boundary-node
+        # row below may still surface, hence we don't early-return.
+        if view.elements.has_partitions:
+            for dt, eids in self._scene.brep_to_elems.items():
+                ranks: list[int] = []
+                for eid in eids:
+                    r = view.elements.partition_for(int(eid))
+                    if r is not None:
+                        ranks.append(int(r))
+                if not ranks:
+                    continue
+                dominant = max(set(ranks), key=ranks.count)
+                self._rank_to_brep.setdefault(dominant, []).append(dt)
 
-        if not self._rank_to_brep:
+        # PR3 — boundary-node toggle row.  Added inside the Partitions
+        # section, alongside the per-rank rows, when the view carries
+        # cross-rank boundary node ids (schema 2.10.0 / ADR 0027).  The
+        # ``getattr`` guards against test fixtures that mock ``view``
+        # without a full ``nodes`` composite.
+        view_nodes = getattr(view, "nodes", None)
+        has_boundary = bool(
+            view_nodes is not None
+            and getattr(view_nodes, "has_boundary_nodes", False)
+        )
+
+        if not self._rank_to_brep and not has_boundary:
             self._group_partitions.setHidden(True)
             return
 
@@ -399,6 +421,22 @@ class MeshOutlineTree:
             item.setData(0, _ROLE_KIND, "partition")
             item.setData(0, _ROLE_PAYLOAD, int(rank))
             item.setData(0, ROLE_VISIBLE, self._group_is_visible(breps))
+
+        if has_boundary:
+            n_boundary = len(view_nodes.boundary_node_ids)
+            item = QtWidgets.QTreeWidgetItem(self._group_partitions)
+            item.setText(0, "Boundary nodes")
+            item.setText(1, f"{n_boundary:,}")
+            item.setData(0, _ROLE_KIND, "boundary_nodes")
+            item.setData(0, _ROLE_PAYLOAD, None)
+            # Initial state mirrors the overlay model when one is bound;
+            # default to ``False`` (overlay hidden) for the standalone
+            # case so the first eye-click reveals the glyphs.
+            initial = (
+                bool(self._overlay_model.boundary_nodes_visible)
+                if self._overlay_model is not None else False
+            )
+            item.setData(0, ROLE_VISIBLE, initial)
 
     # ------------------------------------------------------------------
     # FEM-input sections — Loads / Masses / Constraints
@@ -565,6 +603,13 @@ class MeshOutlineTree:
             if self._on_constraint_kinds_changed is not None:
                 self._on_constraint_kinds_changed(
                     self._active_constraint_kinds(),
+                )
+            return
+        if kind == "boundary_nodes":
+            self._toggle_simple_row(item)
+            if self._on_boundary_nodes_changed is not None:
+                self._on_boundary_nodes_changed(
+                    bool(item.data(0, ROLE_VISIBLE)),
                 )
             return
 

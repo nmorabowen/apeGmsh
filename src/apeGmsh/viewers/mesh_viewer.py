@@ -180,6 +180,7 @@ class MeshViewer:
         self._load_actors: list = []
         self._mass_actors: list = []
         self._constraint_actors: list = []
+        self._boundary_node_actors: list = []
         self._overlay_scales: dict[str, float] = {
             'force_arrow':           1.0,
             'moment_arrow':          1.0,
@@ -451,6 +452,16 @@ class MeshViewer:
         self._overlay_model.subscribe(
             lambda: self._rebuild_constraints_overlay(self._overlay_model.constraint_kinds)
         )
+        # PR3 — boundary-node glyph overlay (ADR 0027 / schema 2.10.0).
+        # Toggled by the "Boundary nodes" row in the Partitions outline
+        # section.  Inert when ``view.nodes.has_boundary_nodes`` is
+        # False (single-partition models, pre-2.10.0 archives, or live
+        # ``from_fem`` viewers).
+        self._overlay_model.subscribe(
+            lambda: self._rebuild_boundary_node_overlay(
+                self._overlay_model.boundary_nodes_visible,
+            )
+        )
 
         # Map outline row kinds to the right-side tab names whose
         # contents serve as the property editor for that row type.
@@ -488,6 +499,7 @@ class MeshViewer:
             on_load_patterns_changed=self._overlay_model.set_load_patterns,
             on_mass_visibility_changed=self._overlay_model.set_mass_visible,
             on_constraint_kinds_changed=self._overlay_model.set_constraint_kinds,
+            on_boundary_nodes_changed=self._overlay_model.set_boundary_nodes_visible,
             on_row_focused=_on_outline_row_focused,
             overlay_model=self._overlay_model,
             # PR2 — partition rows (ADR 0027). The outline reads
@@ -1162,6 +1174,72 @@ class MeshViewer:
             pickable=False,
         )
         self._mass_actors.append(actor)
+        plotter.render()
+
+    def _rebuild_boundary_node_overlay(self, visible: bool) -> None:
+        """Render the cross-partition boundary-node glyph layer.
+
+        Schema 2.10.0 (ADR 0027).  Boundary nodes are the inter-rank
+        shared node tags surfaced by ``ViewerNodes.boundary_node_ids``
+        — the union of every ``PartitionEmittedRecord.boundary_node_ids``
+        from the OpenSeesMP partition emission.
+
+        Renders as larger distinct-colour point glyphs over the base
+        mesh.  Idempotent: removes the previous actor before any
+        re-add so toggling on/off (or repaint) leaves no leak.
+
+        Inert when ``view`` is absent or ``view.nodes.has_boundary_nodes``
+        is False (single-partition models, pre-2.10.0 archives, live
+        ``from_fem`` viewers) — clears the actor list and renders the
+        plotter clean without raising.
+        """
+        import pyvista as pv
+
+        plotter = self._plotter
+        registry = self._registry
+        view = self._view
+        if plotter is None or registry is None:
+            return
+
+        for a in self._boundary_node_actors:
+            try:
+                plotter.remove_actor(a)
+            except Exception:
+                pass
+        self._boundary_node_actors.clear()
+
+        if (
+            not visible
+            or view is None
+            or not view.nodes.has_boundary_nodes
+        ):
+            plotter.render()
+            return
+
+        origin = registry.origin_shift
+        positions: list = []
+        for nid in view.nodes.boundary_node_ids:
+            try:
+                xyz = view.nodes.coords[view.nodes.index(int(nid))] - origin
+            except Exception:
+                continue
+            positions.append(xyz)
+
+        if not positions:
+            plotter.render()
+            return
+
+        cloud = pv.PolyData(np.array(positions, dtype=float))
+        actor = plotter.add_mesh(
+            cloud,
+            color="#ff8c00",  # distinct orange — separates from default node colors
+            point_size=12.0,
+            render_points_as_spheres=True,
+            name="_boundary_node_overlay",
+            reset_camera=False,
+            pickable=False,
+        )
+        self._boundary_node_actors.append(actor)
         plotter.render()
 
     def _rebuild_constraints_overlay(self, active_kinds: set[str]) -> None:
