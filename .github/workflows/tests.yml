@@ -79,7 +79,10 @@ jobs:
       - name: Install package (no openseespy)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[plot,viewer,dxf]" pytest
+          # partition-pymetis: opt-in extra added in this PR (feat/partition-weighted).
+          # Installs pymetis (METIS Python bindings) so TestPartitionWeighted runs
+          # against the real backend on Linux instead of being importorskip'd.
+          pip install -e ".[plot,viewer,dxf,partition-pymetis]" pytest
 
       - name: Run curated suite
         run: |
