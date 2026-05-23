@@ -29,12 +29,18 @@ from ._internal.build import (
     FixRecord,
     MassRecord,
     RegionAssignmentRecord,
+    allocate_element_tags,
+    build_element_partition_owner,
+    build_node_partition_owners,
     emit_element_spec,
+    emit_element_spec_partitioned,
     emit_mp_constraints,
+    emit_mp_constraints_partitioned,
     emit_pattern_spec,
     emit_recorder_spec,
     emit_transform_specs,
     expand_pg_to_nodes,
+    is_partitioned,
     topological_order,
 )
 from ._internal.compose import _compose_model_h5, _path_stem
@@ -298,14 +304,6 @@ class BuiltModel:
         # 1. Model directive.
         emitter.model(ndm=self.ndm, ndf=self.ndf)
 
-        # 1a. Nodes — emit every node from the FEM snapshot. The element
-        # fan-out, fix, mass, load, and sp commands all reference node
-        # tags that must exist in the OpenSees domain. Emitting all
-        # nodes here is the simplest correct path; downstream consumers
-        # can always strip unused nodes if that's desired.
-        for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
-            emitter.node(int(nid), float(xyz[0]), float(xyz[1]), float(xyz[2]))
-
         # 2. Topo-sort all registered primitives (and their dependencies).
         ordered = topological_order(self.primitives)
 
@@ -337,13 +335,6 @@ class BuiltModel:
                 rest.append(p)
 
         # 4. Emit non-element / non-transform primitives in topo order.
-        # Materials / sections / time series go first by virtue of
-        # topological_order's sort. Patterns and recorders + analysis
-        # chain follow only after elements (they don't appear in the
-        # `rest` partition until that point in the iteration). To keep
-        # it simple, we walk `rest` once, and patterns/recorders at the
-        # tail emit AFTER the element/transform passes — we slice out
-        # those families and emit them after step 5/6.
         pre_element: list[Primitive] = []
         post_element: list[Primitive] = []
         for p in rest:
@@ -352,14 +343,66 @@ class BuiltModel:
             else:
                 pre_element.append(p)
 
+        # ADR 0027: partitioned vs unpartitioned branch.  The
+        # unpartitioned path must be **byte-identical** to the pre-ADR
+        # 0027 behaviour — no ``partition_open`` / ``partition_close``
+        # calls, no runtime shim, no per-rank fan-out.  Single-
+        # partition / unpartitioned models keep the flat emit order
+        # exactly as it was.
+        if not is_partitioned(self.fem):
+            self._emit_flat(
+                emitter=emitter,
+                tags=tags,
+                transforms=transforms,
+                elements=elements,
+                pre_element=pre_element,
+                post_element=post_element,
+                base_resolver=_base_resolver,
+            )
+            return 0
+
+        # Partitioned path — per-rank fan-out per ADR 0027.
+        self._emit_partitioned(
+            emitter=emitter,
+            tags=tags,
+            transforms=transforms,
+            elements=elements,
+            pre_element=pre_element,
+            post_element=post_element,
+            base_resolver=_base_resolver,
+        )
+        return 0
+
+    # -- Flat (unpartitioned) emit path -----------------------------------
+
+    def _emit_flat(
+        self,
+        *,
+        emitter: Emitter,
+        tags: TagAllocator,
+        transforms: "list[GeomTransf]",
+        elements: "list[Element]",
+        pre_element: "list[Primitive]",
+        post_element: "list[Primitive]",
+        base_resolver: object,
+    ) -> None:
+        """Pre-ADR 0027 flat emit path.
+
+        Byte-identical to the original :meth:`emit` body when
+        ``len(self.fem.partitions) <= 1``.  No ``partition_open`` /
+        ``partition_close`` calls, no runtime shim emission.
+        """
+        # 1a. Nodes — emit every node from the FEM snapshot.
+        for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
+            emitter.node(int(nid), float(xyz[0]), float(xyz[1]), float(xyz[2]))
+
         # 4a. Materials / sections / time series / analysis chain
         # (excluding patterns + recorders).
         for p in pre_element:
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
-        # 5. GeomTransf fan-out — emit one geomTransf line per distinct
-        # vecxz across elements; build the per-element override map.
+        # 5. GeomTransf fan-out.
         overrides = emit_transform_specs(
             transforms=transforms,
             elements=elements,
@@ -370,67 +413,30 @@ class BuiltModel:
             ndm=self.ndm,
         )
 
-        # 6. Elements — fan out across PG with per-element-vecxz overrides
-        # where orientation-bearing transforms produced distinct vecxz.
+        # 6. Elements.
         for ele_spec in elements:
             emit_element_spec(
                 spec=ele_spec,
                 emitter=emitter,
                 fem=self.fem,
                 tags=tags,
-                base_resolver=_base_resolver,
+                base_resolver=base_resolver,
                 transf_tag_for_element=overrides,
             )
 
-        # 7. Model-level fix / mass records (after elements so node
-        # tags are well-defined; before patterns so they show up in
-        # the typical OpenSees deck order: model -> bcs -> patterns).
+        # 7. Fixes / masses / regions / broker loads.
         self._emit_fixes(emitter)
         self._emit_masses(emitter)
-
-        # 7-bis. Named-region assignments collected through
-        # ``apeSees.region(name=...)`` / ``Node.region(name=...)``.
-        # Emitted before patterns and recorders so a future
-        # ``recorder.X(region="damping")`` lookup or a Rayleigh damping
-        # directive can reference the region by tag.
         self._emit_regions(emitter, tags)
-
-        # 7a. Broker nodal loads (ADR 0001 — the bridge reads
-        # ``fem.nodes.loads`` directly). These come from session-side
-        # ``g.loads.*`` declarations; the records carry a pattern name
-        # but no OpenSees timeSeries/pattern, so we synthesize one
-        # ``timeSeries Linear`` + ``pattern Plain`` per distinct
-        # pattern name. This lets a pure ``g.loads`` model drive a live
-        # run with no bridge ``ops.pattern`` primitive.
         self._emit_broker_loads(emitter, tags)
 
-        # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Runs strictly
-        # between element emission and pattern emission: the constraint
-        # pass itself emits ``element ASDEmbeddedNodeElement`` lines
-        # (one per InterpolationRecord) whose internally-allocated tags
-        # need to come after the user's structural elements so they do
-        # not shadow user tags; DOFs must be consolidated before
-        # patterns push ``ops.load(node, ...)`` on them (equalDOF
-        # collapses pairs of DOFs into one).  Includes the phantom-node
-        # pre-step that emits ``node(tag, *xyz, ndf=6)`` before any
-        # constraint references the phantom (INV-3).
+        # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).
         emit_mp_constraints(emitter, self.fem)
 
-        # 7c. Auto-emit constraint handler when MP constraints are
-        # present (Phase 8 fold-in).  Default OpenSees handler is
-        # ``Plain``, which silently ignores MP constraints — the
-        # footgun surfaced in Phase 7b.  Two surfaces:
-        #
-        # * User declared NO handler + MP constraints present →
-        #   auto-emit ``Transformation`` + ``UserWarning``.
-        # * User explicitly declared ``Plain`` + MP constraints
-        #   present → ``UserWarning`` (different message); the
-        #   user's choice is respected (Plain already emitted by the
-        #   pre_element pass).
-        # * Any other explicit handler → no warning, no auto-emit.
+        # 7c. Auto-emit constraint handler when MP constraints present.
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
 
-        # 8. Patterns + recorders (post-element).
+        # 8. Patterns + recorders.
         for p in post_element:
             tag = self.tag_for[id(p)]
             if isinstance(p, Pattern):
@@ -440,7 +446,180 @@ class BuiltModel:
             else:  # pragma: no cover  - unreachable per partition above
                 p._emit(emitter, tag)
 
-        return 0
+    # -- Partitioned emit path (ADR 0027) ---------------------------------
+
+    def _emit_partitioned(
+        self,
+        *,
+        emitter: Emitter,
+        tags: TagAllocator,
+        transforms: "list[GeomTransf]",
+        elements: "list[Element]",
+        pre_element: "list[Primitive]",
+        post_element: "list[Primitive]",
+        base_resolver: object,
+    ) -> None:
+        """Per-rank fan-out implementing ADR 0027 (cross-partition MP-constraint
+        emission policy).
+
+        Build order:
+
+        1. **Pre-element global primitives** (materials, sections, time series,
+           geomTransf, analysis chain). Emitted ONCE outside any
+           ``partition_open`` block — these are global script state.
+        2. **Per-rank emission** for each rank in ascending partition id:
+
+           * ``partition_open(rank)``
+           * Owned nodes (only this rank's ``node_ids`` from the
+             ``PartitionRecord``).
+           * Owned elements (per-rank fan-out across each Element spec;
+             non-owned elements still consume a tag slot to preserve
+             cross-rank tag identity per ADR 0027 §"Tag determinism").
+           * Owned fixes / masses / regions (with per-rank intersection
+             of region member ids per INV-4).
+           * Broker nodal loads (re-partitioned per-rank).
+           * MP constraints — replicated per ADR 0027 §"Decision" with
+             foreign-node declarations preceding each constraint per
+             INV-2; phantom-node tags broker-derived per INV-3.
+           * Pattern loads / sps (per-rank).
+           * ``partition_close()``
+
+        3. **Analysis chain** (constraint handler auto-upgrade,
+           numberer / system auto-upgrade per INV-5, pure recorder
+           declarations).
+        """
+        partitions = list(self.fem.partitions)
+        node_owners = build_node_partition_owners(self.fem)
+        element_owner = build_element_partition_owner(self.fem)
+
+        # -- 1. Pre-element global primitives. ----------------------------
+        for p in pre_element:
+            tag = self.tag_for[id(p)]
+            p._emit(emitter, tag)
+
+        # GeomTransf fan-out is GLOBAL — orientation-driven per-element
+        # vecxz fan-out emits one geomTransf line per distinct vecxz,
+        # which must be declared once on every rank that uses it. The
+        # simplest correct path is to emit transforms outside any
+        # partition_open block so they're available to every rank.
+        overrides = emit_transform_specs(
+            transforms=transforms,
+            elements=elements,
+            emitter=emitter,
+            fem=self.fem,
+            tags=tags,
+            spec_to_own_tag=self.tag_for,
+            ndm=self.ndm,
+        )
+
+        # Pre-allocate element tags ONCE per element across all PGs
+        # (ADR 0027 §"Tag determinism"). Per-rank fan-out then looks
+        # tags up rather than re-allocating, so cross-rank tag identity
+        # holds for every element (the rank-K block uses the same
+        # element tag as the owning rank's block).
+        element_plan = allocate_element_tags(elements, self.fem, tags)
+
+        # Stable per-rank node tags — sort within each rank by node id
+        # so cross-rank diffs of the emitted text are grep-friendly.
+        # Cache the owned set per rank for the fix / mass / region
+        # passes below.
+        rank_owned_nodes: dict[int, set[int]] = {
+            int(rec.id): {int(n) for n in rec.node_ids}
+            for rec in partitions
+        }
+
+        # Cross-rank tag identity caches (region tags, broker
+        # timeSeries / pattern tags, ADR 0027 §"Tag determinism").
+        region_tag_cache: dict[str, int] = {}
+        broker_ts_tag_cache: dict[str, int] = {}
+        broker_pat_tag_cache: dict[str, int] = {}
+
+        # Pre-compute the post-element rank-local plan for the bridge's
+        # fix / mass / region / load passes.  We use the same shapes
+        # the flat path uses but pre-intersect with per-rank ownership.
+        for part in partitions:
+            rank = int(part.id)
+            emitter.partition_open(rank)
+            try:
+                # 1a. Owned nodes — emit in node-id order for stable
+                # cross-rank diffs.  Only THIS rank's node_ids are
+                # emitted here; foreign-side declarations for cross-
+                # partition MP constraints happen in the constraint
+                # pass below (INV-2).
+                node_idx_lookup = {
+                    int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
+                }
+                for nid in sorted(int(n) for n in part.node_ids):
+                    idx = node_idx_lookup.get(nid)
+                    if idx is None:
+                        continue
+                    xyz = self.fem.nodes.coords[idx]
+                    emitter.node(
+                        nid,
+                        float(xyz[0]), float(xyz[1]), float(xyz[2]),
+                    )
+
+                # 6. Elements — per-rank fan-out (tags pre-allocated).
+                for ele_spec, pre_alloc in element_plan:
+                    emit_element_spec_partitioned(
+                        spec=ele_spec,
+                        emitter=emitter,
+                        fem=self.fem,
+                        pre_allocated=pre_alloc,
+                        base_resolver=base_resolver,
+                        transf_tag_for_element=overrides,
+                        partition_rank=rank,
+                        element_owner=element_owner,
+                    )
+
+                # 7. Fixes / masses (per-rank ownership).
+                self._emit_fixes_partitioned(emitter, rank_owned_nodes[rank])
+                self._emit_masses_partitioned(emitter, rank_owned_nodes[rank])
+
+                # 7-bis. Named regions (per-rank intersection — INV-4).
+                self._emit_regions_partitioned(
+                    emitter, tags, rank_owned_nodes[rank], rank,
+                    region_tag_cache,
+                )
+
+                # 7a. Broker nodal loads (re-partitioned per-rank).
+                self._emit_broker_loads_partitioned(
+                    emitter, tags, rank_owned_nodes[rank],
+                    broker_ts_tag_cache, broker_pat_tag_cache,
+                )
+
+                # 7b. MP constraints (ADR 0027 — replication policy).
+                emit_mp_constraints_partitioned(
+                    emitter=emitter,
+                    fem=self.fem,
+                    partition_rank=rank,
+                    node_owners=node_owners,
+                    element_owner=element_owner,
+                    foreign_node_ndf=int(self.ndf),
+                )
+
+                # 8. Patterns (loads + sps) per-rank.
+                self._emit_patterns_partitioned(
+                    emitter, post_element, rank_owned_nodes[rank],
+                )
+            finally:
+                emitter.partition_close()
+
+        # -- 3. Analysis chain — emitted GLOBALLY (outside any rank
+        # block).  Auto-emit Transformation handler + ParallelPlain
+        # numberer + Mumps system per ADR 0027 §"Constraint handler
+        # interaction" (INV-5).
+        self._maybe_auto_emit_constraint_handler(emitter, pre_element)
+        self._maybe_auto_emit_parallel_numberer(emitter, pre_element)
+        self._maybe_auto_emit_parallel_system(emitter, pre_element)
+
+        # Recorders — also global (recorders write to disk, not into
+        # the model topology; one recorder is sufficient even under
+        # MP).  No partition wrapping.
+        for p in post_element:
+            if isinstance(p, Recorder):
+                tag = self.tag_for[id(p)]
+                emit_recorder_spec(p, emitter, tag, self.fem, tags=tags)
 
     # -- Model-level fix / mass fan-out -----------------------------------
 
@@ -453,6 +632,29 @@ class BuiltModel:
         for rec in self.mass_records:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 emitter.mass(node_tag, *rec.values)
+
+    def _emit_fixes_partitioned(
+        self, emitter: Emitter, owned_nodes: set[int],
+    ) -> None:
+        """Per-rank fix fan-out (ADR 0027).
+
+        Only emit ``fix`` lines for nodes owned by this rank.  A fix on
+        a non-owned node is silently skipped on this rank's block —
+        the owning rank handles it.
+        """
+        for rec in self.fix_records:
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                if int(node_tag) in owned_nodes:
+                    emitter.fix(node_tag, *rec.dofs)
+
+    def _emit_masses_partitioned(
+        self, emitter: Emitter, owned_nodes: set[int],
+    ) -> None:
+        """Per-rank mass fan-out (ADR 0027). Mirror of :meth:`_emit_fixes_partitioned`."""
+        for rec in self.mass_records:
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                if int(node_tag) in owned_nodes:
+                    emitter.mass(node_tag, *rec.values)
 
     def _emit_regions(self, emitter: Emitter, tags: TagAllocator) -> None:
         """Fan named-region assignments out into ``emitter.region`` calls.
@@ -483,6 +685,49 @@ class BuiltModel:
                 continue
             tag = tags.allocate("region")
             emitter.region(tag, "-node", *node_list)
+
+    def _emit_regions_partitioned(
+        self,
+        emitter: Emitter,
+        tags: TagAllocator,
+        owned_nodes: set[int],
+        rank: int,
+        region_tag_cache: dict[str, int],
+    ) -> None:
+        """Per-rank named-region fan-out (ADR 0027 §"Regions interaction" /
+        INV-4).
+
+        Same name-merging semantics as :meth:`_emit_regions`, but the
+        merged node tuple is intersected with ``owned_nodes`` before
+        emission.  Empty intersection ⇒ no ``region`` line emitted on
+        this rank (INV-4).  The region tag is allocated **once** on the
+        FIRST rank that emits the region — ``region_tag_cache`` is
+        shared across the per-rank loop so the same tag survives across
+        every rank that emits the region (INV-4 §"region tag is the
+        same scalar across every rank that does emit").
+        """
+        if not self.region_records:
+            return
+
+        by_name: dict[str, list[int]] = {}
+        seen_per_name: dict[str, set[int]] = {}
+        for rec in self.region_records:
+            bucket = by_name.setdefault(rec.name, [])
+            seen = seen_per_name.setdefault(rec.name, set())
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                if node_tag not in seen:
+                    seen.add(node_tag)
+                    bucket.append(node_tag)
+        for name, node_list in by_name.items():
+            owned_list = [n for n in node_list if int(n) in owned_nodes]
+            if not owned_list:
+                # INV-4: empty intersection → no region line on this rank.
+                continue
+            tag = region_tag_cache.get(name)
+            if tag is None:
+                tag = tags.allocate("region")
+                region_tag_cache[name] = tag
+            emitter.region(tag, "-node", *owned_list)
 
     def _resolve_node_target(
         self, pg: str | None, nodes: tuple[int, ...] | None,
@@ -539,6 +784,110 @@ class BuiltModel:
         if self.ndf == 6:
             return (fx, fy, fz, mx, my, mz)
         return (fx, fy, fz, mx, my, mz)[: self.ndf]
+
+    def _emit_broker_loads_partitioned(
+        self,
+        emitter: Emitter,
+        tags: TagAllocator,
+        owned_nodes: set[int],
+        ts_tag_cache: dict[str, int],
+        pat_tag_cache: dict[str, int],
+    ) -> None:
+        """Per-rank broker nodal-load fan-out (ADR 0027).
+
+        Mirrors :meth:`_emit_broker_loads` but emits only loads
+        targeting nodes owned by this rank. Pattern / time-series tags
+        are cached across the per-rank loop so ranks that emit the
+        same pattern share the same tag (cross-rank tag identity per
+        ADR 0027 §"Tag determinism").
+        """
+        nodes = getattr(self.fem, "nodes", None)
+        load_set = getattr(nodes, "loads", None)
+        if load_set is None:
+            return
+
+        by_pattern: dict[str, list[Any]] = {}
+        for rec in load_set:
+            by_pattern.setdefault(rec.pattern, []).append(rec)
+        if not by_pattern:
+            return
+
+        for pattern_name, recs in by_pattern.items():
+            owned_recs = [
+                r for r in recs if int(r.node_id) in owned_nodes
+            ]
+            if not owned_recs:
+                continue
+            ts_tag = ts_tag_cache.get(pattern_name)
+            if ts_tag is None:
+                ts_tag = tags.allocate("timeSeries")
+                ts_tag_cache[pattern_name] = ts_tag
+            pat_tag = pat_tag_cache.get(pattern_name)
+            if pat_tag is None:
+                pat_tag = tags.allocate("pattern")
+                pat_tag_cache[pattern_name] = pat_tag
+            emitter.timeSeries("Linear", ts_tag)
+            emitter.pattern_open("Plain", pat_tag, ts_tag)
+            for rec in owned_recs:
+                emitter.load(
+                    int(rec.node_id), *self._broker_load_components(rec),
+                )
+            emitter.pattern_close()
+
+    def _emit_patterns_partitioned(
+        self,
+        emitter: Emitter,
+        post_element: "list[Primitive]",
+        owned_nodes: set[int],
+    ) -> None:
+        """Per-rank pattern fan-out (ADR 0027).
+
+        Walks every :class:`Pattern` primitive (skipping recorders,
+        which emit globally outside any partition block) and emits
+        only the ``p.load`` / ``p.sp`` rows targeting nodes owned by
+        this rank.  Non-Plain patterns delegate verbatim — they have
+        no per-node fan-out to filter, and OpenSeesMP handles them
+        with their own per-rank semantics (e.g. ``UniformExcitation``
+        applies on every rank simultaneously).
+        """
+        from .pattern.pattern import Plain, _LoadRecord, _SPRecord
+        from ._internal.tag_resolution import resolve_tag
+
+        for p in post_element:
+            if not isinstance(p, Pattern):
+                continue
+            tag = self.tag_for[id(p)]
+            if not isinstance(p, Plain):
+                # Non-Plain pattern (UniformExcitation etc.) — emit on
+                # every rank verbatim.  Per ADR 0027 these patterns
+                # have no per-node fan-out the bridge can filter; the
+                # OpenSeesMP semantics for them are pattern-class-
+                # specific.
+                p._emit(emitter, tag)
+                continue
+
+            ts_tag = resolve_tag(emitter, p.series)
+            # Pre-filter loads / sps so we don't open an empty pattern.
+            owned_loads = [
+                rec for rec in p.loads
+                if _pattern_record_owned(rec, owned_nodes, self.fem)
+            ]
+            owned_sps = [
+                rec for rec in p.sps
+                if _pattern_record_owned(rec, owned_nodes, self.fem)
+            ]
+            if not owned_loads and not owned_sps:
+                continue
+            emitter.pattern_open("Plain", tag, ts_tag)
+            for rec in owned_loads:
+                _emit_pattern_load_partitioned(
+                    rec, emitter, self.fem, owned_nodes,
+                )
+            for rec in owned_sps:
+                _emit_pattern_sp_partitioned(
+                    rec, emitter, self.fem, owned_nodes,
+                )
+            emitter.pattern_close()
 
     # -- Auto-emit constraint handler (Phase 8 fold-in) ----------------
 
@@ -616,6 +965,175 @@ class BuiltModel:
             )
             return
         # Any other explicit handler — no warning, no auto-emit.
+
+    # -- Auto-emit parallel numberer / system (ADR 0027 INV-5) -----------
+
+    def _maybe_auto_emit_parallel_numberer(
+        self,
+        emitter: Emitter,
+        pre_element: "list[Primitive]",
+    ) -> None:
+        """Auto-emit ``numberer ParallelPlain`` under partitioning when
+        the user has not explicitly declared a numberer (ADR 0027 INV-5).
+
+        Behaviour:
+
+        * No user numberer + ``len(fem.partitions) > 1`` → emit
+          ``numberer ParallelPlain`` (single ``UserWarning``).
+        * User declared ``Plain`` / ``RCM`` (serial) +
+          ``len(fem.partitions) > 1`` → ``UserWarning`` flagging the
+          MP-incompatibility; the user's choice is preserved verbatim
+          (already emitted by the pre_element pass).
+        * User declared ``ParallelPlain`` / ``ParallelRCM`` → no
+          warning, no auto-emit.
+        """
+        import warnings as _warnings
+
+        declared_numberer: "Numberer | None" = None
+        for p in pre_element:
+            if isinstance(p, Numberer):
+                declared_numberer = p
+                break
+
+        if declared_numberer is None:
+            _warnings.warn(
+                "len(fem.partitions) > 1 with no user-declared numberer; "
+                "auto-emitting 'numberer ParallelPlain' (OpenSeesMP-"
+                "compatible).  Explicitly declare "
+                "ops.numberer.<Plain|RCM|ParallelPlain|ParallelRCM>() "
+                "before build() to override.",
+                UserWarning,
+                stacklevel=2,
+            )
+            emitter.numberer("ParallelPlain")
+            return
+
+        # User-declared numberer — check MP compatibility.
+        token = type(declared_numberer).__name__
+        if token in {"Plain", "RCM", "AMD"}:
+            _warnings.warn(
+                f"len(fem.partitions) > 1 with serial numberer "
+                f"{token!r} explicitly declared — OpenSeesMP requires "
+                "a parallel numberer ('ParallelPlain' or 'ParallelRCM') "
+                "for correct DOF numbering across ranks. The user's "
+                "choice is preserved; switch to ops.numberer.ParallelPlain() "
+                "or ops.numberer.ParallelRCM() for a runnable parallel "
+                "deck.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    def _maybe_auto_emit_parallel_system(
+        self,
+        emitter: Emitter,
+        pre_element: "list[Primitive]",
+    ) -> None:
+        """Auto-emit ``system Mumps`` under partitioning when the user
+        has not explicitly declared a system of equations (ADR 0027
+        INV-5).  Mirror of :meth:`_maybe_auto_emit_parallel_numberer`.
+        """
+        import warnings as _warnings
+
+        declared_system: "LinearSystem | None" = None
+        for p in pre_element:
+            if isinstance(p, LinearSystem):
+                declared_system = p
+                break
+
+        if declared_system is None:
+            _warnings.warn(
+                "len(fem.partitions) > 1 with no user-declared system; "
+                "auto-emitting 'system Mumps' (OpenSeesMP-compatible "
+                "parallel sparse-direct solver).  Explicitly declare "
+                "ops.system.<Mumps|MumpsParallel>() before build() to "
+                "override.",
+                UserWarning,
+                stacklevel=2,
+            )
+            emitter.system("Mumps")
+            return
+
+        # User-declared system — check MP compatibility.
+        token = type(declared_system).__name__
+        # Heuristic incompatibility list (the serial systems most users
+        # default to).  Mumps / MumpsParallel are MP-OK; everything else
+        # warns.
+        if token in {
+            "BandSPD", "BandGen", "ProfileSPD", "SparseGeneral",
+            "SparseSPD", "FullGeneral", "UmfPack",
+        }:
+            _warnings.warn(
+                f"len(fem.partitions) > 1 with serial system "
+                f"{token!r} explicitly declared — OpenSeesMP requires "
+                "a parallel system ('Mumps' typically). The user's "
+                "choice is preserved; switch to ops.system.Mumps() for "
+                "a runnable parallel deck.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Module-level pattern record helpers (ADR 0027) — keep imports off the
+# hot path and the bridge body small.
+# ---------------------------------------------------------------------------
+
+
+def _pattern_record_owned(
+    rec: "Any", owned_nodes: set[int], fem: "FEMData",
+) -> bool:
+    """True iff ``rec``'s ``pg``/``node`` targets include any owned node."""
+    target_kind = getattr(rec, "target_kind", "node")
+    target = getattr(rec, "target", None)
+    if target_kind == "node":
+        try:
+            return int(target) in owned_nodes
+        except (TypeError, ValueError):
+            return False
+    # PG target — at least one of the PG's nodes must be owned.
+    try:
+        ids = fem.nodes.select(pg=target).ids
+    except (KeyError, ValueError, AttributeError):
+        return False
+    for nid in ids:
+        if int(nid) in owned_nodes:
+            return True
+    return False
+
+
+def _emit_pattern_load_partitioned(
+    rec: "Any", emitter: Emitter, fem: "FEMData", owned_nodes: set[int],
+) -> None:
+    """Per-rank version of the inner load fan-out."""
+    if rec.target_kind == "node":
+        if int(rec.target) in owned_nodes:
+            emitter.load(int(rec.target), *rec.forces)
+        return
+    # PG — fan out only owned nodes.
+    try:
+        ids = fem.nodes.select(pg=rec.target).ids
+    except (KeyError, ValueError, AttributeError):
+        return
+    for node_tag in ids:
+        if int(node_tag) in owned_nodes:
+            emitter.load(int(node_tag), *rec.forces)
+
+
+def _emit_pattern_sp_partitioned(
+    rec: "Any", emitter: Emitter, fem: "FEMData", owned_nodes: set[int],
+) -> None:
+    """Per-rank version of the inner sp fan-out."""
+    if rec.target_kind == "node":
+        if int(rec.target) in owned_nodes:
+            emitter.sp(int(rec.target), rec.dof, rec.value)
+        return
+    try:
+        ids = fem.nodes.select(pg=rec.target).ids
+    except (KeyError, ValueError, AttributeError):
+        return
+    for node_tag in ids:
+        if int(node_tag) in owned_nodes:
+            emitter.sp(int(node_tag), rec.dof, rec.value)
 
 
 # ---------------------------------------------------------------------------

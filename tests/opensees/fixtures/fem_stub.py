@@ -378,6 +378,39 @@ class _ConstraintsStub:
                 yield from rec.slave_records
 
 
+@dataclass(frozen=True)
+class _PartitionStub:
+    """Stand-in for :class:`apeGmsh._kernel.records._partitions.PartitionRecord`.
+
+    Used by ADR 0027 (P4) integration tests that drive
+    :class:`apeSees` over a partitioned FEM stub.
+    """
+    id: int
+    node_ids: tuple[int, ...]
+    element_ids: tuple[int, ...]
+
+
+class _PartitionSetStub:
+    """Stand-in for :class:`apeGmsh._kernel.record_sets.PartitionSet`.
+
+    Iterates in ascending id order; supports ``len()`` for the
+    ``len(fem.partitions) > 1`` partitioned-emit gate.
+    """
+    def __init__(self, records: list[_PartitionStub] | None = None) -> None:
+        recs = list(records or [])
+        recs.sort(key=lambda r: int(r.id))
+        self._records = recs
+
+    def __iter__(self):
+        return iter(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __bool__(self) -> bool:
+        return bool(self._records)
+
+
 class FEMStub:
     """Hand-rolled FEMData-shaped fixture for Phase-4 tests."""
 
@@ -398,6 +431,10 @@ class FEMStub:
         # constraint sets).
         self.nodes.constraints = _ConstraintsStub()
         self.elements.constraints = _ConstraintsStub()
+        # ADR 0027 (P4) — partitions composite. Default empty
+        # (unpartitioned model). Tests that need a partitioned FEM
+        # populate it via :meth:`set_partitions`.
+        self.partitions: _PartitionSetStub = _PartitionSetStub()
 
     def add_node_constraints(self, records: list) -> None:
         """Install a list of node-side constraint records.
@@ -415,6 +452,26 @@ class FEMStub:
         :class:`SurfaceCouplingRecord`.
         """
         self.elements.constraints = _ConstraintsStub(records)
+
+    def set_partitions(
+        self, partitions: list[tuple[int, list[int], list[int]]],
+    ) -> None:
+        """Install partitions on the stub.
+
+        Each ``(id, node_ids, element_ids)`` tuple becomes one
+        :class:`_PartitionStub`; the resulting :class:`_PartitionSetStub`
+        replaces ``self.partitions``. The unpartitioned default (empty)
+        keeps the flat-emit code path; setting two or more partitions
+        flips the bridge into the partition-emit branch (ADR 0027).
+        """
+        self.partitions = _PartitionSetStub([
+            _PartitionStub(
+                id=int(pid),
+                node_ids=tuple(int(n) for n in nids),
+                element_ids=tuple(int(e) for e in eids),
+            )
+            for pid, nids, eids in partitions
+        ])
 
 
 def make_two_node_beam() -> FEMStub:
@@ -518,6 +575,21 @@ def make_two_column_frame_with_labels_and_selection() -> FEMStub:
         elements=elements,
         mesh_selection=mesh_selection,
     )
+
+
+def make_two_column_frame_partitioned() -> FEMStub:
+    """Same geometry as :func:`make_two_column_frame`, partitioned into 2.
+
+    Partition 0 owns column A (nodes 1, 2; element 1).
+    Partition 1 owns column B (nodes 3, 4; element 2).
+    Used by ADR 0027 (P4) integration tests.
+    """
+    stub = make_two_column_frame()
+    stub.set_partitions([
+        (0, [1, 2], [1]),
+        (1, [3, 4], [2]),
+    ])
+    return stub
 
 
 def make_arch_with_orientation_fan_out() -> FEMStub:

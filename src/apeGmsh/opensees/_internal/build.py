@@ -75,14 +75,20 @@ __all__ = [
     "FixRecord",
     "MassRecord",
     "VECXZ_TOL",
+    "allocate_element_tags",
+    "build_element_partition_owner",
+    "build_node_partition_owners",
     "compute_vecxz_for_element",
     "emit_element_spec",
+    "emit_element_spec_partitioned",
     "emit_mp_constraints",
+    "emit_mp_constraints_partitioned",
     "emit_pattern_spec",
     "emit_recorder_spec",
     "expand_pg_to_elements",
     "expand_pg_to_nodes",
     "is_orientation_transform",
+    "is_partitioned",
     "topological_order",
 ]
 
@@ -1570,3 +1576,608 @@ def _perp_dirn_from_normal(normal: object) -> int:
     if arr.size < 3 or not np.any(np.isfinite(arr)) or not np.any(arr):
         return 3
     return int(np.argmax(arr[:3])) + 1
+
+
+# ---------------------------------------------------------------------------
+# Partition-aware emission (ADR 0027, P4) — closes the unpartitioned-only
+# assumption baked into the original emit pipeline.
+# ---------------------------------------------------------------------------
+
+
+def is_partitioned(fem: "FEMData") -> bool:
+    """True iff the FEM snapshot carries more than one partition.
+
+    Single-partition (or unpartitioned) FEMs use the flat emit path —
+    bit-identical to the pre-ADR 0027 behaviour, with no
+    ``partition_open`` / ``partition_close`` calls and no runtime shim.
+    Multi-partition FEMs route through the per-rank fan-out helpers
+    that emit per-rank-bracketed output and replicate cross-partition
+    MP constraints per ADR 0027.
+    """
+    parts = getattr(fem, "partitions", None)
+    if parts is None:
+        return False
+    try:
+        return len(parts) > 1
+    except TypeError:
+        return False
+
+
+def build_node_partition_owners(fem: "FEMData") -> dict[int, set[int]]:
+    """Return ``{node_tag: set[rank_id]}`` covering every owning rank.
+
+    A node may belong to multiple partitions (boundary / shared nodes
+    that the partitioner replicates across ranks).  The returned dict
+    is keyed by every node id that appears in any ``PartitionRecord``;
+    unknown / unowned nodes are absent from the map.
+    """
+    owners: dict[int, set[int]] = {}
+    parts = getattr(fem, "partitions", None)
+    if parts is None:
+        return owners
+    for rec in parts:
+        rid = int(rec.id)
+        for nid in rec.node_ids:
+            owners.setdefault(int(nid), set()).add(rid)
+    return owners
+
+
+def build_element_partition_owner(fem: "FEMData") -> dict[int, int]:
+    """Return ``{element_tag: rank_id}`` — each element lives on exactly one rank.
+
+    Unlike nodes, the partitioner gives each element to a single rank
+    (interface elements typically belong to a "interface partition" in
+    Gmsh; here we honour whatever the broker recorded).  Element ids
+    not present in any partition are absent from the map; callers
+    interpret "missing key" as "unowned" and either skip emission or
+    fall back to an explicit policy.
+    """
+    owners: dict[int, int] = {}
+    parts = getattr(fem, "partitions", None)
+    if parts is None:
+        return owners
+    for rec in parts:
+        rid = int(rec.id)
+        for eid in rec.element_ids:
+            # If an element appears in two partitions (degenerate input),
+            # the first-seen partition wins.  This is a deterministic
+            # tiebreak; callers can rely on it.
+            owners.setdefault(int(eid), rid)
+    return owners
+
+
+def _intersect_with_partition(
+    ids: "Iterable[int]", partition_ids: "Iterable[int]",
+) -> tuple[int, ...]:
+    """Return ``ids`` intersected with ``partition_ids``, preserving order.
+
+    Helper for per-rank region intersection (ADR 0027 INV-4) and any
+    other per-rank "owned subset" pruning.  Order is the order of
+    ``ids`` (the supplied iteration order is preserved); the partition
+    side is hashed for O(1) membership.
+    """
+    part_set = set(int(p) for p in partition_ids)
+    out: list[int] = []
+    seen: set[int] = set()
+    for i in ids:
+        ii = int(i)
+        if ii in part_set and ii not in seen:
+            seen.add(ii)
+            out.append(ii)
+    return tuple(out)
+
+
+def allocate_element_tags(
+    elements: "Iterable[Element]",
+    fem: "FEMData",
+    tags: TagAllocator,
+) -> "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]":
+    """Allocate canonical element tags up-front, return per-spec plan.
+
+    Returns a list of ``(spec, [(eid, conn, ele_tag), ...])`` so the
+    per-rank fan-out can simply look up each element's pre-allocated
+    tag instead of consuming the allocator per-rank (which would
+    produce diverging tag numbering across ranks — ADR 0027 §"Tag
+    determinism").  Iteration order matches the flat fan-out so tags
+    are byte-identical to the unpartitioned path for shared elements.
+    """
+    plan: list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]] = []
+    for spec in elements:
+        sub: list[tuple[int, tuple[int, ...], int]] = []
+        for eid, conn in expand_pg_to_elements(fem, spec.pg):  # type: ignore[attr-defined]
+            ele_tag = tags.allocate("element")
+            sub.append((int(eid), tuple(int(n) for n in conn), int(ele_tag)))
+        plan.append((spec, sub))
+    return plan
+
+
+def emit_element_spec_partitioned(
+    spec: Element,
+    emitter: "Emitter",
+    fem: "FEMData",
+    pre_allocated: "list[tuple[int, tuple[int, ...], int]]",
+    base_resolver: object,
+    transf_tag_for_element: dict[tuple[int, int], int] | None,
+    partition_rank: int,
+    element_owner: dict[int, int],
+) -> None:
+    """Per-rank element fan-out (ADR 0027).
+
+    Emits ONLY the elements of ``spec.pg`` whose owner-rank matches
+    ``partition_rank``.  Tags come from ``pre_allocated`` (built once
+    by :func:`allocate_element_tags`) so cross-rank tag identity is
+    preserved verbatim per ADR 0027 §"Tag determinism".
+    """
+    if not pre_allocated:
+        return
+    transf_spec = _element_transf(spec)
+
+    for eid, node_tags, ele_tag in pre_allocated:
+        owner = element_owner.get(int(eid))
+        if owner is None or owner != partition_rank:
+            continue
+        set_element_nodes(emitter, node_tags)
+        set_current_fem_element_id(emitter, eid)
+
+        if (
+            transf_spec is not None
+            and transf_tag_for_element is not None
+            and (id(transf_spec), eid) in transf_tag_for_element
+        ):
+            override_tag = transf_tag_for_element[(id(transf_spec), eid)]
+            base = base_resolver
+            override = transf_spec
+
+            def _resolver_with_override(
+                p: Primitive,
+                _base: object = base,
+                _override_spec: Primitive = override,
+                _override_tag: int = override_tag,
+            ) -> int:
+                if p is _override_spec:
+                    return _override_tag
+                return int(_base(p))  # type: ignore[operator]
+
+            set_tag_resolver(emitter, _resolver_with_override)
+            try:
+                spec._emit(emitter, ele_tag)
+            finally:
+                set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
+        else:
+            spec._emit(emitter, ele_tag)
+
+
+# ---------------------------------------------------------------------------
+# Cross-partition MP-constraint replication (ADR 0027 §"Decision")
+# ---------------------------------------------------------------------------
+
+
+def _node_coords_safe(fem: "FEMData", node_id: int) -> tuple[float, float, float]:
+    """Best-effort ``(x, y, z)`` lookup for ``node_id``.
+
+    Returns zeros if the node id is unknown to the broker (e.g. a
+    phantom tag whose coords live on the source record, not on
+    ``fem.nodes``); the caller is responsible for using
+    :meth:`_emit_phantom_nodes` for those.
+    """
+    try:
+        idx = fem.nodes.index(int(node_id))
+        xyz = fem.nodes.coords[idx]
+        return float(xyz[0]), float(xyz[1]), float(xyz[2])
+    except (KeyError, IndexError, AttributeError):
+        return (0.0, 0.0, 0.0)
+
+
+def _gather_phantom_nodes(node_constraints: object) -> dict[int, tuple[float, float, float]]:
+    """Walk ``NodeToSurfaceRecord`` rows and return ``{phantom_tag: xyz}``.
+
+    Phantom tags are broker-derived (one canonical numbering) — per
+    ADR 0027 INV-3 the same tag and the same coords appear on every
+    rank that hosts a constraint referencing them.
+    """
+    out: dict[int, tuple[float, float, float]] = {}
+    n2s_iter = getattr(node_constraints, "node_to_surfaces", None)
+    if n2s_iter is None:
+        return out
+    for rec in n2s_iter():
+        coords = rec.phantom_coords
+        if coords is None:
+            continue
+        for tag, xyz in zip(rec.phantom_nodes, coords):
+            t = int(tag)
+            if t in out:
+                continue
+            out[t] = (float(xyz[0]), float(xyz[1]), float(xyz[2]))
+    return out
+
+
+def emit_mp_constraints_partitioned(
+    emitter: "Emitter",
+    fem: "FEMData",
+    partition_rank: int,
+    node_owners: dict[int, set[int]],
+    element_owner: dict[int, int],
+    foreign_node_ndf: int | None,
+) -> None:
+    """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
+
+    For ``partition_rank``:
+
+    1. Collect every constraint that touches this rank — meaning any
+       node it references lives on this rank (or, for embedded-node /
+       ASDEmbeddedNodeElement, the host element lives on this rank).
+    2. Compute the set of foreign nodes referenced by those
+       constraints (nodes not in this rank's owner set, plus phantoms).
+    3. Emit the foreign-node declarations FIRST (INV-2): regular
+       foreign nodes via ``node(tag, *xyz, ndf=foreign_node_ndf)``;
+       phantoms via ``node(tag, *xyz, ndf=6)``.
+    4. Emit the constraints in the same order as the unpartitioned
+       :func:`emit_mp_constraints` (phantom-node pre-step → rigidLink
+       → equalDOF → rigidDiaphragm → kinematic_coupling →
+       ASDEmbeddedNodeElement) so cross-rank text is byte-identical
+       per INV-1.
+    """
+    nodes = getattr(fem, "nodes", None)
+    elements = getattr(fem, "elements", None)
+    node_constraints = (
+        getattr(nodes, "constraints", None) if nodes is not None else None
+    )
+    surface_constraints = (
+        getattr(elements, "constraints", None)
+        if elements is not None
+        else None
+    )
+
+    if node_constraints is None and surface_constraints is None:
+        return
+
+    # Build the lookup tables used during constraint replication.
+    phantom_coords = (
+        _gather_phantom_nodes(node_constraints)
+        if node_constraints is not None
+        else {}
+    )
+
+    # Collect which constraints will emit on this rank, plus all the
+    # foreign-node tags they reference (replicate-on-both / replicate-
+    # everywhere-with-a-slave rules from ADR 0027).
+    plan = _plan_rank_constraints(
+        node_constraints=node_constraints,
+        surface_constraints=surface_constraints,
+        partition_rank=partition_rank,
+        node_owners=node_owners,
+        element_owner=element_owner,
+        phantom_tags=set(phantom_coords.keys()),
+    )
+    if not plan.any():
+        return
+
+    # -- 1. Foreign-node declarations (INV-2). ---------------------------
+    # Phantoms first (their tags are 6-DOF regardless of model ndf,
+    # mirroring the unpartitioned phantom-node-first invariant within
+    # this rank's block per ADR 0027 §"Phantom-node policy").
+    for tag in sorted(plan.referenced_phantoms):
+        xyz = phantom_coords[tag]
+        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
+    for tag in sorted(plan.foreign_node_tags):
+        xyz = _node_coords_safe(fem, tag)
+        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=foreign_node_ndf)
+
+    # -- 2. Constraint emission, mirroring the unpartitioned order. ------
+    if node_constraints is not None:
+        _emit_rigid_links_filtered(
+            emitter, node_constraints, plan.allowed_record_ids,
+        )
+        _emit_equal_dofs_filtered(
+            emitter, node_constraints, plan.allowed_record_ids,
+        )
+        _emit_rigid_diaphragms_filtered(
+            emitter, node_constraints, plan.allowed_record_ids,
+        )
+        _emit_kinematic_couplings_filtered(
+            emitter, node_constraints, plan.allowed_record_ids,
+        )
+
+    # ASDEmbeddedNodeElement: only the host-element-owning rank emits.
+    if surface_constraints is not None and plan.embedded_records:
+        _emit_surface_couplings_for_rank(
+            emitter, plan.embedded_records,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _RankConstraintPlan:
+    """What the per-rank MP-constraint pass will emit on this rank."""
+
+    allowed_record_ids: frozenset[int]
+    foreign_node_tags: frozenset[int]
+    referenced_phantoms: frozenset[int]
+    embedded_records: tuple[object, ...]
+
+    def any(self) -> bool:
+        return bool(self.allowed_record_ids) or bool(self.embedded_records)
+
+
+def _plan_rank_constraints(
+    *,
+    node_constraints: object,
+    surface_constraints: object,
+    partition_rank: int,
+    node_owners: dict[int, set[int]],
+    element_owner: dict[int, int],
+    phantom_tags: set[int],
+) -> _RankConstraintPlan:
+    """Decide which constraint records emit on ``partition_rank``."""
+    from apeGmsh._kernel.records._constraints import (
+        InterpolationRecord,
+        NodeGroupRecord,
+        NodePairRecord,
+        NodeToSurfaceRecord,
+    )
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    allowed_ids: set[int] = set()
+    foreign_nodes: set[int] = set()
+    referenced_phantoms: set[int] = set()
+    embedded: list[object] = []
+
+    def _owns(node_tag: int) -> bool:
+        return partition_rank in node_owners.get(int(node_tag), set())
+
+    def _is_phantom(node_tag: int) -> bool:
+        return int(node_tag) in phantom_tags
+
+    def _add_foreign_or_phantom(node_tag: int) -> None:
+        t = int(node_tag)
+        if _owns(t):
+            return
+        if _is_phantom(t):
+            referenced_phantoms.add(t)
+        else:
+            foreign_nodes.add(t)
+
+    if node_constraints is not None:
+        for rec in node_constraints:
+            if isinstance(rec, NodePairRecord):
+                # equal_dof / rigid_beam / rigid_rod replicate on both
+                # owning ranks (ADR 0027 §"Decision" — bullets 1, 2).
+                m = int(rec.master_node)
+                s = int(rec.slave_node)
+                touches = _owns(m) or _owns(s)
+                # Honor phantom slave on rigid_beam side: phantoms are
+                # never "owned" by ranks per the broker (they're
+                # broker-synthetic). A constraint whose master is on
+                # this rank but slave is a phantom must still emit here
+                # so that the phantom→slave equalDOF pair (emitted via
+                # the NodeToSurface expansion below) sees the master.
+                if not touches and (_is_phantom(m) or _is_phantom(s)):
+                    # If neither master nor slave is owned by this rank
+                    # and neither is a phantom referenced by another
+                    # owned constraint, skip.  Pure phantom-phantom
+                    # pairs are not expected from the broker.
+                    pass
+                if touches:
+                    allowed_ids.add(id(rec))
+                    _add_foreign_or_phantom(m)
+                    _add_foreign_or_phantom(s)
+            elif isinstance(rec, NodeGroupRecord):
+                # rigid_body / rigid_diaphragm / kinematic_coupling.
+                # Per ADR 0027 §"Decision" bullet 3:
+                #   "emit on every rank that owns any slave node".
+                # The full command line is emitted verbatim on each
+                # such rank; slaves are not sharded.
+                m = int(rec.master_node)
+                slaves = [int(s) for s in rec.slave_nodes]
+                touches = _owns(m) or any(_owns(s) for s in slaves)
+                if touches:
+                    allowed_ids.add(id(rec))
+                    _add_foreign_or_phantom(m)
+                    for s in slaves:
+                        _add_foreign_or_phantom(s)
+            elif isinstance(rec, NodeToSurfaceRecord):
+                # NodeToSurface is a compound record. Its rigid_link
+                # rows and equal_dof rows reference phantom nodes; we
+                # treat the compound as a single bundle and replicate
+                # it on every rank that owns the master OR any slave OR
+                # any phantom.  Phantoms are "owned" by the rank that
+                # owns their slave-side node (the rigid_beam / equalDOF
+                # row chains phantom → slave).
+                touches = False
+                for pair in rec.rigid_link_records:
+                    if _owns(int(pair.master_node)) or _owns(int(pair.slave_node)):
+                        touches = True
+                        break
+                if not touches:
+                    for pair in rec.equal_dof_records:
+                        if (
+                            _owns(int(pair.master_node))
+                            or _owns(int(pair.slave_node))
+                        ):
+                            touches = True
+                            break
+                if touches:
+                    allowed_ids.add(id(rec))
+                    for pair in rec.rigid_link_records:
+                        _add_foreign_or_phantom(int(pair.master_node))
+                        _add_foreign_or_phantom(int(pair.slave_node))
+                    for pair in rec.equal_dof_records:
+                        _add_foreign_or_phantom(int(pair.master_node))
+                        _add_foreign_or_phantom(int(pair.slave_node))
+
+    if surface_constraints is not None:
+        # ASDEmbeddedNodeElement ownership: bound to the rank that owns
+        # the host element. We allocate file-internal element tags
+        # canonically (per-call counter) and only the host-element-
+        # owning rank emits.  Per ADR 0027 §"ASDEmbeddedNodeElement
+        # ownership". Since the host element of an
+        # ASDEmbeddedNodeElement is an *implied* element (not in
+        # fem.elements), we use the first master node id as the proxy
+        # for ownership — the surface constraint's interpolation
+        # touches a real master element, so its corner nodes all live
+        # on the same rank (the partitioner does not split element
+        # connectivity).
+        interps_iter = getattr(surface_constraints, "interpolations", None)
+        if interps_iter is not None:
+            for rec in interps_iter():
+                if not isinstance(rec, InterpolationRecord):
+                    continue
+                # Host ownership: the rank that owns ALL master nodes
+                # of the host element. In the partitioner this is
+                # exactly the rank that owns the host element since the
+                # master nodes form one element's connectivity. We pick
+                # the first master node's owner-set; any rank in that
+                # set is the host's rank (and the masters are
+                # guaranteed co-resident).
+                masters = [int(mn) for mn in rec.master_nodes]
+                if not masters:
+                    continue
+                host_owners = node_owners.get(masters[0], set())
+                if partition_rank in host_owners:
+                    embedded.append(rec)
+                    # Declare any foreign master/slave nodes.
+                    for mn in masters:
+                        _add_foreign_or_phantom(mn)
+                    _add_foreign_or_phantom(int(rec.slave_node))
+
+    return _RankConstraintPlan(
+        allowed_record_ids=frozenset(allowed_ids),
+        foreign_node_tags=frozenset(foreign_nodes),
+        referenced_phantoms=frozenset(referenced_phantoms),
+        embedded_records=tuple(embedded),
+    )
+
+
+def _emit_rigid_links_filtered(
+    emitter: "Emitter", node_constraints: object,
+    allowed_ids: frozenset[int],
+) -> None:
+    """Subset of :func:`_emit_rigid_links` honoring ``allowed_ids``."""
+    from apeGmsh._kernel.records._constraints import (
+        NodeGroupRecord, NodePairRecord, NodeToSurfaceRecord,
+    )
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    rigid_pair_kinds = {
+        ConstraintKind.RIGID_BEAM, ConstraintKind.RIGID_ROD,
+    }
+    for rec in node_constraints:
+        if id(rec) not in allowed_ids:
+            continue
+        if isinstance(rec, NodePairRecord):
+            if rec.kind in rigid_pair_kinds:
+                kind = "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
+                _emit_name(emitter, rec.name)
+                emitter.rigidLink(
+                    kind, int(rec.master_node), int(rec.slave_node),
+                )
+        elif isinstance(rec, NodeGroupRecord):
+            if rec.kind == ConstraintKind.RIGID_BODY:
+                _emit_name(emitter, rec.name)
+                for sn in rec.slave_nodes:
+                    emitter.rigidLink(
+                        "beam", int(rec.master_node), int(sn),
+                    )
+        elif isinstance(rec, NodeToSurfaceRecord):
+            for pair in rec.rigid_link_records:
+                if pair.kind in rigid_pair_kinds:
+                    kind = (
+                        "beam"
+                        if pair.kind == ConstraintKind.RIGID_BEAM
+                        else "bar"
+                    )
+                    _emit_name(emitter, pair.name)
+                    emitter.rigidLink(
+                        kind, int(pair.master_node), int(pair.slave_node),
+                    )
+
+
+def _emit_equal_dofs_filtered(
+    emitter: "Emitter", node_constraints: object,
+    allowed_ids: frozenset[int],
+) -> None:
+    from apeGmsh._kernel.records._constraints import (
+        NodePairRecord, NodeToSurfaceRecord,
+    )
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if id(rec) not in allowed_ids:
+            continue
+        if isinstance(rec, NodePairRecord):
+            if rec.kind == ConstraintKind.EQUAL_DOF:
+                _emit_name(emitter, rec.name)
+                emitter.equalDOF(
+                    int(rec.master_node), int(rec.slave_node),
+                    *(int(d) for d in rec.dofs),
+                )
+        elif isinstance(rec, NodeToSurfaceRecord):
+            for pair in rec.equal_dof_records:
+                _emit_name(emitter, pair.name)
+                emitter.equalDOF(
+                    int(pair.master_node), int(pair.slave_node),
+                    *(int(d) for d in pair.dofs),
+                )
+
+
+def _emit_rigid_diaphragms_filtered(
+    emitter: "Emitter", node_constraints: object,
+    allowed_ids: frozenset[int],
+) -> None:
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if id(rec) not in allowed_ids:
+            continue
+        if not (
+            isinstance(rec, NodeGroupRecord)
+            and rec.kind == ConstraintKind.RIGID_DIAPHRAGM
+        ):
+            continue
+        perp = _perp_dirn_from_normal(rec.plane_normal)
+        _emit_name(emitter, rec.name)
+        emitter.rigidDiaphragm(
+            perp, int(rec.master_node),
+            *(int(s) for s in rec.slave_nodes),
+        )
+
+
+def _emit_kinematic_couplings_filtered(
+    emitter: "Emitter", node_constraints: object,
+    allowed_ids: frozenset[int],
+) -> None:
+    from apeGmsh._kernel.records._constraints import NodeGroupRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+
+    for rec in node_constraints:
+        if id(rec) not in allowed_ids:
+            continue
+        if not (
+            isinstance(rec, NodeGroupRecord)
+            and rec.kind == ConstraintKind.KINEMATIC_COUPLING
+        ):
+            continue
+        _emit_name(emitter, rec.name)
+        for sn in rec.slave_nodes:
+            emitter.equalDOF(
+                int(rec.master_node), int(sn),
+                *(int(d) for d in rec.dofs),
+            )
+
+
+def _emit_surface_couplings_for_rank(
+    emitter: "Emitter", records: tuple[object, ...],
+) -> None:
+    """Emit ASDEmbeddedNodeElement lines for the host-rank surface couplings."""
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+
+    next_tag = _allocate_embedded_tag_base(emitter)
+    for rec in records:
+        if not isinstance(rec, InterpolationRecord):
+            continue
+        _emit_name(emitter, rec.name)
+        ele_tag = next_tag
+        next_tag += 1
+        cnode = int(rec.slave_node)
+        args: list[int | float] = [int(mn) for mn in rec.master_nodes]
+        emitter.embeddedNode(ele_tag, cnode, *args)
