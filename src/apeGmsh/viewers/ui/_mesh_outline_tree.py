@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from apeGmsh._types import DimTag
     from ..core.selection import SelectionState
     from ..core.visibility import VisibilityManager
+    from ..data import ViewerData
     from ..scene.mesh_scene import MeshSceneData
 
 
@@ -124,6 +125,7 @@ class MeshOutlineTree:
         ] = None,
         on_row_focused: Optional[Callable[[str, Any], None]] = None,
         overlay_model: Any = None,
+        view: "ViewerData | None" = None,
     ) -> None:
         QtCore, _, QtWidgets = _qt()
         self._scene = scene
@@ -137,6 +139,16 @@ class MeshOutlineTree:
         self._on_load_patterns_changed = on_load_patterns_changed
         self._on_mass_visibility_changed = on_mass_visibility_changed
         self._on_constraint_kinds_changed = on_constraint_kinds_changed
+        # PR2 — optional ViewerData for partition-aware outline rows
+        # (ADR 0027). When supplied AND the view carries partition
+        # labelling, the Partitions section is populated. ``None`` /
+        # absent labelling hides the section entirely.
+        self._view = view
+        # Per-rank DimTag map — rebuilt by ``_refresh_partitions`` from
+        # ``scene.brep_to_elems`` + ``view.elements.partition_for(eid)``
+        # via dominant-rank reduction. Read by ``_resolve_dts`` for
+        # partition rows.
+        self._rank_to_brep: "dict[int, list[DimTag]]" = {}
         # PR5 — optional :class:`OverlayVisibilityModel`.  When
         # supplied, the outline subscribes to model changes and
         # refreshes its eye-icons to match the model state.  This
@@ -191,11 +203,13 @@ class MeshOutlineTree:
         self._group_groups = self._make_header_item("Physical Groups")
         self._group_types = self._make_header_item("Element Types")
         self._group_parts = self._make_header_item("Parts")
+        self._group_partitions = self._make_header_item("Partitions")
         self._group_loads = self._make_header_item("Loads")
         self._group_masses = self._make_header_item("Masses")
         self._group_constraints = self._make_header_item("Constraints")
         for header in (
             self._group_groups, self._group_types, self._group_parts,
+            self._group_partitions,
             self._group_loads, self._group_masses, self._group_constraints,
         ):
             tree.addTopLevelItem(header)
@@ -220,6 +234,7 @@ class MeshOutlineTree:
         self._refresh_groups()
         self._refresh_types()
         self._refresh_parts()
+        self._refresh_partitions()
         self._refresh_loads()
         self._refresh_masses()
         self._refresh_constraints()
@@ -324,6 +339,66 @@ class MeshOutlineTree:
             item.setData(0, _ROLE_KIND, "part")
             item.setData(0, _ROLE_PAYLOAD, name)
             item.setData(0, ROLE_VISIBLE, self._group_is_visible(flat))
+
+    def _refresh_partitions(self) -> None:
+        """One row per OpenSeesMP rank carrying at least one entity.
+
+        Schema 2.10.0 (ADR 0027).  Visible only when a ViewerData with
+        ``elements.has_partitions == True`` is bound — single-partition
+        models, pre-2.10.0 archives, and live ``from_fem``-only viewers
+        all hide the section.
+
+        Per-entity granularity (not per-cell) via dominant-rank
+        reduction over ``scene.brep_to_elems[dt]``.  Matches the
+        per-entity dispatch shape of ``ColorMode "Partition"`` from
+        PR1 so colouring and outline grouping stay consistent.
+
+        Substrate-mesh semantics — eye click routes through
+        :class:`VisibilityManager` (same path as Groups / Types /
+        Parts), not through the overlay-visibility model.  Partition
+        visibility hides base mesh elements, not overlay glyph layers;
+        the overlay model is reserved for the latter
+        (loads / masses / constraints).
+        """
+        _, _, QtWidgets = _qt()
+        self._group_partitions.takeChildren()
+        self._rank_to_brep.clear()
+
+        view = self._view
+        if view is None or not view.elements.has_partitions:
+            self._group_partitions.setHidden(True)
+            return
+
+        # Dominant-rank reduction per entity.  Mirrors the controller's
+        # ``_partition_idle`` so the outline row a user sees aligns
+        # with the colour they see in PARTITION mode.
+        for dt, eids in self._scene.brep_to_elems.items():
+            ranks: list[int] = []
+            for eid in eids:
+                r = view.elements.partition_for(int(eid))
+                if r is not None:
+                    ranks.append(int(r))
+            if not ranks:
+                continue
+            dominant = max(set(ranks), key=ranks.count)
+            self._rank_to_brep.setdefault(dominant, []).append(dt)
+
+        if not self._rank_to_brep:
+            self._group_partitions.setHidden(True)
+            return
+
+        self._group_partitions.setHidden(False)
+        for rank in sorted(self._rank_to_brep.keys()):
+            breps = self._rank_to_brep[rank]
+            n_elems = sum(
+                len(self._scene.brep_to_elems.get(dt, [])) for dt in breps
+            )
+            item = QtWidgets.QTreeWidgetItem(self._group_partitions)
+            item.setText(0, f"Rank {rank}")
+            item.setText(1, f"{n_elems:,}")
+            item.setData(0, _ROLE_KIND, "partition")
+            item.setData(0, _ROLE_PAYLOAD, int(rank))
+            item.setData(0, ROLE_VISIBLE, self._group_is_visible(breps))
 
     # ------------------------------------------------------------------
     # FEM-input sections — Loads / Masses / Constraints
@@ -463,6 +538,10 @@ class MeshOutlineTree:
             for dim, tags in (inst.entities or {}).items():
                 out.extend((int(dim), int(t)) for t in tags)
             return out
+        if kind == "partition":
+            # ``payload`` is the rank (int).  ``_rank_to_brep`` is built
+            # by ``_refresh_partitions`` from the dominant-rank reduction.
+            return list(self._rank_to_brep.get(int(payload), []))
         return []
 
     def _on_eye_clicked(self, item: Any) -> None:
@@ -511,7 +590,10 @@ class MeshOutlineTree:
 
     def _refresh_eye_states(self) -> None:
         """Repaint every row's eye after a programmatic visibility change."""
-        for top in (self._group_groups, self._group_types, self._group_parts):
+        for top in (
+            self._group_groups, self._group_types, self._group_parts,
+            self._group_partitions,
+        ):
             for i in range(top.childCount()):
                 row = top.child(i)
                 dts = self._resolve_dts(row)
@@ -551,7 +633,7 @@ class MeshOutlineTree:
         if item is None:
             return
         kind = item.data(0, _ROLE_KIND)
-        if kind not in ("group", "type", "part"):
+        if kind not in ("group", "type", "part", "partition"):
             return
         dts = self._resolve_dts(item)
         n = len(dts)

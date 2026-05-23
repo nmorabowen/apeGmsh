@@ -490,6 +490,11 @@ class MeshViewer:
             on_constraint_kinds_changed=self._overlay_model.set_constraint_kinds,
             on_row_focused=_on_outline_row_focused,
             overlay_model=self._overlay_model,
+            # PR2 — partition rows (ADR 0027). The outline reads
+            # ``view.elements.partition_for(eid)`` to group entities by
+            # dominant OpenSeesMP rank; hidden when the view is absent
+            # or carries no partition labelling.
+            view=self._view,
         )
         outline_dock = win.add_extension_dock(DockSpec(
             dock_id="dock_mesh_outline",
