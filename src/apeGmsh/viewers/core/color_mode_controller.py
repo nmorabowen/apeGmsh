@@ -30,6 +30,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from apeGmsh._types import DimTag
+    from ..data import ViewerData
     from ..scene.mesh_scene import MeshSceneData
     from .color_manager import ColorManager
     from .entity_registry import EntityRegistry
@@ -82,7 +83,7 @@ class ColorModeController:
 
     __slots__ = (
         "_color_mgr", "_registry", "_scene", "_sel", "_vis_mgr",
-        "_plotter", "_mode",
+        "_plotter", "_view", "_mode",
         "_quality_metric", "_quality_mapper_state", "_quality_bar_title",
     )
 
@@ -95,6 +96,7 @@ class ColorModeController:
         sel: "SelectionState",
         vis_mgr: "VisibilityManager",
         plotter,
+        view: "ViewerData | None" = None,
     ) -> None:
         self._color_mgr = color_mgr
         self._registry = registry
@@ -102,6 +104,11 @@ class ColorModeController:
         self._sel = sel
         self._vis_mgr = vis_mgr
         self._plotter = plotter
+        # ViewerData snapshot — supplies per-element bridge enrichment
+        # the gmsh-only scene lacks (partition rank per FEM eid). None
+        # for from_fem-only viewers without an h5 source; the Partition
+        # mode degrades to a uniform fallback color in that case.
+        self._view: "ViewerData | None" = view
         self._mode = "Default"
         self._quality_metric = _DEFAULT_QUALITY_METRIC
         # Per-dim VTK mapper state captured on entry to Quality mode,
@@ -129,6 +136,8 @@ class ColorModeController:
             self._color_mgr.set_idle_fn(self._elem_type_idle)
         elif mode == "Physical Group":
             self._color_mgr.set_idle_fn(self._phys_group_idle)
+        elif mode == "Partition":
+            self._color_mgr.set_idle_fn(self._partition_idle)
         elif mode == "Quality":
             self._enter_quality_mode()
             self._mode = mode
@@ -159,6 +168,50 @@ class ColorModeController:
             return _FALLBACK_RGB
         idx = abs(hash(name)) % len(_GROUP_PALETTE_RGB)
         return _GROUP_PALETTE_RGB[idx]
+
+    def _partition_idle(self, dt: "DimTag") -> np.ndarray:
+        """Color one BRep entity by its dominant OpenSeesMP rank.
+
+        Schema 2.10.0 (ADR 0027). Per-entity granularity (not per-cell)
+        — typical METIS-style partitioners produce contiguous rank
+        assignments that align with CAD entity boundaries; the
+        ``most common rank`` reduction is a faithful summary for the
+        common case and a graceful approximation for split-entity
+        cases (a single-rank uniform color rather than a mixed-rank
+        per-cell painting).
+
+        Degrades to ``_FALLBACK_RGB`` when:
+
+        * No ViewerData is bound (``from_fem``-only viewers with no
+          OpenSees enrichment).
+        * The view carries no partition labelling
+          (``has_partitions == False`` — single-partition models or
+          pre-2.10.0 archives).
+        * The DimTag has no elements in the scene, or every owning
+          element has ``partition_for(eid) is None``.
+
+        The full per-cell fidelity (a scalar-mapper strategy mirroring
+        Quality mode) is a follow-up; PR1 ships the per-entity dispatch
+        because (a) it composes cleanly with the existing idle-fn
+        infrastructure and (b) it covers the common case
+        (METIS-contiguous partitions) at zero extra scaffolding cost.
+        """
+        view = self._view
+        if view is None or not view.elements.has_partitions:
+            return _FALLBACK_RGB
+        eids = self._scene.brep_to_elems.get(dt)
+        if not eids:
+            return _FALLBACK_RGB
+        # Collect non-None ranks; np.bincount picks the most common.
+        ranks: list[int] = []
+        for eid in eids:
+            r = view.elements.partition_for(int(eid))
+            if r is not None:
+                ranks.append(int(r))
+        if not ranks:
+            return _FALLBACK_RGB
+        dominant = int(np.bincount(np.asarray(ranks, dtype=np.int64)).argmax())
+        return _GROUP_PALETTE_RGB[dominant % len(_GROUP_PALETTE_RGB)]
 
     def _repaint(self) -> None:
         # Single batched recolor — one VTK rebind per dim, not per entity.
