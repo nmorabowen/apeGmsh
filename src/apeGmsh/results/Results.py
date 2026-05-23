@@ -136,6 +136,7 @@ class Results:
         stage_id: Optional[str] = None,
         path: Optional[Path] = None,
         model: "OpenSeesModel",
+        model_path: Optional[Path] = None,
     ) -> None:
         self._reader = reader
         self._fem = fem
@@ -146,6 +147,13 @@ class Results:
         # contract and raise :class:`TypeError` on missing supply;
         # internal callers (``_derive``) propagate the existing handle.
         self._model = model
+        # Sibling-archive path for readers that carry no embedded
+        # ``/opensees/`` zone (MPCO).  ``None`` when ``self._path``
+        # already is the model archive (native Composed file).  The
+        # subprocess viewer reads this to forward ``--model-h5`` to
+        # the child process — without it, ``__main__.py`` exits(2)
+        # on ``.mpco`` paths.
+        self._model_path = model_path
         self._stages_cache: Optional[list[StageInfo]] = None
 
         # Composites
@@ -358,6 +366,7 @@ class Results:
         bound_model = OpenSeesModel.from_h5(model_h5)
         return cls(
             reader, fem=bound_fem, path=anchor, model=bound_model,
+            model_path=Path(model_h5),
         )
 
     # ------------------------------------------------------------------
@@ -723,6 +732,40 @@ class Results:
             cuts=cuts,
         ).show()
 
+    def _build_viewer_argv(
+        self,
+        *,
+        title: Optional[str],
+        python_exe: Optional[str] = None,
+    ) -> list[str]:
+        """Build the argv for ``python -m apeGmsh.viewers``.
+
+        Factored out of :meth:`_spawn_viewer_subprocess` so the wire
+        contract between parent and child is testable without
+        launching a real subprocess.  Emits ``--model-h5`` iff
+        :attr:`_model_path` is set (MPCO-opened Results) — the
+        child's ``__main__.py`` exits(2) on ``.mpco`` paths without
+        that flag.
+        """
+        import sys
+        if self._path is None:
+            raise RuntimeError(
+                "In-memory Results cannot launch in a subprocess. Open "
+                "the Results from disk via Results.from_native(path) or "
+                "Results.from_mpco(path), or call results.viewer() with "
+                "the default blocking=True."
+            )
+        args = [
+            python_exe or sys.executable,
+            "-m", "apeGmsh.viewers",
+            str(self._path),
+        ]
+        if title is not None:
+            args.extend(["--title", title])
+        if self._model_path is not None:
+            args.extend(["--model-h5", str(self._model_path)])
+        return args
+
     def _spawn_viewer_subprocess(
         self,
         *,
@@ -735,17 +778,7 @@ class Results:
         future work, see ``viewer()`` docstring).
         """
         import subprocess
-        import sys
-        if self._path is None:
-            raise RuntimeError(
-                "In-memory Results cannot launch in a subprocess. Open "
-                "the Results from disk via Results.from_native(path) or "
-                "Results.from_mpco(path), or call results.viewer() with "
-                "the default blocking=True."
-            )
-        args = [sys.executable, "-m", "apeGmsh.viewers", str(self._path)]
-        if title is not None:
-            args.extend(["--title", title])
+        args = self._build_viewer_argv(title=title)
         return subprocess.Popen(args)
 
     # ------------------------------------------------------------------
@@ -849,6 +882,7 @@ class Results:
         new._model = (
             self._model if isinstance(model, _Sentinel) else model
         )
+        new._model_path = self._model_path
         new._stages_cache = self._stages_cache
         new.nodes = NodeResultsComposite(new)
         new.elements = ElementResultsComposite(new)
