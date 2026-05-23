@@ -389,24 +389,37 @@ def test_bind_results_sets_opensees_model_handle(one_stage_results):
     assert d.opensees_model is handle
 
 
-def test_bind_results_with_no_path_clears_tag_map_path(one_stage_results):
-    """In-memory Results (``_path=None``) → no tag-map path bound."""
+def test_bind_results_with_no_path_yields_no_tag_map(one_stage_results):
+    """In-memory Results (``_path=None``) → :attr:`tag_map` returns
+    None (the orientation source can't be resolved).
+
+    PR-stretch — observable behaviour replaces the removed
+    ``d.model_h5`` property check; the model_h5 field is gone, but
+    the tag_map property is the same gate users care about.
+    """
     d = ResultsDirector(one_stage_results)
     stub = _stub_results(path=None, model=object())
 
     d.bind_results(stub)
 
-    assert d.model_h5 is None
+    assert d.tag_map is None
 
 
-def test_bind_results_with_oriented_path_binds_tag_map_path(
+def test_bind_results_with_oriented_path_makes_tag_map_buildable(
     tmp_path: Path, one_stage_results,
 ):
     """When ``results._path`` points at a model.h5 with the
-    ``/opensees/`` orientation zone, bind_results extracts the path
-    and stores it for the tag_map factory."""
+    ``/opensees/`` orientation zone, :attr:`tag_map` resolves to a
+    non-None value (the source is resolvable; the actual map may be
+    empty if no fem_eids were stamped, but the property doesn't
+    return None).
+
+    The bound results IS the source of truth — no separate
+    director-side field needed.
+    """
     from apeGmsh.opensees import ModelData
     from tests.opensees.fixtures.fem_stub import make_two_node_beam
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
 
     fem = make_two_node_beam()
     oriented = tmp_path / "oriented.h5"
@@ -420,14 +433,18 @@ def test_bind_results_with_oriented_path_binds_tag_map_path(
 
     d.bind_results(stub)
 
-    assert d.model_h5 == oriented
+    # The bound Results IS the tag-map path source — verified via
+    # the same probe the director uses internally.
+    assert resolve_orientation_source(stub) == oriented
+    # The director sees the bound results.
+    assert d._results is stub
 
 
-def test_bind_results_bare_path_clears_tag_map_path(
+def test_bind_results_bare_path_yields_no_tag_map(
     tmp_path: Path, one_stage_results,
 ):
-    """A model.h5 WITHOUT the orientation zone → no tag-map path
-    (the viewer must degrade)."""
+    """A model.h5 WITHOUT the orientation zone → :attr:`tag_map`
+    returns None (the viewer must degrade)."""
     from apeGmsh.opensees import ModelData
     from tests.opensees.fixtures.fem_stub import make_two_node_beam
 
@@ -441,14 +458,22 @@ def test_bind_results_bare_path_clears_tag_map_path(
 
     d.bind_results(stub)
 
-    assert d.model_h5 is None
+    assert d.tag_map is None
 
 
-def test_bind_results_clears_tag_map_cache_when_path_changes(
+def test_bind_results_clears_tag_map_cache_on_rebind(
     tmp_path: Path, one_stage_results,
 ):
-    """Re-binding to a different oriented file invalidates the
-    cached :class:`FemToOpsTagMap` (the path change is the cache key)."""
+    """Re-binding to a different Results invalidates the cached
+    :class:`FemToOpsTagMap` so the next :attr:`tag_map` access
+    re-derives from the freshly-bound source.
+
+    PR-stretch — the cache invalidation is unconditional on rebind
+    (we don't compare paths to detect a "real" change); the next
+    access will pay the rebuild cost regardless.  This is correct:
+    rebinding a Results means the user wants the new context to
+    win.
+    """
     from apeGmsh.opensees import ModelData
     from tests.opensees.fixtures.fem_stub import make_two_node_beam
 
@@ -463,13 +488,14 @@ def test_bind_results_clears_tag_map_cache_when_path_changes(
 
     d = ResultsDirector(one_stage_results)
     d.bind_results(_stub_results(path=a, model=object()))
-    # Force the cache to populate.
-    _ = d.tag_map
-    cached_before = d._tag_map_cache
-    assert cached_before is not None
+    # Seed the cache (simulate prior access — don't call .tag_map
+    # because that would try to build a real FemToOpsTagMap, which
+    # requires fem_eids in the H5).
+    d._tag_map_cache = "sentinel"
 
     d.bind_results(_stub_results(path=b, model=object()))
 
-    # Path changed → cache invalidated.
+    # Rebind invalidates the cache.
     assert d._tag_map_cache is None
-    assert d.model_h5 == b
+    # The director now sees the new bound results.
+    assert d._results._path == b

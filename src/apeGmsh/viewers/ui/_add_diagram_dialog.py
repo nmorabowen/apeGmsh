@@ -436,7 +436,12 @@ class AddDiagramDialog:
         form.addRow("Cut:", self._cut_h5_dropdown)
 
         self._cut_model_h5_edit = QtWidgets.QLineEdit()
-        prefill = director.model_h5
+        # ADR 0026 PR-stretch — director no longer exposes `.model_h5`
+        # as a stored field.  Prefill the dialog from the bound
+        # Results' path via the canonical orientation probe; the
+        # dialog gives the same UX as before without the field.
+        from ..data._h5_probe import resolve_orientation_source
+        prefill = resolve_orientation_source(director.results)
         if prefill is not None:
             self._cut_model_h5_edit.setText(str(prefill))
         self._cut_model_h5_edit.setPlaceholderText(

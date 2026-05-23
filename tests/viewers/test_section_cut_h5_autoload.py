@@ -71,12 +71,17 @@ def _sample_cut(label: str = "cut", z: float = 1.0) -> SectionCutDef:
 # Director — load_cuts_from_h5
 # --------------------------------------------------------------------- #
 def test_director_load_cuts_from_h5_raises_without_source() -> None:
-    """No cuts source bound (neither OpenSeesModel nor model.h5 path)
-    → load_cuts_from_h5 raises."""
+    """No cuts source bound (neither OpenSeesModel handle nor a Results
+    with an /opensees/ path) → load_cuts_from_h5 raises.
+
+    ADR 0026 PR-stretch — the fallback gate is now
+    ``resolve_orientation_source(self._results) is None`` rather
+    than ``self._model_h5 is None``.
+    """
     # Bypass full ResultsDirector construction — we only need the
     # state and the method.
     director = ResultsDirector.__new__(ResultsDirector)
-    director._model_h5 = None
+    director._results = SimpleNamespace(_path=None, model=None)
     director._opensees_model = None
     with pytest.raises(RuntimeError, match="no cuts source bound"):
         ResultsDirector.load_cuts_from_h5(director)
@@ -105,7 +110,8 @@ def test_director_load_cuts_from_h5_walks_cuts_and_sweeps(
     _make_h5_with_cuts(path, cuts=[cut_a, cut_b], sweeps=[sweep])
 
     director = ResultsDirector.__new__(ResultsDirector)
-    director._model_h5 = path
+    # PR-stretch — _results is the new tag-map / cuts-source root.
+    director._results = SimpleNamespace(_path=path, model=None)
     director._opensees_model = None
     director._tag_map_cache = None  # tag_map property guard
     director.add_section_cut = MagicMock(return_value="diag")
@@ -139,7 +145,7 @@ def test_director_load_cuts_from_h5_on_pre_v4_file_is_empty(
     _make_minimal_h5(path, schema_version=OPENSEES_CURRENT)
 
     director = ResultsDirector.__new__(ResultsDirector)
-    director._model_h5 = path
+    director._results = SimpleNamespace(_path=path, model=None)
     director._opensees_model = None
     director._tag_map_cache = None
     director.add_section_cut = MagicMock()
@@ -170,15 +176,15 @@ def test_director_load_cuts_from_opensees_model_preferred(
         sweeps=MagicMock(return_value=(sweep,)),
     )
     director = ResultsDirector.__new__(ResultsDirector)
-    director._model_h5 = None  # no fallback path bound
+    director._results = SimpleNamespace(_path=None, model=model)
     director._opensees_model = model
     director._tag_map_cache = None
     director.add_section_cut = MagicMock(return_value="diag")
     director.add_section_cut_sweep = MagicMock(return_value=["sd"])
 
     attached = ResultsDirector.load_cuts_from_h5(director)
-    # The file at ``_model_h5`` was never read — the cuts came from
-    # the OpenSeesModel handle.
+    # The bound Results' path was never read — the cuts came from
+    # the OpenSeesModel handle (chain-forward path).
     model.cuts.assert_called_once_with()
     model.sweeps.assert_called_once_with()
     assert director.add_section_cut.call_count == 2
@@ -186,24 +192,28 @@ def test_director_load_cuts_from_opensees_model_preferred(
     assert attached == ["diag", "diag", "sd"]
 
 
-def test_director_internal_bind_model_h5_does_not_warn(tmp_path: Path) -> None:
-    """Phase 8 — ``set_model_h5`` (the deprecated public verb) is gone.
-
-    The internal ``_bind_model_h5`` helper still exists (used by
-    viewer-internal callers); it must NOT emit a DeprecationWarning.
+def test_director_bind_results_does_not_warn(tmp_path: Path) -> None:
+    """ADR 0026 PR-stretch — ``_bind_model_h5`` private alias is gone;
+    ``bind_results(results)`` is the canonical single-call binder.
+    It must NOT emit a DeprecationWarning.
     """
     path = tmp_path / "model.h5"
+    path.write_bytes(b"")  # exists so resolve_orientation_source can probe
     director = ResultsDirector.__new__(ResultsDirector)
-    director._model_h5 = None
+    director._results = SimpleNamespace(_path=None, model=None)
     director._opensees_model = None
     director._tag_map_cache = None
 
-    # The internal helper does NOT emit.
     import warnings as _w
     with _w.catch_warnings():
         _w.simplefilter("error")  # any warning → error → test fails
-        ResultsDirector._bind_model_h5(director, path)
-    assert director._model_h5 == path
+        ResultsDirector.bind_results(
+            director,
+            SimpleNamespace(_path=path, model=None),
+        )
+    # bind_results stores the Results handle; tag_map cache is invalidated.
+    assert director._results._path == path
+    assert director._tag_map_cache is None
 
 
 # --------------------------------------------------------------------- #

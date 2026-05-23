@@ -344,37 +344,14 @@ def test_filter_fem_eids_cached_for_phase_1b(
 # Director plumbing (add_section_cut / add_section_cut_sweep)
 # ---------------------------------------------------------------------
 
-def test_director_set_model_h5_caches(cube_results):
-    """Phase 8 — ``set_model_h5`` was deleted; tag_map is cached on
-    first access after ``_bind_model_h5`` (the surviving internal
-    path-binder)."""
-    from apeGmsh.viewers.diagrams import ResultsDirector
-    results, _fem, h5, _ = cube_results
-    director = ResultsDirector(results)
-    assert director.tag_map is None    # nothing set yet
-    director._bind_model_h5(h5)
-    m1 = director.tag_map
-    m2 = director.tag_map
-    assert m1 is not None
-    assert m1 is m2                    # cached on second access
-
-
-def test_director_set_model_h5_to_none_clears_cache(cube_results):
-    """Phase 8 — clearing the model path resets the cached tag_map."""
-    from apeGmsh.viewers.diagrams import ResultsDirector
-    results, _fem, h5, _ = cube_results
-    director = ResultsDirector(results)
-    director._bind_model_h5(h5)
-    _ = director.tag_map
-    director._bind_model_h5(None)
-    assert director.tag_map is None
-
-
-def test_director_add_section_cut_without_model_h5_raises(cube_results):
+def test_director_add_section_cut_without_orientation_raises(cube_results):
+    """``add_section_cut`` requires either a bound Results with an
+    orientation source OR an explicit ``model_h5=`` kwarg.  ADR 0026
+    PR-stretch — the error message points at ``bind_results``."""
     from apeGmsh.viewers.diagrams import ResultsDirector
     results, _fem, _h5, _ = cube_results
     director = ResultsDirector(results)
-    with pytest.raises(RuntimeError, match="no model.h5 bound"):
+    with pytest.raises(RuntimeError, match="no model.h5 source available"):
         director.add_section_cut(_make_cut())
 
 

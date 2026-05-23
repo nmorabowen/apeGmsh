@@ -1606,12 +1606,14 @@ class ResultsViewer:
                 ))
 
             fem = self._results.fem
-            # ``director.model_h5`` is populated by the internal
-            # path binder used at boot for the FemToOpsTagMap (still
-            # path-based today).  Emitting it as part of the session
-            # lets restore rebuild the FemToOpsTagMap that
-            # SectionCutDiagram layers need.
-            model_h5_path = getattr(self._director, "model_h5", None)
+            # ADR 0026 PR-stretch — the director no longer stores a
+            # ``_model_h5`` field; the tag-map path is derived on
+            # demand from the bound :class:`Results`.  We still emit
+            # ``model_h5`` in the session payload for back-compat
+            # (older save_session signatures, older readers) — but
+            # source it from the same probe the director uses.
+            from .data._h5_probe import resolve_orientation_source
+            model_h5_path = resolve_orientation_source(self._results)
             save_session(
                 specs=specs,
                 results_path=path,
@@ -1699,20 +1701,21 @@ class ResultsViewer:
         )
         if _batch_cm is not None:
             _batch_cm.__enter__()
-        # Restore the section-cut tag-map binding BEFORE constructing
-        # any layers — a SectionCutDiagram needs ``tag_map=`` at
-        # construction time to translate OpenSees tags back to FEM eids.
-        # Routes through the internal path binder used by the tag_map
-        # (still path-based today).
-        session_model_h5 = getattr(session, "model_h5", None)
-        if session_model_h5:
-            try:
-                self._director._bind_model_h5(session_model_h5)
-            except Exception as exc:
-                from ._failures import report
-                report(
-                    "ResultsViewer._apply_session(model_h5)", exc,
-                )
+        # ADR 0026 PR-stretch — the director's tag-map source is now
+        # derived from the bound :class:`Results`, not a separate
+        # ``_model_h5`` path field.  bind_results(self._results)
+        # ensures the director's tag_map property resolves correctly
+        # at construction time for any SectionCutDiagram restored
+        # below.  The session payload's ``model_h5`` field is now
+        # informational only (kept in the schema for one cycle so
+        # older session JSONs still parse).
+        try:
+            self._director.bind_results(self._results)
+        except Exception as exc:
+            from ._failures import report
+            report(
+                "ResultsViewer._apply_session(bind_results)", exc,
+            )
         kind_to_class = {entry.kind_id: entry.diagram_class for entry in _KINDS}
         n_added = 0
         n_skipped = 0

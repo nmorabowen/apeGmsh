@@ -149,16 +149,28 @@ def test_switching_back_restores_results_rows(qapp, director):
 # model_h5 autofill
 # =====================================================================
 
-def test_model_h5_autofills_from_director(qapp, director, tmp_path):
-    """Phase 8 — the deprecated ``set_model_h5`` verb is gone.
+def test_model_h5_autofills_from_director(qapp, director, tmp_path, monkeypatch):
+    """ADR 0026 PR-stretch — the dialog autofill reads the bound
+    Results' path via :func:`resolve_orientation_source` (replaces
+    the director's removed ``_model_h5`` field).
 
-    The director's internal ``_bind_model_h5`` helper is the only
-    remaining path-binder; it carries the same autofill semantics.
+    Monkey-patches the probe to a known path so the test is
+    independent of file-creation mechanics; the dialog should call
+    the probe with the director's results and use the returned path.
     """
     from apeGmsh.viewers.ui._add_diagram_dialog import AddDiagramDialog
     fake = tmp_path / "model.h5"
-    fake.write_bytes(b"")          # touch — content irrelevant for the prefill check
-    director._bind_model_h5(fake)
+
+    def _fake_resolve(results):
+        # Verify the dialog passes the right argument, then return
+        # the prefill we want to assert on.
+        assert results is director.results
+        return fake
+
+    monkeypatch.setattr(
+        "apeGmsh.viewers.data._h5_probe.resolve_orientation_source",
+        _fake_resolve,
+    )
     dlg = AddDiagramDialog(director, parent=None)
     assert dlg._cut_model_h5_edit.text() == str(fake)
 

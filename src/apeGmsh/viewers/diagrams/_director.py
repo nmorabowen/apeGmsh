@@ -105,17 +105,17 @@ class ResultsDirector:
         self._geometries = GeometryManager()
 
         # Section-cut tag-map state. Populated lazily on first
-        # ``tag_map`` access after a path is set via the internal
-        # :meth:`_bind_model_h5`.  The map translates
-        # :class:`SectionCutDef.element_ids` (OpenSees tags) into FEM
-        # eids the viewer's FEMData can use.
-        self._model_h5: Optional[Path] = None
+        # ``tag_map`` access; the path is derived on demand via
+        # :func:`apeGmsh.viewers.data._h5_probe.resolve_orientation_source`
+        # against the bound :class:`Results`.  ADR 0026 PR-stretch
+        # closed the previous ``_model_h5: Path`` field and the
+        # ``_bind_model_h5(path)`` private setter — the bound Results
+        # is now the single source of truth for the tag-map path.
         self._tag_map_cache: "Optional[FemToOpsTagMap]" = None
 
         # Chain-forward handle.  The OpenSeesModel (when supplied via
-        # :meth:`set_model`) is the source for
-        # :meth:`load_cuts_from_h5` iteration; the ``_model_h5`` path
-        # above is still used for the :class:`FemToOpsTagMap` build.
+        # :meth:`set_model` or :meth:`bind_results`) is the source for
+        # :meth:`load_cuts_from_h5` iteration.
         # AST guard: duck-typed storage, no runtime import.
         self._opensees_model: "Optional[Any]" = None
 
@@ -218,33 +218,35 @@ class ResultsDirector:
 
     def bind_results(self, results: "Any") -> None:
         """Bind a :class:`Results` handle — the canonical single-call
-        replacement for the dual ``set_model`` + ``_bind_model_h5``
-        ceremony (ADR 0026 PR7-d).
+        binder (ADR 0026 PR7-d, PR-stretch made it the only path).
 
         Pulls both binding sources off the Results in one step:
 
         * ``results.model`` — the chain-forward OpenSeesModel handle
           (cuts iteration source; duck-typed per ADR 0014 INV-2).
         * ``results._path`` — the file path the
-          :class:`FemToOpsTagMap` builds against, IFF
-          :func:`resolve_orientation_source` confirms the file
-          carries the ``/opensees/`` orientation zone.
+          :class:`FemToOpsTagMap` builds against, derived on demand
+          inside :attr:`tag_map` via
+          :func:`resolve_orientation_source`.  No separate
+          ``_model_h5`` field is kept on the director.
 
         Cuts auto-load (``_apply_pending_cuts`` in ResultsViewer)
-        should call this method instead of issuing ``set_model`` and
-        ``_bind_model_h5`` separately.  ``set_model`` and
-        ``_bind_model_h5`` survive for session-restore paths that
-        serialise paths today; they are slated for removal once the
-        session payload moves to a reader-based descriptor.
+        and session restore both flow through this entry point.
 
         Idempotent: re-binding the same Results is a no-op on the
-        chain-forward handle and re-derives the tag-map path (clears
-        the cache if the path changes).
+        chain-forward handle; the tag_map cache is invalidated so
+        the next access re-derives against the freshly-bound
+        Results.
         """
-        from ..data._h5_probe import resolve_orientation_source
+        # Replace the bound Results so resolve_orientation_source picks
+        # it up next access.  The director's __init__ stored an initial
+        # ``self._results``; bind_results swaps it (typically the same
+        # object on re-bind, but tests can swap to alternates).
+        self._results = results
         self._opensees_model = getattr(results, "model", None)
-        source = resolve_orientation_source(results)
-        self._bind_model_h5(source)
+        # Invalidate the tag_map cache so the next access re-derives
+        # from the new Results' _path via resolve_orientation_source.
+        self._tag_map_cache = None
 
     def set_model(
         self, opensees_model: "Optional[Any]",
@@ -257,13 +259,12 @@ class ResultsDirector:
         ``opensees_model.cuts()`` / ``opensees_model.sweeps()`` instead
         of re-walking the file.
 
-        The :class:`FemToOpsTagMap` is still built from a file path
-        via :meth:`_bind_model_h5` (still path-based today).
-
         ADR 0026 — prefer :meth:`bind_results` for the canonical
         single-call binding from a Results handle.  ``set_model``
         stays for external callers that already hold an
-        OpenSeesModel directly (without a Results wrapper).
+        OpenSeesModel directly (without a Results wrapper) — it does
+        NOT touch the tag-map state because the tag-map path lives
+        on the bound :class:`Results`.
 
         Pass ``None`` to clear the bound handle.
         """
@@ -282,44 +283,30 @@ class ResultsDirector:
         """
         return self._opensees_model
 
-    def _bind_model_h5(self, path: "Optional[str | Path]") -> None:
-        """Internal path-binding hook used by viewer-internal callers
-        that need the tag_map file path.
-
-        Phase 8 (ADR 0020) collapsed the public ``set_model_h5``
-        deprecated alias.  ADR 0026 PR7-d added :meth:`bind_results`
-        as the canonical single-call binder; this method survives as
-        the back-compat seam for paths that still arrive as strings
-        (session restore in particular — the session payload
-        schema still serialises ``model_h5`` as a path string).
-        Removal is gated on session-payload migration to a reader-
-        based descriptor.
-        """
-        new_path = Path(path) if path is not None else None
-        if new_path == self._model_h5:
-            return
-        self._model_h5 = new_path
-        self._tag_map_cache = None
-
-    @property
-    def model_h5(self) -> Optional[Path]:
-        return self._model_h5
-
     @property
     def tag_map(self) -> "Optional[FemToOpsTagMap]":
-        """Lazy-built :class:`FemToOpsTagMap` for the current ``model_h5``.
+        """Lazy-built :class:`FemToOpsTagMap` for the bound Results.
 
-        Returns ``None`` when no ``model_h5`` has been set. The first
-        access after :meth:`_bind_model_h5` opens the file via
-        :meth:`FemToOpsTagMap.from_h5`; subsequent accesses reuse the
-        cached map. Propagates any reader exception so callers see the
-        underlying error (missing file, schema mismatch, …).
+        Returns ``None`` when the bound :class:`Results` has no path
+        carrying an ``/opensees/`` orientation zone (in-memory
+        Results, recorder flavours, or bare neutral-only files).
+        The first access opens the file via
+        :meth:`FemToOpsTagMap.from_h5`; subsequent accesses reuse
+        the cached map.  Propagates any reader exception so callers
+        see the underlying error (missing file, schema mismatch).
+
+        ADR 0026 PR-stretch — the path is derived on demand via
+        :func:`resolve_orientation_source` instead of being stored
+        in a separate ``_model_h5`` field.  The bound Results is the
+        single source of truth.
         """
-        if self._model_h5 is None:
+        from ..data._h5_probe import resolve_orientation_source
+        source = resolve_orientation_source(self._results)
+        if source is None:
             return None
         if self._tag_map_cache is None:
             from apeGmsh.cuts import FemToOpsTagMap
-            self._tag_map_cache = FemToOpsTagMap.from_h5(self._model_h5)
+            self._tag_map_cache = FemToOpsTagMap.from_h5(source)
         return self._tag_map_cache
 
     def add_section_cut(
@@ -369,14 +356,21 @@ class ResultsDirector:
         Diagram
             The attached :class:`SectionCutDiagram` instance.
         """
+        # ADR 0026 PR-stretch: ``model_h5=`` no longer mutates director
+        # state.  When supplied it builds a transient :class:`FemToOpsTagMap`
+        # for this cut only; otherwise we fall back to ``self.tag_map``
+        # (which derives the path from the bound :class:`Results`).
         if model_h5 is not None:
-            self._bind_model_h5(model_h5)
-        tag_map = self.tag_map
+            from apeGmsh.cuts import FemToOpsTagMap
+            tag_map = FemToOpsTagMap.from_h5(model_h5)
+        else:
+            tag_map = self.tag_map
         if tag_map is None:
             raise RuntimeError(
-                "add_section_cut: no model.h5 bound. Pass model_h5= "
-                "to this call, or set director.set_model(opensees_model) "
-                "first."
+                "add_section_cut: no model.h5 source available. Bind "
+                "the director to a Results carrying an /opensees/ "
+                "orientation zone via director.bind_results(results), "
+                "or pass model_h5= to this call for a one-shot tag map."
             )
 
         from ._base import DiagramSpec
@@ -438,28 +432,38 @@ class ResultsDirector:
         followed by each sweep's fan-out flattened in sweep order).
 
         The cuts source is the bound :class:`OpenSeesModel` handle
-        when available (:meth:`set_model`); otherwise falls back to
-        reading ``model_h5`` directly via :func:`read_cuts_and_sweeps`.
-        The :class:`FemToOpsTagMap` still requires ``model_h5`` to be
-        bound (path-based today).
+        when available (:meth:`set_model` or :meth:`bind_results`);
+        otherwise falls back to reading the bound Results' file via
+        :func:`read_cuts_and_sweeps`.  The :class:`FemToOpsTagMap`
+        is built lazily inside :attr:`tag_map` from the same source.
+
+        ADR 0026 PR-stretch — the fallback path was previously gated
+        on ``self._model_h5``; it is now derived on demand via
+        :func:`resolve_orientation_source` against the bound Results.
 
         Pre-v4 files (no ``/opensees/cuts/``) produce an empty result.
         """
         if self._opensees_model is not None:
             # Chain-forward path — cuts iteration via the handle.
-            # The tag_map still needs a file path (path-based by
-            # current contract); the bind requirement is enforced by
-            # ``add_section_cut`` downstream.
             cuts = tuple(self._opensees_model.cuts())
             sweeps = tuple(self._opensees_model.sweeps())
         else:
-            if self._model_h5 is None:
+            # File-fallback path — read cuts directly off the bound
+            # Results' file.  Note: cuts persistence is independent
+            # of the orientation zone (a file can carry
+            # /opensees/cuts/ without /opensees/transforms/), so we
+            # use the raw ``_path`` here rather than
+            # :func:`resolve_orientation_source`.
+            path = getattr(self._results, "_path", None) if self._results else None
+            if path is None:
                 raise RuntimeError(
                     "load_cuts_from_h5: no cuts source bound. Call "
-                    "director.set_model(opensees_model) first."
+                    "director.bind_results(results) (or set_model) "
+                    "with a Results pointing at a file with "
+                    "/opensees/cuts/ first."
                 )
             from apeGmsh.cuts import read_cuts_and_sweeps
-            cuts, sweeps = read_cuts_and_sweeps(self._model_h5)
+            cuts, sweeps = read_cuts_and_sweeps(path)
         attached: list = []
         for cut in cuts:
             attached.append(self.add_section_cut(cut))
@@ -486,9 +490,10 @@ class ResultsDirector:
         own label; pass ``label_prefix`` to override (becomes
         ``f"{prefix}[{i}]"``).
         """
-        if model_h5 is not None:
-            # Internal binder — see ``add_section_cut`` for rationale.
-            self._bind_model_h5(model_h5)
+        # ADR 0026 PR-stretch: forward ``model_h5=`` to every per-cut
+        # add_section_cut call instead of mutating director state.
+        # Each cut builds its own transient tag map; cheap because
+        # FemToOpsTagMap.from_h5 only walks /opensees/element_meta.
         diagrams: list = []
         for i, cut in enumerate(sweep):
             cut_label = (
@@ -502,6 +507,7 @@ class ResultsDirector:
                 composition_name=composition_name,
                 label=cut_label,
                 style=style,
+                model_h5=model_h5,
             ))
         return diagrams
 
