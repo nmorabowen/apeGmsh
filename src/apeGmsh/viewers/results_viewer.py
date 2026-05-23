@@ -250,16 +250,15 @@ class ResultsViewer:
         (Composed-file pattern, the typical Phase-8 landing), build
         from the file via :meth:`ViewerData.from_h5`; otherwise fall
         back to the live :meth:`ViewerData.from_fem` path (degraded
-        orientation per ADR 0018 INV-11).
+        orientation per ADR 0018 INV-11).  The "should we read from
+        the file?" predicate is centralised in
+        :func:`resolve_orientation_source` — see ADR 0026.
         """
         from .data import ViewerData
-        from .data._h5_probe import has_opensees_orientation
-        results_path = getattr(self._results, "_path", None)
-        if (
-            results_path is not None
-            and has_opensees_orientation(Path(results_path))
-        ):
-            return ViewerData.from_h5(str(results_path))
+        from .data._h5_probe import resolve_orientation_source
+        source = resolve_orientation_source(self._results)
+        if source is not None:
+            return ViewerData.from_h5(str(source))
         return ViewerData.from_fem(self._results.fem)
 
     def _show_impl(self, *, maximized: bool = True):
@@ -1406,18 +1405,15 @@ class ResultsViewer:
         """
         if self._director is None:
             return
-        from .data._h5_probe import has_opensees_orientation
+        from .data._h5_probe import resolve_orientation_source
         from ._log import log_action, log_error
         # Resolve the file path the director should bind for FemToOps
         # tag mapping.  Phase 8: ``results._path`` is the canonical
         # source (Composed-file pattern carries ``/opensees/``).
-        results_path = getattr(self._results, "_path", None)
-        bind_path: Optional[Path] = None
-        if (
-            results_path is not None
-            and has_opensees_orientation(Path(results_path))
-        ):
-            bind_path = Path(results_path)
+        # Centralised in :func:`resolve_orientation_source` — see
+        # ADR 0026 for the H5ModelReader Protocol that supersedes the
+        # path-return contract.
+        bind_path: Optional[Path] = resolve_orientation_source(self._results)
         # Whether auto-load should fire (no explicit cuts; cuts
         # source present).
         model = self._results.model

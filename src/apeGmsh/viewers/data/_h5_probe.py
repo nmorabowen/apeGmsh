@@ -21,7 +21,7 @@ this rule prevents.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Union
+from typing import Any, Optional, Union
 
 _PathLike = Union[str, Path]
 
@@ -67,4 +67,50 @@ def has_opensees_orientation(path: _PathLike) -> bool:
         return False
 
 
-__all__ = ["has_opensees_orientation"]
+def resolve_orientation_source(results: Any) -> Optional[Path]:
+    """Return the file path that carries an orientation zone for
+    ``results``, or ``None`` when the viewer must degrade.
+
+    Single source of truth for the "should we read from the file or
+    fall back to the live FEMData?" decision that the post-solve
+    viewer makes in two places — :meth:`ResultsViewer._build_viewer_data`
+    (scene snapshot) and :meth:`ResultsViewer._apply_pending_cuts`
+    (director binding).  Both paths previously inlined the same
+    ``Path + has_opensees_orientation`` block, drifting independently.
+
+    The probe gate is:
+
+    * ``results._path`` must be a non-None filesystem path
+      (in-memory ``Results`` and recorder flavours yield ``None``).
+    * That path must satisfy :func:`has_opensees_orientation`
+      (both ``/opensees/transforms`` and ``/opensees/element_meta``
+      groups present).
+
+    Returns ``None`` if either gate fails. Producer-agnostic by
+    construction — the probe inspects the file, not its provenance.
+
+    .. note::
+       ADR 0026 (proposed) widens this to return an ``H5ModelReader``
+       instead of a ``Path``. Until that lands, the return is the
+       ``Path`` consumed by :func:`ViewerData.from_h5` and
+       :func:`FemToOpsTagMap.from_h5`.  The signature change at
+       adoption time is a one-line update at each call site.
+
+    Parameters
+    ----------
+    results
+        Any object exposing a ``_path`` attribute — typically a
+        :class:`apeGmsh.results.Results` instance.  Duck-typed via
+        :func:`getattr`; no import edge into :mod:`apeGmsh.results`
+        is created (ADR 0014 INV-1 is preserved).
+    """
+    results_path = getattr(results, "_path", None)
+    if results_path is None:
+        return None
+    p = Path(results_path)
+    if not has_opensees_orientation(p):
+        return None
+    return p
+
+
+__all__ = ["has_opensees_orientation", "resolve_orientation_source"]

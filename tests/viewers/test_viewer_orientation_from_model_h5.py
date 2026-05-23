@@ -293,3 +293,74 @@ def test_probe_rejects_non_hdf5_file(tmp_path: Path) -> None:
     junk = tmp_path / "junk.h5"
     junk.write_bytes(b"not actually hdf5\n")
     assert has_opensees_orientation(junk) is False
+
+
+# =====================================================================
+# resolve_orientation_source — the centralised gate (PR3 / ADR 0026)
+# =====================================================================
+#
+# Two ResultsViewer call sites previously inlined the same
+# ``Path + has_opensees_orientation`` block (the scene snapshot at
+# ``_build_viewer_data`` and the cuts auto-load gate at
+# ``_apply_pending_cuts``).  Collapsing into one helper preserves the
+# probe semantics — these tests pin that contract.
+
+def test_resolve_returns_path_when_orientation_zone_present(tmp_path):
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    fem = make_two_node_beam()
+    oriented = tmp_path / "oriented.h5"
+    _write_oriented_model(oriented, fem=fem)
+
+    results = SimpleNamespace(_path=oriented)
+    source = resolve_orientation_source(results)
+
+    assert source == oriented
+    assert isinstance(source, Path)
+
+
+def test_resolve_returns_none_when_orientation_zone_absent(tmp_path):
+    """A bare model.h5 (no /opensees/transforms or /opensees/element_meta)
+    yields None — the viewer must degrade to the from_fem path."""
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    fem = make_two_node_beam()
+    bare = tmp_path / "bare.h5"
+    _write_bare_model(bare, fem=fem)
+
+    results = SimpleNamespace(_path=bare)
+
+    assert resolve_orientation_source(results) is None
+
+
+def test_resolve_returns_none_when_results_has_no_path():
+    """In-memory Results (``_path is None``) yields None — typical for
+    recorder-flavoured Results and for hand-constructed test fixtures."""
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    results = SimpleNamespace(_path=None)
+
+    assert resolve_orientation_source(results) is None
+
+
+def test_resolve_returns_none_when_results_path_does_not_exist(tmp_path):
+    """A ``_path`` that points at a nonexistent file yields None — the
+    probe's "should I auto-resolve?" contract trumps any path-shape
+    inference."""
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    results = SimpleNamespace(_path=tmp_path / "never_written.h5")
+
+    assert resolve_orientation_source(results) is None
+
+
+def test_resolve_is_duck_typed_no_results_import():
+    """Verify the resolver never imports apeGmsh.results — it operates
+    entirely on ``getattr(results, "_path", None)``.  Preserves
+    ADR 0014 INV-1: viewers/data/ has no import edge into
+    apeGmsh.results.  The probe accepts any object with a _path
+    attribute; the test passes a bare SimpleNamespace."""
+    from apeGmsh.viewers.data._h5_probe import resolve_orientation_source
+
+    # No _path attribute at all → also None (getattr default fires).
+    assert resolve_orientation_source(SimpleNamespace()) is None
