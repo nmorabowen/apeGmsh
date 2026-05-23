@@ -405,6 +405,7 @@ class MeshViewer:
             sel=sel,
             vis_mgr=vis_mgr,
             plotter=plotter,
+            view=self._view,
         )
 
         # ── Browser tab (groups + element types visibility) ─────────
