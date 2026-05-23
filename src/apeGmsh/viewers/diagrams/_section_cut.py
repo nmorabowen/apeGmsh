@@ -106,8 +106,11 @@ class SectionCutDiagram(Diagram):
         if self._tag_map is None:
             raise RuntimeError(
                 "SectionCutDiagram.attach requires a FemToOpsTagMap. "
-                "Use director.add_section_cut(cut_def, model_h5=path) "
-                "which sets it implicitly."
+                "Bind the director to a Results that carries an "
+                "/opensees/ orientation zone — typically via "
+                "director.bind_results(results), then call "
+                "director.add_section_cut(cut_def) which picks the "
+                "tag-map up from the director's bound state."
             )
         super().attach(plotter, view, scene)
 
@@ -125,8 +128,9 @@ class SectionCutDiagram(Diagram):
         except KeyError as exc:
             raise NoDataError(
                 f"SectionCutDiagram: cut.element_ids do not match the "
-                f"loaded model.h5 — {exc}. Check that director's model_h5 "
-                f"points at the same run the cut was built against."
+                f"loaded model.h5 — {exc}. Check that the director's "
+                f"bound Results points at the same run the cut was "
+                f"built against (director.bind_results(results))."
             ) from exc
         self._filter_fem_eids = fem_eids
 
