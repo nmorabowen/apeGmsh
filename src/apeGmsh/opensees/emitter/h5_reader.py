@@ -30,6 +30,7 @@ Schema-version compatibility (ADR 0023):
 from __future__ import annotations
 
 import builtins
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -60,9 +61,51 @@ if TYPE_CHECKING:
 __all__ = [
     "H5Model",
     "MalformedH5Error",
+    "PartitionEmittedRecord",
     "SchemaVersionError",
     "open",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class PartitionEmittedRecord:
+    """Read-side view of one ``/opensees/partitions/partition_NN`` group.
+
+    Schema 2.10.0 (ADR 0027).  The reader returns these as the value
+    of :meth:`H5Model.partitions`; they mirror the bridge's
+    :class:`apeGmsh.mesh._kernel.records._partitions.PartitionRecord`
+    (the broker / mesh side) but are intentionally a separate type —
+    that record is the unpartitioned-time topology snapshot used by
+    the broker to assign rank ownership; this record is the emitted
+    rank's per-block emit log captured by :class:`H5Emitter`.  The
+    two need not stay aligned beyond the ``rank`` field — e.g. the
+    emitted block can carry foreign-declared nodes from
+    cross-partition MP constraints that don't appear on the broker's
+    side (ADR 0027 §"Decision" INV-2).
+
+    Attributes
+    ----------
+    rank
+        OpenSeesMP rank id this block scopes.  Matches the value
+        passed to :meth:`H5Emitter.partition_open`.
+    element_ids
+        Tuple of OpenSees element tags owned by this rank, in
+        emission order.
+    node_ids
+        Tuple of OpenSees node tags declared on this rank's block,
+        deduped within the block.  Includes any foreign-declared
+        nodes from replicated MP constraints.
+    boundary_node_ids
+        Tuple of node tags shared with at least one other rank
+        (per-rank set intersected against the union of every other
+        rank's node set).  Empty when the model carries only one
+        partition.
+    """
+
+    rank: int
+    element_ids: tuple[int, ...]
+    node_ids: tuple[int, ...]
+    boundary_node_ids: tuple[int, ...]
 
 
 class MalformedH5Error(ValueError):
@@ -335,8 +378,8 @@ class H5Model:
         return self._group_attrs_map("opensees/element_meta")
 
     def element_meta_arrays(self, type_token: str) -> dict[str, Any]:
-        """Return ``{ids, fem_eids?, args?, args_str?}`` for one
-        element-meta group.
+        """Return ``{ids, fem_eids?, partition_ids?, args?, args_str?}``
+        for one element-meta group.
 
         Raises ``KeyError`` if the type group is missing.
 
@@ -345,11 +388,19 @@ class H5Model:
         Sentinel value ``-1`` (matches
         :data:`apeGmsh.opensees._internal.tag_resolution.MISSING_FEM_ELEMENT_ID`)
         marks records emitted outside a bridge fan-out.
+
+        ``partition_ids`` is the schema 2.10.0 (ADR 0027) column
+        carrying the rank each element was emitted under.  Sentinel
+        ``-1`` marks records emitted outside a ``partition_open`` /
+        ``partition_close`` bracket.  Optional — pre-2.10.0 archives
+        will not carry it.
         """
         sub = self._f[f"opensees/element_meta/{type_token}"]
         out: dict[str, Any] = {"ids": sub["ids"][:]}
         if "fem_eids" in sub:
             out["fem_eids"] = sub["fem_eids"][:]
+        if "partition_ids" in sub:
+            out["partition_ids"] = sub["partition_ids"][:]
         if "args" in sub:
             out["args"] = sub["args"][:]
         if "args_str" in sub:
@@ -612,6 +663,50 @@ class H5Model:
             return out
         for name in ops["recorders"]:
             out.append(self._recorder_record(ops["recorders"][name]))
+        return out
+
+    def partitions(self) -> list[PartitionEmittedRecord]:
+        """Return every ``/opensees/partitions/partition_NN`` sub-group.
+
+        Schema 2.10.0 (ADR 0027).  Returns ``[]`` when no partition
+        group is present in the file (back-compat: pre-2.10.0 archives
+        and 2.10.x archives written outside any
+        :meth:`H5Emitter.partition_open` / :meth:`partition_close`
+        bracket both produce an empty list).
+
+        The list is ordered by the ``partition_NN`` group ordinal
+        (insertion order on write — h5py preserves group creation
+        order).  Each record carries the rank id plus the three
+        int64 arrays as immutable tuples.
+        """
+        out: list[PartitionEmittedRecord] = []
+        if "opensees" not in self._f:
+            return out
+        ops = self._f["opensees"]
+        if "partitions" not in ops:
+            return out
+        partitions = ops["partitions"]
+        for name in partitions:
+            g = partitions[name]
+            attrs = _attrs_as_dict(g)
+            element_ids = (
+                tuple(int(v) for v in g["element_ids"][:])
+                if "element_ids" in g else ()
+            )
+            node_ids = (
+                tuple(int(v) for v in g["node_ids"][:])
+                if "node_ids" in g else ()
+            )
+            boundary = (
+                tuple(int(v) for v in g["boundary_node_ids"][:])
+                if "boundary_node_ids" in g else ()
+            )
+            out.append(PartitionEmittedRecord(
+                rank=int(attrs.get("rank", 0)),
+                element_ids=element_ids,
+                node_ids=node_ids,
+                boundary_node_ids=boundary,
+            ))
         return out
 
     # -- Private decoders for the typed accessors -----------------------

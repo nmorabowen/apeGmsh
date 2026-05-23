@@ -72,6 +72,7 @@ the dependency into import time for users who never call ``ops.h5()``.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -206,7 +207,25 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     referenced region is missing at re-emit time).  Per ADR 0023
 #:     two-version reader window, both 2.8.x and 2.9.x files are
 #:     accepted.
-SCHEMA_VERSION: str = "2.9.0"
+#:   * 2.10.0 — ADR 0027 (cross-partition MP-constraint emission policy):
+#:     the H5 emitter gained the ``/opensees/partitions/`` group plus
+#:     a parallel ``partition_ids`` int64 column on every
+#:     ``/opensees/element_meta/{type_token}/`` group.  The new
+#:     :meth:`partition_open` / :meth:`partition_close` Protocol
+#:     methods bracket per-rank emit blocks; each block populates one
+#:     ``partition_NN`` sub-group with ``element_ids`` /
+#:     ``node_ids`` / ``boundary_node_ids`` int64 datasets and
+#:     ``rank`` / ``n_elements`` / ``n_nodes`` scalar attrs.  The
+#:     parent ``/opensees/partitions/`` group carries the
+#:     ``n_partitions`` scalar attr.  Boundary nodes are computed on
+#:     write as the per-rank set intersected against every other
+#:     rank's node set — symmetric across ranks.  Elements emitted
+#:     outside a ``partition_open`` / ``partition_close`` bracket get
+#:     ``partition_ids`` row value ``-1``.  Additive — old 2.9.x
+#:     readers ignore the new group and the new column.  Per ADR 0023
+#:     two-version reader window, both 2.9.x and 2.10.x files are
+#:     accepted.
+SCHEMA_VERSION: str = "2.10.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -355,6 +374,45 @@ def _write_param_array(
 
 
 # ---------------------------------------------------------------------------
+# Partition emission (ADR 0027, schema 2.10.0)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class _PartitionEmitBlock:
+    """In-memory accumulator for a single ``partition_open(rank)`` block.
+
+    Lives only inside :class:`H5Emitter`; the read-side reuses
+    :class:`apeGmsh.opensees.emitter.h5_reader.PartitionEmittedRecord`
+    which is the public surface.  The two are intentionally separate —
+    the writer carries mutable accumulators (lists; node_set for dedupe),
+    the reader carries immutable tuples.
+    """
+
+    #: OpenSeesMP rank id this block scopes.
+    rank: int
+    #: Node tags emitted under this block, in insertion order, with
+    #: duplicates dropped (a phantom node declared twice in one rank
+    #: block from two MP constraints would still count once).
+    node_ids: list[int] = field(default_factory=list)
+    #: Element tags emitted under this block, in insertion order.
+    element_ids: list[int] = field(default_factory=list)
+    #: O(1) dedupe membership test for ``node_ids`` (parallel
+    #: shadow — never read directly, only via ``add_node``).
+    _node_set: set[int] = field(default_factory=set)
+
+    def add_node(self, tag: int) -> None:
+        """Append ``tag`` if not already present (dedupe within block)."""
+        if tag not in self._node_set:
+            self._node_set.add(tag)
+            self.node_ids.append(tag)
+
+    def add_element(self, tag: int) -> None:
+        """Append ``tag`` to the block's element list."""
+        self.element_ids.append(tag)
+
+
+# ---------------------------------------------------------------------------
 # H5Emitter
 # ---------------------------------------------------------------------------
 
@@ -452,6 +510,20 @@ class H5Emitter:
         # with bridge-driven ``element()`` calls on the same instance.
         self._orientation_tag_counter: int = 0
 
+        # Partition emission state (ADR 0027, schema 2.10.0).
+        # ``_partition_current`` is the block in flight between
+        # ``partition_open(rank)`` and ``partition_close()``; while
+        # non-None, every :meth:`node` and :meth:`element` call also
+        # appends to it.  ``_partition_blocks`` accumulates closed
+        # blocks in emit order (one per rank).  ``_element_ranks`` is
+        # a parallel list to ``self._elements`` carrying the rank each
+        # element was emitted under (sentinel ``-1`` for outside-bracket
+        # emission); it materializes the per-element ``partition_ids``
+        # column on ``/opensees/element_meta/{type_token}/``.
+        self._partition_current: _PartitionEmitBlock | None = None
+        self._partition_blocks: list[_PartitionEmitBlock] = []
+        self._element_ranks: list[int] = []
+
     # =====================================================================
     # Protocol — Model
     # =====================================================================
@@ -484,6 +556,13 @@ class H5Emitter:
         # (no other emitter path passes ``ndf=`` today).
         if ndf is not None:
             self._phantom_node_tags.append(int(tag))
+        # Partition emission (ADR 0027) — while a per-rank block is
+        # open, also record the tag on the active block so the
+        # ``/opensees/partitions/partition_NN/node_ids`` dataset
+        # reflects every node declared on that rank (native + foreign
+        # MP-constraint declarations both count, per INV-2).
+        if self._partition_current is not None:
+            self._partition_current.add_node(int(tag))
 
     def fix(self, tag: int, *dofs: int) -> None:
         self._fixes.append(_FixRecord(tag=int(tag), dofs=tuple(int(d) for d in dofs)))
@@ -696,6 +775,18 @@ class H5Emitter:
                 fem_eid=fem_eid,
             )
         )
+        # Partition emission (ADR 0027) — record the per-element rank
+        # parallel to ``self._elements`` so the per-type
+        # ``partition_ids`` column on ``/opensees/element_meta/`` can
+        # be materialised at write time.  Sentinel ``-1`` for elements
+        # emitted outside any ``partition_open`` / ``partition_close``
+        # bracket.  Also append to the active block's ``element_ids``
+        # list so the per-rank dataset reflects emission order.
+        if self._partition_current is not None:
+            self._element_ranks.append(self._partition_current.rank)
+            self._partition_current.add_element(int(tag))
+        else:
+            self._element_ranks.append(-1)
 
     # =====================================================================
     # Public — declarative orientation inject (ADR 0018 / ModelData)
@@ -826,6 +917,13 @@ class H5Emitter:
                     fem_eid=int(fem_eid),
                 )
             )
+            # Parallel partition_ids row — declarative inject is never
+            # rank-scoped (ModelData runs outside the bridge fan-out),
+            # so the sentinel -1 always applies.  Keeping the lists
+            # parallel is invariant: a future caller mixing this path
+            # with bridge-driven element() must not break the
+            # element_meta column write.
+            self._element_ranks.append(-1)
 
     # =====================================================================
     # Protocol — Time series
@@ -961,6 +1059,59 @@ class H5Emitter:
         self._decl_context = None
 
     # =====================================================================
+    # Protocol — Partition emission (ADR 0027, schema 2.10.0)
+    # =====================================================================
+
+    def partition_open(self, rank: int) -> None:
+        """Enter rank-scoped emit tracking.
+
+        Subsequent :meth:`node` and :meth:`element` calls — until the
+        matching :meth:`partition_close` — are mirrored onto an in-memory
+        accumulator for the rank.  Each accumulator becomes one
+        ``/opensees/partitions/partition_NN`` sub-group at
+        :meth:`write` time.
+
+        Unlike the streaming emitters (Tcl / Py), H5 has no notion of a
+        "current rank block" in the file format; the call is purely a
+        bookkeeping mode switch on the in-memory buffer.
+
+        Raises
+        ------
+        RuntimeError
+            If another partition block is already open.  Nested
+            partition brackets are not supported — the bridge fan-out
+            in ``_internal/build.py`` calls
+            ``partition_open(rank) ... partition_close()`` in strict
+            sequence, one rank at a time (ADR 0027 §"Implementation
+            pointer").
+        """
+        if self._partition_current is not None:
+            raise RuntimeError(
+                "H5Emitter.partition_open: a partition block is "
+                f"already open (rank={self._partition_current.rank}); "
+                "call partition_close() first."
+            )
+        self._partition_current = _PartitionEmitBlock(rank=int(rank))
+
+    def partition_close(self) -> None:
+        """Close the active partition block and stash it for write-time.
+
+        The accumulated ``node_ids`` / ``element_ids`` are frozen into
+        the block; :meth:`_write_partitions` later writes them out and
+        computes ``boundary_node_ids`` per-rank as the intersection
+        against every other rank's node set (ADR 0027 §"Decision" —
+        the boundary-node computation is symmetric across ranks and
+        does not require a separate pass).
+
+        Calling :meth:`partition_close` with no open block is a no-op
+        — mirrors the tolerance :meth:`pattern_close` already provides.
+        """
+        if self._partition_current is None:
+            return
+        self._partition_blocks.append(self._partition_current)
+        self._partition_current = None
+
+    # =====================================================================
     # Protocol — Analysis chain
     # =====================================================================
 
@@ -1051,6 +1202,7 @@ class H5Emitter:
         self._write_regions(f)
         self._write_recorders(f)
         self._write_constraints(f)
+        self._write_partitions(f)
         self._write_analysis(f)
 
     # -- Per-group writers (split out so each step adds one) -------------
@@ -1416,13 +1568,25 @@ class H5Emitter:
             return
         import numpy as np
 
-        # Bin by type token; preserve per-type insertion order.
-        bins: dict[str, list[_ElementRecord]] = {}
-        for rec in self._elements:
-            bins.setdefault(rec.type_token, []).append(rec)
+        # Bin by type token; preserve per-type insertion order.  Each
+        # bin entry pairs a record with its index in ``self._elements``
+        # so the parallel ``self._element_ranks`` row (schema 2.10.0
+        # ``partition_ids`` column) can be looked up by index.
+        bins: dict[str, list[tuple[int, _ElementRecord]]] = {}
+        for i, rec in enumerate(self._elements):
+            bins.setdefault(rec.type_token, []).append((i, rec))
+
+        # Safety net: if the partition tracker fell out of sync with
+        # the element list, fall back to all-sentinel.  The element()
+        # method is the only writer for both lists, so they should be
+        # the same length — this guards against unrelated bridge
+        # refactors that might bypass element() (e.g. a future
+        # declarative front-door that forgets to append).
+        ranks_ok = len(self._element_ranks) == len(self._elements)
 
         parent = self._ops_group(f).create_group("element_meta")
-        for type_token, recs in bins.items():
+        for type_token, indexed_recs in bins.items():
+            recs = [rec for _, rec in indexed_recs]
             g = parent.create_group(element_group_name(type_token))
             _set_attr(g, "type", type_token)
             g.create_dataset(
@@ -1437,6 +1601,20 @@ class H5Emitter:
             g.create_dataset(
                 "fem_eids",
                 data=np.asarray([r.fem_eid for r in recs], dtype=np.int64),
+            )
+            # Schema 2.10.0 (ADR 0027): parallel array of partition
+            # ranks — one int64 per row of ``ids`` carrying the rank
+            # the element was emitted under, or ``-1`` for elements
+            # emitted outside a ``partition_open`` / ``partition_close``
+            # bracket.  Always emitted (additive minor — old 2.9.x
+            # readers ignore the new column).
+            if ranks_ok:
+                rank_row = [self._element_ranks[i] for i, _ in indexed_recs]
+            else:
+                rank_row = [-1] * len(indexed_recs)
+            g.create_dataset(
+                "partition_ids",
+                data=np.asarray(rank_row, dtype=np.int64),
             )
             self._write_element_argstack(g, recs)
 
@@ -1793,6 +1971,94 @@ class H5Emitter:
                 tuple(padded), len(rec.args), rec.name,
             )
         parent.create_dataset("embeddedNode", data=rows)
+
+    # -- Partition emission (ADR 0027, schema 2.10.0) -------------------
+
+    def _write_partitions(self, f: Any) -> None:
+        """Persist ``/opensees/partitions/`` per ADR 0027.
+
+        One ``partition_NN`` sub-group per closed
+        :meth:`partition_open` / :meth:`partition_close` block; each
+        sub-group carries:
+
+        * ``rank`` (int64 attr) — the OpenSeesMP rank id.
+        * ``n_elements`` / ``n_nodes`` (int64 attrs) — convenience
+          counters (``len`` of the respective dataset).
+        * ``element_ids`` (int64 1-D dataset) — OpenSees element tags
+          owned by this rank (insertion order).
+        * ``node_ids`` (int64 1-D dataset) — OpenSees node tags
+          declared on this rank's block, deduped within block.
+          Includes foreign-declared nodes from cross-partition MP
+          constraints (ADR 0027 §"Decision" INV-2 / phantom-node
+          policy).
+        * ``boundary_node_ids`` (int64 1-D dataset) — nodes shared
+          with at least one other rank (the per-rank set intersected
+          against the union of every other rank's node set).  May be
+          empty (e.g. a model with one partition).
+
+        The parent group carries the ``n_partitions`` (int64 attr) so
+        a reader can quickly probe the count without enumerating
+        children.  When no partition block was ever opened, the group
+        is not created at all — old 2.9.x readers see no change to
+        the file shape.
+
+        Boundary-node strategy: **one-pass intersection on write** —
+        symmetric across ranks because the per-rank node sets are
+        all available when this method runs (the bridge has finished
+        emitting before :meth:`write_opensees_into` is called).  See
+        ADR 0027 §"Decision" INV-3 for the determinism contract.
+        """
+        # If a caller forgot to close the final partition block, flush
+        # it defensively (mirrors ``_write_patterns``'s open-pattern
+        # auto-close).  The bridge always pairs open/close; this is a
+        # safety net for direct tests / interactive use.
+        if self._partition_current is not None:
+            self._partition_blocks.append(self._partition_current)
+            self._partition_current = None
+
+        if not self._partition_blocks:
+            return
+
+        import numpy as np
+
+        # Precompute each block's node set so the per-rank intersection
+        # is O(N_blocks * mean_block_size) total.  A second loop then
+        # subtracts the per-rank set from the global union to identify
+        # the boundary slice for each rank.
+        node_sets = [set(blk.node_ids) for blk in self._partition_blocks]
+
+        parent = self._ops_group(f).create_group("partitions")
+        _set_attr(parent, "n_partitions", len(self._partition_blocks))
+
+        for idx, blk in enumerate(self._partition_blocks):
+            g = parent.create_group(f"partition_{idx:02d}")
+            _set_attr(g, "rank", blk.rank)
+            _set_attr(g, "n_elements", len(blk.element_ids))
+            _set_attr(g, "n_nodes", len(blk.node_ids))
+            g.create_dataset(
+                "element_ids",
+                data=np.asarray(blk.element_ids, dtype=np.int64),
+            )
+            g.create_dataset(
+                "node_ids",
+                data=np.asarray(blk.node_ids, dtype=np.int64),
+            )
+            # Boundary nodes: intersect this rank's node set with the
+            # union of every other rank's node set.  A node that lives
+            # on rank K and rank L appears in both ranks'
+            # ``boundary_node_ids`` (symmetric).  Preserve emission
+            # order from this rank's ``node_ids`` so the dataset is
+            # deterministic and easy to diff.
+            others: set[int] = set()
+            for other_idx, other_set in enumerate(node_sets):
+                if other_idx == idx:
+                    continue
+                others.update(other_set)
+            boundary = [n for n in blk.node_ids if n in others]
+            g.create_dataset(
+                "boundary_node_ids",
+                data=np.asarray(boundary, dtype=np.int64),
+            )
 
     # -- Analysis chain --------------------------------------------------
 
