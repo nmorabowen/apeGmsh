@@ -10,7 +10,7 @@ Read-only — never modifies state.
 """
 from __future__ import annotations
 
-from typing import Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from apeGmsh.core.MassesComposite import MassesComposite
@@ -31,12 +31,17 @@ class MassTabPanel:
         view: "ViewerData | None" = None,
         *,
         on_overlay_changed: Callable[[bool], None] | None = None,
+        overlay_model: Any = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
         self._mass = mass_composite
         self._view = view
         self._on_overlay_changed = on_overlay_changed
+        # PR5 — see LoadsTabPanel for the design.
+        self._overlay_model = overlay_model
+        if overlay_model is not None:
+            overlay_model.subscribe(self._sync_from_overlay_model)
 
         self.widget = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.widget)
@@ -190,6 +195,26 @@ class MassTabPanel:
 
     def show_overlays(self) -> bool:
         return self._show_cb.isChecked()
+
+    def _sync_from_overlay_model(self) -> None:
+        """Refresh the overlay checkbox to match the
+        OverlayVisibilityModel (PR5 — symmetric with outline tree).
+
+        ``blockSignals(True)`` prevents the ``toggled`` signal from
+        firing during the programmatic ``setChecked`` — otherwise
+        the callback would re-write the same state to the model
+        (a no-op via idempotent setters, but cleaner to skip).
+        """
+        if self._overlay_model is None:
+            return
+        target = bool(self._overlay_model.mass_visible)
+        if self._show_cb.isChecked() == target:
+            return
+        was_blocked = self._show_cb.blockSignals(True)
+        try:
+            self._show_cb.setChecked(target)
+        finally:
+            self._show_cb.blockSignals(was_blocked)
 
     # ── Handlers ────────────────────────────────────────────
 
