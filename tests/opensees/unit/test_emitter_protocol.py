@@ -118,6 +118,8 @@ REPRESENTATIVE_METHODS = (
     # MP constraint methods (ADR 0022, Phase 7b)
     "equalDOF", "rigidLink", "rigidDiaphragm",
     "embeddedNode", "mp_constraint_comment",
+    # Partition-emission scoping (ADR 0027, P4)
+    "partition_open", "partition_close",
 )
 
 
@@ -185,3 +187,31 @@ def test_node_accepts_ndf_kwarg_for_phantom() -> None:
     e = RecordingEmitter()
     e.node(99, 1.0, 2.0, 3.0, ndf=6)
     assert e.calls == [("node", (99, 1.0, 2.0, 3.0), {"ndf": 6})]
+
+
+# ---------------------------------------------------------------------------
+# Partition-emission scoping (ADR 0027, P4)
+# ---------------------------------------------------------------------------
+
+
+def test_partition_open_records_rank() -> None:
+    e = RecordingEmitter()
+    e.partition_open(3)
+    assert e.calls == [("partition_open", (3,), {})]
+
+
+def test_partition_close_records_no_args() -> None:
+    e = RecordingEmitter()
+    e.partition_close()
+    assert e.calls == [("partition_close", (), {})]
+
+
+def test_partition_open_close_pair_brackets_content() -> None:
+    """Bracket pair scopes the inner emit calls to a single rank."""
+    e = RecordingEmitter()
+    e.partition_open(0)
+    e.node(1, 0.0, 0.0, 0.0)
+    e.partition_close()
+    assert [c[0] for c in e.calls] == [
+        "partition_open", "node", "partition_close",
+    ]

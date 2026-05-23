@@ -17,6 +17,7 @@ This is the only place ``import openseespy.opensees`` may appear in
 """
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -24,6 +25,25 @@ if TYPE_CHECKING:
 
 
 __all__ = ["LiveOpsEmitter"]
+
+
+class _NoOpOps:
+    """A no-op stand-in for the openseespy module.
+
+    Used by :class:`LiveOpsEmitter` while a non-zero partition block
+    is open. Every attribute access returns a callable that swallows
+    its arguments and returns ``0`` (the convention :meth:`analyze`
+    uses for "no failure"). This lets every emit-style method on
+    :class:`LiveOpsEmitter` continue to call ``self._ops.X(...)``
+    unchanged while suppression is active.
+    """
+
+    __slots__ = ()
+
+    def __getattr__(self, _name: str) -> Any:
+        def _noop(*_args: Any, **_kwargs: Any) -> int:
+            return 0
+        return _noop
 
 
 def _get_ops() -> "ModuleType":
@@ -58,6 +78,18 @@ class LiveOpsEmitter:
         self._ops = _get_ops()
         if wipe:
             self._ops.wipe()
+        # Partition-emission state (ADR 0027 / P4). LiveOps is
+        # single-process; it cannot drive OpenSeesMP. ``partition_open(0)``
+        # passes through; ``partition_open(K!=0)`` swaps ``self._ops``
+        # for a :class:`_NoOpOps` so every subsequent emit method
+        # silently no-ops until the matching ``partition_close``. The
+        # real openseespy module is stashed in ``_real_ops`` and
+        # restored on ``partition_close``. A one-shot ``UserWarning``
+        # fires on the first non-zero ``partition_open`` to surface
+        # the contract mismatch (live cannot run partitioned models).
+        self._real_ops: "ModuleType" = self._ops
+        self._partition_warned: bool = False
+        self._in_partition: bool = False
 
     # -- Model ---------------------------------------------------------------
 
@@ -268,6 +300,44 @@ class LiveOpsEmitter:
         # :class:`apeGmsh.opensees.analysis.eigen.EigenResult`.
         values: Any = self._ops.eigen(solver, num_modes)
         return [float(v) for v in values]
+
+    # -- Partition emission scoping (ADR 0027, P4) --------------------------
+
+    def partition_open(self, rank: int) -> None:
+        """Begin a per-rank emission block.
+
+        LiveOps runs in a single Python process; it cannot drive
+        OpenSeesMP. The implementation treats itself as rank 0:
+
+        * ``rank == 0``: pass through — subsequent emits go to the
+          real openseespy module.
+        * ``rank != 0``: suppress every subsequent emit until the
+          matching ``partition_close`` by swapping ``self._ops`` for a
+          :class:`_NoOpOps`. A one-shot ``UserWarning`` fires on the
+          first non-zero call to surface the contract mismatch.
+        """
+        self._in_partition = True
+        if rank != 0:
+            if not self._partition_warned:
+                warnings.warn(
+                    "LiveOpsEmitter is single-process; "
+                    f"partition_open(rank={rank}) with rank!=0 will "
+                    "suppress emission. Use ops.tcl(...) / ops.py(...) "
+                    "+ `mpirun -np N OpenSeesMP` for true parallel runs.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                self._partition_warned = True
+            # Swap to a no-op stand-in. The real ops module is
+            # restored in ``partition_close``.
+            self._ops = _NoOpOps()  # type: ignore[assignment]
+        # rank == 0: pass through; ``self._ops`` already the real module.
+
+    def partition_close(self) -> None:
+        """End the current per-rank block; restore real openseespy."""
+        # Restore unconditionally; cheap and idempotent.
+        self._ops = self._real_ops
+        self._in_partition = False
 
     # -- Direct accessor for tests / diagnostics ----------------------------
 

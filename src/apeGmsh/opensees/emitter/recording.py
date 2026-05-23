@@ -224,3 +224,11 @@ class RecordingEmitter:
             ("eigen", (), {"num_modes": num_modes, "solver": solver}),
         )
         return []
+
+    # -- Partition emission scoping (ADR 0027, P4) -----------------------
+
+    def partition_open(self, rank: int) -> None:
+        self.calls.append(("partition_open", (rank,), {}))
+
+    def partition_close(self) -> None:
+        self.calls.append(("partition_close", (), {}))

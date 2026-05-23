@@ -55,6 +55,22 @@ driver method parallel to ``analyze``; wraps the eigenvalues in an
 mode)`` accessor over ``ops.nodeEigenvector``.  No schema bump — the
 H5 emitter no-ops on ``eigen`` because the call is a runtime
 retrieval, not a model-definition declaration.
+
+**Architecture event — ADR 0027 (P4, May 2026).** The Protocol was
+widened with two emission-scoping methods (:meth:`partition_open`,
+:meth:`partition_close`) that bracket a per-rank emission block.
+Tcl wraps the block in ``if {[getPID] == K} { ... }``; Py wraps it
+in ``if getPID() == K: ...``; LiveOps treats itself as rank 0 and
+suppresses emission on non-zero rank blocks; H5 collects per-rank
+content into a per-partition sub-group under ``/opensees/partitions/``;
+Recording captures both ``partition_open(rank)`` and
+``partition_close()`` events for tests. The Tcl / Py emitters also
+inject a one-shot runtime shim on the first ``partition_open`` call
+so single-process OpenSees still runs the deck: Tcl declares
+``proc getPID {} { return 0 }`` if not already present; Py wraps
+``from openseespy.opensees import getPID`` in a ``try / except
+ImportError`` with a fallback ``def getPID(): return 0``.  Schema
+bump opensees ``2.9.0 → 2.10.0`` per ADR 0023 — additive minor.
 """
 from __future__ import annotations
 
@@ -210,3 +226,31 @@ class Emitter(Protocol):
     def eigen(
         self, num_modes: int, *, solver: str = "-genBandArpack",
     ) -> list[float]: ...
+
+    # -- Partition emission scoping (ADR 0027, P4) -----------------------
+    # Bracket a per-rank emission block. Every emit call between
+    # ``partition_open(K)`` and the matching ``partition_close()`` is
+    # scoped to rank ``K``. Tcl wraps the block in
+    # ``if {[getPID] == K} { ... }``; Py wraps it in
+    # ``if getPID() == K: ...``; LiveOps treats itself as rank 0 and
+    # suppresses emission on non-zero rank blocks; H5 collects per-rank
+    # content into a per-partition sub-group; Recording captures both
+    # events. The Tcl / Py emitters inject a one-shot runtime shim on
+    # the first ``partition_open`` so single-process OpenSees still runs
+    # the deck — Tcl defines ``proc getPID {} { return 0 }`` and Py
+    # defines a ``getPID()`` fallback wrapped in a ``try / except
+    # ImportError`` from ``openseespy.opensees``.
+    def partition_open(self, rank: int) -> None:
+        """Open a per-rank emission block.
+
+        All subsequent emit calls until the matching
+        :meth:`partition_close` belong to the specified ``rank``.
+        Implementations MUST be idempotent w.r.t. preamble emission:
+        the partition-runtime shim (defining ``getPID`` fallback) is
+        emitted on the first ``partition_open`` call only.
+        """
+        ...
+
+    def partition_close(self) -> None:
+        """Close the current per-rank emission block."""
+        ...
