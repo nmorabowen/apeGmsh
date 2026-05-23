@@ -6,27 +6,26 @@ real model needs them.
 
 ## Node aggregator capabilities (v1 ships lean)
 
-`Node` for v1 exposes:
+`Node` ships:
 
 - `.coords`, `.tag`
 - `.fix(dofs=...)` (model-level)
 - `.mass(values=...)` (model-level)
 - `.load(forces=...)` inside a pattern context
+- `.region(name)` — assign the node to a named OpenSees Region;
+  ships on top of the `Emitter.region()` Protocol method from
+  ADR 0024.
 
 Held for later, in priority order:
 
-1. **`.region(name)`** — assign the node to an OpenSees Region
-   for damping, recorders, etc.  The `Emitter.region()` Protocol
-   method shipped with ADR 0024; the typed-primitive surface
-   re-uses it.
-2. **`.disp_history()` / `.element.disp_history()`** — pull recorder
+1. **`.disp_history()` / `.element.disp_history()`** — pull recorder
    output for a node or element after analysis.  Requires a
    registered :class:`Recorder` matching the query; the typed
    query layer composes over the existing Recorders system.
-3. **`.get_reaction()`** — query post-analysis reaction forces.
-4. **`.coupled_dofs()`** — list MP_Constraints that touch this node
+2. **`.get_reaction()`** — query post-analysis reaction forces.
+3. **`.coupled_dofs()`** — list MP_Constraints that touch this node
    (rigid links, equal_dof, etc.).
-5. **`.partition`** — owning partition tag for parallel runs.
+4. **`.partition`** — owning partition tag for parallel runs.
 
 ## Asymmetric-section warning at `geomTransf` build
 
