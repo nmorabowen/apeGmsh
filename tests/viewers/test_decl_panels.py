@@ -131,3 +131,68 @@ def test_masses_types_and_volume_payload(qapp):
     assert tgt == ("label", "shaft")
     assert params["density"] == pytest.approx(7850.0)
     assert params["derive_rotational"] is False
+
+
+# =====================================================================
+# _decl_record_view — LoadDef/MassDef → outline-row projection
+# =====================================================================
+#
+# Regression for the three-broker (ADR 0020 / Phase 8) field rename.
+# Pre-refactor model_viewer._rec_view read removed ``r.pg`` /
+# ``r.label`` attributes; the outline always saw
+# ``target_tuple = None`` and the edit-from-outline flow lost the
+# group/label discrimination.  LoadDef and MassDef now expose
+# ``target`` + ``target_source`` only (see
+# ``apeGmsh/_kernel/defs/loads.py:21,26``).
+
+
+def test_decl_record_view_pg_target_maps_to_group_tuple():
+    from apeGmsh._kernel.defs.loads import PointLoadDef
+    from apeGmsh.viewers.model_viewer import _decl_record_view
+
+    r = PointLoadDef(
+        target="Diaphragm", target_source="pg",
+        pattern="dead", force_xyz=(0.0, 0.0, -100.0),
+    )
+    out = _decl_record_view(r, with_pattern=True)
+
+    assert out["target_tuple"] == ("group", "Diaphragm")
+    assert out["target"] == "Diaphragm"
+    assert out["pattern"] == "dead"
+    assert out["type"] == "point"
+    assert out["params"]["force_xyz"] == (0.0, 0.0, -100.0)
+
+
+def test_decl_record_view_label_target_maps_to_label_tuple():
+    from apeGmsh._kernel.defs.masses import PointMassDef
+    from apeGmsh.viewers.model_viewer import _decl_record_view
+
+    r = PointMassDef(
+        target="lumped_top", target_source="label",
+        mass=50.0,
+    )
+    out = _decl_record_view(r, with_pattern=False)
+
+    assert out["target_tuple"] == ("label", "lumped_top")
+    assert out["target"] == "lumped_top"
+    assert "pattern" not in out
+    assert out["type"] == "point"
+
+
+def test_decl_record_view_auto_target_yields_none_tuple():
+    """target_source='auto' (e.g. user passed a Part / DimTag list)
+    must not be coerced into a group/label tuple — the outline shows
+    the bare target string and the edit flow leaves the type picker
+    on its current value."""
+    from apeGmsh._kernel.defs.loads import GravityLoadDef
+    from apeGmsh.viewers.model_viewer import _decl_record_view
+
+    r = GravityLoadDef(
+        target="Body", target_source="auto",
+        g=(0.0, 0.0, -9.81), density=2500.0,
+    )
+    out = _decl_record_view(r, with_pattern=True)
+
+    assert out["target_tuple"] is None
+    assert out["target"] == "Body"
+    assert out["type"] == "gravity"

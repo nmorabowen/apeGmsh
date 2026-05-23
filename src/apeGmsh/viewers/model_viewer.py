@@ -26,6 +26,54 @@ if TYPE_CHECKING:
     from .core.selection import SelectionState
 
 
+def _decl_record_view(r: Any, *, with_pattern: bool) -> dict:
+    """Project a LoadDef/MassDef onto the dict the panels render.
+
+    Three-broker (ADR 0020 / Phase 8): LoadDef and MassDef expose
+    ``target`` + ``target_source`` only — the pre-refactor
+    ``pg``/``label`` attributes are gone (see
+    ``apeGmsh/_kernel/defs/loads.py:21,26`` and
+    ``defs/masses.py``).  The outline tuple is derived from
+    ``target_source``; downstream consumers
+    (``_loads_panel.py:311``, ``_masses_panel.py:207``) expect the
+    ``("group"|"label", name)`` convention or ``None`` for
+    unresolved/auto targets.
+    """
+    t = (getattr(r, "load_type", None)
+         or getattr(r, "mass_type", None)
+         or getattr(r, "kind", None)
+         or getattr(r, "type", None)
+         or type(r).__name__)
+    tgt = getattr(r, "target", "") or ""
+    src = getattr(r, "target_source", "auto")
+    if src == "pg":
+        ttuple: tuple[str, Any] | None = ("group", tgt)
+    elif src == "label":
+        ttuple = ("label", tgt)
+    else:
+        ttuple = None
+    params: dict[str, Any] = {}
+    for a in dir(r):
+        if a.startswith("_"):
+            continue
+        try:
+            v = getattr(r, a)
+        except Exception:
+            continue
+        if callable(v):
+            continue
+        if isinstance(v, (int, float, bool, str, list, tuple)):
+            params[a] = v
+    d: dict[str, Any] = {
+        "key": id(r), "type": str(t), "target": str(tgt),
+        "target_tuple": ttuple,
+        "name": getattr(r, "name", None), "params": params,
+    }
+    if with_pattern:
+        d["pattern"] = getattr(r, "pattern", "default")
+    return d
+
+
 class ModelViewer:
     """Interactive BRep model viewer with physical group management.
 
@@ -1043,37 +1091,9 @@ class ModelViewer:
             kw.update(params)
             return kw
 
-        def _rec_view(r, with_pattern):
-            t = (getattr(r, "load_type", None)
-                 or getattr(r, "mass_type", None)
-                 or getattr(r, "kind", None)
-                 or getattr(r, "type", None)
-                 or type(r).__name__)
-            tgt = (getattr(r, "pg", None) or getattr(r, "label", None)
-                   or getattr(r, "target", None) or "")
-            ttuple = None
-            if getattr(r, "pg", None):
-                ttuple = ("group", r.pg)
-            elif getattr(r, "label", None):
-                ttuple = ("label", r.label)
-            params = {}
-            for a in dir(r):
-                if a.startswith("_"):
-                    continue
-                try:
-                    v = getattr(r, a)
-                except Exception:
-                    continue
-                if callable(v):
-                    continue
-                if isinstance(v, (int, float, bool, str, list, tuple)):
-                    params[a] = v
-            d = {"key": id(r), "type": str(t), "target": str(tgt),
-                 "target_tuple": ttuple,
-                 "name": getattr(r, "name", None), "params": params}
-            if with_pattern:
-                d["pattern"] = getattr(r, "pattern", "default")
-            return d
+        _rec_view = lambda r, with_pattern: _decl_record_view(  # noqa: E731
+            r, with_pattern=with_pattern
+        )
 
         def _loads_records():
             recs = getattr(self._parent.loads, "load_defs", []) or []
