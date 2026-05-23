@@ -33,4 +33,4 @@ earlier one, write a new ADR that supersedes it; do not edit history.
 | [0023](0023-per-zone-schema-versioning.md) | Per-zone schema versioning; two-version reader window | Accepted (replaces single-envelope policy) |
 | [0024](0024-emitter-protocol-widen-region.md) | `Emitter.region` Protocol widening for MPCO `pg=` filtering | Accepted (widens the `Emitter` Protocol; schema 2.8.0 → 2.9.0) |
 | [0025](0025-emitter-protocol-widen-eigen.md) | `Emitter.eigen` Protocol widening for one-shot modal solves; `apeSees.eigen` bridge method + `EigenResult` | Accepted (widens the `Emitter` Protocol; no schema bump) |
-| [0026](0026-h5modelreader-protocol-contract.md) | `H5ModelReader` Protocol — formalise the viewer-side model read contract; unblock director path-survivor elimination and foreign-format adapters | Proposed (May 2026; successor to 0014/0019/0020) |
+| [0026](0026-h5modelreader-protocol-contract.md) | `H5ModelReader` Protocol — formalise the viewer-side model read contract; unblock director path-survivor elimination and foreign-format adapters | Accepted (May 2026; successor to 0014/0019/0020; adoption via PRs 7-a through 7-d) |

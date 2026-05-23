@@ -1,11 +1,13 @@
 # ADR 0026 — `H5ModelReader` Protocol contract for viewer-side model access
 
-**Status:** Proposed (May 2026). Successor work to ADR 0014
-(viewers pure-h5 consumer), ADR 0019 (`OpenSeesModel` read-side
-broker), and ADR 0020 (Results carries `OpenSeesModel` via Composed
-file). Codifies the implicit contract Phase 8 left undocumented and
-unblocks the elimination of the last `model_h5`-as-path survivor
-inside the viewer subpackage.
+**Status:** Accepted (May 2026, head-engineer review on branch
+`guppi/suspicious-babbage-5b8b0a` / PR #282). Successor work to
+ADR 0014 (viewers pure-h5 consumer), ADR 0019 (`OpenSeesModel`
+read-side broker), and ADR 0020 (Results carries `OpenSeesModel`
+via Composed file). Codifies the implicit contract Phase 8 left
+undocumented and unblocks the elimination of the last
+`model_h5`-as-path survivor inside the viewer subpackage. Adoption
+ships as PRs 7-a through 7-d (sequenced under §Decision).
 
 ## Context
 
