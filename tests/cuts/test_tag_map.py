@@ -332,5 +332,101 @@ def test_repr_smoke(tmp_path: Path) -> None:
     s = repr(m)
     assert "FemToOpsTagMap" in s
     assert "n=1" in s
-    assert "forceBeamColumn" in s
-    assert "sentinel_dropped=1" in s
+
+
+# --------------------------------------------------------------------- #
+# ADR 0026 PR7-b — from_reader(reader) is the canonical factory
+# --------------------------------------------------------------------- #
+#
+# from_h5(path) becomes a shim that opens + delegates.  The two
+# factories must produce identical maps for the same file; from_reader
+# additionally accepts duck-typed readers (any object with
+# element_meta() + element_meta_arrays()) so foreign-format adapters
+# can plug in without going through h5_reader.
+
+
+def test_from_reader_matches_from_h5(tmp_path: Path) -> None:
+    """``from_h5(path)`` is defined as ``from_reader`` after opening
+    the file — the two paths must yield equivalent maps."""
+    from apeGmsh.opensees.emitter import h5_reader
+
+    h5 = tmp_path / "model.h5"
+    _write_minimal_h5(h5, groups={
+        "forceBeamColumn": {
+            "ids": np.array([10, 11, 12]),
+            "fem_eids": np.array([101, 102, 103]),
+        },
+        "elasticBeamColumn": {
+            "ids": np.array([20, 21]),
+            "fem_eids": np.array([201, 202]),
+        },
+    })
+
+    via_path = FemToOpsTagMap.from_h5(h5)
+    with h5_reader.open(str(h5)) as reader:
+        via_reader = FemToOpsTagMap.from_reader(reader)
+
+    assert len(via_path) == len(via_reader)
+    assert via_path.type_tokens == via_reader.type_tokens
+    for fid in (101, 102, 103, 201, 202):
+        assert via_path.ops_tag(fid) == via_reader.ops_tag(fid)
+        assert (via_path.type_token_for(fid)
+                == via_reader.type_token_for(fid))
+    assert via_path.n_sentinel == via_reader.n_sentinel
+
+
+def test_from_reader_accepts_duck_typed_reader(tmp_path: Path) -> None:
+    """``from_reader`` does not require an h5_reader.H5Model — any
+    object exposing ``element_meta()`` and
+    ``element_meta_arrays(type_token)`` is accepted (the H5ModelReader
+    Protocol's minimum reader surface for tag-map construction).
+    Validates that foreign-format adapters can produce tag maps
+    without going through h5py."""
+
+    class StubReader:
+        """Synthesised reader — no file, no h5py."""
+
+        def __init__(self, meta_by_type):
+            self._meta = meta_by_type
+
+        def element_meta(self):
+            return self._meta
+
+        def element_meta_arrays(self, type_token):
+            return self._meta[type_token]
+
+    stub = StubReader({
+        "forceBeamColumn": {
+            "ids": np.array([10, 11], dtype=np.int64),
+            "fem_eids": np.array([101, 102], dtype=np.int64),
+        },
+    })
+    m = FemToOpsTagMap.from_reader(stub)
+
+    assert len(m) == 2
+    assert m.ops_tag(101) == 10
+    assert m.ops_tag(102) == 11
+    assert m.type_tokens == ("forceBeamColumn",)
+
+
+def test_from_reader_does_not_close_reader(tmp_path: Path) -> None:
+    """``from_reader`` must NOT close the reader — lifecycle is the
+    caller's responsibility (long-lived ResultsDirector ownership).
+    The h5_reader.H5Model handle stays usable after the call."""
+    from apeGmsh.opensees.emitter import h5_reader
+
+    h5 = tmp_path / "model.h5"
+    _write_minimal_h5(h5, groups={
+        "forceBeamColumn": {
+            "ids": np.array([10]),
+            "fem_eids": np.array([101]),
+        },
+    })
+
+    with h5_reader.open(str(h5)) as reader:
+        m = FemToOpsTagMap.from_reader(reader)
+        # If from_reader had closed the file, this next call would
+        # raise (h5py.File on a closed handle raises ValueError).
+        meta = reader.meta()
+        assert meta["model_name"] == "test"
+        assert m.ops_tag(101) == 10

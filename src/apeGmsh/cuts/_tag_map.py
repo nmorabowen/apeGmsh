@@ -28,7 +28,7 @@ expected case.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 
@@ -73,12 +73,83 @@ class FemToOpsTagMap:
     # Construction
     # ------------------------------------------------------------------ #
     @classmethod
+    def from_reader(cls, reader: Any) -> "FemToOpsTagMap":
+        """Build the map from any open H5ModelReader-conforming object.
+
+        ADR 0026 PR7-b — the canonical factory.  Walks every
+        ``/opensees/element_meta/{type_token}/`` group on the reader,
+        pairs each row of ``ids`` (OpenSees tag) with ``fem_eids`` (FEM
+        eid), drops sentinel ``-1`` rows, and detects collisions.
+
+        Does **not** close the reader.  Lifecycle is the caller's
+        responsibility — typically a ``with h5_reader.open(...) as r``
+        block in :meth:`from_h5` or a long-lived
+        :class:`ResultsDirector`-owned reader.
+
+        Parameters
+        ----------
+        reader
+            Any object exposing ``element_meta()`` and
+            ``element_meta_arrays(type_token)`` per the H5ModelReader
+            Protocol — duck-typed as ``Any`` so the cuts subpackage
+            does not import the Protocol class (preserving its
+            independence from ``apeGmsh.viewers.data``).
+
+        Raises
+        ------
+        ValueError
+            If a FEM eid appears in more than one type group, or if
+            a type group is missing the ``fem_eids`` dataset.
+        """
+        by_fem: dict[int, int] = {}
+        type_of: dict[int, str] = {}
+        n_sentinel = 0
+
+        for type_token in reader.element_meta():
+            arrays = reader.element_meta_arrays(type_token)
+            if "fem_eids" not in arrays:
+                # Pre-Phase-8.6 file — bail with a clear message.
+                raise ValueError(
+                    f"/opensees/element_meta/{type_token} is missing the "
+                    "'fem_eids' dataset. Re-emit model.h5 with "
+                    "apeGmsh ≥ Phase 8.6 (schema 2.2.0)."
+                )
+            ids = np.asarray(arrays["ids"], dtype=np.int64)
+            fem_eids = np.asarray(arrays["fem_eids"], dtype=np.int64)
+            for ops_tag, fem_eid in zip(ids, fem_eids):
+                fid = int(fem_eid)
+                if fid == _MISSING_FEM_EID:
+                    n_sentinel += 1
+                    continue
+                if fid in by_fem:
+                    prior_tag = by_fem[fid]
+                    prior_type = type_of[fid]
+                    raise ValueError(
+                        f"FEM eid {fid} is mapped to OpenSees tag "
+                        f"{prior_tag} ({prior_type}) and also to "
+                        f"{int(ops_tag)} ({type_token}). One FEM "
+                        "element must fan out to exactly one OpenSees "
+                        "element — this is a bridge bug."
+                    )
+                by_fem[fid] = int(ops_tag)
+                type_of[fid] = str(type_token)
+
+        return cls(
+            by_fem_eid=by_fem,
+            type_of_fem_eid=type_of,
+            n_sentinel=n_sentinel,
+        )
+
+    @classmethod
     def from_h5(cls, path: str | Path) -> "FemToOpsTagMap":
         """Build the map by reading ``path`` through the reference reader.
 
-        Walks every ``/opensees/element_meta/{type_token}/`` group,
-        pairs each row of ``ids`` (OpenSees tag) with ``fem_eids`` (FEM
-        eid), drops sentinel ``-1`` rows, and detects collisions.
+        Convenience shim over :meth:`from_reader`: opens the file via
+        :func:`apeGmsh.opensees.emitter.h5_reader.open`, delegates the
+        walk, then closes.  ADR 0026 keeps this path-based entry point
+        for callers that own only a path string (e.g. legacy session-
+        restore) — the canonical reader-based factory is
+        :meth:`from_reader`.
 
         Raises
         ------
@@ -91,45 +162,8 @@ class FemToOpsTagMap:
         # eagerly loading h5py-bearing modules at apeGmsh import time.
         from apeGmsh.opensees.emitter import h5_reader
 
-        by_fem: dict[int, int] = {}
-        type_of: dict[int, str] = {}
-        n_sentinel = 0
-
-        with h5_reader.open(str(path)) as model:
-            for type_token in model.element_meta():
-                arrays = model.element_meta_arrays(type_token)
-                if "fem_eids" not in arrays:
-                    # Pre-Phase-8.6 file — bail with a clear message.
-                    raise ValueError(
-                        f"/opensees/element_meta/{type_token} is missing the "
-                        "'fem_eids' dataset. Re-emit model.h5 with "
-                        "apeGmsh ≥ Phase 8.6 (schema 2.2.0)."
-                    )
-                ids = np.asarray(arrays["ids"], dtype=np.int64)
-                fem_eids = np.asarray(arrays["fem_eids"], dtype=np.int64)
-                for ops_tag, fem_eid in zip(ids, fem_eids):
-                    fid = int(fem_eid)
-                    if fid == _MISSING_FEM_EID:
-                        n_sentinel += 1
-                        continue
-                    if fid in by_fem:
-                        prior_tag = by_fem[fid]
-                        prior_type = type_of[fid]
-                        raise ValueError(
-                            f"FEM eid {fid} is mapped to OpenSees tag "
-                            f"{prior_tag} ({prior_type}) and also to "
-                            f"{int(ops_tag)} ({type_token}). One FEM "
-                            "element must fan out to exactly one OpenSees "
-                            "element — this is a bridge bug."
-                        )
-                    by_fem[fid] = int(ops_tag)
-                    type_of[fid] = str(type_token)
-
-        return cls(
-            by_fem_eid=by_fem,
-            type_of_fem_eid=type_of,
-            n_sentinel=n_sentinel,
-        )
+        with h5_reader.open(str(path)) as reader:
+            return cls.from_reader(reader)
 
     # ------------------------------------------------------------------ #
     # Lookup
