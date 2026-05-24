@@ -387,6 +387,37 @@ class BuiltModel:
                     "primitives via ops.register(prim) before build()."
                 )
 
+        # 2b. Validate ``initial_stress`` record names are unique across
+        # all stages + the global pool (red-team H2).  Duplicate names
+        # would produce two ``proc <name> {...}`` definitions in Tcl:
+        # the second overwrites the first, but each was built with
+        # different parameter tags + cumulative-state keys, so the
+        # surviving proc would reference an uninitialised
+        # ``${name}_state(cum_<tag>)`` array element and crash at the
+        # first analyze step of the later stage.  Fail loudly at build
+        # time instead.
+        name_to_owner: dict[str, str] = {}
+        for rec in self.initial_stress_records:
+            if rec.name in name_to_owner:
+                raise BridgeError(
+                    f"initial_stress name {rec.name!r} is registered "
+                    f"twice (both on {name_to_owner[rec.name]!r}); "
+                    "names must be unique across the global pool and "
+                    "every stage's records."
+                )
+            name_to_owner[rec.name] = "global pool"
+        for stage in self.stage_records:
+            for rec in stage.initial_stress_records:
+                if rec.name in name_to_owner:
+                    raise BridgeError(
+                        f"initial_stress name {rec.name!r} is registered "
+                        f"twice (both on {name_to_owner[rec.name]!r} "
+                        f"and on stage {stage.name!r}); names must be "
+                        "unique across the global pool and every "
+                        "stage's records."
+                    )
+                name_to_owner[rec.name] = f"stage {stage.name!r}"
+
         # 3. Pre-bin: separate transforms, elements, the rest.
         transforms: list[GeomTransf] = []
         elements:   list[Element]    = []
@@ -488,6 +519,14 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
+            # Validate that fix / mass / region records don't target
+            # stage-bound nodes (red-team H1).  A ``fix 5 1 1`` line
+            # emits in the pre-stage block but references a node that
+            # doesn't exist yet — OpenSees errors at parse time.
+            # Each record stores either an explicit ``nodes`` tuple
+            # or a ``pg`` name; we resolve both into the same FEM-id
+            # set and check.
+            self._validate_no_stage_bound_node_targets(node_owner_stage)
 
         # 1a. Nodes — emit every node from the FEM snapshot, EXCEPT
         # nodes bound to a stage (those emit inside that stage's
@@ -1033,6 +1072,63 @@ class BuiltModel:
                 emit_recorder_spec(p, emitter, tag, self.fem, tags=tags)
 
     # -- Model-level fix / mass fan-out -----------------------------------
+
+    def _validate_no_stage_bound_node_targets(
+        self, node_owner_stage: "dict[int, int]",
+    ) -> None:
+        """Refuse fix / mass / region directives that target stage-bound
+        nodes (red-team H1).
+
+        The pre-stage global emit fires before any ``stage_open``, so
+        a ``fix 5 1 1`` line targeting a node that only emits inside
+        stage 2's block would reference a non-existent node and crash
+        OpenSees at parse time.  Validate upfront with the ownership
+        map and a clear error message.
+        """
+        if not node_owner_stage:
+            return
+        offenders: list[tuple[str, str, int, int]] = []  # (kind, name, node, stage_idx)
+        for rec in self.fix_records:
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                sidx = node_owner_stage.get(int(node_tag))
+                if sidx is not None:
+                    offenders.append((
+                        "fix", str(rec.pg or rec.nodes), int(node_tag), sidx,
+                    ))
+        for rec in self.mass_records:
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                sidx = node_owner_stage.get(int(node_tag))
+                if sidx is not None:
+                    offenders.append((
+                        "mass", str(rec.pg or rec.nodes), int(node_tag), sidx,
+                    ))
+        for rec in self.region_records:
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                sidx = node_owner_stage.get(int(node_tag))
+                if sidx is not None:
+                    offenders.append((
+                        "region", rec.name, int(node_tag), sidx,
+                    ))
+        if offenders:
+            lines = [
+                f"  • {kind} ({name!r}) targets node {nid} → owned by "
+                f"stage index {sidx} ({self.stage_records[sidx].name!r})"
+                for kind, name, nid, sidx in offenders[:10]
+            ]
+            extra = (
+                f"\n  • ... and {len(offenders) - 10} more"
+                if len(offenders) > 10 else ""
+            )
+            raise BridgeError(
+                "Stage-bound nodes referenced by global "
+                "fix / mass / region directives — those directives "
+                "would emit before the stage's ``stage_open`` and "
+                "reference a non-existent OpenSees node, crashing at "
+                "parse time.  Either move the BC onto a globally-"
+                "emitted node, or wait for Phase SSI-2.C to land "
+                "stage-bound BCs.  Offenders:\n"
+                + "\n".join(lines) + extra
+            )
 
     def _emit_fixes(self, emitter: Emitter) -> None:
         for rec in self.fix_records:
@@ -1711,6 +1807,11 @@ class apeSees:
         # emission path (per-stage analyze loops with loadConst /
         # wipeAnalysis / hook-list clear between).
         self._stage_records: list[StageRecord] = []
+        # Tracks the currently-open _StageBuilder, if any, so
+        # ``apeSees.stage()`` can refuse nested ``with`` blocks
+        # (post-merge cleanup, red-team M4).  None when no stage is
+        # being built.  Cleared by ``_StageBuilder.__exit__``.
+        self._open_stage_builder: "_StageBuilder | None" = None
         # Resolve the sentinel: unset → Cartesian() (Z-up). Explicit
         # None disables the auto-default (2D models).
         if isinstance(default_orientation, _UnsetType):
@@ -2092,6 +2193,22 @@ class apeSees:
                 "non-zero (a zero factor produces an inert pattern)."
             )
 
+        # DOF-index validation against the model's ndf (red-team H3).
+        # ``uz`` maps to DOF 3, which only exists on ndf>=3 models;
+        # emitting ``sp NODE 3 VALUE`` on an ndf=2 model produces an
+        # OpenSees parse error ("invalid dof").  Catch upfront with a
+        # clear error pointing at the offending kwarg.
+        if self._ndf is not None:
+            dof_kwargs = (("ux", 1, ux), ("uy", 2, uy), ("uz", 3, uz))
+            for kw, dof_idx, val in dof_kwargs:
+                if val is not None and dof_idx > self._ndf:
+                    raise ValueError(
+                        f"apeSees.imposed_displacement: {kw}= targets "
+                        f"DOF {dof_idx}, but the model's ndf is "
+                        f"{self._ndf}.  Drop {kw}= or call "
+                        f"ops.model(..., ndf={dof_idx}) first."
+                    )
+
         # Default time series: Linear scaled by pattern_factor.
         # Folds STKO's ``-fact F`` semantics into the time-series
         # factor instead of an explicit ``-fact`` on the pattern
@@ -2124,6 +2241,14 @@ class apeSees:
 
     def stage(self, name: str) -> "_StageBuilder":
         """Open a staged-analysis block (Phase SSI-2.A).
+
+        Nested ``with ops.stage(...)`` blocks are NOT supported —
+        opening a second stage builder while another is still open
+        raises ``RuntimeError``.  The lexical-vs-emit-order semantics
+        would otherwise be confusing (the inner builder's __exit__
+        fires first, registering the inner stage BEFORE the outer in
+        ``_stage_records``, which is the opposite of what readers
+        expect).
 
         Usage::
 
@@ -2160,7 +2285,17 @@ class apeSees:
         """
         if not name:
             raise ValueError("apeSees.stage: name= must be non-empty.")
-        return _StageBuilder(self, str(name))
+        if self._open_stage_builder is not None:
+            raise RuntimeError(
+                "apeSees.stage: a stage is already open "
+                f"(name={self._open_stage_builder._name!r}).  Close it "
+                "before opening another — nested ``with ops.stage(...)``"
+                " blocks would register stages in lexically-reversed "
+                "order at emit time."
+            )
+        builder = _StageBuilder(self, str(name))
+        self._open_stage_builder = builder
+        return builder
 
     def region(
         self,
@@ -2278,10 +2413,22 @@ class apeSees:
         ------
         ValueError
             If ``num_modes < 1``.
+        NotImplementedError
+            If the model has any registered stages — live execution
+            of staged models is unsupported (Phase SSI-2.A).
         """
         if num_modes < 1:
             raise ValueError(
                 f"apeSees.eigen: num_modes must be >= 1, got {num_modes}."
+            )
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.eigen: live execution does not support staged "
+                "models (Phase SSI-2.A) "
+                f"(got {len(self._stage_records)} stage(s)).  Eigen "
+                "analyses are typically run against an unstaged build; "
+                "either drop the stage blocks or emit Tcl/Py and run "
+                "the eigen command there."
             )
 
         # Local imports — keep openseespy + numpy out of bridge import
@@ -2609,6 +2756,11 @@ class _StageBuilder:
         exc_val: BaseException | None,
         exc_tb: object,
     ) -> bool:
+        # Clear the bridge's open-builder slot regardless of how we
+        # exit (exception or clean close) so subsequent
+        # ``ops.stage(...)`` calls work.  Set in
+        # ``apeSees.stage(name)``.
+        self._bridge._open_stage_builder = None
         if exc_type is not None:
             # Don't swallow user's exception; just drop the in-progress
             # stage (no records appended to the bridge).

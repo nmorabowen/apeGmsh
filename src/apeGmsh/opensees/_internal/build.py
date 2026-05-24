@@ -1878,8 +1878,14 @@ def compute_stage_ownership(
     # And: nodes referenced by any GLOBAL element are global,
     # independent of which stages also reference them.
     global_nodes: set[int] = set()
+    # Track which element-PG names actually appear on registered
+    # Element primitives — used below to validate that every
+    # ``s.activate(pgs=)`` PG matches at least one Element.
+    seen_element_pgs: set[str] = set()
     for spec in elements:
         spec_pg = getattr(spec, "pg", None)
+        if spec_pg:
+            seen_element_pgs.add(spec_pg)
         owner_idx = pg_owner.get(spec_pg) if spec_pg else None
         if owner_idx is not None:
             element_owner[id(spec)] = owner_idx
@@ -1889,6 +1895,27 @@ def compute_stage_ownership(
                     global_nodes.add(int(node_id))
                 else:
                     node_stages.setdefault(int(node_id), set()).add(owner_idx)
+
+    # 2b. Validate every activated PG matches at least one registered
+    # Element primitive's ``pg=`` (red-team M1).  A typo'd PG name
+    # would otherwise silently no-op — no domain_change, no element
+    # emit, no error — leaving the user with a wrong-but-runnable
+    # deck.
+    unknown_pgs: list[tuple[str, str]] = []  # (stage_name, pg)
+    for stage_idx, stage in enumerate(stage_records):
+        for pg in stage.activated_pgs:
+            if pg not in seen_element_pgs:
+                unknown_pgs.append((stage.name, pg))
+    if unknown_pgs:
+        joined = ", ".join(
+            f"stage {sn!r} → {pg!r}" for sn, pg in unknown_pgs
+        )
+        raise BridgeError(
+            f"Stage activation references unknown element PGs: "
+            f"{joined}.  Each ``s.activate(pgs=...)`` PG must match "
+            f"at least one registered Element primitive's ``pg=``.  "
+            f"Registered element PGs: {sorted(seen_element_pgs)}."
+        )
 
     # 3. Assemble node_owner: a node is stage-bound to the lowest
     # stage index that references it iff it's NOT referenced by any
@@ -1971,26 +1998,41 @@ def emit_initial_stress_addtoparameter(
     partition / flat callers pass ``partition_rank=None`` and the
     filter is skipped.
 
-    Elements whose FEM id isn't in ``fem_eid_to_ops_tag`` are silently
-    skipped — they live on a different rank in MP, or the user listed
-    an element id that doesn't correspond to any registered Element
-    spec.  The fan-out is best-effort by design.
+    Elements whose FEM id is in ``fem_eid_to_ops_tag`` but does NOT
+    match this rank (in MP mode) are silently skipped — they belong
+    to a different rank.  Elements whose FEM id is ABSENT from
+    ``fem_eid_to_ops_tag`` entirely (e.g. the user passed an
+    ``elements=[bad_id]`` that doesn't match any registered Element
+    primitive) raise :class:`BridgeError` in single-partition mode
+    so the user sees the mistake (red-team M6).  Under MP the same
+    eid might legitimately be missing on this rank because it's
+    owned by another rank — there we keep the silent-skip behaviour.
     """
     components = (
         ("commitStressIncrementXX", 0),
         ("commitStressIncrementYY", 1),
         ("commitStressIncrementZZ", 2),
     )
+    is_partitioned_mode = partition_rank is not None
     for rec in records:
         param_tags = name_to_param_tags[rec.name]
         for eid in resolve_initial_stress_elements(rec, fem):
-            if partition_rank is not None and element_owner is not None:
+            if is_partitioned_mode and element_owner is not None:
                 owner = element_owner.get(int(eid))
                 if owner is None or owner != partition_rank:
                     continue
             ops_tag = fem_eid_to_ops_tag.get(int(eid))
             if ops_tag is None:
-                continue
+                if is_partitioned_mode:
+                    continue  # owned by another rank; silent skip OK.
+                raise BridgeError(
+                    f"initial_stress {rec.name!r}: element id {int(eid)} "
+                    "is not registered with any Element primitive "
+                    "(would silently no-op the addToParameter response).  "
+                    "Either remove it from ``elements=`` or register the "
+                    "matching Element primitive via "
+                    "``ops.element.<Type>(pg=...)``."
+                )
             for response, idx in components:
                 emitter.addToParameter(
                     int(param_tags[idx]), int(ops_tag), response,
