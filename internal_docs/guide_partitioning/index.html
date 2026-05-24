@@ -845,6 +845,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="8. Single-process vs OpenSeesMP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runtime-conditional-numberer-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime-conditional numberer + system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overriding-the-auto-emit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overriding the auto-emit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h5-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        H5 emission
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4122,6 +4161,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="8. Single-process vs OpenSeesMP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runtime-conditional-numberer-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime-conditional numberer + system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overriding-the-auto-emit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overriding the auto-emit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h5-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        H5 emission
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4680,35 +4758,44 @@ parseable under single-process OpenSees:</p>
 is unbound, the shim defines it to return 0, and only the rank-0
 block executes. Other ranks' blocks are skipped by the
 <code>if {[getPID] == K}</code> gate.</p>
-<blockquote>
-<p><strong>Current limitation (subject to change).</strong> Today —
-<code>apesees.py::_maybe_auto_emit_parallel_numberer</code>, commit
-<code>c9a8b2c</code> — when <code>len(fem.partitions) &gt; 1</code> the bridge
-<strong>unconditionally</strong> emits <code>numberer ParallelPlain</code> + <code>system
-Mumps</code> at the global scope. Those two commands are MP-only;
-single-process OpenSees rejects them with
-<code>No Numberer type exists, Plain, RCM only</code>. The shim handles the
-per-rank brackets but not the global analysis chain.</p>
-<p>Practical consequence: as of <code>c9a8b2c</code>, partitioned decks ship
-<strong>OpenSeesMP-runnable only.</strong> To run a partitioned deck under
-single-process OpenSees today, override before emit:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">UmfPack</span><span class="p">()</span>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># ... rest of analysis chain ...</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>     <span class="c1"># MP-incompatible-user-choice warning fires</span>
+<h3 id="runtime-conditional-numberer-system">Runtime-conditional numberer + system<a class="headerlink" href="#runtime-conditional-numberer-system" title="Permanent link">&para;</a></h3>
+<p>When <code>len(fem.partitions) &gt; 1</code> and the user has not explicitly
+declared a numberer / system, the bridge auto-emits a <strong>runtime
+conditional</strong> (ADR 0027 INV-5, amended 2026-05-23) so the same deck
+runs under both OpenSeesMP and single-process OpenSees:</p>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c"># ParallelPlain only exists in OpenSeesMP; fall back to RCM under single-process OpenSees.</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="k">if</span><span class="w"> </span><span class="k">{[catch</span><span class="w"> </span><span class="k">{</span><span class="nv">numberer</span><span class="w"> </span>ParallelPlain<span class="k">}</span><span class="w"> </span>_err<span class="k">]}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="nv">numberer</span><span class="w"> </span>RCM<span class="w"> </span><span class="k">}</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c"># Mumps requires OpenSeesMP + MPI; fall back to UmfPack under single-process OpenSees.</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="k">if</span><span class="w"> </span><span class="k">{[catch</span><span class="w"> </span><span class="k">{</span><span class="nv">system</span><span class="w"> </span>Mumps<span class="k">}</span><span class="w"> </span>_err<span class="k">]}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="nv">system</span><span class="w"> </span>UmfPack<span class="w"> </span><span class="k">}</span>
 </span></code></pre></div>
-<p>The bridge fires a <code>UserWarning</code> ("serial numberer 'RCM' explicitly
-declared … OpenSeesMP requires a parallel numberer") because your
-override is no longer MP-compatible; that is by design — you've
-opted into a single-process deck.</p>
-<p>A runtime-conditional fix is in flight on
-<code>feat/inv5-runtime-conditional</code> (task #17). When it lands, the
-bridge will emit a <code>catch</code> / try-except fallback that picks
-<code>ParallelPlain</code> / <code>Mumps</code> under MPI and <code>RCM</code> / <code>UmfPack</code>
-otherwise, so a single deck runs under both. Re-check this section
-against <code>_maybe_auto_emit_parallel_numberer</code> after that branch
-merges.</p>
-</blockquote>
+<p>The Py emitter produces the equivalent <code>try / except Exception</code>
+shape. The LiveOps emitter performs the same try/fallback
+in-process, emitting one <code>UserWarning</code> per fallback.</p>
+<p>Under regular OpenSees, the runtime prints two <code>WARNING</code> lines
+(<code>No Numberer type exists (Plain, RCM only)</code>, <code>system Mumps is
+unknown or not installed</code>); Tcl <code>catch</code> swallows them and the
+fallback executes. The deck reaches end-of-file and <code>analyze</code>
+converges. Under OpenSeesMP the primary <code>ParallelPlain</code> +
+<code>Mumps</code> apply.</p>
+<h3 id="overriding-the-auto-emit">Overriding the auto-emit<a class="headerlink" href="#overriding-the-auto-emit" title="Permanent link">&para;</a></h3>
+<p>Declare the analysis chain explicitly before <code>ops.tcl(...)</code> /
+<code>ops.py(...)</code> / <code>ops.h5(...)</code> to suppress the auto-emit:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>         <span class="c1"># or ParallelPlain — your choice</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">UmfPack</span><span class="p">()</span>       <span class="c1"># or Mumps — your choice</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="c1"># ... rest of analysis chain ...</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>If your explicit override is MP-incompatible (e.g. <code>RCM</code> with
+<code>len(fem.partitions) &gt; 1</code>) the bridge fires a <code>UserWarning</code>
+("serial numberer 'RCM' explicitly declared … OpenSeesMP requires
+a parallel numberer") but respects your choice — you've opted
+into a single-process deck.</p>
+<h3 id="h5-emission">H5 emission<a class="headerlink" href="#h5-emission" title="Permanent link">&para;</a></h3>
+<p>The H5 emitter records the <strong>primary</strong> in <code>/opensees/analysis/</code>
+attrs (<code>numberer</code>, <code>system</code>) and the <strong>fallback</strong> in companion
+attrs (<code>numberer_runtime_fallback</code>, <code>system_runtime_fallback</code>).
+Readers see both choices; round-trip through <code>OpenSeesModel</code>
+preserves the pair.</p>
 <p>The shim itself, by contrast, has been stable since P4 and is not
 expected to change.</p>
 <h2 id="9-gotchas-and-known-limitations">9. Gotchas and known limitations<a class="headerlink" href="#9-gotchas-and-known-limitations" title="Permanent link">&para;</a></h2>
