@@ -21,7 +21,7 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Iterable, Sequence, TypeVar
 
 from ._internal.build import (
@@ -85,6 +85,7 @@ from ._internal.types import (
 )
 from .emitter.base import Emitter
 from .node import Node, _NodeAccessor, _iter_tags
+from .recorder import MPCO
 from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
@@ -207,6 +208,32 @@ def _fem_has_mp_constraints(fem: "FEMData") -> bool:
             except TypeError:
                 pass
     return False
+
+
+# ---------------------------------------------------------------------------
+# Partition-aware MPCO recorder plan (ADR 0027 INV-4)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, slots=True)
+class _MPCOFilterPlan:
+    """Pre-resolved filter ids + shared region tag for one MPCO recorder.
+
+    Built once before the partitioned per-rank loop in
+    :meth:`BuiltModel._emit_partitioned`; consumed by
+    :meth:`BuiltModel._emit_mpco_filter_regions_for_rank` (inside each
+    rank block) and by the global recorder emit pass after the loop.
+
+    The ``materialised_spec`` carries ``_region_tag`` populated and
+    ``nodes_pg`` / ``elements_pg`` cleared so the spec's ``_emit``
+    appends ``-R <region_tag>`` to the ``recorder mpco`` line without
+    re-entering ``MPCO.materialize`` (which would otherwise allocate a
+    new region tag and re-emit the region globally — the buggy pre-
+    ADR-0027 INV-4 behaviour for the partitioned path).
+    """
+    region_tag: int
+    node_ids: tuple[int, ...]
+    elem_ids: tuple[int, ...]
+    materialised_spec: "MPCO"
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +566,19 @@ class BuiltModel:
         broker_ts_tag_cache: dict[str, int] = {}
         broker_pat_tag_cache: dict[str, int] = {}
 
+        # ADR 0027 INV-4 (MPCO recorder path): for every MPCO recorder
+        # that carries a filter, resolve its full filter ids ONCE and
+        # allocate the region tag ONCE — both shared across every rank.
+        # The per-rank loop below emits one ``region <tag> -node ... -ele ...``
+        # line per rank with the rank's owned subset (or skips the rank
+        # entirely when the intersection is empty).  After the per-rank
+        # loop, the recorder declaration itself emits ONCE globally with
+        # ``-R <tag>`` referencing the shared tag — MPCO post-processing
+        # then stitches the per-rank ``.mpco`` outputs by tag identity.
+        mpco_filter_plan = self._plan_partitioned_mpco_recorders(
+            post_element, tags,
+        )
+
         # Pre-compute the post-element rank-local plan for the bridge's
         # fix / mass / region / load passes.  We use the same shapes
         # the flat path uses but pre-intersect with per-rank ownership.
@@ -591,6 +631,19 @@ class BuiltModel:
                     region_tag_cache,
                 )
 
+                # 7-ter. MPCO recorder filter regions (INV-4 — internal
+                # region resolution).  The recorder DECLARATION itself
+                # is emitted globally after the per-rank loop; only the
+                # ``region <tag> -node ... -ele ...`` lines vary per
+                # rank (and may be skipped when the intersection is
+                # empty).  The region tag is the SAME scalar across
+                # every emitting rank so MPCO post-merge can stitch by
+                # tag identity.
+                self._emit_mpco_filter_regions_for_rank(
+                    emitter, rank, mpco_filter_plan, rank_owned_nodes[rank],
+                    element_owner,
+                )
+
                 # 7a. Broker nodal loads (re-partitioned per-rank).
                 self._emit_broker_loads_partitioned(
                     emitter, tags, rank_owned_nodes[rank],
@@ -625,9 +678,28 @@ class BuiltModel:
         # Recorders — also global (recorders write to disk, not into
         # the model topology; one recorder is sufficient even under
         # MP).  No partition wrapping.
+        #
+        # MPCO recorders with a filter (INV-4): the per-rank ``region``
+        # lines were already emitted inside the rank loop above; here we
+        # only emit the ``recorder mpco ... -R <tag>`` declaration line,
+        # injecting the pre-allocated shared region tag via
+        # :func:`dataclasses.replace` so MPCO.materialize's region-emit
+        # branch is bypassed (the region was emitted per-rank).  All
+        # other recorders (Node / Element / RecorderDeclaration / MPCO
+        # without filter) route through emit_recorder_spec unchanged.
         for p in post_element:
-            if isinstance(p, Recorder):
-                tag = self.tag_for[id(p)]
+            if not isinstance(p, Recorder):
+                continue
+            tag = self.tag_for[id(p)]
+            plan_entry = mpco_filter_plan.get(id(p))
+            if plan_entry is not None:
+                # Pre-resolved MPCO: build the materialised spec directly
+                # so its ``_emit`` appends ``-R <tag>`` without re-
+                # entering MPCO.materialize (which would otherwise
+                # re-allocate a tag and re-emit the region globally).
+                materialised = plan_entry.materialised_spec
+                materialised._emit(emitter, tag)
+            else:
                 emit_recorder_spec(p, emitter, tag, self.fem, tags=tags)
 
     # -- Model-level fix / mass fan-out -----------------------------------
@@ -737,6 +809,108 @@ class BuiltModel:
                 tag = tags.allocate("region")
                 region_tag_cache[name] = tag
             emitter.region(tag, "-node", *owned_list)
+
+    # -- MPCO recorder filter regions (ADR 0027 INV-4 — internal regions) --
+
+    def _plan_partitioned_mpco_recorders(
+        self,
+        post_element: "list[Primitive]",
+        tags: TagAllocator,
+    ) -> "dict[int, _MPCOFilterPlan]":
+        """Pre-resolve filter ids + allocate one region tag per filter-bearing MPCO.
+
+        Returns a dict keyed by ``id(spec)`` carrying the resolved
+        ``(node_ids, elem_ids)`` plus the shared region tag and the
+        materialised spec (with ``_region_tag`` populated, filters
+        cleared, ready for ``_emit``).  Non-MPCO recorders and
+        whole-model MPCO recorders are absent from the dict; the
+        caller routes them through the unchanged
+        :func:`emit_recorder_spec` global pass.
+
+        The plan is built ONCE before the per-rank loop so:
+
+        1. The region tag is the SAME scalar across every rank that
+           emits its rank-intersection of the region (INV-4: stitching
+           by tag identity).
+        2. ``_emit`` is bypass-safe — the materialised spec carries the
+           shared ``_region_tag`` directly, so the global recorder pass
+           after the per-rank loop simply forwards ``-R <tag>`` onto the
+           ``recorder mpco`` line without re-allocating a tag or re-
+           emitting the region globally.
+        """
+        plan: dict[int, _MPCOFilterPlan] = {}
+        for p in post_element:
+            if not isinstance(p, MPCO):
+                continue
+            if not p.has_filter():
+                continue
+            node_ids, elem_ids = p.resolve_filter_ids(self.fem)
+            region_tag = tags.allocate("region")
+            materialised = replace(
+                p,
+                nodes_pg=None,
+                elements_pg=None,
+                nodes=node_ids if node_ids else None,
+                elements=elem_ids if elem_ids else None,
+                _region_tag=region_tag,
+            )
+            plan[id(p)] = _MPCOFilterPlan(
+                region_tag=region_tag,
+                node_ids=node_ids,
+                elem_ids=elem_ids,
+                materialised_spec=materialised,
+            )
+        return plan
+
+    def _emit_mpco_filter_regions_for_rank(
+        self,
+        emitter: Emitter,
+        rank: int,
+        plan: "dict[int, _MPCOFilterPlan]",
+        owned_nodes: set[int],
+        element_owner: dict[int, int],
+    ) -> None:
+        """Per-rank emission of MPCO recorder filter regions (INV-4).
+
+        For every filter-bearing MPCO recorder, intersects the resolved
+        node ids with ``owned_nodes`` and the resolved element ids with
+        the rank's owned elements (via ``element_owner``).  When BOTH
+        intersections are empty the recorder's region is omitted on
+        this rank (INV-4 §"empty intersection ⇒ no region emitted on
+        that rank").
+
+        The region tag is the SAME scalar across every emitting rank
+        (carried on each plan entry); MPCO post-processing stitches the
+        per-rank ``.mpco`` files by tag identity, so a rank with an
+        empty intersection that simply omits its region line is fine —
+        MPCO handles the missing per-rank contribution gracefully and
+        the recorder declaration's ``-R <tag>`` still resolves on the
+        ranks that did emit.
+        """
+        if not plan:
+            return
+        for entry in plan.values():
+            # Per-rank node intersection — preserves original declaration order.
+            rank_node_ids = tuple(
+                n for n in entry.node_ids if int(n) in owned_nodes
+            )
+            # Per-rank element intersection — keep elements whose owner
+            # is this rank.  Element ownership is single-rank
+            # (build_element_partition_owner), so a missing key means
+            # the element isn't on any rank — skip silently.
+            rank_elem_ids = tuple(
+                e for e in entry.elem_ids
+                if element_owner.get(int(e)) == rank
+            )
+            if not rank_node_ids and not rank_elem_ids:
+                # INV-4: empty intersection on this rank → no region line.
+                continue
+            region_args: list[int | float | str] = []
+            if rank_node_ids:
+                region_args += ["-node", *rank_node_ids]
+            if rank_elem_ids:
+                region_args += ["-ele", *rank_elem_ids]
+            emitter.region(entry.region_tag, *region_args)
 
     def _resolve_node_target(
         self, pg: str | None, nodes: tuple[int, ...] | None,

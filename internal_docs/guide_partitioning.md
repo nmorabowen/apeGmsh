@@ -399,6 +399,32 @@ Schema version: **opensees 2.11.0** (per ADR 0023 two-version
 reader window — 2.10.x readers still open 2.11.x files; rank attr
 / `partition_ids` row values became 0-based in 2.11.0).
 
+### 5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)
+
+When a partitioned model declares
+`ops.recorder.MPCO(nodes_pg="...", elements_pg="...", file=...)`
+(or any filter form: `nodes=`, `elements=`, `*_pg=`), the bridge
+splits emission into two scopes per ADR 0027 INV-4:
+
+* The `recorder mpco ... -R <tag>` **declaration** emits **once**
+  in global scope (outside every `if {[getPID] == K} {...}` block).
+  One MPCO declaration is sufficient under OpenSeesMP — the
+  recorder writes to disk, not to the model topology.
+* The `region <tag> -node ... -ele ...` line emits **per-rank**
+  inside each rank's `partition_open(K)` block, carrying only the
+  intersection of the resolved filter ids with that rank's owned
+  nodes/elements. Ranks whose intersection is **empty** emit no
+  `region` line at all (MPCO handles a missing per-rank region as
+  a no-op — the recorder declaration's `-R <tag>` still resolves
+  on the ranks that did emit).
+* The `<tag>` is the **same scalar** across every emitting rank
+  and on the global recorder line. MPCO post-processing stitches
+  the per-rank `.mpco` outputs by `<tag>` identity at read time.
+
+For un-partitioned models (`len(fem.partitions) <= 1`) the emit
+is byte-identical to the pre-INV-4 behaviour — one `region` plus
+one `recorder mpco` in global scope, with the same tag.
+
 
 ## 6. Viewer integration
 

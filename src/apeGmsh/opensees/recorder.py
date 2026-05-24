@@ -453,51 +453,46 @@ class MPCO(Recorder):
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
 
-    def materialize(
-        self,
-        emitter: "Emitter",
-        fem: "FEMData",
-        tags: "TagAllocator | None",
-    ) -> "MPCO":
-        """Resolve filter selectors against the FEM and emit the region.
+    def has_filter(self) -> bool:
+        """True iff any node/element selector was supplied.
 
-        Whole-model recording (no filter selectors) is a no-op pass-
-        through.  When any of ``nodes`` / ``nodes_pg`` / ``elements`` /
-        ``elements_pg`` is set, this method:
-
-        1. Resolves ``*_pg`` to explicit id tuples via the bridge's
-           PG-expansion helpers; refuses empty resolutions with
-           :class:`BridgeError` (an empty OpenSees region is rejected
-           at runtime).
-        2. Allocates one fresh region tag from ``tags`` (must be
-           supplied — the bridge build pipeline forwards the
-           ``TagAllocator``).
-        3. Emits one ``region $tag -node ... -ele ...`` line on
-           ``emitter``.
-        4. Returns a clone with the filter selectors cleared and
-           ``_region_tag`` populated, so the subsequent ``_emit``
-           appends ``-R $tag`` to the MPCO command.
+        Used by the partition-aware build pipeline (ADR 0027 INV-4) to
+        decide whether the recorder needs a per-rank region pass — a
+        whole-model MPCO (no filter) emits one ``recorder mpco`` line
+        and nothing else.
         """
-        node_filter = self.nodes is not None or self.nodes_pg is not None
-        elem_filter = (
-            self.elements is not None or self.elements_pg is not None
+        return (
+            self.nodes is not None
+            or self.nodes_pg is not None
+            or self.elements is not None
+            or self.elements_pg is not None
         )
-        if not (node_filter or elem_filter):
-            return self
 
+    def resolve_filter_ids(
+        self, fem: "FEMData",
+    ) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """Resolve ``nodes`` / ``nodes_pg`` / ``elements`` / ``elements_pg``
+        to explicit id tuples — no emission, no tag allocation.
+
+        Returns ``(node_ids, elem_ids)``. Either may be empty when its
+        side was not requested; an empty *result* on a *requested* side
+        (e.g. ``nodes_pg="X"`` resolving to zero nodes) raises
+        :class:`BridgeError` to mirror the OpenSees runtime rejection of
+        an empty region.
+
+        This is the partition-aware split-point of the legacy single-
+        pass :meth:`materialize`: the partition orchestrator calls
+        ``resolve_filter_ids`` once globally to determine the full
+        filter id set, then intersects per-rank before emitting the
+        region.  Whole-model recording (``has_filter() is False``) is
+        a no-op pass-through — callers should not invoke this method
+        in that case.
+        """
         from ._internal.build import (
             BridgeError,
             expand_pg_to_elements,
             expand_pg_to_nodes,
         )
-
-        if tags is None:
-            raise BridgeError(
-                "MPCO with nodes=/elements=/nodes_pg=/elements_pg= filter "
-                "requires a TagAllocator on emit_recorder_spec(..., tags=); "
-                "the bridge build pipeline supplies one — tests that "
-                "bypass the bridge must pass it explicitly."
-            )
 
         # Resolve node-side selector.
         node_ids: tuple[int, ...] = ()
@@ -543,13 +538,61 @@ class MPCO(Recorder):
                     "supply a non-empty tuple or drop the elements= kwarg."
                 )
 
+        return node_ids, elem_ids
+
+    def materialize(
+        self,
+        emitter: "Emitter",
+        fem: "FEMData",
+        tags: "TagAllocator | None",
+    ) -> "MPCO":
+        """Resolve filter selectors against the FEM and emit the region.
+
+        Whole-model recording (no filter selectors) is a no-op pass-
+        through.  When any of ``nodes`` / ``nodes_pg`` / ``elements`` /
+        ``elements_pg`` is set, this method:
+
+        1. Resolves ``*_pg`` to explicit id tuples via the bridge's
+           PG-expansion helpers; refuses empty resolutions with
+           :class:`BridgeError` (an empty OpenSees region is rejected
+           at runtime).
+        2. Allocates one fresh region tag from ``tags`` (must be
+           supplied — the bridge build pipeline forwards the
+           ``TagAllocator``).
+        3. Emits one ``region $tag -node ... -ele ...`` line on
+           ``emitter``.
+        4. Returns a clone with the filter selectors cleared and
+           ``_region_tag`` populated, so the subsequent ``_emit``
+           appends ``-R $tag`` to the MPCO command.
+
+        Used by the flat / unpartitioned emit path.  The partitioned
+        emit path (ADR 0027 INV-4) invokes :meth:`resolve_filter_ids`
+        once and emits the per-rank region line itself; it then
+        injects ``_region_tag=`` onto the spec via
+        :func:`dataclasses.replace` directly, bypassing this method.
+        """
+        if not self.has_filter():
+            return self
+
+        from ._internal.build import BridgeError
+
+        if tags is None:
+            raise BridgeError(
+                "MPCO with nodes=/elements=/nodes_pg=/elements_pg= filter "
+                "requires a TagAllocator on emit_recorder_spec(..., tags=); "
+                "the bridge build pipeline supplies one — tests that "
+                "bypass the bridge must pass it explicitly."
+            )
+
+        node_ids, elem_ids = self.resolve_filter_ids(fem)
+
         # Allocate one region tag for this MPCO recorder and emit it.
         # One ``region`` command can carry both ``-node`` and ``-ele``
         # flags; MPCO's ``-R`` then filters both nodal and element
         # results.  At least one of node_ids / elem_ids is guaranteed
-        # non-empty (empty-resolution branches above raise before we
-        # get here, and __post_init__ already verified at least one
-        # selector was supplied).
+        # non-empty (empty-resolution branches in resolve_filter_ids
+        # raise before we get here, and __post_init__ already verified
+        # at least one selector was supplied).
         region_tag = tags.allocate("region")
         region_args: list[int | float | str] = []
         if node_ids:
