@@ -1944,6 +1944,184 @@ class apeSees:
         # is already registered and will emit in the flat path.
         return record
 
+    def convergence_confinement(
+        self,
+        *,
+        name: str,
+        pg: str | None = None,
+        elements: Iterable[int] | None = None,
+        sigma_xx: float = 0.0,
+        sigma_yy: float = 0.0,
+        sigma_zz: float = 0.0,
+        lambda_target: float,
+        n_steps: int,
+    ) -> "InitialStressRecord":
+        """Convergence-confinement helper (Phase SSI-3).
+
+        Thin wrapper over :meth:`initial_stress` for the tunnelling
+        convergence-confinement pattern: ramp a target stress on a
+        boundary region to ``lambda_target`` × ``sigma`` over
+        ``n_steps`` analyze steps.  Matches the
+        ``_stressCtrl_11``-style proc from
+        ``SSI/Interaccion/analysis_steps.tcl:19753-19767``.
+
+        Differs from :meth:`initial_stress` in two cosmetic ways:
+
+        * ``lambda_target`` (renamed from ``lambda_install``) — more
+          natural reading at the call site for confinement / relaxation
+          contexts.
+        * ``n_steps`` (renamed from ``ramp_steps``) — matches the
+          spec's naming.
+
+        At least one of ``sigma_xx`` / ``sigma_yy`` / ``sigma_zz`` must
+        be non-zero (typically only one — single-component relaxation
+        is the canonical SSI use case).
+
+        Returns the underlying :class:`InitialStressRecord`; pass it to
+        ``s.add(...)`` inside a stage block to bind to that stage.
+
+        Parameters
+        ----------
+        name
+            Unique Tcl-identifier-safe label.
+        pg, elements
+            Same XOR semantics as :meth:`initial_stress`.
+        sigma_xx, sigma_yy, sigma_zz
+            Target Cauchy stress per component (compression negative).
+            At least one must be non-zero.
+        lambda_target
+            Fraction of target stress to install — i.e. the relaxation
+            (or confinement) coefficient.  Must be in ``(0, 1]``.
+        n_steps
+            Number of analyze steps over which the factor reaches 1.0
+            internally.  After the cap, the cumulative is
+            ``sigma × lambda_target``.
+        """
+        if sigma_xx == 0.0 and sigma_yy == 0.0 and sigma_zz == 0.0:
+            raise ValueError(
+                "apeSees.convergence_confinement: at least one of "
+                "sigma_xx / sigma_yy / sigma_zz must be non-zero."
+            )
+        return self.initial_stress(
+            name=name,
+            pg=pg,
+            elements=elements,
+            sigma_xx=sigma_xx,
+            sigma_yy=sigma_yy,
+            sigma_zz=sigma_zz,
+            ramp_steps=n_steps,
+            lambda_install=lambda_target,
+        )
+
+    def imposed_displacement(
+        self,
+        *,
+        pg: str | None = None,
+        nodes: Iterable[int] | None = None,
+        ux: float | None = None,
+        uy: float | None = None,
+        uz: float | None = None,
+        pattern_factor: float = 1.0,
+        series: "TimeSeries | None" = None,
+    ) -> "Plain":
+        """Imposed-displacement pattern helper (Phase SSI-3).
+
+        Emits one ``pattern Plain`` containing ``sp NODE DOF VALUE``
+        prescribed-displacement entries for every (node, dof) pair
+        where the corresponding ``ux`` / ``uy`` / ``uz`` is non-None.
+        Used for fault-slip kinematics, support-settlement scenarios,
+        and any other prescribed-displacement driver.
+
+        STKO equivalent:
+        ``pattern Plain N tsTag -fact F { sp NODE DOF VAL ... }``
+        from ``SSI/Interaccion y Falla/analysis_steps.tcl:22832-23253``.
+        Where STKO uses ``-fact F`` on the pattern, this helper folds
+        the same scaling into the auto-created ``Linear(factor=F)``
+        time series — numerically identical, simpler API.
+
+        Parameters
+        ----------
+        pg, nodes
+            XOR: exactly one of ``pg`` (physical-group name) or
+            ``nodes`` (iterable of FEM node ids) must be supplied.
+        ux, uy, uz
+            Scalar broadcast: every targeted node gets the same
+            prescribed displacement in this DOF.  ``None`` (default)
+            skips the DOF.  At least one of the three must be set.
+        pattern_factor
+            Multiplier folded into the auto-created ``Linear`` time
+            series.  Default ``1.0`` (no scaling).  Matches STKO's
+            ``-fact F`` semantics: the actual applied displacement
+            at simulation-time ``t`` is
+            ``value × pattern_factor × t``.
+        series
+            Optional explicit :class:`TimeSeries` to use.  Must be
+            already registered with the bridge.  When supplied,
+            ``pattern_factor`` is ignored — the user is in full
+            control of the time-history shape.
+
+        Returns
+        -------
+        Plain
+            The registered :class:`Plain` pattern.  Phase SSI-3 ships
+            the pattern as a global registration; if used inside a
+            staged deck, it fires in every stage's analyze loop
+            (gate via the time series if that's not desired).
+
+        Notes
+        -----
+        Per-node-varying displacements are NOT supported in v1 —
+        every targeted node gets the same scalar.  For different
+        values per node, call ``imposed_displacement`` multiple times
+        with disjoint ``nodes=`` lists, or construct the ``Plain``
+        pattern manually via ``ops.pattern.Plain(...)``.
+        """
+        if (pg is None) == (nodes is None):
+            raise ValueError(
+                "apeSees.imposed_displacement: supply exactly one of "
+                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
+            )
+        if ux is None and uy is None and uz is None:
+            raise ValueError(
+                "apeSees.imposed_displacement: at least one of ux / "
+                "uy / uz must be supplied."
+            )
+        if pattern_factor == 0.0:
+            raise ValueError(
+                "apeSees.imposed_displacement: pattern_factor must be "
+                "non-zero (a zero factor produces an inert pattern)."
+            )
+
+        # Default time series: Linear scaled by pattern_factor.
+        # Folds STKO's ``-fact F`` semantics into the time-series
+        # factor instead of an explicit ``-fact`` on the pattern
+        # (apeGmsh's Plain pattern primitive doesn't carry one).
+        if series is None:
+            series = self.timeSeries.Linear(factor=float(pattern_factor))
+
+        # Construct the Plain pattern via the namespace so it gets
+        # registered + tagged.
+        plain = self.pattern.Plain(series=series)
+        # Populate the sp records.  Plain's recording API accepts
+        # either pg= or node=; we route based on the helper's input.
+        dof_values: tuple[tuple[int, float | None], ...] = (
+            (1, ux), (2, uy), (3, uz),
+        )
+        with plain:
+            if pg is not None:
+                for dof, value in dof_values:
+                    if value is None:
+                        continue
+                    plain.sp(pg=pg, dof=dof, value=float(value))
+            else:
+                assert nodes is not None
+                for node in nodes:
+                    for dof, value in dof_values:
+                        if value is None:
+                            continue
+                        plain.sp(node=int(node), dof=dof, value=float(value))
+        return plain
+
     def stage(self, name: str) -> "_StageBuilder":
         """Open a staged-analysis block (Phase SSI-2.A).
 
