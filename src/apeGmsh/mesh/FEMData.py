@@ -59,8 +59,10 @@ from ._group_set import (
 from .._kernel.record_sets import (
     NodeConstraintSet, SurfaceConstraintSet,
     NodalLoadSet, SPSet, ElementLoadSet, MassSet,
+    NodeNDFSet,
     PartitionSet,
 )
+from .._kernel.records._node_ndf import NodeNDFRecord
 from .._kernel.records._partitions import PartitionRecord
 from ._element_types import ElementTypeInfo
 from .._kernel.payloads import (
@@ -213,6 +215,8 @@ class NodeComposite:
         masses=None,
         partitions: dict[int, dict] | None = None,
         part_node_map: dict | None = None,
+        ndf: ndarray | None = None,
+        ndf_source: ndarray | None = None,
     ) -> None:
         self._ids    = _to_object(node_ids)
         self._coords = np.asarray(node_coords, dtype=np.float64)
@@ -231,6 +235,27 @@ class NodeComposite:
         # needing a live Gmsh session (parts registry may be gone
         # by the time the user queries). Dict of ``str -> set[int]``.
         self._part_node_map: dict[str, set[int]] = part_node_map or {}
+
+        # Per-node ndf metadata (shell-to-solid coupling feature).
+        # ``_ndf`` is an ``int8`` array aligned 1:1 with ``self._ids``
+        # carrying the resolved DOF count per node; ``_ndf_source`` is
+        # the parallel byte vector encoding ``0`` = implicit (from
+        # element-class heuristic) or ``1`` = explicit (pinned via
+        # ``g.model.set_node_ndf(target, ndf=K)``).
+        #
+        # Both may be ``None`` when the broker was built by a caller
+        # that didn't populate the field (e.g. legacy h5 fixtures
+        # from before schema 2.7.0, or direct test construction).
+        # Consumers must check :meth:`ndf_for` for ``None`` callers
+        # are tolerant of that — see :class:`NodeNDFSet`.
+        self._ndf: ndarray | None = (
+            np.asarray(ndf, dtype=np.int8) if ndf is not None else None
+        )
+        self._ndf_source: ndarray | None = (
+            np.asarray(ndf_source, dtype=np.int8)
+            if ndf_source is not None
+            else None
+        )
 
     # ── Public properties ───────────────────────────────────
 
@@ -497,6 +522,69 @@ class NodeComposite:
             else:
                 msg = f"Node ID {nid} not found (no nodes)"
             raise KeyError(msg) from None
+
+    # ── ndf metadata (shell-to-solid coupling) ──────────────
+
+    def ndf_for(self, nid: int) -> int | None:
+        """Return the resolved ``ndf`` (DOF count) for a node ID.
+
+        The value is derived once at FEM-build time via the hybrid
+        populator (implicit element-class heuristic + optional
+        explicit ``g.model.set_node_ndf(...)`` override) and stored
+        on the broker as ``self._ndf``.
+
+        Returns
+        -------
+        int or None
+            Resolved DOF count for the node.  ``None`` when the
+            broker was constructed without ndf metadata — e.g.
+            loaded from a pre-2.7.0 h5 file, or built directly in
+            tests without the kwarg.
+
+        Raises
+        ------
+        KeyError
+            If ``nid`` is not a known node ID.
+        """
+        if self._ndf is None:
+            return None
+        # Reuse the ``index`` cache + error path so the lookup
+        # raises the same descriptive KeyError as every other
+        # node-id lookup on the composite.
+        idx = self.index(nid)
+        return int(self._ndf[idx])
+
+    def ndf_records(self) -> "NodeNDFSet":
+        """Return the :class:`NodeNDFSet` view of per-node ``ndf``.
+
+        Iteration yields :class:`NodeNDFRecord` instances in node-id
+        order, each carrying ``node_id``, ``ndf``, and ``source``
+        (``'implicit'`` or ``'explicit'``).
+
+        Returns an **empty** :class:`NodeNDFSet` when the broker
+        carries no ndf metadata (legacy h5 files, direct test
+        construction without the kwarg) — callers should be tolerant
+        of an empty set and use :meth:`ndf_for` (which returns
+        ``None`` in that case) when they need the per-node value.
+        """
+        if self._ndf is None:
+            return NodeNDFSet()
+        records: list[NodeNDFRecord] = []
+        src = self._ndf_source
+        for i, tag in enumerate(self._ids):
+            source = (
+                "explicit"
+                if (src is not None and int(src[i]) == 1)
+                else "implicit"
+            )
+            records.append(
+                NodeNDFRecord(
+                    node_id=int(tag),
+                    ndf=int(self._ndf[i]),
+                    source=source,  # type: ignore[arg-type]
+                )
+            )
+        return NodeNDFSet(records)
 
     # ── Dunder ──────────────────────────────────────────────
 

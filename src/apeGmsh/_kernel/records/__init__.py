@@ -71,6 +71,7 @@ from ._loads import (
     SPRecord,
 )
 from ._masses import MassRecord
+from ._node_ndf import IMPLICIT_NDF_BY_DIM, NodeNDFRecord
 from ._partitions import PartitionRecord
 
 
@@ -112,6 +113,9 @@ __all__ = [
     "MassRecord",
     # Partition records
     "PartitionRecord",
+    # Node ndf records
+    "NodeNDFRecord",
+    "IMPLICIT_NDF_BY_DIM",
 ]
 
 

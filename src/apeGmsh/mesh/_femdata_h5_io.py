@@ -101,10 +101,18 @@ __all__ = [
 #: 2.5.x files silently lack the lineage sub-group (legacy-file
 #: warning surfaces at the :class:`Lineage` layer, never raises).
 #:
+#: v2.7.0 (May 2026, shell-to-solid coupling broker foundation):
+#: additive — adds the ``/nodes/ndf`` (int8) and ``/nodes/ndf_source``
+#: (int8: 0 implicit, 1 explicit) datasets carrying per-node DOF
+#: count metadata.  Per ADR 0023's two-version reader window,
+#: readers tolerate 2.6.x and 2.7.x; 2.6.x files silently lack the
+#: datasets and round-trip with ``fem.nodes.ndf_for(...) is None``
+#: until re-extracted from a live Gmsh session.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.6.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.7.0"
 
 
 # ---------------------------------------------------------------------------
@@ -269,12 +277,34 @@ def _derive_ndm(fem: "FEMData") -> int:
 
 
 def _write_nodes(fem: "FEMData", f: Any) -> None:
-    """Write ``/nodes/{ids, coords}`` from ``fem.nodes``."""
+    """Write ``/nodes/{ids, coords[, ndf, ndf_source]}`` from ``fem.nodes``.
+
+    Neutral schema 2.7.0 added the optional per-node ``ndf`` and
+    ``ndf_source`` datasets carrying the shell-to-solid coupling
+    metadata.  Both are skipped when the broker has no metadata
+    populated (e.g. a degenerate :class:`NodeComposite` built
+    directly in a test) — readers tolerate absence by returning
+    ``None`` from :meth:`NodeComposite.ndf_for`.
+    """
     nodes_grp = f.create_group("nodes")
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     node_coords = np.asarray(fem.nodes.coords, dtype=np.float64)
     nodes_grp.create_dataset("ids", data=node_ids)
     nodes_grp.create_dataset("coords", data=node_coords)
+
+    # Per-node ndf metadata (additive in 2.7.0; absent when the
+    # composite carries no populated arrays).  Stored as int8 since
+    # ndf is always in [1, 6] and the source byte uses 0/1.
+    ndf = getattr(fem.nodes, "_ndf", None)
+    ndf_source = getattr(fem.nodes, "_ndf_source", None)
+    if ndf is not None:
+        nodes_grp.create_dataset(
+            "ndf", data=np.asarray(ndf, dtype=np.int8),
+        )
+    if ndf_source is not None:
+        nodes_grp.create_dataset(
+            "ndf_source", data=np.asarray(ndf_source, dtype=np.int8),
+        )
 
 
 def _write_elements(fem: "FEMData", f: Any) -> None:
@@ -1111,6 +1141,20 @@ def read_neutral_zone_from_group(
     nodes_grp = parent["nodes"]
     node_ids = np.asarray(nodes_grp["ids"][...], dtype=np.int64)
     node_coords = np.asarray(nodes_grp["coords"][...], dtype=np.float64)
+    # Per-node ndf metadata (additive in neutral schema 2.7.0; absent
+    # in 2.6.x files — readers must tolerate the omission per the
+    # two-version window).  ``None`` here surfaces as
+    # ``fem.nodes.ndf_for(...) is None`` for legacy files.
+    node_ndf = (
+        np.asarray(nodes_grp["ndf"][...], dtype=np.int8)
+        if "ndf" in nodes_grp
+        else None
+    )
+    node_ndf_source = (
+        np.asarray(nodes_grp["ndf_source"][...], dtype=np.int8)
+        if "ndf_source" in nodes_grp
+        else None
+    )
 
     # -- elements (per-type subgroups) --
     element_groups: dict[int, ElementGroup] = {}
@@ -1197,6 +1241,8 @@ def read_neutral_zone_from_group(
         masses=mass_records,
         partitions=partitions or None,
         part_node_map=part_node_map or None,
+        ndf=node_ndf,
+        ndf_source=node_ndf_source,
     )
     elements = ElementComposite(
         groups=element_groups,

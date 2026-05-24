@@ -92,6 +92,13 @@ BASELINE = {
     ("mesh", "_kernel", "mesh/PhysicalGroups.py"),
     ("mesh", "_kernel", "mesh/__init__.py"),
     ("mesh", "_kernel", "mesh/_element_types.py"),
+    # Shell-to-solid coupling broker foundation (S1b):
+    # ``mesh/_fem_factory.py`` now eagerly imports
+    # ``IMPLICIT_NDF_BY_DIM`` from ``_kernel.records._node_ndf`` so
+    # the per-node ndf populator runs at module load.  This is a
+    # downward leaf edge in the same polarity already established
+    # for ``mesh/FEMData.py`` and ``mesh/_element_types.py``.
+    ("mesh", "_kernel", "mesh/_fem_factory.py"),
     ("mesh", "_kernel", "mesh/_mesh_selection.py"),
     ("results", "fem", "results/_gauss_extrapolation.py"),
     ("results", "fem", "results/_gauss_world_coords.py"),

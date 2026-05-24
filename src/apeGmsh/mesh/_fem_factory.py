@@ -14,6 +14,7 @@ import logging
 
 import numpy as np
 
+from .._kernel.records._node_ndf import IMPLICIT_NDF_BY_DIM
 from ._element_types import ElementGroup, make_type_info
 from ._fem_extract import (
     extract_raw, extract_physical_groups, extract_labels,
@@ -186,6 +187,158 @@ def _flat_elem_tags(groups: dict[int, ElementGroup]) -> np.ndarray:
     if not groups:
         return np.array([], dtype=np.int64)
     return np.concatenate([g.ids for g in groups.values()])
+
+
+# =====================================================================
+# Per-node ndf populator (shell-to-solid coupling feature)
+# =====================================================================
+
+
+def _build_implicit_ndf(
+    node_ids: np.ndarray,
+    groups: dict[int, ElementGroup],
+) -> np.ndarray:
+    """Compute the per-node implicit ``ndf`` vector.
+
+    For each node, take the max of :data:`IMPLICIT_NDF_BY_DIM` over
+    the dim of every incident element group.  Nodes with no incident
+    element (orphans that survive the orphan filter, e.g. because a
+    BC pins them) fall back to the largest implicit value in the
+    table — currently 6 — so a downstream solver that needs DOFs at
+    a constraint-only node won't silently lose them.
+
+    Returns an ``int8`` array aligned 1:1 with ``node_ids``.
+    """
+    n = int(np.asarray(node_ids).size)
+    # Initialise to 0 so the max-reduction over incident groups
+    # cleanly accumulates.  Nodes that never appear in any group
+    # are patched to the fallback at the end.
+    ndf = np.zeros(n, dtype=np.int8)
+
+    # Build a tag -> index map so we can scatter quickly.
+    id_to_idx = {int(t): i for i, t in enumerate(np.asarray(node_ids))}
+
+    for grp in groups.values():
+        if grp.connectivity.size == 0:
+            continue
+        dim_ndf = IMPLICIT_NDF_BY_DIM.get(int(grp.dim))
+        if dim_ndf is None:
+            continue
+        # Unique node ids in this group's connectivity.
+        unique_tags = np.unique(np.asarray(grp.connectivity).reshape(-1))
+        for tag in unique_tags:
+            idx = id_to_idx.get(int(tag))
+            if idx is None:
+                continue
+            if dim_ndf > int(ndf[idx]):
+                ndf[idx] = np.int8(dim_ndf)
+
+    # Patch any node that didn't appear in any group's connectivity.
+    # The most defensible default is the largest table value so the
+    # full DOF set is available for whatever BC pins them.  Tests
+    # that build degenerate fixtures with no elements will see this.
+    fallback = max(IMPLICIT_NDF_BY_DIM.values()) if IMPLICIT_NDF_BY_DIM else 6
+    ndf[ndf == 0] = np.int8(fallback)
+    return ndf
+
+
+def _apply_explicit_ndf_overrides(
+    ndf: np.ndarray,
+    ndf_source: np.ndarray,
+    node_ids: np.ndarray,
+    session,
+    node_map: dict | None = None,
+) -> None:
+    """Apply ``g.model.set_node_ndf(...)`` overrides in-place.
+
+    Walks the session's ``model._node_ndf_defs`` list (each entry is
+    a :class:`NodeNDFDef`); resolves each def's target to a node-id
+    set via the shared loads/masses resolver
+    (:func:`apeGmsh.core._resolution.resolve_target`) and overwrites
+    the implicit value at every resolved index, marking the source
+    byte ``1`` (= explicit).
+    """
+    model = getattr(session, "model", None)
+    if model is None:
+        return
+    defs = getattr(model, "_node_ndf_defs", None) or []
+    if not defs:
+        return
+
+    id_to_idx = {int(t): i for i, t in enumerate(np.asarray(node_ids))}
+
+    # Local helper that turns a NodeNDFDef target into a node-id set.
+    # Reuses the same precedence chain (label → PG → part) used by
+    # loads/masses via the shared resolver, plus the parts node-map
+    # fast path so part labels resolve without a live Gmsh probe.
+    import gmsh
+
+    from apeGmsh.core._resolution import resolve_target
+
+    parts = getattr(session, "parts", None)
+
+    def _resolve_to_node_ids(target) -> set[int]:
+        # Part-label fast path — consistent with NodeComposite._resolve_one_target.
+        if (isinstance(target, str)
+                and parts is not None
+                and target in getattr(parts, "_instances", {})
+                and node_map is not None
+                and target in node_map):
+            return {int(n) for n in node_map[target]}
+        # Mesh-selection sentinel + raw DimTag list + label/PG/part union
+        # all flow through the shared resolver.
+        dts = resolve_target(
+            session, target, source="auto",
+            not_found_prefix="set_node_ndf target",
+            noun="node_ndf",
+        )
+        if dts and isinstance(dts[0], tuple) and dts[0] and dts[0][0] == "__ms__":
+            _, dim, tag = dts[0]
+            ms = getattr(session, "mesh_selection", None)
+            info = None if ms is None else ms._sets.get((dim, tag))
+            if info is None:
+                raise KeyError(
+                    f"set_node_ndf target {target!r} resolved to a mesh "
+                    f"selection that is absent from g.mesh_selection."
+                )
+            return {int(n) for n in info.get("node_ids", [])}
+
+        nodes: set[int] = set()
+        for d, t in dts:
+            try:
+                nt, _, _ = gmsh.model.mesh.getNodes(
+                    dim=int(d), tag=int(t),
+                    includeBoundary=True, returnParametricCoord=False,
+                )
+                nodes.update(int(n) for n in nt)
+            except Exception:
+                pass
+        return nodes
+
+    # Apply each def in declaration order; later defs win on overlap.
+    for defn in defs:
+        try:
+            target_nodes = _resolve_to_node_ids(defn.target)
+        except KeyError:
+            # Re-raise: silent drop here would resurface much later as a
+            # misleading "wrong ndf on node X" debugging session.
+            raise
+        if not target_nodes:
+            _log.warning(
+                "set_node_ndf target %r resolved to zero nodes — "
+                "the override has no effect.",
+                defn.target,
+            )
+            continue
+        for tag in target_nodes:
+            idx = id_to_idx.get(int(tag))
+            if idx is None:
+                # Node target points at a tag that isn't in the broker
+                # — likely an orphan filtered out.  Skip silently;
+                # there is no node to assign ndf to.
+                continue
+            ndf[idx] = np.int8(defn.ndf)
+            ndf_source[idx] = np.int8(1)
 
 
 # =====================================================================
@@ -392,6 +545,19 @@ def _from_gmsh(
                 if e_ids:
                     part_elem_map[label] = e_ids
 
+    # ── 5b. Per-node ndf (shell-to-solid coupling feature) ────
+    # Compute the implicit vector from element-class dim, then apply
+    # any explicit ``g.model.set_node_ndf(...)`` overrides.  Lives
+    # here (after orphan filtering, before composite construction) so
+    # the arrays are aligned 1:1 with the final ``node_ids``.
+    node_ndf = _build_implicit_ndf(node_ids, groups)
+    node_ndf_source = np.zeros(node_ndf.shape, dtype=np.int8)
+    if session is not None:
+        _apply_explicit_ndf_overrides(
+            node_ndf, node_ndf_source, node_ids, session,
+            node_map=node_map if 'node_map' in locals() else None,
+        )
+
     nodes = NodeComposite(
         node_ids=node_ids,
         node_coords=node_coords_all,
@@ -403,6 +569,8 @@ def _from_gmsh(
         masses=mass_records or None,
         partitions=partitions or None,
         part_node_map=part_node_map or None,
+        ndf=node_ndf,
+        ndf_source=node_ndf_source,
     )
     elements = ElementComposite(
         groups=groups,
@@ -509,10 +677,17 @@ def _from_msh(
             types=type_list,
         )
 
+        # Per-node implicit ndf (no session for explicit overrides
+        # in from_msh — explicit ndf only flows through from_gmsh).
+        node_ndf = _build_implicit_ndf(node_ids, groups)
+        node_ndf_source = np.zeros(node_ndf.shape, dtype=np.int8)
+
         nodes = NodeComposite(
             node_ids=node_ids, node_coords=node_coords,
             physical=physical, labels=labels,
             partitions=partitions or None,
+            ndf=node_ndf,
+            ndf_source=node_ndf_source,
         )
         elements = ElementComposite(
             groups=groups,

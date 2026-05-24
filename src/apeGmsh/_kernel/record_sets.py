@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     )
     from apeGmsh._kernel.records._loads import NodalLoadRecord, ElementLoadRecord, SPRecord  # noqa: F401
     from apeGmsh._kernel.records._masses import MassRecord  # noqa: F401
+    from apeGmsh._kernel.records._node_ndf import NodeNDFRecord  # noqa: F401
     from apeGmsh._kernel.records._partitions import PartitionRecord  # noqa: F401
 
 
@@ -1026,3 +1027,96 @@ class PartitionSet:
         if not self._records:
             return "PartitionSet(empty)"
         return f"PartitionSet({len(self._records)} partitions, ids={self.ids})"
+
+
+# =====================================================================
+# NodeNDFSet — composite for fem.nodes.ndf_records()
+# =====================================================================
+
+class NodeNDFSet:
+    """Composite over :class:`NodeNDFRecord` instances on
+    :class:`~apeGmsh.mesh.FEMData.NodeComposite`.
+
+    Built once at :class:`~apeGmsh.mesh.FEMData.FEMData` init from the
+    per-node ``_ndf`` / ``_ndf_source`` arrays already held on
+    :class:`NodeComposite` — the back-stores that power
+    :meth:`NodeComposite.ndf_for`.  This composite is a Python-side
+    ergonomic layer that yields :class:`NodeNDFRecord` instances for
+    iteration / lookup / filtering; it never re-derives the underlying
+    values.
+
+    Records are stored in **ascending node-id order** (matching the
+    extraction order of ``NodeComposite._ids``).  Iteration yields
+    :class:`NodeNDFRecord` instances::
+
+        for rec in fem.nodes.ndf_records():
+            if rec.source == 'explicit':
+                print(rec.node_id, rec.ndf)
+
+    Lookup by node id is O(1) via :meth:`get`::
+
+        rec = fem.nodes.ndf_records().get(42)  # NodeNDFRecord or None
+    """
+
+    def __init__(self, records: list["NodeNDFRecord"] | None = None) -> None:
+        self._records: list["NodeNDFRecord"] = list(records) if records else []
+        # Lazy id -> record map built on first lookup.
+        self._by_id: dict[int, "NodeNDFRecord"] | None = None
+
+    def _ensure_index(self) -> dict[int, "NodeNDFRecord"]:
+        if self._by_id is None:
+            self._by_id = {int(r.node_id): r for r in self._records}
+        return self._by_id
+
+    def get(self, node_id: int) -> "NodeNDFRecord | None":
+        """Return the record for ``node_id``, or ``None`` if absent."""
+        return self._ensure_index().get(int(node_id))
+
+    def by_source(self, source: str) -> list["NodeNDFRecord"]:
+        """Return all records whose ``source`` matches.
+
+        ``source`` is one of ``'implicit'`` or ``'explicit'``.
+        """
+        return [r for r in self._records if r.source == source]
+
+    def by_ndf(self, ndf: int) -> list["NodeNDFRecord"]:
+        """Return all records whose ``ndf`` equals the given value."""
+        return [r for r in self._records if r.ndf == int(ndf)]
+
+    # ── Dunder ──────────────────────────────────────────────
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __bool__(self) -> bool:
+        return bool(self._records)
+
+    def __iter__(self) -> Iterator["NodeNDFRecord"]:
+        return iter(self._records)
+
+    def __getitem__(self, idx: int) -> "NodeNDFRecord":
+        return self._records[idx]
+
+    def __contains__(self, node_id: object) -> bool:
+        try:
+            return int(node_id) in self._ensure_index()  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+
+    def __repr__(self) -> str:
+        if not self._records:
+            return "NodeNDFSet(empty)"
+        # Concise summary: distribution of ndf values + count by source.
+        by_ndf: dict[int, int] = {}
+        n_expl = 0
+        for r in self._records:
+            by_ndf[r.ndf] = by_ndf.get(r.ndf, 0) + 1
+            if r.source == "explicit":
+                n_expl += 1
+        ndf_summary = ", ".join(
+            f"ndf={k}:{v}" for k, v in sorted(by_ndf.items())
+        )
+        return (
+            f"NodeNDFSet({len(self._records)} nodes; "
+            f"{ndf_summary}; explicit={n_expl})"
+        )

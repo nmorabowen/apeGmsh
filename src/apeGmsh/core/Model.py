@@ -81,6 +81,15 @@ class Model(_HasLogging):
         self.io = _IO(self)
         self.queries = _Queries(self)
 
+        # Per-node ndf overrides — shell-to-solid coupling feature.
+        # Each entry is a :class:`apeGmsh._kernel.defs.node_ndf.NodeNDFDef`
+        # registered via :meth:`set_node_ndf`.  Resolved at FEM-build
+        # time by ``_fem_factory`` into the per-node ``ndf`` vector on
+        # :class:`NodeComposite`.  Pre-mesh declarations only — the
+        # broker is the single source of truth for resolved values.
+        from apeGmsh._kernel.defs.node_ndf import NodeNDFDef  # local: keep import-time graph clean
+        self._node_ndf_defs: list[NodeNDFDef] = []
+
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._model._*)
     # ------------------------------------------------------------------
@@ -122,6 +131,78 @@ class Model(_HasLogging):
                         stacklevel=3,
                     )
         return tag
+
+    # ------------------------------------------------------------------
+    # Per-node ndf overrides (shell-to-solid coupling feature)
+    # ------------------------------------------------------------------
+
+    def set_node_ndf(
+        self,
+        target,
+        *,
+        ndf: int,
+        name: str | None = None,
+    ):
+        """Register an explicit per-node ``ndf`` (DOF count) override.
+
+        The broker's default rule derives each node's ``ndf`` from
+        the **dim** of its incident element groups (frame-on-line
+        and shell-on-surface both default to 6; solid-on-volume
+        defaults to 3 — see :data:`IMPLICIT_NDF_BY_DIM` in
+        :mod:`apeGmsh._kernel.records._node_ndf`).  Call this method
+        to override that default for a specific named region:
+
+        - Truss-only models — pin truss nodes to ``ndf=3``
+          (lines would otherwise default to 6).
+        - 2D plane-stress models — pin every node to ``ndf=2``.
+        - Future shell-on-solid bridges (S2) — pin the shell-base
+          interface nodes to ``ndf=6`` even when the implicit max
+          rule already yields the same value, for explicit
+          intent-capture.
+
+        Resolution happens at FEM-build time
+        (``g.mesh.queries.get_fem_data()`` / ``FEMData.from_gmsh()``)
+        via the same label-then-PG-then-part precedence chain that
+        loads and masses use.  The resulting per-node value is
+        recorded with ``source='explicit'`` on the broker (see
+        :class:`~apeGmsh._kernel.records._node_ndf.NodeNDFRecord`).
+
+        Parameters
+        ----------
+        target :
+            Label name, physical-group name, part label, raw
+            ``[(dim, tag), ...]`` list, or mesh-selection name —
+            anything the shared resolver accepts.
+        ndf : int, keyword-only
+            Number of DOFs to pin at every resolved node.  Must be
+            in ``[1, 6]``.
+        name : str, optional
+            Friendly tag stored on the def for debugging.
+
+        Returns
+        -------
+        NodeNDFDef
+            The stored def (mostly useful for tests / introspection).
+
+        Examples
+        --------
+        ::
+
+            # truss model — bring all line nodes down from default 6 to 3
+            g.model.set_node_ndf("Truss", ndf=3)
+
+            # 2D plane stress — every node carries only ux, uy
+            g.model.set_node_ndf("Plate", ndf=2)
+        """
+        from apeGmsh._kernel.defs.node_ndf import NodeNDFDef
+
+        if not isinstance(ndf, int) or ndf < 1 or ndf > 6:
+            raise ValueError(
+                f"set_node_ndf: ndf must be an int in [1, 6]; got {ndf!r}"
+            )
+        defn = NodeNDFDef(target=target, ndf=int(ndf), name=name)
+        self._node_ndf_defs.append(defn)
+        return defn
 
     # ------------------------------------------------------------------
     # Sync
