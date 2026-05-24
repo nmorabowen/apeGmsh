@@ -431,12 +431,14 @@ def test_staged_emit_resets_hook_state_between_stages(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.live
 def test_live_stage_open_raises() -> None:
     e = LiveOpsEmitter(wipe=True)
     with pytest.raises(NotImplementedError, match="does not support staged"):
         e.stage_open("insitu")
 
 
+@pytest.mark.live
 def test_live_stage_close_raises() -> None:
     e = LiveOpsEmitter(wipe=True)
     with pytest.raises(NotImplementedError, match="does not support staged"):
