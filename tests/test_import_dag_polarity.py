@@ -84,6 +84,11 @@ BASELINE = {
     ("core", "_kernel", "core/Labels.py"),
     ("core", "_kernel", "core/LoadsComposite.py"),
     ("core", "_kernel", "core/MassesComposite.py"),
+    # S1b shell-to-solid coupling: NodeNDFComposite eagerly imports
+    # ``NodeNDFDef`` from ``_kernel.defs.node_ndf`` at module load —
+    # the same downward leaf edge already established for the loads
+    # and masses composites above.
+    ("core", "_kernel", "core/NodeNDFComposite.py"),
     ("core", "_kernel", "core/_selection.py"),
     ("core", "_kernel", "core/constraints/defs.py"),
     ("core", "_kernel", "core/loads/defs.py"),

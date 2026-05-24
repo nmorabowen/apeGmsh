@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .core.ConstraintsComposite import ConstraintsComposite
     from .core.LoadsComposite import LoadsComposite
     from .core.MassesComposite import MassesComposite
+    from .core.NodeNDFComposite import NodeNDFComposite
     from .core._parts_registry import PartsRegistry
     from .sections._builder import SectionsBuilder
     from .mesh.Mesh import Mesh
@@ -43,6 +44,7 @@ class apeGmsh(_SessionBase):
         ("constraints",     ".core.ConstraintsComposite",  "ConstraintsComposite",  False),
         ("loads",           ".core.LoadsComposite",        "LoadsComposite",        False),
         ("masses",          ".core.MassesComposite",       "MassesComposite",       False),
+        ("node_ndf",        ".core.NodeNDFComposite",      "NodeNDFComposite",      False),
         ("mesh",            ".mesh.Mesh",                  "Mesh",                  False),
         ("loader",          ".mesh.MshLoader",             "MshLoader",             False),
         ("physical",        ".mesh.PhysicalGroups",        "PhysicalGroups",        False),
@@ -67,6 +69,7 @@ class apeGmsh(_SessionBase):
     constraints: ConstraintsComposite
     loads: LoadsComposite
     masses: MassesComposite
+    node_ndf: NodeNDFComposite
     mesh: Mesh
     loader: MshLoader
     physical: PhysicalGroups
