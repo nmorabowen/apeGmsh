@@ -4602,23 +4602,28 @@ fiber-section beams (expensive) with elastic beams (cheap):</p>
 </table>
 <h2 id="5-hdf5-round-trip-and-post-processing">5. HDF5 round-trip and post-processing<a class="headerlink" href="#5-hdf5-round-trip-and-post-processing" title="Permanent link">&para;</a></h2>
 <p><code>ops.h5(path)</code> writes the bridge's canonical <code>model.h5</code>. When
-<code>len(fem.partitions) &gt; 1</code>, the bridge populates the schema 2.10.0
+<code>len(fem.partitions) &gt; 1</code>, the bridge populates the schema 2.11.0
 partition zone:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/meta                                 (carries opensees=2.10.0)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/meta                                 (carries opensees=2.11.0)
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>/opensees/...                         (nodes, elements, materials, ...)
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>/opensees/partitions/                 (n_partitions = N attr)
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>  partition_01/
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    element_ids        int64 (n_elem_rank_1,)
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    node_ids           int64 (n_node_rank_1,)   # native + foreign decls
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    boundary_node_ids  int64 (n_boundary_1,)    # shared with another rank
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    @rank              = 1
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>  partition_00/
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    element_ids        int64 (n_elem_rank_0,)
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    node_ids           int64 (n_node_rank_0,)   # native + foreign decls
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    boundary_node_ids  int64 (n_boundary_0,)    # shared with another rank
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    @rank              = 0
 </span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    @n_elements        = ...
 </span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    @n_nodes           = ...
-</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>  partition_02/
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>  partition_01/
 </span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    ...
 </span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>/opensees/element_meta/{type_token}/
 </span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>  partition_ids        int64 (n_elem_of_type,)  # parallel to other columns
 </span></code></pre></div>
+<p>Group names and the <code>rank</code> attr / <code>partition_ids</code> values are
+<strong>0-based</strong> (matching <code>OpenSeesMP::getPID()</code>).  The broker's
+<code>PartitionRecord.id</code> remains Gmsh's 1-based label — that is
+Gmsh-side traceability metadata, not a runtime rank.  The mapping
+is <code>rank == i</code>, <code>PartitionRecord.id == fem.partitions[rank].id</code>.</p>
 <p>The new parallel <code>partition_ids</code> column on every
 <code>element_meta/{type}/</code> group lets a reader filter elements by rank
 in O(N) without re-reading the partition groups. Sentinel <code>-1</code>
@@ -4636,6 +4641,9 @@ which today is empty in the partition path).</p>
 </span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">rec</span><span class="p">)</span>
 </span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="c1"># PartitionRecord(id=1, n_nodes=12, n_elements=10)</span>
 </span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="c1"># ...</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="c1"># (PartitionRecord.id retains Gmsh&#39;s 1-based label;</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="c1"># the matching OpenSeesMP rank is the enumerate index — rank 0</span>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="c1"># is fem.partitions[0] is PartitionRecord(id=1, ...).)</span>
 </span></code></pre></div>
 <p><code>OpenSeesModel.from_h5</code> rehydrates the broker via
 <code>FEMData.from_h5(...)</code>, which restores <code>fem.partitions</code>. The
@@ -4650,9 +4658,9 @@ constraints) — use the <code>H5Model</code> reader directly:</p>
 </span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rank </span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">rank</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">element_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> elements, &quot;</span>
 </span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>              <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">boundary_node_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> boundary nodes&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Schema version: <strong>opensees 2.10.0</strong> (per ADR 0023 two-version reader
-window — 2.9.x readers still open 2.10.x files, ignoring the new
-partition zone).</p>
+<p>Schema version: <strong>opensees 2.11.0</strong> (per ADR 0023 two-version
+reader window — 2.10.x readers still open 2.11.x files; rank attr
+/ <code>partition_ids</code> row values became 0-based in 2.11.0).</p>
 <h2 id="6-viewer-integration">6. Viewer integration<a class="headerlink" href="#6-viewer-integration" title="Permanent link">&para;</a></h2>
 <p>The interactive Qt mesh viewer surfaces partition assignment in
 three places:</p>
@@ -4722,9 +4730,9 @@ rigid-floor diaphragm per storey:</p>
 ranks (the corners are far apart in the dual graph). The emitted
 deck contains the same <code>rigidDiaphragm</code> line on every rank that
 owns at least one slave corner:</p>
-<div class="language-tcl highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">1</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">0</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">    </span><span class="nv">...</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="c"># Foreign-node declarations for nodes rank 1 does not own.</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="c"># Foreign-node declarations for nodes rank 0 does not own.</span>
 </span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
 </span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">11</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
 </span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
@@ -4733,7 +4741,7 @@ owns at least one slave corner:</p>
 </span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">    </span><span class="nv">rigidDiaphragm</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mi">11</span>
 </span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="k">}</span>
 </span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>
-</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">2</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">1</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
 </span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="w">    </span><span class="nv">...</span>
 </span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
 </span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
@@ -4741,7 +4749,7 @@ owns at least one slave corner:</p>
 </span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="w">    </span><span class="nv">rigidDiaphragm</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mi">11</span>
 </span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="k">}</span>
 </span></code></pre></div>
-<p>Both rank 1 and rank 2 emit the <strong>same</strong> <code>rigidDiaphragm 3 5 7 9 11</code>
+<p>Both rank 0 and rank 1 emit the <strong>same</strong> <code>rigidDiaphragm 3 5 7 9 11</code>
 line; whichever ranks natively own which slaves, the foreign-side
 ranks declare the missing nodes before the line. The OpenSeesMP
 constraint handler dedupes equivalent declarations at solve time —
@@ -4801,16 +4809,20 @@ expected to change.</p>
 <h2 id="9-gotchas-and-known-limitations">9. Gotchas and known limitations<a class="headerlink" href="#9-gotchas-and-known-limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
-<p><strong>1-based partition IDs.</strong> Gmsh emits partition tags as <code>1..N</code>,
-  not <code>0..N-1</code>. The matching <code>if {[getPID] == K}</code> blocks in the
-  emitted Tcl also use 1-based ranks (matching Gmsh / <code>fem.partitions</code>).
-  <strong>However</strong>, OpenSeesMP's <code>getPID</code> returns 0-based ranks. The
-  bridge currently emits ranks as they land from <code>fem.partitions</code>
-  (1-based); under <code>mpiexec -np 4</code> only ranks that match the
-  emitted block IDs execute. If you are surprised by silent
-  no-execution on some ranks, this is the place to check —
-  prefer iterating <code>for rec in fem.partitions:</code> over hard-coding
-  rank IDs in your post-processing scripts.</p>
+<p><strong>Partition ID conventions: broker is 1-based, runtime is 0-based.</strong>
+  Gmsh assigns <code>PartitionRecord.id</code> as <code>1..N</code> (Gmsh-side label,
+  preserved on the broker for traceability).  The emitted Tcl /
+  Py runtime gates are <code>if {[getPID] == K}</code> with <code>K in 0..N-1</code>,
+  matching <code>OpenSeesMP::getPID()</code>.  The mapping is
+  <code>rank == i, fem.partitions[rank].id == rank + 1</code> — available
+  via plain <code>enumerate(fem.partitions)</code>.  This was a bug in
+  schema 2.10.0 (gates were 1-based, so rank 0 had no work and
+  partition N's content was silently dropped under <code>mpiexec -np
+  N</code>); schema 2.11.0 fixed it at the build-path seam.  Post-
+  processing scripts should iterate <code>for rank, rec in
+  enumerate(fem.partitions):</code> rather than hard-coding rank IDs,
+  and downstream HDF5 readers should treat <code>partition_NN/rank</code> /
+  <code>partition_ids</code> values as 0-based.</p>
 </li>
 <li>
 <p><strong><code>pymetis</code> has no PyPI Windows wheel.</strong> Install via
