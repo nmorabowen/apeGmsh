@@ -458,18 +458,9 @@ class BuiltModel:
             return 0
 
         # Partitioned path — per-rank fan-out per ADR 0027.  Phase
-        # SSI-2.A: the (stages + partitions) combo is not yet
-        # supported; the per-stage emit assumes the flat path.  Lift
-        # in a follow-up when an MP-staged use case appears.
-        if self.stage_records:
-            raise NotImplementedError(
-                "apeSees: combining staged builds (Phase SSI-2.A) "
-                "with MP-partitioned FEMs (ADR 0027) is not yet "
-                f"supported (got {len(self.stage_records)} stage(s) "
-                f"and {len(self.fem.partitions)} partitions).  Use "
-                "single-partition FEMs for staged decks, or non-staged "
-                "builds for MP-partitioned ones."
-            )
+        # SSI-2.C lifted the prior (stages + partitions) gate; staging
+        # is now handled inline by :meth:`_emit_partitioned` and
+        # :meth:`_emit_stages_partitioned`.
         self._emit_partitioned(
             emitter=emitter,
             tags=tags,
@@ -831,14 +822,20 @@ class BuiltModel:
         1. **Pre-element global primitives** (materials, sections, time series,
            geomTransf, analysis chain). Emitted ONCE outside any
            ``partition_open`` block — these are global script state.
+           Phase SSI-2.C: when ``stage_records`` is non-empty, analysis-
+           chain primitives are SKIPPED here and re-emitted per-stage by
+           :meth:`_emit_stages_partitioned`.
         2. **Per-rank emission** for each rank in ascending partition id:
 
            * ``partition_open(rank)``
            * Owned nodes (only this rank's ``node_ids`` from the
-             ``PartitionRecord``).
+             ``PartitionRecord``). Phase SSI-2.C: stage-bound nodes are
+             SKIPPED here and emitted inside their stage's block.
            * Owned elements (per-rank fan-out across each Element spec;
              non-owned elements still consume a tag slot to preserve
              cross-rank tag identity per ADR 0027 §"Tag determinism").
+             Phase SSI-2.C: stage-bound element specs are SKIPPED here
+             and emitted inside their stage's block.
            * Owned fixes / masses / regions (with per-rank intersection
              of region member ids per INV-4).
            * Broker nodal loads (re-partitioned per-rank).
@@ -850,14 +847,33 @@ class BuiltModel:
 
         3. **Analysis chain** (constraint handler auto-upgrade,
            numberer / system auto-upgrade per INV-5, pure recorder
-           declarations).
+           declarations). Phase SSI-2.C: auto-emit handlers are
+           SKIPPED in the staged case (each stage validated by
+           :class:`_StageBuilder` carries its own complete chain).
+        4. **Per-stage blocks** (Phase SSI-2.C) — only when
+           ``stage_records`` is non-empty: dispatch to
+           :meth:`_emit_stages_partitioned`.
         """
+        staged = bool(self.stage_records)
+
+        # Phase SSI-2.C: compute stage ownership for partitioned + staged.
+        element_owner_stage: dict[int, int] = {}
+        node_owner_stage: dict[int, int] = {}
+        if staged:
+            element_owner_stage, node_owner_stage = compute_stage_ownership(
+                self.stage_records, elements, self.fem,
+            )
+
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
         element_owner = build_element_partition_owner(self.fem)
 
         # -- 1. Pre-element global primitives. ----------------------------
+        # Phase SSI-2.C: skip analysis-chain primitives when staged —
+        # each stage re-emits its own chain inside its stage block.
         for p in pre_element:
+            if staged and _is_analysis_chain_primitive(p):
+                continue
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
@@ -957,6 +973,11 @@ class BuiltModel:
                     int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
                 }
                 for nid in sorted(int(n) for n in part.node_ids):
+                    # Phase SSI-2.C: stage-bound nodes emit inside
+                    # their stage's block, not in the global pre-stage
+                    # per-rank pass.
+                    if staged and nid in node_owner_stage:
+                        continue
                     idx = node_idx_lookup.get(nid)
                     if idx is None:
                         continue
@@ -967,7 +988,11 @@ class BuiltModel:
                     )
 
                 # 6. Elements — per-rank fan-out (tags pre-allocated).
+                # Phase SSI-2.C: stage-bound element specs emit inside
+                # their stage's block.
                 for ele_spec, pre_alloc in element_plan:
+                    if staged and id(ele_spec) in element_owner_stage:
+                        continue
                     emit_element_spec_partitioned(
                         spec=ele_spec,
                         emitter=emitter,
@@ -1044,9 +1069,17 @@ class BuiltModel:
         # block).  Auto-emit Transformation handler + ParallelPlain
         # numberer + Mumps system per ADR 0027 §"Constraint handler
         # interaction" (INV-5).
-        self._maybe_auto_emit_constraint_handler(emitter, pre_element)
-        self._maybe_auto_emit_parallel_numberer(emitter, pre_element)
-        self._maybe_auto_emit_parallel_system(emitter, pre_element)
+        # Phase SSI-2.C: in the staged case each stage carries a
+        # complete user-declared chain (validated by
+        # :class:`_StageBuilder`), so the global auto-emit is skipped
+        # to avoid emitting a stale fallback chain that would
+        # interfere with per-stage state.  Users must declare a
+        # parallel-friendly chain (``ParallelPlain`` / ``Mumps`` /
+        # ``Transformation``) inside each ``s.analysis(...)``.
+        if not staged:
+            self._maybe_auto_emit_constraint_handler(emitter, pre_element)
+            self._maybe_auto_emit_parallel_numberer(emitter, pre_element)
+            self._maybe_auto_emit_parallel_system(emitter, pre_element)
 
         # Recorders — also global (recorders write to disk, not into
         # the model topology; one recorder is sufficient even under
@@ -1078,6 +1111,171 @@ class BuiltModel:
                     tags=tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
+
+        # -- 4. Per-stage emit blocks (Phase SSI-2.C). ----------------
+        if staged:
+            self._emit_stages_partitioned(
+                emitter, tags,
+                partitions=partitions,
+                element_plan=element_plan,
+                element_owner_stage=element_owner_stage,
+                node_owner_stage=node_owner_stage,
+                element_owner=element_owner,
+                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                overrides=overrides,
+                base_resolver=base_resolver,
+            )
+
+    # -- Partitioned staged emit (Phase SSI-2.C) --------------------------
+
+    def _emit_stages_partitioned(
+        self,
+        emitter: Emitter,
+        tags: TagAllocator,
+        *,
+        partitions: "list[Any]",
+        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]",
+        element_owner_stage: "dict[int, int]",
+        node_owner_stage: "dict[int, int]",
+        element_owner: "dict[int, int]",
+        fem_eid_to_ops_tag: "dict[int, int]",
+        overrides: "dict[tuple[int, int], int] | None",
+        base_resolver: object,
+    ) -> None:
+        """Phase SSI-2.C: emit each stage block in registration order under MP.
+
+        Per stage:
+
+        1. ``stage_open(name)``.
+        2. **(only if the stage activates topology)** Per-rank loop:
+           ``partition_open(rank)``; emit owned stage-bound nodes + owned
+           stage-bound elements; ``partition_close()``. Then a single
+           ``domain_change()`` global so every rank rebuilds its DOF map.
+        3. **(only if the stage carries initial-stress records)**
+           Initial-stress globals (parameter declarations + step_hook
+           procs) emit GLOBALLY, then a per-rank loop emits the
+           ``addToParameter`` calls, filtered per rank by
+           ``element_owner`` so each element gets exactly one
+           ``addToParameter`` per component on its owning rank.
+        4. Analysis-chain primitives (global — each rank executes them
+           locally at runtime, mirroring the initial-stress
+           ``parameter`` / proc semantics).
+        5. ``emitter.analyze(steps=, dt=)`` (global — auto-wraps with
+           hook dispatcher calls).
+        6. ``stage_close()`` (global — ``loadConst -time 0`` +
+           ``wipeAnalysis`` + hook-list clear).
+
+        Cross-stage tag identity is preserved because
+        :meth:`_emit_partitioned` pre-allocated ALL element tags upfront
+        (across global + stage-bound element specs) before the first
+        per-rank loop.  Every rank sees the same FEM-eid ↔ OpenSees-tag
+        binding across every stage block.
+        """
+        # Reverse maps for efficient per-stage iteration.
+        stage_owned_nodes: dict[int, set[int]] = {}
+        for nid, sidx in node_owner_stage.items():
+            stage_owned_nodes.setdefault(sidx, set()).add(int(nid))
+
+        stage_owned_specs: dict[
+            int, list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]
+        ] = {}
+        for spec, sub in element_plan:
+            sidx = element_owner_stage.get(id(spec))
+            if sidx is not None:
+                stage_owned_specs.setdefault(sidx, []).append((spec, sub))
+
+        node_idx_lookup = {
+            int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
+        }
+
+        for stage_idx, stage in enumerate(self.stage_records):
+            emitter.stage_open(stage.name)
+
+            owned_nodes_this_stage = stage_owned_nodes.get(stage_idx, set())
+            owned_specs_this_stage = stage_owned_specs.get(stage_idx, [])
+            has_activation = bool(
+                owned_nodes_this_stage or owned_specs_this_stage
+            )
+
+            # 2. Per-rank topology emit for stage-owned nodes + elements.
+            if has_activation:
+                for rank, part in enumerate(partitions):
+                    rank_owned = {int(n) for n in part.node_ids}
+                    rank_stage_nodes = sorted(
+                        rank_owned & owned_nodes_this_stage
+                    )
+                    emitter.partition_open(rank)
+                    try:
+                        for nid in rank_stage_nodes:
+                            idx = node_idx_lookup.get(nid)
+                            if idx is None:
+                                continue
+                            xyz = self.fem.nodes.coords[idx]
+                            emitter.node(
+                                nid,
+                                float(xyz[0]),
+                                float(xyz[1]),
+                                float(xyz[2]),
+                            )
+                        # Per-rank element fan-out across this stage's
+                        # specs.  ``emit_element_spec_partitioned``
+                        # filters per element by ``element_owner == rank``
+                        # internally, so non-owned elements within a
+                        # stage-bound spec are silently skipped on this
+                        # rank's block.
+                        for ele_spec, pre_alloc in owned_specs_this_stage:
+                            emit_element_spec_partitioned(
+                                spec=ele_spec,
+                                emitter=emitter,
+                                fem=self.fem,
+                                pre_allocated=pre_alloc,
+                                base_resolver=base_resolver,
+                                transf_tag_for_element=overrides,
+                                partition_rank=rank,
+                                element_owner=element_owner,
+                            )
+                    finally:
+                        emitter.partition_close()
+
+                # 3. Global ``domain_change`` — rebuild DOF map on every
+                # rank after topology activation.  Single global call;
+                # OpenSeesMP executes it locally on each rank.
+                emitter.domain_change()
+
+            # 4. Initial-stress globals + per-rank ``addToParameter``.
+            if stage.initial_stress_records:
+                name_to_param_tags = emit_initial_stress_global(
+                    stage.initial_stress_records, emitter, tags,
+                )
+                for rank, _part in enumerate(partitions):
+                    emitter.partition_open(rank)
+                    try:
+                        emit_initial_stress_addtoparameter(
+                            stage.initial_stress_records,
+                            emitter, self.fem,
+                            name_to_param_tags=name_to_param_tags,
+                            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                            element_owner=element_owner,
+                            partition_rank=rank,
+                        )
+                    finally:
+                        emitter.partition_close()
+
+            # 5. Analysis chain — global; each rank executes locally.
+            for chain in (
+                stage.constraints, stage.numberer, stage.system,
+                stage.test, stage.algorithm, stage.integrator,
+                stage.analysis,
+            ):
+                if chain is not None:
+                    chain_tag = self.tag_for[id(chain)]
+                    chain._emit(emitter, chain_tag)
+
+            # 6. Analyze loop (auto-wraps with hook dispatcher calls).
+            emitter.analyze(steps=stage.n_increments, dt=stage.dt)
+
+            # 7. Stage close — loadConst + wipeAnalysis + hook clear.
+            emitter.stage_close()
 
     # -- Model-level fix / mass fan-out -----------------------------------
 
