@@ -2399,6 +2399,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#corenodendfcompositepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        core/NodeNDFComposite.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#core_model_geometrypy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5463,6 +5474,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#corenodendfcompositepy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        core/NodeNDFComposite.py
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#core_model_geometrypy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6517,33 +6539,34 @@ the <code>_COMPOSITES</code> tuple in <code>_core.py</code>.</p>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    G --&gt; CONSTR[g.constraints&lt;br/&gt;&lt;i&gt;ConstraintsComposite&lt;/i&gt;]
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    G --&gt; LOADS[g.loads&lt;br/&gt;&lt;i&gt;LoadsComposite&lt;/i&gt;]
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    G --&gt; MASSES[g.masses&lt;br/&gt;&lt;i&gt;MassesComposite&lt;/i&gt;]
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    G --&gt; MESH[g.mesh&lt;br/&gt;&lt;i&gt;mesh.Mesh&lt;/i&gt;]
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    G --&gt; LOADER[g.loader&lt;br/&gt;&lt;i&gt;mesh.MshLoader&lt;/i&gt;]
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    G --&gt; PHYS[g.physical&lt;br/&gt;&lt;i&gt;mesh.PhysicalGroups&lt;/i&gt;]
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    G --&gt; MSEL[g.mesh_selection&lt;br/&gt;&lt;i&gt;MeshSelectionSet&lt;/i&gt;]
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    G --&gt; VIEW[g.view&lt;br/&gt;&lt;i&gt;mesh.View&lt;/i&gt;]
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    G --&gt; PLOT[g.plot&lt;br/&gt;&lt;i&gt;viz.Plot — lazy&lt;/i&gt;]
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    FEM[FEMData broker] --&gt; OPS[&quot;apeSees(fem)&lt;br/&gt;&lt;i&gt;post-session bridge&lt;/i&gt;&quot;]
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    MODEL --&gt; MG[.geometry &lt;i&gt;_Geometry&lt;/i&gt;]
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    MODEL --&gt; MB[.boolean &lt;i&gt;_Boolean&lt;/i&gt;]
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    MODEL --&gt; MT[.transforms &lt;i&gt;_Transforms&lt;/i&gt;]
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    MODEL --&gt; MQ[.queries &lt;i&gt;_Queries&lt;/i&gt;]
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    MODEL --&gt; MIO[.io &lt;i&gt;_IO&lt;/i&gt;]
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>    MESH --&gt; MESHGEN[.generation &lt;i&gt;_Generation&lt;/i&gt;]
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>    MESH --&gt; MESHQ[.queries &lt;i&gt;_Queries&lt;/i&gt;]
-</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    MESH --&gt; MESHSZ[.sizing &lt;i&gt;_Sizing&lt;/i&gt;]
-</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    MESH --&gt; MESHF[.fields &lt;i&gt;FieldHelper&lt;/i&gt;]
-</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    MESH --&gt; MESHE[.editing &lt;i&gt;_Editing&lt;/i&gt;]
-</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    MESH --&gt; MESHS[.structured &lt;i&gt;_Structured&lt;/i&gt;]
-</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    MESH --&gt; MESHP[.partitioning &lt;i&gt;_Partitioning&lt;/i&gt;]
-</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>
-</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>    OPS --&gt; OMAT[.nDMaterial / .uniaxialMaterial / .section]
-</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>    OPS --&gt; OELEM[.element / .geomTransf / .beamIntegration]
-</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>    OPS --&gt; OPAT[.pattern / .timeSeries]
-</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>    OPS --&gt; OREC[.recorder]
-</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>    OPS --&gt; ORUN[.tcl / .py / .h5 / .run / .analyze]
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    G --&gt; NDF[g.node_ndf&lt;br/&gt;&lt;i&gt;NodeNDFComposite&lt;/i&gt;]
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    G --&gt; MESH[g.mesh&lt;br/&gt;&lt;i&gt;mesh.Mesh&lt;/i&gt;]
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    G --&gt; LOADER[g.loader&lt;br/&gt;&lt;i&gt;mesh.MshLoader&lt;/i&gt;]
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    G --&gt; PHYS[g.physical&lt;br/&gt;&lt;i&gt;mesh.PhysicalGroups&lt;/i&gt;]
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    G --&gt; MSEL[g.mesh_selection&lt;br/&gt;&lt;i&gt;MeshSelectionSet&lt;/i&gt;]
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    G --&gt; VIEW[g.view&lt;br/&gt;&lt;i&gt;mesh.View&lt;/i&gt;]
+</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    G --&gt; PLOT[g.plot&lt;br/&gt;&lt;i&gt;viz.Plot — lazy&lt;/i&gt;]
+</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    FEM[FEMData broker] --&gt; OPS[&quot;apeSees(fem)&lt;br/&gt;&lt;i&gt;post-session bridge&lt;/i&gt;&quot;]
+</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>
+</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    MODEL --&gt; MG[.geometry &lt;i&gt;_Geometry&lt;/i&gt;]
+</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    MODEL --&gt; MB[.boolean &lt;i&gt;_Boolean&lt;/i&gt;]
+</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>    MODEL --&gt; MT[.transforms &lt;i&gt;_Transforms&lt;/i&gt;]
+</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>    MODEL --&gt; MQ[.queries &lt;i&gt;_Queries&lt;/i&gt;]
+</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>    MODEL --&gt; MIO[.io &lt;i&gt;_IO&lt;/i&gt;]
+</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>
+</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>    MESH --&gt; MESHGEN[.generation &lt;i&gt;_Generation&lt;/i&gt;]
+</span><span id="__span-0-27"><a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>    MESH --&gt; MESHQ[.queries &lt;i&gt;_Queries&lt;/i&gt;]
+</span><span id="__span-0-28"><a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>    MESH --&gt; MESHSZ[.sizing &lt;i&gt;_Sizing&lt;/i&gt;]
+</span><span id="__span-0-29"><a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    MESH --&gt; MESHF[.fields &lt;i&gt;FieldHelper&lt;/i&gt;]
+</span><span id="__span-0-30"><a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>    MESH --&gt; MESHE[.editing &lt;i&gt;_Editing&lt;/i&gt;]
+</span><span id="__span-0-31"><a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    MESH --&gt; MESHS[.structured &lt;i&gt;_Structured&lt;/i&gt;]
+</span><span id="__span-0-32"><a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>    MESH --&gt; MESHP[.partitioning &lt;i&gt;_Partitioning&lt;/i&gt;]
+</span><span id="__span-0-33"><a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>
+</span><span id="__span-0-34"><a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>    OPS --&gt; OMAT[.nDMaterial / .uniaxialMaterial / .section]
+</span><span id="__span-0-35"><a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>    OPS --&gt; OELEM[.element / .geomTransf / .beamIntegration]
+</span><span id="__span-0-36"><a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>    OPS --&gt; OPAT[.pattern / .timeSeries]
+</span><span id="__span-0-37"><a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>    OPS --&gt; OREC[.recorder]
+</span><span id="__span-0-38"><a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>    OPS --&gt; ORUN[.tcl / .py / .h5 / .run / .analyze]
 </span></code></pre></div>
 <p>The ASCII equivalent, for pasting into commit messages:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>g                                                       (apeGmsh session)
@@ -6560,28 +6583,29 @@ the <code>_COMPOSITES</code> tuple in <code>_core.py</code>.</p>
 </span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>├── constraints      ConstraintsComposite
 </span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>├── loads            LoadsComposite
 </span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>├── masses           MassesComposite
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>├── mesh             mesh.Mesh
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>│   ├── .generation    _Generation      (mesh/_mesh_generation.py)
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>│   ├── .queries       _Queries         (mesh/_mesh_queries.py)
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>│   ├── .sizing        _Sizing          (mesh/_mesh_sizing.py)
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>│   ├── .fields        FieldHelper      (mesh/_mesh_field.py)
-</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>│   ├── .editing       _Editing         (mesh/_mesh_editing.py)
-</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>│   ├── .structured    _Structured      (mesh/_mesh_structured.py)
-</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>│   └── .partitioning  _Partitioning    (mesh/_mesh_partitioning.py)
-</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>├── loader           mesh.MshLoader
-</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>├── physical         mesh.PhysicalGroups
-</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>├── mesh_selection   mesh.MeshSelectionSet
-</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>├── view             mesh.View
-</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>└── plot             viz.Plot                           (lazy-loaded)
-</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>
-</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>apeSees(fem)  apeGmsh.opensees.apeSees                 (post-session)
-</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>    ├── .nDMaterial / .uniaxialMaterial / .section
-</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>    ├── .geomTransf / .beamIntegration
-</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>    ├── .element
-</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>    ├── .fix / .mass
-</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>    ├── .pattern / .timeSeries
-</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>    ├── .recorder
-</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>    └── .tcl / .py / .h5 / .run / .analyze
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>├── node_ndf         NodeNDFComposite                 (core/NodeNDFComposite.py)
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>├── mesh             mesh.Mesh
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>│   ├── .generation    _Generation      (mesh/_mesh_generation.py)
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>│   ├── .queries       _Queries         (mesh/_mesh_queries.py)
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>│   ├── .sizing        _Sizing          (mesh/_mesh_sizing.py)
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>│   ├── .fields        FieldHelper      (mesh/_mesh_field.py)
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>│   ├── .editing       _Editing         (mesh/_mesh_editing.py)
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>│   ├── .structured    _Structured      (mesh/_mesh_structured.py)
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>│   └── .partitioning  _Partitioning    (mesh/_mesh_partitioning.py)
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>├── loader           mesh.MshLoader
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>├── physical         mesh.PhysicalGroups
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>├── mesh_selection   mesh.MeshSelectionSet
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>├── view             mesh.View
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>└── plot             viz.Plot                           (lazy-loaded)
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>apeSees(fem)  apeGmsh.opensees.apeSees                 (post-session)
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>    ├── .nDMaterial / .uniaxialMaterial / .section
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>    ├── .geomTransf / .beamIntegration
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>    ├── .element
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>    ├── .fix / .mass
+</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>    ├── .pattern / .timeSeries
+</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>    ├── .recorder
+</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>    └── .tcl / .py / .h5 / .run / .analyze
 </span></code></pre></div>
 <p>Output of the workflow is <code>fem = g.mesh.queries.get_fem_data(dim=N)</code> —
 a frozen <code>FEMData</code> that has its own
@@ -6862,9 +6886,14 @@ for the full broker surface.</p>
 <td><code>core/MassesComposite.py</code></td>
 </tr>
 <tr>
+<td>set per-node ndf (DOF count) for a region</td>
+<td><code>g.node_ndf.set(target, ndf=K)</code> / <code>set_default(ndf=K)</code></td>
+<td><code>core/NodeNDFComposite.py</code></td>
+</tr>
+<tr>
 <td>list, filter, or clear declared intent</td>
-<td><code>g.loads.list_defs()</code>, <code>.patterns()</code>, <code>.clear()</code> — and equivalents on <code>constraints</code> / <code>masses</code></td>
-<td>all three composites</td>
+<td><code>g.loads.list_defs()</code>, <code>.patterns()</code>, <code>.clear()</code> — and equivalents on <code>constraints</code> / <code>masses</code> / <code>node_ndf</code></td>
+<td>all four composites</td>
 </tr>
 </tbody>
 </table>
@@ -7252,8 +7281,8 @@ and <code>Constraints</code> (the facade module).</p>
 <li><code>apeGmsh(_SessionBase)</code> <strong>[composite]</strong> — the standalone session class.
   Declares <code>_COMPOSITES</code> tuple that <code>_SessionBase._create_composites()</code>
   iterates; exposes typed attributes <code>inspect</code>, <code>model</code>, <code>labels</code>,
-  <code>sections</code>, <code>parts</code>, <code>constraints</code>, <code>loads</code>, <code>masses</code>, <code>mesh</code>, <code>loader</code>,
-  <code>physical</code>, <code>mesh_selection</code>, <code>view</code>, <code>opensees</code>, <code>plot</code>.</li>
+  <code>sections</code>, <code>parts</code>, <code>constraints</code>, <code>loads</code>, <code>masses</code>, <code>node_ndf</code>,
+  <code>mesh</code>, <code>loader</code>, <code>physical</code>, <code>mesh_selection</code>, <code>view</code>, <code>plot</code>.</li>
 <li><code>.__init__(self, *, model_name="ModelName", verbose=False)</code></li>
 </ul>
 <h4 id="_sessionpy"><code>_session.py</code><a class="headerlink" href="#_sessionpy" title="Permanent link">&para;</a></h4>
@@ -7463,6 +7492,49 @@ tables.</p>
 <li><code>.__len__(self)</code></li>
 <li><code>.__repr__(self)</code></li>
 </ul>
+<h4 id="corenodendfcompositepy"><code>core/NodeNDFComposite.py</code><a class="headerlink" href="#corenodendfcompositepy" title="Permanent link">&para;</a></h4>
+<ul>
+<li><code>NodeNDFComposite</code> <strong>[composite]</strong> — explicit per-node DOF count
+  (<code>ndf</code>) declarations. Sibling to constraints / loads / masses;
+  declare on geometry (label / PG / part / mesh-selection) before
+  meshing and the broker materialises the per-node <code>ndf</code> vector at
+  <code>g.mesh.queries.get_fem_data()</code> time. apeGmsh deliberately does
+  not infer <code>ndf</code> from element class — explicit-only, fail-loud
+  (ADR 0032). See <code>_kernel/defs/node_ndf.py::NodeNDFDef</code> for the
+  stored intent shape.</li>
+<li><code>.__init__(self, parent)</code></li>
+<li><code>.set(self, target, *, ndf: int, name=None) -&gt; NodeNDFDef</code> —
+    declare <code>ndf</code> for every node resolved from <code>target</code>; targets
+    accept the same shapes loads/masses do (label / PG / part /
+    mesh-selection / raw DimTag list). Validates <code>ndf ∈ [1, 6]</code>.
+    Multiple <code>set</code> calls may overlap; the last matching def wins.</li>
+<li><code>.set_default(self, *, ndf: int, name=None) -&gt; NodeNDFDef</code> —
+    declare the fallback <code>ndf</code> for every node not covered by an
+    explicit <code>set</code> call. Re-calling replaces the existing default
+    in place (does not append a second default).</li>
+<li><code>.list(self) -&gt; list[NodeNDFDef]</code> — registered defs in
+    declaration order; the default (if declared) has <code>target=None</code>.</li>
+<li><code>.clear(self)</code> — drop every def including the default; warns
+    if called after extraction.</li>
+<li><code>._default_def(self)</code> / <code>._targeted_defs(self)</code> — internal
+    helpers used by <code>mesh/_fem_factory::_populate_node_ndf</code>.</li>
+<li><code>._warn_if_post_extraction(self, method_name)</code> — fires a
+    UserWarning when <code>set</code> / <code>set_default</code> / <code>clear</code> is called
+    after <code>get_fem_data()</code> because the cached broker holds the
+    pre-mutation array; clears the post-extract flag so a batch
+    of mutations only warns once.</li>
+<li><code>.__len__(self)</code> / <code>.__iter__(self)</code> / <code>.__bool__(self)</code> /
+    <code>.__repr__(self)</code></li>
+</ul>
+<p>Module-level: <code>_VALID_NDF_RANGE = range(1, 7)</code>, <code>_validate_ndf</code>
+  (type + range check, rejects <code>bool</code>).</p>
+<p>Fail-loud contract:
+  - Build-time <code>set(target=...)</code> with an unresolvable target raises
+    <code>KeyError</code> per the dimensional resolution contract
+    (<code>tests/test_resolution_contract.py</code>).
+  - Runtime <code>fem.nodes.ndf_for(nid)</code> on an undeclared node raises
+    <code>LookupError</code> naming both fixes (<code>set</code> for partial coverage,
+    <code>set_default</code> for uniform).</p>
 <h4 id="core_model_geometrypy"><code>core/_model_geometry.py</code><a class="headerlink" href="#core_model_geometrypy" title="Permanent link">&para;</a></h4>
 <ul>
 <li><code>_Geometry</code> <strong>[sub-composite]</strong></li>

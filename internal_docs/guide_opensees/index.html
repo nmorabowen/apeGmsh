@@ -5233,6 +5233,18 @@ error -- <code>build()</code> catches it.</p>
 <h3 id="shell-elements-need-ndf6">Shell elements need ndf=6<a class="headerlink" href="#shell-elements-need-ndf6" title="Permanent link">&para;</a></h3>
 <p>Shell elements require six DOFs per node. If your model mixes shells
 with solids, set <code>ndf=6</code> for the entire model.</p>
+<p>For shell-on-solid mixed-ndf models where the model-wide bump is
+wasteful, the top-level <code>g.node_ndf</code> composite (sibling to
+<code>g.constraints</code> / <code>g.loads</code> / <code>g.masses</code>) declares per-region DOF
+counts. Pair a default with a targeted override:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">g</span><span class="o">.</span><span class="n">node_ndf</span><span class="o">.</span><span class="n">set_default</span><span class="p">(</span><span class="n">ndf</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>          <span class="c1"># solids stay at 3</span>
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="n">g</span><span class="o">.</span><span class="n">node_ndf</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">&quot;ShellRegion&quot;</span><span class="p">,</span> <span class="n">ndf</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>   <span class="c1"># shell nodes get rotational DOFs</span>
+</span></code></pre></div>
+<p>apeGmsh resolves per-node <code>ndf</code> at FEM-build time; nodes not covered
+by any declaration raise <code>LookupError</code> from <code>fem.nodes.ndf_for(nid)</code>.
+See <a href="../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+for the explicit-only doctrine and the dimensional-resolution-contract
+alignment.</p>
 <h3 id="the-deck-stops-at-model-definition">The deck stops at model definition<a class="headerlink" href="#the-deck-stops-at-model-definition" title="Permanent link">&para;</a></h3>
 <p>The emitted scripts omit analysis commands (integrator, algorithm,
 system). Append your analysis block or source/import the generated
@@ -5240,7 +5252,7 @@ file from a driver script. Recorders, if you declared them on
 <code>ops.recorder.*</code>, <em>are</em> emitted.</p>
 <h3 id="tie-non-conformal-interfaces-are-deferred">Tie / non-conformal interfaces are DEFERRED<a class="headerlink" href="#tie-non-conformal-interfaces-are-deferred" title="Permanent link">&para;</a></h3>
 <p>You can declare ties for non-matching meshes on the session:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">&quot;ColumnTop&quot;</span><span class="p">,</span> <span class="s2">&quot;SlabBottom&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">tie</span><span class="p">(</span><span class="s2">&quot;ColumnTop&quot;</span><span class="p">,</span> <span class="s2">&quot;SlabBottom&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
 </span></code></pre></div>
 <p>The tie resolves into <code>FEMData</code> and persists into <code>model.h5</code> for the
 <strong>viewer / <code>Results</code></strong>, but <code>apeSees</code> has <strong>no OpenSees emission path</strong>

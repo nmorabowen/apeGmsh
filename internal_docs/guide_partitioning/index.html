@@ -4908,14 +4908,29 @@ expected to change.</p>
   intersection on the read side.</p>
 </li>
 <li>
-<p><strong>Per-node <code>ndf</code> metadata is not yet on the broker.</strong> Foreign
-  node declarations under cross-partition replication (§ 7) use
-  the model-wide <code>ndf</code> declared via <code>ops.model(ndm=, ndf=)</code>.
-  This is fine for the homogeneous-ndf models apeGmsh supports
-  today (one <code>ndf</code> per session). Mixed-ndf models — <code>ndf=3</code> solid
-  nodes coexisting with <code>ndf=6</code> beam nodes in the same broker —
-  are not yet supported; tracked as task #16.</p>
+<p><strong>Per-node <code>ndf</code> metadata is on the broker.</strong> The top-level
+  <code>g.node_ndf</code> composite (sibling to <code>g.constraints</code> / <code>g.loads</code> /
+  <code>g.masses</code>) is the user-facing API for declaring DOF counts per
+  region; <code>fem.nodes.ndf_for(nid)</code> is the broker-side query.
+  Declarations are explicit-only — apeGmsh does not infer <code>ndf</code>
+  from element class — and <code>ndf_for</code> raises <code>LookupError</code> on
+  undeclared nodes naming both fixes
+  (<code>g.node_ndf.set(target, ndf=K)</code> and
+  <code>g.node_ndf.set_default(ndf=K)</code>). See
+  <a href="../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+  for the doctrine.</p>
 </li>
+</ul>
+<p>Foreign node declarations under cross-partition replication (§ 7)
+  still emit through the model-wide <code>ndf</code> declared via
+  <code>ops.model(ndm=, ndf=)</code>. The forward-pointer to S2 work: the
+  cross-partition fan-out could consume per-node <code>ndf</code> directly
+  via <code>fem.nodes.ndf_for(nid)</code>, which would unblock mixed-ndf
+  partitioned models (e.g. <code>ndf=3</code> solid nodes coexisting with
+  <code>ndf=6</code> beam nodes across rank boundaries). The broker-side
+  data is in place; the bridge-side consumption is the remaining
+  work.</p>
+<ul>
 <li>
 <p><strong><code>partition()</code> after <code>renumber()</code> is the canonical order.</strong>
   Call <code>g.mesh.partitioning.renumber(dim=, method="simple",
