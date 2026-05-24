@@ -263,12 +263,10 @@ def test_hash_changes_when_ndf_changes(g, tmp_path: Path):
     snap_a = fem_a.snapshot_id
 
     # Second build — uniform ndf=6.  Drop and re-declare.
+    # ``_fem_built`` is reset at the top of every ``_from_gmsh`` call,
+    # so the second ``get_fem_data()`` correctly picks up the new
+    # declaration without a workaround.
     g.node_ndf.clear()
-    # ``_fem_built`` is now True; force a fresh broker by clearing it
-    # and re-declaring (the warning is the intended UX — silence it
-    # here because we want a fresh, identical-geometry FEM for the
-    # hash compare).
-    g._fem_built = False
     g.node_ndf.set_default(ndf=6)
     fem_b = g.mesh.queries.get_fem_data(dim=3)
     snap_b = fem_b.snapshot_id
@@ -291,6 +289,71 @@ def test_hash_stable_for_same_declarations(g):
     fem_a = g.mesh.queries.get_fem_data(dim=3)
     fem_b = g.mesh.queries.get_fem_data(dim=3)
     assert fem_a.snapshot_id == fem_b.snapshot_id
+
+
+def test_hash_diverges_when_coverage_differs(g):
+    """Two FEMs with the same geometry + same default but different
+    *targeted* ndf coverage produce different snapshot_ids.
+
+    FEM A: set('Top', ndf=6) + set_default(ndf=3) -> Top=6, rest=3.
+    FEM B: set('Top', ndf=3) + set_default(ndf=3) -> all=3.
+
+    The resolved arrays differ on the top-face nodes, so the
+    snapshot_ids must differ — proving the hash actually folds in
+    the *per-node* ndf vector rather than a coarse digest.
+    """
+    # First build — top face overridden to 6.
+    _build_two_box_model(g)
+    g.node_ndf.set("Top", ndf=6)
+    g.node_ndf.set_default(ndf=3)
+    fem_a = g.mesh.queries.get_fem_data(dim=3)
+    snap_a = fem_a.snapshot_id
+
+    # Second build — top face matches the default (effectively uniform).
+    g.node_ndf.clear()
+    g.node_ndf.set("Top", ndf=3)
+    g.node_ndf.set_default(ndf=3)
+    fem_b = g.mesh.queries.get_fem_data(dim=3)
+    snap_b = fem_b.snapshot_id
+
+    assert snap_a != snap_b, (
+        "Different per-node ndf coverage (Top=6 vs Top=3) must "
+        "produce different snapshot_ids."
+    )
+
+
+def test_hash_insensitive_to_declaration_order(g):
+    """Two FEMs whose declarations differ only in call order — but
+    produce the same final resolved ``_ndf`` array — must hash to the
+    same snapshot_id.
+
+    Order A: ``set('Top', ndf=6)`` then ``set_default(ndf=3)``.
+    Order B: ``set_default(ndf=3)`` then ``set('Top', ndf=6)``.
+
+    Per the resolver semantics (targeted defs apply first; default
+    fills sentinels), both orders yield the same final array
+    (Top nodes → 6, rest → 3).  The snapshot_id is over the *resolved
+    state* of ``_ndf``, not the declaration list — so the hashes
+    must agree.
+    """
+    # First build — order A.
+    _build_two_box_model(g)
+    g.node_ndf.set("Top", ndf=6)
+    g.node_ndf.set_default(ndf=3)
+    fem_a = g.mesh.queries.get_fem_data(dim=3)
+    snap_a = fem_a.snapshot_id
+
+    # Second build — order B, same geometry.
+    g.node_ndf.clear()
+    g.node_ndf.set_default(ndf=3)
+    g.node_ndf.set("Top", ndf=6)
+    fem_b = g.mesh.queries.get_fem_data(dim=3)
+    snap_b = fem_b.snapshot_id
+
+    assert snap_a == snap_b, (
+        "Declaration order should not change snapshot_id when the "
+        "resolved ndf array is identical."
+    )
 
 
 # =====================================================================
@@ -384,6 +447,28 @@ def test_set_rejects_out_of_range_ndf(g):
         g.node_ndf.set("Body", ndf=7)
     with pytest.raises(ValueError):
         g.node_ndf.set_default(ndf=0)
+
+
+def test_set_rejects_invalid_ndf_types(g):
+    """set/set_default refuse non-int ndf values (None, bool, float).
+
+    ``bool`` is a subclass of ``int`` in Python so a naked
+    ``isinstance(ndf, int)`` accepts it; the validator pre-empts
+    that with an explicit ``isinstance(ndf, bool)`` guard.
+    """
+    # set(...) rejects.
+    with pytest.raises(TypeError):
+        g.node_ndf.set("Body", ndf=None)
+    with pytest.raises(TypeError):
+        g.node_ndf.set("Body", ndf=True)
+    with pytest.raises(TypeError):
+        g.node_ndf.set("Body", ndf=2.0)
+
+    # set_default(...) rejects (same validator).
+    with pytest.raises(TypeError):
+        g.node_ndf.set_default(ndf=None)
+    with pytest.raises(TypeError):
+        g.node_ndf.set_default(ndf=True)
 
 
 def test_set_default_replaces_not_appends(g):
