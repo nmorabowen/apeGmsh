@@ -411,24 +411,6 @@ def _from_gmsh(
         NodeComposite, ElementComposite, MeshInfo, _compute_bandwidth,
     )
 
-    # Reset the post-extraction guard at the *top* of every build.
-    # ``_fem_built`` is stamped True at the end of this function so
-    # that any further ``g.node_ndf.set(...)`` after extraction warns
-    # (the broker is cached; later defs won't appear in this FEMData).
-    # But subsequent ``get_fem_data()`` calls — after a legitimate
-    # re-mesh / re-partition / model change — re-build the FEM
-    # *correctly*; without this reset, every ``set(...)`` after the
-    # second extraction would warn spuriously even though the new
-    # def *will* be honoured by the build currently in progress.
-    # Resetting here baselines each fresh extraction so only
-    # post-cache mutations (set after the last extraction completed)
-    # trigger the warning.
-    if session is not None:
-        try:
-            session._fem_built = False
-        except AttributeError:
-            pass  # not a vanilla session — skip silently
-
     # ── 1. Extract ────────────────────────────────────────────
     (node_tags, node_coords, elem_tags, groups,
      used_tags, physical, labels, partitions) = _extract_mesh_core(dim)
@@ -705,10 +687,22 @@ def _from_msh(
             types=type_list,
         )
 
+        # Per-node ndf — initialise to the all-sentinel array (zeros).
+        # ``from_msh`` has no session and no ``NodeNDFComposite``, so
+        # there are no declarations to resolve.  Stamping zeros (rather
+        # than leaving ``_ndf=None``) makes the hash gate in
+        # ``_femdata_hash`` symmetric across construction paths:
+        # ``from_gmsh`` and ``from_msh`` of the same geometry now
+        # produce the same ``snapshot_id``.  ``ndf_for`` still raises
+        # the helpful LookupError for sentinel-0 nodes, so the
+        # explicit-only API contract is unchanged.
+        node_ndf = np.zeros(len(node_ids), dtype=np.int8)
+
         nodes = NodeComposite(
             node_ids=node_ids, node_coords=node_coords,
             physical=physical, labels=labels,
             partitions=partitions or None,
+            ndf=node_ndf,
         )
         elements = ElementComposite(
             groups=groups,

@@ -194,7 +194,14 @@ class NodeNDFComposite:
         return list(self._defs)
 
     def clear(self) -> None:
-        """Drop every registered def (including the default)."""
+        """Drop every registered def (including the default).
+
+        Symmetric with :meth:`set` / :meth:`set_default`: warns if
+        called after a ``get_fem_data()`` build because the cached
+        broker still holds the pre-clear ndf array; re-extract to
+        propagate the wipe.
+        """
+        self._warn_if_post_extraction("clear")
         self._defs.clear()
         self._default_idx = None
 
@@ -218,9 +225,20 @@ class NodeNDFComposite:
         """Warn when defs are mutated after the broker has been built.
 
         The broker caches per-node ``ndf`` arrays at
-        ``get_fem_data()`` time; later ``set`` / ``set_default`` calls
-        do not retroactively rewrite an already-extracted FEM.
-        Re-extract the broker if the new declaration must take effect.
+        ``get_fem_data()`` time; later ``set`` / ``set_default`` /
+        ``clear`` calls do not retroactively rewrite an
+        already-extracted FEM.  Re-extract the broker if the new
+        declaration must take effect.
+
+        The flag is *cleared* after warning so that a batch of
+        post-extract mutations only warns on the first call; the next
+        ``get_fem_data()`` re-stamps the flag, restoring the guard for
+        the next round.  Without this, the reset-at-top-of-build trick
+        from PR #317 fired spurious warnings during the legitimate
+        re-extract sequence ``extract → set → extract → set`` (the
+        polish commit only suppressed warnings *during* a build, not
+        the warning that fires *between* two builds when the new
+        declaration will in fact be picked up by the next extract).
         """
         if getattr(self._parent, "_fem_built", False):
             warnings.warn(
@@ -231,6 +249,13 @@ class NodeNDFComposite:
                 UserWarning,
                 stacklevel=3,
             )
+            # Clear the flag so the user can finish their batch of
+            # re-declarations without N redundant warnings.  Next
+            # ``get_fem_data()`` re-stamps it.
+            try:
+                self._parent._fem_built = False
+            except AttributeError:
+                pass  # not a vanilla session — skip silently
 
     # ------------------------------------------------------------------
     # Dunder

@@ -60,11 +60,13 @@ def _hash_nodes(h: "hashlib._Hash", fem: "FEMData") -> None:
     h.update(coords[sort_idx].tobytes())
 
     # Per-node ndf (shell-to-solid coupling, S1b).  Gated on
-    # ``_ndf is not None`` so legacy / direct-test FEMData broker
-    # instances built without the ndf channel preserve their
-    # pre-existing snapshot_id — only FEMs that carry per-node ndf
-    # extend the digest.  ``getattr`` because mock fixtures in
-    # test_results_femdata_hash use SimpleNamespace for ``nodes``.
+    # ``_ndf is not None`` to keep the digest stable for the
+    # ``SimpleNamespace``-style mock fixtures in
+    # ``test_results_femdata_hash`` that omit the channel entirely.
+    # *Real* FEMData constructed via ``from_gmsh`` / ``from_msh`` /
+    # ``from_h5`` always carries an ndf array (zeros sentinel if
+    # nothing was declared), so this branch fires symmetrically
+    # across construction paths — Bug 3 in the post-#317 audit.
     ndf = getattr(fem.nodes, "_ndf", None)
     if ndf is not None:
         h.update(b"NDF|")

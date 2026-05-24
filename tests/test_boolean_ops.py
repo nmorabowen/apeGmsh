@@ -195,6 +195,58 @@ class TestFragment:
                 f"Surface {surf_tag} is free (unbounded) after fragment cleanup"
             )
 
+    def test_fragment_cleanup_free_strict_centroid_check(self, g):
+        """Pins the actual ``cleanup_free=True`` preservation rule:
+        ``centroid-inside-some-volume-bbox`` is the *only* check.
+
+        A shell whose centroid lies OUTSIDE every volume bounding box
+        is deleted even if it shares an edge / boundary curve with a
+        volume face.  The earlier docstring (Bug 5 in the post-#317
+        audit) claimed edge-sharing shells were preserved, but the
+        implementation at ``_model_boolean.py`` only inspects the
+        centroid.  Updating the docstring without this test would
+        let a future contributor silently re-introduce the false
+        claim.
+        """
+        # Box at [0,1]³.
+        g.model.geometry.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0, label='box')
+        # Shell rectangle in the z=0 plane spanning x in [1, 2] and y in
+        # [0, 1].  Its left edge (x=1, y in [0,1], z=0) coincides with
+        # the box's front-bottom edge — they SHARE a boundary curve.
+        # Centroid (1.5, 0.5, 0.0) is outside the box bbox in x (>1).
+        g.model.geometry.add_rectangle(1.0, 0.0, 0.0, 1.0, 1.0, label='overhang')
+        g.model.sync()
+
+        # Confirm precondition: overhang is dim=2, centroid outside
+        # box bbox in x.
+        overhang_tags = g.labels.entities('overhang', dim=2)
+        assert overhang_tags, "label 'overhang' did not resolve"
+        cx, cy, cz = gmsh.model.occ.getCenterOfMass(2, overhang_tags[0])
+        assert cx > 1.0, (
+            f"Test setup invalid: overhang centroid x={cx} must be "
+            f"OUTSIDE the box bbox (x_max=1.0)"
+        )
+
+        g.model.boolean.fragment(
+            objects='box', tools='overhang', cleanup_free=True,
+        )
+
+        # The overhang label no longer resolves to any surviving
+        # dim=2 entity — cleanup_free deleted it (centroid-outside
+        # check), edge-sharing notwithstanding.
+        try:
+            survivors = g.labels.entities('overhang', dim=2)
+        except KeyError:
+            survivors = []
+        existing_dim2 = {t for _, t in gmsh.model.getEntities(2)}
+        assert not [t for t in survivors if t in existing_dim2], (
+            "cleanup_free=True regressed: edge-sharing-but-centroid-"
+            "outside shell survived.  If this was an intentional API "
+            "change to add the curve-sharing preservation rule, "
+            "update both the test and the docstring at "
+            "_model_boolean.py."
+        )
+
 
 # =====================================================================
 # label= override

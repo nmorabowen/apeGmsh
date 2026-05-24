@@ -236,9 +236,10 @@ class _Boolean:
             ``gmsh.model.occ.remove`` after the fragment.  When True,
             free surfaces whose centroid sits INSIDE some volume bbox
             are still preserved (embedded interior surfaces such as
-            future crack planes), and free surfaces sharing a boundary
-            curve with a volume face are preserved as well (shell
-            walls attached to a volume).
+            future crack planes); the centroid-inside-bbox test is the
+            *only* preservation rule — a shell whose centroid lies
+            outside every volume bbox is deleted even if it shares
+            an edge / boundary curve with a volume face.
         sync : synchronise the OCC kernel (default True).
 
         Returns

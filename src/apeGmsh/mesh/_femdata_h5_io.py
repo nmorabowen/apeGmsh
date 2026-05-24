@@ -280,11 +280,15 @@ def _derive_ndm(fem: "FEMData") -> int:
 def _write_nodes(fem: "FEMData", f: Any) -> None:
     """Write ``/nodes/{ids, coords[, ndf]}`` from ``fem.nodes``.
 
-    Neutral schema 2.7.0 added the optional per-node ``ndf`` dataset
-    (shell-to-solid coupling, S1b).  Skipped when the broker has no
-    metadata populated (e.g. a from_msh-built FEMData or a direct
-    test fixture); readers tolerate absence by raising
-    :class:`LookupError` from :meth:`NodeComposite.ndf_for`.
+    Neutral schema 2.7.0 added the per-node ``ndf`` dataset
+    (shell-to-solid coupling, S1b).  Written whenever the broker has
+    a populated ``_ndf`` array — real FEMData from any construction
+    path (``from_gmsh``/``from_msh``/``from_h5``) now always carries
+    the array (zeros sentinel when nothing was declared); only
+    hand-built test fixtures that explicitly pass ``ndf=None`` skip
+    the dataset.  Readers tolerate absence by synthesising the
+    all-sentinel array so a 2.6.x file's recomputed hash equals the
+    fresh-from-mesh value.
     """
     nodes_grp = f.create_group("nodes")
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
@@ -1140,6 +1144,21 @@ def read_neutral_zone_from_group(
     # must tolerate the omission per the two-version window).  Probe
     # with ``in`` not ``Group.get`` per the h5py optional-child .get()
     # hazard (project_h5py_optional_child_get_hazard).
+    #
+    # If the dataset is present, use it.  If absent:
+    #   * Pre-2.7.0 file: the writer didn't know about ndf at all.
+    #     Synthesise the all-sentinel array so the loaded FEM's hash
+    #     matches what ``from_gmsh`` / ``from_msh`` would compute for
+    #     the same node set (Bug 3 in the post-#317 audit).
+    #   * 2.7.0+ file with no ``/nodes/ndf``: the writer intentionally
+    #     omitted it because ``_ndf=None`` at write time (hand-built
+    #     test fixture or pre-Bug-3 from_msh).  Stored snapshot_id was
+    #     computed without the ndf fold, so leave ``_ndf=None`` to
+    #     keep the recomputed hash symmetric with what was stored.
+    #
+    # The explicit-only API contract is unaffected: ``ndf_for`` still
+    # raises the helpful LookupError for sentinel-0 nodes (or for the
+    # ``_ndf=None`` case).
     if "ndf" in nodes_grp:
         node_ndf = np.asarray(nodes_grp["ndf"][...], dtype=np.int8)
         if node_ndf.shape != node_ids.shape:
@@ -1148,7 +1167,13 @@ def read_neutral_zone_from_group(
                 f"match /nodes/ids shape {node_ids.shape}."
             )
     else:
-        node_ndf = None
+        # Tuple-compare the dataclass fields (SchemaVersion isn't
+        # ordering-enabled, but its fields are comparable).
+        _fv = (file_version.major, file_version.minor, file_version.patch)
+        if _fv < (2, 7, 0):
+            node_ndf = np.zeros(node_ids.shape, dtype=np.int8)
+        else:
+            node_ndf = None
 
     # -- elements (per-type subgroups) --
     element_groups: dict[int, ElementGroup] = {}
