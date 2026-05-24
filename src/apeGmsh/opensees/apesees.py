@@ -601,7 +601,11 @@ class BuiltModel:
             if isinstance(p, Pattern):
                 emit_pattern_spec(p, emitter, tag, self.fem)
             elif isinstance(p, Recorder):
-                emit_recorder_spec(p, emitter, tag, self.fem, tags=tags)
+                emit_recorder_spec(
+                    p, emitter, tag, self.fem,
+                    tags=tags,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                )
             else:  # pragma: no cover  - unreachable per partition above
                 p._emit(emitter, tag)
 
@@ -1030,7 +1034,11 @@ class BuiltModel:
                 materialised = plan_entry.materialised_spec
                 materialised._emit(emitter, tag)
             else:
-                emit_recorder_spec(p, emitter, tag, self.fem, tags=tags)
+                emit_recorder_spec(
+                    p, emitter, tag, self.fem,
+                    tags=tags,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                )
 
     # -- Model-level fix / mass fan-out -----------------------------------
 

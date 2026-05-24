@@ -858,6 +858,7 @@ def emit_recorder_spec(
     fem: "FEMData",
     *,
     tags: "TagAllocator | None" = None,
+    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
 ) -> None:
     """Drive a recorder's emit through its :meth:`Recorder.materialize`.
 
@@ -873,11 +874,24 @@ def emit_recorder_spec(
     Recorders that carry no build-time selectors (e.g. a Node recorder
     constructed with explicit ``nodes=``) inherit the default
     no-op :meth:`Recorder.materialize` and pass through unchanged.
+
+    ``fem_eid_to_ops_tag`` is the bridge-built ``{fem_eid: ops_tag}``
+    map — element-targeting recorders (``Element``) use it to translate
+    FEM eids resolved from ``pg=`` into the actual OpenSees element
+    tags emitted by the element fan-out.  Without it (legacy direct
+    callers), ``Element`` recorders fall back to FEM eids verbatim,
+    which silently writes recorder lines that target the wrong
+    elements whenever an element primitive consumed an allocator slot
+    in ``_register`` — the bridge always supplies the map on the
+    recorder emit pass.
     """
     if isinstance(spec, RecorderDeclaration):
         _emit_recorder_declaration(spec, emitter, fem)
         return
-    spec.materialize(emitter, fem, tags)._emit(emitter, tag)
+    materialised = spec.materialize(
+        emitter, fem, tags, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+    )
+    materialised._emit(emitter, tag)
 
 
 # ---------------------------------------------------------------------------

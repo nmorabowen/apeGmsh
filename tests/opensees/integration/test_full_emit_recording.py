@@ -132,11 +132,25 @@ def test_node_recorder_pg_resolves_to_explicit_node_ids() -> None:
 
 
 def test_element_recorder_pg_resolves_to_explicit_element_ids() -> None:
-    """Same as the Node test but for ``ops.recorder.Element(pg=...)``."""
-    fem = make_two_column_frame()  # PG "Cols" -> elements (1, 2)
+    """``ops.recorder.Element(pg=...)`` lands the same recorder line as
+    the explicit ``elements=`` form when the latter is seeded with the
+    OpenSees element tags that the bridge actually emits.
+
+    Per ``test_element_fan_out_across_pg`` (above), one ``elasticBeamColumn``
+    spec on PG "Cols" allocates element-kind tag 1 for the spec itself
+    in ``_register`` and tags 2, 3 for the two fan-out instances — so
+    the recorder's ``-ele`` list must contain (2, 3), NOT the raw FEM
+    eids (1, 2).
+    """
+    fem = make_two_column_frame()  # PG "Cols" -> FEM eids (1, 2)
 
     ops_pg = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops_pg.model(ndm=3, ndf=6)
+    transf_pg = ops_pg.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops_pg.element.elasticBeamColumn(
+        pg="Cols", transf=transf_pg,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
     ops_pg.recorder.Element(
         file="force.out", response=("globalForce",), pg="Cols",
     )
@@ -145,8 +159,13 @@ def test_element_recorder_pg_resolves_to_explicit_element_ids() -> None:
 
     ops_ids = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops_ids.model(ndm=3, ndf=6)
+    transf_ids = ops_ids.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops_ids.element.elasticBeamColumn(
+        pg="Cols", transf=transf_ids,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
     ops_ids.recorder.Element(
-        file="force.out", response=("globalForce",), elements=(1, 2),
+        file="force.out", response=("globalForce",), elements=(2, 3),
     )
     rec_ids = RecordingEmitter()
     ops_ids.build().emit(rec_ids)
@@ -156,7 +175,100 @@ def test_element_recorder_pg_resolves_to_explicit_element_ids() -> None:
     assert pg_recorder_calls == ids_recorder_calls
     args = pg_recorder_calls[0][1]
     ele_idx = args.index("-ele")
-    assert args[ele_idx + 1: ele_idx + 3] == (1, 2)
+    assert args[ele_idx + 1: ele_idx + 3] == (2, 3)
+
+
+def test_element_recorder_pg_translates_fem_eids_to_ops_tags() -> None:
+    """Regression: the Element recorder's ``pg=`` resolution must
+    translate FEM eids to the actual OpenSees element tags emitted by
+    the fan-out, not pass FEM eids verbatim.
+
+    Setup mirrors the Phase SSI-1 acceptance shape: one element
+    primitive consumes element-kind tag 1 via ``_register``; the
+    single PG-element fans out to tag 2.  A recorder targeting that
+    PG must emit ``-ele 2``, never ``-ele 1`` (the FEM eid).  The
+    silent-buggy behaviour writes an output file with only a time
+    column.
+    """
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub, _ElementGroupView, _ElementsStub, _NodesStub,
+    )
+
+    nodes = _NodesStub(
+        ids=[1, 2, 3, 4],
+        coords=[
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0),
+        ],
+        node_pgs={"Corners": [1, 2, 3, 4]},
+    )
+    elements = _ElementsStub(
+        elem_pgs={
+            "Rock": _ElementGroupView(
+                ids=(1,), connectivity=((1, 2, 3, 4),),
+            ),
+        },
+    )
+    fem = FEMStub(nodes=nodes, elements=elements)
+
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=2)
+    mat = ops.nDMaterial.ElasticIsotropic(E=4e6, nu=0.18, rho=4.5)
+    ops.element.FourNodeQuad(
+        pg="Rock", thickness=1.0, material=mat, plane_type="PlaneStrain",
+    )
+    ops.recorder.Element(
+        file="stress.out", response=("material", "1", "stress"), pg="Rock",
+    )
+
+    bm = ops.build()
+    rec = RecordingEmitter()
+    bm.emit(rec)
+
+    element_calls = [c for c in rec.calls if c[0] == "element"]
+    recorder_calls = [c for c in rec.calls if c[0] == "recorder"]
+    assert len(element_calls) == 1
+    assert len(recorder_calls) == 1
+    # Element primitive consumed element-kind tag 1; fan-out instance
+    # for FEM eid 1 took tag 2.
+    emitted_ele_tag = element_calls[0][1][1]
+    assert emitted_ele_tag == 2
+    # The recorder MUST target the emitted ops tag (2), not the FEM
+    # eid (1).
+    rec_args = recorder_calls[0][1]
+    ele_idx = rec_args.index("-ele")
+    assert rec_args[ele_idx + 1] == 2, (
+        f"recorder targets {rec_args[ele_idx + 1]!r}, expected 2 "
+        "(the OpenSees element tag); 1 = the FEM eid = the buggy "
+        "behaviour."
+    )
+
+
+def test_element_recorder_pg_unmatched_pg_fails_loud() -> None:
+    """A recorder ``pg=`` whose resolved FEM eids aren't represented in
+    any element primitive's fan-out raises ``BridgeError`` at emit
+    time.  Without the bridge-built ``fem_eid_to_ops_tag`` entry, the
+    recorder would silently emit ``-ele <fem_eid>`` and OpenSees would
+    write an output file with only a time column — the loud failure
+    surfaces the misuse immediately.
+    """
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    fem = make_two_column_frame()  # PG "Cols" -> FEM eids (1, 2)
+
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    # Note: NO element primitive declared for "Cols", so the recorder's
+    # pg= resolves to FEM eids 1, 2 but the fem_eid_to_ops_tag map is
+    # empty — translation fails loud.
+    ops.recorder.Element(
+        file="force.out", response=("globalForce",), pg="Cols",
+    )
+
+    with pytest.raises(BridgeError, match=r"no element was emitted"):
+        ops.build().emit(RecordingEmitter())
 
 
 def test_mpco_nodes_pg_emits_region_and_R_flag() -> None:
@@ -954,7 +1066,13 @@ def test_orientation_transform_collinear_elements_share_one_geomtransf() -> None
 
 
 def test_recorder_pg_elements_fans_to_explicit_list() -> None:
-    """An Element recorder with ``pg=`` resolves to the PG's elements."""
+    """An Element recorder with ``pg=`` resolves to the PG's elements.
+
+    Per ``test_element_fan_out_across_pg`` (above), the element spec
+    consumes element-kind tag 1 in ``_register`` and the two fan-out
+    instances take tags 2, 3 — so the emitted ``-ele`` list must
+    contain (2, 3), not the raw FEM eids (1, 2).
+    """
     fem = make_two_column_frame()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
@@ -980,9 +1098,9 @@ def test_recorder_pg_elements_fans_to_explicit_list() -> None:
     assert len(rec_calls) == 1
     args = rec_calls[0][1]
     assert args[0] == "Element"
-    # Fan-out includes both element tags 1, 2.
-    assert 1 in args
+    # Element-kind tag 1 → spec; fan-out instances → tags 2, 3.
     assert 2 in args
+    assert 3 in args
 
 
 # ---------------------------------------------------------------------------

@@ -195,6 +195,7 @@ class Recorder(Primitive):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
     ) -> "Recorder":
         """Resolve build-time selectors against the FEM.
 
@@ -209,6 +210,16 @@ class Recorder(Primitive):
         directly — i.e. with no remaining ``pg=`` form set.  ``tags``
         is the bridge's :class:`TagAllocator`; recorders that need
         a fresh tag (e.g. MPCO's region tag) allocate from it.
+
+        ``fem_eid_to_ops_tag`` is the bridge-built ``{fem_eid: ops_tag}``
+        map for element fan-out — needed by element-targeting recorders
+        (``Element``, ``MPCO`` with element filters) to translate
+        FEM-side element ids resolved from ``pg=`` into the actual
+        OpenSees element tags emitted by the element fan-out (which
+        differ whenever an element primitive consumed an allocator
+        slot in ``_register``).  ``None`` means the bridge did not
+        supply it (legacy direct callers); element-targeting recorders
+        with ``pg=`` then fall back to the FEM eids verbatim.
         """
         return self
 

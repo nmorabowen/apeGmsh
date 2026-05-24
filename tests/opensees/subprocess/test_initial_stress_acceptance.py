@@ -137,17 +137,17 @@ def _build_full_apesees_deck(stress_recorder_path: str) -> apeSees:
     ops.integrator.LoadControl(dlam=0.1)
     ops.analysis.Static()
 
-    # NOTE: the Element recorder for stress is emitted manually
-    # below as raw Tcl.  Using ``ops.recorder.Element(pg=...)`` here
-    # would hit a latent apeGmsh bug — the Element recorder's
-    # ``materialize()`` returns FEM eids, but the bridge's OpenSees
-    # element tags drift past those when the element primitive
-    # consumes an allocator slot (one FourNodeQuad → primitive tag 1,
-    # fan-out instance → tag 2; recorder emits ``-ele 1`` → silently
-    # writes only the time column).  Spawned task tracks the fix.
-    # The acceptance test uses post-pended raw Tcl below to read the
-    # actual element tag from the emitted deck and insert a
-    # recorder line that targets the right tag.
+    # Element recorder for the per-material stress history.  The
+    # bridge translates ``pg="Rock"`` through ``fem_eid_to_ops_tag``
+    # so the emitted ``-ele <tag>`` references the actual OpenSees
+    # element tag (2) the FourNodeQuad fan-out allocated, not the
+    # FEM eid (1).
+    ops.recorder.Element(
+        file=stress_recorder_path,
+        response=("material", "1", "stress"),
+        pg="Rock",
+        time_format="dt",
+    )
 
     ops.initial_stress(
         name="rock_insitu",
@@ -202,33 +202,13 @@ def test_initial_stress_ramp_matches_fixed_reference_full_apesees(
     deck_path = tmp_path / "deck.tcl"
     stress_out = tmp_path / "stress.out"
 
-    ops = _build_full_apesees_deck(str(stress_out))
-    ops.tcl(str(deck_path), analyze_steps=10, analyze_dt=0.1)
-
-    # Post-insert the Element recorder line — workaround for the
-    # known apeGmsh Element-recorder pg= fan-out bug (spawned task
-    # tracks the proper fix).  We parse the actual OpenSees element
-    # tag from the emitted ``element quad`` line, then inject the
-    # recorder before the analyze for-loop.
-    text = deck_path.read_text()
-    quad_tag: int | None = None
-    for line in text.splitlines():
-        if line.startswith("element quad "):
-            quad_tag = int(line.split()[2])
-            break
-    assert quad_tag is not None, "no `element quad` line in deck"
+    # The bridge now emits the Element recorder natively (the
+    # ``Recorder.materialize`` chain translates ``pg="Rock"`` into the
+    # OpenSees element tag via ``fem_eid_to_ops_tag``).  No raw-Tcl
+    # post-pend.
     stress_out_posix = str(stress_out).replace("\\", "/")
-    recorder_line = (
-        f"recorder Element -file {stress_out_posix} -time "
-        f"-ele {quad_tag} material 1 stress\n"
-    )
-    # Insert just before the analyze for-loop (the analyze block is
-    # the LAST thing apeSees emits when analyze_steps= is set).
-    text = text.replace(
-        "for {set _apesees_i",
-        recorder_line + "for {set _apesees_i",
-    )
-    deck_path.write_text(text)
+    ops = _build_full_apesees_deck(stress_out_posix)
+    ops.tcl(str(deck_path), analyze_steps=10, analyze_dt=0.1)
 
     binary = os.environ.get("OPENSEES_BIN") or shutil.which("OpenSees")
     assert binary is not None

@@ -159,7 +159,13 @@ class Node(Recorder):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
     ) -> "Node":
+        # ``fem_eid_to_ops_tag`` is accepted for signature parity with
+        # element-targeting recorders but ignored here: OpenSees node
+        # tags equal FEM node ids (nodes are never rebased through an
+        # allocator), so no translation is needed.
+        del fem_eid_to_ops_tag
         if self.pg is None:
             return self
         from ._internal.build import expand_pg_to_nodes
@@ -264,15 +270,39 @@ class Element(Recorder):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
     ) -> "Element":
         if self.pg is None:
             return self
-        from ._internal.build import expand_pg_to_elements
-        # Element recorders accept element ids only, not connectivity.
-        elem_ids = tuple(
+        from ._internal.build import BridgeError, expand_pg_to_elements
+        # ``expand_pg_to_elements`` yields FEM-side element ids; the
+        # OpenSees element tags assigned by the bridge's fan-out differ
+        # whenever an element primitive consumed an allocator slot in
+        # ``_register`` (one ``ops.element.X(pg="Rock")`` declaration
+        # → element-kind tag 1 for the spec, fan-out instance → tag 2).
+        # Translate through the bridge-built ``{fem_eid: ops_tag}`` map
+        # so the recorder's ``-ele ...`` list references the emitted
+        # OpenSees tags, not the raw FEM eids.
+        fem_eids = tuple(
             eid for eid, _conn in expand_pg_to_elements(fem, self.pg)
         )
-        return replace(self, pg=None, elements=elem_ids)
+        if fem_eid_to_ops_tag is None:
+            # Legacy direct callers (unit tests of materialize() with no
+            # bridge) get the raw FEM eids; the bridge always supplies
+            # the map on the recorder emit pass.
+            return replace(self, pg=None, elements=fem_eids)
+        ops_tags: list[int] = []
+        for eid in fem_eids:
+            ops_tag = fem_eid_to_ops_tag.get(int(eid))
+            if ops_tag is None:
+                raise BridgeError(
+                    f"Element recorder pg={self.pg!r} resolves to FEM "
+                    f"eid {eid} but no element was emitted at that "
+                    "eid — declare an ``ops.element.X(pg=...)`` "
+                    f"primitive whose pg includes {self.pg!r}."
+                )
+            ops_tags.append(int(ops_tag))
+        return replace(self, pg=None, elements=tuple(ops_tags))
 
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         args: list[int | float | str] = ["-file", self.file]
@@ -545,6 +575,7 @@ class MPCO(Recorder):
         emitter: "Emitter",
         fem: "FEMData",
         tags: "TagAllocator | None",
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
     ) -> "MPCO":
         """Resolve filter selectors against the FEM and emit the region.
 
@@ -584,6 +615,15 @@ class MPCO(Recorder):
                 "bypass the bridge must pass it explicitly."
             )
 
+        # TODO: when ``elements_pg=`` is set, ``elem_ids`` here are FEM
+        # eids, but the region's ``-ele`` arg needs OpenSees element
+        # tags.  Same drift as the Element recorder (closed by
+        # ``Element.materialize`` above).  Translation requires both
+        # the ``fem_eid_to_ops_tag`` map AND a reformulation of the
+        # partitioned ``element_owner`` intersection in
+        # ``_emit_mpco_filter_regions_for_rank`` (which is keyed by
+        # FEM eid today).  Tracked as a follow-up.
+        del fem_eid_to_ops_tag
         node_ids, elem_ids = self.resolve_filter_ids(fem)
 
         # Allocate one region tag for this MPCO recorder and emit it.
