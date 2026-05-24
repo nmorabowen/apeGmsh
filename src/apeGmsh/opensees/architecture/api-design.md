@@ -101,11 +101,41 @@ Commands without type variants are **flat** methods on the bridge:
 ops.model(*, ndm: int, ndf: int)
 ops.fix(*, pg=None, nodes=None, dofs)
 ops.mass(*, pg=None, nodes=None, values)
+ops.region(*, name, pg=None, nodes=None)
 ops.analyze(*, steps, dt=None) -> int
-ops.tcl(path, *, run=False)
-ops.py(path, *, run=False)
+ops.eigen(num_modes, *, solver="-genBandArpack") -> EigenResult
+ops.tcl(path, *, run=False, bin=None,
+        analyze_steps=None, analyze_dt=None)
+ops.py(path, *, run=False,
+       analyze_steps=None, analyze_dt=None)
 ops.run(*, wipe=True)
+ops.h5(path, *, model_name=None, cuts=(), sweeps=())
+ops.domain_capture(spec, *, path, ops=None) -> DomainCapture
+
+# SSI helpers (Phase SSI-1 / SSI-3) — declarative wrappers that fan
+# out at build time. See "## Initial-stress injection" and
+# "## Imposed displacement" below.
+ops.initial_stress(*, name, pg=None, elements=None,
+                   sigma_xx, sigma_yy, sigma_zz,
+                   ramp_steps, lambda_install=1.0) -> InitialStressRecord
+ops.convergence_confinement(*, name, pg=None, elements=None,
+                            sigma_xx=0.0, sigma_yy=0.0, sigma_zz=0.0,
+                            lambda_target, n_steps) -> InitialStressRecord
+ops.imposed_displacement(*, pg=None, nodes=None,
+                         ux=None, uy=None, uz=None,
+                         pattern_factor=1.0, series=None) -> Plain
+
+# Staged analysis (Phase SSI-2.A / SSI-2.B) — context-manager block.
+ops.stage(name: str) -> _StageBuilder
 ```
+
+The `analyze_steps=` / `analyze_dt=` kwargs on `ops.tcl(...)` /
+`ops.py(...)` append one `analyze` line at the tail of the emitted
+deck. When any `ops.initial_stress(...)` registered a per-step ramp,
+that line is automatically wrapped in a for-loop that calls the
+hook dispatcher between steps — see [emitter.md](emitter.md) "Phase
+SSI-1 analyze hook-wrapping" and the
+[staged-analysis.md](staged-analysis.md) §"Hook dispatcher" walkthrough.
 
 ### Model-wide defaults at construction
 
@@ -340,3 +370,254 @@ ops.register(s)                   # tag is allocated
 
 No registry edits, no factory functions. The class IS the registry
 entry.
+
+## Initial-stress injection (Phase SSI-1)
+
+`ops.initial_stress(...)` declares a ramped in-situ stress tensor on
+`ASDPlasticMaterial3D`-bearing elements. The mechanism mirrors the
+STKO `stressControl` pattern: one `parameter` declaration per
+component (XX / YY / ZZ), one `addToParameter <tag> element <ele> <response>`
+per element / component, and a per-step `proc` body that ramps
+`factor = min(count / ramp_steps, 1.0)` linearly 0 → 1, advancing
+`updateParameter` between analyze steps via the hook dispatcher.
+
+```python
+fem = g.mesh.queries.get_fem_data(dim=2)
+ops = apeSees(fem, default_orientation=None)
+ops.model(ndm=2, ndf=2)
+
+# Mohr-Coulomb soil — a typed convenience helper that returns a
+# fully-configured ASDPlasticMaterial3D (yf/pf/el/iv composition
+# locked, model parameters wired). See material/nd.py for the
+# generic ASDPlasticMaterial3D escape hatch and the PlaneStrain
+# wrapper used to bridge the 3-D constitutive into 2-D quads.
+mat_3d = ops.nDMaterial.MohrCoulombSoil(
+    c=1014.0, phi=45.95, psi=11.49,
+    E=4.08e6, nu=0.18, rho=4.5,
+)
+mat_2d = ops.nDMaterial.PlaneStrain(base=mat_3d)
+ops.element.FourNodeQuad(
+    pg="Rock", thickness=1.0, material=mat_2d, plane_type="PlaneStrain",
+)
+
+ops.fix(pg="Fixed_All", dofs=(1, 1))
+# ... analysis chain (constraints / numberer / system / test /
+#     algorithm / integrator / analysis) ...
+
+# Declare the ramp.  Returns the InitialStressRecord so callers can
+# pass it to a stage block via ``s.add(record)``; non-staged callers
+# can ignore the return value.
+ops.initial_stress(
+    name="rock_insitu",
+    pg="Rock",
+    sigma_xx=-6300.0, sigma_yy=-6300.0, sigma_zz=-6300.0,
+    ramp_steps=10,
+    lambda_install=1.0,        # 1.0 = full install; partial install
+                               # produces a convergence-confinement
+                               # intermediate (see helper below).
+)
+
+# Emit and run.  ``analyze_steps=`` appends an ``analyze`` line at
+# the tail of the deck; once a step hook is registered, the emitter
+# wraps it in a for-loop with hook-dispatcher calls between steps.
+ops.tcl("deck.tcl", analyze_steps=10, analyze_dt=0.1, run=True)
+# verified: tests/opensees/subprocess/test_initial_stress_acceptance.py
+#           ::test_initial_stress_ramp_matches_fixed_reference_full_apesees
+```
+
+Validation (raised by `apeSees.initial_stress`):
+
+| Condition | Outcome |
+|---|---|
+| `name` empty | `ValueError` |
+| `name` not a Tcl identifier (alphanumeric + `_`, can't start with a digit) | `ValueError` — name becomes a Tcl proc name |
+| `(pg is None) == (elements is None)` | `ValueError` — XOR required |
+| `ramp_steps < 1` | `ValueError` |
+| `lambda_install ∉ (0, 1]` | `ValueError` |
+| Duplicate `name` across global pool + every stage's pool | `BridgeError` at `build()` time — two `proc <name>` definitions would collide and the surviving one would reference uninitialised state (red-team H2, post-merge hardening) |
+
+Per-axis target is `sigma_<xx|yy|zz> × lambda_install`; the ramp
+factor always advances 0 → 1.0. Even when only one component is
+non-zero, three `parameter` declarations and three
+`updateParameter` calls per step are emitted (one for each axis).
+For zero-target axes the delta is always 0.0 — wasteful but
+harmless. The STKO reference (Interaccion deck, `_stressCtrl_11`)
+allocates fewer parameters when a component is null; this is a
+documented divergence.
+
+### `convergence_confinement` helper (Phase SSI-3)
+
+Thin wrapper over `initial_stress` for the tunnelling-mechanics
+canonical pattern: ramp a single stress component on a boundary
+region to `lambda_target × sigma` over `n_steps` analyze increments.
+Mirrors the `_stressCtrl_11`-style proc at
+`SSI/Interaccion/analysis_steps.tcl:19753-19767`.
+
+```python
+relax = ops.convergence_confinement(
+    name="rock_relax_50",
+    pg="Rock",
+    sigma_xx=-6300.0,           # at least one non-zero required
+    lambda_target=0.5,          # 50% relaxation (intermediate)
+    n_steps=100,
+)
+```
+
+The two cosmetic renames vs. `initial_stress`: `lambda_target`
+reads more naturally for relaxation contexts than `lambda_install`,
+and `n_steps` matches the typical tunneling-spec phrasing.
+
+## Imposed displacement (Phase SSI-3)
+
+`ops.imposed_displacement(...)` declares a `pattern Plain` carrying
+prescribed-displacement `sp` entries. Mirrors STKO's
+`pattern Plain N tsTag -fact F { sp NODE DOF VAL ... }` (the
+fault-slip pattern at `SSI/Interaccion y Falla/analysis_steps.tcl:22832-23253`).
+
+```python
+fault_slip = ops.imposed_displacement(
+    pg="Fault_Hanging",
+    ux=-1.0, uy=-4.0,          # scalar broadcast per targeted node
+    pattern_factor=0.001,      # folded into Linear(factor=) (see below)
+)
+# Equivalent for an explicit node list:
+support_settle = ops.imposed_displacement(
+    nodes=[105, 107, 109],
+    uz=-0.01,
+)
+```
+
+Where STKO uses `pattern Plain N tsTag -fact F`, this helper folds
+the `F` factor into an auto-created `Linear(factor=F)` time series.
+The pattern itself is registered with the bridge default factor
+`1.0` — numerically identical (`value × F × t`), simpler API. Pass
+an explicit `series=` (a pre-registered `TimeSeries`) to override;
+`pattern_factor` is then ignored.
+
+Validation:
+
+| Condition | Outcome |
+|---|---|
+| `(pg is None) == (nodes is None)` | `ValueError` |
+| All of `ux` / `uy` / `uz` are `None` | `ValueError` |
+| `pattern_factor == 0.0` | `ValueError` (an inert pattern is a typo) |
+| `uz=` on an `ndf=2` model (or any DOF index > `ndf`) | `ValueError` at declaration time (red-team H3, post-merge hardening) |
+
+Limitations:
+
+- Per-node-varying values are NOT supported in v1 — every targeted
+  node gets the same scalar per DOF. For different values per node,
+  call `imposed_displacement` multiple times with disjoint
+  `nodes=` lists, or build the `Plain` pattern manually via
+  `ops.pattern.Plain(...)`.
+- The pattern is registered globally; if used inside a staged deck
+  it fires in every stage's analyze loop. Gate via the time series
+  if that is not desired.
+
+## Staged analysis (Phase SSI-2.A / SSI-2.B)
+
+`ops.stage(name)` opens a context manager that frames one stage of a
+multi-stage analysis. Each stage emits its own analysis chain, its
+own ramped initial-stress records, optional stage-bound topology
+activation, an `analyze` loop, and an inter-stage cleanup block
+(`loadConst -time 0.0` + `wipeAnalysis` + hook-list clear).
+
+```python
+ops = apeSees(fem)
+ops.model(ndm=3, ndf=3)
+# ... materials / elements / fixes / masses ...
+
+# Construct primitives the stages will reuse.  Each stage holds a
+# reference to its chain; the bridge emits each primitive once per
+# stage in which it's referenced (so OpenSees gets a fresh
+# ``constraints Plain`` / ``numberer RCM`` per stage).
+test_norm   = ops.test.NormDispIncr(tol=1e-4, max_iter=150)
+algo_newton = ops.algorithm.Newton()
+constr      = ops.constraints.Plain()
+numb        = ops.numberer.RCM()
+sysolv      = ops.system.UmfPack()
+analy       = ops.analysis.Static()
+
+# Stage 1 — in-situ stress install (no topology activation).
+insitu = ops.initial_stress(
+    name="rock_insitu",
+    pg="Rock",
+    sigma_xx=-6300.0, sigma_yy=-6300.0, sigma_zz=-6300.0,
+    ramp_steps=10,
+)
+with ops.stage(name="insitu") as s:
+    s.add(insitu)                              # bind to this stage
+    s.analysis(
+        test=test_norm, algorithm=algo_newton,
+        integrator=ops.integrator.LoadControl(dlam=0.1),
+        constraints=constr, numberer=numb, system=sysolv,
+        analysis=analy,
+    )
+    s.run(n_increments=10, dt=0.1)
+
+# Stage 2 — excavate (activate the lining elements that come online).
+with ops.stage(name="excavate") as s:
+    s.activate(pgs=["Lining"])                 # element-PG activation
+    s.analysis(
+        test=test_norm, algorithm=algo_newton,
+        integrator=ops.integrator.LoadControl(dlam=0.05),
+        constraints=constr, numberer=numb, system=sysolv,
+        analysis=analy,
+    )
+    s.run(n_increments=20, dt=0.05)
+
+# Only Tcl/Py text-emit is supported for staged decks today.  Live
+# execution (``ops.analyze`` / ``ops.eigen``) refuses staged models
+# with NotImplementedError; emit and run a subprocess instead.
+ops.tcl("staged.tcl", run=True)
+# verified: tests/opensees/subprocess/test_stages_subprocess.py
+#           tests/opensees/subprocess/test_stage_activation_subprocess.py
+```
+
+`_StageBuilder` lifecycle:
+
+| Step | Required | Behaviour |
+|---|---|---|
+| `with ops.stage(name) as s:` | yes | Opens the builder. Refuses nested `with` blocks (a second open while one is in-progress raises `RuntimeError` — post-merge hardening M4). |
+| `s.add(initial_stress_record)` | optional | Binds an `InitialStressRecord` (returned by `ops.initial_stress(...)`) to this stage. The record is removed from the bridge's global pool. Double-adding a record to two stages raises `ValueError`. Other record types raise `TypeError`. |
+| `s.activate(pgs=[...])` | optional | Marks element-PG names as activated by this stage. Elements + their referenced nodes emit inside the stage block, not in the global pre-stage emit. Same PG activated in two stages raises `BridgeError` at build time. |
+| `s.analysis(test=, algorithm=, integrator=, constraints=, numberer=, system=, analysis=)` | required | All seven kwargs. Each must be a primitive already registered with the bridge. Second call raises `ValueError`. |
+| `s.run(n_increments=, dt=None)` | required | Sets analyze-loop length + step size. Second call raises `ValueError`; `n_increments < 1` raises `ValueError`. |
+| Clean `__exit__` | — | Validates `analysis_set` + `run_set`; appends a frozen `StageRecord` to the bridge. Exception in the body propagates and the in-progress stage is discarded. |
+
+Caveats:
+
+- **Live execution unsupported.** Once `ops.stage(...)` has been
+  used, `ops.analyze(...)` and `ops.eigen(...)` raise
+  `NotImplementedError`. Emit via `ops.tcl(p)` / `ops.py(p)` and run
+  the subprocess (`run=True` or external invocation).
+- **Staged + MP partitioned is supported (Phase SSI-2.C).** Combine
+  `ops.stage(...)` blocks freely with a partitioned FEM —
+  `BuiltModel._emit_partitioned` dispatches to
+  `_emit_stages_partitioned` and emits per-rank topology /
+  initial-stress fan-outs inside each stage. See
+  [staged-analysis.md](staged-analysis.md) §"MP partitioned +
+  initial_stress + stages (Phase SSI-2.C)" for the layout.
+- **`fix` / `mass` / `region` on stage-bound nodes is refused at
+  build time.** Those directives emit in the pre-stage global block;
+  a node owned by stage 2 doesn't exist yet at that point, so
+  OpenSees would error at parse time. The validator raises
+  `BridgeError` with the offender list naming each `(kind, target,
+  node, stage)` tuple (red-team H1, post-merge hardening). Either
+  move the BC onto a globally-emitted node, or wait for a future
+  phase that supports stage-bound BCs.
+- **H5 archival of staged structure is deferred and fail-loud.**
+  `apeSees.h5(path)` on a staged model — or one carrying any global
+  `initial_stress` record — raises `NotImplementedError` (#313)
+  pointing the user at `ops.tcl(path)` / `ops.py(path)`. The
+  `H5Emitter`-side methods (`stage_open` / `stage_close` /
+  `addToParameter` / `step_hook_ramp` / `domain_change`) remain
+  no-ops; the bridge-side guard is what refuses the round-trip.
+  A future `opensees_schema_version` bump (`2.11.0` → `2.12.0`,
+  per [ADR 0023](decisions/0023-per-zone-schema-versioning.md))
+  would persist stages under `/opensees/stages/` and lift the
+  guard. See [staged-analysis.md](staged-analysis.md) §"Deferred work".
+
+See [staged-analysis.md](staged-analysis.md) for the internals —
+node + element ownership computation, hook-dispatcher mechanics,
+stage-close cleanup contract.

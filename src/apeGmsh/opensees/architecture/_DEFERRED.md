@@ -103,6 +103,94 @@ method (ADR 0003) is hand-written for v1. If it becomes painful as
 the type catalog grows, generate the namespace from the typed
 classes via introspection.
 
+## Staged-analysis follow-ups
+
+The SSI feature set ([ADR
+0028](decisions/0028-initial-stress-via-parameter-ramping.md) /
+[0029](decisions/0029-staged-analysis-context-manager.md) /
+[0030](decisions/0030-stage-bound-topology-activation.md) /
+[0031](decisions/0031-ssi-convenience-helpers.md)) ships the
+declarative `ops.stage(name)` / `s.activate(pgs=)` /
+`ops.initial_stress(...)` surface, the runnable Tcl / Py text
+emit, and (per Phase SSI-2.C) the combined partitioned + staged
+emit. Three follow-ups are still explicitly deferred:
+
+### Live execution of staged models
+
+`apeSees.analyze` and `apeSees.eigen` refuse staged models with
+`NotImplementedError`. `LiveOpsEmitter.stage_open` /
+`stage_close` raise. Lifting requires staging the analysis-chain
+re-binding, per-stage `analyze` loops, `loadConst` / `wipeAnalysis`
+interleaving, and hook-list clearing inside the live emitter. The
+contract is documented (ADR 0029 §"Stage-close cleanup contract");
+the implementation is the missing piece.
+
+The workaround is `ops.tcl(p, run=True)` / `ops.py(p, run=True)` —
+the OpenSees subprocess runs every stage's analyze loop and
+inter-stage cleanup as part of executing the deck. The Cerro
+Lindo migration uses this; live execution is the ergonomic gap.
+
+Lives in `emitter/live.py::stage_open` / `stage_close` (currently
+raise); `apesees.py::analyze` / `eigen` (currently refuse).
+
+### H5 archival of staged structure + initial-stress
+
+`H5Emitter.addToParameter` / `step_hook_ramp` / `stage_open` /
+`stage_close` / `domain_change` are no-ops — staged structure and
+the in-situ stress ramp are not persisted by the per-zone
+`/opensees/` schema today. Because a silent-drop H5 round-trip
+would produce a non-staged flat model that no longer matches the
+declared one, `apeSees.h5(path)` is **guarded**: it raises
+`NotImplementedError` (#313) when `self._stage_records` or
+`self._initial_stress_records` is non-empty, pointing the user at
+`ops.tcl(path)` / `ops.py(path)` instead. The H5 emitter-side
+no-ops remain reachable from direct `H5Emitter` unit tests outside
+the bridge; the guard is at the user-facing `apeSees.h5`.
+
+A future schema bump (per [ADR
+0023](decisions/0023-per-zone-schema-versioning.md)) bringing
+`opensees_schema_version` from `2.11.0` → `2.12.0` would persist
+per-stage primitive lists and initial-stress records under
+`/opensees/stages/` and `/opensees/initial_stress/`, lift the
+guard, and restore round-trip parity. Open design questions
+before that lands:
+
+- Persistence shape for the per-step ramp proc. Three plausible
+  readings: serialise the `(name, targets, n_steps_to_full,
+  phase)` tuple (lossless re-emit on read); persist the rendered
+  Tcl/Py body bytes (only useful for textual re-emit, not for
+  live replay); persist the `InitialStressRecord` pre-resolve (the
+  cleanest — re-runs `emit_initial_stress_global` on read).
+- How a viewer would render staged state. `Results.viewer()`
+  currently shows a single time-history slab; staged decks have a
+  per-stage analyze loop with reset pseudo-time. Likely needs a
+  `Stage` discriminator on the slab.
+
+Lives in `apesees.py::h5` (the bridge-side guard, #313) and
+`emitter/h5.py::addToParameter` / `step_hook_ramp` / `stage_open`
+/ `stage_close` / `domain_change` (the schema-side no-ops).
+
+### Stage-bound `fix` / `mass` / `region` directives
+
+Currently refused at build time by
+`_validate_no_stage_bound_node_targets` (red-team H1 hardening —
+[ADR 0029 §"Build-time fan-out"](decisions/0029-staged-analysis-context-manager.md)).
+The pre-stage global emit fires before any `stage_open`; a `fix N
+1 1` line referencing a node that only emits in stage 2 would
+reference a non-existent OpenSees node and crash at parse time.
+
+The workaround is to keep the BC on a globally-emitted node — for
+geotechnical models, the rock-mass boundary nodes are typically
+global so this is usually fine. A future phase would add
+stage-bound BCs by extending `StageRecord` with `fix_records` /
+`mass_records` / `region_records` fields and a per-stage emit pass
+that fires after the stage's `domain_change` (so the BC targets
+exist).
+
+Lives in `apesees.py::_validate_no_stage_bound_node_targets`
+(currently raises with offender list); would need additional
+fields on `StageRecord` at `_internal/build.py:161-212`.
+
 ## Cylindrical / Spherical in 2-D models
 
 `Cylindrical(axis=(0,0,1))` for a 2-D model would be meaningful
