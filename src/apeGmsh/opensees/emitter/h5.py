@@ -1195,6 +1195,12 @@ class H5Emitter:
     def stage_close(self) -> None:
         """No-op for Phase SSI-2.A — archival deferred."""
 
+    def domain_change(self) -> None:
+        """No-op (Phase SSI-2.B) — domain renumbering is a runtime
+        state transition, not a model-definition change.  H5 archives
+        the final flat topology; downstream readers don't need to
+        replay the per-stage domainChange calls."""
+
     # =====================================================================
     # Protocol — Analysis chain
     # =====================================================================

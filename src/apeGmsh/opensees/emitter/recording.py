@@ -283,3 +283,6 @@ class RecordingEmitter:
 
     def stage_close(self) -> None:
         self.calls.append(("stage_close", (), {}))
+
+    def domain_change(self) -> None:
+        self.calls.append(("domain_change", (), {}))

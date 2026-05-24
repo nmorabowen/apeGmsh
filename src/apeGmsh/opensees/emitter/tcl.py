@@ -459,6 +459,12 @@ class TclEmitter:
         self._lines.append(f"# === Stage: {name} ===")
         self._lines.indent = prev_indent
 
+    def domain_change(self) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append("domainChange")
+        self._lines.indent = prev_indent
+
     def stage_close(self) -> None:
         prev_indent = self._lines.indent
         self._lines.indent = ""

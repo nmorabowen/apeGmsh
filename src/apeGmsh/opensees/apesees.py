@@ -34,6 +34,7 @@ from ._internal.build import (
     allocate_element_tags,
     build_element_partition_owner,
     build_node_partition_owners,
+    compute_stage_ownership,
     emit_element_spec,
     emit_element_spec_partitioned,
     emit_initial_stress_addtoparameter,
@@ -46,6 +47,11 @@ from ._internal.build import (
     expand_pg_to_nodes,
     is_partitioned,
     topological_order,
+)
+from ._internal.build import _element_transf as _build_element_transf
+from ._internal.tag_resolution import (
+    set_current_fem_element_id,
+    set_element_nodes,
 )
 from ._internal.compose import _compose_model_h5, _path_stem
 from ._internal.ns import (
@@ -470,15 +476,31 @@ class BuiltModel:
         keeps every other primitive's emit position byte-identical
         to the non-staged path.
         """
-        # 1a. Nodes — emit every node from the FEM snapshot.
+        staged = bool(self.stage_records)
+
+        # Phase SSI-2.B: compute element / node ownership maps when
+        # stages are declared.  Stage-bound topology (nodes + elements
+        # owned by a stage's activated PGs) emits inside its stage's
+        # block; everything else stays in this global pre-stage emit.
+        element_owner_stage: dict[int, int] = {}
+        node_owner_stage: dict[int, int] = {}
+        if staged:
+            element_owner_stage, node_owner_stage = compute_stage_ownership(
+                self.stage_records, elements, self.fem,
+            )
+
+        # 1a. Nodes — emit every node from the FEM snapshot, EXCEPT
+        # nodes bound to a stage (those emit inside that stage's
+        # block per Phase SSI-2.B).
         for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
+            if int(nid) in node_owner_stage:
+                continue
             emitter.node(int(nid), float(xyz[0]), float(xyz[1]), float(xyz[2]))
 
         # 4a. Materials / sections / time series / analysis chain
         # (excluding patterns + recorders).  Phase SSI-2.A: skip
         # analysis-chain primitives when stages are declared — each
         # stage re-emits its own chain below.
-        staged = bool(self.stage_records)
         for p in pre_element:
             if staged and _is_analysis_chain_primitive(p):
                 continue
@@ -496,22 +518,51 @@ class BuiltModel:
             ndm=self.ndm,
         )
 
-        # 6. Elements.  ``fem_eid_to_ops_tag`` collects ``{fem_eid:
-        # ops_element_tag}`` as the fan-out emits each element — the
-        # initial_stress emit pass below needs it to translate the
-        # user's element selection (FEM ids) into the OpenSees tags
-        # used by ``addToParameter``.
-        fem_eid_to_ops_tag: dict[int, int] = {}
-        for ele_spec in elements:
-            emit_element_spec(
-                spec=ele_spec,
-                emitter=emitter,
-                fem=self.fem,
-                tags=tags,
-                base_resolver=base_resolver,
-                transf_tag_for_element=overrides,
-                tag_recorder=fem_eid_to_ops_tag,
-            )
+        # 6. Elements.  Phase SSI-2.B: pre-allocate ALL element tags
+        # upfront (across global + stage-bound elements) so the
+        # fem_eid → ops_tag map is complete before any per-stage
+        # emit runs.  Then emit only globally-owned elements here;
+        # stage-bound elements emit in their stage's block via
+        # ``_emit_stages_flat`` below.
+        element_plan = allocate_element_tags(elements, self.fem, tags)
+        fem_eid_to_ops_tag: dict[int, int] = {
+            eid: ele_tag
+            for _, sub in element_plan
+            for eid, _conn, ele_tag in sub
+        }
+        for spec, sub in element_plan:
+            if id(spec) in element_owner_stage:
+                continue  # stage-bound — emit inside the stage block.
+            transf_spec = _build_element_transf(spec)
+            for eid, node_tags, ele_tag in sub:
+                set_element_nodes(emitter, node_tags)
+                set_current_fem_element_id(emitter, eid)
+                if (
+                    transf_spec is not None
+                    and overrides is not None
+                    and (id(transf_spec), eid) in overrides
+                ):
+                    override_tag = overrides[(id(transf_spec), eid)]
+                    base = base_resolver
+                    override = transf_spec
+
+                    def _resolver_with_override(
+                        p: Primitive,
+                        _base: object = base,
+                        _override_spec: Primitive = override,
+                        _override_tag: int = override_tag,
+                    ) -> int:
+                        if p is _override_spec:
+                            return _override_tag
+                        return int(_base(p))  # type: ignore[operator]
+
+                    set_tag_resolver(emitter, _resolver_with_override)
+                    try:
+                        spec._emit(emitter, ele_tag)
+                    finally:
+                        set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
+                else:
+                    spec._emit(emitter, ele_tag)
 
         # 7. Fixes / masses / regions / broker loads.
         self._emit_fixes(emitter)
@@ -554,39 +605,141 @@ class BuiltModel:
             else:  # pragma: no cover  - unreachable per partition above
                 p._emit(emitter, tag)
 
-        # 9. Phase SSI-2.A: per-stage emit block.  Each stage emits
-        # its own initial_stress + analysis chain + analyze loop +
-        # stage_close().  No-op for non-staged models.
+        # 9. Phase SSI-2.A / 2.B: per-stage emit block.  Each stage
+        # emits its activated topology (Phase 2.B) + initial_stress
+        # + analysis chain + analyze loop + stage_close.  No-op for
+        # non-staged models.
         if staged:
-            self._emit_stages_flat(emitter, tags, fem_eid_to_ops_tag)
+            self._emit_stages_flat(
+                emitter, tags,
+                element_plan=element_plan,
+                element_owner_stage=element_owner_stage,
+                node_owner_stage=node_owner_stage,
+                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                overrides=overrides,
+                base_resolver=base_resolver,
+            )
 
     def _emit_stages_flat(
         self,
         emitter: Emitter,
         tags: TagAllocator,
-        fem_eid_to_ops_tag: "dict[int, int]",
+        *,
+        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]" = (),  # type: ignore[assignment]
+        element_owner_stage: "dict[int, int]" = {},  # type: ignore[assignment]
+        node_owner_stage: "dict[int, int]" = {},  # type: ignore[assignment]
+        fem_eid_to_ops_tag: "dict[int, int]" = {},  # type: ignore[assignment]
+        overrides: "dict[tuple[int, int], int] | None" = None,
+        base_resolver: object = None,
     ) -> None:
-        """Phase SSI-2.A: emit each stage block in registration order.
+        """Phase SSI-2.A / 2.B: emit each stage block in registration order.
 
         Per stage:
 
         1. ``stage_open(name)`` — comment delimiter.
-        2. Stage's initial_stress records (parameter declarations +
+        2. **(Phase SSI-2.B)** Stage-owned nodes — emit nodes that
+           are exclusively referenced by stage-bound elements (per
+           the ``node_owner_stage`` map).
+        3. **(Phase SSI-2.B)** Stage-owned elements — emit the
+           ``element`` commands for elements whose pg is activated
+           by this stage.  Tags come from the global ``element_plan``
+           (pre-allocated upfront so cross-stage tag identity holds).
+        4. **(Phase SSI-2.B)** ``domain_change()`` — if any topology
+           was added in this stage, tell OpenSees to rebuild its
+           DOF map before the analysis chain emits.
+        5. Stage's initial_stress records (parameter declarations +
            step_hook_ramp procs + addToParameter calls, exactly the
            same shape as the Phase SSI-1 non-staged global emit).
-        3. Analysis-chain primitives — emit each via its ``_emit``
+        6. Analysis-chain primitives — emit each via its ``_emit``
            (the bridge skipped these in the pre_element pass).
-        4. ``emitter.analyze(steps=, dt=)`` — auto-wraps with hook
+        7. ``emitter.analyze(steps=, dt=)`` — auto-wraps with hook
            dispatcher calls if any step_hook_ramp registered this
            stage (the emitter tracks ``_step_hooks_registered``).
-        5. ``stage_close()`` — loadConst + wipeAnalysis + hook clear.
+        8. ``stage_close()`` — loadConst + wipeAnalysis + hook clear.
 
         Single-process path only.  The (stages + partitions) combo
         is not yet supported; ``_emit_partitioned`` raises
         ``NotImplementedError`` when stages are present.
         """
-        for stage in self.stage_records:
+        # Pre-compute reverse maps: stage_index → list of owned nodes
+        # / owned element-spec ids, for efficient per-stage lookup.
+        stage_owned_nodes: dict[int, list[int]] = {}
+        for nid, sidx in node_owner_stage.items():
+            stage_owned_nodes.setdefault(sidx, []).append(int(nid))
+        # Within each stage's bucket, emit nodes in FEM-id order so
+        # the deck is grep-friendly and cross-run-stable.
+        for ids in stage_owned_nodes.values():
+            ids.sort()
+
+        # Element plan filtered per stage.  Stage index → list of
+        # (spec, sub_records) where sub_records are the (eid, conn,
+        # ele_tag) triples already in the global plan.
+        stage_owned_specs: dict[int, list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]]] = {}
+        for spec, sub in element_plan:
+            sidx = element_owner_stage.get(id(spec))
+            if sidx is not None:
+                stage_owned_specs.setdefault(sidx, []).append((spec, sub))
+
+        # FEM node-id → coord index lookup (mirrors the
+        # _emit_partitioned helper inline).  Cheap to build once.
+        node_idx_lookup = {
+            int(nid): i for i, nid in enumerate(self.fem.nodes.ids)
+        }
+
+        for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
+
+            # 2. Owned nodes.
+            owned_nodes = stage_owned_nodes.get(stage_idx, [])
+            for nid in owned_nodes:
+                idx = node_idx_lookup.get(nid)
+                if idx is None:
+                    continue
+                xyz = self.fem.nodes.coords[idx]
+                emitter.node(
+                    nid,
+                    float(xyz[0]), float(xyz[1]), float(xyz[2]),
+                )
+
+            # 3. Owned elements.
+            owned_specs = stage_owned_specs.get(stage_idx, [])
+            for spec, sub in owned_specs:
+                transf_spec = _build_element_transf(spec)
+                for eid, node_tags, ele_tag in sub:
+                    set_element_nodes(emitter, node_tags)
+                    set_current_fem_element_id(emitter, eid)
+                    if (
+                        transf_spec is not None
+                        and overrides is not None
+                        and (id(transf_spec), eid) in overrides
+                    ):
+                        override_tag = overrides[(id(transf_spec), eid)]
+                        base = base_resolver
+                        override = transf_spec
+
+                        def _resolver_with_override(
+                            p: Primitive,
+                            _base: object = base,
+                            _override_spec: Primitive = override,
+                            _override_tag: int = override_tag,
+                        ) -> int:
+                            if p is _override_spec:
+                                return _override_tag
+                            return int(_base(p))  # type: ignore[operator]
+
+                        set_tag_resolver(emitter, _resolver_with_override)
+                        try:
+                            spec._emit(emitter, ele_tag)
+                        finally:
+                            set_tag_resolver(emitter, base_resolver)  # type: ignore[arg-type]
+                    else:
+                        spec._emit(emitter, ele_tag)
+
+            # 4. domainChange — only if this stage added topology.
+            if owned_nodes or owned_specs:
+                emitter.domain_change()
+
+            # 5. Initial stress.
             if stage.initial_stress_records:
                 name_to_param_tags = emit_initial_stress_global(
                     stage.initial_stress_records, emitter, tags,
@@ -597,6 +750,8 @@ class BuiltModel:
                     name_to_param_tags=name_to_param_tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
+
+            # 6. Analysis chain.
             for chain in (
                 stage.constraints, stage.numberer, stage.system,
                 stage.test, stage.algorithm, stage.integrator,
@@ -605,7 +760,11 @@ class BuiltModel:
                 if chain is not None:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
+
+            # 7. Analyze loop (auto-wraps with hook dispatcher calls).
             emitter.analyze(steps=stage.n_increments, dt=stage.dt)
+
+            # 8. Stage close — loadConst + wipeAnalysis + hook clear.
             emitter.stage_close()
 
     # -- Partitioned emit path (ADR 0027) ---------------------------------
@@ -2239,6 +2398,7 @@ class _StageBuilder:
     __slots__ = (
         "_bridge", "_name",
         "_initial_stress_records",
+        "_activated_pgs",
         "_test", "_algorithm", "_integrator",
         "_constraints", "_numberer", "_system", "_analysis",
         "_n_increments", "_dt",
@@ -2249,6 +2409,7 @@ class _StageBuilder:
         self._bridge = bridge
         self._name = name
         self._initial_stress_records: list[InitialStressRecord] = []
+        self._activated_pgs: list[str] = []
         self._test: Primitive | None = None
         self._algorithm: Primitive | None = None
         self._integrator: Primitive | None = None
@@ -2300,6 +2461,7 @@ class _StageBuilder:
             analysis=self._analysis,
             n_increments=int(self._n_increments),
             dt=None if self._dt is None else float(self._dt),
+            activated_pgs=tuple(self._activated_pgs),
         )
         self._bridge._stage_records.append(record)
         return False
@@ -2335,6 +2497,37 @@ class _StageBuilder:
             f"{type(record).__name__!r}.  Phase SSI-2.A supports "
             "InitialStressRecord only; future versions may extend."
         )
+
+    def activate(self, *, pgs: "Iterable[str]") -> None:
+        """Mark element PGs as activated by this stage (Phase SSI-2.B).
+
+        Elements whose ``pg=`` matches any activated PG emit their
+        ``node`` + ``element`` commands **inside this stage's block**
+        (between ``stage_open`` and ``domain_change``), not in the
+        global pre-stage emit.  Nodes referenced exclusively by
+        stage-activated elements move into the stage's block too;
+        nodes shared with global elements stay global.
+
+        May be called multiple times per stage (PGs accumulate as a
+        set; duplicates collapse).  Same PG activated in two
+        different stages is a build-time error (first-write wins
+        is unsafe — the user clearly meant something different).
+
+        Parameters
+        ----------
+        pgs
+            Iterable of element-PG names (e.g. ``["cimbra"]``,
+            ``["rock", "lining"]``).  Each must be a non-empty string.
+        """
+        for pg in pgs:
+            if not isinstance(pg, str) or not pg:
+                raise ValueError(
+                    f"Stage {self._name!r}.activate: pgs= must be an "
+                    "iterable of non-empty strings, got "
+                    f"{pg!r}."
+                )
+            if pg not in self._activated_pgs:
+                self._activated_pgs.append(pg)
 
     def analysis(
         self,

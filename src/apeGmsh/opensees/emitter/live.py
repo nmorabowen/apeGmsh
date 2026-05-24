@@ -446,6 +446,17 @@ class LiveOpsEmitter:
             "subprocess instead."
         )
 
+    def domain_change(self) -> None:
+        """``ops.domainChange()`` — rebuild the renumbered DOF map.
+
+        Live emit is currently NOT staged (``stage_open`` /
+        ``stage_close`` raise), so this is reachable only from a
+        non-staged user-driven call (e.g. someone driving live with
+        a custom topology-rebuild workflow).  Forward straight to
+        openseespy.
+        """
+        self._ops.domainChange()
+
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 
     def addToParameter(

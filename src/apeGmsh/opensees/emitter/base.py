@@ -114,6 +114,15 @@ lists are reset, not the proc bodies themselves.  H5 / Recording
 emitters no-op / capture for tests; Live raises
 ``NotImplementedError`` (staged live execution deferred — the
 bridge's :meth:`apeSees.analyze` only supports non-staged models).
+
+**Architecture event — Phase SSI-2.B (per-stage topology activation,
+May 2026).** The Protocol gained :meth:`domain_change`, which emits
+the OpenSees ``domainChange`` command.  Staged decks need this
+after activating new elements / nodes mid-analysis so OpenSees
+rebuilds its renumbered DOF map.  Tcl emits ``domainChange``;
+Py emits ``ops.domainChange()``; Live calls ``ops.domainChange()``
+in-process; H5 no-ops (no model-state change to archive);
+Recording captures for tests.
 """
 from __future__ import annotations
 
@@ -318,6 +327,14 @@ class Emitter(Protocol):
     def stage_open(self, name: str) -> None: ...
 
     def stage_close(self) -> None: ...
+
+    # -- Topology activation (Phase SSI-2.B) -------------------------------
+    # ``domain_change()`` emits the OpenSees ``domainChange`` command,
+    # which tells OpenSees to rebuild its internal DOF map after the
+    # set of active nodes / elements has changed.  Staged decks call
+    # this after a stage's element activation block, before its
+    # analysis chain emits.
+    def domain_change(self) -> None: ...
 
     # -- Eigen (one-shot, returns values from live emitter) ---------------
     # Issues ``eigen [solver] $numModes`` — does not require an

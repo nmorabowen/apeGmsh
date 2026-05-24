@@ -78,6 +78,7 @@ __all__ = [
     "RegionAssignmentRecord",
     "StageRecord",
     "VECXZ_TOL",
+    "compute_stage_ownership",
     "allocate_element_tags",
     "build_element_partition_owner",
     "build_node_partition_owners",
@@ -200,6 +201,15 @@ class StageRecord:
     analysis: "Primitive | None"
     n_increments: int
     dt: float | None
+    # Phase SSI-2.B: element-PG names that come online in this stage.
+    # The bridge filters Element primitives whose ``pg=`` matches any
+    # entry here into the stage's topology-emit block.  Nodes
+    # referenced only by stage-bound elements emit alongside them.
+    # Multiple stages can NOT share the same PG (first stage wins —
+    # later activations of the same PG are validated as errors at
+    # build time).  An element whose PG is not activated by any
+    # stage stays global (emitted before stage 1).
+    activated_pgs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1815,6 +1825,81 @@ def allocate_element_tags(
             sub.append((int(eid), tuple(int(n) for n in conn), int(ele_tag)))
         plan.append((spec, sub))
     return plan
+
+
+def compute_stage_ownership(
+    stage_records: "tuple[StageRecord, ...]",
+    elements: "Iterable[Element]",
+    fem: "FEMData",
+) -> "tuple[dict[int, int], dict[int, int]]":
+    """Compute element + node ownership maps for Phase SSI-2.B.
+
+    For each stage in registration order, walks the Element primitives
+    whose ``pg=`` matches one of the stage's ``activated_pgs`` and
+    assigns them (and their referenced nodes) to that stage.
+
+    Returns
+    -------
+    element_owner : dict[int, int]
+        ``{id(element_primitive): stage_index}`` — stage index is the
+        position in ``stage_records``.  Element primitives not in any
+        stage's activation set are absent from this map (global emit).
+    node_owner : dict[int, int]
+        ``{fem_node_id: stage_index}`` — node ID is the broker's FEM
+        node id.  A node referenced by ANY global element stays global
+        (absent from this map).  A node referenced ONLY by stage-bound
+        elements is owned by the *lowest* stage index that references
+        it.
+
+    Raises
+    ------
+    BridgeError
+        If a PG is activated by more than one stage (ambiguous
+        ownership — first-write wins is unsafe; the user clearly
+        meant something different).
+    """
+    # 1. Map PG name → owning stage index.  Raise on conflicts.
+    pg_owner: dict[str, int] = {}
+    for stage_idx, stage in enumerate(stage_records):
+        for pg in stage.activated_pgs:
+            if pg in pg_owner:
+                raise BridgeError(
+                    f"Stage {stage.name!r}: PG {pg!r} is activated by "
+                    f"another stage (index {pg_owner[pg]}); PGs may be "
+                    "activated by AT MOST one stage."
+                )
+            pg_owner[pg] = stage_idx
+
+    # 2. Walk elements; map each spec to its owning stage (if any).
+    element_owner: dict[int, int] = {}
+    # We need to compute node ownership too — walk every element's
+    # PG fan-out to collect (eid → set of stages that reference it).
+    node_stages: dict[int, set[int]] = {}
+    # And: nodes referenced by any GLOBAL element are global,
+    # independent of which stages also reference them.
+    global_nodes: set[int] = set()
+    for spec in elements:
+        spec_pg = getattr(spec, "pg", None)
+        owner_idx = pg_owner.get(spec_pg) if spec_pg else None
+        if owner_idx is not None:
+            element_owner[id(spec)] = owner_idx
+        for _eid, conn in expand_pg_to_elements(fem, spec_pg):
+            for node_id in conn:
+                if owner_idx is None:
+                    global_nodes.add(int(node_id))
+                else:
+                    node_stages.setdefault(int(node_id), set()).add(owner_idx)
+
+    # 3. Assemble node_owner: a node is stage-bound to the lowest
+    # stage index that references it iff it's NOT referenced by any
+    # global element.
+    node_owner: dict[int, int] = {}
+    for node_id, stages in node_stages.items():
+        if node_id in global_nodes:
+            continue  # global element references it; stays global.
+        node_owner[node_id] = min(stages)
+
+    return element_owner, node_owner
 
 
 def resolve_initial_stress_elements(
