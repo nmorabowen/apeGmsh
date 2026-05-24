@@ -213,6 +213,7 @@ class NodeComposite:
         masses=None,
         partitions: dict[int, dict] | None = None,
         part_node_map: dict | None = None,
+        ndf: ndarray | None = None,
     ) -> None:
         self._ids    = _to_object(node_ids)
         self._coords = np.asarray(node_coords, dtype=np.float64)
@@ -231,6 +232,25 @@ class NodeComposite:
         # needing a live Gmsh session (parts registry may be gone
         # by the time the user queries). Dict of ``str -> set[int]``.
         self._part_node_map: dict[str, set[int]] = part_node_map or {}
+
+        # Per-node ``ndf`` (DOF count) — int8 array aligned 1:1 with
+        # ``self._ids``.  Sentinel ``0`` means "undeclared"; positive
+        # values were declared via ``g.node_ndf.set(...)`` or
+        # ``g.node_ndf.set_default(...)``.  ``None`` means the broker
+        # was constructed without per-node ndf metadata at all (e.g.
+        # a direct test fixture); :meth:`ndf_for` raises in that case
+        # too — there is no implicit default in this API.
+        self._ndf: ndarray | None
+        if ndf is None:
+            self._ndf = None
+        else:
+            arr = np.asarray(ndf, dtype=np.int8)
+            if arr.shape != self._ids.shape:
+                raise ValueError(
+                    f"NodeComposite: ndf array shape {arr.shape} does "
+                    f"not match node_ids shape {self._ids.shape}."
+                )
+            self._ndf = arr
 
     # ── Public properties ───────────────────────────────────
 
@@ -497,6 +517,43 @@ class NodeComposite:
             else:
                 msg = f"Node ID {nid} not found (no nodes)"
             raise KeyError(msg) from None
+
+    # ── ndf (DOF count) ─────────────────────────────────────
+
+    def ndf_for(self, nid: int) -> int:
+        """Return the declared per-node ``ndf`` (DOF count) for *nid*.
+
+        Resolution happens once at FEM-build time from the session's
+        :class:`NodeNDFComposite` defs (``g.node_ndf.set(...)`` /
+        ``g.node_ndf.set_default(...)``).  apeGmsh does **not** infer
+        ``ndf`` from element class; every node must be covered by a
+        declaration or a default.
+
+        Raises
+        ------
+        KeyError
+            If ``nid`` is not a known node ID.
+        LookupError
+            If ``nid`` exists but no declaration covers it (no
+            targeted def matched and no default was declared).  The
+            message names both fixes (``g.node_ndf.set(...)`` and
+            ``g.node_ndf.set_default(...)``) so the user can pick.
+        """
+        idx = self.index(nid)
+        if self._ndf is None:
+            raise LookupError(
+                f"node {nid}: ndf not declared — call "
+                f"g.node_ndf.set(target, ndf=K) covering this node, "
+                f"or g.node_ndf.set_default(ndf=K) for the uniform case."
+            )
+        val = int(self._ndf[idx])
+        if val == 0:
+            raise LookupError(
+                f"node {nid}: ndf not declared — call "
+                f"g.node_ndf.set(target, ndf=K) covering this node, "
+                f"or g.node_ndf.set_default(ndf=K) for the uniform case."
+            )
+        return val
 
     # ── Dunder ──────────────────────────────────────────────
 

@@ -189,6 +189,168 @@ def _flat_elem_tags(groups: dict[int, ElementGroup]) -> np.ndarray:
 
 
 # =====================================================================
+# Per-node ndf populator (shell-to-solid coupling feature, S1b)
+# =====================================================================
+#
+# Explicit-only contract: every node that needs an ``ndf`` must be
+# covered by a declaration on ``session.node_ndf`` — either a targeted
+# :meth:`set` call or the blanket :meth:`set_default`.  apeGmsh
+# refuses to infer ``ndf`` from element class; the populator writes
+# ``0`` (sentinel) for any node not covered by a declaration, and
+# :meth:`NodeComposite.ndf_for` raises ``LookupError`` on the
+# sentinel with a message that names both fixes.
+
+
+def _populate_node_ndf(
+    node_ids: np.ndarray,
+    session,
+    node_map: dict | None,
+) -> np.ndarray | None:
+    """Build the per-node ``ndf`` ``int8`` array from session defs.
+
+    Returns ``None`` when no ``NodeNDFComposite`` is wired (e.g. a
+    session built without it, or the ``from_msh`` path with no
+    session at all).  Returns a sentinel-initialised array (``0`` =
+    undeclared) when the composite exists but carries no defs — this
+    distinguishes "broker came from a session that knows about ndf
+    but the user hadn't declared anything" from "broker has no
+    ndf metadata channel at all".
+
+    Resolver behaviour follows the dimensional resolution contract:
+    a missing target raises ``KeyError``, which propagates through
+    this function and up out of ``get_fem_data()`` rather than being
+    silently swallowed.
+    """
+    if session is None:
+        return None
+    composite = getattr(session, "node_ndf", None)
+    if composite is None:
+        return None
+
+    n = int(np.asarray(node_ids).size)
+    ndf = np.zeros(n, dtype=np.int8)
+
+    # Empty composite: return the sentinel array so the broker still
+    # advertises "ndf was wired but undeclared" — every ndf_for() will
+    # raise the helpful LookupError.
+    if not composite._defs:
+        return ndf
+
+    id_to_idx = {int(t): i for i, t in enumerate(np.asarray(node_ids))}
+
+    targeted = composite._targeted_defs()
+    default = composite._default_def()
+
+    # Apply targeted defs in declaration order; later defs win on
+    # overlap (consistent with the imperative ``set_*`` semantics
+    # documented on NodeNDFComposite).
+    for defn in targeted:
+        target_nodes = _resolve_ndf_target_to_node_ids(
+            session, defn.target, node_map=node_map,
+        )
+        if not target_nodes:
+            _log.warning(
+                "g.node_ndf.set target %r resolved to zero nodes — "
+                "the declaration has no effect.",
+                defn.target,
+            )
+            continue
+        ndf_value = np.int8(defn.ndf)
+        missing: list[int] = []
+        for tag in target_nodes:
+            idx = id_to_idx.get(int(tag))
+            if idx is None:
+                # Tag references a node not in the broker — typically
+                # an orphan filtered out by ``remove_orphans=True``.
+                # Log the cohort once at the end rather than failing
+                # loud per node: the resolver itself already failed
+                # loud at the target level (no-such-label / wrong-dim);
+                # an orphan-filtered node is a downstream artifact of
+                # the orphan-removal pass the user explicitly opted
+                # into.
+                missing.append(int(tag))
+                continue
+            ndf[idx] = ndf_value
+        if missing:
+            _log.warning(
+                "g.node_ndf.set target %r resolved to %d node(s) "
+                "absent from the FEM broker (likely orphan-filtered): "
+                "%s%s",
+                defn.target,
+                len(missing),
+                missing[:5],
+                "..." if len(missing) > 5 else "",
+            )
+
+    # Fill remaining sentinels with the default, if one was declared.
+    if default is not None:
+        ndf[ndf == 0] = np.int8(default.ndf)
+
+    return ndf
+
+
+def _resolve_ndf_target_to_node_ids(
+    session,
+    target,
+    *,
+    node_map: dict | None,
+) -> set[int]:
+    """Resolve a ``NodeNDFDef`` target to a set of mesh node IDs.
+
+    Mirrors the precedence chain used by
+    :meth:`LoadsComposite._target_nodes` and
+    :meth:`MassesComposite`: raw DimTag list / mesh-selection
+    sentinel / label / PG / part label.  ``KeyError`` from the
+    shared resolver propagates per the dimensional resolution
+    contract — a missing target must fail loud, not silently
+    bind zero nodes.
+    """
+    import gmsh
+
+    from apeGmsh.core._resolution import resolve_target
+
+    # Part-label fast path — consistent with NodeComposite._resolve_one_target
+    # and LoadsComposite._target_nodes.
+    parts = getattr(session, "parts", None)
+    if (isinstance(target, str)
+            and parts is not None
+            and target in getattr(parts, "_instances", {})
+            and node_map is not None
+            and target in node_map):
+        return {int(n) for n in node_map[target]}
+
+    dts = resolve_target(
+        session, target, source="auto",
+        not_found_prefix="g.node_ndf.set target",
+        noun="node_ndf",
+    )
+
+    # Mesh-selection sentinel — fail loud on missing set, mirrors
+    # LoadsComposite._target_nodes (the silent ``return set()`` was
+    # promoted to KeyError there for the same reason).
+    if dts and isinstance(dts[0], tuple) and dts[0] and dts[0][0] == "__ms__":
+        _, dim, tag = dts[0]
+        ms = getattr(session, "mesh_selection", None)
+        info = None if ms is None else ms._sets.get((dim, tag))
+        if info is None:
+            raise KeyError(
+                f"g.node_ndf.set target {target!r} resolved to a "
+                f"mesh-selection sentinel ('__ms__', {dim}, {tag}), "
+                f"but that set is absent from g.mesh_selection._sets."
+            )
+        return {int(n) for n in info.get("node_ids", [])}
+
+    nodes: set[int] = set()
+    for d, t in dts:
+        nt, _, _ = gmsh.model.mesh.getNodes(
+            dim=int(d), tag=int(t),
+            includeBoundary=True, returnParametricCoord=False,
+        )
+        nodes.update(int(n) for n in nt)
+    return nodes
+
+
+# =====================================================================
 # Shared extraction core
 # =====================================================================
 
@@ -248,6 +410,24 @@ def _from_gmsh(
     from .FEMData import (
         NodeComposite, ElementComposite, MeshInfo, _compute_bandwidth,
     )
+
+    # Reset the post-extraction guard at the *top* of every build.
+    # ``_fem_built`` is stamped True at the end of this function so
+    # that any further ``g.node_ndf.set(...)`` after extraction warns
+    # (the broker is cached; later defs won't appear in this FEMData).
+    # But subsequent ``get_fem_data()`` calls — after a legitimate
+    # re-mesh / re-partition / model change — re-build the FEM
+    # *correctly*; without this reset, every ``set(...)`` after the
+    # second extraction would warn spuriously even though the new
+    # def *will* be honoured by the build currently in progress.
+    # Resetting here baselines each fresh extraction so only
+    # post-cache mutations (set after the last extraction completed)
+    # trigger the warning.
+    if session is not None:
+        try:
+            session._fem_built = False
+        except AttributeError:
+            pass  # not a vanilla session — skip silently
 
     # ── 1. Extract ────────────────────────────────────────────
     (node_tags, node_coords, elem_tags, groups,
@@ -392,6 +572,12 @@ def _from_gmsh(
                 if e_ids:
                     part_elem_map[label] = e_ids
 
+    # ── 5b. Per-node ndf populator (S1b explicit-only) ────────
+    # Walks session.node_ndf defs and writes the int8 ndf vector.
+    # KeyError from a missing resolver target propagates per the
+    # dimensional resolution contract (test_resolution_contract.py).
+    node_ndf = _populate_node_ndf(node_ids, session, node_map=part_node_map)
+
     nodes = NodeComposite(
         node_ids=node_ids,
         node_coords=node_coords_all,
@@ -403,6 +589,7 @@ def _from_gmsh(
         masses=mass_records or None,
         partitions=partitions or None,
         part_node_map=part_node_map or None,
+        ndf=node_ndf,
     )
     elements = ElementComposite(
         groups=groups,
@@ -413,6 +600,15 @@ def _from_gmsh(
         partitions=partitions or None,
         part_elem_map=part_elem_map or None,
     )
+
+    # Stamp the post-extraction flag on the session so any further
+    # ``g.node_ndf.set(...)`` call after this point warns (the
+    # broker is cached; later defs won't appear in this FEMData).
+    if session is not None:
+        try:
+            session._fem_built = True
+        except AttributeError:
+            pass  # not a vanilla session — skip silently
 
     # ── 6. Snapshot mesh selections ───────────────────────────
     ms_store = None

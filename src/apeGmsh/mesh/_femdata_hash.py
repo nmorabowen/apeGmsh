@@ -59,6 +59,21 @@ def _hash_nodes(h: "hashlib._Hash", fem: "FEMData") -> None:
     h.update(node_ids[sort_idx].tobytes())
     h.update(coords[sort_idx].tobytes())
 
+    # Per-node ndf (shell-to-solid coupling, S1b).  Gated on
+    # ``_ndf is not None`` so legacy / direct-test FEMData broker
+    # instances built without the ndf channel preserve their
+    # pre-existing snapshot_id — only FEMs that carry per-node ndf
+    # extend the digest.  ``getattr`` because mock fixtures in
+    # test_results_femdata_hash use SimpleNamespace for ``nodes``.
+    ndf = getattr(fem.nodes, "_ndf", None)
+    if ndf is not None:
+        h.update(b"NDF|")
+        ndf_arr = np.asarray(ndf, dtype=np.int8)
+        # Use the same node-id sort order so a permutation of the
+        # node array (same ids, same ndf-per-id) produces the same
+        # digest.
+        h.update(ndf_arr[sort_idx].tobytes())
+
 
 # ---------------------------------------------------------------------
 # Section: elements

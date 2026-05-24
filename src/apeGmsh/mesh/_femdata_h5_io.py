@@ -101,10 +101,19 @@ __all__ = [
 #: 2.5.x files silently lack the lineage sub-group (legacy-file
 #: warning surfaces at the :class:`Lineage` layer, never raises).
 #:
+#: v2.7.0 (May 2026, shell-to-solid coupling broker foundation, S1b):
+#: additive — adds the optional ``/nodes/ndf`` (int8) dataset
+#: carrying per-node DOF count metadata declared via
+#: ``g.node_ndf.set(...)`` / ``g.node_ndf.set_default(...)``.  Per
+#: ADR 0023's two-version reader window, readers tolerate 2.6.x and
+#: 2.7.x; 2.6.x files silently lack the dataset and round-trip with
+#: ``fem.nodes._ndf is None`` (every ``fem.nodes.ndf_for(...)`` call
+#: raises ``LookupError`` until the user re-declares).
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.6.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.7.0"
 
 
 # ---------------------------------------------------------------------------
@@ -269,12 +278,28 @@ def _derive_ndm(fem: "FEMData") -> int:
 
 
 def _write_nodes(fem: "FEMData", f: Any) -> None:
-    """Write ``/nodes/{ids, coords}`` from ``fem.nodes``."""
+    """Write ``/nodes/{ids, coords[, ndf]}`` from ``fem.nodes``.
+
+    Neutral schema 2.7.0 added the optional per-node ``ndf`` dataset
+    (shell-to-solid coupling, S1b).  Skipped when the broker has no
+    metadata populated (e.g. a from_msh-built FEMData or a direct
+    test fixture); readers tolerate absence by raising
+    :class:`LookupError` from :meth:`NodeComposite.ndf_for`.
+    """
     nodes_grp = f.create_group("nodes")
     node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
     node_coords = np.asarray(fem.nodes.coords, dtype=np.float64)
     nodes_grp.create_dataset("ids", data=node_ids)
     nodes_grp.create_dataset("coords", data=node_coords)
+
+    # Per-node ndf (additive in 2.7.0; absent when the composite
+    # carries no populated array).  int8 since values are always
+    # in [1, 6] with 0 as the "undeclared" sentinel.
+    ndf = getattr(fem.nodes, "_ndf", None)
+    if ndf is not None:
+        nodes_grp.create_dataset(
+            "ndf", data=np.asarray(ndf, dtype=np.int8),
+        )
 
 
 def _write_elements(fem: "FEMData", f: Any) -> None:
@@ -1111,6 +1136,19 @@ def read_neutral_zone_from_group(
     nodes_grp = parent["nodes"]
     node_ids = np.asarray(nodes_grp["ids"][...], dtype=np.int64)
     node_coords = np.asarray(nodes_grp["coords"][...], dtype=np.float64)
+    # Per-node ndf (additive in 2.7.0; absent in 2.6.x files — readers
+    # must tolerate the omission per the two-version window).  Probe
+    # with ``in`` not ``Group.get`` per the h5py optional-child .get()
+    # hazard (project_h5py_optional_child_get_hazard).
+    if "ndf" in nodes_grp:
+        node_ndf = np.asarray(nodes_grp["ndf"][...], dtype=np.int8)
+        if node_ndf.shape != node_ids.shape:
+            raise MalformedH5Error(
+                f"{label}: /nodes/ndf shape {node_ndf.shape} does not "
+                f"match /nodes/ids shape {node_ids.shape}."
+            )
+    else:
+        node_ndf = None
 
     # -- elements (per-type subgroups) --
     element_groups: dict[int, ElementGroup] = {}
@@ -1197,6 +1235,7 @@ def read_neutral_zone_from_group(
         masses=mass_records,
         partitions=partitions or None,
         part_node_map=part_node_map or None,
+        ndf=node_ndf,
     )
     elements = ElementComposite(
         groups=element_groups,
