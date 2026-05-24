@@ -359,12 +359,13 @@ the result map. After a fragment you can keep using
 `g.labels.entities("soil")` and it will return the correct (possibly
 expanded) set of tags.
 
-`fragment` also does a small post-processing step. If the operation
-leaves free-floating surface fragments — for example a cutting plane
-that extended past the solid — it removes them when
-`cleanup_free=True` (the default). Set it to `False` if you
-deliberately want to keep those surfaces for a boundary condition or
-a selection set.
+`fragment` also exposes an opt-in post-processing step. If the
+operation leaves free-floating surface fragments — for example a
+cutting plane that extended past the solid — it removes them when
+`cleanup_free=True`. The default is `cleanup_free=False` so shells
+sitting on top of a solid's face (shell-on-solid coupling) are
+preserved. Pass `cleanup_free=True` explicitly when you want the
+old destructive cleanup.
 
 ### Choosing between fragment and fuse — the conformal question
 

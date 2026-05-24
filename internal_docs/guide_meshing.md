@@ -84,7 +84,7 @@ on `g.model`. All four share the same shape:
 g.model.boolean.fuse     (objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
 g.model.boolean.cut      (objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
 g.model.boolean.intersect(objects, tools, *, dim=3, remove_object=True, remove_tool=True, sync=True) -> list[Tag]
-g.model.boolean.fragment (objects, tools, *, dim=3, remove_object=True, remove_tool=True, cleanup_free=True, sync=True) -> list[Tag]
+g.model.boolean.fragment (objects, tools, *, dim=3, remove_object=True, remove_tool=True, cleanup_free=False, sync=True) -> list[Tag]
 ```
 
 `objects` and `tools` accept a flexible `TagsLike = Tag | list[Tag] | DimTag |
@@ -104,10 +104,12 @@ Semantically:
   or another solid.
 - **`fragment`** is the conformal-meshing primitive. It splits every shape at
   every intersection and keeps *all* sub-volumes, including the pieces of the
-  tools that are left over. The `cleanup_free=True` default also drops
-  surfaces that do not bound a volume after the operation — those are the
-  dangling remnants of cutting planes that sit outside the solid and would
-  otherwise show up as stray 2D elements in the mesh.
+  tools that are left over. The default `cleanup_free=False` preserves every
+  surface — including shells sitting on a solid's face (shell-on-solid
+  coupling). Pass `cleanup_free=True` opt-in to drop surfaces that do not
+  bound a volume after the operation — those are the dangling remnants of
+  cutting planes that sit outside the solid and would otherwise show up as
+  stray 2D elements in the mesh.
 
 **Conformal meshing in practice** almost always means "fragment, then mesh".
 Without fragmentation, two touching parts will be meshed independently and

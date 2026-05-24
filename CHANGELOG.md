@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — shell-on-solid conformity (S1a)
+
+### CHANGED — boolean.fragment default (BREAKING)
+
+- **`g.model.boolean.fragment(...)` default `cleanup_free` flipped from
+  `True` to `False`.** The previous default silently destroyed shell
+  surfaces sitting on top of solids in shell-on-solid coupling
+  scenarios (and any other dim-2 entity without an upward-volume
+  adjacency). Existing scripts that relied on the destructive cleanup
+  must now pass `cleanup_free=True` explicitly. The viewer's Fragment
+  panel checkbox also defaults unchecked to match.
+
 ## v2.0.0 — Three-broker chain: Results carries OpenSeesModel carries FEMData (BREAKING) · Composed file pattern · lineage chain · MP constraint emission shipped · per-zone schemas
 
 Major architectural refactor establishing the **FEM ⊂ Model ⊂
@@ -1210,8 +1222,9 @@ without fragmenting the host mesh.
 - `tests/test_target_resolution.py` — locks in `FEMData.nodes.get()` /
   `.elements.get()` `target=` precedence (`label > PG`) and raw
   `[(dim, tag)]` passthrough.
-- `tests/test_boolean_ops.py` — guards the 2D `fragment(cleanup_free=True)`
-  bug so it can't regress.
+- `tests/test_boolean_ops.py` — guards the 2D opt-in
+  `fragment(cleanup_free=True)` bug so it can't regress (and now also
+  pins that the default `cleanup_free=False` preserves surfaces).
 - `tests/test_parts_advanced.py` — covers `g.parts.add(part, label=...,
   translate=...)` on an unlabeled Part (no sidecar).
 

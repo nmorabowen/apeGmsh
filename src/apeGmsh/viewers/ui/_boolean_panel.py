@@ -65,7 +65,7 @@ class BooleanPanel:
         self._cb_cleanup = QtWidgets.QCheckBox(
             "Fragment: drop free surfaces"
         )
-        self._cb_cleanup.setChecked(True)
+        self._cb_cleanup.setChecked(False)
         for w in (self._cb_rm_obj, self._cb_rm_tool, self._cb_cleanup):
             ol.addWidget(w)
         lay.addWidget(opt)

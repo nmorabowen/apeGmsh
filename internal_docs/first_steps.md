@@ -841,11 +841,14 @@ wrong if you wanted separate materials for each.
   the warning, either adopt them with `g.parts.from_model()`
   first, or accept that they'll participate in fragmentation but
   not be tracked in the registry.
-- **`fragment(cleanup_free=True)` is the default.** It drops
-  dim-2 surfaces that don't bound a volume — useful for killing
-  remnants of a cutting plane that extended past your solid. In
-  pure 2D models it auto-skips (otherwise it would kill every
-  surface in sight).
+- **`fragment(cleanup_free=False)` is the default.** Pass
+  `cleanup_free=True` opt-in to drop dim-2 surfaces that don't
+  bound a volume — useful for killing remnants of a cutting plane
+  that extended past your solid. The default preserves all
+  surfaces so shells on top of solids (shell-on-solid coupling)
+  survive the operation. In pure 2D models the cleanup auto-skips
+  even when requested (otherwise it would kill every surface in
+  sight).
 
 ---
 

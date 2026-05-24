@@ -132,11 +132,13 @@ class TestFragment:
         assert len(vols) == 3
 
     def test_fragment_2d_preserves_surfaces_with_default_cleanup(self, g):
-        """2D fragment must not drop surfaces even with cleanup_free=True.
+        """2D fragment must not drop surfaces under the default
+        ``cleanup_free=False``.
 
         Regression: in a 2D model every surface has zero upward-volume
-        adjacency, so the free-surface heuristic used to delete all
-        surfaces and produce an empty model.
+        adjacency, so the old `cleanup_free=True` default deleted all
+        surfaces and produced an empty model. The new default
+        preserves them; this test pins that behavior.
         """
         p_BL = g.model.geometry.add_point(0.0, 0.0, 0.0, lc=0.5)
         p_BR = g.model.geometry.add_point(2.0, 0.0, 0.0, lc=0.5)
