@@ -3544,6 +3544,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#apeGmsh.opensees.apeSees.h5--raises" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raises
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5093,6 +5104,17 @@
     <span class="md-ellipsis">
       
         Parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.opensees.apeSees.h5--raises" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raises
       
     </span>
   </a>
@@ -7821,6 +7843,22 @@ sweeps
     to persist under <code>/opensees/sweeps/sweep_{i}</code>.  Each
     sweep group carries its own <code>cuts/</code> sub-group in sweep
     order (see <code>apeGmsh/cuts/ARCHITECTURE.md</code> "## v4").</p>
+<h5 id="apeGmsh.opensees.apeSees.h5--raises">Raises<a class="headerlink" href="#apeGmsh.opensees.apeSees.h5--raises" title="Permanent link">&para;</a></h5>
+<p>NotImplementedError
+    When the bridge carries staged-analysis records
+    (<code>ops.stage(...)</code> blocks) or initial-stress directives
+    (<code>ops.initial_stress(...)</code>).  H5 archival of these
+    constructs is deferred (Phase SSI-1 / SSI-2.A / SSI-2.B):
+    the H5 emitter currently no-ops <code>stage_open</code> /
+    <code>stage_close</code> / <code>domain_change</code> / <code>addToParameter</code> /
+    <code>step_hook_ramp</code>, so a silent <code>h5(...)</code> on such a
+    build would write a file that round-trips to a non-staged
+    flat model — every stage's analysis chain rebinding,
+    per-stage activated PGs, per-stage initial-stress records,
+    and the per-stage analyze loop would be silently dropped.
+    Fail loud here so callers route to <code>ops.tcl(path)</code> /
+    <code>ops.py(path)</code> (both of which fully support these
+    constructs) until the H5 schema bump lands.</p>
 
 
             <details class="mkdocstrings-source">
@@ -7903,7 +7941,50 @@ sweeps
 <span class="normal"><a href="#__codelineno-0-2629">2629</a></span>
 <span class="normal"><a href="#__codelineno-0-2630">2630</a></span>
 <span class="normal"><a href="#__codelineno-0-2631">2631</a></span>
-<span class="normal"><a href="#__codelineno-0-2632">2632</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2554"><a id="__codelineno-0-2554" name="__codelineno-0-2554"></a><span class="k">def</span><span class="w"> </span><span class="nf">h5</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-2632">2632</a></span>
+<span class="normal"><a href="#__codelineno-0-2633">2633</a></span>
+<span class="normal"><a href="#__codelineno-0-2634">2634</a></span>
+<span class="normal"><a href="#__codelineno-0-2635">2635</a></span>
+<span class="normal"><a href="#__codelineno-0-2636">2636</a></span>
+<span class="normal"><a href="#__codelineno-0-2637">2637</a></span>
+<span class="normal"><a href="#__codelineno-0-2638">2638</a></span>
+<span class="normal"><a href="#__codelineno-0-2639">2639</a></span>
+<span class="normal"><a href="#__codelineno-0-2640">2640</a></span>
+<span class="normal"><a href="#__codelineno-0-2641">2641</a></span>
+<span class="normal"><a href="#__codelineno-0-2642">2642</a></span>
+<span class="normal"><a href="#__codelineno-0-2643">2643</a></span>
+<span class="normal"><a href="#__codelineno-0-2644">2644</a></span>
+<span class="normal"><a href="#__codelineno-0-2645">2645</a></span>
+<span class="normal"><a href="#__codelineno-0-2646">2646</a></span>
+<span class="normal"><a href="#__codelineno-0-2647">2647</a></span>
+<span class="normal"><a href="#__codelineno-0-2648">2648</a></span>
+<span class="normal"><a href="#__codelineno-0-2649">2649</a></span>
+<span class="normal"><a href="#__codelineno-0-2650">2650</a></span>
+<span class="normal"><a href="#__codelineno-0-2651">2651</a></span>
+<span class="normal"><a href="#__codelineno-0-2652">2652</a></span>
+<span class="normal"><a href="#__codelineno-0-2653">2653</a></span>
+<span class="normal"><a href="#__codelineno-0-2654">2654</a></span>
+<span class="normal"><a href="#__codelineno-0-2655">2655</a></span>
+<span class="normal"><a href="#__codelineno-0-2656">2656</a></span>
+<span class="normal"><a href="#__codelineno-0-2657">2657</a></span>
+<span class="normal"><a href="#__codelineno-0-2658">2658</a></span>
+<span class="normal"><a href="#__codelineno-0-2659">2659</a></span>
+<span class="normal"><a href="#__codelineno-0-2660">2660</a></span>
+<span class="normal"><a href="#__codelineno-0-2661">2661</a></span>
+<span class="normal"><a href="#__codelineno-0-2662">2662</a></span>
+<span class="normal"><a href="#__codelineno-0-2663">2663</a></span>
+<span class="normal"><a href="#__codelineno-0-2664">2664</a></span>
+<span class="normal"><a href="#__codelineno-0-2665">2665</a></span>
+<span class="normal"><a href="#__codelineno-0-2666">2666</a></span>
+<span class="normal"><a href="#__codelineno-0-2667">2667</a></span>
+<span class="normal"><a href="#__codelineno-0-2668">2668</a></span>
+<span class="normal"><a href="#__codelineno-0-2669">2669</a></span>
+<span class="normal"><a href="#__codelineno-0-2670">2670</a></span>
+<span class="normal"><a href="#__codelineno-0-2671">2671</a></span>
+<span class="normal"><a href="#__codelineno-0-2672">2672</a></span>
+<span class="normal"><a href="#__codelineno-0-2673">2673</a></span>
+<span class="normal"><a href="#__codelineno-0-2674">2674</a></span>
+<span class="normal"><a href="#__codelineno-0-2675">2675</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2554"><a id="__codelineno-0-2554" name="__codelineno-0-2554"></a><span class="k">def</span><span class="w"> </span><span class="nf">h5</span><span class="p">(</span>
 </span><span id="__span-0-2555"><a id="__codelineno-0-2555" name="__codelineno-0-2555"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-2556"><a id="__codelineno-0-2556" name="__codelineno-0-2556"></a>    <span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
 </span><span id="__span-0-2557"><a id="__codelineno-0-2557" name="__codelineno-0-2557"></a>    <span class="o">*</span><span class="p">,</span>
@@ -7953,35 +8034,78 @@ sweeps
 </span><span id="__span-0-2601"><a id="__codelineno-0-2601" name="__codelineno-0-2601"></a><span class="sd">        to persist under ``/opensees/sweeps/sweep_{i}``.  Each</span>
 </span><span id="__span-0-2602"><a id="__codelineno-0-2602" name="__codelineno-0-2602"></a><span class="sd">        sweep group carries its own ``cuts/`` sub-group in sweep</span>
 </span><span id="__span-0-2603"><a id="__codelineno-0-2603" name="__codelineno-0-2603"></a><span class="sd">        order (see ``apeGmsh/cuts/ARCHITECTURE.md`` &quot;## v4&quot;).</span>
-</span><span id="__span-0-2604"><a id="__codelineno-0-2604" name="__codelineno-0-2604"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-2605"><a id="__codelineno-0-2605" name="__codelineno-0-2605"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.emitter.h5</span><span class="w"> </span><span class="kn">import</span> <span class="n">H5Emitter</span>
-</span><span id="__span-0-2606"><a id="__codelineno-0-2606" name="__codelineno-0-2606"></a>
-</span><span id="__span-0-2607"><a id="__codelineno-0-2607" name="__codelineno-0-2607"></a>    <span class="n">snapshot_id</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-</span><span id="__span-0-2608"><a id="__codelineno-0-2608" name="__codelineno-0-2608"></a>    <span class="k">try</span><span class="p">:</span>
-</span><span id="__span-0-2609"><a id="__codelineno-0-2609" name="__codelineno-0-2609"></a>        <span class="n">snapshot_id</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="o">.</span><span class="n">snapshot_id</span><span class="p">)</span>
-</span><span id="__span-0-2610"><a id="__codelineno-0-2610" name="__codelineno-0-2610"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
-</span><span id="__span-0-2611"><a id="__codelineno-0-2611" name="__codelineno-0-2611"></a>        <span class="c1"># FEM snapshots produced by some legacy paths may not have</span>
-</span><span id="__span-0-2612"><a id="__codelineno-0-2612" name="__codelineno-0-2612"></a>        <span class="c1"># a snapshot_id; tolerate gracefully (the H5 emitter writes</span>
-</span><span id="__span-0-2613"><a id="__codelineno-0-2613" name="__codelineno-0-2613"></a>        <span class="c1"># an empty string into /meta/snapshot_id, which the schema</span>
-</span><span id="__span-0-2614"><a id="__codelineno-0-2614" name="__codelineno-0-2614"></a>        <span class="c1"># already allows).</span>
-</span><span id="__span-0-2615"><a id="__codelineno-0-2615" name="__codelineno-0-2615"></a>        <span class="n">snapshot_id</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
-</span><span id="__span-0-2616"><a id="__codelineno-0-2616" name="__codelineno-0-2616"></a>
-</span><span id="__span-0-2617"><a id="__codelineno-0-2617" name="__codelineno-0-2617"></a>    <span class="n">name</span> <span class="o">=</span> <span class="n">model_name</span> <span class="ow">or</span> <span class="n">_path_stem</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-</span><span id="__span-0-2618"><a id="__codelineno-0-2618" name="__codelineno-0-2618"></a>    <span class="n">bm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
-</span><span id="__span-0-2619"><a id="__codelineno-0-2619" name="__codelineno-0-2619"></a>    <span class="n">emitter</span> <span class="o">=</span> <span class="n">H5Emitter</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">snapshot_id</span><span class="o">=</span><span class="n">snapshot_id</span><span class="p">)</span>
-</span><span id="__span-0-2620"><a id="__codelineno-0-2620" name="__codelineno-0-2620"></a>    <span class="n">bm</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span><span class="n">emitter</span><span class="p">)</span>
-</span><span id="__span-0-2621"><a id="__codelineno-0-2621" name="__codelineno-0-2621"></a>
-</span><span id="__span-0-2622"><a id="__codelineno-0-2622" name="__codelineno-0-2622"></a>    <span class="c1"># Single composition path, shared with ModelData.write (ADR</span>
-</span><span id="__span-0-2623"><a id="__codelineno-0-2623" name="__codelineno-0-2623"></a>    <span class="c1"># 0018 / _internal.compose).  apeSees passes snapshot_id=None:</span>
-</span><span id="__span-0-2624"><a id="__codelineno-0-2624" name="__codelineno-0-2624"></a>    <span class="c1"># the broker / bridge meta write is authoritative here, so</span>
-</span><span id="__span-0-2625"><a id="__codelineno-0-2625" name="__codelineno-0-2625"></a>    <span class="c1"># this stays byte-invariant with the pre-extraction code.</span>
-</span><span id="__span-0-2626"><a id="__codelineno-0-2626" name="__codelineno-0-2626"></a>    <span class="n">_compose_model_h5</span><span class="p">(</span>
-</span><span id="__span-0-2627"><a id="__codelineno-0-2627" name="__codelineno-0-2627"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span> <span class="n">emitter</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span>
-</span><span id="__span-0-2628"><a id="__codelineno-0-2628" name="__codelineno-0-2628"></a>        <span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
-</span><span id="__span-0-2629"><a id="__codelineno-0-2629" name="__codelineno-0-2629"></a>        <span class="n">ndf</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">),</span>
-</span><span id="__span-0-2630"><a id="__codelineno-0-2630" name="__codelineno-0-2630"></a>        <span class="n">cuts</span><span class="o">=</span><span class="n">cuts</span><span class="p">,</span>
-</span><span id="__span-0-2631"><a id="__codelineno-0-2631" name="__codelineno-0-2631"></a>        <span class="n">sweeps</span><span class="o">=</span><span class="n">sweeps</span><span class="p">,</span>
-</span><span id="__span-0-2632"><a id="__codelineno-0-2632" name="__codelineno-0-2632"></a>    <span class="p">)</span>
+</span><span id="__span-0-2604"><a id="__codelineno-0-2604" name="__codelineno-0-2604"></a>
+</span><span id="__span-0-2605"><a id="__codelineno-0-2605" name="__codelineno-0-2605"></a><span class="sd">    Raises</span>
+</span><span id="__span-0-2606"><a id="__codelineno-0-2606" name="__codelineno-0-2606"></a><span class="sd">    ------</span>
+</span><span id="__span-0-2607"><a id="__codelineno-0-2607" name="__codelineno-0-2607"></a><span class="sd">    NotImplementedError</span>
+</span><span id="__span-0-2608"><a id="__codelineno-0-2608" name="__codelineno-0-2608"></a><span class="sd">        When the bridge carries staged-analysis records</span>
+</span><span id="__span-0-2609"><a id="__codelineno-0-2609" name="__codelineno-0-2609"></a><span class="sd">        (``ops.stage(...)`` blocks) or initial-stress directives</span>
+</span><span id="__span-0-2610"><a id="__codelineno-0-2610" name="__codelineno-0-2610"></a><span class="sd">        (``ops.initial_stress(...)``).  H5 archival of these</span>
+</span><span id="__span-0-2611"><a id="__codelineno-0-2611" name="__codelineno-0-2611"></a><span class="sd">        constructs is deferred (Phase SSI-1 / SSI-2.A / SSI-2.B):</span>
+</span><span id="__span-0-2612"><a id="__codelineno-0-2612" name="__codelineno-0-2612"></a><span class="sd">        the H5 emitter currently no-ops ``stage_open`` /</span>
+</span><span id="__span-0-2613"><a id="__codelineno-0-2613" name="__codelineno-0-2613"></a><span class="sd">        ``stage_close`` / ``domain_change`` / ``addToParameter`` /</span>
+</span><span id="__span-0-2614"><a id="__codelineno-0-2614" name="__codelineno-0-2614"></a><span class="sd">        ``step_hook_ramp``, so a silent ``h5(...)`` on such a</span>
+</span><span id="__span-0-2615"><a id="__codelineno-0-2615" name="__codelineno-0-2615"></a><span class="sd">        build would write a file that round-trips to a non-staged</span>
+</span><span id="__span-0-2616"><a id="__codelineno-0-2616" name="__codelineno-0-2616"></a><span class="sd">        flat model — every stage&#39;s analysis chain rebinding,</span>
+</span><span id="__span-0-2617"><a id="__codelineno-0-2617" name="__codelineno-0-2617"></a><span class="sd">        per-stage activated PGs, per-stage initial-stress records,</span>
+</span><span id="__span-0-2618"><a id="__codelineno-0-2618" name="__codelineno-0-2618"></a><span class="sd">        and the per-stage analyze loop would be silently dropped.</span>
+</span><span id="__span-0-2619"><a id="__codelineno-0-2619" name="__codelineno-0-2619"></a><span class="sd">        Fail loud here so callers route to ``ops.tcl(path)`` /</span>
+</span><span id="__span-0-2620"><a id="__codelineno-0-2620" name="__codelineno-0-2620"></a><span class="sd">        ``ops.py(path)`` (both of which fully support these</span>
+</span><span id="__span-0-2621"><a id="__codelineno-0-2621" name="__codelineno-0-2621"></a><span class="sd">        constructs) until the H5 schema bump lands.</span>
+</span><span id="__span-0-2622"><a id="__codelineno-0-2622" name="__codelineno-0-2622"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-2623"><a id="__codelineno-0-2623" name="__codelineno-0-2623"></a>    <span class="c1"># Phase SSI-1 / SSI-2 guard: see Raises above.  Bump the H5</span>
+</span><span id="__span-0-2624"><a id="__codelineno-0-2624" name="__codelineno-0-2624"></a>    <span class="c1"># SCHEMA_VERSION + extend the H5Emitter no-op methods +</span>
+</span><span id="__span-0-2625"><a id="__codelineno-0-2625" name="__codelineno-0-2625"></a>    <span class="c1"># extend ``_compose_model_h5`` and the OpenSeesModel read-side</span>
+</span><span id="__span-0-2626"><a id="__codelineno-0-2626" name="__codelineno-0-2626"></a>    <span class="c1"># broker when the persist work lands; drop this guard then.</span>
+</span><span id="__span-0-2627"><a id="__codelineno-0-2627" name="__codelineno-0-2627"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">:</span>
+</span><span id="__span-0-2628"><a id="__codelineno-0-2628" name="__codelineno-0-2628"></a>        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+</span><span id="__span-0-2629"><a id="__codelineno-0-2629" name="__codelineno-0-2629"></a>            <span class="s2">&quot;ops.h5: H5 archival of staged builds is not yet &quot;</span>
+</span><span id="__span-0-2630"><a id="__codelineno-0-2630" name="__codelineno-0-2630"></a>            <span class="sa">f</span><span class="s2">&quot;supported (got </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">)</span><span class="si">}</span><span class="s2"> stage(s); &quot;</span>
+</span><span id="__span-0-2631"><a id="__codelineno-0-2631" name="__codelineno-0-2631"></a>            <span class="s2">&quot;Phase SSI-2.A/B deferred — the H5 emitter no-ops &quot;</span>
+</span><span id="__span-0-2632"><a id="__codelineno-0-2632" name="__codelineno-0-2632"></a>            <span class="s2">&quot;stage_open / stage_close / domain_change).  &quot;</span>
+</span><span id="__span-0-2633"><a id="__codelineno-0-2633" name="__codelineno-0-2633"></a>            <span class="s2">&quot;Use ops.tcl(path) or ops.py(path) for staged decks; &quot;</span>
+</span><span id="__span-0-2634"><a id="__codelineno-0-2634" name="__codelineno-0-2634"></a>            <span class="s2">&quot;H5 is only supported for non-staged builds.&quot;</span>
+</span><span id="__span-0-2635"><a id="__codelineno-0-2635" name="__codelineno-0-2635"></a>        <span class="p">)</span>
+</span><span id="__span-0-2636"><a id="__codelineno-0-2636" name="__codelineno-0-2636"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_initial_stress_records</span><span class="p">:</span>
+</span><span id="__span-0-2637"><a id="__codelineno-0-2637" name="__codelineno-0-2637"></a>        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+</span><span id="__span-0-2638"><a id="__codelineno-0-2638" name="__codelineno-0-2638"></a>            <span class="s2">&quot;ops.h5: H5 archival of ops.initial_stress(...) &quot;</span>
+</span><span id="__span-0-2639"><a id="__codelineno-0-2639" name="__codelineno-0-2639"></a>            <span class="s2">&quot;directives is not yet supported (got &quot;</span>
+</span><span id="__span-0-2640"><a id="__codelineno-0-2640" name="__codelineno-0-2640"></a>            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_initial_stress_records</span><span class="p">)</span><span class="si">}</span><span class="s2"> record(s); &quot;</span>
+</span><span id="__span-0-2641"><a id="__codelineno-0-2641" name="__codelineno-0-2641"></a>            <span class="s2">&quot;Phase SSI-1 deferred — the H5 emitter no-ops &quot;</span>
+</span><span id="__span-0-2642"><a id="__codelineno-0-2642" name="__codelineno-0-2642"></a>            <span class="s2">&quot;addToParameter / step_hook_ramp).  &quot;</span>
+</span><span id="__span-0-2643"><a id="__codelineno-0-2643" name="__codelineno-0-2643"></a>            <span class="s2">&quot;Use ops.tcl(path) or ops.py(path) for decks that &quot;</span>
+</span><span id="__span-0-2644"><a id="__codelineno-0-2644" name="__codelineno-0-2644"></a>            <span class="s2">&quot;declare initial stress; H5 is only supported for &quot;</span>
+</span><span id="__span-0-2645"><a id="__codelineno-0-2645" name="__codelineno-0-2645"></a>            <span class="s2">&quot;builds without ops.initial_stress(...).&quot;</span>
+</span><span id="__span-0-2646"><a id="__codelineno-0-2646" name="__codelineno-0-2646"></a>        <span class="p">)</span>
+</span><span id="__span-0-2647"><a id="__codelineno-0-2647" name="__codelineno-0-2647"></a>
+</span><span id="__span-0-2648"><a id="__codelineno-0-2648" name="__codelineno-0-2648"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.emitter.h5</span><span class="w"> </span><span class="kn">import</span> <span class="n">H5Emitter</span>
+</span><span id="__span-0-2649"><a id="__codelineno-0-2649" name="__codelineno-0-2649"></a>
+</span><span id="__span-0-2650"><a id="__codelineno-0-2650" name="__codelineno-0-2650"></a>    <span class="n">snapshot_id</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+</span><span id="__span-0-2651"><a id="__codelineno-0-2651" name="__codelineno-0-2651"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-0-2652"><a id="__codelineno-0-2652" name="__codelineno-0-2652"></a>        <span class="n">snapshot_id</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="o">.</span><span class="n">snapshot_id</span><span class="p">)</span>
+</span><span id="__span-0-2653"><a id="__codelineno-0-2653" name="__codelineno-0-2653"></a>    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+</span><span id="__span-0-2654"><a id="__codelineno-0-2654" name="__codelineno-0-2654"></a>        <span class="c1"># FEM snapshots produced by some legacy paths may not have</span>
+</span><span id="__span-0-2655"><a id="__codelineno-0-2655" name="__codelineno-0-2655"></a>        <span class="c1"># a snapshot_id; tolerate gracefully (the H5 emitter writes</span>
+</span><span id="__span-0-2656"><a id="__codelineno-0-2656" name="__codelineno-0-2656"></a>        <span class="c1"># an empty string into /meta/snapshot_id, which the schema</span>
+</span><span id="__span-0-2657"><a id="__codelineno-0-2657" name="__codelineno-0-2657"></a>        <span class="c1"># already allows).</span>
+</span><span id="__span-0-2658"><a id="__codelineno-0-2658" name="__codelineno-0-2658"></a>        <span class="n">snapshot_id</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+</span><span id="__span-0-2659"><a id="__codelineno-0-2659" name="__codelineno-0-2659"></a>
+</span><span id="__span-0-2660"><a id="__codelineno-0-2660" name="__codelineno-0-2660"></a>    <span class="n">name</span> <span class="o">=</span> <span class="n">model_name</span> <span class="ow">or</span> <span class="n">_path_stem</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+</span><span id="__span-0-2661"><a id="__codelineno-0-2661" name="__codelineno-0-2661"></a>    <span class="n">bm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">build</span><span class="p">()</span>
+</span><span id="__span-0-2662"><a id="__codelineno-0-2662" name="__codelineno-0-2662"></a>    <span class="n">emitter</span> <span class="o">=</span> <span class="n">H5Emitter</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">snapshot_id</span><span class="o">=</span><span class="n">snapshot_id</span><span class="p">)</span>
+</span><span id="__span-0-2663"><a id="__codelineno-0-2663" name="__codelineno-0-2663"></a>    <span class="n">bm</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span><span class="n">emitter</span><span class="p">)</span>
+</span><span id="__span-0-2664"><a id="__codelineno-0-2664" name="__codelineno-0-2664"></a>
+</span><span id="__span-0-2665"><a id="__codelineno-0-2665" name="__codelineno-0-2665"></a>    <span class="c1"># Single composition path, shared with ModelData.write (ADR</span>
+</span><span id="__span-0-2666"><a id="__codelineno-0-2666" name="__codelineno-0-2666"></a>    <span class="c1"># 0018 / _internal.compose).  apeSees passes snapshot_id=None:</span>
+</span><span id="__span-0-2667"><a id="__codelineno-0-2667" name="__codelineno-0-2667"></a>    <span class="c1"># the broker / bridge meta write is authoritative here, so</span>
+</span><span id="__span-0-2668"><a id="__codelineno-0-2668" name="__codelineno-0-2668"></a>    <span class="c1"># this stays byte-invariant with the pre-extraction code.</span>
+</span><span id="__span-0-2669"><a id="__codelineno-0-2669" name="__codelineno-0-2669"></a>    <span class="n">_compose_model_h5</span><span class="p">(</span>
+</span><span id="__span-0-2670"><a id="__codelineno-0-2670" name="__codelineno-0-2670"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span> <span class="n">emitter</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span>
+</span><span id="__span-0-2671"><a id="__codelineno-0-2671" name="__codelineno-0-2671"></a>        <span class="n">model_name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span>
+</span><span id="__span-0-2672"><a id="__codelineno-0-2672" name="__codelineno-0-2672"></a>        <span class="n">ndf</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">),</span>
+</span><span id="__span-0-2673"><a id="__codelineno-0-2673" name="__codelineno-0-2673"></a>        <span class="n">cuts</span><span class="o">=</span><span class="n">cuts</span><span class="p">,</span>
+</span><span id="__span-0-2674"><a id="__codelineno-0-2674" name="__codelineno-0-2674"></a>        <span class="n">sweeps</span><span class="o">=</span><span class="n">sweeps</span><span class="p">,</span>
+</span><span id="__span-0-2675"><a id="__codelineno-0-2675" name="__codelineno-0-2675"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -8006,11 +8130,11 @@ sweeps
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/opensees/apesees.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2643">2643</a></span>
-<span class="normal"><a href="#__codelineno-0-2644">2644</a></span>
-<span class="normal"><a href="#__codelineno-0-2645">2645</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2643"><a id="__codelineno-0-2643" name="__codelineno-0-2643"></a><span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prim</span><span class="p">:</span> <span class="n">_P</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">_P</span><span class="p">:</span>
-</span><span id="__span-0-2644"><a id="__codelineno-0-2644" name="__codelineno-0-2644"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Register a standalone primitive with the bridge (P11).&quot;&quot;&quot;</span>
-</span><span id="__span-0-2645"><a id="__codelineno-0-2645" name="__codelineno-0-2645"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_register</span><span class="p">(</span><span class="n">prim</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2686">2686</a></span>
+<span class="normal"><a href="#__codelineno-0-2687">2687</a></span>
+<span class="normal"><a href="#__codelineno-0-2688">2688</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2686"><a id="__codelineno-0-2686" name="__codelineno-0-2686"></a><span class="k">def</span><span class="w"> </span><span class="nf">register</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prim</span><span class="p">:</span> <span class="n">_P</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">_P</span><span class="p">:</span>
+</span><span id="__span-0-2687"><a id="__codelineno-0-2687" name="__codelineno-0-2687"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Register a standalone primitive with the bridge (P11).&quot;&quot;&quot;</span>
+</span><span id="__span-0-2688"><a id="__codelineno-0-2688" name="__codelineno-0-2688"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_register</span><span class="p">(</span><span class="n">prim</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -8035,11 +8159,11 @@ sweeps
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/opensees/apesees.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2647">2647</a></span>
-<span class="normal"><a href="#__codelineno-0-2648">2648</a></span>
-<span class="normal"><a href="#__codelineno-0-2649">2649</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2647"><a id="__codelineno-0-2647" name="__codelineno-0-2647"></a><span class="k">def</span><span class="w"> </span><span class="nf">tag_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prim</span><span class="p">:</span> <span class="n">Primitive</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2648"><a id="__codelineno-0-2648" name="__codelineno-0-2648"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``prim``&#39;s allocated tag, or ``None`` if unregistered.&quot;&quot;&quot;</span>
-</span><span id="__span-0-2649"><a id="__codelineno-0-2649" name="__codelineno-0-2649"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tags</span><span class="o">.</span><span class="n">tag_for</span><span class="p">(</span><span class="n">prim</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2690">2690</a></span>
+<span class="normal"><a href="#__codelineno-0-2691">2691</a></span>
+<span class="normal"><a href="#__codelineno-0-2692">2692</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2690"><a id="__codelineno-0-2690" name="__codelineno-0-2690"></a><span class="k">def</span><span class="w"> </span><span class="nf">tag_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prim</span><span class="p">:</span> <span class="n">Primitive</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-2691"><a id="__codelineno-0-2691" name="__codelineno-0-2691"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``prim``&#39;s allocated tag, or ``None`` if unregistered.&quot;&quot;&quot;</span>
+</span><span id="__span-0-2692"><a id="__codelineno-0-2692" name="__codelineno-0-2692"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tags</span><span class="o">.</span><span class="n">tag_for</span><span class="p">(</span><span class="n">prim</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -8064,51 +8188,51 @@ sweeps
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/opensees/apesees.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2653">2653</a></span>
-<span class="normal"><a href="#__codelineno-0-2654">2654</a></span>
-<span class="normal"><a href="#__codelineno-0-2655">2655</a></span>
-<span class="normal"><a href="#__codelineno-0-2656">2656</a></span>
-<span class="normal"><a href="#__codelineno-0-2657">2657</a></span>
-<span class="normal"><a href="#__codelineno-0-2658">2658</a></span>
-<span class="normal"><a href="#__codelineno-0-2659">2659</a></span>
-<span class="normal"><a href="#__codelineno-0-2660">2660</a></span>
-<span class="normal"><a href="#__codelineno-0-2661">2661</a></span>
-<span class="normal"><a href="#__codelineno-0-2662">2662</a></span>
-<span class="normal"><a href="#__codelineno-0-2663">2663</a></span>
-<span class="normal"><a href="#__codelineno-0-2664">2664</a></span>
-<span class="normal"><a href="#__codelineno-0-2665">2665</a></span>
-<span class="normal"><a href="#__codelineno-0-2666">2666</a></span>
-<span class="normal"><a href="#__codelineno-0-2667">2667</a></span>
-<span class="normal"><a href="#__codelineno-0-2668">2668</a></span>
-<span class="normal"><a href="#__codelineno-0-2669">2669</a></span>
-<span class="normal"><a href="#__codelineno-0-2670">2670</a></span>
-<span class="normal"><a href="#__codelineno-0-2671">2671</a></span>
-<span class="normal"><a href="#__codelineno-0-2672">2672</a></span>
-<span class="normal"><a href="#__codelineno-0-2673">2673</a></span>
-<span class="normal"><a href="#__codelineno-0-2674">2674</a></span>
-<span class="normal"><a href="#__codelineno-0-2675">2675</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2653"><a id="__codelineno-0-2653" name="__codelineno-0-2653"></a><span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BuiltModel</span><span class="p">:</span>
-</span><span id="__span-0-2654"><a id="__codelineno-0-2654" name="__codelineno-0-2654"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Freeze the declarations into a :class:`BuiltModel`.&quot;&quot;&quot;</span>
-</span><span id="__span-0-2655"><a id="__codelineno-0-2655" name="__codelineno-0-2655"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ndm</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-2656"><a id="__codelineno-0-2656" name="__codelineno-0-2656"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
-</span><span id="__span-0-2657"><a id="__codelineno-0-2657" name="__codelineno-0-2657"></a>            <span class="s2">&quot;apeSees.model(ndm=..., ndf=...) must be called before &quot;</span>
-</span><span id="__span-0-2658"><a id="__codelineno-0-2658" name="__codelineno-0-2658"></a>            <span class="s2">&quot;build().&quot;</span>
-</span><span id="__span-0-2659"><a id="__codelineno-0-2659" name="__codelineno-0-2659"></a>        <span class="p">)</span>
-</span><span id="__span-0-2660"><a id="__codelineno-0-2660" name="__codelineno-0-2660"></a>
-</span><span id="__span-0-2661"><a id="__codelineno-0-2661" name="__codelineno-0-2661"></a>    <span class="n">tag_for</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
-</span><span id="__span-0-2662"><a id="__codelineno-0-2662" name="__codelineno-0-2662"></a>        <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">):</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tags</span><span class="o">.</span><span class="n">tag_for</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">0</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_primitives</span>
-</span><span id="__span-0-2663"><a id="__codelineno-0-2663" name="__codelineno-0-2663"></a>    <span class="p">}</span>
-</span><span id="__span-0-2664"><a id="__codelineno-0-2664" name="__codelineno-0-2664"></a>    <span class="k">return</span> <span class="n">BuiltModel</span><span class="p">(</span>
-</span><span id="__span-0-2665"><a id="__codelineno-0-2665" name="__codelineno-0-2665"></a>        <span class="n">primitives</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_primitives</span><span class="p">),</span>
-</span><span id="__span-0-2666"><a id="__codelineno-0-2666" name="__codelineno-0-2666"></a>        <span class="n">tag_for</span><span class="o">=</span><span class="n">tag_for</span><span class="p">,</span>
-</span><span id="__span-0-2667"><a id="__codelineno-0-2667" name="__codelineno-0-2667"></a>        <span class="n">ndm</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndm</span><span class="p">,</span>
-</span><span id="__span-0-2668"><a id="__codelineno-0-2668" name="__codelineno-0-2668"></a>        <span class="n">ndf</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span><span class="p">,</span>
-</span><span id="__span-0-2669"><a id="__codelineno-0-2669" name="__codelineno-0-2669"></a>        <span class="n">fem</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span>
-</span><span id="__span-0-2670"><a id="__codelineno-0-2670" name="__codelineno-0-2670"></a>        <span class="n">fix_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fix_records</span><span class="p">),</span>
-</span><span id="__span-0-2671"><a id="__codelineno-0-2671" name="__codelineno-0-2671"></a>        <span class="n">mass_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_mass_records</span><span class="p">),</span>
-</span><span id="__span-0-2672"><a id="__codelineno-0-2672" name="__codelineno-0-2672"></a>        <span class="n">region_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_region_records</span><span class="p">),</span>
-</span><span id="__span-0-2673"><a id="__codelineno-0-2673" name="__codelineno-0-2673"></a>        <span class="n">initial_stress_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_initial_stress_records</span><span class="p">),</span>
-</span><span id="__span-0-2674"><a id="__codelineno-0-2674" name="__codelineno-0-2674"></a>        <span class="n">stage_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">),</span>
-</span><span id="__span-0-2675"><a id="__codelineno-0-2675" name="__codelineno-0-2675"></a>    <span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-2696">2696</a></span>
+<span class="normal"><a href="#__codelineno-0-2697">2697</a></span>
+<span class="normal"><a href="#__codelineno-0-2698">2698</a></span>
+<span class="normal"><a href="#__codelineno-0-2699">2699</a></span>
+<span class="normal"><a href="#__codelineno-0-2700">2700</a></span>
+<span class="normal"><a href="#__codelineno-0-2701">2701</a></span>
+<span class="normal"><a href="#__codelineno-0-2702">2702</a></span>
+<span class="normal"><a href="#__codelineno-0-2703">2703</a></span>
+<span class="normal"><a href="#__codelineno-0-2704">2704</a></span>
+<span class="normal"><a href="#__codelineno-0-2705">2705</a></span>
+<span class="normal"><a href="#__codelineno-0-2706">2706</a></span>
+<span class="normal"><a href="#__codelineno-0-2707">2707</a></span>
+<span class="normal"><a href="#__codelineno-0-2708">2708</a></span>
+<span class="normal"><a href="#__codelineno-0-2709">2709</a></span>
+<span class="normal"><a href="#__codelineno-0-2710">2710</a></span>
+<span class="normal"><a href="#__codelineno-0-2711">2711</a></span>
+<span class="normal"><a href="#__codelineno-0-2712">2712</a></span>
+<span class="normal"><a href="#__codelineno-0-2713">2713</a></span>
+<span class="normal"><a href="#__codelineno-0-2714">2714</a></span>
+<span class="normal"><a href="#__codelineno-0-2715">2715</a></span>
+<span class="normal"><a href="#__codelineno-0-2716">2716</a></span>
+<span class="normal"><a href="#__codelineno-0-2717">2717</a></span>
+<span class="normal"><a href="#__codelineno-0-2718">2718</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-2696"><a id="__codelineno-0-2696" name="__codelineno-0-2696"></a><span class="k">def</span><span class="w"> </span><span class="nf">build</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BuiltModel</span><span class="p">:</span>
+</span><span id="__span-0-2697"><a id="__codelineno-0-2697" name="__codelineno-0-2697"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Freeze the declarations into a :class:`BuiltModel`.&quot;&quot;&quot;</span>
+</span><span id="__span-0-2698"><a id="__codelineno-0-2698" name="__codelineno-0-2698"></a>    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ndm</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-2699"><a id="__codelineno-0-2699" name="__codelineno-0-2699"></a>        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+</span><span id="__span-0-2700"><a id="__codelineno-0-2700" name="__codelineno-0-2700"></a>            <span class="s2">&quot;apeSees.model(ndm=..., ndf=...) must be called before &quot;</span>
+</span><span id="__span-0-2701"><a id="__codelineno-0-2701" name="__codelineno-0-2701"></a>            <span class="s2">&quot;build().&quot;</span>
+</span><span id="__span-0-2702"><a id="__codelineno-0-2702" name="__codelineno-0-2702"></a>        <span class="p">)</span>
+</span><span id="__span-0-2703"><a id="__codelineno-0-2703" name="__codelineno-0-2703"></a>
+</span><span id="__span-0-2704"><a id="__codelineno-0-2704" name="__codelineno-0-2704"></a>    <span class="n">tag_for</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-0-2705"><a id="__codelineno-0-2705" name="__codelineno-0-2705"></a>        <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">):</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tags</span><span class="o">.</span><span class="n">tag_for</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">0</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_primitives</span>
+</span><span id="__span-0-2706"><a id="__codelineno-0-2706" name="__codelineno-0-2706"></a>    <span class="p">}</span>
+</span><span id="__span-0-2707"><a id="__codelineno-0-2707" name="__codelineno-0-2707"></a>    <span class="k">return</span> <span class="n">BuiltModel</span><span class="p">(</span>
+</span><span id="__span-0-2708"><a id="__codelineno-0-2708" name="__codelineno-0-2708"></a>        <span class="n">primitives</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_primitives</span><span class="p">),</span>
+</span><span id="__span-0-2709"><a id="__codelineno-0-2709" name="__codelineno-0-2709"></a>        <span class="n">tag_for</span><span class="o">=</span><span class="n">tag_for</span><span class="p">,</span>
+</span><span id="__span-0-2710"><a id="__codelineno-0-2710" name="__codelineno-0-2710"></a>        <span class="n">ndm</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndm</span><span class="p">,</span>
+</span><span id="__span-0-2711"><a id="__codelineno-0-2711" name="__codelineno-0-2711"></a>        <span class="n">ndf</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_ndf</span><span class="p">,</span>
+</span><span id="__span-0-2712"><a id="__codelineno-0-2712" name="__codelineno-0-2712"></a>        <span class="n">fem</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_fem</span><span class="p">,</span>
+</span><span id="__span-0-2713"><a id="__codelineno-0-2713" name="__codelineno-0-2713"></a>        <span class="n">fix_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_fix_records</span><span class="p">),</span>
+</span><span id="__span-0-2714"><a id="__codelineno-0-2714" name="__codelineno-0-2714"></a>        <span class="n">mass_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_mass_records</span><span class="p">),</span>
+</span><span id="__span-0-2715"><a id="__codelineno-0-2715" name="__codelineno-0-2715"></a>        <span class="n">region_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_region_records</span><span class="p">),</span>
+</span><span id="__span-0-2716"><a id="__codelineno-0-2716" name="__codelineno-0-2716"></a>        <span class="n">initial_stress_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_initial_stress_records</span><span class="p">),</span>
+</span><span id="__span-0-2717"><a id="__codelineno-0-2717" name="__codelineno-0-2717"></a>        <span class="n">stage_records</span><span class="o">=</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stage_records</span><span class="p">),</span>
+</span><span id="__span-0-2718"><a id="__codelineno-0-2718" name="__codelineno-0-2718"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
