@@ -1205,10 +1205,10 @@ class H5Emitter:
     # Protocol — Analysis chain
     # =====================================================================
 
-    def constraints(self, c_type: str, *args: float) -> None:
+    def constraints(self, c_type: str, *args: int | float | str) -> None:
         self._analysis_attrs["handler"] = c_type
         if args:
-            self._analysis_attrs["handler_args"] = tuple(float(a) for a in args)
+            self._analysis_attrs["handler_args"] = tuple(args)
 
     def numberer(self, n_type: str) -> None:
         self._analysis_attrs["numberer"] = n_type

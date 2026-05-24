@@ -49,6 +49,9 @@ from apeGmsh.opensees.analysis.analysis import (
     VariableTransient,
 )
 from apeGmsh.opensees.analysis.constraint_handler import (
+    Auto as ConstraintsAuto,
+)
+from apeGmsh.opensees.analysis.constraint_handler import (
     Lagrange,
     Penalty,
     Transformation,
@@ -65,7 +68,12 @@ from apeGmsh.opensees.analysis.integrator import (
     LoadControl,
     Newmark,
 )
-from apeGmsh.opensees.analysis.numberer import AMD, RCM
+from apeGmsh.opensees.analysis.numberer import (
+    AMD,
+    RCM,
+    ParallelPlain,
+    ParallelRCM,
+)
 from apeGmsh.opensees.analysis.numberer import Plain as NumbererPlain
 from apeGmsh.opensees.analysis.system import (
     BandGeneral,
@@ -95,12 +103,15 @@ ALL_CONSTRAINT_HANDLERS: list[type[ConstraintHandler]] = [
     Penalty,
     Transformation,
     Lagrange,
+    ConstraintsAuto,
 ]
 
 ALL_NUMBERERS: list[type[Numberer]] = [
     NumbererPlain,
     RCM,
     AMD,
+    ParallelPlain,
+    ParallelRCM,
 ]
 
 ALL_SYSTEMS: list[type[LinearSystem]] = [
@@ -170,10 +181,13 @@ _MINIMAL_PARAMS: dict[type[Primitive], dict[str, Any]] = {
     Penalty: {"alpha_sp": 1e10, "alpha_mp": 1e10},
     Transformation: {},
     Lagrange: {},
+    ConstraintsAuto: {},
     # numberer
     NumbererPlain: {},
     RCM: {},
     AMD: {},
+    ParallelPlain: {},
+    ParallelRCM: {},
     # system
     BandGeneral: {},
     BandSPD: {},

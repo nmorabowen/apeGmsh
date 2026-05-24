@@ -40,6 +40,9 @@ from apeGmsh.opensees.analysis.analysis import (
     VariableTransient,
 )
 from apeGmsh.opensees.analysis.constraint_handler import (
+    Auto as ConstraintsAuto,
+)
+from apeGmsh.opensees.analysis.constraint_handler import (
     Lagrange,
     Penalty,
     Transformation,
@@ -56,7 +59,12 @@ from apeGmsh.opensees.analysis.integrator import (
     LoadControl,
     Newmark,
 )
-from apeGmsh.opensees.analysis.numberer import AMD, RCM
+from apeGmsh.opensees.analysis.numberer import (
+    AMD,
+    RCM,
+    ParallelPlain,
+    ParallelRCM,
+)
 from apeGmsh.opensees.analysis.numberer import Plain as NumbererPlain
 from apeGmsh.opensees.analysis.system import (
     BandGeneral,
@@ -179,6 +187,62 @@ class TestLagrange:
         assert e.calls == [("constraints", ("Lagrange", 2.0, 3.0), {})]
 
 
+class TestAuto:
+    def test_construction_defaults(self) -> None:
+        c = ConstraintsAuto()
+        assert c.verbose is False
+        assert c.auto_penalty is True
+        assert c.auto_penalty_oom == 3.0
+        assert c.user_penalty == 0.0
+
+    def test_user_penalty_without_positive_value_raises(self) -> None:
+        with pytest.raises(ValueError, match="user_penalty must be > 0"):
+            ConstraintsAuto(auto_penalty=False, user_penalty=0.0)
+
+    def test_emit_defaults_minimal(self) -> None:
+        e = RecordingEmitter()
+        ConstraintsAuto()._emit(e, tag=1)
+        # auto_penalty=True with default oom=3.0 — no flags emitted.
+        assert e.calls == [("constraints", ("Auto",), {})]
+
+    def test_emit_verbose(self) -> None:
+        e = RecordingEmitter()
+        ConstraintsAuto(verbose=True)._emit(e, tag=1)
+        assert e.calls == [("constraints", ("Auto", "-verbose"), {})]
+
+    def test_emit_custom_auto_penalty_oom(self) -> None:
+        e = RecordingEmitter()
+        ConstraintsAuto(auto_penalty_oom=5.0)._emit(e, tag=1)
+        assert e.calls == [
+            ("constraints", ("Auto", "-autoPenalty", 5.0), {}),
+        ]
+
+    def test_emit_user_penalty(self) -> None:
+        e = RecordingEmitter()
+        ConstraintsAuto(
+            auto_penalty=False, user_penalty=1e12,
+        )._emit(e, tag=1)
+        assert e.calls == [
+            ("constraints", ("Auto", "-userPenalty", 1e12), {}),
+        ]
+
+    def test_emit_verbose_plus_user_penalty(self) -> None:
+        e = RecordingEmitter()
+        ConstraintsAuto(
+            verbose=True, auto_penalty=False, user_penalty=1e12,
+        )._emit(e, tag=1)
+        assert e.calls == [
+            (
+                "constraints",
+                ("Auto", "-verbose", "-userPenalty", 1e12),
+                {},
+            ),
+        ]
+
+    def test_dependencies_empty(self) -> None:
+        assert ConstraintsAuto().dependencies() == ()
+
+
 class TestConstraintsNamespace:
     def test_plain(self) -> None:
         ops = _make_ops()
@@ -207,6 +271,19 @@ class TestConstraintsNamespace:
         ops = _make_ops()
         c = ops.constraints.Lagrange(alpha_sp=1.0, alpha_mp=1.0)
         assert c.alpha_sp == 1.0
+
+    def test_auto_defaults(self) -> None:
+        ops = _make_ops()
+        c = ops.constraints.Auto()
+        assert isinstance(c, ConstraintsAuto)
+        assert c.auto_penalty is True
+
+    def test_auto_user_penalty(self) -> None:
+        ops = _make_ops()
+        c = ops.constraints.Auto(
+            auto_penalty=False, user_penalty=1e12,
+        )
+        assert c.user_penalty == 1e12
 
 
 # ===========================================================================
@@ -237,6 +314,26 @@ class TestAMD:
         assert e.calls == [("numberer", ("AMD",), {})]
 
 
+class TestParallelPlain:
+    def test_emit(self) -> None:
+        e = RecordingEmitter()
+        ParallelPlain()._emit(e, tag=1)
+        assert e.calls == [("numberer", ("ParallelPlain",), {})]
+
+    def test_dependencies_empty(self) -> None:
+        assert ParallelPlain().dependencies() == ()
+
+
+class TestParallelRCM:
+    def test_emit(self) -> None:
+        e = RecordingEmitter()
+        ParallelRCM()._emit(e, tag=1)
+        assert e.calls == [("numberer", ("ParallelRCM",), {})]
+
+    def test_dependencies_empty(self) -> None:
+        assert ParallelRCM().dependencies() == ()
+
+
 class TestNumbererNamespace:
     def test_plain(self) -> None:
         ops = _make_ops()
@@ -252,6 +349,16 @@ class TestNumbererNamespace:
         ops = _make_ops()
         n = ops.numberer.AMD()
         assert isinstance(n, AMD)
+
+    def test_parallel_plain(self) -> None:
+        ops = _make_ops()
+        n = ops.numberer.ParallelPlain()
+        assert isinstance(n, ParallelPlain)
+
+    def test_parallel_rcm(self) -> None:
+        ops = _make_ops()
+        n = ops.numberer.ParallelRCM()
+        assert isinstance(n, ParallelRCM)
 
 
 # ===========================================================================

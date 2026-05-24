@@ -16,10 +16,11 @@ OpenSees command shapes::
     constraints Penalty alphaSP alphaMP
     constraints Transformation
     constraints Lagrange [alphaSP alphaMP]
+    constraints Auto <-verbose> <-autoPenalty $oom> <-userPenalty $val>
 
 See ``architecture/api-design.md`` for the namespace surface and
 ``architecture/emitter.md`` for the underlying ``constraints(c_type,
-*args: float)`` Protocol method.
+*args: int | float | str)`` Protocol method.
 """
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ __all__ = [
     "Penalty",
     "Transformation",
     "Lagrange",
+    "Auto",
 ]
 
 
@@ -136,6 +138,56 @@ class Lagrange(ConstraintHandler):
         else:
             assert self.alpha_mp is not None  # __post_init__ guarantee
             emitter.constraints("Lagrange", self.alpha_sp, self.alpha_mp)
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# Auto — auto-selecting handler (Petracca, June 2024)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Auto(ConstraintHandler):
+    """``constraints Auto <-verbose> <-autoPenalty $oom> <-userPenalty $val>``.
+
+    Uses Transformation for SP constraints and PenaltyMP for MP
+    constraints. By default chooses the penalty value automatically
+    from the stiffness scale of the DOFs involved (``auto_penalty=True``,
+    ``auto_penalty_oom=3.0``).
+
+    Set ``user_penalty`` (with ``auto_penalty=False``) to override with
+    a fixed value. The two penalty modes are mutually exclusive; the
+    underlying OpenSees parser errors if both ``-autoPenalty`` and
+    ``-userPenalty`` flags are emitted.
+    """
+
+    verbose: bool = False
+    auto_penalty: bool = True
+    auto_penalty_oom: float = 3.0
+    user_penalty: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.auto_penalty and self.user_penalty <= 0:
+            raise ValueError(
+                "Auto: when auto_penalty=False, user_penalty must be > 0 "
+                f"(got user_penalty={self.user_penalty})."
+            )
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        args: list[int | float | str] = []
+        if self.verbose:
+            args.append("-verbose")
+        if self.auto_penalty:
+            # Only emit the flag when the OOM differs from the parser
+            # default (3.0) — keeps the emitted command minimal when
+            # the user is just asking for "auto" with defaults.
+            if self.auto_penalty_oom != 3.0:
+                args.extend(("-autoPenalty", self.auto_penalty_oom))
+        else:
+            args.extend(("-userPenalty", self.user_penalty))
+        emitter.constraints("Auto", *args)
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()

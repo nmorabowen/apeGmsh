@@ -36,6 +36,9 @@ from ...analysis.algorithm import (
 from ...analysis.algorithm import Linear as AlgorithmLinear
 from ...analysis.analysis import Static, Transient, VariableTransient
 from ...analysis.constraint_handler import (
+    Auto as ConstraintsAuto,
+)
+from ...analysis.constraint_handler import (
     Lagrange,
     Penalty,
     Transformation,
@@ -50,7 +53,7 @@ from ...analysis.integrator import (
     LoadControl,
     Newmark,
 )
-from ...analysis.numberer import AMD, RCM
+from ...analysis.numberer import AMD, RCM, ParallelPlain, ParallelRCM
 from ...analysis.numberer import Plain as NumbererPlain
 from ...analysis.system import (
     BandGeneral,
@@ -117,6 +120,29 @@ class _ConstraintsNS(_BridgeNamespace):
             Lagrange(alpha_sp=alpha_sp, alpha_mp=alpha_mp)
         )
 
+    def Auto(
+        self,
+        *,
+        verbose: bool = False,
+        auto_penalty: bool = True,
+        auto_penalty_oom: float = 3.0,
+        user_penalty: float = 0.0,
+    ) -> ConstraintsAuto:
+        """``constraints Auto <-verbose> <-autoPenalty $oom> <-userPenalty $val>``.
+
+        Auto-selecting handler (Petracca, 2024): Transformation for SP,
+        PenaltyMP for MP, with the penalty value picked from the local
+        stiffness scale by default.
+        """
+        return self._bridge._register(
+            ConstraintsAuto(
+                verbose=verbose,
+                auto_penalty=auto_penalty,
+                auto_penalty_oom=auto_penalty_oom,
+                user_penalty=user_penalty,
+            )
+        )
+
 
 # ---------------------------------------------------------------------------
 # _NumbererNS — ops.numberer.<Type>()
@@ -136,6 +162,24 @@ class _NumbererNS(_BridgeNamespace):
     def AMD(self) -> AMD:
         """``numberer AMD`` — approximate minimum degree reduction."""
         return self._bridge._register(AMD())
+
+    def ParallelPlain(self) -> ParallelPlain:
+        """``numberer ParallelPlain`` — parallel plain numbering.
+
+        Only available in OpenSees builds with ``_PARALLEL_INTERPRETERS``
+        (e.g. ``OpenSeesMP``). Emit-only against serial ``OpenSees.exe``
+        will error at runtime.
+        """
+        return self._bridge._register(ParallelPlain())
+
+    def ParallelRCM(self) -> ParallelRCM:
+        """``numberer ParallelRCM`` — parallel reverse Cuthill-McKee.
+
+        Only available in OpenSees builds with ``_PARALLEL_INTERPRETERS``
+        (e.g. ``OpenSeesMP``). Emit-only against serial ``OpenSees.exe``
+        will error at runtime.
+        """
+        return self._bridge._register(ParallelRCM())
 
 
 # ---------------------------------------------------------------------------

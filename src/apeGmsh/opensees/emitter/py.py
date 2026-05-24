@@ -298,7 +298,7 @@ class PyEmitter:
 
     # -- Analysis chain -----------------------------------------------------
 
-    def constraints(self, c_type: str, *args: float) -> None:
+    def constraints(self, c_type: str, *args: int | float | str) -> None:
         self._lines.append(_ops_call("constraints", c_type, *args))
 
     def numberer(self, n_type: str) -> None:

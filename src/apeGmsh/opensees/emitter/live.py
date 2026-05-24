@@ -272,7 +272,7 @@ class LiveOpsEmitter:
 
     # -- Analysis chain -----------------------------------------------------
 
-    def constraints(self, c_type: str, *args: float) -> None:
+    def constraints(self, c_type: str, *args: int | float | str) -> None:
         self._ops.constraints(c_type, *args)
 
     def numberer(self, n_type: str) -> None:

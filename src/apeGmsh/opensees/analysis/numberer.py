@@ -16,10 +16,13 @@ OpenSees command shapes::
     numberer Plain
     numberer RCM
     numberer AMD
+    numberer ParallelPlain
+    numberer ParallelRCM
 
-Note: ``numberer ParallelPlain`` (and other parallel variants) are
-deferred — they apply only to OpenSeesSP/MP builds, are rarely used,
-and add complexity without payoff for the v1 bridge.
+Note: the parallel variants (:class:`ParallelPlain`, :class:`ParallelRCM`)
+are only compiled into OpenSees builds with ``_PARALLEL_INTERPRETERS``
+(typically ``OpenSeesMP``). Emitting them and running through a serial
+``OpenSees.exe`` produces ``WARNING No Numberer type exists``.
 """
 from __future__ import annotations
 
@@ -36,6 +39,8 @@ __all__ = [
     "Plain",
     "RCM",
     "AMD",
+    "ParallelPlain",
+    "ParallelRCM",
 ]
 
 
@@ -82,6 +87,50 @@ class AMD(Numberer):
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         _ = tag
         emitter.numberer("AMD")
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# ParallelPlain — node-add-order numbering on partitioned domains
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ParallelPlain(Numberer):
+    """``numberer ParallelPlain`` — parallel plain numbering.
+
+    Only available in OpenSees builds with ``_PARALLEL_INTERPRETERS``
+    (e.g. ``OpenSeesMP``). Use with MP-partitioned models; running
+    against a serial ``OpenSees.exe`` raises ``WARNING No Numberer
+    type exists``.
+    """
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.numberer("ParallelPlain")
+
+    def dependencies(self) -> tuple[Primitive, ...]:
+        return ()
+
+
+# ---------------------------------------------------------------------------
+# ParallelRCM — reverse Cuthill-McKee on partitioned domains
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ParallelRCM(Numberer):
+    """``numberer ParallelRCM`` — parallel reverse Cuthill-McKee.
+
+    Only available in OpenSees builds with ``_PARALLEL_INTERPRETERS``
+    (e.g. ``OpenSeesMP``). Use with MP-partitioned models; running
+    against a serial ``OpenSees.exe`` raises ``WARNING No Numberer
+    type exists``.
+    """
+
+    def _emit(self, emitter: "Emitter", tag: int) -> None:
+        _ = tag
+        emitter.numberer("ParallelRCM")
 
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
