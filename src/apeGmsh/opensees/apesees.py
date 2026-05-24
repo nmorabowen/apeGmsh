@@ -2601,7 +2601,50 @@ class apeSees:
             to persist under ``/opensees/sweeps/sweep_{i}``.  Each
             sweep group carries its own ``cuts/`` sub-group in sweep
             order (see ``apeGmsh/cuts/ARCHITECTURE.md`` "## v4").
+
+        Raises
+        ------
+        NotImplementedError
+            When the bridge carries staged-analysis records
+            (``ops.stage(...)`` blocks) or initial-stress directives
+            (``ops.initial_stress(...)``).  H5 archival of these
+            constructs is deferred (Phase SSI-1 / SSI-2.A / SSI-2.B):
+            the H5 emitter currently no-ops ``stage_open`` /
+            ``stage_close`` / ``domain_change`` / ``addToParameter`` /
+            ``step_hook_ramp``, so a silent ``h5(...)`` on such a
+            build would write a file that round-trips to a non-staged
+            flat model — every stage's analysis chain rebinding,
+            per-stage activated PGs, per-stage initial-stress records,
+            and the per-stage analyze loop would be silently dropped.
+            Fail loud here so callers route to ``ops.tcl(path)`` /
+            ``ops.py(path)`` (both of which fully support these
+            constructs) until the H5 schema bump lands.
         """
+        # Phase SSI-1 / SSI-2 guard: see Raises above.  Bump the H5
+        # SCHEMA_VERSION + extend the H5Emitter no-op methods +
+        # extend ``_compose_model_h5`` and the OpenSeesModel read-side
+        # broker when the persist work lands; drop this guard then.
+        if self._stage_records:
+            raise NotImplementedError(
+                "ops.h5: H5 archival of staged builds is not yet "
+                f"supported (got {len(self._stage_records)} stage(s); "
+                "Phase SSI-2.A/B deferred — the H5 emitter no-ops "
+                "stage_open / stage_close / domain_change).  "
+                "Use ops.tcl(path) or ops.py(path) for staged decks; "
+                "H5 is only supported for non-staged builds."
+            )
+        if self._initial_stress_records:
+            raise NotImplementedError(
+                "ops.h5: H5 archival of ops.initial_stress(...) "
+                "directives is not yet supported (got "
+                f"{len(self._initial_stress_records)} record(s); "
+                "Phase SSI-1 deferred — the H5 emitter no-ops "
+                "addToParameter / step_hook_ramp).  "
+                "Use ops.tcl(path) or ops.py(path) for decks that "
+                "declare initial stress; H5 is only supported for "
+                "builds without ops.initial_stress(...)."
+            )
+
         from .emitter.h5 import H5Emitter
 
         snapshot_id = ""

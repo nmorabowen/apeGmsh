@@ -1150,20 +1150,34 @@ class H5Emitter:
         self._analysis_attrs["system_runtime_fallback"] = fallback
 
     # =====================================================================
-    # Protocol — Stress control (Phase SSI-1)
+    # Protocol — Stress control (Phase SSI-1) + Staged analysis (SSI-2)
     # =====================================================================
     #
-    # H5 archival of parameter / addToParameter / step_hook_ramp is
-    # deferred for Phase SSI-1.  The bridge still drives these methods
-    # when an InitialStress composite is emitted, so the H5 emitter must
-    # accept them — it just discards them (no schema bump).  When a
-    # model.h5 round-trip is needed for staged-construction models, this
-    # is the spot to add the writers (and bump SCHEMA_VERSION).
+    # H5 archival of these Protocol methods is deferred (Phase SSI-1
+    # for parameter / addToParameter / step_hook_ramp; Phase SSI-2.A
+    # for stage_open / stage_close; Phase SSI-2.B for domain_change).
+    # Persisting them requires a new ``/opensees/stages/stage_NN``
+    # zone (one group per StageRecord) carrying name + activated_pgs
+    # + n_increments + dt + analysis-chain tag references + a
+    # per-stage initial_stress sub-table, plus matching
+    # ``_replay_into`` iteration on the read side and new
+    # :class:`OpenSeesModel` accessors (``.stages()`` /
+    # ``.initial_stress()``).  Bump SCHEMA_VERSION (2.11.0 → 2.12.0)
+    # when that work lands.
+    #
+    # Until then, :meth:`apeSees.h5` raises ``NotImplementedError``
+    # the moment a caller asks for an H5 archive of a build that
+    # carries stage records or initial_stress records.  The bridge-
+    # level guard means these emitter-side bodies are unreachable
+    # from real bridge-driven call sites; they remain no-ops solely
+    # so direct unit tests that drive an :class:`H5Emitter` outside
+    # the bridge (Protocol-conformance smoke tests, RecordingEmitter
+    # replay) still type-check and run.
 
     def addToParameter(
         self, tag: int, ele_tag: int, response: str,
     ) -> None:
-        """No-op for Phase SSI-1 — archival deferred."""
+        """No-op — Phase SSI-1 archival deferred (apeSees.h5 fails loud)."""
         del tag, ele_tag, response
 
     def step_hook_ramp(
@@ -1174,32 +1188,18 @@ class H5Emitter:
         n_steps_to_full: float,
         phase: Literal["before", "after"] = "before",
     ) -> None:
-        """No-op for Phase SSI-1 — archival deferred."""
+        """No-op — Phase SSI-1 archival deferred (apeSees.h5 fails loud)."""
         del name, targets, n_steps_to_full, phase
 
-    # =====================================================================
-    # Protocol — Staged analysis (Phase SSI-2.A)
-    # =====================================================================
-    #
-    # H5 archival of staged structure is deferred for Phase SSI-2.A:
-    # the bridge drives stage_open / stage_close calls when emitting
-    # a staged model, but the H5 emitter discards them.  A future
-    # schema bump would persist stage names + per-stage primitive
-    # lists under ``/opensees/stages/`` so the model.h5 round-trip
-    # reconstructs the staged build.
-
     def stage_open(self, name: str) -> None:
-        """No-op for Phase SSI-2.A — archival deferred."""
+        """No-op — Phase SSI-2.A archival deferred (apeSees.h5 fails loud)."""
         del name
 
     def stage_close(self) -> None:
-        """No-op for Phase SSI-2.A — archival deferred."""
+        """No-op — Phase SSI-2.A archival deferred (apeSees.h5 fails loud)."""
 
     def domain_change(self) -> None:
-        """No-op (Phase SSI-2.B) — domain renumbering is a runtime
-        state transition, not a model-definition change.  H5 archives
-        the final flat topology; downstream readers don't need to
-        replay the per-stage domainChange calls."""
+        """No-op — Phase SSI-2.B archival deferred (apeSees.h5 fails loud)."""
 
     # =====================================================================
     # Protocol — Analysis chain
