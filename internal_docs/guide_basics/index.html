@@ -4580,12 +4580,13 @@ label and physical-group membership by remapping entity tags through
 the result map. After a fragment you can keep using
 <code>g.labels.entities("soil")</code> and it will return the correct (possibly
 expanded) set of tags.</p>
-<p><code>fragment</code> also does a small post-processing step. If the operation
-leaves free-floating surface fragments — for example a cutting plane
-that extended past the solid — it removes them when
-<code>cleanup_free=True</code> (the default). Set it to <code>False</code> if you
-deliberately want to keep those surfaces for a boundary condition or
-a selection set.</p>
+<p><code>fragment</code> also exposes an opt-in post-processing step. If the
+operation leaves free-floating surface fragments — for example a
+cutting plane that extended past the solid — it removes them when
+<code>cleanup_free=True</code>. The default is <code>cleanup_free=False</code> so shells
+sitting on top of a solid's face (shell-on-solid coupling) are
+preserved. Pass <code>cleanup_free=True</code> explicitly when you want the
+old destructive cleanup.</p>
 <h3 id="choosing-between-fragment-and-fuse-the-conformal-question">Choosing between fragment and fuse — the conformal question<a class="headerlink" href="#choosing-between-fragment-and-fuse-the-conformal-question" title="Permanent link">&para;</a></h3>
 <p>This is the decision you need to make for every multi-body model:</p>
 <table>

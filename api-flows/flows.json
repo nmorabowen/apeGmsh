@@ -20286,7 +20286,7 @@
    "id": "g.model.boolean.fragment",
    "label": "fragment",
    "composite": "model.boolean",
-   "signature": "fragment(objects, tools, *, dim=3, remove_object=True, remove_tool=True, cleanup_free=True, sync=True) -> list[int]",
+   "signature": "fragment(objects, tools, *, dim=3, remove_object=True, remove_tool=True, cleanup_free=False, sync=True) -> list[int]",
    "summary": "Boolean fragment — split all shapes at intersections, keep all sub-volumes (conformal meshing).",
    "file": "src/apeGmsh/core/_model_boolean.py:200",
    "flow": [
