@@ -697,9 +697,10 @@ class BuiltModel:
            stage (the emitter tracks ``_step_hooks_registered``).
         8. ``stage_close()`` — loadConst + wipeAnalysis + hook clear.
 
-        Single-process path only.  The (stages + partitions) combo
-        is not yet supported; ``_emit_partitioned`` raises
-        ``NotImplementedError`` when stages are present.
+        Single-partition dispatch arm.  For MP-partitioned models with
+        stages, the dispatch goes through
+        ``_emit_partitioned → _emit_stages_partitioned`` instead — see
+        that method for the partition-aware emit.
         """
         # Pre-compute reverse maps: stage_index → list of owned nodes
         # / owned element-spec ids, for efficient per-stage lookup.
