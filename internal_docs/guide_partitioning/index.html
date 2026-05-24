@@ -812,6 +812,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="5. HDF5 round-trip and post-processing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4128,6 +4145,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="5. HDF5 round-trip and post-processing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4661,6 +4695,30 @@ constraints) — use the <code>H5Model</code> reader directly:</p>
 <p>Schema version: <strong>opensees 2.11.0</strong> (per ADR 0023 two-version
 reader window — 2.10.x readers still open 2.11.x files; rank attr
 / <code>partition_ids</code> row values became 0-based in 2.11.0).</p>
+<h3 id="51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4">5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)<a class="headerlink" href="#51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4" title="Permanent link">&para;</a></h3>
+<p>When a partitioned model declares
+<code>ops.recorder.MPCO(nodes_pg="...", elements_pg="...", file=...)</code>
+(or any filter form: <code>nodes=</code>, <code>elements=</code>, <code>*_pg=</code>), the bridge
+splits emission into two scopes per ADR 0027 INV-4:</p>
+<ul>
+<li>The <code>recorder mpco ... -R &lt;tag&gt;</code> <strong>declaration</strong> emits <strong>once</strong>
+  in global scope (outside every <code>if {[getPID] == K} {...}</code> block).
+  One MPCO declaration is sufficient under OpenSeesMP — the
+  recorder writes to disk, not to the model topology.</li>
+<li>The <code>region &lt;tag&gt; -node ... -ele ...</code> line emits <strong>per-rank</strong>
+  inside each rank's <code>partition_open(K)</code> block, carrying only the
+  intersection of the resolved filter ids with that rank's owned
+  nodes/elements. Ranks whose intersection is <strong>empty</strong> emit no
+  <code>region</code> line at all (MPCO handles a missing per-rank region as
+  a no-op — the recorder declaration's <code>-R &lt;tag&gt;</code> still resolves
+  on the ranks that did emit).</li>
+<li>The <code>&lt;tag&gt;</code> is the <strong>same scalar</strong> across every emitting rank
+  and on the global recorder line. MPCO post-processing stitches
+  the per-rank <code>.mpco</code> outputs by <code>&lt;tag&gt;</code> identity at read time.</li>
+</ul>
+<p>For un-partitioned models (<code>len(fem.partitions) &lt;= 1</code>) the emit
+is byte-identical to the pre-INV-4 behaviour — one <code>region</code> plus
+one <code>recorder mpco</code> in global scope, with the same tag.</p>
 <h2 id="6-viewer-integration">6. Viewer integration<a class="headerlink" href="#6-viewer-integration" title="Permanent link">&para;</a></h2>
 <p>The interactive Qt mesh viewer surfaces partition assignment in
 three places:</p>
