@@ -257,36 +257,22 @@ class _Boolean:
         # surface has no volume neighbour (there ARE no volumes), so
         # the sweep would destroy every surface in the model. Skip
         # the cleanup when no 3D entities exist.
-        # Three classes of free surface must survive cleanup:
-        #   (1) embedded interior surface (centroid inside some volume
-        #       bbox) — future crack/cohesive plane,
-        #   (2) shell wall attached to a volume face (centroid OUTSIDE
-        #       every volume bbox but its boundary curves shared with
-        #       a volume's face boundary) — shell-on-solid workflow.
-        # Surfaces clearly disconnected from every volume (centroid
-        # outside every bbox AND no shared boundary curve with a
-        # volume face) are the orphan cutting-plane remnants we want
-        # to drop.
+        # An embedded interior surface (e.g. a future crack plane) is
+        # also adjacency-free, so we keep any free surface whose
+        # centroid falls inside some volume's bounding box; only
+        # surfaces clearly outside every volume are deleted.
+        # NOTE on shell-on-solid: the cleanup_free=True path is
+        # opt-in and removes ALL adjacency-free overhang surfaces
+        # outside volume bboxes — both genuine cutting-plane remnants
+        # AND shell-wall portions that extend beyond the volume face
+        # they sit on. Shell-on-solid workflows must use the default
+        # cleanup_free=False (changed from True for exactly this
+        # reason) so user-declared shells survive.
         if cleanup_free and gmsh.model.getEntities(3):
             vol_bboxes = [
                 gmsh.model.getBoundingBox(3, vt)
                 for _, vt in gmsh.model.getEntities(3)
             ]
-            # Collect every curve that participates in a volume's
-            # bounding faces.  A free surface that shares any of these
-            # curves is touching a volume face — protect it.
-            vol_face_curves: set[int] = set()
-            for _, vt in gmsh.model.getEntities(3):
-                for fd, ft in gmsh.model.getBoundary(
-                    [(3, vt)], oriented=False,
-                ):
-                    if fd != 2:
-                        continue
-                    for ed, et in gmsh.model.getBoundary(
-                        [(2, ft)], oriented=False,
-                    ):
-                        if ed == 1:
-                            vol_face_curves.add(et)
             free: list[tuple[int, int]] = []
             for _, tag_s in gmsh.model.getEntities(2):
                 up, _ = gmsh.model.getAdjacencies(2, tag_s)
@@ -299,21 +285,8 @@ class _Boolean:
                     and zmin <= cz <= zmax
                     for xmin, ymin, zmin, xmax, ymax, zmax in vol_bboxes
                 )
-                if inside_any:
-                    continue
-                # Outside every volume bbox — but if the surface
-                # shares a boundary curve with a volume face it is
-                # likely a shell wall attached to the volume.  Keep it.
-                shares_volume_curve = False
-                for ed, et in gmsh.model.getBoundary(
-                    [(2, tag_s)], oriented=False,
-                ):
-                    if ed == 1 and et in vol_face_curves:
-                        shares_volume_curve = True
-                        break
-                if shares_volume_curve:
-                    continue
-                free.append((2, tag_s))
+                if not inside_any:
+                    free.append((2, tag_s))
             if free:
                 gmsh.model.occ.remove(free, recursive=True)
                 if sync:
