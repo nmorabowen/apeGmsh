@@ -47,6 +47,7 @@ composite — it is a separate post-session bridge, `apeSees(fem)` (§5).
 | `g.constraints` | Pre-mesh constraint definitions (14 declaration verbs — §3.1) |
 | `g.loads` | Pre-mesh load definitions (pattern grouping) |
 | `g.masses` | Pre-mesh mass definitions |
+| `g.node_ndf` | Explicit per-node `ndf` (DOF count) declarations — required for mixed-ndf models (shell-on-solid). Fail-loud `fem.nodes.ndf_for(nid)` (ADR 0032) |
 | `g.loader` | `.msh` file loader — build a `FEMData` snapshot from a saved mesh |
 | `g.inspect` | Session diagnostics |
 | `g.plot` | Matplotlib (optional dep) |

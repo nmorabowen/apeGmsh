@@ -169,6 +169,16 @@
    "group": "defs"
   },
   {
+   "id": "node_ndf",
+   "label": "node_ndf",
+   "group": "defs"
+  },
+  {
+   "id": "node_ndf.defs",
+   "label": "node_ndf defs",
+   "group": "defs"
+  },
+  {
    "id": "mesh.generation",
    "label": "mesh.generation",
    "group": "mesh"
@@ -1773,6 +1783,31 @@
     "g.masses.surface",
     "g.masses.validate_pre_mesh",
     "g.masses.volume"
+   ]
+  },
+  {
+   "from": "node_ndf",
+   "to": "node_ndf.defs",
+   "methods": [
+    "g.node_ndf.set",
+    "g.node_ndf.set_default",
+    "g.node_ndf.clear"
+   ]
+  },
+  {
+   "from": "node_ndf.defs",
+   "to": "fem.extract",
+   "methods": [
+    "g.node_ndf.set",
+    "g.node_ndf.set_default"
+   ]
+  },
+  {
+   "from": "fem.extract",
+   "to": "fem.nodes",
+   "methods": [
+    "g.node_ndf.set",
+    "g.node_ndf.set_default"
    ]
   },
   {
@@ -17377,6 +17412,134 @@
    "writes": [
     "self.mass_defs",
     "fem.nodes.masses (deferred)"
+   ],
+   "_cluster": "D_clm"
+  },
+  {
+   "id": "g.node_ndf.set",
+   "label": "set",
+   "composite": "node_ndf",
+   "signature": "set(target, *, ndf: int, name=None) -> NodeNDFDef",
+   "summary": "Declares the per-node DOF count (ndf) for every node resolved from target (label / PG / part / mesh-selection / DimTag list); resolved at FEM-build time by _fem_factory._populate_node_ndf and written into NodeComposite._ndf. Explicit-only — apeGmsh does NOT infer ndf from element class (ADR 0032). Validates ndf in [1, 6]; multiple set calls may overlap (last-matching-def-wins).",
+   "file": "src/apeGmsh/core/NodeNDFComposite.py:107",
+   "flow": [
+    {
+     "node": "node_ndf",
+     "action": "_validate_ndf (int in [1,6]; rejects bool), _warn_if_post_extraction, append NodeNDFDef (pre-mesh)",
+     "passes": "NodeNDFDef(target, ndf, name)",
+     "to": "node_ndf.defs"
+    },
+    {
+     "node": "node_ndf.defs",
+     "action": "held until get_fem_data() -> _fem_factory._populate_node_ndf walks defs in declaration order",
+     "passes": "list[NodeNDFDef]",
+     "to": "fem.extract"
+    },
+    {
+     "node": "fem.extract",
+     "action": "_populate_node_ndf resolves each def's target via core._resolution.resolve_target, writes ndf into NodeComposite._ndf int8 array; orphan-filtered tags logged as cohort warning; KeyError on unresolvable target propagates per the dimensional resolution contract",
+     "passes": "int8 ndarray (sentinel 0 = undeclared)",
+     "to": "fem.nodes"
+    },
+    {
+     "node": "fem.nodes",
+     "action": "fem.nodes.ndf_for(nid) returns declared value; sentinel 0 raises LookupError naming both fixes (set + set_default)",
+     "passes": "per-node int ndf",
+     "to": "femdata"
+    }
+   ],
+   "inputs": "target (label/PG/part/mesh-selection/DimTag list); ndf (int in [1,6]); name (optional)",
+   "outputs": "NodeNDFDef stored on self._defs; resolves into per-node int8 ndf array on fem.nodes",
+   "reads": [
+    "core._resolution.resolve_target"
+   ],
+   "writes": [
+    "self._defs",
+    "fem.nodes._ndf (deferred via _fem_factory._populate_node_ndf)"
+   ],
+   "_cluster": "D_clm"
+  },
+  {
+   "id": "g.node_ndf.set_default",
+   "label": "set_default",
+   "composite": "node_ndf",
+   "signature": "set_default(*, ndf: int, name=None) -> NodeNDFDef",
+   "summary": "Declares the fallback ndf for every node not covered by an explicit set() call. Re-calling replaces the existing default in place (does not append a second). Without a default, undeclared nodes raise LookupError from fem.nodes.ndf_for (ADR 0032).",
+   "file": "src/apeGmsh/core/NodeNDFComposite.py:147",
+   "flow": [
+    {
+     "node": "node_ndf",
+     "action": "_validate_ndf, _warn_if_post_extraction, append-or-replace default NodeNDFDef (target=None) at self._default_idx",
+     "passes": "NodeNDFDef(target=None, ndf, name)",
+     "to": "node_ndf.defs"
+    },
+    {
+     "node": "node_ndf.defs",
+     "action": "_default_def() returns the default; _fem_factory._populate_node_ndf fills every node still at the sentinel after all targeted defs resolve",
+     "passes": "NodeNDFDef (default)",
+     "to": "fem.extract"
+    },
+    {
+     "node": "fem.extract",
+     "action": "after every targeted def is applied, write default.ndf into every remaining sentinel slot",
+     "passes": "int8 ndarray (fully populated)",
+     "to": "fem.nodes"
+    }
+   ],
+   "inputs": "ndf (int in [1,6]); name (optional)",
+   "outputs": "NodeNDFDef stored at self._default_idx",
+   "reads": [],
+   "writes": [
+    "self._defs",
+    "self._default_idx",
+    "fem.nodes._ndf (deferred)"
+   ],
+   "_cluster": "D_clm"
+  },
+  {
+   "id": "g.node_ndf.list",
+   "label": "list",
+   "composite": "node_ndf",
+   "signature": "list() -> list[NodeNDFDef]",
+   "summary": "Returns the registered defs in declaration order; the default (if declared) is identifiable by defn.target is None.",
+   "file": "src/apeGmsh/core/NodeNDFComposite.py:188",
+   "flow": [
+    {
+     "node": "node_ndf",
+     "action": "shallow copy of self._defs",
+     "passes": "list[NodeNDFDef]",
+     "to": "node_ndf.defs"
+    }
+   ],
+   "inputs": "none",
+   "outputs": "list[NodeNDFDef] in declaration order",
+   "reads": [
+    "self._defs"
+   ],
+   "writes": [],
+   "_cluster": "D_clm"
+  },
+  {
+   "id": "g.node_ndf.clear",
+   "label": "clear",
+   "composite": "node_ndf",
+   "signature": "clear() -> None",
+   "summary": "Drops every registered def including the default. Warns if called after get_fem_data() because the cached broker still holds the pre-clear ndf array; re-extract to propagate the wipe.",
+   "file": "src/apeGmsh/core/NodeNDFComposite.py:196",
+   "flow": [
+    {
+     "node": "node_ndf",
+     "action": "_warn_if_post_extraction, self._defs.clear(), self._default_idx = None",
+     "passes": "None",
+     "to": "node_ndf.defs"
+    }
+   ],
+   "inputs": "none",
+   "outputs": "None",
+   "reads": [],
+   "writes": [
+    "self._defs",
+    "self._default_idx"
    ],
    "_cluster": "D_clm"
   },

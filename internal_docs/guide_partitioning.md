@@ -646,13 +646,27 @@ expected to change.
   `-R $tag` filter, and any post-processing has to do the
   intersection on the read side.
 
-- **Per-node `ndf` metadata is not yet on the broker.** Foreign
-  node declarations under cross-partition replication (§ 7) use
-  the model-wide `ndf` declared via `ops.model(ndm=, ndf=)`.
-  This is fine for the homogeneous-ndf models apeGmsh supports
-  today (one `ndf` per session). Mixed-ndf models — `ndf=3` solid
-  nodes coexisting with `ndf=6` beam nodes in the same broker —
-  are not yet supported; tracked as task #16.
+- **Per-node `ndf` metadata is on the broker.** The top-level
+  `g.node_ndf` composite (sibling to `g.constraints` / `g.loads` /
+  `g.masses`) is the user-facing API for declaring DOF counts per
+  region; `fem.nodes.ndf_for(nid)` is the broker-side query.
+  Declarations are explicit-only — apeGmsh does not infer `ndf`
+  from element class — and `ndf_for` raises `LookupError` on
+  undeclared nodes naming both fixes
+  (`g.node_ndf.set(target, ndf=K)` and
+  `g.node_ndf.set_default(ndf=K)`). See
+  [ADR 0032](../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
+  for the doctrine.
+
+  Foreign node declarations under cross-partition replication (§ 7)
+  still emit through the model-wide `ndf` declared via
+  `ops.model(ndm=, ndf=)`. The forward-pointer to S2 work: the
+  cross-partition fan-out could consume per-node `ndf` directly
+  via `fem.nodes.ndf_for(nid)`, which would unblock mixed-ndf
+  partitioned models (e.g. `ndf=3` solid nodes coexisting with
+  `ndf=6` beam nodes across rank boundaries). The broker-side
+  data is in place; the bridge-side consumption is the remaining
+  work.
 
 - **`partition()` after `renumber()` is the canonical order.**
   Call `g.mesh.partitioning.renumber(dim=, method="simple",

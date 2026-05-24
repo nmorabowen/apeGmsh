@@ -47,7 +47,7 @@ sessions never overlap.
 
 ## The composite tree
 
-After `g.begin()`, the session object `g` has 17 composites:
+After `g.begin()`, the session object `g` has 18 composites:
 
 ```
 g
@@ -67,6 +67,7 @@ g
   |-- .constraints        Pre-mesh constraint definitions (12 types)
   |-- .loads              Pre-mesh load definitions (7 types, pattern grouping)
   |-- .masses             Pre-mesh mass definitions (4 types)
+  |-- .node_ndf           Explicit per-node ndf (DOF count) declarations
   |
   |-- .mesh               Meshing pipeline
   |     |-- .generation   generate, set_order, refine, optimize, algorithms

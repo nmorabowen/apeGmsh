@@ -55,6 +55,7 @@ graph TD
     G --> CONSTR[g.constraints<br/><i>ConstraintsComposite</i>]
     G --> LOADS[g.loads<br/><i>LoadsComposite</i>]
     G --> MASSES[g.masses<br/><i>MassesComposite</i>]
+    G --> NDF[g.node_ndf<br/><i>NodeNDFComposite</i>]
     G --> MESH[g.mesh<br/><i>mesh.Mesh</i>]
     G --> LOADER[g.loader<br/><i>mesh.MshLoader</i>]
     G --> PHYS[g.physical<br/><i>mesh.PhysicalGroups</i>]
@@ -101,6 +102,7 @@ g                                                       (apeGmsh session)
 ├── constraints      ConstraintsComposite
 ├── loads            LoadsComposite
 ├── masses           MassesComposite
+├── node_ndf         NodeNDFComposite                 (core/NodeNDFComposite.py)
 ├── mesh             mesh.Mesh
 │   ├── .generation    _Generation      (mesh/_mesh_generation.py)
 │   ├── .queries       _Queries         (mesh/_mesh_queries.py)
@@ -199,7 +201,8 @@ for the full broker surface.
 | apply gravity / body load               | `g.loads.gravity(label, g=(0,0,-9.81), density=...)` / `g.loads.body(...)` | `core/LoadsComposite.py`                         |
 | apply a prescribed displacement         | `g.loads.face_sp(...)`                                   | `core/LoadsComposite.py`                         |
 | place a point / line / surface / volume mass | `g.masses.point` / `line` / `surface` / `volume`         | `core/MassesComposite.py`                        |
-| list, filter, or clear declared intent  | `g.loads.list_defs()`, `.patterns()`, `.clear()` — and equivalents on `constraints` / `masses` | all three composites                             |
+| set per-node ndf (DOF count) for a region  | `g.node_ndf.set(target, ndf=K)` / `set_default(ndf=K)`  | `core/NodeNDFComposite.py`                       |
+| list, filter, or clear declared intent  | `g.loads.list_defs()`, `.patterns()`, `.clear()` — and equivalents on `constraints` / `masses` / `node_ndf` | all four composites                              |
 
 ### 3.5 Mesh
 
@@ -328,8 +331,8 @@ and `Constraints` (the facade module).
 - `apeGmsh(_SessionBase)` **[composite]** — the standalone session class.
   Declares `_COMPOSITES` tuple that `_SessionBase._create_composites()`
   iterates; exposes typed attributes `inspect`, `model`, `labels`,
-  `sections`, `parts`, `constraints`, `loads`, `masses`, `mesh`, `loader`,
-  `physical`, `mesh_selection`, `view`, `opensees`, `plot`.
+  `sections`, `parts`, `constraints`, `loads`, `masses`, `node_ndf`,
+  `mesh`, `loader`, `physical`, `mesh_selection`, `view`, `plot`.
   - `.__init__(self, *, model_name="ModelName", verbose=False)`
 
 #### `_session.py`
@@ -533,6 +536,50 @@ tables.
   - `._resolve_volume_consistent(self, resolver, defn, node_map, all_nodes)`
   - `.__len__(self)`
   - `.__repr__(self)`
+
+#### `core/NodeNDFComposite.py`
+- `NodeNDFComposite` **[composite]** — explicit per-node DOF count
+  (`ndf`) declarations. Sibling to constraints / loads / masses;
+  declare on geometry (label / PG / part / mesh-selection) before
+  meshing and the broker materialises the per-node `ndf` vector at
+  `g.mesh.queries.get_fem_data()` time. apeGmsh deliberately does
+  not infer `ndf` from element class — explicit-only, fail-loud
+  (ADR 0032). See `_kernel/defs/node_ndf.py::NodeNDFDef` for the
+  stored intent shape.
+  - `.__init__(self, parent)`
+  - `.set(self, target, *, ndf: int, name=None) -> NodeNDFDef` —
+    declare `ndf` for every node resolved from `target`; targets
+    accept the same shapes loads/masses do (label / PG / part /
+    mesh-selection / raw DimTag list). Validates `ndf ∈ [1, 6]`.
+    Multiple `set` calls may overlap; the last matching def wins.
+  - `.set_default(self, *, ndf: int, name=None) -> NodeNDFDef` —
+    declare the fallback `ndf` for every node not covered by an
+    explicit `set` call. Re-calling replaces the existing default
+    in place (does not append a second default).
+  - `.list(self) -> list[NodeNDFDef]` — registered defs in
+    declaration order; the default (if declared) has `target=None`.
+  - `.clear(self)` — drop every def including the default; warns
+    if called after extraction.
+  - `._default_def(self)` / `._targeted_defs(self)` — internal
+    helpers used by `mesh/_fem_factory::_populate_node_ndf`.
+  - `._warn_if_post_extraction(self, method_name)` — fires a
+    UserWarning when `set` / `set_default` / `clear` is called
+    after `get_fem_data()` because the cached broker holds the
+    pre-mutation array; clears the post-extract flag so a batch
+    of mutations only warns once.
+  - `.__len__(self)` / `.__iter__(self)` / `.__bool__(self)` /
+    `.__repr__(self)`
+
+  Module-level: `_VALID_NDF_RANGE = range(1, 7)`, `_validate_ndf`
+  (type + range check, rejects `bool`).
+
+  Fail-loud contract:
+  - Build-time `set(target=...)` with an unresolvable target raises
+    `KeyError` per the dimensional resolution contract
+    (`tests/test_resolution_contract.py`).
+  - Runtime `fem.nodes.ndf_for(nid)` on an undeclared node raises
+    `LookupError` naming both fixes (`set` for partial coverage,
+    `set_default` for uniform).
 
 #### `core/_model_geometry.py`
 - `_Geometry` **[sub-composite]**

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a)
+## Unreleased — shell-on-solid conformity (S1a + S1b)
 
 ### CHANGED — boolean.fragment default (BREAKING)
 
@@ -11,6 +11,47 @@
   adjacency). Existing scripts that relied on the destructive cleanup
   must now pass `cleanup_free=True` explicitly. The viewer's Fragment
   panel checkbox also defaults unchecked to match.
+
+### ADDED — top-level `g.node_ndf` composite, explicit-only per-node `ndf` (S1b, ADR 0032)
+
+- **New top-level composite `g.node_ndf`** (sibling to `g.constraints`
+  / `g.loads` / `g.masses`) for explicit per-node DOF count
+  declarations. Required for any model that mixes ndf — most
+  importantly shell-on-solid coupling where shared nodes need
+  `ndf=6`. API surface:
+
+  ```python
+  g.node_ndf.set_default(ndf=3)             # uniform fallback
+  g.node_ndf.set("ShellRegion", ndf=6)      # targeted override
+  g.node_ndf.list()                         # registered defs
+  g.node_ndf.clear()                        # drop all defs
+  ```
+
+  Targets follow the same flexible scheme loads and masses accept
+  (label / PG / part / mesh-selection / raw DimTag list). Values
+  must lie in `[1, 6]`.
+
+- **Fail-loud `fem.nodes.ndf_for(nid)`** raises `LookupError` for
+  any node not covered by a declaration or default; the error
+  message names both fixes so the user picks the right one. apeGmsh
+  deliberately does **not** infer `ndf` from element class — the
+  user is the single source of truth (ADR 0032).
+
+- **H5 schema 2.6.0 → 2.7.0** writes an optional `/nodes/ndf` int8
+  dataset; readers tolerate 2.6.x absence (two-version window per
+  ADR 0023) and raise `MalformedH5Error` on length mismatch with
+  `/nodes/ids`. The snapshot_id digest folds `_ndf` when present so
+  identical geometry with different declarations hashes differently
+  (presence-gated to preserve legacy / direct-test FEM digests).
+
+- **PR #321 hardening:** declaration-order invariant hash (the same
+  resolved ndf array hashes identically regardless of `set()`
+  ordering); `_fem_built` resets at the top of each FEM build so
+  post-extract warnings only fire on genuine post-cache mutations;
+  `g.node_ndf.clear()` warns when called after extraction with the
+  same once-per-batch semantics as `set` / `set_default`; real
+  2.6.0 back-compat fixture replaces the synthetic version-rewrite
+  test.
 
 ## v2.0.0 — Three-broker chain: Results carries OpenSeesModel carries FEMData (BREAKING) · Composed file pattern · lineage chain · MP constraint emission shipped · per-zone schemas
 

@@ -553,6 +553,22 @@ error -- `build()` catches it.
 Shell elements require six DOFs per node. If your model mixes shells
 with solids, set `ndf=6` for the entire model.
 
+For shell-on-solid mixed-ndf models where the model-wide bump is
+wasteful, the top-level `g.node_ndf` composite (sibling to
+`g.constraints` / `g.loads` / `g.masses`) declares per-region DOF
+counts. Pair a default with a targeted override:
+
+```python
+g.node_ndf.set_default(ndf=3)          # solids stay at 3
+g.node_ndf.set("ShellRegion", ndf=6)   # shell nodes get rotational DOFs
+```
+
+apeGmsh resolves per-node `ndf` at FEM-build time; nodes not covered
+by any declaration raise `LookupError` from `fem.nodes.ndf_for(nid)`.
+See [ADR 0032](../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
+for the explicit-only doctrine and the dimensional-resolution-contract
+alignment.
+
 ### The deck stops at model definition
 
 The emitted scripts omit analysis commands (integrator, algorithm,
