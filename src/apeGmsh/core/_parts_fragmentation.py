@@ -94,43 +94,85 @@ class _PartsFragmentationMixin:
 
         Updates each Instance.entities in-place with post-fragment tags.
 
+        When the registry holds entities at multiple dimensions (e.g. a
+        3D solid foundation plus a 2D shell wall sitting on its top
+        face), the OCC fragment call is invoked with the union of all
+        present dims so the shell becomes conformal against the volume
+        face rather than being silently dropped from the operation.
+        Pass ``dim=`` explicitly to restrict fragmentation to a single
+        dimension (legacy behaviour).
+
         Parameters
         ----------
         dim : int, optional
-            Target dimension.  Auto-detects highest present if None.
+            Target dimension.  When None, auto-detects ALL dimensions
+            present in the registry/model (mixed-dim shell-on-solid
+            workflows fragment conformally).  When set, only that dim
+            participates and the returned list contains tags at that
+            dim only.
 
         Returns
         -------
         list[int]
-            Tags of all surviving entities at the target dimension.
+            Tags of all surviving entities.  When ``dim`` is set the
+            list is the surviving tags at that dim only.  When ``dim``
+            is None and multiple dims fragment, the list contains the
+            tags of the highest dim present so single-dim callers
+            (the existing volume-only tests) see the same shape they
+            used to.
         """
+        # ── Auto-detect dims ────────────────────────────────────────
+        # Single-dim mode (legacy or explicit ``dim=``): the OCC
+        # fragment call uses entities at one dim only.  Multi-dim
+        # mode (auto + multiple dims present): include every dim that
+        # is either tracked or present in the model.
         if dim is None:
-            for d in (3, 2, 1):
-                if gmsh.model.getEntities(d):
-                    dim = d
-                    break
-            else:
+            present_dims = [d for d in (3, 2, 1) if gmsh.model.getEntities(d)]
+            if not present_dims:
                 raise RuntimeError("No entities found.")
+            return self._fragment_dims(present_dims)
+        return self._fragment_dims([dim])
 
-        all_ents = gmsh.model.getEntities(dim)
+    def _fragment_dims(self, dims: list[int]) -> list[int]:
+        """Internal: fragment entities at the given dims as a group.
 
-        # Warn about untracked entities
-        tracked = set()
-        for inst in self._instances.values():
-            for t in inst.entities.get(dim, []):
-                tracked.add(t)
-        all_tags = set(t for _, t in all_ents)
-        orphans = all_tags - tracked
-        if orphans:
-            warnings.warn(
-                f"{len(orphans)} entities at dim={dim} are not tracked "
-                f"by any part (tags: {sorted(orphans)}).  They will "
-                f"participate in fragmentation but won't be remapped.  "
-                f"Use g.parts.register() or g.parts.from_model() to "
-                f"adopt them.",
-                stacklevel=2,
-            )
+        Builds an OCC fragment input list spanning every dim, runs the
+        op once, and remaps registries on every dim.  ``dims`` is the
+        full set of dims to include (e.g. ``[3]`` for legacy single-dim
+        or ``[3, 2]`` for shell-on-solid).  Returns surviving tags at
+        the highest dim in ``dims`` (matches the legacy single-dim
+        return shape; callers that want the full survivor set per dim
+        should walk ``gmsh.model.getEntities(d)`` after the call).
+        """
+        # Collect all entities across all requested dims.
+        ents_by_dim: dict[int, list[tuple[int, int]]] = {
+            d: list(gmsh.model.getEntities(d)) for d in dims
+        }
+        all_ents: list[tuple[int, int]] = []
+        for d in dims:
+            all_ents.extend(ents_by_dim[d])
 
+        # Warn per-dim about untracked entities — keep the existing
+        # "not tracked by any part" warning shape so callers depending
+        # on it (test_fragment_all_warns_untracked) still trip.
+        for d in dims:
+            tracked = set()
+            for inst in self._instances.values():
+                for t in inst.entities.get(d, []):
+                    tracked.add(t)
+            d_tags = set(t for _, t in ents_by_dim[d])
+            orphans = d_tags - tracked
+            if orphans:
+                warnings.warn(
+                    f"{len(orphans)} entities at dim={d} are not tracked "
+                    f"by any part (tags: {sorted(orphans)}).  They will "
+                    f"participate in fragmentation but won't be remapped.  "
+                    f"Use g.parts.register() or g.parts.from_model() to "
+                    f"adopt them.",
+                    stacklevel=3,
+                )
+
+        # Nothing to fragment when fewer than 2 entities total.
         if len(all_ents) < 2:
             return [t for _, t in all_ents]
 
@@ -146,7 +188,12 @@ class _PartsFragmentationMixin:
             pg.set_result(input_ents, result_map)
             self._remap_from_result(input_ents, result_map)
 
-        return [t for _, t in result]
+        # Return surviving tags at the highest requested dim.  When
+        # the caller passed multiple dims (shell-on-solid), the highest
+        # dim is the most "complete" answer; lower-dim survivors are
+        # reachable through ``gmsh.model.getEntities(d)`` directly.
+        top_dim = max(dims)
+        return [t for d, t in result if d == top_dim]
 
     def fragment_pair(
         self,
@@ -155,28 +202,61 @@ class _PartsFragmentationMixin:
         *,
         dim: int | None = None,
     ) -> list[int]:
-        """Fragment only two instances against each other.
+        """Fragment two instances against each other.
+
+        Supports cross-dimensional pairs — e.g. a 2D shell wall placed
+        against a 3D solid foundation's top face.  When the two
+        instances live at different dimensions and ``dim`` is None,
+        every entity at every dim each Part owns is included in a
+        single OCC fragment call so the shell becomes conformal at the
+        volume-face interface.  Passing ``dim=`` explicitly restricts
+        the operation to that single dimension (legacy behaviour) and
+        raises ``RuntimeError`` if the requested dim is missing from
+        either Part.
 
         Returns
         -------
         list[int]
-            Surviving entity tags at the target dimension.
+            Surviving entity tags at the highest dimension that
+            participated in the operation.
         """
         inst_a = self._instances[label_a]
         inst_b = self._instances[label_b]
 
-        if dim is None:
-            for d in (3, 2, 1):
-                if d in inst_a.entities and d in inst_b.entities:
-                    dim = d
-                    break
-            else:
+        if dim is not None:
+            # Legacy explicit-dim path: both Parts must own entities
+            # at the requested dim.
+            if dim not in inst_a.entities or dim not in inst_b.entities:
                 raise RuntimeError(
-                    f"No common dimension between '{label_a}' and '{label_b}'."
+                    f"Part '{label_a}' or '{label_b}' has no entities "
+                    f"at dim={dim}."
                 )
+            obj = [(dim, t) for t in inst_a.entities.get(dim, [])]
+            tool = [(dim, t) for t in inst_b.entities.get(dim, [])]
+        else:
+            # Auto-dim path: include every dim each Part owns.  Shells
+            # against volumes (dim 2 vs 3) now go through OCC as a
+            # single mixed-dim fragment call — OCC supports mixed-dim
+            # objects/tools and will produce conformal fragments.
+            a_dims = {d for d, ts in inst_a.entities.items() if ts}
+            b_dims = {d for d, ts in inst_b.entities.items() if ts}
+            if not a_dims:
+                raise RuntimeError(
+                    f"Part '{label_a}' has no entities to fragment."
+                )
+            if not b_dims:
+                raise RuntimeError(
+                    f"Part '{label_b}' has no entities to fragment."
+                )
+            obj = [
+                (d, t) for d in sorted(a_dims)
+                for t in inst_a.entities.get(d, [])
+            ]
+            tool = [
+                (d, t) for d in sorted(b_dims)
+                for t in inst_b.entities.get(d, [])
+            ]
 
-        obj = [(dim, t) for t in inst_a.entities.get(dim, [])]
-        tool = [(dim, t) for t in inst_b.entities.get(dim, [])]
         input_ents = obj + tool
 
         with pg_preserved() as pg:
@@ -187,7 +267,12 @@ class _PartsFragmentationMixin:
             pg.set_result(input_ents, result_map)
             self._remap_from_result(input_ents, result_map)
 
-        return [t for _, t in result]
+        # Return surviving tags at the highest dim that participated
+        # so single-dim callers keep their existing result shape.
+        if not input_ents:
+            return []
+        top_dim = max(d for d, _ in input_ents)
+        return [t for d, t in result if d == top_dim]
 
     def fuse_group(
         self,

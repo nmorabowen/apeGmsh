@@ -70,16 +70,22 @@ def test_fragment_pair(g):
     assert len(result) == 3
 
 
-def test_fragment_pair_no_common_dim_raises(g):
-    """No common dimension between instances raises RuntimeError."""
+def test_fragment_pair_explicit_dim_missing_raises(g):
+    """Asking for a dim that one of the Parts does not own raises.
+
+    The auto-dim path (no ``dim=``) now supports cross-dim pairs (e.g.
+    shell-on-solid), so the old "no common dimension" RuntimeError no
+    longer fires there.  The explicit ``dim=`` path still validates
+    that both Parts have entities at the requested dim, which is the
+    contract this test pins.
+    """
     with g.parts.part("vol"):
         g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
-    # Create a part with only a point (dim=0)
     with g.parts.part("pt"):
         g.model.geometry.add_point(5, 5, 5)
 
-    with pytest.raises(RuntimeError, match="No common dimension"):
-        g.parts.fragment_pair("vol", "pt")
+    with pytest.raises(RuntimeError, match="dim=2"):
+        g.parts.fragment_pair("vol", "pt", dim=2)
 
 
 def test_fuse_group_two_parts(g):
