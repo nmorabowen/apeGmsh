@@ -30,6 +30,7 @@ from ._internal.build import (
     InitialStressRecord,
     MassRecord,
     RegionAssignmentRecord,
+    StageRecord,
     allocate_element_tags,
     build_element_partition_owner,
     build_node_partition_owners,
@@ -153,6 +154,26 @@ _KIND_BY_FAMILY: tuple[tuple[type[Primitive], str], ...] = (
     (Integrator,       "integrator"),
     (Analysis,         "analysis"),
 )
+
+
+# Analysis-chain Primitive base types (Phase SSI-2.A) — used by the
+# staged-emit path to filter chain primitives out of the global
+# pre-element emit (each stage emits its own chain).  Mirrors the
+# tuple in :meth:`apeSees._check_analysis_chain_for_analyze`.
+_ANALYSIS_CHAIN_BASES: tuple[type[Primitive], ...] = (
+    ConstraintHandler,
+    Numberer,
+    LinearSystem,
+    ConvergenceTest,
+    SolutionAlgorithm,
+    Integrator,
+    Analysis,
+)
+
+
+def _is_analysis_chain_primitive(prim: Primitive) -> bool:
+    """True iff ``prim`` is one of the seven analysis-chain types."""
+    return isinstance(prim, _ANALYSIS_CHAIN_BASES)
 
 
 def _kind_of(prim: Primitive) -> str:
@@ -290,6 +311,7 @@ class BuiltModel:
     mass_records:            tuple[MassRecord, ...]
     region_records:          tuple[RegionAssignmentRecord, ...]
     initial_stress_records:  tuple[InitialStressRecord, ...] = ()
+    stage_records:           tuple[StageRecord, ...] = ()
 
     def emit(self, emitter: Emitter) -> int:
         """Drive ``emitter`` over the model, returning ``analyze``'s exit value.
@@ -398,7 +420,19 @@ class BuiltModel:
             )
             return 0
 
-        # Partitioned path — per-rank fan-out per ADR 0027.
+        # Partitioned path — per-rank fan-out per ADR 0027.  Phase
+        # SSI-2.A: the (stages + partitions) combo is not yet
+        # supported; the per-stage emit assumes the flat path.  Lift
+        # in a follow-up when an MP-staged use case appears.
+        if self.stage_records:
+            raise NotImplementedError(
+                "apeSees: combining staged builds (Phase SSI-2.A) "
+                "with MP-partitioned FEMs (ADR 0027) is not yet "
+                f"supported (got {len(self.stage_records)} stage(s) "
+                f"and {len(self.fem.partitions)} partitions).  Use "
+                "single-partition FEMs for staged decks, or non-staged "
+                "builds for MP-partitioned ones."
+            )
         self._emit_partitioned(
             emitter=emitter,
             tags=tags,
@@ -428,14 +462,26 @@ class BuiltModel:
         Byte-identical to the original :meth:`emit` body when
         ``len(self.fem.partitions) <= 1``.  No ``partition_open`` /
         ``partition_close`` calls, no runtime shim emission.
+
+        Phase SSI-2.A: when ``stage_records`` is non-empty, the
+        analysis-chain primitives in ``pre_element`` are SKIPPED in
+        the global pre-element emit and instead emitted per-stage by
+        :meth:`_emit_stages_flat` at the end of this method.  This
+        keeps every other primitive's emit position byte-identical
+        to the non-staged path.
         """
         # 1a. Nodes — emit every node from the FEM snapshot.
         for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
             emitter.node(int(nid), float(xyz[0]), float(xyz[1]), float(xyz[2]))
 
         # 4a. Materials / sections / time series / analysis chain
-        # (excluding patterns + recorders).
+        # (excluding patterns + recorders).  Phase SSI-2.A: skip
+        # analysis-chain primitives when stages are declared — each
+        # stage re-emits its own chain below.
+        staged = bool(self.stage_records)
         for p in pre_element:
+            if staged and _is_analysis_chain_primitive(p):
+                continue
             tag = self.tag_for[id(p)]
             p._emit(emitter, tag)
 
@@ -482,7 +528,11 @@ class BuiltModel:
         # 7d. Initial stress (Phase SSI-1).  Emit the step_hook_ramp
         # bundle (dispatcher + parameter decls + proc + lappend), then
         # one addToParameter per element / component.  Single-process
-        # path = no ``partition_open`` wrapping.
+        # path = no ``partition_open`` wrapping.  In staged mode the
+        # bridge's ``_initial_stress_records`` should be empty (every
+        # record was ``.add()``'d to a stage), but defensively support
+        # the case where some records weren't staged — they emit here
+        # globally before any stage starts.
         if self.initial_stress_records:
             name_to_param_tags = emit_initial_stress_global(
                 self.initial_stress_records, emitter, tags,
@@ -503,6 +553,60 @@ class BuiltModel:
                 emit_recorder_spec(p, emitter, tag, self.fem, tags=tags)
             else:  # pragma: no cover  - unreachable per partition above
                 p._emit(emitter, tag)
+
+        # 9. Phase SSI-2.A: per-stage emit block.  Each stage emits
+        # its own initial_stress + analysis chain + analyze loop +
+        # stage_close().  No-op for non-staged models.
+        if staged:
+            self._emit_stages_flat(emitter, tags, fem_eid_to_ops_tag)
+
+    def _emit_stages_flat(
+        self,
+        emitter: Emitter,
+        tags: TagAllocator,
+        fem_eid_to_ops_tag: "dict[int, int]",
+    ) -> None:
+        """Phase SSI-2.A: emit each stage block in registration order.
+
+        Per stage:
+
+        1. ``stage_open(name)`` — comment delimiter.
+        2. Stage's initial_stress records (parameter declarations +
+           step_hook_ramp procs + addToParameter calls, exactly the
+           same shape as the Phase SSI-1 non-staged global emit).
+        3. Analysis-chain primitives — emit each via its ``_emit``
+           (the bridge skipped these in the pre_element pass).
+        4. ``emitter.analyze(steps=, dt=)`` — auto-wraps with hook
+           dispatcher calls if any step_hook_ramp registered this
+           stage (the emitter tracks ``_step_hooks_registered``).
+        5. ``stage_close()`` — loadConst + wipeAnalysis + hook clear.
+
+        Single-process path only.  The (stages + partitions) combo
+        is not yet supported; ``_emit_partitioned`` raises
+        ``NotImplementedError`` when stages are present.
+        """
+        for stage in self.stage_records:
+            emitter.stage_open(stage.name)
+            if stage.initial_stress_records:
+                name_to_param_tags = emit_initial_stress_global(
+                    stage.initial_stress_records, emitter, tags,
+                )
+                emit_initial_stress_addtoparameter(
+                    stage.initial_stress_records,
+                    emitter, self.fem,
+                    name_to_param_tags=name_to_param_tags,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                )
+            for chain in (
+                stage.constraints, stage.numberer, stage.system,
+                stage.test, stage.algorithm, stage.integrator,
+                stage.analysis,
+            ):
+                if chain is not None:
+                    chain_tag = self.tag_for[id(chain)]
+                    chain._emit(emitter, chain_tag)
+            emitter.analyze(steps=stage.n_increments, dt=stage.dt)
+            emitter.stage_close()
 
     # -- Partitioned emit path (ADR 0027) ---------------------------------
 
@@ -1442,6 +1546,12 @@ class apeSees:
         self._mass_records: list[MassRecord] = []
         self._region_records: list[RegionAssignmentRecord] = []
         self._initial_stress_records: list[InitialStressRecord] = []
+        # Phase SSI-2.A: closed StageRecord instances accumulate here as
+        # ``with ops.stage(name) as s:`` blocks exit.  ``stage_records``
+        # being non-empty switches BuiltModel.emit into the staged
+        # emission path (per-stage analyze loops with loadConst /
+        # wipeAnalysis / hook-list clear between).
+        self._stage_records: list[StageRecord] = []
         # Resolve the sentinel: unset → Cartesian() (Z-up). Explicit
         # None disables the auto-default (2D models).
         if isinstance(default_orientation, _UnsetType):
@@ -1589,7 +1699,7 @@ class apeSees:
         sigma_zz: float,
         ramp_steps: int,
         lambda_install: float = 1.0,
-    ) -> None:
+    ) -> "InitialStressRecord":
         """Initialize an in-situ stress tensor on ASDPlasticMaterial3D elements.
 
         Emits the OpenSees ``parameter`` / ``addToParameter`` /
@@ -1657,18 +1767,63 @@ class apeSees:
         elements_tuple = (
             tuple(int(e) for e in elements) if elements is not None else None
         )
-        self._initial_stress_records.append(
-            InitialStressRecord(
-                name=str(name),
-                pg=pg,
-                elements=elements_tuple,
-                sigma_xx=float(sigma_xx),
-                sigma_yy=float(sigma_yy),
-                sigma_zz=float(sigma_zz),
-                ramp_steps=int(ramp_steps),
-                lambda_install=float(lambda_install),
-            ),
+        record = InitialStressRecord(
+            name=str(name),
+            pg=pg,
+            elements=elements_tuple,
+            sigma_xx=float(sigma_xx),
+            sigma_yy=float(sigma_yy),
+            sigma_zz=float(sigma_zz),
+            ramp_steps=int(ramp_steps),
+            lambda_install=float(lambda_install),
         )
+        self._initial_stress_records.append(record)
+        # Phase SSI-2.A: return the record so callers can pass it to
+        # ``with ops.stage(...) as s: s.add(record)`` which moves it
+        # from this bridge-global pool into the stage's pool.
+        # Non-staged callers can ignore the return value — the record
+        # is already registered and will emit in the flat path.
+        return record
+
+    def stage(self, name: str) -> "_StageBuilder":
+        """Open a staged-analysis block (Phase SSI-2.A).
+
+        Usage::
+
+            with ops.stage(name="insitu") as s:
+                s.add(ops.initial_stress(name="rock", ..., ramp_steps=10))
+                s.analysis(
+                    test=ops.test.NormDispIncr(tol=1e-4, max_iter=150),
+                    algorithm=ops.algorithm.Newton(),
+                    integrator=ops.integrator.LoadControl(dlam=0.1),
+                    constraints=ops.constraints.Plain(),
+                    numberer=ops.numberer.RCM(),
+                    system=ops.system.UmfPack(),
+                    analysis=ops.analysis.Static(),
+                )
+                s.run(n_increments=10, dt=0.1)
+
+        Each stage emits its own analysis-chain primitives, its own
+        analyze loop (hook-wrapped if any ``s.add(initial_stress(...))``
+        registered a ramp), and a between-stages cleanup block
+        (``loadConst -time 0.0`` + ``wipeAnalysis`` + hook-list clear).
+
+        Multiple ``with ops.stage(...)`` blocks accumulate in
+        registration order; they emit in that order at deck-emit time.
+
+        Validation happens on ``with`` exit: every stage must have a
+        complete analysis chain (all six chain kwargs + the analysis
+        directive) and an ``s.run(...)`` call.
+
+        Returns
+        -------
+        _StageBuilder
+            Context manager that collects per-stage records and emits
+            a :class:`StageRecord` to the bridge on close.
+        """
+        if not name:
+            raise ValueError("apeSees.stage: name= must be non-empty.")
+        return _StageBuilder(self, str(name))
 
     def region(
         self,
@@ -1718,7 +1873,21 @@ class apeSees:
         Raises :class:`BridgeError` if the analysis chain is incomplete
         (one or more of constraints / numberer / system / test /
         algorithm / integrator / analysis is missing).
+
+        Phase SSI-2.A: staged models (``ops.stage(...)`` blocks
+        declared) are NOT supported by live execution.  Emit a Tcl
+        or Py deck via :meth:`tcl` / :meth:`py` and run it via the
+        OpenSees binary / openseespy subprocess instead.
         """
+        if self._stage_records:
+            raise NotImplementedError(
+                "apeSees.analyze: live execution does not support "
+                "staged models in Phase SSI-2.A "
+                f"(got {len(self._stage_records)} stage(s)).  Use "
+                "ops.tcl(path, run=True) or ops.py(path, run=True) to "
+                "emit a staged deck and run it via the OpenSees binary "
+                "/ openseespy subprocess instead."
+            )
         self._check_analysis_chain_for_analyze()
 
         # Local import — keeps openseespy out of import-time for users
@@ -2010,6 +2179,7 @@ class apeSees:
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),
             initial_stress_records=tuple(self._initial_stress_records),
+            stage_records=tuple(self._stage_records),
         )
 
     # -- Internal helpers ------------------------------------------------
@@ -2036,6 +2206,187 @@ class apeSees:
                 "primitives via ops.<family>.<Type>(...) before calling "
                 "analyze()."
             )
+
+
+# ---------------------------------------------------------------------------
+# _StageBuilder — context manager backing ops.stage(name) (Phase SSI-2.A)
+# ---------------------------------------------------------------------------
+
+
+class _StageBuilder:
+    """Collects per-stage records inside a ``with ops.stage(...) as s:``
+    block; emits a :class:`StageRecord` to the bridge on context-exit.
+
+    Lifecycle:
+
+    1. Constructed by :meth:`apeSees.stage` — holds a back-reference
+       to the bridge.
+    2. Inside the ``with`` block, the user calls ``s.add(record)``,
+       ``s.analysis(test=, algorithm=, ...)``, and ``s.run(n=, dt=)``.
+    3. On ``__exit__`` (clean exit only), validates that all required
+       fields are populated and appends a frozen :class:`StageRecord`
+       to ``bridge._stage_records``.  On exception, the stage is
+       discarded (caller's exception propagates).
+
+    The builder is NOT a typed primitive — it does not register a tag
+    with the bridge.  The records / analysis-chain primitives it
+    references ARE registered (independently, via their own
+    namespace calls) and therefore appear in
+    :attr:`apeSees._primitives` for the topological emit pass.  The
+    stage record holds REFERENCES into those primitives, not copies.
+    """
+
+    __slots__ = (
+        "_bridge", "_name",
+        "_initial_stress_records",
+        "_test", "_algorithm", "_integrator",
+        "_constraints", "_numberer", "_system", "_analysis",
+        "_n_increments", "_dt",
+        "_analysis_set", "_run_set",
+    )
+
+    def __init__(self, bridge: "apeSees", name: str) -> None:
+        self._bridge = bridge
+        self._name = name
+        self._initial_stress_records: list[InitialStressRecord] = []
+        self._test: Primitive | None = None
+        self._algorithm: Primitive | None = None
+        self._integrator: Primitive | None = None
+        self._constraints: Primitive | None = None
+        self._numberer: Primitive | None = None
+        self._system: Primitive | None = None
+        self._analysis: Primitive | None = None
+        self._n_increments: int = 0
+        self._dt: float | None = None
+        self._analysis_set: bool = False
+        self._run_set: bool = False
+
+    def __enter__(self) -> "_StageBuilder":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> bool:
+        if exc_type is not None:
+            # Don't swallow user's exception; just drop the in-progress
+            # stage (no records appended to the bridge).
+            return False
+        # Validate: every stage MUST have a complete analysis chain
+        # and a run() call.  Missing-piece errors are caller errors.
+        if not self._analysis_set:
+            raise ValueError(
+                f"Stage {self._name!r}: missing s.analysis(...) — "
+                "every stage must declare its analysis chain (test, "
+                "algorithm, integrator, constraints, numberer, system, "
+                "analysis)."
+            )
+        if not self._run_set:
+            raise ValueError(
+                f"Stage {self._name!r}: missing s.run(n_increments=, "
+                "dt=) — every stage must declare its analyze loop."
+            )
+        record = StageRecord(
+            name=self._name,
+            initial_stress_records=tuple(self._initial_stress_records),
+            test=self._test,
+            algorithm=self._algorithm,
+            integrator=self._integrator,
+            constraints=self._constraints,
+            numberer=self._numberer,
+            system=self._system,
+            analysis=self._analysis,
+            n_increments=int(self._n_increments),
+            dt=None if self._dt is None else float(self._dt),
+        )
+        self._bridge._stage_records.append(record)
+        return False
+
+    # -- Stage population -------------------------------------------------
+
+    def add(self, record: InitialStressRecord) -> None:
+        """Bind a previously-registered record to this stage.
+
+        Currently supports :class:`InitialStressRecord` only.  The
+        record is removed from the bridge's global ``_initial_stress_records``
+        pool (so it does not also emit in the flat-emit zone) and
+        added to this stage's pool.
+
+        Passing a record that's NOT in the bridge's global pool
+        raises ``ValueError`` — usually a sign of double-``add``ing
+        the same record across stages.
+        """
+        if isinstance(record, InitialStressRecord):
+            try:
+                self._bridge._initial_stress_records.remove(record)
+            except ValueError as e:
+                raise ValueError(
+                    f"Stage {self._name!r}.add: InitialStressRecord "
+                    f"name={record.name!r} not in the bridge's global "
+                    "pool — was it already added to a different stage "
+                    "or registered through a different bridge instance?"
+                ) from e
+            self._initial_stress_records.append(record)
+            return
+        raise TypeError(
+            f"Stage {self._name!r}.add: unsupported record type "
+            f"{type(record).__name__!r}.  Phase SSI-2.A supports "
+            "InitialStressRecord only; future versions may extend."
+        )
+
+    def analysis(
+        self,
+        *,
+        test: Primitive,
+        algorithm: Primitive,
+        integrator: Primitive,
+        constraints: Primitive,
+        numberer: Primitive,
+        system: Primitive,
+        analysis: Primitive,
+    ) -> None:
+        """Bind the analysis chain for this stage.
+
+        All seven arguments are required.  Each must be a primitive
+        already registered with the bridge (e.g. via
+        ``ops.test.NormDispIncr(...)``); the stage holds a reference
+        only, not a copy.  Multiple stages may share the same
+        primitive instance (e.g. the same ``constraints.Plain()``
+        across all stages) — the bridge emits each primitive exactly
+        once per stage in which it's referenced, so OpenSees gets a
+        fresh ``constraints Plain`` line per stage as required.
+        """
+        if self._analysis_set:
+            raise ValueError(
+                f"Stage {self._name!r}.analysis: already called; "
+                "stages support one analysis chain each."
+            )
+        self._test = test
+        self._algorithm = algorithm
+        self._integrator = integrator
+        self._constraints = constraints
+        self._numberer = numberer
+        self._system = system
+        self._analysis = analysis
+        self._analysis_set = True
+
+    def run(self, *, n_increments: int, dt: float | None = None) -> None:
+        """Set the analyze-loop length + step size for this stage."""
+        if self._run_set:
+            raise ValueError(
+                f"Stage {self._name!r}.run: already called; "
+                "stages support one analyze loop each."
+            )
+        if n_increments < 1:
+            raise ValueError(
+                f"Stage {self._name!r}.run: n_increments must be >= 1, "
+                f"got {n_increments}."
+            )
+        self._n_increments = int(n_increments)
+        self._dt = None if dt is None else float(dt)
+        self._run_set = True
 
 
 # ---------------------------------------------------------------------------

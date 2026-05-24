@@ -98,6 +98,22 @@ loop with hook-dispatcher calls so the ramp actually advances
 between steps.  H5 archival is deferred (no schema bump in Phase
 SSI-1); H5 / Recording / Live emitters implement the methods as
 no-ops / capture-only / in-process closures respectively.
+
+**Architecture event — Phase SSI-2.A (staged analysis, May 2026).**
+The Protocol gained two stage-bracketing methods,
+:meth:`stage_open` and :meth:`stage_close`, that frame a per-stage
+analysis block in multi-stage decks.  ``stage_open`` emits a
+human-readable comment delimiter (``# === Stage: <name> ===``);
+``stage_close`` emits the canonical between-stages cleanup:
+``loadConst -time 0.0`` + ``wipeAnalysis`` + (if step hooks are
+registered) clears the ``_apesees_before_step_hooks`` /
+``_apesees_after_step_hooks`` dispatcher lists so the next stage's
+hooks fire on the right step counters.  The emitted ``proc``
+definitions persist across ``stage_close`` — only the lappend
+lists are reset, not the proc bodies themselves.  H5 / Recording
+emitters no-op / capture for tests; Live raises
+``NotImplementedError`` (staged live execution deferred — the
+bridge's :meth:`apeSees.analyze` only supports non-staged models).
 """
 from __future__ import annotations
 
@@ -290,6 +306,18 @@ class Emitter(Protocol):
         n_steps_to_full: float,
         phase: Literal["before", "after"] = "before",
     ) -> None: ...
+
+    # -- Staged analysis (Phase SSI-2.A) -----------------------------------
+    # ``stage_open(name)`` emits a human-readable comment delimiter
+    # so the multi-stage deck stays grep-friendly.  ``stage_close()``
+    # emits the canonical between-stages cleanup: ``loadConst -time
+    # 0.0`` + ``wipeAnalysis`` + (if any step hook was registered)
+    # clears the dispatcher lists so the next stage's hooks fire on
+    # the right step counters.  Proc definitions persist across
+    # ``stage_close`` — only the ``lappend`` lists are reset.
+    def stage_open(self, name: str) -> None: ...
+
+    def stage_close(self) -> None: ...
 
     # -- Eigen (one-shot, returns values from live emitter) ---------------
     # Issues ``eigen [solver] $numModes`` — does not require an

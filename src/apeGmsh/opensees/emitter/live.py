@@ -417,6 +417,35 @@ class LiveOpsEmitter:
             )
             self._ops.system(fallback)
 
+    # -- Staged analysis (Phase SSI-2.A) ------------------------------------
+    #
+    # Live execution does not currently support staged builds.  The
+    # bridge's :meth:`apeSees.analyze` builds a deck, drives it
+    # through this emitter, and calls :meth:`analyze` once — a model
+    # shape with multiple stages would need separate analysis-chain
+    # re-binding, per-stage analyze loops, ``loadConst`` /
+    # ``wipeAnalysis`` interleaved, and hook-list clearing in
+    # between.  Lifting this is feasible but deferred: Tcl + Py text
+    # emit are the supported execution paths for staged decks in
+    # Phase SSI-2.A.
+
+    def stage_open(self, name: str) -> None:
+        raise NotImplementedError(
+            "LiveOpsEmitter does not support staged models in Phase "
+            f"SSI-2.A (got stage_open(name={name!r})).  Use "
+            "``ops.tcl(...)`` / ``ops.py(...)`` to emit a staged deck "
+            "and run it via OpenSees.exe / openseespy subprocess "
+            "instead."
+        )
+
+    def stage_close(self) -> None:
+        raise NotImplementedError(
+            "LiveOpsEmitter does not support staged models in Phase "
+            "SSI-2.A.  Use ``ops.tcl(...)`` / ``ops.py(...)`` to emit "
+            "a staged deck and run it via OpenSees.exe / openseespy "
+            "subprocess instead."
+        )
+
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 
     def addToParameter(

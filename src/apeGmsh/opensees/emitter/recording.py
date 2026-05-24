@@ -275,3 +275,11 @@ class RecordingEmitter:
                 "phase": phase,
             },
         ))
+
+    # -- Staged analysis (Phase SSI-2.A) ------------------------------------
+
+    def stage_open(self, name: str) -> None:
+        self.calls.append(("stage_open", (name,), {}))
+
+    def stage_close(self) -> None:
+        self.calls.append(("stage_close", (), {}))

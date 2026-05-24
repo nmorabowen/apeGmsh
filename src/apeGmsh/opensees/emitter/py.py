@@ -396,6 +396,27 @@ class PyEmitter:
         self._lines.append("        _f()")
         self._lines.indent = prev_indent
 
+    # -- Staged analysis (Phase SSI-2.A) ------------------------------------
+
+    def stage_open(self, name: str) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(f"# === Stage: {name} ===")
+        self._lines.indent = prev_indent
+
+    def stage_close(self) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        # openseespy: ``ops.loadConst('-time', 0.0)`` matches the Tcl
+        # ``loadConst -time 0.0`` semantics.
+        self._lines.append(_ops_call("loadConst", "-time", 0.0))
+        self._lines.append(_ops_call("wipeAnalysis"))
+        if self._step_hooks_registered:
+            self._lines.append("_apesees_before_step_hooks.clear()")
+            self._lines.append("_apesees_after_step_hooks.clear()")
+            self._step_hooks_registered = False
+        self._lines.indent = prev_indent
+
     def _emit_hook_ramp_function(
         self,
         name: str,

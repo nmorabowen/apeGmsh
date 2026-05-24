@@ -1178,6 +1178,24 @@ class H5Emitter:
         del name, targets, n_steps_to_full, phase
 
     # =====================================================================
+    # Protocol — Staged analysis (Phase SSI-2.A)
+    # =====================================================================
+    #
+    # H5 archival of staged structure is deferred for Phase SSI-2.A:
+    # the bridge drives stage_open / stage_close calls when emitting
+    # a staged model, but the H5 emitter discards them.  A future
+    # schema bump would persist stage names + per-stage primitive
+    # lists under ``/opensees/stages/`` so the model.h5 round-trip
+    # reconstructs the staged build.
+
+    def stage_open(self, name: str) -> None:
+        """No-op for Phase SSI-2.A — archival deferred."""
+        del name
+
+    def stage_close(self) -> None:
+        """No-op for Phase SSI-2.A — archival deferred."""
+
+    # =====================================================================
     # Protocol — Analysis chain
     # =====================================================================
 

@@ -449,6 +449,35 @@ class TclEmitter:
         self._lines.append("}")
         self._lines.indent = prev_indent
 
+    # -- Staged analysis (Phase SSI-2.A) ------------------------------------
+
+    def stage_open(self, name: str) -> None:
+        # Human-readable banner.  Emitted at the outer indent so it
+        # remains visible even inside partition-open blocks.
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(f"# === Stage: {name} ===")
+        self._lines.indent = prev_indent
+
+    def stage_close(self) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append("loadConst -time 0.0")
+        self._lines.append("wipeAnalysis")
+        if self._step_hooks_registered:
+            # Clear the dispatcher lists so the next stage's hooks
+            # don't inherit this stage's procs.  Proc bodies persist
+            # but are unreachable until a future ``lappend`` puts
+            # them back into the list.
+            self._lines.append("set _apesees_before_step_hooks {}")
+            self._lines.append("set _apesees_after_step_hooks {}")
+            # Reset the "are hooks live?" flag so the next stage's
+            # ``analyze`` emits a bare ``analyze N`` line UNLESS that
+            # stage also registers a ramp (the orchestrator emits
+            # ramp registrations BEFORE the next analyze).
+            self._step_hooks_registered = False
+        self._lines.indent = prev_indent
+
     def _emit_hook_ramp_proc(
         self,
         name: str,

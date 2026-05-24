@@ -76,6 +76,7 @@ __all__ = [
     "InitialStressRecord",
     "MassRecord",
     "RegionAssignmentRecord",
+    "StageRecord",
     "VECXZ_TOL",
     "allocate_element_tags",
     "build_element_partition_owner",
@@ -154,6 +155,51 @@ class RegionAssignmentRecord:
     name: str
     pg: str | None
     nodes: tuple[int, ...] | None
+
+
+@dataclass(frozen=True, slots=True)
+class StageRecord:
+    """One ``apeSees.stage(name)`` block — a per-stage analysis chain
+    + per-stage ramped initial-stress records + the analyze run params.
+
+    Used by Phase SSI-2.A staged-analysis decks.  Stages emit in the
+    order they appear in ``BuiltModel.stage_records``; each one emits:
+
+    1. ``stage_open(name)`` — comment delimiter for deck readability.
+    2. Stage's :class:`InitialStressRecord` instances — parameter
+       declarations + step_hook_ramp procs + addToParameter calls.
+    3. The analysis chain (constraints / numberer / system / test /
+       algorithm / integrator / analysis directive) — emitted via
+       each primitive's ``_emit``.
+    4. ``analyze`` loop — hook-wrapped if any initial_stress
+       registered a ramp.
+    5. ``stage_close()`` — emits ``loadConst -time 0.0`` +
+       ``wipeAnalysis`` + clears the dispatcher lists.
+
+    Analysis-chain primitives stay on the bridge's ``_primitives``
+    list (they need tags via the topological-order pass); the stage
+    record holds *references* to them, not copies.  ``BuiltModel.emit``
+    skips the global pre-element emit of chain primitives when stages
+    are declared, so each stage's chain is the only one OpenSees sees
+    at run time.
+    """
+
+    name: str
+    initial_stress_records: tuple["InitialStressRecord", ...]
+    # Analysis chain references — primitives live on the bridge's
+    # ``_primitives`` list; the stage knows which ones to bind for
+    # this stage's analyze loop.  Stored as ``Primitive`` (generic)
+    # to avoid pulling in the full analysis-chain type hierarchy
+    # here; runtime types are enforced by the stage builder.
+    test: "Primitive | None"
+    algorithm: "Primitive | None"
+    integrator: "Primitive | None"
+    constraints: "Primitive | None"
+    numberer: "Primitive | None"
+    system: "Primitive | None"
+    analysis: "Primitive | None"
+    n_increments: int
+    dt: float | None
 
 
 @dataclass(frozen=True, slots=True)
