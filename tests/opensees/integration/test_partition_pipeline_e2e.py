@@ -401,15 +401,16 @@ def test_scenario_a_flavor_a_full_pipeline(n_parts: int, tmp_path: Path) -> None
         assert len(blocks) == n_parts, (
             f"expected {n_parts} partition blocks; got {sorted(blocks.keys())}"
         )
-        # The bridge forwards the broker's ``PartitionRecord.id``
-        # verbatim through ``partition_open(rank)`` — Gmsh emits
-        # 1-based partition ids by default, so the rank set here is
-        # typically ``{1..n_parts}``.  We don't pin the exact base
-        # (0 vs 1) — that's the broker's convention, not part of the
-        # contract.  We only require ``n_parts`` distinct ranks.
+        # Schema 2.11.0 contract: rank gates are 0-based, matching
+        # ``OpenSeesMP::getPID()``.  Under ``mpiexec -np N`` ranks
+        # cover ``{0..N-1}`` — the broker's 1-based ``PartitionRecord.id``
+        # is *not* used as the runtime rank (the build path uses
+        # ``enumerate(fem.partitions)``).
         rank_set = set(blocks.keys())
-        assert len(rank_set) == n_parts, (
-            f"expected {n_parts} distinct ranks; got {sorted(rank_set)}"
+        assert rank_set == set(range(n_parts)), (
+            f"expected 0-based rank gates {set(range(n_parts))}; "
+            f"got {sorted(rank_set)}.  If this is {{1..{n_parts}}} the "
+            f"0-based-rank fix has regressed."
         )
 
         outside = _outside_partition_blocks(text)
@@ -435,14 +436,13 @@ def test_scenario_a_flavor_a_full_pipeline(n_parts: int, tmp_path: Path) -> None
 
         # The Py shim is a try/except wrap of `getPID` from openseespy.
         assert "getPID" in py_text, "Py deck missing the getPID shim symbol"
-        # The Py deck must contain one ``if getPID() == K:`` gate per
-        # rank (whatever K values the bridge picked — typically 1-based
-        # for Gmsh-built FEMs, 0-based for hand-rolled fixtures).
+        # Per schema 2.11.0, Py gates are 0-based matching
+        # ``OpenSeesMP::getPID()`` (mirrors the Tcl assertion above).
         py_rank_re = re.compile(r"if getPID\(\) == (\d+):")
         py_rank_set = {int(m.group(1)) for m in py_rank_re.finditer(py_text)}
-        assert len(py_rank_set) == n_parts, (
-            f"Py deck: expected {n_parts} distinct per-rank gates "
-            f"`if getPID() == K:`; got {sorted(py_rank_set)}"
+        assert py_rank_set == set(range(n_parts)), (
+            f"Py deck: expected 0-based per-rank gates "
+            f"{set(range(n_parts))}; got {sorted(py_rank_set)}"
         )
 
         # --- 8. Emit H5 archive -----------------------------------------
@@ -452,14 +452,16 @@ def test_scenario_a_flavor_a_full_pipeline(n_parts: int, tmp_path: Path) -> None
         with h5py.File(str(h5_path), "r") as f:
             assert "/opensees/partitions" in f, (
                 "H5 file missing /opensees/partitions/ group "
-                "(ADR 0027 schema 2.10.0)"
+                "(ADR 0027 schema 2.10.0, 0-based ranks since 2.11.0)"
             )
             parts_grp = f["/opensees/partitions"]
             assert int(parts_grp.attrs["n_partitions"]) == n_parts, (
                 f"n_partitions attr = "
                 f"{parts_grp.attrs.get('n_partitions')!r}; expected {n_parts}"
             )
-            # One partition_NN sub-group per rank.
+            # One partition_NN sub-group per rank.  Schema 2.11.0
+            # contract: the per-group ``rank`` attr is the 0-based
+            # runtime rank (== loop index ``k`` here).
             for k in range(n_parts):
                 gname = f"partition_{k:02d}"
                 assert gname in parts_grp, (
@@ -471,6 +473,10 @@ def test_scenario_a_flavor_a_full_pipeline(n_parts: int, tmp_path: Path) -> None
                     assert attr in g_p.attrs, (
                         f"{gname}: missing required attr {attr!r}"
                     )
+                assert int(g_p.attrs["rank"]) == k, (
+                    f"{gname}/@rank must be {k} (0-based runtime "
+                    f"rank, schema 2.11.0); got {int(g_p.attrs['rank'])}"
+                )
                 # Required datasets.
                 for ds in ("element_ids", "node_ids", "boundary_node_ids"):
                     assert ds in g_p, (

@@ -1610,15 +1610,24 @@ def build_node_partition_owners(fem: "FEMData") -> dict[int, set[int]]:
     that the partitioner replicates across ranks).  The returned dict
     is keyed by every node id that appears in any ``PartitionRecord``;
     unknown / unowned nodes are absent from the map.
+
+    ``rank_id`` is the **0-based runtime rank** — matching
+    ``OpenSeesMP::getPID()`` — derived via ``enumerate`` over
+    ``fem.partitions`` (which already iterates in sorted Gmsh-id
+    order, so the assignment is stable and deterministic).  The
+    broker's Gmsh-side 1-based ``PartitionRecord.id`` is preserved
+    on the records themselves; only the runtime-rank seam (this
+    helper, ``build_element_partition_owner``, and the
+    ``partition_rank`` parameter passed to per-rank fan-out helpers)
+    is 0-based.
     """
     owners: dict[int, set[int]] = {}
     parts = getattr(fem, "partitions", None)
     if parts is None:
         return owners
-    for rec in parts:
-        rid = int(rec.id)
+    for rank, rec in enumerate(parts):
         for nid in rec.node_ids:
-            owners.setdefault(int(nid), set()).add(rid)
+            owners.setdefault(int(nid), set()).add(rank)
     return owners
 
 
@@ -1631,18 +1640,22 @@ def build_element_partition_owner(fem: "FEMData") -> dict[int, int]:
     not present in any partition are absent from the map; callers
     interpret "missing key" as "unowned" and either skip emission or
     fall back to an explicit policy.
+
+    ``rank_id`` is the **0-based runtime rank** — matching
+    ``OpenSeesMP::getPID()`` — derived via ``enumerate`` over
+    ``fem.partitions`` (sorted Gmsh-id order).  See the docstring
+    on :func:`build_node_partition_owners` for the rationale.
     """
     owners: dict[int, int] = {}
     parts = getattr(fem, "partitions", None)
     if parts is None:
         return owners
-    for rec in parts:
-        rid = int(rec.id)
+    for rank, rec in enumerate(parts):
         for eid in rec.element_ids:
             # If an element appears in two partitions (degenerate input),
             # the first-seen partition wins.  This is a deterministic
             # tiebreak; callers can rely on it.
-            owners.setdefault(int(eid), rid)
+            owners.setdefault(int(eid), rank)
     return owners
 
 

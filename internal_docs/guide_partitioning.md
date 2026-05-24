@@ -327,25 +327,31 @@ Backend dispatch rules (from `_mesh_partitioning.py`):
 ## 5. HDF5 round-trip and post-processing
 
 `ops.h5(path)` writes the bridge's canonical `model.h5`. When
-`len(fem.partitions) > 1`, the bridge populates the schema 2.10.0
+`len(fem.partitions) > 1`, the bridge populates the schema 2.11.0
 partition zone:
 
 ```
-/meta                                 (carries opensees=2.10.0)
+/meta                                 (carries opensees=2.11.0)
 /opensees/...                         (nodes, elements, materials, ...)
 /opensees/partitions/                 (n_partitions = N attr)
-  partition_01/
-    element_ids        int64 (n_elem_rank_1,)
-    node_ids           int64 (n_node_rank_1,)   # native + foreign decls
-    boundary_node_ids  int64 (n_boundary_1,)    # shared with another rank
-    @rank              = 1
+  partition_00/
+    element_ids        int64 (n_elem_rank_0,)
+    node_ids           int64 (n_node_rank_0,)   # native + foreign decls
+    boundary_node_ids  int64 (n_boundary_0,)    # shared with another rank
+    @rank              = 0
     @n_elements        = ...
     @n_nodes           = ...
-  partition_02/
+  partition_01/
     ...
 /opensees/element_meta/{type_token}/
   partition_ids        int64 (n_elem_of_type,)  # parallel to other columns
 ```
+
+Group names and the `rank` attr / `partition_ids` values are
+**0-based** (matching `OpenSeesMP::getPID()`).  The broker's
+`PartitionRecord.id` remains Gmsh's 1-based label — that is
+Gmsh-side traceability metadata, not a runtime rank.  The mapping
+is `rank == i`, `PartitionRecord.id == fem.partitions[rank].id`.
 
 The new parallel `partition_ids` column on every
 `element_meta/{type}/` group lets a reader filter elements by rank
@@ -367,6 +373,9 @@ for rec in om._fem.partitions:
     print(rec)
 # PartitionRecord(id=1, n_nodes=12, n_elements=10)
 # ...
+# (PartitionRecord.id retains Gmsh's 1-based label;
+# the matching OpenSeesMP rank is the enumerate index — rank 0
+# is fem.partitions[0] is PartitionRecord(id=1, ...).)
 ```
 
 `OpenSeesModel.from_h5` rehydrates the broker via
@@ -386,9 +395,9 @@ with h5_reader.open("frame_partitioned.h5") as model:
               f"{len(rec.boundary_node_ids)} boundary nodes")
 ```
 
-Schema version: **opensees 2.10.0** (per ADR 0023 two-version reader
-window — 2.9.x readers still open 2.10.x files, ignoring the new
-partition zone).
+Schema version: **opensees 2.11.0** (per ADR 0023 two-version
+reader window — 2.10.x readers still open 2.11.x files; rank attr
+/ `partition_ids` row values became 0-based in 2.11.0).
 
 
 ## 6. Viewer integration
@@ -472,9 +481,9 @@ deck contains the same `rigidDiaphragm` line on every rank that
 owns at least one slave corner:
 
 ```tcl
-if {[getPID] == 1} {
+if {[getPID] == 0} {
     ...
-    # Foreign-node declarations for nodes rank 1 does not own.
+    # Foreign-node declarations for nodes rank 0 does not own.
     node 7 5.0 5.0 3.0 -ndf 6
     node 11 0.0 0.0 3.0 -ndf 6
 
@@ -483,7 +492,7 @@ if {[getPID] == 1} {
     rigidDiaphragm 3 5 7 9 11
 }
 
-if {[getPID] == 2} {
+if {[getPID] == 1} {
     ...
     node 5 0.0 0.0 3.0 -ndf 6
     node 9 5.0 0.0 3.0 -ndf 6
@@ -492,7 +501,7 @@ if {[getPID] == 2} {
 }
 ```
 
-Both rank 1 and rank 2 emit the **same** `rigidDiaphragm 3 5 7 9 11`
+Both rank 0 and rank 1 emit the **same** `rigidDiaphragm 3 5 7 9 11`
 line; whichever ranks natively own which slaves, the foreign-side
 ranks declare the missing nodes before the line. The OpenSeesMP
 constraint handler dedupes equivalent declarations at solve time —
@@ -574,16 +583,20 @@ expected to change.
 
 ## 9. Gotchas and known limitations
 
-- **1-based partition IDs.** Gmsh emits partition tags as `1..N`,
-  not `0..N-1`. The matching `if {[getPID] == K}` blocks in the
-  emitted Tcl also use 1-based ranks (matching Gmsh / `fem.partitions`).
-  **However**, OpenSeesMP's `getPID` returns 0-based ranks. The
-  bridge currently emits ranks as they land from `fem.partitions`
-  (1-based); under `mpiexec -np 4` only ranks that match the
-  emitted block IDs execute. If you are surprised by silent
-  no-execution on some ranks, this is the place to check —
-  prefer iterating `for rec in fem.partitions:` over hard-coding
-  rank IDs in your post-processing scripts.
+- **Partition ID conventions: broker is 1-based, runtime is 0-based.**
+  Gmsh assigns `PartitionRecord.id` as `1..N` (Gmsh-side label,
+  preserved on the broker for traceability).  The emitted Tcl /
+  Py runtime gates are `if {[getPID] == K}` with `K in 0..N-1`,
+  matching `OpenSeesMP::getPID()`.  The mapping is
+  `rank == i, fem.partitions[rank].id == rank + 1` — available
+  via plain `enumerate(fem.partitions)`.  This was a bug in
+  schema 2.10.0 (gates were 1-based, so rank 0 had no work and
+  partition N's content was silently dropped under `mpiexec -np
+  N`); schema 2.11.0 fixed it at the build-path seam.  Post-
+  processing scripts should iterate `for rank, rec in
+  enumerate(fem.partitions):` rather than hard-coding rank IDs,
+  and downstream HDF5 readers should treat `partition_NN/rank` /
+  `partition_ids` values as 0-based.
 
 - **`pymetis` has no PyPI Windows wheel.** Install via
   `conda install -c conda-forge pymetis`, or use Flavor A which

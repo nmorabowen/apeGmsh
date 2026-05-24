@@ -522,10 +522,15 @@ class BuiltModel:
         # Stable per-rank node tags — sort within each rank by node id
         # so cross-rank diffs of the emitted text are grep-friendly.
         # Cache the owned set per rank for the fix / mass / region
-        # passes below.
+        # passes below.  Keyed by the **0-based runtime rank** (what
+        # OpenSeesMP's ``getPID()`` returns), derived via ``enumerate``
+        # over ``partitions`` (which already iterates in sorted Gmsh-id
+        # order).  Broker's ``part.id`` stays Gmsh's 1-based label and
+        # is preserved verbatim on the records themselves; only the
+        # runtime-rank seam is 0-based.
         rank_owned_nodes: dict[int, set[int]] = {
-            int(rec.id): {int(n) for n in rec.node_ids}
-            for rec in partitions
+            rank: {int(n) for n in rec.node_ids}
+            for rank, rec in enumerate(partitions)
         }
 
         # Cross-rank tag identity caches (region tags, broker
@@ -537,8 +542,12 @@ class BuiltModel:
         # Pre-compute the post-element rank-local plan for the bridge's
         # fix / mass / region / load passes.  We use the same shapes
         # the flat path uses but pre-intersect with per-rank ownership.
-        for part in partitions:
-            rank = int(part.id)
+        # ``rank`` is the **0-based runtime rank** matching
+        # OpenSeesMP's ``getPID()`` — derived from ``enumerate`` over
+        # ``partitions`` so it does not collide with Gmsh's 1-based
+        # ``part.id``.  See the bug fix in commit titled
+        # ``fix(opensees-bridge): emit 0-based runtime ranks``.
+        for rank, part in enumerate(partitions):
             emitter.partition_open(rank)
             try:
                 # 1a. Owned nodes — emit in node-id order for stable

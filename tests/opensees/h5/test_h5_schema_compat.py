@@ -400,36 +400,39 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Schema 2.10.0 (ADR 0027) / /opensees/partitions/
+# Schema 2.11.0 — 0-based-runtime-rank fix
 # (2.7.0 added /opensees/constraints/; 2.8.0 renamed embeddedNode's
 #  embedding_ele → cnode; 2.9.0 added /opensees/regions/ for MPCO
 #  region-filtered output; 2.10.0 added /opensees/partitions/ +
-#  partition_ids column for OpenSeesMP per-rank emission.)
+#  partition_ids column for OpenSeesMP per-rank emission; 2.11.0
+#  flipped the runtime-rank seam to 0-based — partition_NN/rank attr
+#  and the partition_ids column values are now in [0, N-1] rather
+#  than [1, N], matching OpenSeesMP::getPID().)
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_10_0() -> None:
-    """Schema 2.10.0 — /opensees/partitions/ zone (ADR 0027)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 10, 0)
+def test_opensees_reader_version_is_2_11_0() -> None:
+    """Schema 2.11.0 — 0-based runtime ranks (was Gmsh 1-based)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 11, 0)
 
 
-def test_two_version_window_at_2_10_accepts_2_9_and_2_10() -> None:
-    """Reader at 2.10.0 accepts 2.9.x and 2.10.x (window: prev minor + current)."""
-    reader = SchemaVersion(2, 10, 0)
+def test_two_version_window_at_2_11_accepts_2_10_and_2_11() -> None:
+    """Reader at 2.11.0 accepts 2.10.x and 2.11.x (window: prev minor + current)."""
+    reader = SchemaVersion(2, 11, 0)
     for patch in (0, 1, 99):
-        validate_zone_version(
-            SchemaVersion(2, 9, patch), reader, zone=OPENSEES,
-        )
         validate_zone_version(
             SchemaVersion(2, 10, patch), reader, zone=OPENSEES,
         )
+        validate_zone_version(
+            SchemaVersion(2, 11, patch), reader, zone=OPENSEES,
+        )
 
 
-def test_two_version_window_at_2_10_refuses_2_8() -> None:
-    """Reader at 2.10.0 refuses 2.8.x (outside window)."""
+def test_two_version_window_at_2_11_refuses_2_9() -> None:
+    """Reader at 2.11.0 refuses 2.9.x (outside window)."""
     with pytest.raises(_PerZoneSchemaError) as exc:
         validate_zone_version(
-            SchemaVersion(2, 8, 0), SchemaVersion(2, 10, 0), zone=OPENSEES,
+            SchemaVersion(2, 9, 0), SchemaVersion(2, 11, 0), zone=OPENSEES,
         )
     assert "too old" in str(exc.value)
 

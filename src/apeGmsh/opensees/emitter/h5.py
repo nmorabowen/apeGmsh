@@ -225,7 +225,18 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     readers ignore the new group and the new column.  Per ADR 0023
 #:     two-version reader window, both 2.9.x and 2.10.x files are
 #:     accepted.
-SCHEMA_VERSION: str = "2.10.0"
+#:   * 2.11.0 — bug fix: the bridge now emits **0-based runtime ranks**
+#:     (matching ``OpenSeesMP::getPID()``) instead of Gmsh's 1-based
+#:     ``PartitionRecord.id``.  Side effect on this zone: per-partition
+#:     group ``rank`` attrs and the parallel ``partition_ids`` column
+#:     values become 0-based (``0..N-1``) instead of 1-based (``1..N``).
+#:     Group naming (``partition_NN`` is just the loop index) is
+#:     unchanged.  The broker's Gmsh-side 1-based ``PartitionRecord.id``
+#:     is preserved verbatim (only the runtime-rank seam flipped).
+#:     Breaking for any reader that mapped ``rank`` attr / partition_ids
+#:     values to ``part.id`` directly; per ADR 0023 two-version reader
+#:     window, both 2.10.x and 2.11.x files are accepted.
+SCHEMA_VERSION: str = "2.11.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path

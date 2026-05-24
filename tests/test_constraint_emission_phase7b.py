@@ -784,10 +784,12 @@ class TestH5SchemaIntegration:
         with h5py.File(out, "r") as f:
             assert "opensees/constraints" not in f
 
-    def test_schema_version_is_2_9_0(self, tmp_path: Path) -> None:
+    def test_schema_version_matches_opensees_current(self, tmp_path: Path) -> None:
         # Phase 7b bumped to 2.7.0 originally; the embeddedNode rename
-        # bumped to 2.8.0 (separately); ADR 0024 (region() Protocol
-        # widening) bumped to 2.9.0.
+        # bumped to 2.8.0; ADR 0024 (region() Protocol widening) bumped
+        # to 2.9.0; ADR 0027 INV-5 amendment + partition emission
+        # carried it to 2.10.0; the 0-based rank-gate fix bumped to
+        # 2.11.0 (partition_NN groups changed naming convention).
         from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION
         assert SCHEMA_VERSION == OPENSEES_CURRENT
         e = H5Emitter()
@@ -797,9 +799,9 @@ class TestH5SchemaIntegration:
             assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
             assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
 
-    def test_reader_window_accepts_2_9_and_2_10(self, tmp_path: Path) -> None:
-        """The 2-version window for OpenSees zone is now 2.9.x — 2.10.x
-        (post-ADR-0027)."""
+    def test_reader_window_accepts_2_10_and_2_11(self, tmp_path: Path) -> None:
+        """The 2-version window for OpenSees zone is now 2.10.x — 2.11.x
+        (post-#304, 0-based rank gates)."""
         from apeGmsh.opensees._internal.schema_version import (
             OPENSEES,
             SchemaVersion,
@@ -808,13 +810,13 @@ class TestH5SchemaIntegration:
             validate_zone_version,
         )
         reader = reader_version(OPENSEES)
-        assert reader == SchemaVersion(2, 10, 0)
-        validate_zone_version(SchemaVersion(2, 9, 0), reader, zone=OPENSEES)
+        assert reader == SchemaVersion(2, 11, 0)
         validate_zone_version(SchemaVersion(2, 10, 0), reader, zone=OPENSEES)
-        # 2.8.x is now outside the window.
+        validate_zone_version(SchemaVersion(2, 11, 0), reader, zone=OPENSEES)
+        # 2.9.x is now outside the window.
         with pytest.raises(SchemaVersionError):
             validate_zone_version(
-                SchemaVersion(2, 8, 0), reader, zone=OPENSEES,
+                SchemaVersion(2, 9, 0), reader, zone=OPENSEES,
             )
 
 

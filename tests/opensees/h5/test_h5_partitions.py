@@ -38,13 +38,17 @@ from apeGmsh.opensees.emitter.h5_reader import (
 # ---------------------------------------------------------------------------
 
 def test_schema_version_bumped() -> None:
-    """Schema bumped from 2.9.0 -> 2.10.0 per ADR 0023 additive minor.
+    """Schema bumped from 2.10.0 -> 2.11.0 per the 0-based-rank fix.
 
-    The ADR 0027 contract spells out the per-zone bump; the bridge's
-    :data:`SCHEMA_VERSION` is the single source for the OPENSEES
-    zone (``schema_version.reader_version(OPENSEES)`` reads it).
+    The 0-based-runtime-rank fix flips per-partition ``rank`` attr
+    and parallel ``partition_ids`` values from Gmsh's 1-based labels
+    to OpenSeesMP's 0-based ``getPID()`` convention; that is a
+    breaking-for-readers schema change, hence the minor bump.  The
+    bridge's :data:`SCHEMA_VERSION` is the single source for the
+    OPENSEES zone (``schema_version.reader_version(OPENSEES)``
+    reads it).
     """
-    assert SCHEMA_VERSION == "2.10.0"
+    assert SCHEMA_VERSION == "2.11.0"
 
 
 # ---------------------------------------------------------------------------
@@ -225,26 +229,27 @@ def test_h5_reader_round_trip_partitions(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 6 — back-compat against a synthetic 2.9.0 archive
+# Test 6 — back-compat against a synthetic prior-minor archive
 # ---------------------------------------------------------------------------
 
 def test_h5_reader_back_compat_pre_partition_schema(
     tmp_path: Path,
 ) -> None:
-    """A file written under the previous opensees-zone schema (2.9.0,
-    no ``/opensees/partitions/`` group) opens cleanly under the
-    current reader and ``H5Model.partitions()`` returns ``[]``.
+    """A file written under the previous opensees-zone schema (2.10.0,
+    pre-0-based-rank-fix) opens cleanly under the current reader
+    and ``H5Model.partitions()`` returns ``[]`` when no partition
+    brackets were emitted.
 
-    Builds the legacy file by overriding the writer's
-    ``schema_version`` and emitting without any partition brackets —
-    the resulting file is byte-shape-equivalent to a 2.9.x archive
-    (no partitions group; ``partition_ids`` column is the only
-    deviation, which old readers ignore — additive minor per ADR 0023).
-    The two-version reader window from
-    :mod:`apeGmsh.opensees._internal.schema_version` accepts the 2.9.0
-    stamp.
+    The 2.10.0 → 2.11.0 bump (0-based runtime ranks) is breaking only
+    for readers that interpret the ``rank`` attr / ``partition_ids``
+    values as 1-based ``PartitionRecord.id`` labels.  For files
+    written WITHOUT any ``partition_open`` / ``partition_close``
+    brackets the two versions are byte-shape-equivalent (no
+    partitions group; ``partition_ids`` column is all ``-1``), so a
+    2.10.0 stamp on such a file is honored by the two-version reader
+    window from :mod:`apeGmsh.opensees._internal.schema_version`.
     """
-    e = H5Emitter(schema_version="2.9.0")
+    e = H5Emitter(schema_version="2.10.0")
     e.model(ndm=3, ndf=6)
     e.node(1, 0.0, 0.0, 0.0)
     e.node(2, 1.0, 0.0, 0.0)
@@ -255,7 +260,7 @@ def test_h5_reader_back_compat_pre_partition_schema(
     e.write(str(out))
 
     with h5_reader.open(str(out)) as m:
-        assert m.schema_version == "2.9.0"
+        assert m.schema_version == "2.10.0"
         recs = m.partitions()
         assert recs == []
 
