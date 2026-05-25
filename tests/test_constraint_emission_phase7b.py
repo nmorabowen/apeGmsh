@@ -513,12 +513,15 @@ class TestEmitMpConstraintsFanout:
         assert rec.calls[1] == ("node", (201, 1.0, 0.0, 1.0), {"ndf": 6})
 
     def test_surface_coupling_tie_dispatches_to_embedded_node(self) -> None:
+        # 3 master nodes = tri3 host (minimum supported by C++
+        # ASDEmbeddedNodeElement; 2 masters would crash OpenSees at
+        # runtime, caught by _check_embedded_rnode_count at emit time).
         fem = make_two_column_frame()
         interp = InterpolationRecord(
             kind=ConstraintKind.TIE,
             slave_node=5,
-            master_nodes=[1, 2],
-            weights=np.array([0.5, 0.5]),
+            master_nodes=[1, 2, 3],
+            weights=np.array([1 / 3, 1 / 3, 1 / 3]),
             dofs=[1, 2, 3],
         )
         fem.add_surface_constraints([interp])
@@ -530,29 +533,31 @@ class TestEmitMpConstraintsFanout:
         # The Emitter Protocol forwards as (ele_tag, Cnode, *Rnodes).
         # Cnode is the embedded (slave) node; Rnodes are the host element corners.
         assert rec.calls[0][1][1] == 5            # Cnode = slave_node
-        assert rec.calls[0][1][2:] == (1, 2)      # Rnodes = master_nodes
+        assert rec.calls[0][1][2:] == (1, 2, 3)   # Rnodes = master_nodes
 
     def test_surface_coupling_tied_contact_expands_slave_records(
         self,
     ) -> None:
+        # Each slave_record uses 3 masters (tri3 host); see comment on
+        # the sibling tie test for the C++ Rnode-count constraint.
         fem = make_two_column_frame()
         coupling = SurfaceCouplingRecord(
             kind=ConstraintKind.TIED_CONTACT,
             slave_nodes=[5, 6],
-            master_nodes=[1, 2, 3],
+            master_nodes=[1, 2, 3, 4],
             slave_records=[
                 InterpolationRecord(
                     kind=ConstraintKind.TIED_CONTACT,
                     slave_node=5,
-                    master_nodes=[1, 2],
-                    weights=np.array([0.5, 0.5]),
+                    master_nodes=[1, 2, 3],
+                    weights=np.array([1 / 3, 1 / 3, 1 / 3]),
                     dofs=[1, 2, 3],
                 ),
                 InterpolationRecord(
                     kind=ConstraintKind.TIED_CONTACT,
                     slave_node=6,
-                    master_nodes=[2, 3],
-                    weights=np.array([0.5, 0.5]),
+                    master_nodes=[2, 3, 4],
+                    weights=np.array([1 / 3, 1 / 3, 1 / 3]),
                     dofs=[1, 2, 3],
                 ),
             ],

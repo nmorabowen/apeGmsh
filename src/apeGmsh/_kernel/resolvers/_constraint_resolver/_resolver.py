@@ -767,9 +767,10 @@ class ConstraintResolver:
         centroid_tree = _SpatialIndex(centroids)
 
         tol = float(defn.tolerance)
-        # Barycentric out-of-element tolerance is unitless; keep it
-        # small so we don't falsely claim a node sits inside an element
-        # it is only grazing.
+        # ``bary_tol`` is the inside-the-element early-break threshold
+        # (resolver short-circuits once a host gives an inside hit).
+        # The user-facing acceptance threshold is ``tol`` — applied
+        # below as a fail-loud gate after the best-candidate search.
         bary_tol = 1e-6
 
         records: list[InterpolationRecord] = []
@@ -813,6 +814,7 @@ class ConstraintResolver:
                         dofs=[1, 2, 3],
                         projected_point=p.copy(),
                         parametric_coords=parametric,
+                        excess=float(excess),
                     )
                 if excess <= bary_tol:
                     break
@@ -820,10 +822,25 @@ class ConstraintResolver:
             if best_record is None:
                 continue
 
-            # Use defn.tolerance as a soft gate on barycentric excess
-            # scaled by a characteristic host edge length. We simply
-            # accept any located record; the caller (composite) decides
-            # whether to warn.
+            # Fail-loud gate on the user-facing barycentric excess
+            # threshold.  ``best_excess`` accounts for float math via
+            # ``bary_tol`` — an inside hit short-circuits the search
+            # with excess <= 1e-6 ≈ 0.  An off-host node that survives
+            # the search has ``best_excess > 0`` (extrapolation); we
+            # accept only when ``best_excess <= defn.tolerance``, else
+            # raise with a clear message naming the slave node so the
+            # user can either fix the geometry / mesh or set a wider
+            # tolerance explicitly.
+            if best_excess > tol + bary_tol:
+                raise ValueError(
+                    f"resolve_embedded: slave node {en} lies outside "
+                    f"every host element (barycentric excess "
+                    f"{best_excess:.3e}, tolerance {tol:.3e}).  Fix the "
+                    f"geometry/mesh so the embedded node falls inside "
+                    f"the host, OR set `EmbeddedDef.tolerance` to a "
+                    f"value >= {best_excess:.3e} if extrapolation is "
+                    f"intentional.  Constraint name: {defn.name!r}."
+                )
             records.append(best_record)
 
         return records

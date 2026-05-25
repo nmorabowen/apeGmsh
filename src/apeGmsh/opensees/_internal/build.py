@@ -1779,6 +1779,7 @@ def _emit_surface_couplings(
     for rec in interps():
         if not isinstance(rec, InterpolationRecord):
             continue
+        _check_embedded_rnode_count(rec)
         _emit_name(emitter, rec.name)
         # ASDEmbeddedNodeElement OpenSees signature:
         #   element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4>
@@ -1792,6 +1793,29 @@ def _emit_surface_couplings(
         cnode = int(rec.slave_node)
         args: list[int | float] = [int(mn) for mn in rec.master_nodes]
         emitter.embeddedNode(ele_tag, cnode, *args)
+
+
+def _check_embedded_rnode_count(rec: object) -> None:
+    """Fail-loud guard: ASDEmbeddedNodeElement only accepts 3 or 4
+    Rnodes (tri host or tet host).
+
+    The C++ parser silently misreads a 5+-Rnode line as a record with
+    flag positions in the slots (anything past ``$Rnode4`` is read as
+    an option string); a 2-Rnode line aborts in ``setDomain``.  Catch
+    here with a clear error rather than at OpenSees runtime.
+    """
+    n = len(getattr(rec, "master_nodes", ()) or ())
+    if n not in (3, 4):
+        slave = getattr(rec, "slave_node", "?")
+        name = getattr(rec, "name", None) or "<unnamed>"
+        raise ValueError(
+            f"ASDEmbeddedNodeElement {name!r} (slave={slave}) has "
+            f"{n} master nodes; the C++ parser only accepts 3 (tri3 "
+            f"host) or 4 (tet4 host).  This typically indicates a "
+            f"hand-built InterpolationRecord that bypassed the "
+            f"resolver, or a resolver path that produced an unsupported "
+            f"host topology."
+        )
 
 
 def _emit_name(emitter: "Emitter", name: object) -> None:
@@ -2711,6 +2735,7 @@ def _emit_surface_couplings_for_rank(
     for rec in records:
         if not isinstance(rec, InterpolationRecord):
             continue
+        _check_embedded_rnode_count(rec)
         _emit_name(emitter, rec.name)
         ele_tag = tags.allocate("element")
         cnode = int(rec.slave_node)

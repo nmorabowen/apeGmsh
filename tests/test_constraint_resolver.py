@@ -12,6 +12,7 @@ import math
 import unittest
 
 import numpy as np
+import pytest
 
 from apeGmsh.core.constraints.defs import (
     DistributingCouplingDef,
@@ -508,6 +509,85 @@ class TestResolveEmbedded(unittest.TestCase):
         self.assertEqual(records[0].master_nodes, [2, 4, 3])
         # Weights must be non-negative (point is inside).
         self.assertTrue((records[0].weights >= -1e-12).all())
+
+
+# ---------------------------------------------------------------------
+# Phase 2 — barycentric-excess tolerance gate
+# ---------------------------------------------------------------------
+#
+# ``EmbeddedDef.tolerance`` is the maximum barycentric excess allowed
+# when locating an embedded node inside a host element.  Default
+# ``0.0`` means strictly inside; the resolver raises ``ValueError`` on
+# any off-host node.  Users with CAD-noise geometry set a small
+# positive tolerance (e.g. ``1e-3``) to allow controlled extrapolation.
+
+
+def test_off_host_embedded_node_raises_under_default_tolerance() -> None:
+    """An embedded node lying outside every host element fails loud
+    under the default tolerance (0.0) — never produces an
+    ``InterpolationRecord`` with extrapolation (negative) weights.
+    """
+    coords = {
+        1: (0.0, 0.0, 0.0),
+        2: (1.0, 0.0, 0.0),
+        3: (0.0, 1.0, 0.0),
+        4: (0.0, 0.0, 1.0),
+        99: (10.0, 10.0, 10.0),  # way outside the unit tet
+    }
+    r = _make_resolver(coords)
+    defn = EmbeddedDef(master_label="host", slave_label="rebar",
+                       name="rebar_node_outside_host")
+
+    with pytest.raises(ValueError, match=r"slave node 99 lies outside"):
+        r.resolve_embedded(
+            defn, np.array([[1, 2, 3, 4]], dtype=int), {99},
+        )
+
+
+def test_off_host_embedded_node_accepted_when_tolerance_is_wide() -> None:
+    """Setting ``tolerance`` wider than the actual excess accepts the
+    record (intentional-extrapolation escape hatch for users with
+    geometry/mesh noise they understand)."""
+    coords = {
+        1: (0.0, 0.0, 0.0),
+        2: (1.0, 0.0, 0.0),
+        3: (0.0, 1.0, 0.0),
+        4: (0.0, 0.0, 1.0),
+        99: (10.0, 10.0, 10.0),
+    }
+    r = _make_resolver(coords)
+    defn = EmbeddedDef(master_label="host", slave_label="rebar",
+                       tolerance=1e9)  # arbitrarily large
+
+    records = r.resolve_embedded(
+        defn, np.array([[1, 2, 3, 4]], dtype=int), {99},
+    )
+    assert len(records) == 1
+    # Excess is surfaced on the record (introspectable post-resolve).
+    assert records[0].excess is not None
+    assert records[0].excess > 0.0
+
+
+def test_inside_embedded_node_has_zero_excess() -> None:
+    """An embedded node strictly inside a host element gets a record
+    with ``excess`` ≈ 0 (the short-circuit `bary_tol = 1e-6` threshold).
+    """
+    coords = {
+        1: (0.0, 0.0, 0.0),
+        2: (1.0, 0.0, 0.0),
+        3: (0.0, 1.0, 0.0),
+        4: (0.0, 0.0, 1.0),
+        99: (0.25, 0.25, 0.25),  # tet centroid
+    }
+    r = _make_resolver(coords)
+    defn = EmbeddedDef(master_label="host", slave_label="rebar")
+
+    records = r.resolve_embedded(
+        defn, np.array([[1, 2, 3, 4]], dtype=int), {99},
+    )
+    assert len(records) == 1
+    assert records[0].excess is not None
+    assert records[0].excess <= 1e-6
 
 
 class TestColocatedPairingFailLoud(unittest.TestCase):

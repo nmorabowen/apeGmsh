@@ -50,6 +50,87 @@ def test_embedded_factory_accepts_entity_scoping():
         assert d.embedded_entities == [(1, 7)]
 
 
+# ---------------------------------------------------------------------
+# Phase 2 repro — mixed-host element types silently dropped
+# ---------------------------------------------------------------------
+#
+# ``_collect_host_elems`` (ConstraintsComposite.py:1493) keeps only
+# Gmsh element types 2 (tri3) and 4 (tet4); every other type — quad4
+# (etype 3), hex8 (etype 5), prism (6), tet10 (11), … — is silently
+# dropped.  A user with a mixed mesh (e.g. transition between hex and
+# tet, or quad-recombined surface adjacent to a triangulated one) gets
+# the supported subset and no warning; embedded nodes that fall into
+# the dropped region project onto the nearest tri/tet (often distant)
+# producing extrapolation weights, exactly the same wrong-physics
+# failure as the off-host bug.
+#
+# Phase 2 fix: raise when the host PG contains any element type other
+# than tri3/tet4, with a clear message naming the offending type.
+
+
+def test_embedded_emit_rejects_unsupported_rnode_count():
+    """C++ ASDEmbeddedNodeElement only accepts 3 or 4 Rnodes.  A
+    hand-built record with 2 or 5+ masters must fail loud at emit
+    rather than reaching OpenSees, which would either misread the
+    extras as flags (5+) or abort in setDomain (2).
+    """
+    from apeGmsh._kernel.records._constraints import InterpolationRecord
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+    from apeGmsh.opensees._internal.build import (
+        _check_embedded_rnode_count,
+    )
+
+    bad = InterpolationRecord(
+        kind=ConstraintKind.EMBEDDED,
+        name="too_many_masters",
+        slave_node=99,
+        master_nodes=[1, 2, 3, 4, 5],
+        dofs=[1, 2, 3],
+    )
+    with pytest.raises(ValueError, match="3 \\(tri3 host\\) or 4 \\(tet4 host\\)"):
+        _check_embedded_rnode_count(bad)
+
+    too_few = InterpolationRecord(
+        kind=ConstraintKind.EMBEDDED,
+        name="too_few_masters",
+        slave_node=99,
+        master_nodes=[1, 2],
+        dofs=[1, 2, 3],
+    )
+    with pytest.raises(ValueError, match="3 \\(tri3 host\\) or 4 \\(tet4 host\\)"):
+        _check_embedded_rnode_count(too_few)
+
+
+def test_quad4_host_raises_with_clear_message():
+    """A quad-meshed (recombined) host surface fails loud at
+    ``_collect_host_elems``, naming quad4 as the unsupported type —
+    not a misleading downstream 'host has no elements' message.
+    """
+    import gmsh
+
+    from apeGmsh.core.ConstraintsComposite import ConstraintsComposite
+
+    with apeGmsh(model_name="phase2_mixed_host", verbose=False) as g:
+        surf = g.model.geometry.add_rectangle(0.0, 0.0, 0.0, 1.0, 1.0)
+        g.model.sync()
+        gmsh.option.setNumber("Mesh.RecombineAll", 1)
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(2)
+        g.physical.add(2, [surf], name="concrete")
+
+        # Sanity: the mesh actually contains quad4 (etype 3) elements.
+        etypes, _, _ = gmsh.model.mesh.getElements(dim=2, tag=surf)
+        assert 3 in [int(e) for e in etypes], (
+            f"setup precondition: expected quad4 (etype 3) in the "
+            f"recombined mesh; got etypes={[int(e) for e in etypes]}"
+        )
+
+        # Direct call to the collector — currently returns empty,
+        # which is the silent drop.  After Phase 2 fix it must raise.
+        with pytest.raises(ValueError, match="quad4|element type 3|hex|unsupported"):
+            ConstraintsComposite._collect_host_elems([(2, surf)])
+
+
 def _diaphragm(master, slaves, normal):
     return NodeGroupRecord(
         kind=K.RIGID_DIAPHRAGM, master_node=master, slave_nodes=slaves,

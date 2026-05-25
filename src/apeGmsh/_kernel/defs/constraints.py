@@ -321,14 +321,21 @@ class EmbeddedDef(ConstraintDef):
         ``embedded(..., embedded_entities=...)``; when omitted the
         whole ``embedded_label`` is used.
     tolerance : float
-        Reserved.  **Not currently enforced** — the resolver accepts
-        any located host record (barycentric gating uses a fixed
-        internal tolerance).  Kept for API stability.
+        Maximum **dimensionless barycentric excess** allowed when
+        locating an embedded node inside a host element.  ``0.0``
+        (the default) means strictly inside; ``0.05`` allows ~5%
+        extrapolation; ``inf`` accepts everything (the pre-Phase-2
+        behaviour).  An embedded node whose excess exceeds this
+        threshold raises ``ValueError`` from the resolver naming the
+        offending slave node and its excess — fail-loud, since
+        accepting an extrapolated node silently produces an
+        ``ASDEmbeddedNodeElement`` with negative shape-function
+        weights and the wrong physics.
     """
     kind: str = field(init=False, default="embedded")
     host_entities: list[tuple[int, int]] | None = None
     embedded_entities: list[tuple[int, int]] | None = None
-    tolerance: float = 1.0
+    tolerance: float = 0.0
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────

@@ -202,6 +202,13 @@ class InterpolationRecord(ConstraintRecord):
         (useful for verification / visualisation).
     parametric_coords : ndarray or None
         (ξ, η) on the master face.
+    excess : float or None
+        Barycentric excess of the slave node relative to the host
+        element — ``0.0`` when the slave is strictly inside, positive
+        when outside (extrapolation; the magnitude is how far outside
+        in barycentric coordinates).  Populated by ``resolve_embedded``;
+        ``None`` for records produced by other code paths.  Enables
+        downstream tolerance gating and post-resolution introspection.
     """
     slave_node: int = 0
     master_nodes: list[int] = field(default_factory=list)
@@ -209,6 +216,7 @@ class InterpolationRecord(ConstraintRecord):
     dofs: list[int] = field(default_factory=list)
     projected_point: ndarray | None = None
     parametric_coords: ndarray | None = None
+    excess: float | None = None
 
     def constraint_matrix(self, ndof: int = 3) -> ndarray:
         """

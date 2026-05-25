@@ -1495,11 +1495,24 @@ class ConstraintsComposite:
     ) -> np.ndarray:
         """Gather tet4 / tri3 connectivity rows from *entities*.
 
-        Gmsh element type codes: 2 = tri3, 4 = tet4. Other host types
-        (hex, quad, higher-order) are not supported by
-        ``ASDEmbeddedNodeElement`` and are silently ignored.
+        Gmsh element type codes: 2 = tri3, 4 = tet4. These are the
+        only host types ``ASDEmbeddedNodeElement`` supports.  Any
+        other element type encountered in *entities* (quad4, hex8,
+        prism, pyramid, tri6/tet10/higher-order) raises ``ValueError``
+        naming the offending type and the entity it came from — silent
+        drop would let an embedded node in the dropped region project
+        onto a distant tri/tet (extrapolation, wrong physics, see the
+        off-host case in ``resolve_embedded``).
         """
         import gmsh
+        # Human-readable Gmsh element type names (subset relevant to
+        # embedded hosts) — keyed by the integer etype code.
+        _ETYPE_NAMES = {
+            1: "line2", 2: "tri3", 3: "quad4", 4: "tet4",
+            5: "hex8", 6: "prism6", 7: "pyramid5", 8: "line3",
+            9: "tri6", 10: "quad9", 11: "tet10", 15: "point1",
+            16: "quad8", 17: "hex20", 18: "prism15",
+        }
         tri_rows: list[np.ndarray] = []
         tet_rows: list[np.ndarray] = []
         for dim, tag in entities:
@@ -1511,12 +1524,23 @@ class ConstraintsComposite:
             for etype, nodes in zip(etypes, enodes):
                 if len(nodes) == 0:
                     continue
-                if int(etype) == 2:
+                code = int(etype)
+                if code == 2:
                     tri_rows.append(
                         np.asarray(nodes, dtype=int).reshape(-1, 3))
-                elif int(etype) == 4:
+                elif code == 4:
                     tet_rows.append(
                         np.asarray(nodes, dtype=int).reshape(-1, 4))
+                else:
+                    name = _ETYPE_NAMES.get(code, f"etype={code}")
+                    raise ValueError(
+                        f"embedded: host entity (dim={dim}, tag={tag}) "
+                        f"carries {name} elements; ASDEmbeddedNodeElement "
+                        f"supports only tri3 (etype 2) or tet4 (etype 4) "
+                        f"host elements.  Re-mesh the host with a tri3 / "
+                        f"tet4 algorithm, or restrict the host PG to the "
+                        f"sub-entities that are tet4/tri3-meshed."
+                    )
         # Prefer 3D host if present; otherwise fall back to 2D tris.
         if tet_rows:
             return np.vstack(tet_rows)
