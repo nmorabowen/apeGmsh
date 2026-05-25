@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b) · Phase SSI-2.D stage-bound BCs and recorders
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders
 
 ### CHANGED — boolean.fragment default (BREAKING)
 
@@ -52,6 +52,103 @@
   same once-per-batch semantics as `set` / `set_default`; real
   2.6.0 back-compat fixture replaces the synthetic version-rewrite
   test.
+
+### ADDED — S2: per-node `ndf` flows into OpenSees emit (override-only, ADR 0033)
+
+- **`g.node_ndf` declarations now reach the emitted deck** (PR #325).
+  S1 stored per-node `ndf` on the broker; S2 wires it into every
+  OpenSees emit path. **Override-only semantics**: `g.node_ndf` is
+  the override channel; the model envelope set via
+  `apeSees(fem).model(ndm, ndf=K)` is the default. The emitter passes
+  `-ndf K` on `ops.node(...)` only when the broker carries a
+  non-sentinel value at that nid; sentinel slots elide `-ndf` and
+  OpenSees applies the envelope. This mirrors OpenSees-native
+  `model BasicBuilder -ndf K` + per-node `-ndf J` override semantics.
+
+  **Zero user-facing migration cost.** Existing scripts that never
+  touched `g.node_ndf` emit byte-identical decks — the ~285 existing
+  `apeSees(fem)` test sites and every example notebook keep working
+  without rewrite.
+
+- **Five wiring sites** consult the broker via
+  `fem.nodes.ndf_for(tag)` wrapped in `try/except LookupError` (the
+  miss falls back to the envelope, preserving ADR 0032's fail-loud
+  broker contract): four owned-node emit sites in
+  `apesees.py` (flat global, flat staged-owned, partitioned global,
+  partitioned staged-owned) plus one foreign-node site in
+  `_internal/build.py::emit_mp_constraints_partitioned`. The
+  `_replay_into` helper in `_internal/compose.py` widens its per-node
+  tuple to `(tag, coords, ndf|None)` so per-node declarations survive
+  an H5 round-trip without truncating to the envelope.
+
+- **Three-site validator** (`validate_envelope_covers_broker_ndf`)
+  fires at every `OpenSeesModel` materialisation path —
+  `apeSees.model()`, `OpenSeesModel.from_compose_buffers()`, and
+  `OpenSeesModel.from_h5()`. A misconfigured envelope
+  (e.g. `apeSees(fem).model(ndf=3)` after
+  `g.node_ndf.set("Shells", ndf=6)`) raises `BridgeError` at the
+  call site, naming the offending node and the fix.
+
+- **`from_msh` reverted to `_ndf=None`** (undoes PR #321's
+  zero-stamping); `_hash_nodes` skips the `_ndf` fold when None OR
+  all-sentinel, preserving hash symmetry across construction paths
+  AND the emit-layer envelope fallback on `.msh`-loaded models.
+
+- **OpenSeesMP consistency is hash-guaranteed** (ADR 0021): the
+  resolved `_ndf` array folds into `fem_hash`; every rank
+  deserialises the same broker, so all ranks agree on per-node `ndf`
+  for shared nodes without explicit cross-rank communication.
+
+- **Architecture:** [ADR 0033](src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md)
+  codifies the wiring, validator sites, phantom carveout, and
+  hash-guaranteed cross-rank consistency. Extends
+  [ADR 0032](src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
+  (the broker contract S2 consumes).
+
+- **PR #328 (S2 follow-up):** stateful `set_phantom_node_mode(emitter,
+  bool)` side-channel replaced with a stateless
+  `set_phantom_node_tags(emitter, set[int])` predicate set,
+  pre-loaded ONCE at the entry of `emit_mp_constraints` /
+  `emit_mp_constraints_partitioned`. Phantom tags are guaranteed
+  disjoint from real broker tags (the resolver allocates
+  `> max(broker_node_tag)`), so the pre-loaded set classifies every
+  subsequent `node()` call without flag-flipping or ordering
+  constraints. ADR 0033 §"Phantom-node carveout" gained an
+  "Alternatives considered" subsection naming the rejected paths
+  (mode flag, tag-formula predicate, Protocol-widening kwarg).
+  Eight emit-path tests added in `tests/test_node_ndf.py` covering
+  the headline mixed-ndf shell-on-solid case, backcompat byte-identity,
+  each of the three validator sites, H5 round-trip, the `from_msh`
+  envelope path, and the phantom predicate-set regression.
+
+### ADDED — S5: partitioned mixed-ndf shell-on-solid E2E (closes the stream)
+
+- **`tests/opensees/integration/test_emit_partitioned_mixed_ndf_shell_on_solid.py`**
+  (PR #330) — six OpenSeesMP integration tests proving the
+  per-foreign-node `ndf` lookup added in PR #325 fires per-tag across
+  partition boundaries. The S2 merge unit-tested the flat case; this
+  PR closes the partitioned half:
+  1. headline mixed-ndf partitioned emit — shell on rank 0 emits
+     `ndf=6`, solid on rank 1 emits `ndf=3`, foreign-node decls on
+     each rank carry the *broker-sourced* peer `ndf`;
+  2. INV-2 preserved (foreign node decl precedes `equalDOF`);
+  3. `ATTR_PHANTOM_NODE_TAGS` is empty `frozenset` when no
+     `NodeToSurfaceRecord` exists (guards against real broker tags
+     being mis-classified as phantoms);
+  4. cross-rank consistency — rank 0's foreign-decl ndf for tag T
+     equals rank 1's owned-decl ndf for tag T (observable surface of
+     ADR 0033's hash-guaranteed agreement);
+  5. byte-identical backcompat on uniform-ndf partitioned models;
+  6. envelope validator fires at `apeSees.model(...)`, not deep in
+     the per-rank fan-out.
+
+  Assertion strategy follows the precedent in every other
+  `tests/opensees/integration/test_emit_partitioned_*` file:
+  in-process deck capture via `RecordingEmitter`, bucketed per-rank
+  by `partition_open` / `partition_close` brackets — no subprocess
+  MPI runtime needed for emit-semantics assertions. Test-only PR;
+  zero production code changes. Closes the S1 + S2 + S5
+  shell-to-solid coupling stream.
 
 ### ADDED — Phase SSI-2.D: stage-bound BCs and recorders (ADR 0034)
 

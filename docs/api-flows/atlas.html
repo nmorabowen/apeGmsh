@@ -4094,8 +4094,8 @@
     },
     {
      "node": "os.emit",
-     "action": "emit model() then every fem.nodes id/coords as emitter.node()",
-     "passes": "node tag + xyz floats",
+     "action": "emit model() then every fem.nodes id/coords as emitter.node(); per-node ndf flows via fem.nodes.ndf_for(tag) wrapped in try/except LookupError (override-only — sentinel slots elide -ndf and fall back to the envelope per ADR 0033)",
+     "passes": "node tag + xyz floats + per-node ndf|None",
      "to": "fem.nodes"
     },
     {
