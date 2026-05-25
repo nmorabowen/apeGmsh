@@ -1,6 +1,61 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035)
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension)
+
+### ADDED — stage-bound constraints (`s.embedded` et al.) + `s.initial_stress` PUSH path (Phase SSI-2.D extension)
+
+- **Nine new builder methods on `_StageBuilder` claim resolved constraint
+  records by name** so the constraint emits inside the owning stage's
+  block rather than in the global pre-stage MP-constraint pass:
+  `s.embedded(name=...)`, `s.equal_dof(name=...)`, `s.rigid_link(name=...)`,
+  `s.rigid_diaphragm(name=...)`, `s.kinematic_coupling(name=...)`,
+  `s.tie(name=...)`, `s.distributing(name=...)`, `s.node_to_surface(name=...)`,
+  `s.node_to_surface_spring(name=...)`. The user names the constraint
+  at apeGmsh time (`g.constraints.embedded(..., name="cimbra_embed")`)
+  and claims it inside the stage block by the same name. Claim-by-name
+  semantics (not direct-create) because the kernel resolver requires a
+  live `gmsh` model + parts registry that are typically gone by bridge
+  time.
+
+- **`s.initial_stress(name=, pg=, sigma_*, ramp_steps=, ...)`** —
+  PUSH-create mirror of `ops.initial_stress(...)`. Builds the record
+  directly in the stage's pool, no intermediate `s.add(record)` step.
+  Coexists with the existing PULL path; pick by style. A byte-identical
+  parity test locks the equivalence.
+
+- **Forcing function: Cerro Lindo SSI V5.** STKO's canonical SSI
+  workflow installs lining (cimbra) in Stage 3 via `domainChange` onto
+  an already-equilibrated rock state. With embed records always
+  emitting globally pre-extension, the stiff penalty constraint
+  (K=1e8) was active from t=0 and Newton had to equilibrate
+  rock + lining + embed simultaneously from zero — diverged on step 2.
+  The extension defers the embed to stage 2's block with `domainChange`
+  AFTER constraint emit and BEFORE the stage's analysis chain, exactly
+  mirroring STKO's behaviour.
+
+- **Emit pipeline:** new `emit_stage_mp_constraints` /
+  `emit_stage_mp_constraints_partitioned` orchestrators in
+  [`_internal/build.py`](src/apeGmsh/opensees/_internal/build.py) wrap a
+  flat list of stage records via `_StageConstraintAdapter` and reuse
+  the six per-kind helpers unchanged. The global emit orchestrators
+  receive a `claimed_ids=` set and wrap the FEMData broker in
+  `_ExcludeClaimedConstraints`, so claimed records never double-emit.
+  `domain_change()` gate widens to include
+  `stage.stage_constraint_records`.
+
+- **Out of scope (deferred):** `s.tied_contact` /
+  `s.mortar` — `tied_contact` wraps slave records inside a
+  `SurfaceCouplingRecord` and the global exclusion filter operates on
+  outer-record identity; `mortar` is not kernel-implemented. Both
+  tracked in `_DEFERRED.md`. Implicit promotion of `g.constraints.*`
+  records to stages (Path A from the scoping conversation) — users
+  with pre-existing constraints migrate by adding `name=` and claiming
+  in the right stage block.
+
+- **ADR 0034 extended** with §5a (stage-bound constraints via CLAIM-by-
+  name), §5b (`s.initial_stress` PUSH justification — PULL was
+  forward-looking; side effects fire at emit time), §5c (Cerro Lindo
+  forcing function).
 
 ### ADDED — ASDEmbeddedNodeElement optional flags now reach the deck (ADR 0035)
 

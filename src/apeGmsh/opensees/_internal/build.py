@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     # Use the fully-qualified module path to disambiguate from the
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh._kernel.records._constraints import ConstraintRecord
 
     from ..emitter.base import Emitter
 
@@ -90,6 +91,8 @@ __all__ = [
     "resolve_initial_stress_elements",
     "emit_mp_constraints",
     "emit_mp_constraints_partitioned",
+    "emit_stage_mp_constraints",
+    "emit_stage_mp_constraints_partitioned",
     "emit_pattern_spec",
     "emit_recorder_spec",
     "expand_pg_to_elements",
@@ -280,6 +283,18 @@ class StageRecord:
     mass) and PR-C (region + recorder).  Existing construction sites
     that don't pass the new fields keep working via the ``()``
     defaults.
+
+    Stage-bound constraint pool (``stage_constraint_records``) holds
+    resolved :class:`~apeGmsh._kernel.records._constraints.ConstraintRecord`
+    instances authored via ``s.embedded`` / ``s.equal_dof`` /
+    ``s.rigid_link`` / ``s.tie`` / ``s.tied_contact`` /
+    ``s.kinematic_coupling`` / ``s.node_to_surface``.  Each method
+    calls the existing kernel resolver and routes the resolved records
+    here instead of into ``fem.elements.constraints`` /
+    ``fem.nodes.constraints``, so the global pre-stage constraint
+    emit pass skips them and the per-stage emit hook (after regions,
+    before ``domain_change``) emits them inside the owning stage's
+    block.
     """
 
     name: str
@@ -317,6 +332,13 @@ class StageRecord:
     mass_records: tuple[MassRecord, ...] = ()
     region_records: tuple[RegionAssignmentRecord, ...] = ()
     recorder_specs: tuple[Recorder, ...] = ()
+    # Stage-bound constraint pool.  Populated by
+    # ``_StageBuilder.embedded`` / ``.equal_dof`` / ``.rigid_link`` /
+    # ``.tie`` / ``.tied_contact`` / ``.kinematic_coupling`` /
+    # ``.node_to_surface`` — each calls the kernel resolver and
+    # appends resolved records here.  Default ``()`` keeps existing
+    # construction sites and tests working unmodified.
+    stage_constraint_records: tuple["ConstraintRecord", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1430,6 +1452,7 @@ def _sanitize_raw_token(token: str) -> str:
 
 def emit_mp_constraints(
     emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
+    *, claimed_ids: "frozenset[int]" = frozenset(),
 ) -> None:
     """Fan out the broker's MP-constraint records onto ``emitter``.
 
@@ -1504,6 +1527,19 @@ def emit_mp_constraints(
         if elements is not None
         else None
     )
+
+    # Filter out records claimed by stage builders so they don't
+    # double-emit in the global block and again inside their owning
+    # stage's block.  Wrap once at the orchestrator; helpers consume
+    # the adapter unchanged.
+    if claimed_ids and node_constraints is not None:
+        node_constraints = _ExcludeClaimedConstraints(
+            node_constraints, claimed_ids,
+        )
+    if claimed_ids and surface_constraints is not None:
+        surface_constraints = _ExcludeClaimedConstraints(
+            surface_constraints, claimed_ids,
+        )
 
     # -------------------------------------------------------------------
     # 0. Pre-load the phantom-tag predicate on the emitter so the H5
@@ -2291,6 +2327,217 @@ def _gather_phantom_nodes(node_constraints: object) -> dict[int, tuple[float, fl
     return out
 
 
+# ---------------------------------------------------------------------------
+# Stage-bound MP constraints — flat-list adapter + per-stage emit helpers.
+# ---------------------------------------------------------------------------
+
+
+class _ExcludeClaimedConstraints:
+    """Wrap a constraint container, hiding records whose ``id()`` is
+    in ``claimed_ids`` (records claimed by stage builders).
+
+    The MP-constraint emit pass calls this once at the orchestrator
+    level (``emit_mp_constraints`` / ``emit_mp_constraints_partitioned``)
+    to filter ``fem.{nodes,elements}.constraints`` before handing
+    the result to the per-kind helpers.  Stage-claimed records emit
+    inside their owning stage's block instead (see
+    :func:`emit_stage_mp_constraints`), so excluding them from the
+    global pass is what produces the per-stage routing.
+
+    Stateless aside from the wrapped container + frozen claim set;
+    reused on every emit pass.  Delegation surface mirrors
+    :class:`_StageConstraintAdapter` for symmetry with the per-kind
+    helpers.
+    """
+    __slots__ = ("_inner", "_claimed")
+
+    def __init__(
+        self, inner: object, claimed: "frozenset[int]",
+    ) -> None:
+        self._inner = inner
+        self._claimed = claimed
+
+    def __iter__(self):
+        for rec in self._inner:
+            if id(rec) not in self._claimed:
+                yield rec
+
+    def node_to_surfaces(self):
+        inner_method = getattr(self._inner, "node_to_surfaces", None)
+        if inner_method is None:
+            return
+        for rec in inner_method():
+            if id(rec) not in self._claimed:
+                yield rec
+
+    def interpolations(self):
+        inner_method = getattr(self._inner, "interpolations", None)
+        if inner_method is None:
+            return
+        for rec in inner_method():
+            if id(rec) not in self._claimed:
+                yield rec
+
+
+class _StageConstraintAdapter:
+    """Adapter exposing a flat list of resolved constraint records via
+    the same container-method surface that :func:`emit_mp_constraints`
+    and :func:`emit_mp_constraints_partitioned` consume.
+
+    The bridge's stage builder methods (``s.embedded`` / ``s.equal_dof``
+    / ``s.rigid_link`` / ``s.tie`` / ``s.tied_contact`` /
+    ``s.kinematic_coupling`` / ``s.node_to_surface``) route resolved
+    records into ``_StageBuilder._stage_constraint_records`` (a flat
+    ``list[ConstraintRecord]``) instead of ``fem.elements.constraints``
+    / ``fem.nodes.constraints``.  This adapter lets the existing
+    per-kind emit helpers (``_emit_rigid_links`` /
+    ``_emit_equal_dofs`` / etc.) consume that flat list unmodified —
+    ``__iter__`` covers the four record-iterating helpers,
+    ``node_to_surfaces`` covers the phantom-node pre-step, and
+    ``interpolations`` covers the surface-coupling tail.
+
+    Stateless aside from the wrapped list; reused on every emit pass.
+    """
+    __slots__ = ("_records",)
+
+    def __init__(self, records: "Iterable[ConstraintRecord]") -> None:
+        self._records = tuple(records)
+
+    def __iter__(self):
+        return iter(self._records)
+
+    def node_to_surfaces(self):
+        from apeGmsh._kernel.records._constraints import NodeToSurfaceRecord
+        for rec in self._records:
+            if isinstance(rec, NodeToSurfaceRecord):
+                yield rec
+
+    def interpolations(self):
+        from apeGmsh._kernel.records._constraints import (
+            InterpolationRecord, SurfaceCouplingRecord,
+        )
+        for rec in self._records:
+            if isinstance(rec, InterpolationRecord):
+                yield rec
+            elif isinstance(rec, SurfaceCouplingRecord):
+                for slave in rec.slave_records:
+                    yield slave
+
+
+def emit_stage_mp_constraints(
+    stage_records: "Iterable[ConstraintRecord]",
+    emitter: "Emitter",
+    tags: TagAllocator,
+) -> None:
+    """Emit a stage's MP constraints inside the stage block (flat path).
+
+    Mirrors :func:`emit_mp_constraints` step-for-step but iterates the
+    stage's flat record pool via :class:`_StageConstraintAdapter`
+    instead of ``fem.{nodes,elements}.constraints``.  Per ADR 0034 the
+    stage's constraint emit runs AFTER stage regions and BEFORE the
+    stage's ``domain_change`` gate, so the constrained nodes / elements
+    (which emitted at the top of the stage block) are already in the
+    OpenSees domain when the constraint references them.
+
+    Phantom-tag predicate update is additive: the existing predicate
+    (populated by the global pre-stage pass) is unioned with this
+    stage's phantom tags so the H5 emitter classifies subsequent
+    ``node()`` calls correctly for both populations.
+
+    No-op when ``stage_records`` is empty.
+    """
+    from .tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
+
+    adapter = _StageConstraintAdapter(stage_records)
+    if not adapter._records:
+        return
+
+    # Additive phantom-tag predicate update — see docstring.
+    stage_phantoms = set(_gather_phantom_nodes(adapter).keys())
+    if stage_phantoms:
+        existing = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
+        set_phantom_node_tags(emitter, set(existing) | stage_phantoms)
+
+    # Same ordering as emit_mp_constraints (INV-3).
+    _emit_phantom_nodes(emitter, adapter)
+    _emit_rigid_links(emitter, adapter)
+    _emit_equal_dofs(emitter, adapter)
+    _emit_rigid_diaphragms(emitter, adapter)
+    _emit_kinematic_couplings(emitter, adapter)
+    _emit_surface_couplings(emitter, adapter, tags)
+
+
+def emit_stage_mp_constraints_partitioned(
+    stage_records: "Iterable[ConstraintRecord]",
+    emitter: "Emitter",
+    fem: "FEMData",
+    partition_rank: int,
+    node_owners: dict[int, set[int]],
+    element_owner: dict[int, int],
+    foreign_node_ndf: int | None,
+    tags: TagAllocator,
+) -> None:
+    """Per-rank stage-bound MP-constraint fan-out.
+
+    Mirrors :func:`emit_mp_constraints_partitioned` step-for-step using
+    the stage's flat record pool via :class:`_StageConstraintAdapter`.
+    Same rank-replication rules (replicate-on-both for node couplings;
+    canonical host rank for ``ASDEmbeddedNodeElement``) and same
+    foreign-node declaration order (phantoms first, then real foreign
+    nodes) as the global partitioned pass.
+
+    No-op when ``stage_records`` is empty or when nothing on the stage
+    pool touches ``partition_rank``.
+    """
+    from .tag_resolution import ATTR_PHANTOM_NODE_TAGS, set_phantom_node_tags
+
+    adapter = _StageConstraintAdapter(stage_records)
+    if not adapter._records:
+        return
+
+    phantom_coords = _gather_phantom_nodes(adapter)
+    if phantom_coords:
+        existing = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
+        set_phantom_node_tags(
+            emitter, set(existing) | set(phantom_coords.keys()),
+        )
+
+    plan = _plan_rank_constraints(
+        node_constraints=adapter,
+        surface_constraints=adapter,
+        partition_rank=partition_rank,
+        node_owners=node_owners,
+        element_owner=element_owner,
+        phantom_tags=set(phantom_coords.keys()),
+    )
+    if not plan.any():
+        return
+
+    # Foreign-node declarations — phantoms first, then real foreign
+    # nodes (INV-2 within the rank block).
+    for tag in sorted(plan.referenced_phantoms):
+        xyz = phantom_coords[tag]
+        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
+    for tag in sorted(plan.foreign_node_tags):
+        xyz = _node_coords_safe(fem, tag)
+        _emit_node_with_broker_ndf(
+            emitter, fem, int(tag),
+            (xyz[0], xyz[1], xyz[2]),
+            envelope_ndf=foreign_node_ndf,
+        )
+
+    # Constraint emission — same ordering as the unpartitioned path.
+    _emit_rigid_links_filtered(emitter, adapter, plan.allowed_record_ids)
+    _emit_equal_dofs_filtered(emitter, adapter, plan.allowed_record_ids)
+    _emit_rigid_diaphragms_filtered(emitter, adapter, plan.allowed_record_ids)
+    _emit_kinematic_couplings_filtered(emitter, adapter, plan.allowed_record_ids)
+
+    if plan.embedded_records:
+        _emit_surface_couplings_for_rank(
+            emitter, plan.embedded_records, tags,
+        )
+
+
 def emit_mp_constraints_partitioned(
     emitter: "Emitter",
     fem: "FEMData",
@@ -2299,6 +2546,8 @@ def emit_mp_constraints_partitioned(
     element_owner: dict[int, int],
     foreign_node_ndf: int | None,
     tags: TagAllocator,
+    *,
+    claimed_ids: "frozenset[int]" = frozenset(),
 ) -> None:
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -2336,6 +2585,17 @@ def emit_mp_constraints_partitioned(
 
     if node_constraints is None and surface_constraints is None:
         return
+
+    # Filter out stage-claimed records — they emit per-stage via
+    # ``emit_stage_mp_constraints_partitioned`` instead.
+    if claimed_ids and node_constraints is not None:
+        node_constraints = _ExcludeClaimedConstraints(
+            node_constraints, claimed_ids,
+        )
+    if claimed_ids and surface_constraints is not None:
+        surface_constraints = _ExcludeClaimedConstraints(
+            surface_constraints, claimed_ids,
+        )
 
     # Build the lookup tables used during constraint replication.
     phantom_coords = (

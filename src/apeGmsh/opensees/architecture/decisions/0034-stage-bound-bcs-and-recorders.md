@@ -264,6 +264,86 @@ The cross-check overruled three initially-plausible designs:
   lift; the workaround (per-stage named regions + client-side
   aggregation) is correct OpenSees usage.
 
+## Extension: stage-bound constraints + `s.initial_stress` PUSH
+
+Phase SSI-2.D's spine (PUSH/PULL asymmetry, recorder claiming, unified
+`domain_change` gate) generalises to two additional record families
+shipped in a single follow-up PR:
+
+### 5a. Stage-bound MP constraints via CLAIM-by-name
+
+`s.embedded(name=...)`, `s.equal_dof(name=...)`, `s.rigid_link(name=...)`,
+`s.rigid_diaphragm(name=...)`, `s.kinematic_coupling(name=...)`,
+`s.tie(name=...)`, `s.distributing(name=...)`, `s.node_to_surface(name=...)`,
+and `s.node_to_surface_spring(name=...)` all CLAIM resolved constraint
+records by name from `fem.{nodes,elements}.constraints` and route them
+into the owning stage's `_stage_constraint_records` pool.
+
+**Why CLAIM, not PUSH or PULL:** the kernel constraint resolver runs at
+apeGmsh / FEMData-build time and requires a live `gmsh` model + parts
+registry (`gmsh.model.mesh.getNodes(...)` at
+[ConstraintsComposite.py:1434](../../../core/ConstraintsComposite.py),
+`g.parts._instances` at [ConstraintsComposite.py:1470](../../../core/ConstraintsComposite.py)).
+By apeSees bridge time the resolver dependencies are typically gone and
+the resolved records already live on the FEMData broker. The user opts
+into stage routing by naming the constraint at apeGmsh time
+(`g.constraints.embedded(..., name="cimbra_embed")`) and claiming by
+that name inside the stage block (`s.embedded(name="cimbra_embed")`).
+
+**Claim mechanics mirror `s.recorder` exactly:**
+- `apeSees._stage_claimed_constraint_ids: set[int]` accumulates claimed
+  record ids during builder calls.
+- `BuiltModel._claimed_constraint_ids()` derives the same set from
+  `stage_records` at emit time.
+- The global `emit_mp_constraints` and `emit_mp_constraints_partitioned`
+  orchestrators receive `claimed_ids=` and wrap the FEMData broker in
+  `_ExcludeClaimedConstraints`, hiding claimed records from the six
+  per-kind helpers. Records stay on the broker; only their emission is
+  re-routed.
+- `emit_stage_mp_constraints` / `emit_stage_mp_constraints_partitioned`
+  emit the stage's pool inside the stage block (after regions, before
+  `domain_change`) by wrapping the flat list in
+  `_StageConstraintAdapter` and reusing the six per-kind helpers
+  unchanged.
+
+**Out of scope for this PR:** `s.tied_contact(...)` and `s.mortar(...)`.
+`tied_contact` wraps slave records inside a `SurfaceCouplingRecord` and
+the global exclusion filter operates on outer-record identity — it
+won't correctly suppress the nested slaves on the global emit pass.
+`mortar` is not implemented kernel-side (raises `NotImplementedError`
+at apeGmsh time). Follow-up will address `tied_contact` when a concrete
+use case surfaces; tracked in
+[_DEFERRED.md](../_DEFERRED.md).
+
+### 5b. `s.initial_stress(...)` PUSH path
+
+`s.initial_stress(name=, pg=, sigma_*, ramp_steps=, ...)` PUSH-creates
+an `InitialStressRecord` directly in the stage's pool, alongside the
+existing `s.add(InitialStressRecord)` PULL path. Same validation as
+`ops.initial_stress(...)`, just routed to the stage pool.
+
+**Why PUSH is safe for `InitialStressRecord`:** §1's PULL classification
+was forward-looking — the actual side effects (parameter tag allocation,
+ramp proc emission) fire at emit time inside `emit_initial_stress_global`,
+NOT at `ops.initial_stress(...)` call time
+([apesees.py:3148](../../apesees.py) just appends to a list). The
+inert-PUSH precondition is met. Both PUSH and PULL paths coexist; users
+pick by style. The parity test
+[test_stage_initial_stress_push.py](../../../../../tests/opensees/unit/test_stage_initial_stress_push.py)
+locks byte-identical decks between the two.
+
+### 5c. Forcing function: Cerro Lindo SSI V5
+
+The user-facing pain that drove this extension: STKO's canonical SSI
+workflow installs lining (cimbra) in Stage 3 via `domainChange` onto an
+already-equilibrated rock state. With `g.constraints.embedded(...)`
+records always emitting globally pre-Phase-SSI-2.D-ext, the stiff
+penalty constraint (K=1e8) was active from t=0 and Newton had to
+equilibrate rock + lining + embed simultaneously from a zero initial
+state — diverges on the second analyze step. Post-extension, the embed
+defers to stage 2's block with `domainChange` AFTER constraint emit and
+BEFORE the stage's analysis chain, exactly mirroring STKO's behaviour.
+
 ## Alternatives considered
 
 - **Stage-bound BCs as global `_StageBuilder` kwargs** — e.g.
@@ -304,6 +384,13 @@ full SSI-2.D test surface. Phase SSI-2.D added:
 - [`tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py`](../../../../../tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py) — partitioned fix/mass + empty-bracket skip + unified `domain_change` gate.
 - [`tests/opensees/unit/test_stage_bound_region_recorder.py`](../../../../../tests/opensees/unit/test_stage_bound_region_recorder.py) — `s.region` / `s.recorder` + claiming + V4 + introspection.
 - [`tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py`](../../../../../tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py) — per-stage region_tag_cache + cross-rank tag identity + tag disjointness.
+
+Phase SSI-2.D extension (stage-bound constraints + `s.initial_stress` PUSH) added:
+
+- [`tests/opensees/unit/test_stage_initial_stress_push.py`](../../../../../tests/opensees/unit/test_stage_initial_stress_push.py) — PUSH↔PULL parity (byte-identical decks) + return-record contract + stage-scoped error label.
+- [`tests/opensees/unit/test_stage_embedded_claim.py`](../../../../../tests/opensees/unit/test_stage_embedded_claim.py) — `s.embedded(name=...)` claim semantics (pool population, double-claim refusal, missing-name fail-loud, global emit skip, unclaimed-record passthrough).
+- [`tests/opensees/unit/test_stage_constraint_siblings.py`](../../../../../tests/opensees/unit/test_stage_constraint_siblings.py) — smoke tests for `s.equal_dof` / `s.rigid_link` / `s.rigid_diaphragm` / `s.kinematic_coupling` / `s.tie` / `s.distributing` claim-and-route.
+- [`tests/opensees/unit/test_stage_constraint_e2e_2stage.py`](../../../../../tests/opensees/unit/test_stage_constraint_e2e_2stage.py) — Cerro Lindo SSI V5 forcing-function fix: 2-stage SSI deck structure (cimbra + embed inside stage 2, `domainChange` after constraint emit, no leak into stage 1 or global pre-stage).
 
 ## Cross-references
 

@@ -42,6 +42,8 @@ from ._internal.build import (
     emit_initial_stress_global,
     emit_mp_constraints,
     emit_mp_constraints_partitioned,
+    emit_stage_mp_constraints,
+    emit_stage_mp_constraints_partitioned,
     emit_pattern_spec,
     emit_recorder_spec,
     emit_transform_specs,
@@ -346,6 +348,27 @@ class BuiltModel:
             for r in stage.recorder_specs
         }
 
+    def _claimed_constraint_ids(self) -> "set[int]":
+        """``id(...)``-set of resolved constraint records claimed by
+        stage builders via ``s.embedded`` / ``s.equal_dof`` /
+        ``s.rigid_link`` / ``s.tie`` / ``s.tied_contact`` /
+        ``s.kinematic_coupling`` / ``s.node_to_surface``.
+
+        Records in this set stay on the FEMData broker (so the broker
+        view is unmodified across multiple bridges sharing the same
+        FEMData), but the global MP-constraint emit pass SKIPS them
+        — each is emitted instead inside its owning stage's block,
+        AFTER the stage's regions and BEFORE the stage's
+        ``domain_change``, so the constrained nodes / elements (which
+        emitted at the top of the stage block) are already in the
+        OpenSees domain.
+        """
+        return {
+            id(r)
+            for stage in self.stage_records
+            for r in stage.stage_constraint_records
+        }
+
     def emit(self, emitter: Emitter) -> int:
         """Drive ``emitter`` over the model, returning ``analyze``'s exit value.
 
@@ -631,8 +654,13 @@ class BuiltModel:
         self._emit_regions(emitter, tags)
         self._emit_broker_loads(emitter, tags)
 
-        # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).
-        emit_mp_constraints(emitter, self.fem, tags)
+        # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Records
+        # claimed by ``s.embedded`` / ``s.equal_dof`` / ... are
+        # SKIPPED here — they emit inside their owning stage's block.
+        emit_mp_constraints(
+            emitter, self.fem, tags,
+            claimed_ids=frozenset(self._claimed_constraint_ids()),
+        )
 
         # 7c. Auto-emit constraint handler when MP constraints present.
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
@@ -830,16 +858,25 @@ class BuiltModel:
                 for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                     emitter.mass(int(node_tag), *rec.values)
             self._emit_stage_regions(stage, emitter, tags)
+            # Stage-bound MP constraints — emit AFTER regions, BEFORE
+            # domain_change so the constrained nodes / elements (which
+            # emitted at the top of the stage block) are already in
+            # the OpenSees domain when the constraint references them.
+            if stage.stage_constraint_records:
+                emit_stage_mp_constraints(
+                    stage.stage_constraint_records, emitter, tags,
+                )
 
             # 5. domainChange — unified gate: fires if this stage added
-            # ANY topology OR any stage-bound BC.  Single barrier per
-            # stage.
+            # ANY topology OR any stage-bound BC OR any stage-bound
+            # constraint.  Single barrier per stage.
             if (
                 owned_nodes
                 or owned_specs
                 or stage.fix_records
                 or stage.mass_records
                 or stage.region_records
+                or stage.stage_constraint_records
             ):
                 emitter.domain_change()
 
@@ -1048,6 +1085,13 @@ class BuiltModel:
             post_element, tags,
         )
 
+        # Pre-compute claimed-constraint ids ONCE before the per-rank
+        # loop — the set is rank-independent (every rank's global
+        # constraint pass excludes the same records).
+        stage_claimed_constraint_ids = frozenset(
+            self._claimed_constraint_ids()
+        )
+
         # Pre-compute the post-element rank-local plan for the bridge's
         # fix / mass / region / load passes.  We use the same shapes
         # the flat path uses but pre-intersect with per-rank ownership.
@@ -1131,6 +1175,8 @@ class BuiltModel:
                 )
 
                 # 7b. MP constraints (ADR 0027 — replication policy).
+                # Stage-claimed records are SKIPPED — they emit
+                # inside their owning stage's block.
                 emit_mp_constraints_partitioned(
                     emitter=emitter,
                     fem=self.fem,
@@ -1139,6 +1185,7 @@ class BuiltModel:
                     element_owner=element_owner,
                     foreign_node_ndf=int(self.ndf),
                     tags=tags,
+                    claimed_ids=stage_claimed_constraint_ids,
                 )
 
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
@@ -1225,6 +1272,7 @@ class BuiltModel:
                 element_owner_stage=element_owner_stage,
                 node_owner_stage=node_owner_stage,
                 element_owner=element_owner,
+                node_owners=node_owners,
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 overrides=overrides,
                 base_resolver=base_resolver,
@@ -1242,6 +1290,7 @@ class BuiltModel:
         element_owner_stage: "dict[int, int]",
         node_owner_stage: "dict[int, int]",
         element_owner: "dict[int, int]",
+        node_owners: "dict[int, set[int]]",
         fem_eid_to_ops_tag: "dict[int, int]",
         overrides: "dict[tuple[int, int], int] | None",
         base_resolver: object,
@@ -1309,6 +1358,7 @@ class BuiltModel:
                 stage.fix_records
                 or stage.mass_records
                 or stage.region_records
+                or stage.stage_constraint_records
             )
 
             # Phase SSI-2.D PR-B + PR-C: pre-resolve stage-bound BC
@@ -1427,6 +1477,22 @@ class BuiltModel:
                             owned_nodes=rank_owned,
                             region_tag_cache=stage_region_tag_cache,
                         )
+                        # Stage-bound MP constraints — per-rank fan-
+                        # out using the same replication rules as the
+                        # global partitioned constraint pass.  No-op
+                        # when the stage has no constraints or none
+                        # touch this rank.
+                        if stage.stage_constraint_records:
+                            emit_stage_mp_constraints_partitioned(
+                                stage.stage_constraint_records,
+                                emitter=emitter,
+                                fem=self.fem,
+                                partition_rank=rank,
+                                node_owners=node_owners,
+                                element_owner=element_owner,
+                                foreign_node_ndf=int(self.ndf),
+                                tags=tags,
+                            )
                     finally:
                         emitter.partition_close()
 
@@ -2825,6 +2891,16 @@ class apeSees:
         # The recorder stays in ``_primitives`` so its allocated tag
         # remains discoverable via ``tag_for[id(p)]``.
         self._stage_claimed_recorder_ids: set[int] = set()
+        # Stage-bound constraint claiming: when ``s.embedded(name=...)``
+        # / ``s.equal_dof(name=...)`` / etc. CLAIMS a resolved
+        # constraint record from ``fem.{nodes,elements}.constraints``,
+        # the record's ``id(...)`` lands here so the global MP-
+        # constraint emit loop SKIPS it.  The record stays on the
+        # FEMData broker (broker is immutable from the bridge's
+        # perspective) but emits inside the owning stage's block
+        # via ``emit_stage_mp_constraints``.  Doubles as the
+        # double-claim detector across stage builders.
+        self._stage_claimed_constraint_ids: set[int] = set()
         # Resolve the sentinel: unset → Cartesian() (Z-up). Explicit
         # None disables the auto-default (2D models).
         if isinstance(default_orientation, _UnsetType):
@@ -3105,45 +3181,11 @@ class apeSees:
             Fraction of target to install (default 1.0).  Must be in
             ``(0, 1]``.
         """
-        if (pg is None) == (elements is None):
-            raise ValueError(
-                "apeSees.initial_stress: supply exactly one of pg= or "
-                f"elements= (got pg={pg!r}, elements={elements!r})."
-            )
-        if not name:
-            raise ValueError(
-                "apeSees.initial_stress: name= must be non-empty."
-            )
-        # Tcl identifier safety: alphanumeric + underscore, not starting
-        # with a digit.  Keeps the emitted ``proc <name>`` parsable.
-        if not name.replace("_", "").isalnum() or name[0].isdigit():
-            raise ValueError(
-                "apeSees.initial_stress: name must be a valid Tcl "
-                "identifier (alphanumeric + underscore, not starting "
-                f"with a digit). Got name={name!r}."
-            )
-        if ramp_steps < 1:
-            raise ValueError(
-                "apeSees.initial_stress: ramp_steps must be >= 1, "
-                f"got {ramp_steps}."
-            )
-        if not (0.0 < lambda_install <= 1.0):
-            raise ValueError(
-                "apeSees.initial_stress: lambda_install must be in "
-                f"(0, 1], got {lambda_install}."
-            )
-        elements_tuple = (
-            tuple(int(e) for e in elements) if elements is not None else None
-        )
-        record = InitialStressRecord(
-            name=str(name),
-            pg=pg,
-            elements=elements_tuple,
-            sigma_xx=float(sigma_xx),
-            sigma_yy=float(sigma_yy),
-            sigma_zz=float(sigma_zz),
-            ramp_steps=int(ramp_steps),
-            lambda_install=float(lambda_install),
+        record = _build_initial_stress_record(
+            source_label="apeSees.initial_stress",
+            name=name, pg=pg, elements=elements,
+            sigma_xx=sigma_xx, sigma_yy=sigma_yy, sigma_zz=sigma_zz,
+            ramp_steps=ramp_steps, lambda_install=lambda_install,
         )
         self._initial_stress_records.append(record)
         # Phase SSI-2.A: return the record so callers can pass it to
@@ -3844,6 +3886,78 @@ class apeSees:
 
 
 # ---------------------------------------------------------------------------
+# Shared validation for initial_stress (used by ops.initial_stress PULL +
+# s.initial_stress PUSH).
+# ---------------------------------------------------------------------------
+
+
+def _build_initial_stress_record(
+    *,
+    source_label: str,
+    name: str,
+    pg: str | None,
+    elements: "Iterable[int] | None",
+    sigma_xx: float,
+    sigma_yy: float,
+    sigma_zz: float,
+    ramp_steps: int,
+    lambda_install: float,
+) -> "InitialStressRecord":
+    """Validate inputs and construct an :class:`InitialStressRecord`.
+
+    Shared by :meth:`apeSees.initial_stress` (the bridge-global PULL
+    factory) and :meth:`_StageBuilder.initial_stress` (the stage-bound
+    PUSH method).  ``source_label`` prefixes every error message so
+    users see which API surface they violated.
+
+    Validation rules (identical to the historical inline checks):
+
+    * Exactly one of ``pg=`` / ``elements=``.
+    * ``name`` non-empty and a valid Tcl identifier.
+    * ``ramp_steps >= 1``.
+    * ``lambda_install in (0, 1]``.
+    """
+    if (pg is None) == (elements is None):
+        raise ValueError(
+            f"{source_label}: supply exactly one of pg= or "
+            f"elements= (got pg={pg!r}, elements={elements!r})."
+        )
+    if not name:
+        raise ValueError(
+            f"{source_label}: name= must be non-empty."
+        )
+    if not name.replace("_", "").isalnum() or name[0].isdigit():
+        raise ValueError(
+            f"{source_label}: name must be a valid Tcl identifier "
+            "(alphanumeric + underscore, not starting with a digit). "
+            f"Got name={name!r}."
+        )
+    if ramp_steps < 1:
+        raise ValueError(
+            f"{source_label}: ramp_steps must be >= 1, "
+            f"got {ramp_steps}."
+        )
+    if not (0.0 < lambda_install <= 1.0):
+        raise ValueError(
+            f"{source_label}: lambda_install must be in (0, 1], "
+            f"got {lambda_install}."
+        )
+    elements_tuple = (
+        tuple(int(e) for e in elements) if elements is not None else None
+    )
+    return InitialStressRecord(
+        name=str(name),
+        pg=pg,
+        elements=elements_tuple,
+        sigma_xx=float(sigma_xx),
+        sigma_yy=float(sigma_yy),
+        sigma_zz=float(sigma_zz),
+        ramp_steps=int(ramp_steps),
+        lambda_install=float(lambda_install),
+    )
+
+
+# ---------------------------------------------------------------------------
 # _StageBuilder — context manager backing ops.stage(name) (Phase SSI-2.A)
 # ---------------------------------------------------------------------------
 
@@ -3880,6 +3994,10 @@ class _StageBuilder:
         "_mass_records",
         "_region_records",
         "_recorder_specs",
+        # Stage-bound constraint pool — populated by s.embedded /
+        # s.equal_dof / s.rigid_link / s.tie / s.tied_contact /
+        # s.kinematic_coupling / s.node_to_surface.
+        "_stage_constraint_records",
         "_test", "_algorithm", "_integrator",
         "_constraints", "_numberer", "_system", "_analysis",
         "_n_increments", "_dt",
@@ -3897,6 +4015,10 @@ class _StageBuilder:
         # Phase SSI-2.D PR-C: stage-bound region + recorder pools.
         self._region_records: list[RegionAssignmentRecord] = []
         self._recorder_specs: list[Recorder] = []
+        # Stage-bound constraint pool — flat list of resolved
+        # ConstraintRecord instances.  Emit-time dispatches by
+        # isinstance into the six per-kind emit helpers.
+        self._stage_constraint_records: list["ConstraintRecord"] = []
         self._test: Primitive | None = None
         self._algorithm: Primitive | None = None
         self._integrator: Primitive | None = None
@@ -3958,6 +4080,7 @@ class _StageBuilder:
             mass_records=tuple(self._mass_records),
             region_records=tuple(self._region_records),
             recorder_specs=tuple(self._recorder_specs),
+            stage_constraint_records=tuple(self._stage_constraint_records),
         )
         self._bridge._stage_records.append(record)
         return False
@@ -3993,6 +4116,305 @@ class _StageBuilder:
             f"{type(record).__name__!r}.  Phase SSI-2.A supports "
             "InitialStressRecord only; future versions may extend."
         )
+
+    def initial_stress(
+        self,
+        *,
+        name: str,
+        pg: str | None = None,
+        elements: "Iterable[int] | None" = None,
+        sigma_xx: float,
+        sigma_yy: float,
+        sigma_zz: float,
+        ramp_steps: int,
+        lambda_install: float = 1.0,
+    ) -> "InitialStressRecord":
+        """Stage-bound PUSH mirror of :meth:`apeSees.initial_stress`.
+
+        Signature is identical to ``ops.initial_stress(...)``; the
+        record is created and appended directly to this stage's pool
+        instead of the bridge's global pool — no intermediate
+        ``s.add(record)`` step required.
+
+        Equivalent to:
+
+            record = ops.initial_stress(name=..., ...)
+            s.add(record)
+
+        but in one call, mirroring the
+        ``s.fix`` / ``s.mass`` / ``s.embedded`` PUSH builder methods.
+        The existing :meth:`add` PULL path remains supported for
+        callers that build records globally and bind them later.
+
+        Per-stage emission ordering is unchanged: this stage's
+        initial-stress records emit AFTER the stage's analysis chain
+        is established, regardless of which API surface (PUSH vs PULL)
+        the record came in through.
+
+        Returns the constructed record so callers can inspect or pass
+        it to validators (mirroring ``ops.initial_stress``'s return).
+        """
+        record = _build_initial_stress_record(
+            source_label=f"Stage {self._name!r}.initial_stress",
+            name=name, pg=pg, elements=elements,
+            sigma_xx=sigma_xx, sigma_yy=sigma_yy, sigma_zz=sigma_zz,
+            ramp_steps=ramp_steps, lambda_install=lambda_install,
+        )
+        self._initial_stress_records.append(record)
+        return record
+
+    # -- Stage-bound constraints (CLAIM by name) -------------------------
+
+    def embedded(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved ``embedded`` constraint records by name for
+        this stage.
+
+        Constraint declaration happens at apeGmsh time via
+        ``g.constraints.embedded(host_label=..., embedded_label=...,
+        name=...)``, which produces resolved ``InterpolationRecord``
+        rows on ``fem.elements.constraints``.  This method finds the
+        rows matching ``name`` and:
+
+        * appends them to this stage's constraint pool (so they emit
+          inside the stage's block, AFTER stage regions and BEFORE the
+          stage's ``domain_change``);
+        * records their ``id(...)`` in the bridge's
+          ``_stage_claimed_constraint_ids`` set so the global MP-
+          constraint pass SKIPS them (no double emission).
+
+        The shipped contract is **claim-by-name**, not direct create:
+        the kernel resolver runs at apeGmsh / FEMData-build time
+        (needs gmsh + parts), so by bridge time the records already
+        exist on the FEMData broker.  See ADR 0034 §"Stage-bound
+        constraints".
+
+        Parameters
+        ----------
+        name
+            Unique constraint name passed to
+            ``g.constraints.embedded(name=...)`` at apeGmsh time.
+
+        Returns
+        -------
+        tuple[ConstraintRecord, ...]
+            The claimed records, in registration order on the broker.
+
+        Raises
+        ------
+        ValueError
+            * No record on ``fem.elements.constraints`` matches
+              ``name`` (typo, or missing ``name=`` at declaration).
+            * The matched record is already claimed by a different
+              stage (double-claim).
+        """
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.embedded",
+            kind="embedded",
+            scope="elements",
+        )
+
+    def tie(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved ``tie`` constraint records by name (claim-by-
+        name; see :meth:`embedded` for the contract)."""
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.tie",
+            kind="tie",
+            scope="elements",
+        )
+
+    def distributing(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved ``distributing`` constraint records by name
+        (claim-by-name; see :meth:`embedded` for the contract)."""
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.distributing",
+            kind="distributing",
+            scope="elements",
+        )
+
+    def equal_dof(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved ``equal_dof`` constraint records by name
+        (claim-by-name; see :meth:`embedded` for the contract)."""
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.equal_dof",
+            kind="equal_dof",
+            scope="nodes",
+        )
+
+    def rigid_link(self, *, name: str) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved rigid-link constraint records by name.
+
+        Spans ``rigid_beam``, ``rigid_rod``, and ``rigid_body`` since
+        ``g.constraints.rigid_link(...)`` may produce any of the three
+        depending on the user's flag (see ConstraintsComposite).
+        Claim-by-name semantics; see :meth:`embedded` for the contract.
+        """
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.rigid_link",
+            kind=frozenset({"rigid_beam", "rigid_rod", "rigid_body"}),
+            scope="nodes",
+        )
+
+    def rigid_diaphragm(
+        self, *, name: str,
+    ) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved ``rigid_diaphragm`` constraint records by
+        name (claim-by-name; see :meth:`embedded` for the contract)."""
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.rigid_diaphragm",
+            kind="rigid_diaphragm",
+            scope="nodes",
+        )
+
+    def kinematic_coupling(
+        self, *, name: str,
+    ) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved ``kinematic_coupling`` constraint records by
+        name (claim-by-name; see :meth:`embedded` for the contract)."""
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.kinematic_coupling",
+            kind="kinematic_coupling",
+            scope="nodes",
+        )
+
+    def node_to_surface(
+        self, *, name: str,
+    ) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved ``node_to_surface`` constraint records by
+        name (claim-by-name; see :meth:`embedded` for the contract)."""
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.node_to_surface",
+            kind="node_to_surface",
+            scope="nodes",
+        )
+
+    def node_to_surface_spring(
+        self, *, name: str,
+    ) -> "tuple[ConstraintRecord, ...]":
+        """Claim resolved ``node_to_surface_spring`` constraint records
+        by name (claim-by-name; see :meth:`embedded` for the contract).
+        """
+        return self._claim_constraints_by_name(
+            name=name,
+            method_label="s.node_to_surface_spring",
+            kind="node_to_surface_spring",
+            scope="nodes",
+        )
+
+    # NOTE: s.tied_contact and s.mortar are intentionally out of scope
+    # for this PR.  tied_contact wraps slave_records inside a
+    # SurfaceCouplingRecord; the global exclusion filter operates on
+    # outer-record identity and won't correctly suppress the nested
+    # slaves on the global emit pass.  mortar is not implemented
+    # kernel-side (raises NotImplementedError at apeGmsh time).
+    # Follow-up will address tied_contact once a concrete use case
+    # surfaces.
+
+    # -- Internal claim helper -------------------------------------------
+
+    def _claim_constraints_by_name(
+        self,
+        *,
+        name: str,
+        method_label: str,
+        kind: "str | frozenset[str] | None",
+        scope: str,
+    ) -> "tuple[ConstraintRecord, ...]":
+        """Walk the FEMData constraint broker, claim matches by name.
+
+        Parameters
+        ----------
+        name
+            Constraint name to match (from
+            ``g.constraints.<kind>(..., name=name)``).
+        method_label
+            Display name for error messages (e.g. ``"s.embedded"``).
+        kind
+            If a ``str``, filter records by ``rec.kind == kind``.
+            If a ``frozenset[str]``, filter by membership (used for
+            ``s.rigid_link`` which spans rigid_beam / rigid_rod /
+            rigid_body).  ``None`` skips the kind check.
+        scope
+            ``"elements"`` (walk ``fem.elements.constraints``) or
+            ``"nodes"`` (walk ``fem.nodes.constraints``).
+        """
+        if not name:
+            raise ValueError(
+                f"Stage {self._name!r}.{method_label}: name= must be "
+                "non-empty (claim-by-name requires the user to have "
+                "passed a unique name= to g.constraints.X at apeGmsh "
+                "time)."
+            )
+        fem = self._bridge._fem
+        if scope == "elements":
+            container = getattr(
+                getattr(fem, "elements", None), "constraints", None,
+            )
+            scope_attr = "fem.elements.constraints"
+        elif scope == "nodes":
+            container = getattr(
+                getattr(fem, "nodes", None), "constraints", None,
+            )
+            scope_attr = "fem.nodes.constraints"
+        else:
+            raise ValueError(
+                f"Stage {self._name!r}.{method_label}: invalid scope "
+                f"{scope!r} (internal bug)."
+            )
+        if container is None:
+            raise ValueError(
+                f"Stage {self._name!r}.{method_label}: {scope_attr} "
+                f"is None on this FEMData — no constraint broker to "
+                f"claim from."
+            )
+
+        if isinstance(kind, str):
+            kind_check = lambda k: k == kind
+            kind_label = repr(kind)
+        elif kind is not None:
+            kind_check = lambda k: k in kind
+            kind_label = repr(sorted(kind))
+        else:
+            kind_check = None
+            kind_label = None
+        matched: list[object] = []
+        for rec in container:
+            if getattr(rec, "name", None) != name:
+                continue
+            if kind_check is not None and not kind_check(
+                getattr(rec, "kind", None)
+            ):
+                continue
+            matched.append(rec)
+        if not matched:
+            raise ValueError(
+                f"Stage {self._name!r}.{method_label}: no resolved "
+                f"constraint records found with name={name!r}"
+                + (f" and kind in {kind_label}" if kind_label else "")
+                + f" on {scope_attr}. Did you pass name={name!r} to "
+                "the matching g.constraints.X(...) call at apeGmsh "
+                "time?"
+            )
+        already = self._bridge._stage_claimed_constraint_ids
+        for rec in matched:
+            if id(rec) in already:
+                raise ValueError(
+                    f"Stage {self._name!r}.{method_label}: constraint "
+                    f"name={name!r} is already claimed by another "
+                    "stage — each named constraint may bind to at "
+                    "most one stage."
+                )
+        for rec in matched:
+            already.add(id(rec))
+            self._stage_constraint_records.append(rec)
+        return tuple(matched)
 
     def fix(
         self,
