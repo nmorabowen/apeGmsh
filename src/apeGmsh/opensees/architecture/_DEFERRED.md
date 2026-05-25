@@ -109,11 +109,14 @@ The SSI feature set ([ADR
 0028](decisions/0028-initial-stress-via-parameter-ramping.md) /
 [0029](decisions/0029-staged-analysis-context-manager.md) /
 [0030](decisions/0030-stage-bound-topology-activation.md) /
-[0031](decisions/0031-ssi-convenience-helpers.md)) ships the
+[0031](decisions/0031-ssi-convenience-helpers.md) /
+[0034](decisions/0034-stage-bound-bcs-and-recorders.md)) ships the
 declarative `ops.stage(name)` / `s.activate(pgs=)` /
+`s.fix(...)` / `s.mass(...)` / `s.region(...)` / `s.recorder(...)` /
 `ops.initial_stress(...)` surface, the runnable Tcl / Py text
-emit, and (per Phase SSI-2.C) the combined partitioned + staged
-emit. Three follow-ups are still explicitly deferred:
+emit, the combined partitioned + staged emit (Phase SSI-2.C), and
+the four-validator ownership-tier surface (Phase SSI-2.D).
+Follow-ups still explicitly deferred:
 
 ### Live execution of staged models
 
@@ -170,26 +173,52 @@ Lives in `apesees.py::h5` (the bridge-side guard, #313) and
 `emitter/h5.py::addToParameter` / `step_hook_ramp` / `stage_open`
 / `stage_close` / `domain_change` (the schema-side no-ops).
 
-### Stage-bound `fix` / `mass` / `region` directives
+### `remove sp` / mass-zero-out across stages
 
-Currently refused at build time by
-`_validate_no_stage_bound_node_targets` (red-team H1 hardening —
-[ADR 0029 §"Build-time fan-out"](decisions/0029-staged-analysis-context-manager.md)).
-The pre-stage global emit fires before any `stage_open`; a `fix N
-1 1` line referencing a node that only emits in stage 2 would
-reference a non-existent OpenSees node and crash at parse time.
+Stage-bound BCs declared via `s.fix(...)` / `s.mass(...)` are
+APPEND-ONLY in Phase SSI-2.D. A stage cannot release a prior
+stage's SP constraint or zero out a prior stage's mass through
+the builder. For excavation-style decks that genuinely need to
+release support during construction (e.g. removing a temporary
+shoring fix between stages), users currently drop to raw Tcl for
+the release step.
 
-The workaround is to keep the BC on a globally-emitted node — for
-geotechnical models, the rock-mass boundary nodes are typically
-global so this is usually fine. A future phase would add
-stage-bound BCs by extending `StageRecord` with `fix_records` /
-`mass_records` / `region_records` fields and a per-stage emit pass
-that fires after the stage's `domain_change` (so the BC targets
-exist).
+Lifting requires a new `s.remove_sp(*, pg=None, nodes=None,
+dofs)` verb (emits `remove sp $node $dof`) and a
+`s.zero_mass(*, pg=None, nodes=None)` verb (emits
+`node $N mass 0 0 0`). Both would extend `StageRecord` with
+removal-records fields and a per-stage emit pass running
+alongside the existing `s.fix` / `s.mass` pass.
 
-Lives in `apesees.py::_validate_no_stage_bound_node_targets`
-(currently raises with offender list); would need additional
-fields on `StageRecord` at `_internal/build.py:161-212`.
+Open design question: should removals queue on a per-stage
+"release list" that emits BEFORE the stage's new BCs, or AFTER?
+Before is the conservative reading (release the old, then apply
+the new); after lets a stage atomically replace a BC by issuing
+`remove sp` + `fix` for the same target.
+
+Lives in `apesees.py::_StageBuilder` (would gain the new verbs)
+and the stage emit blocks in `_emit_stages_flat` /
+`_emit_stages_partitioned`.
+
+### MPCO recorders with filters under stages
+
+Stage-bound MPCO recorders DO claim through `s.recorder(spec)`
+but the per-rank filter-region planning
+(`_plan_partitioned_mpco_recorders`) currently only runs in the
+global emit pass. A stage-bound MPCO with a `nodes_pg=` /
+`elements_pg=` filter would fall through `emit_recorder_spec`'s
+materialize path and emit the filter region INSIDE the stage
+block instead of pre-allocated — works but doesn't reuse the
+cross-rank tag-identity infrastructure.
+
+Lifting: pre-allocate stage MPCO filter regions alongside the
+per-stage region tag cache; thread `_region_tag` into the
+materialised spec the same way the global path does at
+`apesees.py::_plan_partitioned_mpco_recorders`.
+
+Trigger this work when a real consumer needs stage-bound MPCO
+with filters under MP. Today's call sites use whole-model MPCO
+(no filter) or filtered MPCO at global scope only.
 
 ## Cylindrical / Spherical in 2-D models
 

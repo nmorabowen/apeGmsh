@@ -514,13 +514,16 @@ Limitations:
   it fires in every stage's analyze loop. Gate via the time series
   if that is not desired.
 
-## Staged analysis (Phase SSI-2.A / SSI-2.B)
+## Staged analysis (Phase SSI-2.A / SSI-2.B / SSI-2.C / SSI-2.D)
 
 `ops.stage(name)` opens a context manager that frames one stage of a
 multi-stage analysis. Each stage emits its own analysis chain, its
 own ramped initial-stress records, optional stage-bound topology
-activation, an `analyze` loop, and an inter-stage cleanup block
-(`loadConst -time 0.0` + `wipeAnalysis` + hook-list clear).
+activation, optional stage-bound BCs / recorders (`s.fix` / `s.mass`
+/ `s.region` / `s.recorder` — Phase SSI-2.D), an `analyze` loop, and
+an inter-stage cleanup block (`loadConst -time 0.0` +
+`wipeAnalysis` + hook-list clear). Combining stages with MP
+partitions is supported (Phase SSI-2.C).
 
 ```python
 ops = apeSees(fem)
@@ -555,9 +558,20 @@ with ops.stage(name="insitu") as s:
     )
     s.run(n_increments=10, dt=0.1)
 
-# Stage 2 — excavate (activate the lining elements that come online).
+# Stage 2 — excavate the soil + install the lining + put a recorder on it.
+# Phase SSI-2.D: stage-bound `s.fix` / `s.mass` / `s.region` /
+# `s.recorder` emit INSIDE the stage block (after the stage's topology
+# and before `domain_change`; recorders emit after the chain and
+# before `analyze`).
+lining_recorder = ops.recorder.Element(
+    file="lining_force.out", response=("globalForce",), pg="Lining",
+)
 with ops.stage(name="excavate") as s:
     s.activate(pgs=["Lining"])                 # element-PG activation
+    s.fix(pg="LiningAnchor", dofs=(1, 1, 1))   # SSI-2.D: stage-bound fix
+    s.mass(pg="Lining", values=(100.0, 100.0, 100.0))  # stage-bound mass
+    s.region(name="lining_rayleigh", pg="Lining")      # for Rayleigh damping
+    s.recorder(lining_recorder)                # PULL: claim from global pool
     s.analysis(
         test=test_norm, algorithm=algo_newton,
         integrator=ops.integrator.LoadControl(dlam=0.05),
@@ -581,6 +595,10 @@ ops.tcl("staged.tcl", run=True)
 | `with ops.stage(name) as s:` | yes | Opens the builder. Refuses nested `with` blocks (a second open while one is in-progress raises `RuntimeError` — post-merge hardening M4). |
 | `s.add(initial_stress_record)` | optional | Binds an `InitialStressRecord` (returned by `ops.initial_stress(...)`) to this stage. The record is removed from the bridge's global pool. Double-adding a record to two stages raises `ValueError`. Other record types raise `TypeError`. |
 | `s.activate(pgs=[...])` | optional | Marks element-PG names as activated by this stage. Elements + their referenced nodes emit inside the stage block, not in the global pre-stage emit. Same PG activated in two stages raises `BridgeError` at build time. |
+| `s.fix(*, pg=None, nodes=None, dofs)` | optional | **PUSH model** (Phase SSI-2.D). Stage-bound SP constraint. Mirrors `apeSees.fix` signature verbatim; pg XOR nodes. Records emit inside the stage block alongside `s.mass` / `s.region`. Validated at build time by V1 + V2. |
+| `s.mass(*, pg=None, nodes=None, values)` | optional | **PUSH model** (Phase SSI-2.D). Stage-bound nodal mass. Mirrors `apeSees.mass`. V2 refuses (node)-duplicate across tiers since OpenSees `setMass` silently overwrites. |
+| `s.region(*, name, pg=None, nodes=None)` | optional | **PUSH model** (Phase SSI-2.D). Stage-bound named region. Per-stage tag cache under MP so all contributing ranks agree on one tag per (stage, name). V3 refuses same `name=` across scopes; mangle the label (`lining_r_stage2`) if you really mean a per-stage region with conceptual continuity. |
+| `s.recorder(spec)` | optional | **PULL model** (Phase SSI-2.D). `spec` is a `Recorder` registered via `ops.recorder.Node` / `Element` / `MPCO`. The spec keeps its allocated tag and stays in `bridge._primitives`, but the bridge marks it claimed so the global post-element recorder emit loop skips it; the stage emit drives it AFTER the chain and BEFORE `analyze`. V4 refuses targets owned by a later stage. Same spec claimed by two stages raises `ValueError`. |
 | `s.analysis(test=, algorithm=, integrator=, constraints=, numberer=, system=, analysis=)` | required | All seven kwargs. Each must be a primitive already registered with the bridge. Second call raises `ValueError`. |
 | `s.run(n_increments=, dt=None)` | required | Sets analyze-loop length + step size. Second call raises `ValueError`; `n_increments < 1` raises `ValueError`. |
 | Clean `__exit__` | — | Validates `analysis_set` + `run_set`; appends a frozen `StageRecord` to the bridge. Exception in the body propagates and the in-progress stage is discarded. |
@@ -598,14 +616,29 @@ Caveats:
   initial-stress fan-outs inside each stage. See
   [staged-analysis.md](staged-analysis.md) §"MP partitioned +
   initial_stress + stages (Phase SSI-2.C)" for the layout.
-- **`fix` / `mass` / `region` on stage-bound nodes is refused at
-  build time.** Those directives emit in the pre-stage global block;
-  a node owned by stage 2 doesn't exist yet at that point, so
-  OpenSees would error at parse time. The validator raises
-  `BridgeError` with the offender list naming each `(kind, target,
-  node, stage)` tuple (red-team H1, post-merge hardening). Either
-  move the BC onto a globally-emitted node, or wait for a future
-  phase that supports stage-bound BCs.
+- **Global `fix` / `mass` / `region` on stage-bound nodes is refused
+  at build time** (H1 validator). Those directives emit in the pre-
+  stage global block; a node owned by stage 2 doesn't exist yet at
+  that point, so OpenSees would error at parse time. The validator
+  raises `BridgeError` with the offender list naming each
+  `(kind, target, node, stage)` tuple. **The workaround is now**
+  `s.fix(...)` / `s.mass(...)` / `s.region(...)` inside the owning
+  stage's `with` block (Phase SSI-2.D).
+- **Stage-bound BCs / recorders are append-only across stages.** A
+  stage cannot release a prior stage's fix or zero out a prior
+  stage's mass via the SSI-2.D verbs. For excavation-style decks
+  that genuinely need to release support during construction, users
+  currently drop to raw Tcl for the release step. A future
+  `s.remove_sp(...)` / `s.zero_mass(...)` verb would lift this —
+  see [staged-analysis.md](staged-analysis.md) §"Deferred work".
+- **PUSH vs PULL builder asymmetry is intentional.** `s.fix` /
+  `s.mass` / `s.region` use PUSH (inert dataclasses created on the
+  stage directly); `s.add(initial_stress)` and `s.recorder(spec)`
+  use PULL (specs with registration side effects — parameter tags
+  for `InitialStressRecord`, recorder tag for `Recorder` —
+  registered globally first, then claimed by the stage). See
+  [decisions/0034-stage-bound-bcs-and-recorders.md](decisions/0034-stage-bound-bcs-and-recorders.md)
+  for the rationale.
 - **H5 archival of staged structure is deferred and fail-loud.**
   `apeSees.h5(path)` on a staged model — or one carrying any global
   `initial_stress` record — raises `NotImplementedError` (#313)
