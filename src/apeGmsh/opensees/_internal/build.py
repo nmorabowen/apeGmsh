@@ -183,6 +183,14 @@ class StageRecord:
     skips the global pre-element emit of chain primitives when stages
     are declared, so each stage's chain is the only one OpenSees sees
     at run time.
+
+    Phase SSI-2.D adds stage-bound ``fix`` / ``mass`` / ``region`` /
+    ``recorder`` pools (``fix_records``, ``mass_records``,
+    ``region_records``, ``recorder_specs``).  PR-A ships the dataclass
+    slots + V1-V4 validators only — emit wiring lands in PR-B (fix +
+    mass) and PR-C (region + recorder).  Existing construction sites
+    that don't pass the new fields keep working via the ``()``
+    defaults.
     """
 
     name: str
@@ -210,6 +218,16 @@ class StageRecord:
     # build time).  An element whose PG is not activated by any
     # stage stays global (emitted before stage 1).
     activated_pgs: tuple[str, ...] = ()
+    # Phase SSI-2.D: stage-bound BC + recorder pools.  Populated by
+    # ``_StageBuilder.fix / .mass / .region / .recorder`` (PR-B/C).
+    # PR-A ships the dataclass slots + the validator surface; emit
+    # wiring lands in PR-B (fix + mass) and PR-C (region + recorder).
+    # Defaults to empty tuples so existing construction sites and
+    # tests continue to work without modification.
+    fix_records: tuple[FixRecord, ...] = ()
+    mass_records: tuple[MassRecord, ...] = ()
+    region_records: tuple[RegionAssignmentRecord, ...] = ()
+    recorder_specs: tuple[Recorder, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
