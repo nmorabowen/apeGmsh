@@ -567,7 +567,12 @@ apeGmsh resolves per-node `ndf` at FEM-build time; nodes not covered
 by any declaration raise `LookupError` from `fem.nodes.ndf_for(nid)`.
 See [ADR 0032](../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
 for the explicit-only doctrine and the dimensional-resolution-contract
-alignment.
+alignment. See [ADR 0033](../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md)
+for how the broker's per-node `ndf` flows into the OpenSees emit paths:
+`-ndf K` is passed per-node when an override exists (`g.node_ndf.set`);
+sentinel slots elide `-ndf` and the envelope (`apeSees(fem).model(ndm,
+ndf=K)`) wins — matching OpenSees-native `model -ndf K` + per-node
+override semantics.
 
 ### The deck stops at model definition
 

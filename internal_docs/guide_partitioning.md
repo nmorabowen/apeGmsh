@@ -473,7 +473,11 @@ the bridge follows the policy in ADR 0027:
   rank K's block references a node tag K does not natively own, the
   bridge emits `node <tag> <x> <y> <z> -ndf 6` on K's block before
   the constraint line (INV-2). The coordinates and `ndf` come from
-  the broker — identical to those used on the natively-owning rank.
+  the broker — identical to those used on the natively-owning rank —
+  via the per-foreign-node `fem.nodes.ndf_for(tag)` lookup in
+  `_internal/build.py::emit_mp_constraints_partitioned` (override-only
+  per ADR 0033; sentinel slots elide `-ndf` and fall back to the
+  envelope).
 - **Phantom nodes get broker-deterministic tags** (INV-3). When a
   `node_to_surface` constraint synthesises phantom nodes at
   build time, those tags and coordinates come from one canonical
@@ -659,14 +663,24 @@ expected to change.
   for the doctrine.
 
   Foreign node declarations under cross-partition replication (§ 7)
-  still emit through the model-wide `ndf` declared via
-  `ops.model(ndm=, ndf=)`. The forward-pointer to S2 work: the
-  cross-partition fan-out could consume per-node `ndf` directly
-  via `fem.nodes.ndf_for(nid)`, which would unblock mixed-ndf
-  partitioned models (e.g. `ndf=3` solid nodes coexisting with
-  `ndf=6` beam nodes across rank boundaries). The broker-side
-  data is in place; the bridge-side consumption is the remaining
-  work.
+  now consume per-node `ndf` directly. The partitioned fan-out in
+  `_internal/build.py::emit_mp_constraints_partitioned` looks up
+  `fem.nodes.ndf_for(tag)` per foreign-node decl and passes `-ndf K`
+  on the `node(...)` call when the broker carries an override;
+  sentinel slots elide `-ndf` and OpenSees applies the envelope
+  (`apeSees(fem).model(ndm, ndf=K)`) — matching OpenSees-native
+  semantics. This unblocks mixed-ndf partitioned models such as
+  `ndf=3` solid nodes coexisting with `ndf=6` shell nodes across
+  rank boundaries.
+
+  Cross-rank consistency is **hash-guaranteed** per
+  [ADR 0021](../src/apeGmsh/opensees/architecture/decisions/0021-lineage-chain-replaces-snapshot-id.md):
+  the resolved `_ndf` array folds into `fem_hash`, so every rank
+  deserialises identical declarations and agrees on per-node `ndf`
+  for shared nodes without explicit cross-rank communication. See
+  [ADR 0033](../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md)
+  for the full emit-wiring contract (override-only semantics +
+  validator at three materialisation sites + phantom carveout).
 
 - **`partition()` after `renumber()` is the canonical order.**
   Call `g.mesh.partitioning.renumber(dim=, method="simple",
