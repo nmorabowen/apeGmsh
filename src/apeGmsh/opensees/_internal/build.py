@@ -114,6 +114,95 @@ class BridgeError(RuntimeError):
     primitive construction)."""
 
 
+def validate_envelope_covers_broker_ndf(
+    fem: "FEMData", envelope_ndf: int,
+) -> None:
+    """Raise :class:`BridgeError` when the envelope ``ndf`` is smaller
+    than the largest per-node ``ndf`` declared on the broker.
+
+    Runs at three sites per ADR 0033: :meth:`apeSees.model`,
+    :meth:`OpenSeesModel.from_h5`, and
+    :meth:`OpenSeesModel.from_compose_buffers`.  Sentinel zeros and
+    a missing ``_ndf`` channel are no-ops — the check fires only
+    when the user actually declared per-node ndf values.
+
+    The message names the offending node + the fix (raise the
+    envelope ``ndf`` in ``apeSees(fem).model(...)``) so the user
+    doesn't have to grep the broker.
+    """
+    import numpy as np
+    nodes = getattr(fem, "nodes", None)
+    if nodes is None:
+        return
+    ndf_arr = getattr(nodes, "_ndf", None)
+    if ndf_arr is None:
+        return
+    arr = np.asarray(ndf_arr, dtype=np.int8)
+    if arr.size == 0:
+        return
+    max_declared = int(arr.max())
+    if max_declared <= 0:
+        return
+    if int(envelope_ndf) >= max_declared:
+        return
+    # Find one offending node ID for the error message.
+    idx = int(np.argmax(arr))
+    try:
+        nid = int(nodes.ids[idx])
+    except Exception:
+        nid = -1
+    raise BridgeError(
+        f"OpenSeesModel(ndf={int(envelope_ndf)}) cannot host node "
+        f"nid={nid} declared with ndf={max_declared} via "
+        f"g.node_ndf.set(...); raise ndf in "
+        f"apeSees(fem).model(ndf=...) to at least {max_declared}."
+    )
+
+
+def _emit_node_with_broker_ndf(
+    emitter: "Emitter",
+    fem: "FEMData",
+    tag: int,
+    coords: tuple[float, float, float],
+    *,
+    envelope_ndf: int | None = None,
+) -> None:
+    """Emit one ``node(tag, *coords)`` call with broker-sourced ndf
+    (S2 — ADR 0033 emit-side semantics).
+
+    Looks up the per-node ndf via :meth:`fem.nodes.ndf_for` and
+    passes ``ndf=K`` to the emitter only when a declaration covers
+    the node.  On :class:`LookupError` (no declaration), emits
+    without the override — the OpenSees envelope (``model ... -ndf
+    K`` set via :meth:`apeSees.model`) supplies the value, matching
+    the OpenSees-native semantics of ``model -ndf K`` + per-node
+    ``-ndf J``.
+
+    The optional ``envelope_ndf`` is consulted only when the
+    fallback path itself wants to force a value (e.g. foreign-node
+    declarations in the partitioned MP-constraint emit, where the
+    bridge's model-wide envelope is the documented fallback even
+    when no per-node declaration covers the foreign node).  Pass
+    ``None`` for the common "envelope wins via the model directive"
+    case at globally-owned and stage-owned emit sites.
+    """
+    x, y, z = coords
+    try:
+        ndf_val = fem.nodes.ndf_for(int(tag))
+    except LookupError:
+        if envelope_ndf is None:
+            emitter.node(int(tag), float(x), float(y), float(z))
+        else:
+            emitter.node(
+                int(tag), float(x), float(y), float(z),
+                ndf=int(envelope_ndf),
+            )
+        return
+    emitter.node(
+        int(tag), float(x), float(y), float(z), ndf=int(ndf_val),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Model-level records collected on the bridge between build() calls.
 # ---------------------------------------------------------------------------
@@ -1462,25 +1551,36 @@ def _emit_phantom_nodes(
     pre-flight audit in the Phase 7b spec).  De-duplicates tags across
     records — paranoid-cheap; the resolver maintains a single counter,
     but the set check is one line.
+
+    Sets the H5 emitter's ``phantom_node_mode`` side-channel for the
+    duration of the per-tag fan-out so the H5 emitter classifies
+    every node call inside this loop as a phantom (S2 / ADR 0033 —
+    real broker nodes can also pass ``ndf=K`` now, so the explicit
+    flag replaces the old "``ndf is not None``" heuristic).
     """
+    from .tag_resolution import set_phantom_node_mode
     n2s_iter = getattr(node_constraints, "node_to_surfaces", None)
     if n2s_iter is None:
         return
     seen: set[int] = set()
-    for rec in n2s_iter():
-        coords = rec.phantom_coords
-        if coords is None:
-            continue
-        for tag, xyz in zip(rec.phantom_nodes, coords):
-            t = int(tag)
-            if t in seen:
+    set_phantom_node_mode(emitter, True)
+    try:
+        for rec in n2s_iter():
+            coords = rec.phantom_coords
+            if coords is None:
                 continue
-            seen.add(t)
-            x, y, z = (float(c) for c in xyz)
-            # Per-node ``-ndf 6`` override — phantoms are 6-DOF even
-            # when the surrounding slaves are 3-DOF (standard OpenSees
-            # idiom for mixed-ndf models).
-            emitter.node(t, x, y, z, ndf=6)
+            for tag, xyz in zip(rec.phantom_nodes, coords):
+                t = int(tag)
+                if t in seen:
+                    continue
+                seen.add(t)
+                x, y, z = (float(c) for c in xyz)
+                # Per-node ``-ndf 6`` override — phantoms are 6-DOF even
+                # when the surrounding slaves are 3-DOF (standard OpenSees
+                # idiom for mixed-ndf models).
+                emitter.node(t, x, y, z, ndf=6)
+    finally:
+        set_phantom_node_mode(emitter, False)
 
 
 def _emit_rigid_links(
@@ -2171,14 +2271,19 @@ def emit_mp_constraints_partitioned(
     2. Compute the set of foreign nodes referenced by those
        constraints (nodes not in this rank's owner set, plus phantoms).
     3. Emit the foreign-node declarations FIRST (INV-2): regular
-       foreign nodes via ``node(tag, *xyz, ndf=foreign_node_ndf)``;
-       phantoms via ``node(tag, *xyz, ndf=6)``.
+       foreign nodes via ``node(tag, *xyz[, -ndf K])`` — per-node ndf
+       sourced from the FEM broker via ``fem.nodes.ndf_for(tag)``
+       (S2 / ADR 0033); on ``LookupError`` (no declaration covering
+       the foreign node) the call falls back to ``foreign_node_ndf``
+       — the bridge envelope.  Phantoms via
+       ``node(tag, *xyz, ndf=6)``.
     4. Emit the constraints in the same order as the unpartitioned
        :func:`emit_mp_constraints` (phantom-node pre-step → rigidLink
        → equalDOF → rigidDiaphragm → kinematic_coupling →
        ASDEmbeddedNodeElement) so cross-rank text is byte-identical
        per INV-1.
     """
+    from .tag_resolution import set_phantom_node_mode
     nodes = getattr(fem, "nodes", None)
     elements = getattr(fem, "elements", None)
     node_constraints = (
@@ -2218,12 +2323,24 @@ def emit_mp_constraints_partitioned(
     # Phantoms first (their tags are 6-DOF regardless of model ndf,
     # mirroring the unpartitioned phantom-node-first invariant within
     # this rank's block per ADR 0027 §"Phantom-node policy").
-    for tag in sorted(plan.referenced_phantoms):
-        xyz = phantom_coords[tag]
-        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
+    set_phantom_node_mode(emitter, True)
+    try:
+        for tag in sorted(plan.referenced_phantoms):
+            xyz = phantom_coords[tag]
+            emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
+    finally:
+        set_phantom_node_mode(emitter, False)
+    # Foreign nodes — per-node ndf via broker lookup; envelope
+    # fallback on LookupError (S2 / ADR 0033).  OpenSeesMP per-rank
+    # brokers carry identical ``_ndf`` arrays (lineage-folded per
+    # ADR 0021), so this lookup resolves consistently across ranks.
     for tag in sorted(plan.foreign_node_tags):
         xyz = _node_coords_safe(fem, tag)
-        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=foreign_node_ndf)
+        _emit_node_with_broker_ndf(
+            emitter, fem, int(tag),
+            (xyz[0], xyz[1], xyz[2]),
+            envelope_ndf=foreign_node_ndf,
+        )
 
     # -- 2. Constraint emission, mirroring the unpartitioned order. ------
     if node_constraints is not None:

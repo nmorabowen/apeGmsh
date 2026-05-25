@@ -195,7 +195,7 @@ def _replay_into(
     *,
     ndm: int,
     ndf: int,
-    nodes: "Sequence[tuple[int, tuple[float, ...]]]" = (),
+    nodes: "Sequence[tuple[int, tuple[float, ...]] | tuple[int, tuple[float, ...], int | None]]" = (),
     uniaxial_materials: "Sequence[Any]" = (),
     nd_materials: "Sequence[Any]" = (),
     simple_sections: "Sequence[Any]" = (),
@@ -224,7 +224,10 @@ def _replay_into(
     :class:`OpenSeesModel` carries:
 
       1. ``emitter.model(ndm=, ndf=)``  — model directive
-      2. ``emitter.node(tag, x, y, z)``  — every FEM node
+      2. ``emitter.node(tag, x, y, z[, ndf=K])``  — every FEM node;
+         per-node ``ndf=K`` token sourced from the broker (S2 /
+         ADR 0033) when ``node_ndf`` is non-None in the input tuple,
+         omitted otherwise (envelope wins).
       3. ``emitter.uniaxialMaterial`` / ``emitter.nDMaterial``
       4. ``emitter.section`` (simple) and the open/patch/fiber/layer/close
          sequence (complex)
@@ -263,9 +266,24 @@ def _replay_into(
     # 1. Model directive.
     emitter.model(ndm=int(ndm), ndf=int(ndf))
 
-    # 2. Nodes.
-    for tag, coords in nodes:
-        emitter.node(int(tag), *(float(c) for c in coords))
+    # 2. Nodes.  S2 (ADR 0033): the OpenSeesModel build path widens
+    # the per-node tuple to ``(tag, coords, ndf|None)`` so per-node
+    # ``-ndf K`` declarations survive the H5 round-trip.  Legacy
+    # 2-tuples ``(tag, coords)`` are tolerated for callers that
+    # haven't rebound to the wider shape.
+    for entry in nodes:
+        if len(entry) == 3:
+            tag, coords, node_ndf = entry
+        else:
+            tag, coords = entry
+            node_ndf = None
+        if node_ndf is None:
+            emitter.node(int(tag), *(float(c) for c in coords))
+        else:
+            emitter.node(
+                int(tag), *(float(c) for c in coords),
+                ndf=int(node_ndf),
+            )
 
     # 3. Materials — uniaxial first, then nD.  ADR 0011 schema mirrors
     # this group nesting; the emitter doesn't enforce order, but the

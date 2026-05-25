@@ -257,6 +257,13 @@ class OpenSeesModel:
         # surface drift warnings — never raise (INV-2).
         lineage = _resolve_lineage(spath, fem, fem_root)
 
+        # S2 (ADR 0033): the stored envelope must cover every
+        # per-node declaration in the rehydrated FEM.  Catches
+        # hand-corrupted H5 files that claim ``ndf=6`` on a node in
+        # an ``ndf=3`` envelope.
+        from ._internal.build import validate_envelope_covers_broker_ndf
+        validate_envelope_covers_broker_ndf(fem, ndf)
+
         return cls(
             _fem=fem,
             _model_name=model_name,
@@ -326,6 +333,16 @@ class OpenSeesModel:
             fem_hash=fem_hash,
             model_hash=snapshot_id or None,
         )
+
+        # S2 (ADR 0033): the envelope ``ndf`` carried on the emitter
+        # buffers must cover every per-node declaration on the broker
+        # FEM.  ``apeSees.model()`` already runs the same check at
+        # call time, but ``from_compose_buffers`` is reachable from
+        # programmatic compose flows that bypass ``apeSees.model``;
+        # rechecking here is cheap and guarantees the published
+        # broker is consistent.
+        from ._internal.build import validate_envelope_covers_broker_ndf
+        validate_envelope_covers_broker_ndf(fem, int(emitter._ndf or 0))
 
         return cls(
             _fem=fem,
@@ -776,8 +793,23 @@ class OpenSeesModel:
         complex_sections = tuple(
             s for s in self._sections if isinstance(s, SectionComplexRecord)
         )
+        # S2 (ADR 0033): widen per-node tuple to carry the broker's
+        # per-node ndf so the build path emits ``-ndf K`` for nodes
+        # declared via ``g.node_ndf`` (shell-on-solid).  ``ndf_for``
+        # raises ``LookupError`` for undeclared nodes; we pass ``None``
+        # in that case so the envelope ``ops.model(ndm, ndf=K)`` wins.
+        def _ndf_or_none(nid: int) -> int | None:
+            try:
+                return int(self._fem.nodes.ndf_for(int(nid)))
+            except LookupError:
+                return None
+
         nodes = tuple(
-            (int(nid), (float(c[0]), float(c[1]), float(c[2])))
+            (
+                int(nid),
+                (float(c[0]), float(c[1]), float(c[2])),
+                _ndf_or_none(int(nid)),
+            )
             for nid, c in zip(self._fem.nodes.ids, self._fem.nodes.coords)
         )
 

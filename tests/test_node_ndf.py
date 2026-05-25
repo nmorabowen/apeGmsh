@@ -354,32 +354,32 @@ def test_hash_diverges_when_coverage_differs(g):
     )
 
 
-def test_from_msh_folds_ndf_into_hash_like_from_gmsh(tmp_path: Path):
-    """Bug 3 — the ``from_msh`` construction path must fold ``_ndf``
-    into the snapshot_id digest the same way ``from_gmsh`` does.
+def test_hash_symmetric_across_empty_channel_shapes(tmp_path: Path):
+    """S2 locked design — the ``_ndf`` hash fold must be skipped for
+    every "empty channel" shape, and all such shapes must hash
+    identically.
 
-    Pre-fix, ``from_msh`` left ``_ndf=None`` so the hash gate in
-    ``_femdata_hash`` skipped the ndf section entirely, while
-    ``from_gmsh`` always folded the (zero) array in — same geometry,
-    different hash depending on load path.
+    Empty-channel cases the hash gate handles:
+      * ``_ndf is None``         — from_msh (no NodeNDFComposite),
+                                   direct test fixtures
+      * ``_ndf = np.zeros(N)``   — from_gmsh with no ``g.node_ndf``
+                                   declarations
+      * ``_ndf = np.zeros(N)``   — from_h5 of a 2.6.x file (reader
+                                   synthesises the all-sentinel array)
 
-    Note: we don't simply compare snapshot_ids across the two paths
-    end-to-end because the .msh round-trip loses ~1e-16 of
-    coordinate precision (verified empirically), so byte-equal
-    coords are impossible regardless of Bug 3.  Instead this test
-    isolates the *ndf channel fold*: hash the same FEMData with and
-    without ``_ndf`` and assert the two values differ, proving the
-    ndf array participates in ``from_msh``'s digest.  Combined with
-    ``test_hash_changes_when_ndf_changes`` (which proves the same
-    for ``from_gmsh``), the channel is symmetric.
+    All three shapes denote "the user declared no per-node ndf".
+    The hash must be identical across them — otherwise from_msh and
+    from_gmsh of the same uniform-ndf geometry would hash
+    differently, breaking the lineage chain.
 
     Does NOT take the ``g`` fixture; ``from_msh`` opens its own
     gmsh session.
     """
-    from apeGmsh import apeGmsh
     from apeGmsh.mesh._femdata_hash import compute_snapshot_id
 
+    # Build a single from_msh FEM and use it as the test vehicle.
     msh_path = tmp_path / "box.msh"
+    from apeGmsh import apeGmsh
     with apeGmsh(model_name="hash_sym_src", verbose=False) as g:
         g.model.geometry.add_box(0.0, 0.0, 0.0, 10.0, 10.0, 10.0, label='Body')
         g.model.sync()
@@ -390,27 +390,43 @@ def test_from_msh_folds_ndf_into_hash_like_from_gmsh(tmp_path: Path):
 
     fem = FEMData.from_msh(str(msh_path), dim=3)
 
-    # Sanity: Bug 3 populated ``_ndf`` to the all-zero sentinel.
-    assert fem.nodes._ndf is not None, (
-        "Bug 3 regressed: from_msh left _ndf=None instead of "
-        "synthesising the zero-sentinel array."
+    # Sanity: S2 design — from_msh leaves _ndf=None.
+    assert fem.nodes._ndf is None, (
+        "S2 regressed: from_msh stamped _ndf array instead of leaving "
+        "the channel empty."
     )
 
-    # Snapshot with ``_ndf`` populated (the actual behaviour).
-    h_with_ndf = compute_snapshot_id(fem)
+    # Hash with _ndf=None (the actual from_msh state).
+    h_none = compute_snapshot_id(fem)
 
-    # Toggle ``_ndf`` to None and re-hash — this is what the hash
-    # would have been pre-Bug-3.  If the two values agree, ``_ndf``
-    # was NOT folded into the digest on the from_msh path.
+    # Hash with _ndf=zeros (mimics from_gmsh-no-declarations state).
     saved = fem.nodes._ndf
     try:
-        fem.nodes._ndf = None
-        h_without_ndf = compute_snapshot_id(fem)
+        fem.nodes._ndf = np.zeros(len(fem.nodes.ids), dtype=np.int8)
+        h_zeros = compute_snapshot_id(fem)
     finally:
         fem.nodes._ndf = saved
 
-    assert h_with_ndf != h_without_ndf, (
-        "from_msh's snapshot_id ignored _ndf — Bug 3 fix regressed."
+    assert h_none == h_zeros, (
+        "S2 hash symmetry regressed: empty channel shapes "
+        "(_ndf=None vs _ndf=zeros) hashed differently. The fold gate "
+        "in _femdata_hash._hash_nodes must skip both cases."
+    )
+
+    # And a declared array (positive values) must hash differently.
+    saved = fem.nodes._ndf
+    try:
+        arr = np.zeros(len(fem.nodes.ids), dtype=np.int8)
+        arr[0] = 6
+        fem.nodes._ndf = arr
+        h_declared = compute_snapshot_id(fem)
+    finally:
+        fem.nodes._ndf = saved
+
+    assert h_none != h_declared, (
+        "S2 hash channel regressed: a declared ndf produced the same "
+        "hash as the empty channel. The fold gate must fire when "
+        "any element is non-zero."
     )
 
 
@@ -564,14 +580,23 @@ def test_set_unknown_target_raises_keyerror_at_extraction(g):
 
 
 # =====================================================================
-# 10. from_msh path leaves ndf at the all-sentinel array
+# 10. from_msh path leaves ndf undeclared (None)
 # =====================================================================
 
-def test_from_msh_leaves_ndf_at_sentinel(tmp_path: Path):
+def test_from_msh_leaves_ndf_undeclared(tmp_path: Path):
     """from_msh has no session and no NodeNDFComposite, so the broker
-    is built with the all-zero sentinel array (Bug 3 — symmetric hash
-    initialisation across construction paths) and ndf_for raises with
-    the help text for every node.
+    is built with ``_ndf=None`` (S2 locked design: leave the channel
+    empty rather than synthesise a zero array).  ``ndf_for`` raises
+    with the help text for every node.  The S2 emit-side
+    ``try/except LookupError`` pattern absorbs this and falls back
+    to the apeSees envelope ``ndf=K``, so models loaded via
+    ``from_msh`` emit correctly under any uniform-ndf bridge.
+
+    Hash symmetry between ``from_msh`` (``_ndf=None``) and
+    ``from_gmsh`` with no declarations (``_ndf=zeros``) is preserved
+    by the updated hash fold gate in
+    ``_femdata_hash._hash_nodes``: both empty-channel cases skip the
+    fold and produce identical digests.
 
     Does NOT take the ``g`` fixture: ``FEMData.from_msh`` opens its
     own gmsh session, and overlapping that with the fixture session
@@ -590,16 +615,9 @@ def test_from_msh_leaves_ndf_at_sentinel(tmp_path: Path):
         import gmsh
         gmsh.write(str(msh_path))
 
-    # Phase 2: from_msh has no session — broker carries the
-    # all-sentinel array (zeros), not ``None``.
+    # Phase 2: from_msh has no session — broker carries ``_ndf=None``.
     fem = FEMData.from_msh(str(msh_path), dim=3)
-    assert fem.nodes._ndf is not None
-    assert fem.nodes._ndf.dtype == np.int8
-    assert fem.nodes._ndf.shape == (len(fem.nodes.ids),)
-    assert int(fem.nodes._ndf.sum()) == 0, (
-        "from_msh must leave ndf at the all-zero sentinel — no "
-        "declarations were made."
-    )
+    assert fem.nodes._ndf is None
 
     nid = int(next(iter(fem.nodes.ids)))
     with pytest.raises(LookupError) as exc_info:

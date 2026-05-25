@@ -687,22 +687,19 @@ def _from_msh(
             types=type_list,
         )
 
-        # Per-node ndf — initialise to the all-sentinel array (zeros).
-        # ``from_msh`` has no session and no ``NodeNDFComposite``, so
-        # there are no declarations to resolve.  Stamping zeros (rather
-        # than leaving ``_ndf=None``) makes the hash gate in
-        # ``_femdata_hash`` symmetric across construction paths:
-        # ``from_gmsh`` and ``from_msh`` of the same geometry now
-        # produce the same ``snapshot_id``.  ``ndf_for`` still raises
-        # the helpful LookupError for sentinel-0 nodes, so the
-        # explicit-only API contract is unchanged.
-        node_ndf = np.zeros(len(node_ids), dtype=np.int8)
-
+        # Per-node ndf — leave at ``None`` (no NodeNDFComposite in
+        # the ``from_msh`` path).  Per the locked S2 design, the hash
+        # fold in ``_femdata_hash`` skips when ``_ndf is None`` OR is
+        # all-sentinel, so this stays hash-symmetric with
+        # ``from_gmsh`` of a model with no declarations (which folds
+        # an all-zero array → also skipped).  The emit-side falls
+        # back to the apeSees envelope ``ndf=K`` via the
+        # ``try/except LookupError`` pattern, so ``from_msh``-built
+        # broker FEMs emit correctly under any uniform-ndf model.
         nodes = NodeComposite(
             node_ids=node_ids, node_coords=node_coords,
             physical=physical, labels=labels,
             partitions=partitions or None,
-            ndf=node_ndf,
         )
         elements = ElementComposite(
             groups=groups,

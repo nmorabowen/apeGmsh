@@ -278,6 +278,12 @@ class _NodesStub:
         self.ids = np.asarray(ids, dtype=np.int64)
         self.coords = np.zeros((len(ids), 3), dtype=np.float64)
 
+    def ndf_for(self, nid: int) -> int:
+        """Mirror :meth:`NodeComposite.ndf_for` fail-loud behaviour
+        (S2 / ADR 0033) so the emit-site try/except absorbs and
+        falls back to the envelope ``ndf``."""
+        raise LookupError(f"test stub: no per-node ndf declared (node {nid})")
+
 
 class _ElementsStub:
     def __init__(self, ids: tuple[int, ...]) -> None:
