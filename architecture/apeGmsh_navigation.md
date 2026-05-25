@@ -827,7 +827,7 @@ Module-level functions only:
   - `.clear(self, dim_tags=None)`
   - `.reverse(self, dim_tags=None)`
   - `.relocate_nodes(self, *, dim=-1, tag=-1)`
-  - `.remove_duplicate_nodes(self, verbose=True)`
+  - `.remove_duplicate_nodes(self)`                # always announces on stdout (no silent mode)
   - `.remove_duplicate_elements(self, verbose=True)`
   - `.affine_transform(self, ...)`
 

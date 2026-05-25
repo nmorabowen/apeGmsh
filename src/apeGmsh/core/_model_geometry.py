@@ -780,6 +780,16 @@ class _Geometry:
         ----
         With ``through_point=False`` the arc is the *shorter* of the
         two possible arcs unless you reverse the start/end order.
+
+        See Also
+        --------
+        :meth:`apeGmsh.core._model_queries._Queries.make_conformal` — when
+        an arc joins straight lines to form a closed wire, OCC may create
+        duplicate endpoint vertices at the arc-line junctions instead of
+        welding to the existing point tags. The wire then meshes as
+        disjoint pieces with no moment continuity at the corners. Call
+        ``g.model.queries.make_conformal(dims=[1])`` after assembling the
+        wire to weld the topology.
         """
         start  = self._resolve_entity_tag(start,  dim=0, what="point")
         center = self._resolve_entity_tag(center, dim=0, what="point")
@@ -816,6 +826,16 @@ class _Geometry:
         radius     : radius
         angle1     : start angle in radians (default 0)
         angle2     : end angle in radians   (default 2π = full circle)
+
+        Note
+        ----
+        Partial arcs (``angle2 - angle1 < 2π``) joined to other curves
+        in a closed wire are a classic source of disjoint topology — OCC
+        does not weld arc endpoints to existing point tags. After
+        assembling such a wire call
+        :meth:`apeGmsh.core._model_queries._Queries.make_conformal`
+        (``g.model.queries.make_conformal(dims=[1])``) to fragment-weld
+        the arc-line junctions.
         """
         tag = gmsh.model.occ.addCircle(cx, cy, cz, radius,
                                         angle1=angle1, angle2=angle2)
@@ -847,6 +867,18 @@ class _Geometry:
         r_minor    : semi-minor axis
         angle1     : start angle in radians
         angle2     : end angle in radians
+
+        Note
+        ----
+        Partial ellipses (``angle2 - angle1 < 2π``) joined to other curves
+        in a closed wire are a classic source of disjoint topology — OCC
+        does not weld ellipse endpoints to existing point tags. After
+        assembling such a wire call
+        :meth:`apeGmsh.core._model_queries._Queries.make_conformal`
+        (``g.model.queries.make_conformal(dims=[1])``) to fragment-weld
+        the arc-line junctions, or use
+        :meth:`apeGmsh.mesh.FEMData.InspectComposite.find_coincident_node_pairs`
+        on the resulting FEM to surface unbridged coincident nodes.
         """
         tag = gmsh.model.occ.addEllipse(cx, cy, cz, r_major, r_minor,
                                          angle1=angle1, angle2=angle2)

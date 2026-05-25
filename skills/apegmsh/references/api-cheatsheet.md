@@ -459,8 +459,14 @@ fem = g.mesh.queries.get_fem_data(dim=3, *, remove_orphans=False)
 fem.info       # MeshInfo (n_nodes, n_elems, bandwidth, types)
 fem.nodes      # NodeComposite (ids, coords, get(...), sub-composites)
 fem.elements   # ElementComposite (iter, get(...), resolve(), type_table())
-fem.inspect    # summaries + DataFrames
+fem.inspect    # summaries + DataFrames + topology diagnostics
 fem.mesh_selection  # MeshSelectionStore (if sets were defined)
+
+# Topology diagnostic — surfaces coincident-but-unbridged node pairs
+# (the OCC arc-line-junction failure mode). Empty refs list = bug.
+pairs = fem.inspect.find_coincident_node_pairs(tol=1e-6, pg=None)
+# -> dict[(tag_a, tag_b), list[str]]  # refs: "element <type>#<eid>"
+#                                     # or   "constraint <kind>"
 
 # Factories
 FEMData.from_gmsh(dim=3, session=g, ndf=6, remove_orphans=False)

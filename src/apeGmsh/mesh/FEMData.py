@@ -1161,6 +1161,157 @@ class InspectComposite:
                 break
         return "\n".join(lines)
 
+    # ── Topology diagnostics ────────────────────────────────
+
+    def find_coincident_node_pairs(
+        self,
+        *,
+        tol: float = 1e-6,
+        pg: str | None = None,
+    ) -> dict[tuple[int, int], list[str]]:
+        """Find distinct nodes that share an XYZ within tolerance.
+
+        Opt-in diagnostic for suspect topology — most commonly the
+        arc-line junction case, where OCC builds an arc-bounded wire
+        without welding the arc endpoints onto the joining line's point
+        tags. The mesh then carries two distinct nodes at every
+        junction with no element or constraint bridging them.
+
+        Returns a dict mapping each coincident pair
+        ``(tag_a, tag_b)`` — sorted so ``tag_a < tag_b`` — to a list
+        of references that touch the pair:
+
+        * ``"element <type>#<eid>"`` — both nodes appear in the same
+          element's connectivity (legitimate for ``zeroLength``,
+          tied interfaces, etc.)
+        * ``"constraint <kind>"`` — equalDOF / rigidLink / diaphragm /
+          kinematic / node_to_surface bridges the pair
+
+        An **empty list** is the smoking gun: the pair is coincident
+        but nothing references them together — i.e. an unbridged
+        duplicate (the cimbra arc-line corner). An entry with only
+        ``constraint`` refs means the user has explicitly tied the
+        pair; an entry with an ``element zeroLength*`` ref is the
+        canonical legitimate case.
+
+        Parameters
+        ----------
+        tol : float
+            Maximum Euclidean distance between two nodes to consider
+            them coincident. Default ``1e-6``.  Single value — if
+            you need per-constraint-type tolerances (each constraint
+            kind has its own physical tol), drive the resolver's
+            preflight directly instead.
+        pg : str | None
+            If given, restrict the scan to nodes belonging to this
+            physical group. Otherwise scan all domain nodes.
+
+        Returns
+        -------
+        dict[tuple[int, int], list[str]]
+            ``{(tag_a, tag_b): [ref, ...]}`` for every coincident
+            pair.  Empty dict if no coincident pairs are found.
+
+        Warnings
+        --------
+        Builds a full-model KDTree on each call (SciPy ``cKDTree``,
+        with a NumPy O(N²) fallback if SciPy is unavailable). Avoid
+        invoking inside tight loops on million-node models — cache
+        the result yourself if you need it repeatedly.
+
+        Examples
+        --------
+        ::
+
+            pairs = fem.inspect.find_coincident_node_pairs(tol=1e-6)
+            for (a, b), refs in pairs.items():
+                if not refs:
+                    print(f"UNBRIDGED coincident pair: {a}, {b}")
+                else:
+                    print(f"Pair {a},{b} bridged by: {refs}")
+        """
+        from apeGmsh._kernel.resolvers._constraint_resolver._geom import (
+            _SpatialIndex,
+        )
+
+        f = self._fem
+        all_ids: ndarray = f.nodes.ids
+        all_coords: ndarray = f.nodes.coords
+
+        # Optional PG restriction.
+        if pg is not None:
+            sel_ids = f.nodes.select(pg=pg).ids
+            keep: set[int] = {int(n) for n in sel_ids}
+            mask = np.array([int(t) in keep for t in all_ids], dtype=bool)
+            ids = all_ids[mask]
+            coords = all_coords[mask]
+        else:
+            ids = all_ids
+            coords = all_coords
+
+        n = len(ids)
+        if n < 2:
+            return {}
+
+        index = _SpatialIndex(np.asarray(coords, dtype=float))
+
+        # Walk every node, query the ball, register every distinct
+        # neighbour as a coincident pair (sorted to dedupe).
+        pairs: dict[tuple[int, int], list[str]] = {}
+        for i in range(n):
+            hits = index.query_ball_point(coords[i], float(tol))
+            for j in hits:
+                if int(j) == i:
+                    continue
+                ta = int(ids[i])
+                tb = int(ids[j])
+                key = (ta, tb) if ta < tb else (tb, ta)
+                if key not in pairs:
+                    pairs[key] = []
+
+        if not pairs:
+            return pairs
+
+        # Cross-reference: which elements / constraints touch each pair.
+        # Build a node -> set[pairs] inverted index for O(1) lookup.
+        node_to_pairs: dict[int, list[tuple[int, int]]] = {}
+        for key in pairs:
+            node_to_pairs.setdefault(key[0], []).append(key)
+            node_to_pairs.setdefault(key[1], []).append(key)
+
+        # Element scan — credit a ref when BOTH endpoints of a pair
+        # appear in the same connectivity row.
+        for group in f.elements:
+            type_name = group.type_name
+            for eid, conn in group:
+                conn_set = {int(n) for n in conn}
+                seen: set[tuple[int, int]] = set()
+                for nid in conn_set:
+                    for key in node_to_pairs.get(nid, ()):
+                        if key in seen:
+                            continue
+                        if key[0] in conn_set and key[1] in conn_set:
+                            pairs[key].append(f"element {type_name}#{int(eid)}")
+                            seen.add(key)
+
+        # Constraint scan — flat pairs() expands every constraint kind
+        # (equal_dof, rigid_*, diaphragm, kinematic, node_to_surface)
+        # into NodePairRecords. A ref counts when the constraint's
+        # (master, slave) hits our coincident pair (either order).
+        try:
+            constraint_pairs = list(f.nodes.constraints.pairs())
+        except Exception:
+            constraint_pairs = []
+        for cp in constraint_pairs:
+            a = int(getattr(cp, "master_node"))
+            b = int(getattr(cp, "slave_node"))
+            key = (a, b) if a < b else (b, a)
+            if key in pairs:
+                kind = getattr(cp, "kind", "constraint")
+                pairs[key].append(f"constraint {kind}")
+
+        return pairs
+
 
 # =====================================================================
 # FEMData — top-level broker

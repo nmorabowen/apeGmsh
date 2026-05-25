@@ -165,12 +165,22 @@ class _Queries:
         """
         Fragment all entities against each other to produce a conformal model.
 
-        IGES/STEP files exported from CAD tools often create topologically
-        disconnected entities at shared joints — for example, column endpoints
-        and beam endpoints that are coincident in space but belong to separate
-        BRep objects with no shared vertex.  A conformal model is required for
-        FEM meshing because elements must share nodes at junctions rather than
-        having two independent nodes at the same location.
+        Canonical fix for two flavours of disjoint topology:
+
+        * **IGES/STEP imports** — CAD exporters routinely produce coincident
+          vertices on separate BRep objects (column endpoints, beam endpoints)
+          that share an XYZ but have no shared OCC point.
+        * **Arc-built wires (``add_arc`` / ``add_circle(angle1,angle2)`` /
+          ``add_ellipse(angle1,angle2)``)** — OCC creates fresh endpoint
+          points on each partial-arc curve rather than welding to existing
+          point tags. A wire built as `arc + line + line` is then topologically
+          three disjoint pieces; the mesh produces two nodes at every
+          arc-line junction with no moment continuity. ``make_conformal(dims=[1])``
+          welds them at the geometry layer.
+
+        A conformal model is required for FEM meshing because elements must
+        share nodes at junctions rather than having two independent nodes
+        at the same location.
 
         This method calls ``gmsh.model.occ.fragment()`` with all entities of
         the requested dimensions as both objects and tools.  OCC computes all
@@ -198,6 +208,21 @@ class _Queries:
         Returns
         -------
         self — for method chaining
+
+        Warnings
+        --------
+        ``make_conformal()`` **renumbers OCC entities**. Any
+        :class:`Part` instances already constructed against the pre-fragment
+        model hold stale entity-tag dicts in their ``Instance.entities``
+        attribute, and a best-effort remap runs only for parts registered
+        on the session at call time. For correctness:
+
+        * **Preferred:** call ``make_conformal()`` *before* constructing
+          ``Part`` / ``Assembly`` instances.
+        * **Otherwise:** rebuild any ``Part`` instances after fragmenting.
+
+        Same caveat for hand-stored ``(dim, tag)`` references in user code —
+        fragment refreshes tags, so cached lookups will dangle.
 
         Example
         -------

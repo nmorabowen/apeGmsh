@@ -252,25 +252,25 @@ class _Editing:
         self._mesh._log(f"relocate_nodes(resolved={dts})")
         return self
 
-    def remove_duplicate_nodes(self, verbose: bool = True) -> "_Editing":
+    def remove_duplicate_nodes(self) -> "_Editing":
         """
         Merge nodes that share the same position within tolerance.
 
-        Parameters
-        ----------
-        verbose : if True (default), print how many nodes were merged.
+        Node removal is **always** announced on stdout — there is no
+        silent mode. Deleting nodes from a meshed model is a
+        destructive operation; the visibility floor is intentional so
+        that an unexpected dedup never hides in a long pipeline log.
         """
         before = len(gmsh.model.mesh.getNodes()[0])
         gmsh.model.mesh.removeDuplicateNodes()
         after  = len(gmsh.model.mesh.getNodes()[0])
         removed = before - after
-        if verbose:
-            if removed > 0:
-                print(f"remove_duplicate_nodes: merged {removed} "
-                      f"node(s) ({before} -> {after})")
-            else:
-                print(f"remove_duplicate_nodes: no duplicates found "
-                      f"({before} nodes unchanged)")
+        if removed > 0:
+            print(f"remove_duplicate_nodes: merged {removed} "
+                  f"node(s) ({before} -> {after})")
+        else:
+            print(f"remove_duplicate_nodes: no duplicates found "
+                  f"({before} nodes unchanged)")
         self._mesh._log(f"remove_duplicate_nodes() removed={removed}")
         return self
 

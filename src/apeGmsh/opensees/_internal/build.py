@@ -690,6 +690,18 @@ def emit_element_spec(
     transf_spec = _element_transf(spec)
 
     for eid, node_tags in elements:
+        # Universal cardinality check at the bridge boundary. No
+        # OpenSees element family accepts a repeated tag in its
+        # connectivity tuple — even zeroLength requires two *distinct*
+        # tags (the two nodes happen to be coincident in XYZ, but the
+        # tags differ). A repeat here is always an upstream resolver
+        # bug; fail loud now rather than emit garbage to OpenSees.
+        if len(set(int(t) for t in node_tags)) != len(node_tags):
+            raise BridgeError(
+                f"element {eid} ({type(spec).__name__}): connectivity "
+                f"has duplicate node tags {tuple(int(t) for t in node_tags)} — "
+                f"every node in an element's connectivity must be distinct."
+            )
         ele_tag = tags.allocate("element")
         if tag_recorder is not None:
             tag_recorder[int(eid)] = int(ele_tag)

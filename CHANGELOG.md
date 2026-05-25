@@ -1,6 +1,53 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension)
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · topology safety nets (P1/P3) + arc-line wire docs
+
+### ADDED — topology safety nets and coincident-node diagnostic
+
+- **`fem.inspect.find_coincident_node_pairs(tol=, pg=)`** — opt-in
+  diagnostic that surfaces every pair of distinct nodes sharing an XYZ
+  within tolerance and lists which elements / constraints (if any)
+  bridge them. An empty refs list is the smoking gun for an unbridged
+  duplicate — the classic OCC arc-line-junction failure mode where a
+  wire built as `add_ellipse(angle1, angle2) + lines` produces two
+  nodes at every corner with no moment continuity. Reuses the
+  resolver's `_SpatialIndex` (SciPy `cKDTree` with NumPy fallback);
+  no new dependencies.
+
+- **Tuple-uniqueness check at the OpenSees bridge boundary** — every
+  element's connectivity tuple is now validated by
+  `emit_element_spec` before emission. Repeated node tags in a single
+  element fail loud with a `BridgeError` carrying `(fem_eid, type,
+  tuple)`. The check is tag-level, so `zeroLength` (two *distinct*
+  tags at coincident XYZ) still passes; the only behaviour change is
+  that previously-silent resolver bugs now stop at the bridge instead
+  of confusing OpenSees downstream.
+
+### CHANGED — `mesh.editing.remove_duplicate_nodes()` always prints
+
+- Dropped the `verbose=` parameter. Node removal is now unconditional
+  on stdout — both branches (`merged N node(s)` / `no duplicates
+  found`) always announce themselves. Deleting nodes from a meshed
+  model is destructive; the visibility floor is intentional so an
+  unexpected dedup never hides in a long pipeline log. Callers passing
+  `verbose=False` will now `TypeError` — drop the kwarg.
+
+### DOCS — `make_conformal()` canonical fix for arc-line junctions
+
+- **`g.model.queries.make_conformal()` docstring** now calls out two
+  flavours of disjoint topology it addresses: IGES/STEP imports AND
+  partial-arc-built wires (`add_arc` / `add_circle(angle1,angle2)` /
+  `add_ellipse(angle1,angle2)` joined to lines). Adds a **Warnings**
+  block on ordering: fragment renumbers entities, so any pre-built
+  `Part` / `Assembly` holds stale `Instance.entities` dicts — call
+  `make_conformal()` before constructing Parts, or rebuild Parts
+  afterward.
+
+- **Wire-builder docstrings** (`add_arc`, `add_circle`, `add_ellipse`)
+  now carry a See-Also pointing at `make_conformal(dims=[1])` so the
+  next person who hits the cimbra pattern finds the fix from the
+  symbol they're already on. `add_ellipse` also references the new
+  `find_coincident_node_pairs` diagnostic for post-mesh verification.
 
 ### ADDED — stage-bound constraints (`s.embedded` et al.) + `s.initial_stress` PUSH path (Phase SSI-2.D extension)
 

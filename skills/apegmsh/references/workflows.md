@@ -298,6 +298,48 @@ post-processing — combine with `Results.from_fem(fem)` (or use
 `fem.viewer(blocking=False)`) to visualize without re-running the
 analysis.  For MPCO / STKO outputs see the `stko-to-python` skill.
 
+### Diagnosing disjoint topology (arc-line wires, IGES imports)
+
+When a wire is built from a partial arc plus straight lines —
+`add_ellipse(angle1, angle2)` + `add_line(...)`, or an IGES import
+with un-welded joints — OCC frequently fails to weld the arc/line
+endpoints into a single point.  The mesh then carries two distinct
+nodes at every corner with no element or constraint bridging them,
+and moments at the corner read wrong (no continuity).
+
+The canonical fix is at the **geometry layer**:
+
+```python
+# Build the wire
+g.model.geometry.add_ellipse(0, 0, 0, 2.55, 2.75,
+                             angle1=0, angle2=math.pi, label="arch")
+g.model.geometry.add_line("p_left",   "arch_start")
+g.model.geometry.add_line("arch_end", "p_right")
+
+# Weld arc-line junctions BEFORE constructing Parts or meshing
+g.model.queries.make_conformal(dims=[1])
+
+# Now build PGs / Parts and mesh
+g.mesh.generation.generate(1)
+fem = g.mesh.queries.get_fem_data(dim=1)
+
+# Verify there are no unbridged coincident pairs left
+pairs = fem.inspect.find_coincident_node_pairs(pg="cimbra", tol=1e-6)
+unbridged = {k: v for k, v in pairs.items() if not v}
+assert not unbridged, f"unbridged corners: {sorted(unbridged)}"
+```
+
+Reading the diagnostic output:
+
+* `pairs == {}` — no coincident pairs anywhere; topology is clean.
+* `pairs[(a, b)] == []` — **bug**: two nodes share XYZ but nothing
+  ties them. Either re-fragment (`make_conformal`) or add an
+  explicit `equal_dof` / `rigid_link` constraint.
+* `pairs[(a, b)] == ["element zeroLength#7"]` — legitimate; this is
+  what `zeroLength` is for.
+* `pairs[(a, b)] == ["constraint equal_dof"]` — legitimate; user
+  has explicitly tied the pair.
+
 ## Workflow-level pitfalls
 
 - **Assuming you must call synchronize by hand.**  apeGmsh's
@@ -313,6 +355,20 @@ analysis.  For MPCO / STKO outputs see the `stko-to-python` skill.
   entity tags; any PG you added by tag (not by label) before
   fragmenting gets stale.  Create PGs after fragmentation, or use
   labels which survive fragmentation.
+- **Calling `make_conformal()` after building `Part` instances.**
+  Fragment renumbers entities and the best-effort remap covers only
+  parts registered on the session at call time. A `Part` built before
+  fragmenting holds stale tag dicts in its `Instance.entities` and
+  will silently misresolve. Run `make_conformal()` *before*
+  constructing Parts, or rebuild Parts after fragmenting.
+- **Joining partial arcs to straight lines without `make_conformal`.**
+  `add_ellipse(angle1, angle2)` / `add_circle(angle1, angle2)` /
+  `add_arc(...)` joined to lines produces a wire that OCC treats as
+  three disjoint pieces — the mesh carries two nodes at every corner
+  with no moment continuity. Call
+  `g.model.queries.make_conformal(dims=[1])` after assembly, or
+  diagnose with `fem.inspect.find_coincident_node_pairs(pg=, tol=)`
+  (entries with empty refs lists are the unbridged duplicates).
 - **Asking for 3-D FEMData when the mesh has tets + shell bodies.**
   `get_fem_data(dim=3)` drops the 2-D surface mesh — use
   `dim=None` (all dims) when shells or tied interfaces need to
