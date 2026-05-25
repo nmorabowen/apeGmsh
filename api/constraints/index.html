@@ -11007,69 +11007,69 @@ short stringified view of the kind-specific fields (<code>dofs</code>,
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/core/ConstraintsComposite.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1536">1536</a></span>
-<span class="normal"><a href="#__codelineno-0-1537">1537</a></span>
-<span class="normal"><a href="#__codelineno-0-1538">1538</a></span>
-<span class="normal"><a href="#__codelineno-0-1539">1539</a></span>
-<span class="normal"><a href="#__codelineno-0-1540">1540</a></span>
-<span class="normal"><a href="#__codelineno-0-1541">1541</a></span>
-<span class="normal"><a href="#__codelineno-0-1542">1542</a></span>
-<span class="normal"><a href="#__codelineno-0-1543">1543</a></span>
-<span class="normal"><a href="#__codelineno-0-1544">1544</a></span>
-<span class="normal"><a href="#__codelineno-0-1545">1545</a></span>
-<span class="normal"><a href="#__codelineno-0-1546">1546</a></span>
-<span class="normal"><a href="#__codelineno-0-1547">1547</a></span>
-<span class="normal"><a href="#__codelineno-0-1548">1548</a></span>
-<span class="normal"><a href="#__codelineno-0-1549">1549</a></span>
-<span class="normal"><a href="#__codelineno-0-1550">1550</a></span>
-<span class="normal"><a href="#__codelineno-0-1551">1551</a></span>
-<span class="normal"><a href="#__codelineno-0-1552">1552</a></span>
-<span class="normal"><a href="#__codelineno-0-1553">1553</a></span>
-<span class="normal"><a href="#__codelineno-0-1554">1554</a></span>
-<span class="normal"><a href="#__codelineno-0-1555">1555</a></span>
-<span class="normal"><a href="#__codelineno-0-1556">1556</a></span>
-<span class="normal"><a href="#__codelineno-0-1557">1557</a></span>
-<span class="normal"><a href="#__codelineno-0-1558">1558</a></span>
-<span class="normal"><a href="#__codelineno-0-1559">1559</a></span>
-<span class="normal"><a href="#__codelineno-0-1560">1560</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1560">1560</a></span>
 <span class="normal"><a href="#__codelineno-0-1561">1561</a></span>
 <span class="normal"><a href="#__codelineno-0-1562">1562</a></span>
 <span class="normal"><a href="#__codelineno-0-1563">1563</a></span>
 <span class="normal"><a href="#__codelineno-0-1564">1564</a></span>
 <span class="normal"><a href="#__codelineno-0-1565">1565</a></span>
 <span class="normal"><a href="#__codelineno-0-1566">1566</a></span>
-<span class="normal"><a href="#__codelineno-0-1567">1567</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1536"><a id="__codelineno-0-1536" name="__codelineno-0-1536"></a><span class="k">def</span><span class="w"> </span><span class="nf">summary</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-0-1537"><a id="__codelineno-0-1537" name="__codelineno-0-1537"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;DataFrame of the declared constraint intent — one row per def.</span>
-</span><span id="__span-0-1538"><a id="__codelineno-0-1538" name="__codelineno-0-1538"></a>
-</span><span id="__span-0-1539"><a id="__codelineno-0-1539" name="__codelineno-0-1539"></a><span class="sd">    Columns: ``kind, name, master, slave, params``.  ``params`` is a</span>
-</span><span id="__span-0-1540"><a id="__codelineno-0-1540" name="__codelineno-0-1540"></a><span class="sd">    short stringified view of the kind-specific fields (``dofs``,</span>
-</span><span id="__span-0-1541"><a id="__codelineno-0-1541" name="__codelineno-0-1541"></a><span class="sd">    ``tolerance``, etc.).</span>
-</span><span id="__span-0-1542"><a id="__codelineno-0-1542" name="__codelineno-0-1542"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1543"><a id="__codelineno-0-1543" name="__codelineno-0-1543"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
-</span><span id="__span-0-1544"><a id="__codelineno-0-1544" name="__codelineno-0-1544"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">fields</span>
-</span><span id="__span-0-1545"><a id="__codelineno-0-1545" name="__codelineno-0-1545"></a>
-</span><span id="__span-0-1546"><a id="__codelineno-0-1546" name="__codelineno-0-1546"></a>    <span class="n">_COMMON</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;master_label&quot;</span><span class="p">,</span> <span class="s2">&quot;slave_label&quot;</span><span class="p">}</span>
-</span><span id="__span-0-1547"><a id="__codelineno-0-1547" name="__codelineno-0-1547"></a>
-</span><span id="__span-0-1548"><a id="__codelineno-0-1548" name="__codelineno-0-1548"></a>    <span class="n">rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span id="__span-0-1549"><a id="__codelineno-0-1549" name="__codelineno-0-1549"></a>    <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">constraint_defs</span><span class="p">:</span>
-</span><span id="__span-0-1550"><a id="__codelineno-0-1550" name="__codelineno-0-1550"></a>        <span class="n">params</span> <span class="o">=</span> <span class="p">{</span>
-</span><span id="__span-0-1551"><a id="__codelineno-0-1551" name="__codelineno-0-1551"></a>            <span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
-</span><span id="__span-0-1552"><a id="__codelineno-0-1552" name="__codelineno-0-1552"></a>            <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fields</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
-</span><span id="__span-0-1553"><a id="__codelineno-0-1553" name="__codelineno-0-1553"></a>            <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_COMMON</span>
-</span><span id="__span-0-1554"><a id="__codelineno-0-1554" name="__codelineno-0-1554"></a>        <span class="p">}</span>
-</span><span id="__span-0-1555"><a id="__codelineno-0-1555" name="__codelineno-0-1555"></a>        <span class="n">params</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">params</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">}</span>
-</span><span id="__span-0-1556"><a id="__codelineno-0-1556" name="__codelineno-0-1556"></a>        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
-</span><span id="__span-0-1557"><a id="__codelineno-0-1557" name="__codelineno-0-1557"></a>            <span class="s2">&quot;kind&quot;</span>  <span class="p">:</span> <span class="n">d</span><span class="o">.</span><span class="n">kind</span><span class="p">,</span>
-</span><span id="__span-0-1558"><a id="__codelineno-0-1558" name="__codelineno-0-1558"></a>            <span class="s2">&quot;name&quot;</span>  <span class="p">:</span> <span class="n">d</span><span class="o">.</span><span class="n">name</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
-</span><span id="__span-0-1559"><a id="__codelineno-0-1559" name="__codelineno-0-1559"></a>            <span class="s2">&quot;master&quot;</span><span class="p">:</span> <span class="n">d</span><span class="o">.</span><span class="n">master_label</span><span class="p">,</span>
-</span><span id="__span-0-1560"><a id="__codelineno-0-1560" name="__codelineno-0-1560"></a>            <span class="s2">&quot;slave&quot;</span> <span class="p">:</span> <span class="n">d</span><span class="o">.</span><span class="n">slave_label</span><span class="p">,</span>
-</span><span id="__span-0-1561"><a id="__codelineno-0-1561" name="__codelineno-0-1561"></a>            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">=</span><span class="si">{</span><span class="n">v</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">params</span><span class="o">.</span><span class="n">items</span><span class="p">()),</span>
-</span><span id="__span-0-1562"><a id="__codelineno-0-1562" name="__codelineno-0-1562"></a>        <span class="p">})</span>
-</span><span id="__span-0-1563"><a id="__codelineno-0-1563" name="__codelineno-0-1563"></a>
-</span><span id="__span-0-1564"><a id="__codelineno-0-1564" name="__codelineno-0-1564"></a>    <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;kind&quot;</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;master&quot;</span><span class="p">,</span> <span class="s2">&quot;slave&quot;</span><span class="p">,</span> <span class="s2">&quot;params&quot;</span><span class="p">]</span>
-</span><span id="__span-0-1565"><a id="__codelineno-0-1565" name="__codelineno-0-1565"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">rows</span><span class="p">:</span>
-</span><span id="__span-0-1566"><a id="__codelineno-0-1566" name="__codelineno-0-1566"></a>        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="n">cols</span><span class="p">)</span>
-</span><span id="__span-0-1567"><a id="__codelineno-0-1567" name="__codelineno-0-1567"></a>    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="n">cols</span><span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-1567">1567</a></span>
+<span class="normal"><a href="#__codelineno-0-1568">1568</a></span>
+<span class="normal"><a href="#__codelineno-0-1569">1569</a></span>
+<span class="normal"><a href="#__codelineno-0-1570">1570</a></span>
+<span class="normal"><a href="#__codelineno-0-1571">1571</a></span>
+<span class="normal"><a href="#__codelineno-0-1572">1572</a></span>
+<span class="normal"><a href="#__codelineno-0-1573">1573</a></span>
+<span class="normal"><a href="#__codelineno-0-1574">1574</a></span>
+<span class="normal"><a href="#__codelineno-0-1575">1575</a></span>
+<span class="normal"><a href="#__codelineno-0-1576">1576</a></span>
+<span class="normal"><a href="#__codelineno-0-1577">1577</a></span>
+<span class="normal"><a href="#__codelineno-0-1578">1578</a></span>
+<span class="normal"><a href="#__codelineno-0-1579">1579</a></span>
+<span class="normal"><a href="#__codelineno-0-1580">1580</a></span>
+<span class="normal"><a href="#__codelineno-0-1581">1581</a></span>
+<span class="normal"><a href="#__codelineno-0-1582">1582</a></span>
+<span class="normal"><a href="#__codelineno-0-1583">1583</a></span>
+<span class="normal"><a href="#__codelineno-0-1584">1584</a></span>
+<span class="normal"><a href="#__codelineno-0-1585">1585</a></span>
+<span class="normal"><a href="#__codelineno-0-1586">1586</a></span>
+<span class="normal"><a href="#__codelineno-0-1587">1587</a></span>
+<span class="normal"><a href="#__codelineno-0-1588">1588</a></span>
+<span class="normal"><a href="#__codelineno-0-1589">1589</a></span>
+<span class="normal"><a href="#__codelineno-0-1590">1590</a></span>
+<span class="normal"><a href="#__codelineno-0-1591">1591</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1560"><a id="__codelineno-0-1560" name="__codelineno-0-1560"></a><span class="k">def</span><span class="w"> </span><span class="nf">summary</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-0-1561"><a id="__codelineno-0-1561" name="__codelineno-0-1561"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;DataFrame of the declared constraint intent — one row per def.</span>
+</span><span id="__span-0-1562"><a id="__codelineno-0-1562" name="__codelineno-0-1562"></a>
+</span><span id="__span-0-1563"><a id="__codelineno-0-1563" name="__codelineno-0-1563"></a><span class="sd">    Columns: ``kind, name, master, slave, params``.  ``params`` is a</span>
+</span><span id="__span-0-1564"><a id="__codelineno-0-1564" name="__codelineno-0-1564"></a><span class="sd">    short stringified view of the kind-specific fields (``dofs``,</span>
+</span><span id="__span-0-1565"><a id="__codelineno-0-1565" name="__codelineno-0-1565"></a><span class="sd">    ``tolerance``, etc.).</span>
+</span><span id="__span-0-1566"><a id="__codelineno-0-1566" name="__codelineno-0-1566"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1567"><a id="__codelineno-0-1567" name="__codelineno-0-1567"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+</span><span id="__span-0-1568"><a id="__codelineno-0-1568" name="__codelineno-0-1568"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">fields</span>
+</span><span id="__span-0-1569"><a id="__codelineno-0-1569" name="__codelineno-0-1569"></a>
+</span><span id="__span-0-1570"><a id="__codelineno-0-1570" name="__codelineno-0-1570"></a>    <span class="n">_COMMON</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;master_label&quot;</span><span class="p">,</span> <span class="s2">&quot;slave_label&quot;</span><span class="p">}</span>
+</span><span id="__span-0-1571"><a id="__codelineno-0-1571" name="__codelineno-0-1571"></a>
+</span><span id="__span-0-1572"><a id="__codelineno-0-1572" name="__codelineno-0-1572"></a>    <span class="n">rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-0-1573"><a id="__codelineno-0-1573" name="__codelineno-0-1573"></a>    <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">constraint_defs</span><span class="p">:</span>
+</span><span id="__span-0-1574"><a id="__codelineno-0-1574" name="__codelineno-0-1574"></a>        <span class="n">params</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="__span-0-1575"><a id="__codelineno-0-1575" name="__codelineno-0-1575"></a>            <span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">d</span><span class="p">,</span> <span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+</span><span id="__span-0-1576"><a id="__codelineno-0-1576" name="__codelineno-0-1576"></a>            <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fields</span><span class="p">(</span><span class="n">d</span><span class="p">)</span>
+</span><span id="__span-0-1577"><a id="__codelineno-0-1577" name="__codelineno-0-1577"></a>            <span class="k">if</span> <span class="n">f</span><span class="o">.</span><span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_COMMON</span>
+</span><span id="__span-0-1578"><a id="__codelineno-0-1578" name="__codelineno-0-1578"></a>        <span class="p">}</span>
+</span><span id="__span-0-1579"><a id="__codelineno-0-1579" name="__codelineno-0-1579"></a>        <span class="n">params</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">params</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">}</span>
+</span><span id="__span-0-1580"><a id="__codelineno-0-1580" name="__codelineno-0-1580"></a>        <span class="n">rows</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+</span><span id="__span-0-1581"><a id="__codelineno-0-1581" name="__codelineno-0-1581"></a>            <span class="s2">&quot;kind&quot;</span>  <span class="p">:</span> <span class="n">d</span><span class="o">.</span><span class="n">kind</span><span class="p">,</span>
+</span><span id="__span-0-1582"><a id="__codelineno-0-1582" name="__codelineno-0-1582"></a>            <span class="s2">&quot;name&quot;</span>  <span class="p">:</span> <span class="n">d</span><span class="o">.</span><span class="n">name</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+</span><span id="__span-0-1583"><a id="__codelineno-0-1583" name="__codelineno-0-1583"></a>            <span class="s2">&quot;master&quot;</span><span class="p">:</span> <span class="n">d</span><span class="o">.</span><span class="n">master_label</span><span class="p">,</span>
+</span><span id="__span-0-1584"><a id="__codelineno-0-1584" name="__codelineno-0-1584"></a>            <span class="s2">&quot;slave&quot;</span> <span class="p">:</span> <span class="n">d</span><span class="o">.</span><span class="n">slave_label</span><span class="p">,</span>
+</span><span id="__span-0-1585"><a id="__codelineno-0-1585" name="__codelineno-0-1585"></a>            <span class="s2">&quot;params&quot;</span><span class="p">:</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">=</span><span class="si">{</span><span class="n">v</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">params</span><span class="o">.</span><span class="n">items</span><span class="p">()),</span>
+</span><span id="__span-0-1586"><a id="__codelineno-0-1586" name="__codelineno-0-1586"></a>        <span class="p">})</span>
+</span><span id="__span-0-1587"><a id="__codelineno-0-1587" name="__codelineno-0-1587"></a>
+</span><span id="__span-0-1588"><a id="__codelineno-0-1588" name="__codelineno-0-1588"></a>    <span class="n">cols</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;kind&quot;</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;master&quot;</span><span class="p">,</span> <span class="s2">&quot;slave&quot;</span><span class="p">,</span> <span class="s2">&quot;params&quot;</span><span class="p">]</span>
+</span><span id="__span-0-1589"><a id="__codelineno-0-1589" name="__codelineno-0-1589"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">rows</span><span class="p">:</span>
+</span><span id="__span-0-1590"><a id="__codelineno-0-1590" name="__codelineno-0-1590"></a>        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="n">cols</span><span class="p">)</span>
+</span><span id="__span-0-1591"><a id="__codelineno-0-1591" name="__codelineno-0-1591"></a>    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="n">cols</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -11971,7 +11971,7 @@ weighting : <code>"uniform"</code> or <code>"area"</code>
   </span>
 
 <a href="#apeGmsh._kernel.defs.constraints.EmbeddedDef" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">EmbeddedDef</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">master_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">slave_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">host_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">embedded_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">EmbeddedDef</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">master_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">slave_label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">host_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">embedded_entities</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">tolerance</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">)</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents first">
@@ -11999,9 +11999,16 @@ embedded_entities : list of (dim, tag), optional
     <code>embedded(..., embedded_entities=...)</code>; when omitted the
     whole <code>embedded_label</code> is used.
 tolerance : float
-    Reserved.  <strong>Not currently enforced</strong> — the resolver accepts
-    any located host record (barycentric gating uses a fixed
-    internal tolerance).  Kept for API stability.</p>
+    Maximum <strong>dimensionless barycentric excess</strong> allowed when
+    locating an embedded node inside a host element.  <code>0.0</code>
+    (the default) means strictly inside; <code>0.05</code> allows ~5%
+    extrapolation; <code>inf</code> accepts everything (the pre-Phase-2
+    behaviour).  An embedded node whose excess exceeds this
+    threshold raises <code>ValueError</code> from the resolver naming the
+    offending slave node and its excess — fail-loud, since
+    accepting an extrapolated node silently produces an
+    <code>ASDEmbeddedNodeElement</code> with negative shape-function
+    weights and the wrong physics.</p>
 
 
 
@@ -12650,7 +12657,7 @@ implement group constraints as loops of pair constraints
   </span>
 
 <a href="#apeGmsh._kernel.records._constraints.InterpolationRecord" class="headerlink" title="Permanent link">&para;</a></h4>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">InterpolationRecord</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">slave_node</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">master_nodes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(),</span> <span class="n">weights</span><span class="p">:</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">dofs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(),</span> <span class="n">projected_point</span><span class="p">:</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">parametric_coords</span><span class="p">:</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">InterpolationRecord</span><span class="p">(</span><span class="n">kind</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">slave_node</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">master_nodes</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(),</span> <span class="n">weights</span><span class="p">:</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">dofs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(),</span> <span class="n">projected_point</span><span class="p">:</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">parametric_coords</span><span class="p">:</span> <span class="n">ndarray</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">excess</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
@@ -12683,7 +12690,14 @@ projected_point : ndarray or None
     Physical coordinates of the projection onto the master face
     (useful for verification / visualisation).
 parametric_coords : ndarray or None
-    (ξ, η) on the master face.</p>
+    (ξ, η) on the master face.
+excess : float or None
+    Barycentric excess of the slave node relative to the host
+    element — <code>0.0</code> when the slave is strictly inside, positive
+    when outside (extrapolation; the magnitude is how far outside
+    in barycentric coordinates).  Populated by <code>resolve_embedded</code>;
+    <code>None</code> for records produced by other code paths.  Enables
+    downstream tolerance gating and post-resolution introspection.</p>
 
 
 
@@ -12726,35 +12740,35 @@ parametric_coords : ndarray or None
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/_kernel/records/_constraints.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-213">213</a></span>
-<span class="normal"><a href="#__codelineno-0-214">214</a></span>
-<span class="normal"><a href="#__codelineno-0-215">215</a></span>
-<span class="normal"><a href="#__codelineno-0-216">216</a></span>
-<span class="normal"><a href="#__codelineno-0-217">217</a></span>
-<span class="normal"><a href="#__codelineno-0-218">218</a></span>
-<span class="normal"><a href="#__codelineno-0-219">219</a></span>
-<span class="normal"><a href="#__codelineno-0-220">220</a></span>
-<span class="normal"><a href="#__codelineno-0-221">221</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-221">221</a></span>
 <span class="normal"><a href="#__codelineno-0-222">222</a></span>
 <span class="normal"><a href="#__codelineno-0-223">223</a></span>
 <span class="normal"><a href="#__codelineno-0-224">224</a></span>
 <span class="normal"><a href="#__codelineno-0-225">225</a></span>
 <span class="normal"><a href="#__codelineno-0-226">226</a></span>
-<span class="normal"><a href="#__codelineno-0-227">227</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-213"><a id="__codelineno-0-213" name="__codelineno-0-213"></a><span class="k">def</span><span class="w"> </span><span class="nf">constraint_matrix</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ndof</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ndarray</span><span class="p">:</span>
-</span><span id="__span-0-214"><a id="__codelineno-0-214" name="__codelineno-0-214"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-</span><span id="__span-0-215"><a id="__codelineno-0-215" name="__codelineno-0-215"></a><span class="sd">    Build the constraint matrix C of shape</span>
-</span><span id="__span-0-216"><a id="__codelineno-0-216" name="__codelineno-0-216"></a><span class="sd">    (ndof, n_master_nodes * ndof).</span>
-</span><span id="__span-0-217"><a id="__codelineno-0-217" name="__codelineno-0-217"></a>
-</span><span id="__span-0-218"><a id="__codelineno-0-218" name="__codelineno-0-218"></a><span class="sd">    u_slave[i] = Σ_j  w_j · u_master_j[i]   for each DOF i</span>
-</span><span id="__span-0-219"><a id="__codelineno-0-219" name="__codelineno-0-219"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-220"><a id="__codelineno-0-220" name="__codelineno-0-220"></a>    <span class="n">n_master</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">master_nodes</span><span class="p">)</span>
-</span><span id="__span-0-221"><a id="__codelineno-0-221" name="__codelineno-0-221"></a>    <span class="n">n_dof</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dofs</span><span class="p">)</span>
-</span><span id="__span-0-222"><a id="__codelineno-0-222" name="__codelineno-0-222"></a>    <span class="n">C</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_dof</span><span class="p">,</span> <span class="n">n_master</span> <span class="o">*</span> <span class="n">n_dof</span><span class="p">))</span>
-</span><span id="__span-0-223"><a id="__codelineno-0-223" name="__codelineno-0-223"></a>    <span class="n">w</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">weights</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">weights</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n_master</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_master</span>
-</span><span id="__span-0-224"><a id="__codelineno-0-224" name="__codelineno-0-224"></a>    <span class="k">for</span> <span class="n">row</span><span class="p">,</span> <span class="n">dof</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dofs</span><span class="p">):</span>
-</span><span id="__span-0-225"><a id="__codelineno-0-225" name="__codelineno-0-225"></a>        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_master</span><span class="p">):</span>
-</span><span id="__span-0-226"><a id="__codelineno-0-226" name="__codelineno-0-226"></a>            <span class="n">C</span><span class="p">[</span><span class="n">row</span><span class="p">,</span> <span class="n">j</span> <span class="o">*</span> <span class="n">n_dof</span> <span class="o">+</span> <span class="n">row</span><span class="p">]</span> <span class="o">=</span> <span class="n">w</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
-</span><span id="__span-0-227"><a id="__codelineno-0-227" name="__codelineno-0-227"></a>    <span class="k">return</span> <span class="n">C</span>
+<span class="normal"><a href="#__codelineno-0-227">227</a></span>
+<span class="normal"><a href="#__codelineno-0-228">228</a></span>
+<span class="normal"><a href="#__codelineno-0-229">229</a></span>
+<span class="normal"><a href="#__codelineno-0-230">230</a></span>
+<span class="normal"><a href="#__codelineno-0-231">231</a></span>
+<span class="normal"><a href="#__codelineno-0-232">232</a></span>
+<span class="normal"><a href="#__codelineno-0-233">233</a></span>
+<span class="normal"><a href="#__codelineno-0-234">234</a></span>
+<span class="normal"><a href="#__codelineno-0-235">235</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-221"><a id="__codelineno-0-221" name="__codelineno-0-221"></a><span class="k">def</span><span class="w"> </span><span class="nf">constraint_matrix</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ndof</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-0-222"><a id="__codelineno-0-222" name="__codelineno-0-222"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+</span><span id="__span-0-223"><a id="__codelineno-0-223" name="__codelineno-0-223"></a><span class="sd">    Build the constraint matrix C of shape</span>
+</span><span id="__span-0-224"><a id="__codelineno-0-224" name="__codelineno-0-224"></a><span class="sd">    (ndof, n_master_nodes * ndof).</span>
+</span><span id="__span-0-225"><a id="__codelineno-0-225" name="__codelineno-0-225"></a>
+</span><span id="__span-0-226"><a id="__codelineno-0-226" name="__codelineno-0-226"></a><span class="sd">    u_slave[i] = Σ_j  w_j · u_master_j[i]   for each DOF i</span>
+</span><span id="__span-0-227"><a id="__codelineno-0-227" name="__codelineno-0-227"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-228"><a id="__codelineno-0-228" name="__codelineno-0-228"></a>    <span class="n">n_master</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">master_nodes</span><span class="p">)</span>
+</span><span id="__span-0-229"><a id="__codelineno-0-229" name="__codelineno-0-229"></a>    <span class="n">n_dof</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dofs</span><span class="p">)</span>
+</span><span id="__span-0-230"><a id="__codelineno-0-230" name="__codelineno-0-230"></a>    <span class="n">C</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_dof</span><span class="p">,</span> <span class="n">n_master</span> <span class="o">*</span> <span class="n">n_dof</span><span class="p">))</span>
+</span><span id="__span-0-231"><a id="__codelineno-0-231" name="__codelineno-0-231"></a>    <span class="n">w</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">weights</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">weights</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">n_master</span><span class="p">)</span> <span class="o">/</span> <span class="n">n_master</span>
+</span><span id="__span-0-232"><a id="__codelineno-0-232" name="__codelineno-0-232"></a>    <span class="k">for</span> <span class="n">row</span><span class="p">,</span> <span class="n">dof</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">dofs</span><span class="p">):</span>
+</span><span id="__span-0-233"><a id="__codelineno-0-233" name="__codelineno-0-233"></a>        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_master</span><span class="p">):</span>
+</span><span id="__span-0-234"><a id="__codelineno-0-234" name="__codelineno-0-234"></a>            <span class="n">C</span><span class="p">[</span><span class="n">row</span><span class="p">,</span> <span class="n">j</span> <span class="o">*</span> <span class="n">n_dof</span> <span class="o">+</span> <span class="n">row</span><span class="p">]</span> <span class="o">=</span> <span class="n">w</span><span class="p">[</span><span class="n">j</span><span class="p">]</span>
+</span><span id="__span-0-235"><a id="__codelineno-0-235" name="__codelineno-0-235"></a>    <span class="k">return</span> <span class="n">C</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -12940,21 +12954,21 @@ records — the natural emission order for solvers.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/_kernel/records/_constraints.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-305">305</a></span>
-<span class="normal"><a href="#__codelineno-0-306">306</a></span>
-<span class="normal"><a href="#__codelineno-0-307">307</a></span>
-<span class="normal"><a href="#__codelineno-0-308">308</a></span>
-<span class="normal"><a href="#__codelineno-0-309">309</a></span>
-<span class="normal"><a href="#__codelineno-0-310">310</a></span>
-<span class="normal"><a href="#__codelineno-0-311">311</a></span>
-<span class="normal"><a href="#__codelineno-0-312">312</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-305"><a id="__codelineno-0-305" name="__codelineno-0-305"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodePairRecord</span><span class="p">]:</span>
-</span><span id="__span-0-306"><a id="__codelineno-0-306" name="__codelineno-0-306"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-</span><span id="__span-0-307"><a id="__codelineno-0-307" name="__codelineno-0-307"></a><span class="sd">    Flatten into individual :class:`NodePairRecord` objects.</span>
-</span><span id="__span-0-308"><a id="__codelineno-0-308" name="__codelineno-0-308"></a>
-</span><span id="__span-0-309"><a id="__codelineno-0-309" name="__codelineno-0-309"></a><span class="sd">    Returns the rigid link records followed by the equalDOF</span>
-</span><span id="__span-0-310"><a id="__codelineno-0-310" name="__codelineno-0-310"></a><span class="sd">    records — the natural emission order for solvers.</span>
-</span><span id="__span-0-311"><a id="__codelineno-0-311" name="__codelineno-0-311"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-312"><a id="__codelineno-0-312" name="__codelineno-0-312"></a>    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rigid_link_records</span><span class="p">)</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">equal_dof_records</span><span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-313">313</a></span>
+<span class="normal"><a href="#__codelineno-0-314">314</a></span>
+<span class="normal"><a href="#__codelineno-0-315">315</a></span>
+<span class="normal"><a href="#__codelineno-0-316">316</a></span>
+<span class="normal"><a href="#__codelineno-0-317">317</a></span>
+<span class="normal"><a href="#__codelineno-0-318">318</a></span>
+<span class="normal"><a href="#__codelineno-0-319">319</a></span>
+<span class="normal"><a href="#__codelineno-0-320">320</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-313"><a id="__codelineno-0-313" name="__codelineno-0-313"></a><span class="k">def</span><span class="w"> </span><span class="nf">expand</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodePairRecord</span><span class="p">]:</span>
+</span><span id="__span-0-314"><a id="__codelineno-0-314" name="__codelineno-0-314"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+</span><span id="__span-0-315"><a id="__codelineno-0-315" name="__codelineno-0-315"></a><span class="sd">    Flatten into individual :class:`NodePairRecord` objects.</span>
+</span><span id="__span-0-316"><a id="__codelineno-0-316" name="__codelineno-0-316"></a>
+</span><span id="__span-0-317"><a id="__codelineno-0-317" name="__codelineno-0-317"></a><span class="sd">    Returns the rigid link records followed by the equalDOF</span>
+</span><span id="__span-0-318"><a id="__codelineno-0-318" name="__codelineno-0-318"></a><span class="sd">    records — the natural emission order for solvers.</span>
+</span><span id="__span-0-319"><a id="__codelineno-0-319" name="__codelineno-0-319"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-320"><a id="__codelineno-0-320" name="__codelineno-0-320"></a>    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">rigid_link_records</span><span class="p">)</span> <span class="o">+</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">equal_dof_records</span><span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -14433,7 +14447,24 @@ embedded_nodes : iterable of int
 <span class="normal"><a href="#__codelineno-0-826">826</a></span>
 <span class="normal"><a href="#__codelineno-0-827">827</a></span>
 <span class="normal"><a href="#__codelineno-0-828">828</a></span>
-<span class="normal"><a href="#__codelineno-0-829">829</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-718"><a id="__codelineno-0-718" name="__codelineno-0-718"></a><span class="k">def</span><span class="w"> </span><span class="nf">resolve_embedded</span><span class="p">(</span>
+<span class="normal"><a href="#__codelineno-0-829">829</a></span>
+<span class="normal"><a href="#__codelineno-0-830">830</a></span>
+<span class="normal"><a href="#__codelineno-0-831">831</a></span>
+<span class="normal"><a href="#__codelineno-0-832">832</a></span>
+<span class="normal"><a href="#__codelineno-0-833">833</a></span>
+<span class="normal"><a href="#__codelineno-0-834">834</a></span>
+<span class="normal"><a href="#__codelineno-0-835">835</a></span>
+<span class="normal"><a href="#__codelineno-0-836">836</a></span>
+<span class="normal"><a href="#__codelineno-0-837">837</a></span>
+<span class="normal"><a href="#__codelineno-0-838">838</a></span>
+<span class="normal"><a href="#__codelineno-0-839">839</a></span>
+<span class="normal"><a href="#__codelineno-0-840">840</a></span>
+<span class="normal"><a href="#__codelineno-0-841">841</a></span>
+<span class="normal"><a href="#__codelineno-0-842">842</a></span>
+<span class="normal"><a href="#__codelineno-0-843">843</a></span>
+<span class="normal"><a href="#__codelineno-0-844">844</a></span>
+<span class="normal"><a href="#__codelineno-0-845">845</a></span>
+<span class="normal"><a href="#__codelineno-0-846">846</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-718"><a id="__codelineno-0-718" name="__codelineno-0-718"></a><span class="k">def</span><span class="w"> </span><span class="nf">resolve_embedded</span><span class="p">(</span>
 </span><span id="__span-0-719"><a id="__codelineno-0-719" name="__codelineno-0-719"></a>    <span class="bp">self</span><span class="p">,</span>
 </span><span id="__span-0-720"><a id="__codelineno-0-720" name="__codelineno-0-720"></a>    <span class="n">defn</span><span class="p">,</span>
 </span><span id="__span-0-721"><a id="__codelineno-0-721" name="__codelineno-0-721"></a>    <span class="n">host_elems</span><span class="p">:</span> <span class="n">ndarray</span><span class="p">,</span>
@@ -14485,66 +14516,83 @@ embedded_nodes : iterable of int
 </span><span id="__span-0-767"><a id="__codelineno-0-767" name="__codelineno-0-767"></a>    <span class="n">centroid_tree</span> <span class="o">=</span> <span class="n">_SpatialIndex</span><span class="p">(</span><span class="n">centroids</span><span class="p">)</span>
 </span><span id="__span-0-768"><a id="__codelineno-0-768" name="__codelineno-0-768"></a>
 </span><span id="__span-0-769"><a id="__codelineno-0-769" name="__codelineno-0-769"></a>    <span class="n">tol</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">defn</span><span class="o">.</span><span class="n">tolerance</span><span class="p">)</span>
-</span><span id="__span-0-770"><a id="__codelineno-0-770" name="__codelineno-0-770"></a>    <span class="c1"># Barycentric out-of-element tolerance is unitless; keep it</span>
-</span><span id="__span-0-771"><a id="__codelineno-0-771" name="__codelineno-0-771"></a>    <span class="c1"># small so we don&#39;t falsely claim a node sits inside an element</span>
-</span><span id="__span-0-772"><a id="__codelineno-0-772" name="__codelineno-0-772"></a>    <span class="c1"># it is only grazing.</span>
-</span><span id="__span-0-773"><a id="__codelineno-0-773" name="__codelineno-0-773"></a>    <span class="n">bary_tol</span> <span class="o">=</span> <span class="mf">1e-6</span>
-</span><span id="__span-0-774"><a id="__codelineno-0-774" name="__codelineno-0-774"></a>
-</span><span id="__span-0-775"><a id="__codelineno-0-775" name="__codelineno-0-775"></a>    <span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">InterpolationRecord</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span id="__span-0-776"><a id="__codelineno-0-776" name="__codelineno-0-776"></a>    <span class="n">K</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="n">n_elems</span><span class="p">)</span>
-</span><span id="__span-0-777"><a id="__codelineno-0-777" name="__codelineno-0-777"></a>
-</span><span id="__span-0-778"><a id="__codelineno-0-778" name="__codelineno-0-778"></a>    <span class="k">for</span> <span class="n">en</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">embedded_nodes</span><span class="p">):</span>
-</span><span id="__span-0-779"><a id="__codelineno-0-779" name="__codelineno-0-779"></a>        <span class="n">p</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coords_of</span><span class="p">(</span><span class="n">en</span><span class="p">)</span>
-</span><span id="__span-0-780"><a id="__codelineno-0-780" name="__codelineno-0-780"></a>        <span class="n">_</span><span class="p">,</span> <span class="n">cand</span> <span class="o">=</span> <span class="n">centroid_tree</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">K</span><span class="p">)</span>
-</span><span id="__span-0-781"><a id="__codelineno-0-781" name="__codelineno-0-781"></a>        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">cand</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">integer</span><span class="p">)):</span>
-</span><span id="__span-0-782"><a id="__codelineno-0-782" name="__codelineno-0-782"></a>            <span class="n">cand</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">cand</span><span class="p">)]</span>
-</span><span id="__span-0-783"><a id="__codelineno-0-783" name="__codelineno-0-783"></a>        <span class="k">else</span><span class="p">:</span>
-</span><span id="__span-0-784"><a id="__codelineno-0-784" name="__codelineno-0-784"></a>            <span class="n">cand</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">np</span><span class="o">.</span><span class="n">atleast_1d</span><span class="p">(</span><span class="n">cand</span><span class="p">)]</span>
-</span><span id="__span-0-785"><a id="__codelineno-0-785" name="__codelineno-0-785"></a>
-</span><span id="__span-0-786"><a id="__codelineno-0-786" name="__codelineno-0-786"></a>        <span class="n">best_record</span><span class="p">:</span> <span class="n">InterpolationRecord</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
-</span><span id="__span-0-787"><a id="__codelineno-0-787" name="__codelineno-0-787"></a>        <span class="n">best_excess</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;inf&quot;</span><span class="p">)</span>
-</span><span id="__span-0-788"><a id="__codelineno-0-788" name="__codelineno-0-788"></a>
-</span><span id="__span-0-789"><a id="__codelineno-0-789" name="__codelineno-0-789"></a>        <span class="k">for</span> <span class="n">ei</span> <span class="ow">in</span> <span class="n">cand</span><span class="p">:</span>
-</span><span id="__span-0-790"><a id="__codelineno-0-790" name="__codelineno-0-790"></a>            <span class="n">corners</span> <span class="o">=</span> <span class="n">host_coords</span><span class="p">[</span><span class="n">ei</span><span class="p">]</span>
-</span><span id="__span-0-791"><a id="__codelineno-0-791" name="__codelineno-0-791"></a>            <span class="k">if</span> <span class="n">npe</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
-</span><span id="__span-0-792"><a id="__codelineno-0-792" name="__codelineno-0-792"></a>                <span class="n">weights</span><span class="p">,</span> <span class="n">excess</span><span class="p">,</span> <span class="n">xi_eta</span> <span class="o">=</span> <span class="n">_barycentric_tri3</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">corners</span><span class="p">)</span>
-</span><span id="__span-0-793"><a id="__codelineno-0-793" name="__codelineno-0-793"></a>                <span class="n">parametric</span> <span class="o">=</span> <span class="n">xi_eta</span>
-</span><span id="__span-0-794"><a id="__codelineno-0-794" name="__codelineno-0-794"></a>            <span class="k">else</span><span class="p">:</span>
-</span><span id="__span-0-795"><a id="__codelineno-0-795" name="__codelineno-0-795"></a>                <span class="n">weights</span><span class="p">,</span> <span class="n">excess</span><span class="p">,</span> <span class="n">xi_etz</span> <span class="o">=</span> <span class="n">_barycentric_tet4</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">corners</span><span class="p">)</span>
-</span><span id="__span-0-796"><a id="__codelineno-0-796" name="__codelineno-0-796"></a>                <span class="n">parametric</span> <span class="o">=</span> <span class="n">xi_etz</span>
-</span><span id="__span-0-797"><a id="__codelineno-0-797" name="__codelineno-0-797"></a>
-</span><span id="__span-0-798"><a id="__codelineno-0-798" name="__codelineno-0-798"></a>            <span class="k">if</span> <span class="n">excess</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-799"><a id="__codelineno-0-799" name="__codelineno-0-799"></a>                <span class="k">continue</span>
-</span><span id="__span-0-800"><a id="__codelineno-0-800" name="__codelineno-0-800"></a>
-</span><span id="__span-0-801"><a id="__codelineno-0-801" name="__codelineno-0-801"></a>            <span class="c1"># &quot;Inside&quot; when all barycentric coords are non-negative</span>
-</span><span id="__span-0-802"><a id="__codelineno-0-802" name="__codelineno-0-802"></a>            <span class="c1"># within bary_tol. Take the first hit; if none is fully</span>
-</span><span id="__span-0-803"><a id="__codelineno-0-803" name="__codelineno-0-803"></a>            <span class="c1"># inside, keep the one with the smallest excess so the</span>
-</span><span id="__span-0-804"><a id="__codelineno-0-804" name="__codelineno-0-804"></a>            <span class="c1"># caller can inspect via the log.</span>
-</span><span id="__span-0-805"><a id="__codelineno-0-805" name="__codelineno-0-805"></a>            <span class="k">if</span> <span class="n">excess</span> <span class="o">&lt;</span> <span class="n">best_excess</span><span class="p">:</span>
-</span><span id="__span-0-806"><a id="__codelineno-0-806" name="__codelineno-0-806"></a>                <span class="n">best_excess</span> <span class="o">=</span> <span class="n">excess</span>
-</span><span id="__span-0-807"><a id="__codelineno-0-807" name="__codelineno-0-807"></a>                <span class="n">best_record</span> <span class="o">=</span> <span class="n">InterpolationRecord</span><span class="p">(</span>
-</span><span id="__span-0-808"><a id="__codelineno-0-808" name="__codelineno-0-808"></a>                    <span class="n">kind</span><span class="o">=</span><span class="n">ConstraintKind</span><span class="o">.</span><span class="n">EMBEDDED</span><span class="p">,</span>
-</span><span id="__span-0-809"><a id="__codelineno-0-809" name="__codelineno-0-809"></a>                    <span class="n">name</span><span class="o">=</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
-</span><span id="__span-0-810"><a id="__codelineno-0-810" name="__codelineno-0-810"></a>                    <span class="n">slave_node</span><span class="o">=</span><span class="n">en</span><span class="p">,</span>
-</span><span id="__span-0-811"><a id="__codelineno-0-811" name="__codelineno-0-811"></a>                    <span class="n">master_nodes</span><span class="o">=</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">host_elems</span><span class="p">[</span><span class="n">ei</span><span class="p">]],</span>
-</span><span id="__span-0-812"><a id="__codelineno-0-812" name="__codelineno-0-812"></a>                    <span class="n">weights</span><span class="o">=</span><span class="n">weights</span><span class="p">,</span>
-</span><span id="__span-0-813"><a id="__codelineno-0-813" name="__codelineno-0-813"></a>                    <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span>
-</span><span id="__span-0-814"><a id="__codelineno-0-814" name="__codelineno-0-814"></a>                    <span class="n">projected_point</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
-</span><span id="__span-0-815"><a id="__codelineno-0-815" name="__codelineno-0-815"></a>                    <span class="n">parametric_coords</span><span class="o">=</span><span class="n">parametric</span><span class="p">,</span>
-</span><span id="__span-0-816"><a id="__codelineno-0-816" name="__codelineno-0-816"></a>                <span class="p">)</span>
-</span><span id="__span-0-817"><a id="__codelineno-0-817" name="__codelineno-0-817"></a>            <span class="k">if</span> <span class="n">excess</span> <span class="o">&lt;=</span> <span class="n">bary_tol</span><span class="p">:</span>
-</span><span id="__span-0-818"><a id="__codelineno-0-818" name="__codelineno-0-818"></a>                <span class="k">break</span>
-</span><span id="__span-0-819"><a id="__codelineno-0-819" name="__codelineno-0-819"></a>
-</span><span id="__span-0-820"><a id="__codelineno-0-820" name="__codelineno-0-820"></a>        <span class="k">if</span> <span class="n">best_record</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-821"><a id="__codelineno-0-821" name="__codelineno-0-821"></a>            <span class="k">continue</span>
-</span><span id="__span-0-822"><a id="__codelineno-0-822" name="__codelineno-0-822"></a>
-</span><span id="__span-0-823"><a id="__codelineno-0-823" name="__codelineno-0-823"></a>        <span class="c1"># Use defn.tolerance as a soft gate on barycentric excess</span>
-</span><span id="__span-0-824"><a id="__codelineno-0-824" name="__codelineno-0-824"></a>        <span class="c1"># scaled by a characteristic host edge length. We simply</span>
-</span><span id="__span-0-825"><a id="__codelineno-0-825" name="__codelineno-0-825"></a>        <span class="c1"># accept any located record; the caller (composite) decides</span>
-</span><span id="__span-0-826"><a id="__codelineno-0-826" name="__codelineno-0-826"></a>        <span class="c1"># whether to warn.</span>
-</span><span id="__span-0-827"><a id="__codelineno-0-827" name="__codelineno-0-827"></a>        <span class="n">records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">best_record</span><span class="p">)</span>
-</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a>
-</span><span id="__span-0-829"><a id="__codelineno-0-829" name="__codelineno-0-829"></a>    <span class="k">return</span> <span class="n">records</span>
+</span><span id="__span-0-770"><a id="__codelineno-0-770" name="__codelineno-0-770"></a>    <span class="c1"># ``bary_tol`` is the inside-the-element early-break threshold</span>
+</span><span id="__span-0-771"><a id="__codelineno-0-771" name="__codelineno-0-771"></a>    <span class="c1"># (resolver short-circuits once a host gives an inside hit).</span>
+</span><span id="__span-0-772"><a id="__codelineno-0-772" name="__codelineno-0-772"></a>    <span class="c1"># The user-facing acceptance threshold is ``tol`` — applied</span>
+</span><span id="__span-0-773"><a id="__codelineno-0-773" name="__codelineno-0-773"></a>    <span class="c1"># below as a fail-loud gate after the best-candidate search.</span>
+</span><span id="__span-0-774"><a id="__codelineno-0-774" name="__codelineno-0-774"></a>    <span class="n">bary_tol</span> <span class="o">=</span> <span class="mf">1e-6</span>
+</span><span id="__span-0-775"><a id="__codelineno-0-775" name="__codelineno-0-775"></a>
+</span><span id="__span-0-776"><a id="__codelineno-0-776" name="__codelineno-0-776"></a>    <span class="n">records</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">InterpolationRecord</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-0-777"><a id="__codelineno-0-777" name="__codelineno-0-777"></a>    <span class="n">K</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mi">16</span><span class="p">,</span> <span class="n">n_elems</span><span class="p">)</span>
+</span><span id="__span-0-778"><a id="__codelineno-0-778" name="__codelineno-0-778"></a>
+</span><span id="__span-0-779"><a id="__codelineno-0-779" name="__codelineno-0-779"></a>    <span class="k">for</span> <span class="n">en</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">embedded_nodes</span><span class="p">):</span>
+</span><span id="__span-0-780"><a id="__codelineno-0-780" name="__codelineno-0-780"></a>        <span class="n">p</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coords_of</span><span class="p">(</span><span class="n">en</span><span class="p">)</span>
+</span><span id="__span-0-781"><a id="__codelineno-0-781" name="__codelineno-0-781"></a>        <span class="n">_</span><span class="p">,</span> <span class="n">cand</span> <span class="o">=</span> <span class="n">centroid_tree</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">K</span><span class="p">)</span>
+</span><span id="__span-0-782"><a id="__codelineno-0-782" name="__codelineno-0-782"></a>        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">cand</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">integer</span><span class="p">)):</span>
+</span><span id="__span-0-783"><a id="__codelineno-0-783" name="__codelineno-0-783"></a>            <span class="n">cand</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">cand</span><span class="p">)]</span>
+</span><span id="__span-0-784"><a id="__codelineno-0-784" name="__codelineno-0-784"></a>        <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-785"><a id="__codelineno-0-785" name="__codelineno-0-785"></a>            <span class="n">cand</span> <span class="o">=</span> <span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">c</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">np</span><span class="o">.</span><span class="n">atleast_1d</span><span class="p">(</span><span class="n">cand</span><span class="p">)]</span>
+</span><span id="__span-0-786"><a id="__codelineno-0-786" name="__codelineno-0-786"></a>
+</span><span id="__span-0-787"><a id="__codelineno-0-787" name="__codelineno-0-787"></a>        <span class="n">best_record</span><span class="p">:</span> <span class="n">InterpolationRecord</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-0-788"><a id="__codelineno-0-788" name="__codelineno-0-788"></a>        <span class="n">best_excess</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="s2">&quot;inf&quot;</span><span class="p">)</span>
+</span><span id="__span-0-789"><a id="__codelineno-0-789" name="__codelineno-0-789"></a>
+</span><span id="__span-0-790"><a id="__codelineno-0-790" name="__codelineno-0-790"></a>        <span class="k">for</span> <span class="n">ei</span> <span class="ow">in</span> <span class="n">cand</span><span class="p">:</span>
+</span><span id="__span-0-791"><a id="__codelineno-0-791" name="__codelineno-0-791"></a>            <span class="n">corners</span> <span class="o">=</span> <span class="n">host_coords</span><span class="p">[</span><span class="n">ei</span><span class="p">]</span>
+</span><span id="__span-0-792"><a id="__codelineno-0-792" name="__codelineno-0-792"></a>            <span class="k">if</span> <span class="n">npe</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+</span><span id="__span-0-793"><a id="__codelineno-0-793" name="__codelineno-0-793"></a>                <span class="n">weights</span><span class="p">,</span> <span class="n">excess</span><span class="p">,</span> <span class="n">xi_eta</span> <span class="o">=</span> <span class="n">_barycentric_tri3</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">corners</span><span class="p">)</span>
+</span><span id="__span-0-794"><a id="__codelineno-0-794" name="__codelineno-0-794"></a>                <span class="n">parametric</span> <span class="o">=</span> <span class="n">xi_eta</span>
+</span><span id="__span-0-795"><a id="__codelineno-0-795" name="__codelineno-0-795"></a>            <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-796"><a id="__codelineno-0-796" name="__codelineno-0-796"></a>                <span class="n">weights</span><span class="p">,</span> <span class="n">excess</span><span class="p">,</span> <span class="n">xi_etz</span> <span class="o">=</span> <span class="n">_barycentric_tet4</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">corners</span><span class="p">)</span>
+</span><span id="__span-0-797"><a id="__codelineno-0-797" name="__codelineno-0-797"></a>                <span class="n">parametric</span> <span class="o">=</span> <span class="n">xi_etz</span>
+</span><span id="__span-0-798"><a id="__codelineno-0-798" name="__codelineno-0-798"></a>
+</span><span id="__span-0-799"><a id="__codelineno-0-799" name="__codelineno-0-799"></a>            <span class="k">if</span> <span class="n">excess</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-800"><a id="__codelineno-0-800" name="__codelineno-0-800"></a>                <span class="k">continue</span>
+</span><span id="__span-0-801"><a id="__codelineno-0-801" name="__codelineno-0-801"></a>
+</span><span id="__span-0-802"><a id="__codelineno-0-802" name="__codelineno-0-802"></a>            <span class="c1"># &quot;Inside&quot; when all barycentric coords are non-negative</span>
+</span><span id="__span-0-803"><a id="__codelineno-0-803" name="__codelineno-0-803"></a>            <span class="c1"># within bary_tol. Take the first hit; if none is fully</span>
+</span><span id="__span-0-804"><a id="__codelineno-0-804" name="__codelineno-0-804"></a>            <span class="c1"># inside, keep the one with the smallest excess so the</span>
+</span><span id="__span-0-805"><a id="__codelineno-0-805" name="__codelineno-0-805"></a>            <span class="c1"># caller can inspect via the log.</span>
+</span><span id="__span-0-806"><a id="__codelineno-0-806" name="__codelineno-0-806"></a>            <span class="k">if</span> <span class="n">excess</span> <span class="o">&lt;</span> <span class="n">best_excess</span><span class="p">:</span>
+</span><span id="__span-0-807"><a id="__codelineno-0-807" name="__codelineno-0-807"></a>                <span class="n">best_excess</span> <span class="o">=</span> <span class="n">excess</span>
+</span><span id="__span-0-808"><a id="__codelineno-0-808" name="__codelineno-0-808"></a>                <span class="n">best_record</span> <span class="o">=</span> <span class="n">InterpolationRecord</span><span class="p">(</span>
+</span><span id="__span-0-809"><a id="__codelineno-0-809" name="__codelineno-0-809"></a>                    <span class="n">kind</span><span class="o">=</span><span class="n">ConstraintKind</span><span class="o">.</span><span class="n">EMBEDDED</span><span class="p">,</span>
+</span><span id="__span-0-810"><a id="__codelineno-0-810" name="__codelineno-0-810"></a>                    <span class="n">name</span><span class="o">=</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+</span><span id="__span-0-811"><a id="__codelineno-0-811" name="__codelineno-0-811"></a>                    <span class="n">slave_node</span><span class="o">=</span><span class="n">en</span><span class="p">,</span>
+</span><span id="__span-0-812"><a id="__codelineno-0-812" name="__codelineno-0-812"></a>                    <span class="n">master_nodes</span><span class="o">=</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">host_elems</span><span class="p">[</span><span class="n">ei</span><span class="p">]],</span>
+</span><span id="__span-0-813"><a id="__codelineno-0-813" name="__codelineno-0-813"></a>                    <span class="n">weights</span><span class="o">=</span><span class="n">weights</span><span class="p">,</span>
+</span><span id="__span-0-814"><a id="__codelineno-0-814" name="__codelineno-0-814"></a>                    <span class="n">dofs</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span>
+</span><span id="__span-0-815"><a id="__codelineno-0-815" name="__codelineno-0-815"></a>                    <span class="n">projected_point</span><span class="o">=</span><span class="n">p</span><span class="o">.</span><span class="n">copy</span><span class="p">(),</span>
+</span><span id="__span-0-816"><a id="__codelineno-0-816" name="__codelineno-0-816"></a>                    <span class="n">parametric_coords</span><span class="o">=</span><span class="n">parametric</span><span class="p">,</span>
+</span><span id="__span-0-817"><a id="__codelineno-0-817" name="__codelineno-0-817"></a>                    <span class="n">excess</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="n">excess</span><span class="p">),</span>
+</span><span id="__span-0-818"><a id="__codelineno-0-818" name="__codelineno-0-818"></a>                <span class="p">)</span>
+</span><span id="__span-0-819"><a id="__codelineno-0-819" name="__codelineno-0-819"></a>            <span class="k">if</span> <span class="n">excess</span> <span class="o">&lt;=</span> <span class="n">bary_tol</span><span class="p">:</span>
+</span><span id="__span-0-820"><a id="__codelineno-0-820" name="__codelineno-0-820"></a>                <span class="k">break</span>
+</span><span id="__span-0-821"><a id="__codelineno-0-821" name="__codelineno-0-821"></a>
+</span><span id="__span-0-822"><a id="__codelineno-0-822" name="__codelineno-0-822"></a>        <span class="k">if</span> <span class="n">best_record</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-823"><a id="__codelineno-0-823" name="__codelineno-0-823"></a>            <span class="k">continue</span>
+</span><span id="__span-0-824"><a id="__codelineno-0-824" name="__codelineno-0-824"></a>
+</span><span id="__span-0-825"><a id="__codelineno-0-825" name="__codelineno-0-825"></a>        <span class="c1"># Fail-loud gate on the user-facing barycentric excess</span>
+</span><span id="__span-0-826"><a id="__codelineno-0-826" name="__codelineno-0-826"></a>        <span class="c1"># threshold.  ``best_excess`` accounts for float math via</span>
+</span><span id="__span-0-827"><a id="__codelineno-0-827" name="__codelineno-0-827"></a>        <span class="c1"># ``bary_tol`` — an inside hit short-circuits the search</span>
+</span><span id="__span-0-828"><a id="__codelineno-0-828" name="__codelineno-0-828"></a>        <span class="c1"># with excess &lt;= 1e-6 ≈ 0.  An off-host node that survives</span>
+</span><span id="__span-0-829"><a id="__codelineno-0-829" name="__codelineno-0-829"></a>        <span class="c1"># the search has ``best_excess &gt; 0`` (extrapolation); we</span>
+</span><span id="__span-0-830"><a id="__codelineno-0-830" name="__codelineno-0-830"></a>        <span class="c1"># accept only when ``best_excess &lt;= defn.tolerance``, else</span>
+</span><span id="__span-0-831"><a id="__codelineno-0-831" name="__codelineno-0-831"></a>        <span class="c1"># raise with a clear message naming the slave node so the</span>
+</span><span id="__span-0-832"><a id="__codelineno-0-832" name="__codelineno-0-832"></a>        <span class="c1"># user can either fix the geometry / mesh or set a wider</span>
+</span><span id="__span-0-833"><a id="__codelineno-0-833" name="__codelineno-0-833"></a>        <span class="c1"># tolerance explicitly.</span>
+</span><span id="__span-0-834"><a id="__codelineno-0-834" name="__codelineno-0-834"></a>        <span class="k">if</span> <span class="n">best_excess</span> <span class="o">&gt;</span> <span class="n">tol</span> <span class="o">+</span> <span class="n">bary_tol</span><span class="p">:</span>
+</span><span id="__span-0-835"><a id="__codelineno-0-835" name="__codelineno-0-835"></a>            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+</span><span id="__span-0-836"><a id="__codelineno-0-836" name="__codelineno-0-836"></a>                <span class="sa">f</span><span class="s2">&quot;resolve_embedded: slave node </span><span class="si">{</span><span class="n">en</span><span class="si">}</span><span class="s2"> lies outside &quot;</span>
+</span><span id="__span-0-837"><a id="__codelineno-0-837" name="__codelineno-0-837"></a>                <span class="sa">f</span><span class="s2">&quot;every host element (barycentric excess &quot;</span>
+</span><span id="__span-0-838"><a id="__codelineno-0-838" name="__codelineno-0-838"></a>                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">best_excess</span><span class="si">:</span><span class="s2">.3e</span><span class="si">}</span><span class="s2">, tolerance </span><span class="si">{</span><span class="n">tol</span><span class="si">:</span><span class="s2">.3e</span><span class="si">}</span><span class="s2">).  Fix the &quot;</span>
+</span><span id="__span-0-839"><a id="__codelineno-0-839" name="__codelineno-0-839"></a>                <span class="sa">f</span><span class="s2">&quot;geometry/mesh so the embedded node falls inside &quot;</span>
+</span><span id="__span-0-840"><a id="__codelineno-0-840" name="__codelineno-0-840"></a>                <span class="sa">f</span><span class="s2">&quot;the host, OR set `EmbeddedDef.tolerance` to a &quot;</span>
+</span><span id="__span-0-841"><a id="__codelineno-0-841" name="__codelineno-0-841"></a>                <span class="sa">f</span><span class="s2">&quot;value &gt;= </span><span class="si">{</span><span class="n">best_excess</span><span class="si">:</span><span class="s2">.3e</span><span class="si">}</span><span class="s2"> if extrapolation is &quot;</span>
+</span><span id="__span-0-842"><a id="__codelineno-0-842" name="__codelineno-0-842"></a>                <span class="sa">f</span><span class="s2">&quot;intentional.  Constraint name: </span><span class="si">{</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2">.&quot;</span>
+</span><span id="__span-0-843"><a id="__codelineno-0-843" name="__codelineno-0-843"></a>            <span class="p">)</span>
+</span><span id="__span-0-844"><a id="__codelineno-0-844" name="__codelineno-0-844"></a>        <span class="n">records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">best_record</span><span class="p">)</span>
+</span><span id="__span-0-845"><a id="__codelineno-0-845" name="__codelineno-0-845"></a>
+</span><span id="__span-0-846"><a id="__codelineno-0-846" name="__codelineno-0-846"></a>    <span class="k">return</span> <span class="n">records</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -14578,24 +14626,7 @@ hit the ill-conditioning described in
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/_kernel/resolvers/_constraint_resolver/_resolver.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-831">831</a></span>
-<span class="normal"><a href="#__codelineno-0-832">832</a></span>
-<span class="normal"><a href="#__codelineno-0-833">833</a></span>
-<span class="normal"><a href="#__codelineno-0-834">834</a></span>
-<span class="normal"><a href="#__codelineno-0-835">835</a></span>
-<span class="normal"><a href="#__codelineno-0-836">836</a></span>
-<span class="normal"><a href="#__codelineno-0-837">837</a></span>
-<span class="normal"><a href="#__codelineno-0-838">838</a></span>
-<span class="normal"><a href="#__codelineno-0-839">839</a></span>
-<span class="normal"><a href="#__codelineno-0-840">840</a></span>
-<span class="normal"><a href="#__codelineno-0-841">841</a></span>
-<span class="normal"><a href="#__codelineno-0-842">842</a></span>
-<span class="normal"><a href="#__codelineno-0-843">843</a></span>
-<span class="normal"><a href="#__codelineno-0-844">844</a></span>
-<span class="normal"><a href="#__codelineno-0-845">845</a></span>
-<span class="normal"><a href="#__codelineno-0-846">846</a></span>
-<span class="normal"><a href="#__codelineno-0-847">847</a></span>
-<span class="normal"><a href="#__codelineno-0-848">848</a></span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-848">848</a></span>
 <span class="normal"><a href="#__codelineno-0-849">849</a></span>
 <span class="normal"><a href="#__codelineno-0-850">850</a></span>
 <span class="normal"><a href="#__codelineno-0-851">851</a></span>
@@ -14646,75 +14677,92 @@ hit the ill-conditioning described in
 <span class="normal"><a href="#__codelineno-0-896">896</a></span>
 <span class="normal"><a href="#__codelineno-0-897">897</a></span>
 <span class="normal"><a href="#__codelineno-0-898">898</a></span>
-<span class="normal"><a href="#__codelineno-0-899">899</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-831"><a id="__codelineno-0-831" name="__codelineno-0-831"></a><span class="k">def</span><span class="w"> </span><span class="nf">resolve_node_to_surface_spring</span><span class="p">(</span>
-</span><span id="__span-0-832"><a id="__codelineno-0-832" name="__codelineno-0-832"></a>    <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-833"><a id="__codelineno-0-833" name="__codelineno-0-833"></a>    <span class="n">defn</span><span class="p">:</span> <span class="s2">&quot;NodeToSurfaceSpringDef&quot;</span><span class="p">,</span>
-</span><span id="__span-0-834"><a id="__codelineno-0-834" name="__codelineno-0-834"></a>    <span class="n">master_tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
-</span><span id="__span-0-835"><a id="__codelineno-0-835" name="__codelineno-0-835"></a>    <span class="n">slave_nodes</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
-</span><span id="__span-0-836"><a id="__codelineno-0-836" name="__codelineno-0-836"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NodeToSurfaceRecord</span><span class="p">:</span>
-</span><span id="__span-0-837"><a id="__codelineno-0-837" name="__codelineno-0-837"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
-</span><span id="__span-0-838"><a id="__codelineno-0-838" name="__codelineno-0-838"></a><span class="sd">    Resolve a spring-variant 6-DOF → 3-DOF surface coupling.</span>
-</span><span id="__span-0-839"><a id="__codelineno-0-839" name="__codelineno-0-839"></a>
-</span><span id="__span-0-840"><a id="__codelineno-0-840" name="__codelineno-0-840"></a><span class="sd">    Identical phantom-node generation and equalDOF records as</span>
-</span><span id="__span-0-841"><a id="__codelineno-0-841" name="__codelineno-0-841"></a><span class="sd">    :meth:`resolve_node_to_surface`. The only difference is that</span>
-</span><span id="__span-0-842"><a id="__codelineno-0-842" name="__codelineno-0-842"></a><span class="sd">    the master → phantom rigid-link records are tagged with</span>
-</span><span id="__span-0-843"><a id="__codelineno-0-843" name="__codelineno-0-843"></a><span class="sd">    ``kind=&#39;rigid_beam_stiff&#39;`` so they are routed through</span>
-</span><span id="__span-0-844"><a id="__codelineno-0-844" name="__codelineno-0-844"></a><span class="sd">    ``stiff_beam_groups()`` at emission time (becoming stiff</span>
-</span><span id="__span-0-845"><a id="__codelineno-0-845" name="__codelineno-0-845"></a><span class="sd">    ``elasticBeamColumn`` elements) instead of</span>
-</span><span id="__span-0-846"><a id="__codelineno-0-846" name="__codelineno-0-846"></a><span class="sd">    ``rigid_link_groups()`` (which would emit ``rigidLink`` and</span>
-</span><span id="__span-0-847"><a id="__codelineno-0-847" name="__codelineno-0-847"></a><span class="sd">    hit the ill-conditioning described in</span>
-</span><span id="__span-0-848"><a id="__codelineno-0-848" name="__codelineno-0-848"></a><span class="sd">    :class:`NodeToSurfaceSpringDef`).</span>
-</span><span id="__span-0-849"><a id="__codelineno-0-849" name="__codelineno-0-849"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-850"><a id="__codelineno-0-850" name="__codelineno-0-850"></a>
-</span><span id="__span-0-851"><a id="__codelineno-0-851" name="__codelineno-0-851"></a>    <span class="n">master_xyz</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coords_of</span><span class="p">(</span><span class="n">master_tag</span><span class="p">)</span>
-</span><span id="__span-0-852"><a id="__codelineno-0-852" name="__codelineno-0-852"></a>    <span class="n">slave_list</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">slave_nodes</span> <span class="o">-</span> <span class="p">{</span><span class="n">master_tag</span><span class="p">})</span>
-</span><span id="__span-0-853"><a id="__codelineno-0-853" name="__codelineno-0-853"></a>    <span class="n">dofs</span> <span class="o">=</span> <span class="n">defn</span><span class="o">.</span><span class="n">dofs</span> <span class="ow">or</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
-</span><span id="__span-0-854"><a id="__codelineno-0-854" name="__codelineno-0-854"></a>
-</span><span id="__span-0-855"><a id="__codelineno-0-855" name="__codelineno-0-855"></a>    <span class="n">start</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_next_phantom_tag</span>
-</span><span id="__span-0-856"><a id="__codelineno-0-856" name="__codelineno-0-856"></a>    <span class="n">phantom_tags</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">start</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">slave_list</span><span class="p">)))</span>
-</span><span id="__span-0-857"><a id="__codelineno-0-857" name="__codelineno-0-857"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_next_phantom_tag</span> <span class="o">=</span> <span class="n">start</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">slave_list</span><span class="p">)</span>
-</span><span id="__span-0-858"><a id="__codelineno-0-858" name="__codelineno-0-858"></a>
-</span><span id="__span-0-859"><a id="__codelineno-0-859" name="__codelineno-0-859"></a>    <span class="n">phantom_coords</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span>
-</span><span id="__span-0-860"><a id="__codelineno-0-860" name="__codelineno-0-860"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_coords_of</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">slave_list</span>
-</span><span id="__span-0-861"><a id="__codelineno-0-861" name="__codelineno-0-861"></a>    <span class="p">])</span>
-</span><span id="__span-0-862"><a id="__codelineno-0-862" name="__codelineno-0-862"></a>
-</span><span id="__span-0-863"><a id="__codelineno-0-863" name="__codelineno-0-863"></a>    <span class="c1"># Stiff beams: master → phantom. Same structure as the</span>
-</span><span id="__span-0-864"><a id="__codelineno-0-864" name="__codelineno-0-864"></a>    <span class="c1"># constraint-based variant but tagged with a distinct kind so</span>
-</span><span id="__span-0-865"><a id="__codelineno-0-865" name="__codelineno-0-865"></a>    <span class="c1"># the mesh iterators can route them to the element emission</span>
-</span><span id="__span-0-866"><a id="__codelineno-0-866" name="__codelineno-0-866"></a>    <span class="c1"># path.</span>
-</span><span id="__span-0-867"><a id="__codelineno-0-867" name="__codelineno-0-867"></a>    <span class="n">stiff_records</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span id="__span-0-868"><a id="__codelineno-0-868" name="__codelineno-0-868"></a>    <span class="k">for</span> <span class="n">phantom_tag</span><span class="p">,</span> <span class="n">slave_tag</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">phantom_tags</span><span class="p">,</span> <span class="n">slave_list</span><span class="p">):</span>
-</span><span id="__span-0-869"><a id="__codelineno-0-869" name="__codelineno-0-869"></a>        <span class="n">slave_xyz</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coords_of</span><span class="p">(</span><span class="n">slave_tag</span><span class="p">)</span>
-</span><span id="__span-0-870"><a id="__codelineno-0-870" name="__codelineno-0-870"></a>        <span class="n">offset</span> <span class="o">=</span> <span class="n">slave_xyz</span> <span class="o">-</span> <span class="n">master_xyz</span>
-</span><span id="__span-0-871"><a id="__codelineno-0-871" name="__codelineno-0-871"></a>        <span class="n">stiff_records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">NodePairRecord</span><span class="p">(</span>
-</span><span id="__span-0-872"><a id="__codelineno-0-872" name="__codelineno-0-872"></a>            <span class="n">kind</span><span class="o">=</span><span class="n">ConstraintKind</span><span class="o">.</span><span class="n">RIGID_BEAM_STIFF</span><span class="p">,</span>
-</span><span id="__span-0-873"><a id="__codelineno-0-873" name="__codelineno-0-873"></a>            <span class="n">name</span><span class="o">=</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
-</span><span id="__span-0-874"><a id="__codelineno-0-874" name="__codelineno-0-874"></a>            <span class="n">master_node</span><span class="o">=</span><span class="n">master_tag</span><span class="p">,</span>
-</span><span id="__span-0-875"><a id="__codelineno-0-875" name="__codelineno-0-875"></a>            <span class="n">slave_node</span><span class="o">=</span><span class="n">phantom_tag</span><span class="p">,</span>
-</span><span id="__span-0-876"><a id="__codelineno-0-876" name="__codelineno-0-876"></a>            <span class="n">offset</span><span class="o">=</span><span class="n">offset</span><span class="p">,</span>
-</span><span id="__span-0-877"><a id="__codelineno-0-877" name="__codelineno-0-877"></a>        <span class="p">))</span>
-</span><span id="__span-0-878"><a id="__codelineno-0-878" name="__codelineno-0-878"></a>
-</span><span id="__span-0-879"><a id="__codelineno-0-879" name="__codelineno-0-879"></a>    <span class="n">edof_records</span> <span class="o">=</span> <span class="p">[]</span>
-</span><span id="__span-0-880"><a id="__codelineno-0-880" name="__codelineno-0-880"></a>    <span class="k">for</span> <span class="n">phantom_tag</span><span class="p">,</span> <span class="n">slave_tag</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">phantom_tags</span><span class="p">,</span> <span class="n">slave_list</span><span class="p">):</span>
-</span><span id="__span-0-881"><a id="__codelineno-0-881" name="__codelineno-0-881"></a>        <span class="n">edof_records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">NodePairRecord</span><span class="p">(</span>
-</span><span id="__span-0-882"><a id="__codelineno-0-882" name="__codelineno-0-882"></a>            <span class="n">kind</span><span class="o">=</span><span class="n">ConstraintKind</span><span class="o">.</span><span class="n">EQUAL_DOF</span><span class="p">,</span>
-</span><span id="__span-0-883"><a id="__codelineno-0-883" name="__codelineno-0-883"></a>            <span class="n">name</span><span class="o">=</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
-</span><span id="__span-0-884"><a id="__codelineno-0-884" name="__codelineno-0-884"></a>            <span class="n">master_node</span><span class="o">=</span><span class="n">phantom_tag</span><span class="p">,</span>
-</span><span id="__span-0-885"><a id="__codelineno-0-885" name="__codelineno-0-885"></a>            <span class="n">slave_node</span><span class="o">=</span><span class="n">slave_tag</span><span class="p">,</span>
-</span><span id="__span-0-886"><a id="__codelineno-0-886" name="__codelineno-0-886"></a>            <span class="n">dofs</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">dofs</span><span class="p">),</span>
-</span><span id="__span-0-887"><a id="__codelineno-0-887" name="__codelineno-0-887"></a>        <span class="p">))</span>
-</span><span id="__span-0-888"><a id="__codelineno-0-888" name="__codelineno-0-888"></a>
-</span><span id="__span-0-889"><a id="__codelineno-0-889" name="__codelineno-0-889"></a>    <span class="k">return</span> <span class="n">NodeToSurfaceRecord</span><span class="p">(</span>
-</span><span id="__span-0-890"><a id="__codelineno-0-890" name="__codelineno-0-890"></a>        <span class="n">kind</span><span class="o">=</span><span class="n">ConstraintKind</span><span class="o">.</span><span class="n">NODE_TO_SURFACE_SPRING</span><span class="p">,</span>
-</span><span id="__span-0-891"><a id="__codelineno-0-891" name="__codelineno-0-891"></a>        <span class="n">name</span><span class="o">=</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
-</span><span id="__span-0-892"><a id="__codelineno-0-892" name="__codelineno-0-892"></a>        <span class="n">master_node</span><span class="o">=</span><span class="n">master_tag</span><span class="p">,</span>
-</span><span id="__span-0-893"><a id="__codelineno-0-893" name="__codelineno-0-893"></a>        <span class="n">slave_nodes</span><span class="o">=</span><span class="n">slave_list</span><span class="p">,</span>
-</span><span id="__span-0-894"><a id="__codelineno-0-894" name="__codelineno-0-894"></a>        <span class="n">phantom_nodes</span><span class="o">=</span><span class="n">phantom_tags</span><span class="p">,</span>
-</span><span id="__span-0-895"><a id="__codelineno-0-895" name="__codelineno-0-895"></a>        <span class="n">phantom_coords</span><span class="o">=</span><span class="n">phantom_coords</span><span class="p">,</span>
-</span><span id="__span-0-896"><a id="__codelineno-0-896" name="__codelineno-0-896"></a>        <span class="n">rigid_link_records</span><span class="o">=</span><span class="n">stiff_records</span><span class="p">,</span>
-</span><span id="__span-0-897"><a id="__codelineno-0-897" name="__codelineno-0-897"></a>        <span class="n">equal_dof_records</span><span class="o">=</span><span class="n">edof_records</span><span class="p">,</span>
-</span><span id="__span-0-898"><a id="__codelineno-0-898" name="__codelineno-0-898"></a>        <span class="n">dofs</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">dofs</span><span class="p">),</span>
-</span><span id="__span-0-899"><a id="__codelineno-0-899" name="__codelineno-0-899"></a>    <span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-899">899</a></span>
+<span class="normal"><a href="#__codelineno-0-900">900</a></span>
+<span class="normal"><a href="#__codelineno-0-901">901</a></span>
+<span class="normal"><a href="#__codelineno-0-902">902</a></span>
+<span class="normal"><a href="#__codelineno-0-903">903</a></span>
+<span class="normal"><a href="#__codelineno-0-904">904</a></span>
+<span class="normal"><a href="#__codelineno-0-905">905</a></span>
+<span class="normal"><a href="#__codelineno-0-906">906</a></span>
+<span class="normal"><a href="#__codelineno-0-907">907</a></span>
+<span class="normal"><a href="#__codelineno-0-908">908</a></span>
+<span class="normal"><a href="#__codelineno-0-909">909</a></span>
+<span class="normal"><a href="#__codelineno-0-910">910</a></span>
+<span class="normal"><a href="#__codelineno-0-911">911</a></span>
+<span class="normal"><a href="#__codelineno-0-912">912</a></span>
+<span class="normal"><a href="#__codelineno-0-913">913</a></span>
+<span class="normal"><a href="#__codelineno-0-914">914</a></span>
+<span class="normal"><a href="#__codelineno-0-915">915</a></span>
+<span class="normal"><a href="#__codelineno-0-916">916</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-848"><a id="__codelineno-0-848" name="__codelineno-0-848"></a><span class="k">def</span><span class="w"> </span><span class="nf">resolve_node_to_surface_spring</span><span class="p">(</span>
+</span><span id="__span-0-849"><a id="__codelineno-0-849" name="__codelineno-0-849"></a>    <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-0-850"><a id="__codelineno-0-850" name="__codelineno-0-850"></a>    <span class="n">defn</span><span class="p">:</span> <span class="s2">&quot;NodeToSurfaceSpringDef&quot;</span><span class="p">,</span>
+</span><span id="__span-0-851"><a id="__codelineno-0-851" name="__codelineno-0-851"></a>    <span class="n">master_tag</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+</span><span id="__span-0-852"><a id="__codelineno-0-852" name="__codelineno-0-852"></a>    <span class="n">slave_nodes</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+</span><span id="__span-0-853"><a id="__codelineno-0-853" name="__codelineno-0-853"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NodeToSurfaceRecord</span><span class="p">:</span>
+</span><span id="__span-0-854"><a id="__codelineno-0-854" name="__codelineno-0-854"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+</span><span id="__span-0-855"><a id="__codelineno-0-855" name="__codelineno-0-855"></a><span class="sd">    Resolve a spring-variant 6-DOF → 3-DOF surface coupling.</span>
+</span><span id="__span-0-856"><a id="__codelineno-0-856" name="__codelineno-0-856"></a>
+</span><span id="__span-0-857"><a id="__codelineno-0-857" name="__codelineno-0-857"></a><span class="sd">    Identical phantom-node generation and equalDOF records as</span>
+</span><span id="__span-0-858"><a id="__codelineno-0-858" name="__codelineno-0-858"></a><span class="sd">    :meth:`resolve_node_to_surface`. The only difference is that</span>
+</span><span id="__span-0-859"><a id="__codelineno-0-859" name="__codelineno-0-859"></a><span class="sd">    the master → phantom rigid-link records are tagged with</span>
+</span><span id="__span-0-860"><a id="__codelineno-0-860" name="__codelineno-0-860"></a><span class="sd">    ``kind=&#39;rigid_beam_stiff&#39;`` so they are routed through</span>
+</span><span id="__span-0-861"><a id="__codelineno-0-861" name="__codelineno-0-861"></a><span class="sd">    ``stiff_beam_groups()`` at emission time (becoming stiff</span>
+</span><span id="__span-0-862"><a id="__codelineno-0-862" name="__codelineno-0-862"></a><span class="sd">    ``elasticBeamColumn`` elements) instead of</span>
+</span><span id="__span-0-863"><a id="__codelineno-0-863" name="__codelineno-0-863"></a><span class="sd">    ``rigid_link_groups()`` (which would emit ``rigidLink`` and</span>
+</span><span id="__span-0-864"><a id="__codelineno-0-864" name="__codelineno-0-864"></a><span class="sd">    hit the ill-conditioning described in</span>
+</span><span id="__span-0-865"><a id="__codelineno-0-865" name="__codelineno-0-865"></a><span class="sd">    :class:`NodeToSurfaceSpringDef`).</span>
+</span><span id="__span-0-866"><a id="__codelineno-0-866" name="__codelineno-0-866"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-867"><a id="__codelineno-0-867" name="__codelineno-0-867"></a>
+</span><span id="__span-0-868"><a id="__codelineno-0-868" name="__codelineno-0-868"></a>    <span class="n">master_xyz</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coords_of</span><span class="p">(</span><span class="n">master_tag</span><span class="p">)</span>
+</span><span id="__span-0-869"><a id="__codelineno-0-869" name="__codelineno-0-869"></a>    <span class="n">slave_list</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">slave_nodes</span> <span class="o">-</span> <span class="p">{</span><span class="n">master_tag</span><span class="p">})</span>
+</span><span id="__span-0-870"><a id="__codelineno-0-870" name="__codelineno-0-870"></a>    <span class="n">dofs</span> <span class="o">=</span> <span class="n">defn</span><span class="o">.</span><span class="n">dofs</span> <span class="ow">or</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+</span><span id="__span-0-871"><a id="__codelineno-0-871" name="__codelineno-0-871"></a>
+</span><span id="__span-0-872"><a id="__codelineno-0-872" name="__codelineno-0-872"></a>    <span class="n">start</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_next_phantom_tag</span>
+</span><span id="__span-0-873"><a id="__codelineno-0-873" name="__codelineno-0-873"></a>    <span class="n">phantom_tags</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">start</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">slave_list</span><span class="p">)))</span>
+</span><span id="__span-0-874"><a id="__codelineno-0-874" name="__codelineno-0-874"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_next_phantom_tag</span> <span class="o">=</span> <span class="n">start</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">slave_list</span><span class="p">)</span>
+</span><span id="__span-0-875"><a id="__codelineno-0-875" name="__codelineno-0-875"></a>
+</span><span id="__span-0-876"><a id="__codelineno-0-876" name="__codelineno-0-876"></a>    <span class="n">phantom_coords</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span>
+</span><span id="__span-0-877"><a id="__codelineno-0-877" name="__codelineno-0-877"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_coords_of</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">slave_list</span>
+</span><span id="__span-0-878"><a id="__codelineno-0-878" name="__codelineno-0-878"></a>    <span class="p">])</span>
+</span><span id="__span-0-879"><a id="__codelineno-0-879" name="__codelineno-0-879"></a>
+</span><span id="__span-0-880"><a id="__codelineno-0-880" name="__codelineno-0-880"></a>    <span class="c1"># Stiff beams: master → phantom. Same structure as the</span>
+</span><span id="__span-0-881"><a id="__codelineno-0-881" name="__codelineno-0-881"></a>    <span class="c1"># constraint-based variant but tagged with a distinct kind so</span>
+</span><span id="__span-0-882"><a id="__codelineno-0-882" name="__codelineno-0-882"></a>    <span class="c1"># the mesh iterators can route them to the element emission</span>
+</span><span id="__span-0-883"><a id="__codelineno-0-883" name="__codelineno-0-883"></a>    <span class="c1"># path.</span>
+</span><span id="__span-0-884"><a id="__codelineno-0-884" name="__codelineno-0-884"></a>    <span class="n">stiff_records</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-0-885"><a id="__codelineno-0-885" name="__codelineno-0-885"></a>    <span class="k">for</span> <span class="n">phantom_tag</span><span class="p">,</span> <span class="n">slave_tag</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">phantom_tags</span><span class="p">,</span> <span class="n">slave_list</span><span class="p">):</span>
+</span><span id="__span-0-886"><a id="__codelineno-0-886" name="__codelineno-0-886"></a>        <span class="n">slave_xyz</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_coords_of</span><span class="p">(</span><span class="n">slave_tag</span><span class="p">)</span>
+</span><span id="__span-0-887"><a id="__codelineno-0-887" name="__codelineno-0-887"></a>        <span class="n">offset</span> <span class="o">=</span> <span class="n">slave_xyz</span> <span class="o">-</span> <span class="n">master_xyz</span>
+</span><span id="__span-0-888"><a id="__codelineno-0-888" name="__codelineno-0-888"></a>        <span class="n">stiff_records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">NodePairRecord</span><span class="p">(</span>
+</span><span id="__span-0-889"><a id="__codelineno-0-889" name="__codelineno-0-889"></a>            <span class="n">kind</span><span class="o">=</span><span class="n">ConstraintKind</span><span class="o">.</span><span class="n">RIGID_BEAM_STIFF</span><span class="p">,</span>
+</span><span id="__span-0-890"><a id="__codelineno-0-890" name="__codelineno-0-890"></a>            <span class="n">name</span><span class="o">=</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+</span><span id="__span-0-891"><a id="__codelineno-0-891" name="__codelineno-0-891"></a>            <span class="n">master_node</span><span class="o">=</span><span class="n">master_tag</span><span class="p">,</span>
+</span><span id="__span-0-892"><a id="__codelineno-0-892" name="__codelineno-0-892"></a>            <span class="n">slave_node</span><span class="o">=</span><span class="n">phantom_tag</span><span class="p">,</span>
+</span><span id="__span-0-893"><a id="__codelineno-0-893" name="__codelineno-0-893"></a>            <span class="n">offset</span><span class="o">=</span><span class="n">offset</span><span class="p">,</span>
+</span><span id="__span-0-894"><a id="__codelineno-0-894" name="__codelineno-0-894"></a>        <span class="p">))</span>
+</span><span id="__span-0-895"><a id="__codelineno-0-895" name="__codelineno-0-895"></a>
+</span><span id="__span-0-896"><a id="__codelineno-0-896" name="__codelineno-0-896"></a>    <span class="n">edof_records</span> <span class="o">=</span> <span class="p">[]</span>
+</span><span id="__span-0-897"><a id="__codelineno-0-897" name="__codelineno-0-897"></a>    <span class="k">for</span> <span class="n">phantom_tag</span><span class="p">,</span> <span class="n">slave_tag</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">phantom_tags</span><span class="p">,</span> <span class="n">slave_list</span><span class="p">):</span>
+</span><span id="__span-0-898"><a id="__codelineno-0-898" name="__codelineno-0-898"></a>        <span class="n">edof_records</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">NodePairRecord</span><span class="p">(</span>
+</span><span id="__span-0-899"><a id="__codelineno-0-899" name="__codelineno-0-899"></a>            <span class="n">kind</span><span class="o">=</span><span class="n">ConstraintKind</span><span class="o">.</span><span class="n">EQUAL_DOF</span><span class="p">,</span>
+</span><span id="__span-0-900"><a id="__codelineno-0-900" name="__codelineno-0-900"></a>            <span class="n">name</span><span class="o">=</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+</span><span id="__span-0-901"><a id="__codelineno-0-901" name="__codelineno-0-901"></a>            <span class="n">master_node</span><span class="o">=</span><span class="n">phantom_tag</span><span class="p">,</span>
+</span><span id="__span-0-902"><a id="__codelineno-0-902" name="__codelineno-0-902"></a>            <span class="n">slave_node</span><span class="o">=</span><span class="n">slave_tag</span><span class="p">,</span>
+</span><span id="__span-0-903"><a id="__codelineno-0-903" name="__codelineno-0-903"></a>            <span class="n">dofs</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">dofs</span><span class="p">),</span>
+</span><span id="__span-0-904"><a id="__codelineno-0-904" name="__codelineno-0-904"></a>        <span class="p">))</span>
+</span><span id="__span-0-905"><a id="__codelineno-0-905" name="__codelineno-0-905"></a>
+</span><span id="__span-0-906"><a id="__codelineno-0-906" name="__codelineno-0-906"></a>    <span class="k">return</span> <span class="n">NodeToSurfaceRecord</span><span class="p">(</span>
+</span><span id="__span-0-907"><a id="__codelineno-0-907" name="__codelineno-0-907"></a>        <span class="n">kind</span><span class="o">=</span><span class="n">ConstraintKind</span><span class="o">.</span><span class="n">NODE_TO_SURFACE_SPRING</span><span class="p">,</span>
+</span><span id="__span-0-908"><a id="__codelineno-0-908" name="__codelineno-0-908"></a>        <span class="n">name</span><span class="o">=</span><span class="n">defn</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+</span><span id="__span-0-909"><a id="__codelineno-0-909" name="__codelineno-0-909"></a>        <span class="n">master_node</span><span class="o">=</span><span class="n">master_tag</span><span class="p">,</span>
+</span><span id="__span-0-910"><a id="__codelineno-0-910" name="__codelineno-0-910"></a>        <span class="n">slave_nodes</span><span class="o">=</span><span class="n">slave_list</span><span class="p">,</span>
+</span><span id="__span-0-911"><a id="__codelineno-0-911" name="__codelineno-0-911"></a>        <span class="n">phantom_nodes</span><span class="o">=</span><span class="n">phantom_tags</span><span class="p">,</span>
+</span><span id="__span-0-912"><a id="__codelineno-0-912" name="__codelineno-0-912"></a>        <span class="n">phantom_coords</span><span class="o">=</span><span class="n">phantom_coords</span><span class="p">,</span>
+</span><span id="__span-0-913"><a id="__codelineno-0-913" name="__codelineno-0-913"></a>        <span class="n">rigid_link_records</span><span class="o">=</span><span class="n">stiff_records</span><span class="p">,</span>
+</span><span id="__span-0-914"><a id="__codelineno-0-914" name="__codelineno-0-914"></a>        <span class="n">equal_dof_records</span><span class="o">=</span><span class="n">edof_records</span><span class="p">,</span>
+</span><span id="__span-0-915"><a id="__codelineno-0-915" name="__codelineno-0-915"></a>        <span class="n">dofs</span><span class="o">=</span><span class="nb">list</span><span class="p">(</span><span class="n">dofs</span><span class="p">),</span>
+</span><span id="__span-0-916"><a id="__codelineno-0-916" name="__codelineno-0-916"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
