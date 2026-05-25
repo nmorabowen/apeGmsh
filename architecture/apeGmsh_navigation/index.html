@@ -7085,6 +7085,11 @@ deferred (see <code>skills/apegmsh/references/opensees-bridge.md</code>).</p>
 <td><code>opensees/apesees.py</code></td>
 </tr>
 <tr>
+<td>flow per-node <code>ndf</code> overrides into the deck</td>
+<td>declare on session (<code>g.node_ndf.set("Shells", ndf=6)</code>); <code>apeSees(fem)</code> emit passes <code>-ndf K</code> per-node where override exists, envelope wins on sentinel (override-only)</td>
+<td><code>opensees/apesees.py</code> + <code>opensees/_internal/build.py</code> (ADR 0033)</td>
+</tr>
+<tr>
 <td>add an nD material</td>
 <td><code>conc = ops.nDMaterial.ElasticIsotropic(E=..., nu=..., rho=...)</code></td>
 <td><code>opensees/_internal/ns/</code></td>
@@ -7500,7 +7505,11 @@ tables.</p>
   meshing and the broker materialises the per-node <code>ndf</code> vector at
   <code>g.mesh.queries.get_fem_data()</code> time. apeGmsh deliberately does
   not infer <code>ndf</code> from element class — explicit-only, fail-loud
-  (ADR 0032). See <code>_kernel/defs/node_ndf.py::NodeNDFDef</code> for the
+  (ADR 0032). The OpenSees emit layer consumes the resolved per-node
+  vector via override-only semantics — <code>apeSees(fem)</code> passes <code>-ndf K</code>
+  per-node when the broker carries an override; sentinel slots fall
+  back to the envelope from <code>apeSees(fem).model(ndm, ndf=K)</code>
+  (ADR 0033). See <code>_kernel/defs/node_ndf.py::NodeNDFDef</code> for the
   stored intent shape.</li>
 <li><code>.__init__(self, parent)</code></li>
 <li><code>.set(self, target, *, ndf: int, name=None) -&gt; NodeNDFDef</code> —
@@ -8272,7 +8281,18 @@ were removed in Phase 8 (ADR 0009). The solver adapter is now in
 <code>src/apeGmsh/opensees/</code>.</p>
 </blockquote>
 <ul>
-<li><code>apeSees</code> <strong>[helper]</strong> — post-session explicit-constructor bridge.</li>
+<li><code>apeSees</code> <strong>[helper]</strong> — post-session explicit-constructor bridge.
+  Per-node <code>ndf</code> flows from <code>g.node_ndf</code> into the emitted deck via
+  override-only semantics — <code>-ndf K</code> is passed on <code>ops.node(...)</code>
+  only when the broker carries a non-sentinel override; sentinel
+  slots elide <code>-ndf</code> and OpenSees applies the envelope from
+  <code>.model(ndm, ndf=K)</code>. A three-site validator
+  (<code>apeSees.model()</code>, <code>OpenSeesModel.from_compose_buffers()</code>,
+  <code>OpenSeesModel.from_h5()</code>) asserts envelope ≥ max(declared
+  overrides); mismatch raises <code>BridgeError</code> naming the offending
+  node (<a href="../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>;
+  builds on the <a href="../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+  broker contract).</li>
 <li><code>.__init__(self, fem)</code></li>
 <li><code>.model(self, *, ndm, ndf)</code> — must be called first.</li>
 <li><code>.nDMaterial.*</code> — typed primitive constructors; return handles.</li>

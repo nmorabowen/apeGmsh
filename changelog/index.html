@@ -3809,15 +3809,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#unreleased-shell-on-solid-conformity-s1a-s1b-phase-ssi-2d-stage-bound-bcs-and-recorders" class="md-nav__link">
+  <a href="#unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unreleased — shell-on-solid conformity (S1a + S1b) · Phase SSI-2.D stage-bound BCs and recorders
+        Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Unreleased — shell-on-solid conformity (S1a + S1b) · Phase SSI-2.D stage-bound BCs and recorders">
+    <nav class="md-nav" aria-label="Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -3836,6 +3836,28 @@
     <span class="md-ellipsis">
       
         ADDED — top-level g.node_ndf composite, explicit-only per-node ndf (S1b, ADR 0032)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-s2-per-node-ndf-flows-into-opensees-emit-override-only-adr-0033" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — S2: per-node ndf flows into OpenSees emit (override-only, ADR 0033)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-s5-partitioned-mixed-ndf-shell-on-solid-e2e-closes-the-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — S5: partitioned mixed-ndf shell-on-solid E2E (closes the stream)
       
     </span>
   </a>
@@ -4934,15 +4956,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#unreleased-shell-on-solid-conformity-s1a-s1b-phase-ssi-2d-stage-bound-bcs-and-recorders" class="md-nav__link">
+  <a href="#unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unreleased — shell-on-solid conformity (S1a + S1b) · Phase SSI-2.D stage-bound BCs and recorders
+        Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Unreleased — shell-on-solid conformity (S1a + S1b) · Phase SSI-2.D stage-bound BCs and recorders">
+    <nav class="md-nav" aria-label="Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -4961,6 +4983,28 @@
     <span class="md-ellipsis">
       
         ADDED — top-level g.node_ndf composite, explicit-only per-node ndf (S1b, ADR 0032)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-s2-per-node-ndf-flows-into-opensees-emit-override-only-adr-0033" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — S2: per-node ndf flows into OpenSees emit (override-only, ADR 0033)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-s5-partitioned-mixed-ndf-shell-on-solid-e2e-closes-the-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — S5: partitioned mixed-ndf shell-on-solid E2E (closes the stream)
       
     </span>
   </a>
@@ -6045,7 +6089,7 @@
 
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
-<h2 id="unreleased-shell-on-solid-conformity-s1a-s1b-phase-ssi-2d-stage-bound-bcs-and-recorders">Unreleased — shell-on-solid conformity (S1a + S1b) · Phase SSI-2.D stage-bound BCs and recorders<a class="headerlink" href="#unreleased-shell-on-solid-conformity-s1a-s1b-phase-ssi-2d-stage-bound-bcs-and-recorders" title="Permanent link">&para;</a></h2>
+<h2 id="unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders">Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders<a class="headerlink" href="#unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders" title="Permanent link">&para;</a></h2>
 <h3 id="changed-booleanfragment-default-breaking">CHANGED — boolean.fragment default (BREAKING)<a class="headerlink" href="#changed-booleanfragment-default-breaking" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>g.model.boolean.fragment(...)</code> default <code>cleanup_free</code> flipped from
@@ -6099,6 +6143,109 @@
   test.</p>
 </li>
 </ul>
+<h3 id="added-s2-per-node-ndf-flows-into-opensees-emit-override-only-adr-0033">ADDED — S2: per-node <code>ndf</code> flows into OpenSees emit (override-only, ADR 0033)<a class="headerlink" href="#added-s2-per-node-ndf-flows-into-opensees-emit-override-only-adr-0033" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>g.node_ndf</code> declarations now reach the emitted deck</strong> (PR #325).
+  S1 stored per-node <code>ndf</code> on the broker; S2 wires it into every
+  OpenSees emit path. <strong>Override-only semantics</strong>: <code>g.node_ndf</code> is
+  the override channel; the model envelope set via
+  <code>apeSees(fem).model(ndm, ndf=K)</code> is the default. The emitter passes
+  <code>-ndf K</code> on <code>ops.node(...)</code> only when the broker carries a
+  non-sentinel value at that nid; sentinel slots elide <code>-ndf</code> and
+  OpenSees applies the envelope. This mirrors OpenSees-native
+  <code>model BasicBuilder -ndf K</code> + per-node <code>-ndf J</code> override semantics.</li>
+</ul>
+<p><strong>Zero user-facing migration cost.</strong> Existing scripts that never
+  touched <code>g.node_ndf</code> emit byte-identical decks — the ~285 existing
+  <code>apeSees(fem)</code> test sites and every example notebook keep working
+  without rewrite.</p>
+<ul>
+<li>
+<p><strong>Five wiring sites</strong> consult the broker via
+  <code>fem.nodes.ndf_for(tag)</code> wrapped in <code>try/except LookupError</code> (the
+  miss falls back to the envelope, preserving ADR 0032's fail-loud
+  broker contract): four owned-node emit sites in
+  <code>apesees.py</code> (flat global, flat staged-owned, partitioned global,
+  partitioned staged-owned) plus one foreign-node site in
+  <code>_internal/build.py::emit_mp_constraints_partitioned</code>. The
+  <code>_replay_into</code> helper in <code>_internal/compose.py</code> widens its per-node
+  tuple to <code>(tag, coords, ndf|None)</code> so per-node declarations survive
+  an H5 round-trip without truncating to the envelope.</p>
+</li>
+<li>
+<p><strong>Three-site validator</strong> (<code>validate_envelope_covers_broker_ndf</code>)
+  fires at every <code>OpenSeesModel</code> materialisation path —
+  <code>apeSees.model()</code>, <code>OpenSeesModel.from_compose_buffers()</code>, and
+  <code>OpenSeesModel.from_h5()</code>. A misconfigured envelope
+  (e.g. <code>apeSees(fem).model(ndf=3)</code> after
+  <code>g.node_ndf.set("Shells", ndf=6)</code>) raises <code>BridgeError</code> at the
+  call site, naming the offending node and the fix.</p>
+</li>
+<li>
+<p><strong><code>from_msh</code> reverted to <code>_ndf=None</code></strong> (undoes PR #321's
+  zero-stamping); <code>_hash_nodes</code> skips the <code>_ndf</code> fold when None OR
+  all-sentinel, preserving hash symmetry across construction paths
+  AND the emit-layer envelope fallback on <code>.msh</code>-loaded models.</p>
+</li>
+<li>
+<p><strong>OpenSeesMP consistency is hash-guaranteed</strong> (ADR 0021): the
+  resolved <code>_ndf</code> array folds into <code>fem_hash</code>; every rank
+  deserialises the same broker, so all ranks agree on per-node <code>ndf</code>
+  for shared nodes without explicit cross-rank communication.</p>
+</li>
+<li>
+<p><strong>Architecture:</strong> <a href="src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
+  codifies the wiring, validator sites, phantom carveout, and
+  hash-guaranteed cross-rank consistency. Extends
+  <a href="src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+  (the broker contract S2 consumes).</p>
+</li>
+<li>
+<p><strong>PR #328 (S2 follow-up):</strong> stateful <code>set_phantom_node_mode(emitter,
+  bool)</code> side-channel replaced with a stateless
+  <code>set_phantom_node_tags(emitter, set[int])</code> predicate set,
+  pre-loaded ONCE at the entry of <code>emit_mp_constraints</code> /
+  <code>emit_mp_constraints_partitioned</code>. Phantom tags are guaranteed
+  disjoint from real broker tags (the resolver allocates
+  <code>&gt; max(broker_node_tag)</code>), so the pre-loaded set classifies every
+  subsequent <code>node()</code> call without flag-flipping or ordering
+  constraints. ADR 0033 §"Phantom-node carveout" gained an
+  "Alternatives considered" subsection naming the rejected paths
+  (mode flag, tag-formula predicate, Protocol-widening kwarg).
+  Eight emit-path tests added in <code>tests/test_node_ndf.py</code> covering
+  the headline mixed-ndf shell-on-solid case, backcompat byte-identity,
+  each of the three validator sites, H5 round-trip, the <code>from_msh</code>
+  envelope path, and the phantom predicate-set regression.</p>
+</li>
+</ul>
+<h3 id="added-s5-partitioned-mixed-ndf-shell-on-solid-e2e-closes-the-stream">ADDED — S5: partitioned mixed-ndf shell-on-solid E2E (closes the stream)<a class="headerlink" href="#added-s5-partitioned-mixed-ndf-shell-on-solid-e2e-closes-the-stream" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>tests/opensees/integration/test_emit_partitioned_mixed_ndf_shell_on_solid.py</code></strong>
+  (PR #330) — six OpenSeesMP integration tests proving the
+  per-foreign-node <code>ndf</code> lookup added in PR #325 fires per-tag across
+  partition boundaries. The S2 merge unit-tested the flat case; this
+  PR closes the partitioned half:</li>
+<li>headline mixed-ndf partitioned emit — shell on rank 0 emits
+     <code>ndf=6</code>, solid on rank 1 emits <code>ndf=3</code>, foreign-node decls on
+     each rank carry the <em>broker-sourced</em> peer <code>ndf</code>;</li>
+<li>INV-2 preserved (foreign node decl precedes <code>equalDOF</code>);</li>
+<li><code>ATTR_PHANTOM_NODE_TAGS</code> is empty <code>frozenset</code> when no
+     <code>NodeToSurfaceRecord</code> exists (guards against real broker tags
+     being mis-classified as phantoms);</li>
+<li>cross-rank consistency — rank 0's foreign-decl ndf for tag T
+     equals rank 1's owned-decl ndf for tag T (observable surface of
+     ADR 0033's hash-guaranteed agreement);</li>
+<li>byte-identical backcompat on uniform-ndf partitioned models;</li>
+<li>envelope validator fires at <code>apeSees.model(...)</code>, not deep in
+     the per-rank fan-out.</li>
+</ul>
+<p>Assertion strategy follows the precedent in every other
+  <code>tests/opensees/integration/test_emit_partitioned_*</code> file:
+  in-process deck capture via <code>RecordingEmitter</code>, bucketed per-rank
+  by <code>partition_open</code> / <code>partition_close</code> brackets — no subprocess
+  MPI runtime needed for emit-semantics assertions. Test-only PR;
+  zero production code changes. Closes the S1 + S2 + S5
+  shell-to-solid coupling stream.</p>
 <h3 id="added-phase-ssi-2d-stage-bound-bcs-and-recorders-adr-0034">ADDED — Phase SSI-2.D: stage-bound BCs and recorders (ADR 0034)<a class="headerlink" href="#added-phase-ssi-2d-stage-bound-bcs-and-recorders-adr-0034" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>_StageBuilder</code> gains four new verbs</strong> for binding boundary

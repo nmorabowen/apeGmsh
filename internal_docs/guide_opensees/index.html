@@ -5244,7 +5244,12 @@ counts. Pair a default with a targeted override:</p>
 by any declaration raise <code>LookupError</code> from <code>fem.nodes.ndf_for(nid)</code>.
 See <a href="../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
 for the explicit-only doctrine and the dimensional-resolution-contract
-alignment.</p>
+alignment. See <a href="../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
+for how the broker's per-node <code>ndf</code> flows into the OpenSees emit paths:
+<code>-ndf K</code> is passed per-node when an override exists (<code>g.node_ndf.set</code>);
+sentinel slots elide <code>-ndf</code> and the envelope (<code>apeSees(fem).model(ndm,
+ndf=K)</code>) wins — matching OpenSees-native <code>model -ndf K</code> + per-node
+override semantics.</p>
 <h3 id="the-deck-stops-at-model-definition">The deck stops at model definition<a class="headerlink" href="#the-deck-stops-at-model-definition" title="Permanent link">&para;</a></h3>
 <p>The emitted scripts omit analysis commands (integrator, algorithm,
 system). Append your analysis block or source/import the generated
