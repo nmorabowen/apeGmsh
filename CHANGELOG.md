@@ -1,6 +1,65 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331)
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035)
+
+### ADDED — ASDEmbeddedNodeElement optional flags now reach the deck (ADR 0035)
+
+- **`g.constraints.tie(...)` / `embedded(...)` / `tied_contact(...)`
+  gain four new kwargs** mapping 1:1 to the OpenSees `element
+  ASDEmbeddedNodeElement` optionals documented at
+  [ASDEmbeddedNodeElement.cpp:201](https://github.com/OpenSees/OpenSees/blob/master/SRC/element/CEqElement/ASDEmbeddedNodeElement.cpp):
+
+  ```python
+  g.constraints.tie(
+      master_label="shell", slave_label="solid",
+      stiffness=1.0e8,        # -K  (penalty stiffness)
+      stiffness_p=None,        # -KP (pressure stiffness; only with pressure=True)
+      rotational=False,        # -rot (constrain Cnode rotations too)
+      pressure=False,          # -p  (u-p / saturated-soil coupling)
+  )
+  ```
+
+  Defaults (`stiffness=1.0e18`, `stiffness_p=None`, `rotational=False`,
+  `pressure=False`) match the C++ parser at
+  [ASDEmbeddedNodeElement.cpp:222](https://github.com/OpenSees/OpenSees/blob/master/SRC/element/CEqElement/ASDEmbeddedNodeElement.cpp).
+  Scripts that don't pass the new kwargs emit semantically-identical
+  models — the visible difference is that the `-K 1e+18` token now
+  appears in the Tcl/Py output, where previously it fell through to
+  the silent C++ default.
+
+- **Fail-loud `__post_init__` on every Def** mirrors the parser's
+  mutual-exclusion check ([cpp:276](https://github.com/OpenSees/OpenSees/blob/master/SRC/element/CEqElement/ASDEmbeddedNodeElement.cpp)):
+  `rotational=True, pressure=True` raises `ValueError`. Setting
+  `stiffness_p=...` without `pressure=True` also raises — `-KP` is
+  ignored by OpenSees outside the u-p path, so the no-op is treated
+  as a user mistake rather than silently absorbed.
+
+- **Emitter Protocol** `embeddedNode` widens from
+  `(ele_tag, cnode, *args)` to `(ele_tag, cnode, *master_nodes,
+  stiffness=1.0e18, stiffness_p=None, rotational=False,
+  pressure=False)`. All five concrete emitters (Tcl, Py, LiveOps,
+  H5, Recording) honour the same kwargs; a shared
+  `_build_embedded_flag_args` helper in
+  [emitter/base.py](src/apeGmsh/opensees/emitter/base.py) materialises
+  the flag tokens in parser order for the text-based emitters.
+
+- **H5 schema 2.11.0 → 2.12.0 (additive).**
+  `/opensees/constraints/embeddedNode` gains five typed columns —
+  `stiffness` (float64), `stiffness_p` (float64) +
+  `has_stiffness_p` (uint8 sentinel for `None`), `rotational`
+  (uint8), `pressure` (uint8). Per ADR 0023 two-version reader
+  window, the bridge accepts both 2.11.x and 2.12.x files. Old
+  2.11.x readers ignore the new columns; new readers default the
+  columns to the C++ values when a 2.11.x file lacks them.
+
+- **Motivation.** Diffing apeGmsh-emitted decks against STKO surfaced
+  a 10-order-of-magnitude K-divergence: STKO emitted `-K 1e8`
+  explicitly while apeGmsh fell through to the C++ default `1e18`.
+  Penalty conditioning of every tie / embedded / tied_contact
+  constraint differed between the two pipelines. The exposure
+  closes that gap and gives users the knob to tune K-conditioning
+  on stiff-penalty models. See
+  [ADR 0035](src/apeGmsh/opensees/architecture/decisions/0035-asd-embedded-node-element-option-exposure.md).
 
 ### CHANGED — boolean.fragment default (BREAKING)
 

@@ -530,11 +530,22 @@ class EmbeddedNodeRecord:
     positional in the OpenSees signature
     ``element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 ...``.
     ``args`` are the host element's node tags ($Rnode1..$RnodeN).
+
+    The four optional flag fields (``stiffness``, ``stiffness_p``,
+    ``rotational``, ``pressure``) round-trip the ASDEmbeddedNodeElement
+    options ``-K``, ``-KP``, ``-rot``, ``-p`` per ADR 0035.  Defaults
+    match the C++ parser at ``ASDEmbeddedNodeElement.cpp:222`` so
+    legacy 2.10.x H5 files that lack these columns read back with
+    semantically-identical behaviour to the pre-ADR-0035 emit path.
     """
 
     ele_tag: int
     cnode: int
     args: tuple[int | float, ...]
+    stiffness: float = 1.0e18
+    stiffness_p: float | None = None
+    rotational: bool = False
+    pressure: bool = False
     name: str = ""
 
 

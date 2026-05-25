@@ -537,6 +537,10 @@ class ConstraintResolver:
                         dofs=list(dofs),
                         projected_point=proj,
                         parametric_coords=xi_eta,
+                        stiffness=defn.stiffness,
+                        stiffness_p=defn.stiffness_p,
+                        rotational=defn.rotational,
+                        pressure=defn.pressure,
                     )
 
             if best_record is not None:
@@ -594,6 +598,10 @@ class ConstraintResolver:
             slave_label=defn.slave_label,
             tolerance=defn.tolerance,
             dofs=dofs,
+            stiffness=defn.stiffness,
+            stiffness_p=defn.stiffness_p,
+            rotational=defn.rotational,
+            pressure=defn.pressure,
         )
         all_records = self.resolve_tie(
             tie_fwd, master_face_conn, slave_nodes,
@@ -815,6 +823,10 @@ class ConstraintResolver:
                         projected_point=p.copy(),
                         parametric_coords=parametric,
                         excess=float(excess),
+                        stiffness=defn.stiffness,
+                        stiffness_p=defn.stiffness_p,
+                        rotational=defn.rotational,
+                        pressure=defn.pressure,
                     )
                 if excess <= bary_tol:
                     break

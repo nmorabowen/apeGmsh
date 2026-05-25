@@ -217,6 +217,10 @@ class InterpolationRecord(ConstraintRecord):
     projected_point: ndarray | None = None
     parametric_coords: ndarray | None = None
     excess: float | None = None
+    stiffness: float = 1.0e18
+    stiffness_p: float | None = None
+    rotational: bool = False
+    pressure: bool = False
 
     def constraint_matrix(self, ndof: int = 3) -> ndarray:
         """

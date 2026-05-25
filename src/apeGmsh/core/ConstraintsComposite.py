@@ -748,6 +748,8 @@ class ConstraintsComposite:
     # ── Tier 3 — Node-to-Surface ─────────────────────────────────────
     def tie(self, master_label, slave_label, *, master_entities=None,
             slave_entities=None, dofs=None, tolerance=1.0,
+            stiffness=1.0e18, stiffness_p=None,
+            rotational=False, pressure=False,
             name=None) -> TieDef:
         """Non-matching mesh tie via shape-function interpolation.
 
@@ -835,7 +837,9 @@ class ConstraintsComposite:
         return self._add_def(TieDef(
             master_label=master_label, slave_label=slave_label,
             master_entities=master_entities, slave_entities=slave_entities,
-            dofs=dofs, tolerance=tolerance, name=name))
+            dofs=dofs, tolerance=tolerance, name=name,
+            stiffness=stiffness, stiffness_p=stiffness_p,
+            rotational=rotational, pressure=pressure))
 
     def distributing_coupling(self, master_label, slave_label, *,
                               master_point=(0., 0., 0.), dofs=None,
@@ -883,6 +887,8 @@ class ConstraintsComposite:
 
     def embedded(self, host_label, embedded_label, *, tolerance=1.0,
                  host_entities=None, embedded_entities=None,
+                 stiffness=1.0e18, stiffness_p=None,
+                 rotational=False, pressure=False,
                  name=None) -> EmbeddedDef:
         """Embed lower-dimensional elements inside a host volume or
         surface.
@@ -949,7 +955,9 @@ class ConstraintsComposite:
         return self._add_def(EmbeddedDef(
             master_label=host_label, slave_label=embedded_label,
             tolerance=tolerance, host_entities=host_entities,
-            embedded_entities=embedded_entities, name=name))
+            embedded_entities=embedded_entities, name=name,
+            stiffness=stiffness, stiffness_p=stiffness_p,
+            rotational=rotational, pressure=pressure))
 
     # Level 2b
     def node_to_surface(self, master, slave, *,
@@ -1085,6 +1093,8 @@ class ConstraintsComposite:
     def tied_contact(self, master_label, slave_label, *,
                      master_entities=None, slave_entities=None,
                      dofs=None, tolerance=1.0,
+                     stiffness=1.0e18, stiffness_p=None,
+                     rotational=False, pressure=False,
                      name=None) -> TiedContactDef:
         """Bidirectional surface-to-surface tie.
 
@@ -1133,7 +1143,9 @@ class ConstraintsComposite:
         return self._add_def(TiedContactDef(
             master_label=master_label, slave_label=slave_label,
             master_entities=master_entities, slave_entities=slave_entities,
-            dofs=dofs, tolerance=tolerance, name=name))
+            dofs=dofs, tolerance=tolerance, name=name,
+            stiffness=stiffness, stiffness_p=stiffness_p,
+            rotational=rotational, pressure=pressure))
 
     def mortar(self, master_label, slave_label, *,
                master_entities=None, slave_entities=None,

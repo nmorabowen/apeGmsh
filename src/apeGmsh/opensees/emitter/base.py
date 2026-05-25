@@ -158,8 +158,11 @@ class Emitter(Protocol):
         self, perp_dir: int, master: int, *slaves: int,
     ) -> None: ...
     def embeddedNode(
-        self, ele_tag: int, cnode: int,
-        *args: int | float,
+        self, ele_tag: int, cnode: int, *master_nodes: int,
+        stiffness: float = 1.0e18,
+        stiffness_p: float | None = None,
+        rotational: bool = False,
+        pressure: bool = False,
     ) -> None: ...
     def mp_constraint_comment(self, name: str) -> None: ...
 
@@ -408,3 +411,32 @@ class Emitter(Protocol):
         the fallback system is used instead.
         """
         ...
+
+
+def _build_embedded_flag_args(
+    stiffness: float,
+    stiffness_p: float | None,
+    rotational: bool,
+    pressure: bool,
+) -> list[int | float | str]:
+    """Materialize ASDEmbeddedNodeElement optional flags as positional
+    tokens, in the parser order documented at
+    ``ASDEmbeddedNodeElement.cpp:201``::
+
+        <-rot> <-p> <-K $K> <-KP $KP>
+
+    Shared by the tcl / py / live / recording emitters so the on-wire
+    order is identical across backends; H5 stores the flags as typed
+    columns and bypasses this helper.
+    """
+    out: list[int | float | str] = []
+    if rotational:
+        out.append("-rot")
+    if pressure:
+        out.append("-p")
+    out.append("-K")
+    out.append(float(stiffness))
+    if stiffness_p is not None:
+        out.append("-KP")
+        out.append(float(stiffness_p))
+    return out

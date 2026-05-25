@@ -1791,8 +1791,14 @@ def _emit_surface_couplings(
         # over the host element's corners internally.
         ele_tag = tags.allocate("element")
         cnode = int(rec.slave_node)
-        args: list[int | float] = [int(mn) for mn in rec.master_nodes]
-        emitter.embeddedNode(ele_tag, cnode, *args)
+        master_nodes = [int(mn) for mn in rec.master_nodes]
+        emitter.embeddedNode(
+            ele_tag, cnode, *master_nodes,
+            stiffness=rec.stiffness,
+            stiffness_p=rec.stiffness_p,
+            rotational=rec.rotational,
+            pressure=rec.pressure,
+        )
 
 
 def _check_embedded_rnode_count(rec: object) -> None:
@@ -2739,5 +2745,11 @@ def _emit_surface_couplings_for_rank(
         _emit_name(emitter, rec.name)
         ele_tag = tags.allocate("element")
         cnode = int(rec.slave_node)
-        args: list[int | float] = [int(mn) for mn in rec.master_nodes]
-        emitter.embeddedNode(ele_tag, cnode, *args)
+        master_nodes = [int(mn) for mn in rec.master_nodes]
+        emitter.embeddedNode(
+            ele_tag, cnode, *master_nodes,
+            stiffness=rec.stiffness,
+            stiffness_p=rec.stiffness_p,
+            rotational=rec.rotational,
+            pressure=rec.pressure,
+        )

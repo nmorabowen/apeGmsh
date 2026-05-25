@@ -176,15 +176,25 @@ class TclEmitter:
         )
 
     def embeddedNode(
-        self, ele_tag: int, cnode: int,
-        *args: int | float,
+        self, ele_tag: int, cnode: int, *master_nodes: int,
+        stiffness: float = 1.0e18,
+        stiffness_p: float | None = None,
+        rotational: bool = False,
+        pressure: bool = False,
     ) -> None:
         # ASDEmbeddedNodeElement covers tie / tied_contact / mortar /
-        # embedded surface-coupling primitives (ADR 0022).
+        # embedded surface-coupling primitives (ADR 0022).  Optional
+        # flags (-rot / -p / -K / -KP) are exposed via kwargs and
+        # serialised in parser order by `_build_embedded_flag_args`
+        # (ADR 0035).
+        from .base import _build_embedded_flag_args
+        flag_args = _build_embedded_flag_args(
+            stiffness, stiffness_p, rotational, pressure,
+        )
         self._lines.append(
             _join(
                 "element", "ASDEmbeddedNodeElement",
-                ele_tag, cnode, *args,
+                ele_tag, cnode, *master_nodes, *flag_args,
             )
         )
 

@@ -58,12 +58,22 @@ class RecordingEmitter:
         )
 
     def embeddedNode(
-        self, ele_tag: int, cnode: int,
-        *args: int | float,
+        self, ele_tag: int, cnode: int, *master_nodes: int,
+        stiffness: float = 1.0e18,
+        stiffness_p: float | None = None,
+        rotational: bool = False,
+        pressure: bool = False,
     ) -> None:
-        self.calls.append(
-            ("embeddedNode", (ele_tag, cnode, *args), {})
-        )
+        self.calls.append((
+            "embeddedNode",
+            (ele_tag, cnode, *master_nodes),
+            {
+                "stiffness": stiffness,
+                "stiffness_p": stiffness_p,
+                "rotational": rotational,
+                "pressure": pressure,
+            },
+        ))
 
     def mp_constraint_comment(self, name: str) -> None:
         self.calls.append(("mp_constraint_comment", (name,), {}))

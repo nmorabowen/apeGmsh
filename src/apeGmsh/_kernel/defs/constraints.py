@@ -17,6 +17,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+def _validate_asd_embedded_options(
+    rotational: bool,
+    pressure: bool,
+    stiffness_p: float | None,
+    kind: str,
+) -> None:
+    """Fail-loud validation of ASDEmbeddedNodeElement-bound flags.
+
+    Mirrors the C++ parser's mutual-exclusion check at
+    ``ASDEmbeddedNodeElement.cpp:276`` and refuses combinations that
+    OpenSees would either reject at parse time or silently ignore.
+    """
+    if rotational and pressure:
+        raise ValueError(
+            f"{kind}: rotational and pressure are mutually exclusive "
+            f"(ASDEmbeddedNodeElement parser rejects both -rot and -p)."
+        )
+    if stiffness_p is not None and not pressure:
+        raise ValueError(
+            f"{kind}: stiffness_p (-KP) is only meaningful when "
+            f"pressure=True; OpenSees ignores -KP outside the u-p path."
+        )
+
+
 @dataclass
 class ConstraintDef:
     """Base class for all constraint definitions."""
@@ -265,6 +289,15 @@ class TieDef(ConstraintDef):
     slave_entities: list[tuple[int, int]] | None = None
     dofs: list[int] | None = None
     tolerance: float = 1.0
+    stiffness: float = 1.0e18
+    stiffness_p: float | None = None
+    rotational: bool = False
+    pressure: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_asd_embedded_options(
+            self.rotational, self.pressure, self.stiffness_p, "TieDef",
+        )
 
 
 @dataclass
@@ -299,6 +332,16 @@ class DistributingCouplingDef(ConstraintDef):
     slave_entities: list[tuple[int, int]] | None = None
     dofs: list[int] | None = None
     weighting: str = "uniform"
+    stiffness: float = 1.0e18
+    stiffness_p: float | None = None
+    rotational: bool = False
+    pressure: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_asd_embedded_options(
+            self.rotational, self.pressure, self.stiffness_p,
+            "DistributingCouplingDef",
+        )
 
 
 @dataclass
@@ -336,6 +379,16 @@ class EmbeddedDef(ConstraintDef):
     host_entities: list[tuple[int, int]] | None = None
     embedded_entities: list[tuple[int, int]] | None = None
     tolerance: float = 0.0
+    stiffness: float = 1.0e18
+    stiffness_p: float | None = None
+    rotational: bool = False
+    pressure: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_asd_embedded_options(
+            self.rotational, self.pressure, self.stiffness_p,
+            "EmbeddedDef",
+        )
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────
@@ -475,6 +528,16 @@ class TiedContactDef(ConstraintDef):
     slave_entities: list[tuple[int, int]] | None = None
     dofs: list[int] | None = None
     tolerance: float = 1.0
+    stiffness: float = 1.0e18
+    stiffness_p: float | None = None
+    rotational: bool = False
+    pressure: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_asd_embedded_options(
+            self.rotational, self.pressure, self.stiffness_p,
+            "TiedContactDef",
+        )
 
 
 @dataclass

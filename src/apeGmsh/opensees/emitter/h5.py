@@ -236,7 +236,20 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     Breaking for any reader that mapped ``rank`` attr / partition_ids
 #:     values to ``part.id`` directly; per ADR 0023 two-version reader
 #:     window, both 2.10.x and 2.11.x files are accepted.
-SCHEMA_VERSION: str = "2.11.0"
+#:   * 2.12.0 — ADR 0035 (ASDEmbeddedNodeElement option exposure): the
+#:     ``/opensees/constraints/embeddedNode`` compound dtype gains five
+#:     typed columns — ``stiffness`` (float64, ``-K``),
+#:     ``stiffness_p`` (float64, ``-KP``) + ``has_stiffness_p`` (uint8
+#:     sentinel for ``None``), ``rotational`` (uint8, ``-rot``),
+#:     ``pressure`` (uint8, ``-p``).  Defaults written when the user
+#:     leaves the kwargs untouched match the C++ parser at
+#:     ``ASDEmbeddedNodeElement.cpp:222`` (K = 1e18, ``has_stiffness_p``
+#:     = 0, rot = 0, p = 0), so old decks emitted by the legacy path
+#:     observe semantically-identical on-deck behaviour.  Additive —
+#:     old 2.11.x readers ignore the new columns.  Per ADR 0023 two-
+#:     version reader window, both 2.11.x and 2.12.x files are
+#:     accepted.
+SCHEMA_VERSION: str = "2.12.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -628,15 +641,24 @@ class H5Emitter:
         )
 
     def embeddedNode(
-        self, ele_tag: int, cnode: int,
-        *args: int | float,
+        self, ele_tag: int, cnode: int, *master_nodes: int,
+        stiffness: float = 1.0e18,
+        stiffness_p: float | None = None,
+        rotational: bool = False,
+        pressure: bool = False,
     ) -> None:
         name = self._consume_pending_mp_name()
         self._embedded_nodes.append(
             _EmbeddedNodeRecord(
                 ele_tag=int(ele_tag),
                 cnode=int(cnode),
-                args=tuple(args),
+                args=tuple(int(m) for m in master_nodes),
+                stiffness=float(stiffness),
+                stiffness_p=(
+                    None if stiffness_p is None else float(stiffness_p)
+                ),
+                rotational=bool(rotational),
+                pressure=bool(pressure),
                 name=name,
             )
         )
@@ -2048,12 +2070,21 @@ class H5Emitter:
 
         max_args = max(len(r.args) for r in self._embedded_nodes)
         max_args = max(max_args, 1)
+        # Schema 2.11.0 (ADR 0035): four typed columns added to round-
+        # trip the ASDEmbeddedNodeElement optional flags.  Defaults
+        # match the C++ parser so 2.10.x readers that ignore the new
+        # columns observe the same on-deck behaviour as before.
         dt = np.dtype(
             [
                 ("ele_tag", np.int64),
                 ("cnode", np.int64),
                 ("args", np.float64, (max_args,)),
                 ("n_args", np.int32),
+                ("stiffness", np.float64),
+                ("stiffness_p", np.float64),
+                ("has_stiffness_p", np.uint8),
+                ("rotational", np.uint8),
+                ("pressure", np.uint8),
                 ("name", h5py.string_dtype(encoding="utf-8")),
             ]
         )
@@ -2063,9 +2094,16 @@ class H5Emitter:
                 [float(v) for v in rec.args]
                 + [float("nan")] * (max_args - len(rec.args))
             )
+            has_kp = rec.stiffness_p is not None
             rows[i] = (
                 rec.ele_tag, rec.cnode,
-                tuple(padded), len(rec.args), rec.name,
+                tuple(padded), len(rec.args),
+                float(rec.stiffness),
+                float(rec.stiffness_p) if has_kp else float("nan"),
+                1 if has_kp else 0,
+                1 if rec.rotational else 0,
+                1 if rec.pressure else 0,
+                rec.name,
             )
         parent.create_dataset("embeddedNode", data=rows)
 

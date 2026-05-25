@@ -244,10 +244,12 @@ class TestRigidDiaphragm:
 
 class TestEmbeddedNode:
     def test_emits_tcl_line(self) -> None:
+        # ADR 0035: -K $K is always emitted, with the C++ default
+        # (1.0e18) when the user leaves ``stiffness`` untouched.
         e = TclEmitter()
         e.embeddedNode(1000, 5, 10, 1, 2, 3, 4)
         assert (
-            "element ASDEmbeddedNodeElement 1000 5 10 1 2 3 4"
+            "element ASDEmbeddedNodeElement 1000 5 10 1 2 3 4 -K 1e+18"
             in e.lines()
         )
 
@@ -255,7 +257,7 @@ class TestEmbeddedNode:
         e = PyEmitter()
         e.embeddedNode(1000, 5, 10, 1, 2, 3, 4)
         assert (
-            "ops.element('ASDEmbeddedNodeElement', 1000, 5, 10, 1, 2, 3, 4)"
+            "ops.element('ASDEmbeddedNodeElement', 1000, 5, 10, 1, 2, 3, 4, '-K', 1e+18)"
             in e.lines()
         )
 
@@ -263,7 +265,16 @@ class TestEmbeddedNode:
         e = RecordingEmitter()
         e.embeddedNode(1000, 5, 10, 1, 2, 3, 4)
         assert e.calls == [
-            ("embeddedNode", (1000, 5, 10, 1, 2, 3, 4), {}),
+            (
+                "embeddedNode",
+                (1000, 5, 10, 1, 2, 3, 4),
+                {
+                    "stiffness": 1.0e18,
+                    "stiffness_p": None,
+                    "rotational": False,
+                    "pressure": False,
+                },
+            ),
         ]
 
     def test_emits_to_h5_dataset(self, tmp_path: Path) -> None:
@@ -277,6 +288,89 @@ class TestEmbeddedNode:
         assert len(ds) == 1
         assert int(ds[0]["ele_tag"]) == 1000
         assert int(ds[0]["cnode"]) == 5
+        # ADR 0035 schema 2.12.0 — defaults persist as typed columns.
+        assert float(ds[0]["stiffness"]) == 1.0e18
+        assert int(ds[0]["has_stiffness_p"]) == 0
+        assert int(ds[0]["rotational"]) == 0
+        assert int(ds[0]["pressure"]) == 0
+
+    # -- ADR 0035: optional flag exposure ---------------------------------
+
+    def test_tcl_emits_stiffness_override(self) -> None:
+        e = TclEmitter()
+        e.embeddedNode(1000, 5, 10, 1, 2, 3, stiffness=1.0e8)
+        assert (
+            "element ASDEmbeddedNodeElement 1000 5 10 1 2 3 -K 100000000.0"
+            in e.lines()
+        )
+
+    def test_tcl_emits_rotational_flag(self) -> None:
+        e = TclEmitter()
+        e.embeddedNode(1000, 5, 10, 1, 2, 3, rotational=True)
+        assert (
+            "element ASDEmbeddedNodeElement 1000 5 10 1 2 3 -rot -K 1e+18"
+            in e.lines()
+        )
+
+    def test_tcl_emits_pressure_with_kp(self) -> None:
+        e = TclEmitter()
+        e.embeddedNode(
+            1000, 5, 10, 1, 2, 3,
+            stiffness=1.0e8, stiffness_p=1.0e6, pressure=True,
+        )
+        line = (
+            "element ASDEmbeddedNodeElement 1000 5 10 1 2 3 "
+            "-p -K 100000000.0 -KP 1000000.0"
+        )
+        assert line in e.lines()
+
+    def test_py_emits_flags(self) -> None:
+        e = PyEmitter()
+        e.embeddedNode(
+            1000, 5, 10, 1, 2, 3, rotational=True, stiffness=1.0e8,
+        )
+        assert (
+            "ops.element('ASDEmbeddedNodeElement', 1000, 5, 10, 1, 2, 3, "
+            "'-rot', '-K', 100000000.0)"
+            in e.lines()
+        )
+
+    def test_recording_captures_kwargs(self) -> None:
+        e = RecordingEmitter()
+        e.embeddedNode(
+            1000, 5, 10, 1, 2, 3,
+            stiffness=2.0e7, stiffness_p=3.0e7, pressure=True,
+        )
+        assert e.calls == [
+            (
+                "embeddedNode",
+                (1000, 5, 10, 1, 2, 3),
+                {
+                    "stiffness": 2.0e7,
+                    "stiffness_p": 3.0e7,
+                    "rotational": False,
+                    "pressure": True,
+                },
+            ),
+        ]
+
+    def test_h5_round_trips_flag_columns(self, tmp_path: Path) -> None:
+        e = H5Emitter()
+        e.model(ndm=3, ndf=6)
+        e.embeddedNode(
+            1000, 5, 10, 1, 2,
+            stiffness=1.0e8, stiffness_p=2.0e8,
+            rotational=False, pressure=True,
+        )
+        out = tmp_path / "x.h5"
+        e.write(str(out))
+        with h5py.File(out, "r") as f:
+            ds = f["opensees/constraints/embeddedNode"][:]
+        assert float(ds[0]["stiffness"]) == 1.0e8
+        assert float(ds[0]["stiffness_p"]) == 2.0e8
+        assert int(ds[0]["has_stiffness_p"]) == 1
+        assert int(ds[0]["rotational"]) == 0
+        assert int(ds[0]["pressure"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -810,7 +904,8 @@ class TestH5SchemaIntegration:
         # bumped to 2.8.0; ADR 0024 (region() Protocol widening) bumped
         # to 2.9.0; ADR 0027 INV-5 amendment + partition emission
         # carried it to 2.10.0; the 0-based rank-gate fix bumped to
-        # 2.11.0 (partition_NN groups changed naming convention).
+        # 2.11.0 (partition_NN groups changed naming convention); ADR
+        # 0035 (ASDEmbeddedNodeElement option exposure) bumped to 2.12.0.
         from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION
         assert SCHEMA_VERSION == OPENSEES_CURRENT
         e = H5Emitter()
@@ -820,9 +915,10 @@ class TestH5SchemaIntegration:
             assert f["meta"].attrs["schema_version"] == OPENSEES_CURRENT
             assert f["meta"].attrs["opensees_schema_version"] == OPENSEES_CURRENT
 
-    def test_reader_window_accepts_2_10_and_2_11(self, tmp_path: Path) -> None:
-        """The 2-version window for OpenSees zone is now 2.10.x — 2.11.x
-        (post-#304, 0-based rank gates)."""
+    def test_reader_window_accepts_2_11_and_2_12(self, tmp_path: Path) -> None:
+        """The 2-version window for OpenSees zone is now 2.11.x — 2.12.x
+        (ADR 0035: ASDEmbeddedNodeElement option exposure adds five typed
+        columns to /opensees/constraints/embeddedNode)."""
         from apeGmsh.opensees._internal.schema_version import (
             OPENSEES,
             SchemaVersion,
@@ -831,13 +927,13 @@ class TestH5SchemaIntegration:
             validate_zone_version,
         )
         reader = reader_version(OPENSEES)
-        assert reader == SchemaVersion(2, 11, 0)
-        validate_zone_version(SchemaVersion(2, 10, 0), reader, zone=OPENSEES)
+        assert reader == SchemaVersion(2, 12, 0)
         validate_zone_version(SchemaVersion(2, 11, 0), reader, zone=OPENSEES)
-        # 2.9.x is now outside the window.
+        validate_zone_version(SchemaVersion(2, 12, 0), reader, zone=OPENSEES)
+        # 2.10.x is now outside the window.
         with pytest.raises(SchemaVersionError):
             validate_zone_version(
-                SchemaVersion(2, 9, 0), reader, zone=OPENSEES,
+                SchemaVersion(2, 10, 0), reader, zone=OPENSEES,
             )
 
 

@@ -135,11 +135,19 @@ class LiveOpsEmitter:
         self._ops.rigidDiaphragm(perp_dir, master, *slaves)
 
     def embeddedNode(
-        self, ele_tag: int, cnode: int,
-        *args: int | float,
+        self, ele_tag: int, cnode: int, *master_nodes: int,
+        stiffness: float = 1.0e18,
+        stiffness_p: float | None = None,
+        rotational: bool = False,
+        pressure: bool = False,
     ) -> None:
+        from .base import _build_embedded_flag_args
+        flag_args = _build_embedded_flag_args(
+            stiffness, stiffness_p, rotational, pressure,
+        )
         self._ops.element(
-            "ASDEmbeddedNodeElement", ele_tag, cnode, *args,
+            "ASDEmbeddedNodeElement", ele_tag, cnode,
+            *master_nodes, *flag_args,
         )
 
     def mp_constraint_comment(self, name: str) -> None:

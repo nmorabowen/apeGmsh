@@ -154,9 +154,22 @@ def test_rigidDiaphragm_records_perp_master_slaves() -> None:
 
 
 def test_embeddedNode_records_ele_tag_cnode_args() -> None:
+    # ADR 0035: the embeddedNode signature widened to expose
+    # ASDEmbeddedNodeElement's optional flags as kwargs.  Defaults
+    # mirror the C++ parser at ASDEmbeddedNodeElement.cpp:222 so
+    # legacy callers observe semantically-identical emission.
     e = RecordingEmitter()
     e.embeddedNode(1000, 5, 10, 20, 30)
-    assert e.calls == [("embeddedNode", (1000, 5, 10, 20, 30), {})]
+    assert e.calls == [(
+        "embeddedNode",
+        (1000, 5, 10, 20, 30),
+        {
+            "stiffness": 1.0e18,
+            "stiffness_p": None,
+            "rotational": False,
+            "pressure": False,
+        },
+    )]
 
 
 def test_mp_constraint_comment_records_name() -> None:

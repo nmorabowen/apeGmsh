@@ -614,5 +614,96 @@ class TestColocatedPairingFailLoud(unittest.TestCase):
         self.assertEqual(sorted(pairs), [(1, 3), (2, 4)])
 
 
+# ---------------------------------------------------------------------------
+# ADR 0035 — ASDEmbeddedNodeElement option exposure
+# ---------------------------------------------------------------------------
+
+
+class TestAsdEmbeddedOptionValidation:
+    """The four Defs that map to ASDEmbeddedNodeElement guard against
+    the C++ parser's mutual-exclusion rule (``-rot`` vs ``-p`` at
+    ASDEmbeddedNodeElement.cpp:276) and against silently-ignored
+    ``-KP`` (only consulted when ``-p`` is active)."""
+
+    def test_tie_rot_and_pressure_mutually_exclusive(self):
+        from apeGmsh._kernel.defs.constraints import TieDef
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            TieDef(
+                master_label="m", slave_label="s",
+                rotational=True, pressure=True,
+            )
+
+    def test_embedded_rot_and_pressure_mutually_exclusive(self):
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            EmbeddedDef(
+                master_label="m", slave_label="s",
+                rotational=True, pressure=True,
+            )
+
+    def test_tied_contact_rot_and_pressure_mutually_exclusive(self):
+        from apeGmsh._kernel.defs.constraints import TiedContactDef
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            TiedContactDef(
+                master_label="m", slave_label="s",
+                rotational=True, pressure=True,
+            )
+
+    def test_tie_stiffness_p_without_pressure_raises(self):
+        from apeGmsh._kernel.defs.constraints import TieDef
+        with pytest.raises(ValueError, match="stiffness_p"):
+            TieDef(
+                master_label="m", slave_label="s",
+                stiffness_p=1.0e6,
+            )
+
+    def test_embedded_stiffness_p_with_pressure_accepted(self):
+        defn = EmbeddedDef(
+            master_label="m", slave_label="s",
+            pressure=True, stiffness_p=1.0e6,
+        )
+        assert defn.pressure is True
+        assert defn.stiffness_p == 1.0e6
+
+    def test_default_stiffness_matches_opensees_cpp(self):
+        from apeGmsh._kernel.defs.constraints import (
+            TieDef, TiedContactDef, DistributingCouplingDef,
+        )
+        for D in (TieDef, EmbeddedDef, TiedContactDef,
+                  DistributingCouplingDef):
+            d = D(master_label="m", slave_label="s")
+            assert d.stiffness == 1.0e18
+            assert d.stiffness_p is None
+            assert d.rotational is False
+            assert d.pressure is False
+
+
+class TestAsdEmbeddedResolverPropagation:
+    """The four flags ride the resolver from the Def into every
+    :class:`InterpolationRecord` row so the emit pass can ``-K``/``-KP``/
+    ``-rot``/``-p`` per record without re-consulting the Def."""
+
+    def test_resolve_embedded_carries_flags_to_record(self):
+        coords = {
+            1: (0.0, 0.0, 0.0),
+            2: (1.0, 0.0, 0.0),
+            3: (0.0, 1.0, 0.0),
+            4: (0.0, 0.0, 1.0),
+            99: (0.25, 0.25, 0.25),
+        }
+        r = _make_resolver(coords)
+        defn = EmbeddedDef(
+            master_label="host", slave_label="rebar",
+            stiffness=1.0e8, rotational=True,
+        )
+        records = r.resolve_embedded(
+            defn, np.array([[1, 2, 3, 4]], dtype=int), {99},
+        )
+        assert len(records) == 1
+        assert records[0].stiffness == 1.0e8
+        assert records[0].rotational is True
+        assert records[0].pressure is False
+        assert records[0].stiffness_p is None
+
+
 if __name__ == "__main__":
     unittest.main()
