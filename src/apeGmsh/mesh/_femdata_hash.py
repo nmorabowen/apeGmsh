@@ -59,22 +59,24 @@ def _hash_nodes(h: "hashlib._Hash", fem: "FEMData") -> None:
     h.update(node_ids[sort_idx].tobytes())
     h.update(coords[sort_idx].tobytes())
 
-    # Per-node ndf (shell-to-solid coupling, S1b).  Gated on
-    # ``_ndf is not None`` to keep the digest stable for the
-    # ``SimpleNamespace``-style mock fixtures in
-    # ``test_results_femdata_hash`` that omit the channel entirely.
-    # *Real* FEMData constructed via ``from_gmsh`` / ``from_msh`` /
-    # ``from_h5`` always carries an ndf array (zeros sentinel if
-    # nothing was declared), so this branch fires symmetrically
-    # across construction paths — Bug 3 in the post-#317 audit.
+    # Per-node ndf (shell-to-solid coupling, S1b → S2).  Skip the
+    # fold when the channel is empty: ``_ndf is None`` (legacy /
+    # direct-test FEMs and from_msh which has no NodeNDFComposite)
+    # OR all-sentinel (from_gmsh with no ``g.node_ndf`` calls).  Both
+    # cases mean "the user declared no per-node ndf", so the digest
+    # must be identical — otherwise from_msh and from_gmsh of the
+    # same uniform-ndf geometry would hash differently.  ``getattr``
+    # tolerates ``SimpleNamespace`` mocks in
+    # ``test_results_femdata_hash`` that omit ``_ndf`` entirely.
     ndf = getattr(fem.nodes, "_ndf", None)
     if ndf is not None:
-        h.update(b"NDF|")
         ndf_arr = np.asarray(ndf, dtype=np.int8)
-        # Use the same node-id sort order so a permutation of the
-        # node array (same ids, same ndf-per-id) produces the same
-        # digest.
-        h.update(ndf_arr[sort_idx].tobytes())
+        if np.any(ndf_arr != 0):
+            h.update(b"NDF|")
+            # Use the same node-id sort order so a permutation of the
+            # node array (same ids, same ndf-per-id) produces the same
+            # digest.
+            h.update(ndf_arr[sort_idx].tobytes())
 
 
 # ---------------------------------------------------------------------

@@ -31,6 +31,7 @@ from ._internal.build import (
     MassRecord,
     RegionAssignmentRecord,
     StageRecord,
+    _emit_node_with_broker_ndf,
     allocate_element_tags,
     build_element_partition_owner,
     build_node_partition_owners,
@@ -523,11 +524,16 @@ class BuiltModel:
 
         # 1a. Nodes — emit every node from the FEM snapshot, EXCEPT
         # nodes bound to a stage (those emit inside that stage's
-        # block per Phase SSI-2.B).
+        # block per Phase SSI-2.B).  S2 (ADR 0033): per-node ``-ndf K``
+        # token is sourced from the broker when a declaration covers
+        # the node; otherwise the model envelope wins.
         for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
             if int(nid) in node_owner_stage:
                 continue
-            emitter.node(int(nid), float(xyz[0]), float(xyz[1]), float(xyz[2]))
+            _emit_node_with_broker_ndf(
+                emitter, self.fem, int(nid),
+                (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+            )
 
         # 4a. Materials / sections / time series / analysis chain
         # (excluding patterns + recorders).  Phase SSI-2.A: skip
@@ -736,16 +742,16 @@ class BuiltModel:
         for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
 
-            # 2. Owned nodes.
+            # 2. Owned nodes.  S2 (ADR 0033): per-node ndf via broker.
             owned_nodes = stage_owned_nodes.get(stage_idx, [])
             for nid in owned_nodes:
                 idx = node_idx_lookup.get(nid)
                 if idx is None:
                     continue
                 xyz = self.fem.nodes.coords[idx]
-                emitter.node(
-                    nid,
-                    float(xyz[0]), float(xyz[1]), float(xyz[2]),
+                _emit_node_with_broker_ndf(
+                    emitter, self.fem, int(nid),
+                    (float(xyz[0]), float(xyz[1]), float(xyz[2])),
                 )
 
             # 3. Owned elements.
@@ -1015,16 +1021,17 @@ class BuiltModel:
                 for nid in sorted(int(n) for n in part.node_ids):
                     # Phase SSI-2.C: stage-bound nodes emit inside
                     # their stage's block, not in the global pre-stage
-                    # per-rank pass.
+                    # per-rank pass.  S2 (ADR 0033): per-node ndf via
+                    # broker.
                     if staged and nid in node_owner_stage:
                         continue
                     idx = node_idx_lookup.get(nid)
                     if idx is None:
                         continue
                     xyz = self.fem.nodes.coords[idx]
-                    emitter.node(
-                        nid,
-                        float(xyz[0]), float(xyz[1]), float(xyz[2]),
+                    _emit_node_with_broker_ndf(
+                        emitter, self.fem, int(nid),
+                        (float(xyz[0]), float(xyz[1]), float(xyz[2])),
                     )
 
                 # 6. Elements — per-rank fan-out (tags pre-allocated).
@@ -1299,11 +1306,14 @@ class BuiltModel:
                             if idx is None:
                                 continue
                             xyz = self.fem.nodes.coords[idx]
-                            emitter.node(
-                                nid,
-                                float(xyz[0]),
-                                float(xyz[1]),
-                                float(xyz[2]),
+                            # S2 (ADR 0033): per-node ndf via broker.
+                            _emit_node_with_broker_ndf(
+                                emitter, self.fem, int(nid),
+                                (
+                                    float(xyz[0]),
+                                    float(xyz[1]),
+                                    float(xyz[2]),
+                                ),
                             )
                         # Per-rank element fan-out across this stage's
                         # specs.  ``emit_element_spec_partitioned``
@@ -2520,7 +2530,21 @@ class apeSees:
     # -- Flat methods ----------------------------------------------------
 
     def model(self, *, ndm: int, ndf: int) -> None:
-        """Set the model dimensionality (``ndm``) and DOFs/node (``ndf``)."""
+        """Set the model dimensionality (``ndm``) and DOFs/node (``ndf``).
+
+        The ``ndf`` value is the **envelope default** for nodes that
+        carry no per-node ``g.node_ndf`` declaration; OpenSees uses
+        it as ``model BasicBuilder -ndm K -ndf N`` and per-node
+        ``-ndf K`` overrides are emitted by the bridge when the
+        broker has explicit values (S2 / ADR 0033).  The envelope
+        must therefore be at least as large as the largest per-node
+        ``ndf`` declared on the broker — otherwise a ``ndf=6`` shell
+        node cannot live in a ``ndf=3`` envelope.  A mismatch raises
+        :class:`BridgeError` at call time so the user sees the
+        problem at the model declaration, not deep in an emit fan-out.
+        """
+        from ._internal.build import validate_envelope_covers_broker_ndf
+        validate_envelope_covers_broker_ndf(self._fem, ndf)
         self._ndm = ndm
         self._ndf = ndf
 

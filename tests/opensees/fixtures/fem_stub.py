@@ -231,6 +231,21 @@ class _NodesStub:
             partition=partition, dim=dim,
         )
 
+    def ndf_for(self, nid: int) -> int:
+        """Mirror the real :meth:`NodeComposite.ndf_for` fail-loud
+        behaviour for stub-based bridge tests (S2).
+
+        The stub never carries declared ndf — there is no
+        ``g.node_ndf`` composite behind it.  Raises ``LookupError`` so
+        the S2 emit-site ``try/except LookupError`` path fires and
+        falls back to the envelope ``ndf=K`` from ``apeSees.model``.
+        DO NOT return 0 or the envelope value — that would mask
+        emit-side bugs that the real broker would have caught.
+        """
+        raise LookupError(
+            f"test stub: no per-node ndf declared (node {nid})"
+        )
+
 
 class _ElementsStub:
     """Stand-in for :class:`apeGmsh.mesh.FEMData.ElementComposite`."""

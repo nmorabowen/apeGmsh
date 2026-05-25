@@ -39,14 +39,17 @@ if TYPE_CHECKING:
 __all__ = [
     "ATTR_CURRENT_FEM_ELEMENT_ID",
     "ATTR_ELEMENT_NODES",
+    "ATTR_PHANTOM_NODE_MODE",
     "ATTR_TAG_RESOLVER",
     "MISSING_FEM_ELEMENT_ID",
     "TagResolver",
     "current_element_nodes",
     "current_fem_element_id",
+    "is_phantom_node_mode",
     "resolve_tag",
     "set_current_fem_element_id",
     "set_element_nodes",
+    "set_phantom_node_mode",
     "set_tag_resolver",
 ]
 
@@ -72,6 +75,19 @@ ATTR_CURRENT_FEM_ELEMENT_ID = "_current_fem_element_id"
 #: fan-out.  FEM element IDs are always positive 1-based ints, so
 #: ``-1`` is unambiguous.
 MISSING_FEM_ELEMENT_ID: int = -1
+
+#: Name of the private attribute the bridge sets on an emitter when
+#: emitting **phantom** (broker-synthetic) nodes via
+#: ``node(tag, *xyz, ndf=6)``.  S2 introduced per-node ``-ndf K``
+#: emission for real broker nodes (shell-on-solid), so the H5
+#: emitter can no longer use "``ndf is not None``" as the
+#: phantom-vs-broker discriminator — phantom-emit helpers in
+#: :mod:`apeGmsh.opensees._internal.build` flip this side-channel
+#: flag before / after their phantom-node calls so the H5 emitter
+#: records exactly the phantom tags in
+#: ``/opensees/constraints/phantom_node_tags`` (per ADR 0022 INV-3
+#: and ADR 0033).
+ATTR_PHANTOM_NODE_MODE = "_in_phantom_node_emit"
 
 
 #: Maps a Primitive to its bridge-allocated tag.
@@ -149,6 +165,32 @@ def current_element_nodes(emitter: "Emitter") -> tuple[int, ...]:
             "(emitter, node_tags)`` before driving emission."
         )
     return nodes
+
+
+def set_phantom_node_mode(emitter: object, mode: bool) -> None:
+    """Toggle the H5 emitter's phantom-node recording flag.
+
+    Set to ``True`` just before emitting broker-synthetic phantom
+    nodes (via ``emitter.node(tag, *xyz, ndf=6)``), and ``False``
+    immediately after.  The H5 emitter consults this flag in
+    :meth:`H5Emitter.node` to decide whether the call should land in
+    the ``phantom_node_tags`` array; other emitters ignore the
+    attribute.
+
+    Per S2 (ADR 0033) the per-node ``-ndf K`` token is now legal on
+    real broker nodes (shell-on-solid mixed-ndf models), so the
+    H5 emitter can't infer "phantom" from ``ndf is not None``
+    alone — the bridge must mark phantom emit explicitly.
+
+    Idempotent.
+    """
+    setattr(emitter, ATTR_PHANTOM_NODE_MODE, bool(mode))
+
+
+def is_phantom_node_mode(emitter: object) -> bool:
+    """Return the current phantom-node recording flag, or ``False``
+    when unset.  See :func:`set_phantom_node_mode`."""
+    return bool(getattr(emitter, ATTR_PHANTOM_NODE_MODE, False))
 
 
 def set_current_fem_element_id(emitter: object, fem_eid: int) -> None:

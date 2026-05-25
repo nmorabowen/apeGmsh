@@ -563,9 +563,13 @@ class H5Emitter:
         self._node_coords.append(triple)
         # Phantom nodes (ADR 0022 INV-3) — track tags so a reader can
         # identify which nodes were synthesized by the phantom-emit
-        # pre-step.  The per-node ndf override is the discriminator
-        # (no other emitter path passes ``ndf=`` today).
-        if ndf is not None:
+        # pre-step.  Per S2 (ADR 0033) the per-node ``ndf`` kwarg is
+        # now legal on real broker nodes too, so the discriminator is
+        # the explicit ``phantom_node_mode`` side-channel set by the
+        # phantom-emit helpers in
+        # :mod:`apeGmsh.opensees._internal.build`.
+        from .._internal.tag_resolution import is_phantom_node_mode
+        if is_phantom_node_mode(self):
             self._phantom_node_tags.append(int(tag))
         # Partition emission (ADR 0027) — while a per-rank block is
         # open, also record the tag on the active block so the
