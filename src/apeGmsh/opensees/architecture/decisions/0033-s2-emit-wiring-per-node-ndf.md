@@ -61,14 +61,42 @@ in `fem.nodes.ids` and never resolve through `g.node_ndf`. They
 continue to emit with hardcoded `ndf=6`. The H5 emitter previously
 used `ndf is not None` as the phantom-vs-real-node discriminator —
 that signal is now ambiguous (real broker nodes legally carry `ndf=`
-under S2), so the phantom-emit helpers in
-`apeGmsh.opensees._internal.build` flip an explicit
-`_in_phantom_node_emit` side-channel flag (see
-`apeGmsh.opensees._internal.tag_resolution.set_phantom_node_mode`)
-around their node calls. The H5 emitter consults the flag to
-populate `/opensees/constraints/phantom_node_tags`; other emitters
-ignore it. This is a broker-internal exception to the explicit-only
-doctrine; the user never authors phantom-node declarations.
+under S2). The MP-constraint emit pass
+(`emit_mp_constraints` / `emit_mp_constraints_partitioned` in
+`apeGmsh.opensees._internal.build`) pre-loads the complete
+phantom-tag set onto the emitter ONCE — before any node emission
+begins — via
+`apeGmsh.opensees._internal.tag_resolution.set_phantom_node_tags`.
+The H5 emitter consults the predicate per call via
+`is_phantom_node(emitter, tag)` to populate
+`/opensees/constraints/phantom_node_tags`; other emitters ignore the
+attribute. Phantom tags are guaranteed disjoint from real broker
+tags (the resolver allocates `> max(broker_node_tag)`), so the
+pre-loaded set classifies every subsequent node call unambiguously
+and **without ordering constraints**. This is a broker-internal
+exception to the explicit-only doctrine; the user never authors
+phantom-node declarations.
+
+Alternatives considered for the phantom discriminator:
+
+- **Stateful mode flag** (`set_phantom_node_mode(emitter, bool)` —
+  flip True before phantom-emit, False after) — rejected. The
+  stateful shape is order-dependent and requires `try/finally`
+  scaffolding in every phantom-emit call site; the stateless
+  predicate-set replaces it with zero ordering constraints.
+- **Tag-formula `is_phantom(tag)` predicate via `> max(broker_tag)`** —
+  rejected as a coupling concern. The "tags > max" property is an
+  *implementation detail* of the resolver's allocator; a downstream
+  consumer asserting it would silently break if the allocator ever
+  changes (e.g., reserved-range scheme, hash-based tagging). The
+  explicit set carries the authoritative phantom enumeration and is
+  cheap to compute (one walk of `NodeToSurfaceRecord.phantom_nodes`).
+- **`is_phantom=True` kwarg on `Emitter.node()`** — rejected as a
+  Protocol-widening cost not warranted by the use case. Only the H5
+  emitter cares about the classification; the other four backends
+  would all ignore the kwarg. The attribute-based bridge contract
+  matches the existing `set_tag_resolver` / `set_element_nodes` /
+  `set_current_fem_element_id` side-channels.
 
 **OpenSeesMP consistency is hash-guaranteed.** Per
 [ADR 0021](0021-lineage-chain-replaces-snapshot-id.md), the resolved
@@ -118,11 +146,17 @@ again on `OpenSeesModel.from_h5(...)` and
 programmatic compose flows that bypass `apeSees.model()` also fail
 loud.
 
-**`_replay_into` (compose H5 path) consults the broker directly.**
-The helper at `apeGmsh.opensees._internal.compose._replay_into` walks
-`self._fem.nodes.ndf_for(tag)` per node and emits `-ndf K` only when
-a declaration covers the node; legacy 2-tuple `(tag, coords)` callers
-are tolerated for byte-stability of the existing replay shape.
+**`_replay_into` consumes per-node ndf via tuple-widening (not via
+broker lookup).** The helper at
+`apeGmsh.opensees._internal.compose._replay_into` is a FEM-agnostic
+free function that walks a typed-record graph; it does not (and
+should not) take a `FEMData` parameter. The per-node tuple was
+widened to `(tag, coords, ndf|None)` so the caller
+(`OpenSeesModel._populate_emitter`, which holds `self._fem`) can
+resolve `ndf_for(tag)` once and let the result travel with the node
+record. `_replay_into` emits `-ndf K` only when the third tuple
+element is non-`None`; legacy 2-tuple `(tag, coords)` callers are
+tolerated for byte-stability of the existing replay shape.
 
 ## Related
 
@@ -135,8 +169,9 @@ are tolerated for byte-stability of the existing replay shape.
   coordination.
 - [ADR 0022](0022-mp-constraint-emission-fanout.md) — MP-constraint
   emission. Phantom nodes (INV-3) are exempt from `g.node_ndf` and
-  keep their hardcoded `ndf=6`; the new
-  `set_phantom_node_mode` side-channel disambiguates phantom-emit
+  keep their hardcoded `ndf=6`; the stateless `set_phantom_node_tags`
+  predicate (installed once at the entry of `emit_mp_constraints` /
+  `emit_mp_constraints_partitioned`) disambiguates phantom-emit
   from real-broker-emit for the H5 emitter.
 - [ADR 0019](0019-opensees-model-read-side-broker.md) — read-side
   broker. The `OpenSeesModel.from_h5` and `from_compose_buffers`
@@ -151,8 +186,10 @@ are tolerated for byte-stability of the existing replay shape.
 - `apeGmsh.opensees._internal.build._emit_node_with_broker_ndf` — the
   single helper that wraps `fem.nodes.ndf_for(tag)` in `try/except
   LookupError` and elides `-ndf` on the miss.
-- `apeGmsh.opensees._internal.tag_resolution.set_phantom_node_mode`
-  / `is_phantom_node_mode` — the explicit phantom-emit side-channel.
+- `apeGmsh.opensees._internal.tag_resolution.set_phantom_node_tags`
+  / `is_phantom_node` — the stateless phantom-tag predicate
+  (replaces the prior `set_phantom_node_mode` mode flag; see
+  Alternatives considered).
 - `apeGmsh.mesh._fem_factory._from_msh` — reverted to leave
   `_ndf=None`; combined with the `_hash_nodes` empty-channel gate,
   hash symmetric across `from_msh` and `from_gmsh-no-declarations`.

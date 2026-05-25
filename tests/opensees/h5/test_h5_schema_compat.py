@@ -454,33 +454,33 @@ def test_constraints_group_present_when_emitted(tmp_path: Any) -> None:
         assert "opensees/constraints/embeddedNode" in f
 
 
-def test_phantom_node_tags_present_when_phantom_mode_set(
+def test_phantom_node_tags_present_when_predicate_installed(
     tmp_path: Any,
 ) -> None:
-    """Per S2 (ADR 0033) the phantom discriminator is the explicit
-    ``set_phantom_node_mode`` side-channel — ``ndf=K`` on
+    """Per S2 (ADR 0033) the phantom discriminator is the stateless
+    ``set_phantom_node_tags`` predicate — ``ndf=K`` on
     ``H5Emitter.node`` is now legal for real broker nodes
     (shell-on-solid mixed-ndf models) and no longer implies
-    phantom-ness on its own."""
+    phantom-ness on its own.  The MP-constraint emit pass pre-loads
+    the complete phantom-tag set on the emitter before any node
+    emission begins; the H5 emitter consults it per call."""
     from apeGmsh.opensees._internal.tag_resolution import (
-        set_phantom_node_mode,
+        set_phantom_node_tags,
     )
 
     e = H5Emitter()
     e.model(ndm=3, ndf=3)
+    # Pre-load the phantom-tag predicate once — order-independent.
+    set_phantom_node_tags(e, {200})
     e.node(1, 0.0, 0.0, 0.0)               # regular broker node
     e.node(2, 0.0, 0.0, 1.0, ndf=6)        # real broker node with ndf override
-    set_phantom_node_mode(e, True)
-    try:
-        e.node(200, 0.0, 0.0, 2.0, ndf=6)  # phantom — flagged via side-channel
-    finally:
-        set_phantom_node_mode(e, False)
+    e.node(200, 0.0, 0.0, 2.0, ndf=6)      # phantom — classified by predicate
     out = tmp_path / "phantoms.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
         assert "opensees/constraints/phantom_node_tags" in f
         tags = f["opensees/constraints/phantom_node_tags"][:]
         assert list(int(t) for t in tags) == [200], (
-            "phantom_node_tags must contain only the tag emitted while "
-            "the phantom-mode side-channel was set (ADR 0033)."
+            "phantom_node_tags must contain only tags in the predicate "
+            "set installed via set_phantom_node_tags (ADR 0033)."
         )

@@ -760,28 +760,27 @@ class TestH5SchemaIntegration:
         self, tmp_path: Path,
     ) -> None:
         """``/opensees/constraints/phantom_node_tags`` records the tags
-        of nodes emitted while the ``_in_phantom_node_emit`` side-channel
-        is set.
+        that the bridge declared as phantoms via the stateless
+        ``set_phantom_node_tags`` predicate.
 
         Per S2 (ADR 0033) the per-node ``ndf=K`` kwarg is no longer the
         phantom-vs-real discriminator (real broker nodes legally carry
         ``ndf=K`` for shell-on-solid mixed-ndf models).  The bridge's
-        phantom-emit helpers now flip an explicit
-        ``set_phantom_node_mode`` flag around their node calls.
+        :func:`emit_mp_constraints` helper pre-loads the complete
+        phantom-tag set on the emitter ONCE, before any node emission;
+        the H5 emitter consults it per call.
         """
         from apeGmsh.opensees._internal.tag_resolution import (
-            set_phantom_node_mode,
+            set_phantom_node_tags,
         )
 
         e = H5Emitter()
         e.model(ndm=3, ndf=6)
+        # Pre-load the phantom-tag predicate once — order-independent.
+        set_phantom_node_tags(e, {200, 201})
         e.node(1, 0.0, 0.0, 0.0)                       # regular broker node
-        set_phantom_node_mode(e, True)
-        try:
-            e.node(200, 0.0, 0.0, 1.0, ndf=6)          # phantom
-            e.node(201, 1.0, 0.0, 1.0, ndf=6)          # phantom
-        finally:
-            set_phantom_node_mode(e, False)
+        e.node(200, 0.0, 0.0, 1.0, ndf=6)              # phantom — by predicate
+        e.node(201, 1.0, 0.0, 1.0, ndf=6)              # phantom — by predicate
         out = tmp_path / "x.h5"
         e.write(str(out))
         with h5py.File(out, "r") as f:

@@ -565,11 +565,14 @@ class H5Emitter:
         # identify which nodes were synthesized by the phantom-emit
         # pre-step.  Per S2 (ADR 0033) the per-node ``ndf`` kwarg is
         # now legal on real broker nodes too, so the discriminator is
-        # the explicit ``phantom_node_mode`` side-channel set by the
-        # phantom-emit helpers in
-        # :mod:`apeGmsh.opensees._internal.build`.
-        from .._internal.tag_resolution import is_phantom_node_mode
-        if is_phantom_node_mode(self):
+        # the explicit phantom-tag predicate set on the emitter ONCE
+        # by :func:`emit_mp_constraints` (and the partitioned variant)
+        # before any node emission begins.  Phantom tags are disjoint
+        # from real broker tags (the resolver allocates above
+        # ``max(broker_node_tag)``), so the per-call lookup is
+        # unambiguous and order-independent.
+        from .._internal.tag_resolution import is_phantom_node
+        if is_phantom_node(self, int(tag)):
             self._phantom_node_tags.append(int(tag))
         # Partition emission (ADR 0027) — while a per-rank block is
         # open, also record the tag on the active block so the

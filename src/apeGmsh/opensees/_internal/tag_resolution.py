@@ -39,17 +39,17 @@ if TYPE_CHECKING:
 __all__ = [
     "ATTR_CURRENT_FEM_ELEMENT_ID",
     "ATTR_ELEMENT_NODES",
-    "ATTR_PHANTOM_NODE_MODE",
+    "ATTR_PHANTOM_NODE_TAGS",
     "ATTR_TAG_RESOLVER",
     "MISSING_FEM_ELEMENT_ID",
     "TagResolver",
     "current_element_nodes",
     "current_fem_element_id",
-    "is_phantom_node_mode",
+    "is_phantom_node",
     "resolve_tag",
     "set_current_fem_element_id",
     "set_element_nodes",
-    "set_phantom_node_mode",
+    "set_phantom_node_tags",
     "set_tag_resolver",
 ]
 
@@ -76,18 +76,19 @@ ATTR_CURRENT_FEM_ELEMENT_ID = "_current_fem_element_id"
 #: ``-1`` is unambiguous.
 MISSING_FEM_ELEMENT_ID: int = -1
 
-#: Name of the private attribute the bridge sets on an emitter when
-#: emitting **phantom** (broker-synthetic) nodes via
-#: ``node(tag, *xyz, ndf=6)``.  S2 introduced per-node ``-ndf K``
-#: emission for real broker nodes (shell-on-solid), so the H5
-#: emitter can no longer use "``ndf is not None``" as the
-#: phantom-vs-broker discriminator — phantom-emit helpers in
-#: :mod:`apeGmsh.opensees._internal.build` flip this side-channel
-#: flag before / after their phantom-node calls so the H5 emitter
-#: records exactly the phantom tags in
+#: Name of the private attribute the bridge sets on an emitter holding
+#: the complete set of broker-synthetic phantom-node tags.  S2
+#: introduced per-node ``-ndf K`` emission for real broker nodes
+#: (shell-on-solid), so the H5 emitter can no longer use
+#: "``ndf is not None``" as the phantom-vs-broker discriminator.
+#: The MP-constraint emit pass populates this set ONCE (before any
+#: node emission), and the H5 emitter consults it per-call to decide
+#: whether to record the tag in
 #: ``/opensees/constraints/phantom_node_tags`` (per ADR 0022 INV-3
-#: and ADR 0033).
-ATTR_PHANTOM_NODE_MODE = "_in_phantom_node_emit"
+#: and ADR 0033).  Phantom tags are guaranteed disjoint from real
+#: broker tags (the resolver allocates ``> max(broker_node_tag)``),
+#: so the predicate is unambiguous and order-independent.
+ATTR_PHANTOM_NODE_TAGS = "_phantom_node_tags_predicate"
 
 
 #: Maps a Primitive to its bridge-allocated tag.
@@ -167,12 +168,15 @@ def current_element_nodes(emitter: "Emitter") -> tuple[int, ...]:
     return nodes
 
 
-def set_phantom_node_mode(emitter: object, mode: bool) -> None:
-    """Toggle the H5 emitter's phantom-node recording flag.
+def set_phantom_node_tags(
+    emitter: object, tags: "set[int] | frozenset[int]",
+) -> None:
+    """Attach the complete set of broker-synthetic phantom-node tags
+    to ``emitter`` so :func:`is_phantom_node` can classify per-call.
 
-    Set to ``True`` just before emitting broker-synthetic phantom
-    nodes (via ``emitter.node(tag, *xyz, ndf=6)``), and ``False``
-    immediately after.  The H5 emitter consults this flag in
+    The MP-constraint emit pass calls this ONCE at entry with the
+    union of all phantom tags from :class:`NodeToSurfaceRecord`
+    rows.  The H5 emitter then consults :func:`is_phantom_node` in
     :meth:`H5Emitter.node` to decide whether the call should land in
     the ``phantom_node_tags`` array; other emitters ignore the
     attribute.
@@ -180,17 +184,31 @@ def set_phantom_node_mode(emitter: object, mode: bool) -> None:
     Per S2 (ADR 0033) the per-node ``-ndf K`` token is now legal on
     real broker nodes (shell-on-solid mixed-ndf models), so the
     H5 emitter can't infer "phantom" from ``ndf is not None``
-    alone — the bridge must mark phantom emit explicitly.
+    alone — the bridge must surface the phantom-vs-real distinction
+    explicitly.  This is stateless: the set is computed once from
+    ``fem.nodes.constraints.node_to_surfaces()`` and never mutated
+    during emit.  Phantom tags are disjoint from real broker tags
+    (the resolver allocates ``> max(broker_node_tag)``), so a
+    pre-populated set correctly classifies every subsequent
+    ``emitter.node(...)`` call without ordering constraints.
 
-    Idempotent.
+    Idempotent — calling twice replaces the set.
     """
-    setattr(emitter, ATTR_PHANTOM_NODE_MODE, bool(mode))
+    setattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset(int(t) for t in tags))
 
 
-def is_phantom_node_mode(emitter: object) -> bool:
-    """Return the current phantom-node recording flag, or ``False``
-    when unset.  See :func:`set_phantom_node_mode`."""
-    return bool(getattr(emitter, ATTR_PHANTOM_NODE_MODE, False))
+def is_phantom_node(emitter: object, tag: int) -> bool:
+    """Return ``True`` when ``tag`` is a broker-synthetic phantom node
+    on this emitter.  Defaults to ``False`` when no phantom-tag set
+    has been attached (e.g. tests that drive an emitter directly
+    without the bridge fan-out, or models without MP constraints).
+
+    See :func:`set_phantom_node_tags`.
+    """
+    tags = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, None)
+    if tags is None:
+        return False
+    return int(tag) in tags
 
 
 def set_current_fem_element_id(emitter: object, fem_eid: int) -> None:
