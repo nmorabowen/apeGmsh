@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b)
+## Unreleased — shell-on-solid conformity (S1a + S1b) · Phase SSI-2.D stage-bound BCs and recorders
 
 ### CHANGED — boolean.fragment default (BREAKING)
 
@@ -52,6 +52,85 @@
   same once-per-batch semantics as `set` / `set_default`; real
   2.6.0 back-compat fixture replaces the synthetic version-rewrite
   test.
+
+### ADDED — Phase SSI-2.D: stage-bound BCs and recorders (ADR 0034)
+
+- **`_StageBuilder` gains four new verbs** for binding boundary
+  conditions and recorders to a specific stage of a multi-stage
+  analysis (PRs #323 / #324 / #326):
+
+  ```python
+  with ops.stage("excavate") as s:
+      s.activate(pgs=["Lining"])                       # SSI-2.B
+      s.fix(pg="LiningAnchor", dofs=(1, 1, 1))         # NEW (SSI-2.D)
+      s.mass(pg="Lining", values=(100.0, 100.0, 100.0)) # NEW
+      s.region(name="lining_rayleigh", pg="Lining")    # NEW
+      s.recorder(lining_recorder_spec)                 # NEW
+      s.analysis(...)
+      s.run(n_increments=20, dt=0.05)
+  ```
+
+  Replaces the SSI-2.B workaround of "keep the BC on a globally-
+  emitted node" for stage-bound topology. `s.fix` / `s.mass` /
+  `s.region` use PUSH (inert dataclasses on the stage directly);
+  `s.recorder` uses PULL (claims a `Recorder` already registered via
+  `ops.recorder.Node` / `Element` / `MPCO`).
+
+- **Five-validator ownership-tier surface** in
+  `BuiltModel._run_staged_bc_validators` — orchestrates H1 (global
+  pool targets stage-bound nodes; refactored to share helpers with
+  V1) + V1 (stage N's BC targets stage M > N) + V2 (cross-tier
+  duplicate fix / mass) + V3 (region `name=` collision across
+  scopes) + V4 (stage N's recorder targets stage M > N). Each
+  emits a `BridgeError` with an offender list naming the offending
+  scopes; the orchestrator runs in fixed order so error-message
+  stability holds.
+
+- **PR #323 also fixes a pre-existing latent H1 bug**: the
+  partitioned emit path previously skipped H1 entirely — a global
+  `fix` on a stage-bound node would slip through under MP and
+  crash OpenSees at parse time. H1 now invoked from both
+  `_emit_flat` and `_emit_partitioned`.
+
+- **Emit pipeline extensions:** stage-bound `fix` / `mass` /
+  `region` emit inside the stage block alongside topology and
+  before a single unified `domain_change` (gated on
+  `activation OR fix_records OR mass_records OR region_records`);
+  stage-bound recorders emit after the chain and before `analyze`
+  so they capture the stage's analyze steps. Under MP: per-rank
+  fan-out with empty-bracket skip on non-contributing ranks
+  (prevents Py-emitter `SyntaxError`); per-stage
+  `region_tag_cache` keyed by name guarantees all contributing
+  ranks emit the same scalar tag for a given region.
+
+- **Bridge introspection symmetry:** `bridge.all_fix_records` /
+  `all_mass_records` / `all_region_records` / `all_recorder_specs`
+  read-only properties combining global + per-stage pools, tagged
+  by origin. Tooling that previously inspected `bridge._fix_records`
+  to count fix declarations would have silently missed stage-bound
+  entries.
+
+- **Source-side basis:** a four-agent cross-check against the
+  OpenSees C++ source preceded implementation. Key verifications:
+  `Domain::addRegion` silently appends on duplicate tag
+  (Domain.cpp:2679-2697 — `getRegion` returns only the first);
+  `Domain::addSP_Constraint` rejects duplicate `(node, DOF)` pairs
+  (Domain.cpp:589-605); recorders cache region members at TCL
+  PARSE TIME (TclRecorderCommands.cpp:276); `Domain::setMass`
+  silently overwrites. These findings shaped V3 (mandatory),
+  V2-fix branch, recorder emit position (after region declarations),
+  and V2-mass branch respectively.
+
+- **Architecture:** [ADR 0034](src/apeGmsh/opensees/architecture/decisions/0034-stage-bound-bcs-and-recorders.md),
+  [staged-analysis.md](src/apeGmsh/opensees/architecture/staged-analysis.md)
+  (refreshed with the SSI-2.D slot order + V1-V4 + per-stage tag
+  cache), [api-design.md §"Staged analysis"](src/apeGmsh/opensees/architecture/api-design.md)
+  (refreshed with the four new verbs + PUSH vs PULL note).
+
+- **Test coverage:** 38 new tests across four files (15 unit V1-V3
+  + 13 unit fix/mass + 6 integration partitioned fix/mass + 19
+  unit region/recorder/V4 + 4 integration partitioned regions).
+  Full opensees suite: 2746 passed, 2 skipped, 0 regressions.
 
 ## v2.0.0 — Three-broker chain: Results carries OpenSeesModel carries FEMData (BREAKING) · Composed file pattern · lineage chain · MP constraint emission shipped · per-zone schemas
 

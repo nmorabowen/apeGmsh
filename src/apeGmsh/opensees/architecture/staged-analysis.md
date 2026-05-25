@@ -13,9 +13,9 @@ to converge.
 Read [api-design.md](api-design.md) first; the surface verbs and
 caveats are not repeated here.
 
-## Two phases, one builder
+## Four phases, one builder
 
-The staged-analysis work ships in two phases:
+The staged-analysis work ships in four phases:
 
 - **Phase SSI-2.A — staged analysis chain.** Adds `ops.stage(name)`
   + the `_StageBuilder` context manager + the `StageRecord`
@@ -25,9 +25,21 @@ The staged-analysis work ships in two phases:
   `s.activate(pgs=[...])`. Elements whose PG is in the activation
   set (and the nodes referenced exclusively by those elements) emit
   inside the stage block, between `stage_open` and `domain_change`.
+- **Phase SSI-2.C — MP partitioned + staged.** Lifts the prior
+  (stages + partitions) gate; combining stages with MP partitions
+  builds without error. Per-rank fan-out under partitions while
+  preserving cross-stage / cross-rank tag identity.
+- **Phase SSI-2.D — stage-bound BCs + recorder.** Adds
+  `s.fix(...)` / `s.mass(...)` / `s.region(...)` / `s.recorder(...)`.
+  BCs emit inside the stage block alongside topology (between
+  topology and `domain_change`); recorders emit after the chain and
+  before `analyze` so they capture the stage's analyze steps. Ships
+  with four ownership-tier validators (V1-V4) plus a unified
+  `domain_change` gate.
 
-The user surface is unified — `_StageBuilder` carries `activate` as
-one verb in the same context manager. The deck layout below shows
+The user surface is unified — `_StageBuilder` carries `activate`,
+`fix`, `mass`, `region`, `recorder`, `add`, `analysis`, and `run`
+as verbs in the same context manager. The deck layout below shows
 the combined effect.
 
 ## Deck layout
@@ -88,9 +100,26 @@ node 451 ...              # stage-bound nodes (owned ONLY by stage 2)
 node 452 ...
 element FourNodeTetrahedron 87 ...   # stage-activated elements
 element FourNodeTetrahedron 88 ...
+fix 451 1 1 1             # SSI-2.D: stage-bound fix on stage-bound node
+mass 452 100.0 100.0 100.0 # SSI-2.D: stage-bound mass
+region 17 -node 451 452   # SSI-2.D: stage-bound region (per-stage tag)
 domainChange              # tell OpenSees to rebuild the DOF map
-...                       # stage's initial_stress + analysis chain
-                          # + analyze loop + stage_close
+parameter 200 ...         # stage's initial_stress (PR-A)
+proc excavate_stress {...}
+addToParameter 200 element 87 commitStressIncrementXX
+...                       # analysis chain
+constraints Plain
+numberer RCM
+...                       # SSI-2.D: stage-bound recorder (after chain,
+recorder Element -file lining.out -ele 87 88 globalForce
+                          # before analyze so it captures the loop)
+for {set _apesees_i 0} {$_apesees_i < 5} {incr _apesees_i} {
+    _apesees_call_before_step
+    analyze 1 0.1
+    _apesees_call_after_step
+}
+loadConst -time 0.0
+wipeAnalysis
 ```
 
 The line-by-line emission order is:
@@ -106,13 +135,27 @@ The line-by-line emission order is:
    - Stage-bound elements, in the same per-spec order the global
      plan uses (tags pre-allocated upfront — see "Tag determinism"
      below).
-   - `domain_change()` — only if the stage added any topology.
+   - **Stage-bound `fix` / `mass` / `region`** (Phase SSI-2.D PR-B/C)
+     — per-record fan-out via `_resolve_node_target`; regions group
+     by name within this stage, one tag per name allocated from the
+     shared `TagAllocator`. V3 guarantees no cross-scope name
+     collision so tags stay disjoint across stages and globals.
+   - `domain_change()` — **unified gate (Phase SSI-2.D)**: fires if
+     the stage added ANY topology (nodes / elements) OR any stage-
+     bound BC (fix / mass / region). Single barrier per stage.
    - Stage's `initial_stress` records — `parameter` declarations +
      `step_hook_ramp` proc bodies + `addToParameter` calls. Same
      shape as the Phase SSI-1 non-staged global emit, scoped here.
    - Stage's analysis chain — each of `constraints / numberer /
      system / test / algorithm / integrator / analysis` emitted via
      its registered primitive's `_emit`.
+   - **Stage-bound recorders** (Phase SSI-2.D PR-C) — emit AFTER the
+     chain (so the recorder sees the bound analysis chain) and
+     BEFORE `analyze` (so the recorder captures the stage's analyze
+     steps). Recorder specs are PULLed via `s.recorder(spec)` from
+     globally-registered primitives; the bridge tracks claimed
+     recorder ids in `_stage_claimed_recorder_ids` so the global
+     post-element emit loop skips them.
    - `analyze(steps=stage.n_increments, dt=stage.dt)` — the emitter
      wraps this in a for-loop with hook-dispatcher calls between
      steps if any `step_hook_ramp` was registered (the emitter
@@ -381,61 +424,96 @@ appear only inside the right rank's block; tags hold identity
 between the global element fan-out and the per-stage element
 fan-out.
 
-## Validation surface (post-merge hardening — PR #312)
+## Validation surface
 
-Three guard rails ship with the staged path:
+Seven guard rails ship with the staged path, all orchestrated by
+`BuiltModel._run_staged_bc_validators` (called from both
+`_emit_flat` and `_emit_partitioned` when `stage_records` is
+non-empty). H1 / H2 / M4 land in #312; V1-V4 land in Phase SSI-2.D
+(#323 / #326) and follow the shared `_collect_ownership_offenders`
++ `_render_offender_line` helpers so error messages stay
+consistent across rules.
 
-- **H1 — fix/mass/region on stage-bound nodes**: validated in
-  `BuiltModel._validate_no_stage_bound_node_targets`
-  ([apesees.py:1084-1140](../apesees.py)). Raises `BridgeError`
-  with an offender list naming each `(kind, target, node,
-  stage)` tuple. Without this, the `fix N 1 1` line emits in the
-  pre-stage block, references a node that only comes into being in
-  stage 2, and OpenSees errors at parse time with a less-helpful
-  message.
-- **H2 — duplicate `initial_stress` name across stages**: validated
-  in `BuiltModel.emit` ([apesees.py:390-419](../apesees.py)). Raises
-  `BridgeError` naming both owners. Without this, the second
-  `proc <name>` definition overrides the first, but each was built
-  with different parameter tags + cumulative-state keys, so the
-  surviving proc would reference an uninitialised
-  `${name}_state(cum_<tag>)` array element and crash at the first
-  analyze step of the later stage.
-- **M4 — nested `with ops.stage(...)` blocks**: validated in
-  `apeSees.stage` ([apesees.py:2296-2306](../apesees.py)). Raises
-  `RuntimeError`. Without this, the inner builder's `__exit__`
-  fires first and registers the inner stage **before** the outer
-  one in `_stage_records` — reverse of lexical order, which is the
-  opposite of what readers expect.
+- **H1 — global fix/mass/region on stage-bound nodes** (PR #312,
+  refactored in #323): `_validate_no_stage_bound_node_targets`
+  raises `BridgeError` with an offender list naming each
+  `(kind, target, node, stage)` tuple. Without this, the
+  `fix N 1 1` line emits in the pre-stage block, references a node
+  that only comes into being in stage 2, and OpenSees errors at
+  parse time. **#323 bug fix:** the partitioned path previously
+  skipped H1 entirely — a global `fix` on a stage-bound node would
+  slip through under MP. Now invoked from both emit paths.
+- **H2 — duplicate `initial_stress` name across stages** (PR #312):
+  validated in `BuiltModel.emit`. Raises `BridgeError` naming both
+  owners. The second `proc <name>` definition would otherwise
+  override the first while reading uninitialised state.
+- **M4 — nested `with ops.stage(...)` blocks** (PR #312):
+  `apeSees.stage` raises `RuntimeError`.
+- **V1 — stage N's BC targets nodes owned by stage M > N** (PR
+  #323): `_validate_stage_bound_node_targets`. Each stage's BC
+  block emits AFTER that stage's topology + `domain_change`, so a
+  target owned by a later stage doesn't exist at parse time.
+  Globally-emitted nodes and earlier-stage-owned nodes are legal.
+- **V2 — cross-tier duplicate `(node, DOF)` fix or duplicate
+  `(node)` mass** (PR #323):
+  `_validate_no_duplicate_fix_mass_across_tiers`. Refuses both
+  duplicate-fix (OpenSees `Domain::addSP_Constraint` rejects with
+  an error — Domain.cpp:589-605) and duplicate-mass (`setMass`
+  silently overwrites — Domain.cpp:3876-3883). Error message names
+  the offending scopes.
+- **V3 — region `name=` collision across scopes** (PR #323):
+  `_validate_region_scope_invariants`. OpenSees `Domain::addRegion`
+  silently appends on duplicate tag (Domain.cpp:2679-2697) and
+  `getRegion` returns only the first match — silent data loss.
+  Mangle the name (`lining_rayleigh_stage2`) to make scope
+  explicit.
+- **V4 — stage N's recorder targets owned by stage M > N** (PR
+  #326): `_validate_stage_bound_recorder_targets`. Recorder lines
+  (`recorder Node ...` / `Element ...` / `mpco ...`) parse at deck-
+  read time and bind to the topology that exists at that point.
+  Covers both node targets (`Node.pg/nodes`, `MPCO.nodes_pg/nodes`)
+  and element targets (`Element.pg/elements`,
+  `MPCO.elements_pg/elements`). Note: apeGmsh recorders do NOT
+  reference regions by name — V4 is V1 extended to recorder
+  pg/nodes/elements selectors, not the original "recorder-references-
+  region-by-name" framing from the Red critique (which is moot for
+  the current API).
 
 ## Deferred work
 
 | Item | Where it would land |
 |---|---|
 | **Live execution of staged models** — `apeSees.analyze` / `apeSees.eigen` currently raise `NotImplementedError` when stages are present. Lifting requires staging the analysis-chain re-binding, per-stage analyze loops, `loadConst` / `wipeAnalysis` interleaving, and hook-list clearing inside `LiveOpsEmitter`. Tcl + Py text emit are the supported execution paths. | `emitter/live.py::stage_open` / `stage_close` (currently raise); `apesees.py::analyze` / `eigen` (currently refuse). |
-| **H5 archival of staged structure + initial_stress** — `H5Emitter` no-ops on `addToParameter` / `step_hook_ramp` / `stage_open` / `stage_close` / `domain_change`. Because that silent-drop would round-trip into a non-staged flat model, `apeSees.h5(path)` is **guarded** (#313) — it raises `NotImplementedError` when `self._stage_records` or `self._initial_stress_records` is non-empty, pointing the user at `ops.tcl(path)` / `ops.py(path)`. A future schema bump (per [ADR 0023](decisions/0023-per-zone-schema-versioning.md)) from `opensees_schema_version` `2.11.0` → `2.12.0` would persist per-stage primitive lists + initial-stress records under `/opensees/stages/` and `/opensees/initial_stress/`, lift the guard, and restore round-trip parity. | `apesees.py::h5` (bridge-side guard); `emitter/h5.py::addToParameter / step_hook_ramp / stage_open / stage_close / domain_change` (schema-side no-ops). |
-| **Stage-bound `fix` / `mass` / `region` directives** — currently refused at build time (H1 validator). A future phase would let the user attach BCs to stage-bound nodes that emit inside the stage block after `domain_change`. Today the workaround is to keep the BC on a globally-emitted node. | `apesees.py::_validate_no_stage_bound_node_targets` (currently raises); needs a `StageRecord.fix_records` / `.mass_records` field + per-stage emit pass. |
+| **H5 archival of staged structure + initial_stress + stage-bound BCs/recorders** — `H5Emitter` no-ops on `addToParameter` / `step_hook_ramp` / `stage_open` / `stage_close` / `domain_change`. Because that silent-drop would round-trip into a non-staged flat model, `apeSees.h5(path)` is **guarded** (#313) — it raises `NotImplementedError` when `self._stage_records` or `self._initial_stress_records` is non-empty, pointing the user at `ops.tcl(path)` / `ops.py(path)`. A future schema bump (per [ADR 0023](decisions/0023-per-zone-schema-versioning.md)) from `opensees_schema_version` `2.11.0` → `2.12.0` would persist per-stage primitive lists + BC pools + recorder claims under `/opensees/stages/`, lift the guard, and restore round-trip parity. | `apesees.py::h5` (bridge-side guard); `emitter/h5.py::addToParameter / step_hook_ramp / stage_open / stage_close / domain_change` (schema-side no-ops). |
+| **`remove sp` / mass-zero-out across stages** — stage-bound BCs are APPEND-ONLY in Phase SSI-2.D. A stage cannot release a prior stage's fix or zero out a prior stage's mass via `s.fix` / `s.mass`. For excavation-style decks that genuinely need to release support during construction, users currently drop to raw Tcl for the release step. | A new `s.remove_sp(...)` / `s.zero_mass(...)` verb on `_StageBuilder` + emit hooks calling `remove sp $node $dof` / `node $N mass 0 0 0`. |
+| **MPCO recorders with filters under stages** — stage-bound MPCO recorders DO claim through `s.recorder(spec)` but the per-rank filter-region planning (`_plan_partitioned_mpco_recorders`) currently only runs in the global emit pass. A stage-bound MPCO with a filter would fall through `emit_recorder_spec`'s materialize path and emit the filter region INSIDE the stage block instead of pre-allocated — works but doesn't reuse the cross-rank tag-identity infra. | Pre-allocate stage MPCO filter regions alongside the per-stage region tag cache; thread `_region_tag` into the materialised spec the same way the global path does. |
+| **Cross-stage region union** — V3 refuses same region `name=` across scopes. A region whose conceptual identity spans multiple stages currently requires explicit per-stage mangling (`lining_r_stage2`, `lining_r_stage3`) and client-side aggregation of the per-stage recorder outputs. Lifting V3 to allow opt-in name continuity would either need OpenSees `region` extension (doesn't exist; `MeshRegion` membership is immutable post-construction — MeshRegion.cpp:82-85) or deferred emit of the unified region to the LAST contributing stage (loses recorder coverage for earlier stages). | Likely won't lift — the workaround is correct OpenSees usage and the alternatives degrade behavior. |
 
 ## File map
 
 | Concern | Source |
 |---|---|
-| User surface (`ops.stage`, `_StageBuilder`) | [`apesees.py:2125-2760`](../apesees.py) |
-| `StageRecord` dataclass | [`_internal/build.py:161-212`](../_internal/build.py) |
-| `InitialStressRecord` dataclass | [`_internal/build.py:215-266`](../_internal/build.py) |
-| Per-stage emit pipeline (single-partition) | [`apesees.py::_emit_stages_flat`](../apesees.py) |
-| Per-stage emit pipeline (MP — Phase SSI-2.C) | [`apesees.py::_emit_stages_partitioned`](../apesees.py) |
-| `apeSees.h5` fail-loud guard (#313) | [`apesees.py::h5`](../apesees.py) |
-| Ownership computation | [`_internal/build.py::compute_stage_ownership`](../_internal/build.py) |
-| Tag pre-allocation | [`_internal/build.py::allocate_element_tags`](../_internal/build.py) |
-| Initial-stress global emit | [`_internal/build.py::emit_initial_stress_global`](../_internal/build.py) |
-| Initial-stress `addToParameter` fan-out | [`_internal/build.py::emit_initial_stress_addtoparameter`](../_internal/build.py) |
-| Tcl emitter SSI methods | [`emitter/tcl.py:350-485`](../emitter/tcl.py) |
-| Py emitter SSI methods | [`emitter/py.py:322-423`](../emitter/py.py) |
-| Live emitter SSI methods + raises | [`emitter/live.py:296-521`](../emitter/live.py) |
-| H5 emitter no-ops (deferred archival) | [`emitter/h5.py:1152-1202`](../emitter/h5.py) |
-| Recording emitter capture | [`emitter/recording.py:252-288`](../emitter/recording.py) |
-| Build-time validators (post-merge hardening) | [`apesees.py::_validate_no_stage_bound_node_targets`](../apesees.py), [`apesees.py::emit:390-419`](../apesees.py) |
+| User surface (`ops.stage`, `_StageBuilder`) | [`apesees.py`](../apesees.py) `class _StageBuilder` |
+| `StageRecord` dataclass (+ SSI-2.D `fix_records` / `mass_records` / `region_records` / `recorder_specs`) | [`_internal/build.py`](../_internal/build.py) `class StageRecord` |
+| `InitialStressRecord` dataclass | [`_internal/build.py`](../_internal/build.py) `class InitialStressRecord` |
+| Per-stage emit pipeline (single-partition) | [`apesees.py`](../apesees.py) `BuiltModel._emit_stages_flat` |
+| Per-stage emit pipeline (MP — Phase SSI-2.C / SSI-2.D) | [`apesees.py`](../apesees.py) `BuiltModel._emit_stages_partitioned` |
+| Per-stage region emit helpers (Phase SSI-2.D PR-C) | [`apesees.py`](../apesees.py) `_emit_stage_regions` / `_emit_stage_regions_partitioned` |
+| Recorder claiming + skip in global emit | [`apesees.py`](../apesees.py) `apeSees._stage_claimed_recorder_ids`, `BuiltModel._claimed_recorder_ids` |
+| `apeSees.h5` fail-loud guard (#313) | [`apesees.py`](../apesees.py) `apeSees.h5` |
+| Ownership computation | [`_internal/build.py`](../_internal/build.py) `compute_stage_ownership` |
+| Tag pre-allocation | [`_internal/build.py`](../_internal/build.py) `allocate_element_tags` |
+| Initial-stress global emit | [`_internal/build.py`](../_internal/build.py) `emit_initial_stress_global` |
+| Initial-stress `addToParameter` fan-out | [`_internal/build.py`](../_internal/build.py) `emit_initial_stress_addtoparameter` |
+| Tcl emitter SSI methods | [`emitter/tcl.py`](../emitter/tcl.py) |
+| Py emitter SSI methods | [`emitter/py.py`](../emitter/py.py) |
+| Live emitter SSI methods + raises | [`emitter/live.py`](../emitter/live.py) |
+| H5 emitter no-ops (deferred archival) | [`emitter/h5.py`](../emitter/h5.py) |
+| Recording emitter capture | [`emitter/recording.py`](../emitter/recording.py) |
+| Build-time validators (PR #312 + Phase SSI-2.D) — orchestrator | [`apesees.py`](../apesees.py) `BuiltModel._run_staged_bc_validators` (H1 / V1 / V2 / V3 / V4) |
+| Ownership-tier offender helpers | [`apesees.py`](../apesees.py) `_collect_ownership_offenders`, `_render_offender_line`, `_records_as_targets` |
+| Recorder target resolvers (V4) | [`apesees.py`](../apesees.py) `_recorder_node_targets`, `_recorder_element_targets`, `_build_fem_eid_owner_stage_map` |
+| Bridge introspection (Phase SSI-2.D Red #19) | [`apesees.py`](../apesees.py) `apeSees.all_fix_records` / `all_mass_records` / `all_region_records` / `all_recorder_specs` |
 
 ## Test map
 
@@ -455,11 +533,17 @@ Three guard rails ship with the staged path:
 | [`tests/opensees/subprocess/test_initial_stress_acceptance.py`](../../../../tests/opensees/subprocess/test_initial_stress_acceptance.py) | Empirical acceptance — locks the FIXED ramp values against `result_fixed.csv` within ±0.5 kPa per step; gated on the reference CSV and the Ladruno OpenSees binary being available. |
 | [`tests/opensees/h5/test_h5_staged_fail_loud.py`](../../../../tests/opensees/h5/test_h5_staged_fail_loud.py) | `apeSees.h5` fail-loud guard (#313) — staged build + global `initial_stress` both raise `NotImplementedError`; vanilla non-staged build still writes successfully (guard is precise, no regression). |
 | [`tests/opensees/integration/test_emit_partitioned_staged.py`](../../../../tests/opensees/integration/test_emit_partitioned_staged.py) | Phase SSI-2.C — 4-quad 2-PG 2-partition fixture; locks per-rank topology routing, global `domain_change` after the per-rank loop, `addToParameter` inside `partition_open(K)` only, cross-stage tag identity. |
+| [`tests/opensees/unit/test_stage_bound_validators.py`](../../../../tests/opensees/unit/test_stage_bound_validators.py) | Phase SSI-2.D PR-A — V1 / V2 / V3 ownership-tier + duplicate-fix + region-name validators; StageRecord shape lock; orchestrator H1-before-V1 ordering. |
+| [`tests/opensees/unit/test_stage_bound_fix_mass.py`](../../../../tests/opensees/unit/test_stage_bound_fix_mass.py) | Phase SSI-2.D PR-B — `s.fix` / `s.mass` builder positive + negative + XOR; `__slots__` assertion; `bridge.all_fix_records` / `all_mass_records` introspection; flat emit shape + slot ordering; unified `domain_change` gate (BC-only stage). |
+| [`tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py`](../../../../tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py) | Phase SSI-2.D PR-B — per-rank fix/mass routing on owning rank, zero leak into global scope, single global `domain_change`, empty-bracket skip on non-contributing rank, BC-only stage drives per-rank loop. |
+| [`tests/opensees/unit/test_stage_bound_region_recorder.py`](../../../../tests/opensees/unit/test_stage_bound_region_recorder.py) | Phase SSI-2.D PR-C — `s.region` / `s.recorder` builder positive + negative; recorder type / membership / double-claim checks; global-emit skip on claimed; slot ordering (chain → recorder → analyze; region → `domain_change`); V4 positive + negative; `all_region_records` / `all_recorder_specs` introspection. |
+| [`tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py`](../../../../tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py) | Phase SSI-2.D PR-C — cross-rank region shares tag (per-stage tag cache), single-rank region skips non-contributing ranks (INV-4), per-stage tag cache scoping across stages, global+stage tag disjointness. |
 
 ## Cross-references
 
 - [api-design.md](api-design.md) — user surface for `ops.stage(...)`,
-  `s.activate(...)`, `ops.initial_stress(...)`,
+  `s.activate(...)`, `s.fix(...)` / `s.mass(...)` / `s.region(...)` /
+  `s.recorder(...)` (SSI-2.D), `ops.initial_stress(...)`,
   `ops.convergence_confinement(...)`, `ops.imposed_displacement(...)`.
 - [emitter.md](emitter.md) §"Phase SSI-1 analyze hook-wrapping" —
   the seven Protocol methods that ship in the staged emit
@@ -478,6 +562,10 @@ Three guard rails ship with the staged path:
   — Phase SSI-3 design decision (typed helpers
   `convergence_confinement` / `imposed_displacement` vs. raw
   composition).
+- [decisions/0034-stage-bound-bcs-and-recorders.md](decisions/0034-stage-bound-bcs-and-recorders.md)
+  — Phase SSI-2.D design decision (four-validator surface, PUSH-vs-
+  PULL builder asymmetry, recorder claiming, per-stage region tag
+  cache, empty-bracket skip + unified `domain_change` gate).
 - ADR [0023](decisions/0023-per-zone-schema-versioning.md) — the
   per-zone schema policy any future archival of stages /
   initial-stress will bump.
