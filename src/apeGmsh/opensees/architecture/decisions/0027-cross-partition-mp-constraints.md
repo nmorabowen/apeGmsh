@@ -136,6 +136,42 @@ The other rank's block is silent on this constraint — there is no
 mirror emission. OpenSeesMP's element-side handler resolves the
 embedded node tag against the global node table at solve time.
 
+**Intersection host-rank rule (PR #329 hardening).** A subtle bug
+in the original `_plan_rank_constraints` used `if partition_rank in
+node_owners[masters[0]]` to decide which rank owned the embedded
+record. When `masters[0]` was a partition-boundary node owned by
+multiple ranks, every owning rank's plan included the record and
+the `embeddedNode` line emitted on each — duplicate stiffness
+contribution at solve time. The fix: the unique owner is the HOST
+ELEMENT's owning rank, NOT every rank in `node_owners[masters[0]]`.
+A boundary-shared master appearing in multiple ranks' ownership sets
+is correct (the node IS shared), but the embedded-record itself
+binds to one host-rank only. Locked end-to-end by
+[`test_emit_partitioned_embedded.py`](../../../../tests/opensees/integration/test_emit_partitioned_embedded.py).
+
+**Off-host / mixed-host / bad-Rnode-count guards (PR #331).** Three
+fail-loud build-time guards on the resolver / emit path catch
+silent-wrong configurations the original pipeline would emit:
+
+1. **Off-host extrapolation** — `EmbeddedDef.tolerance` is now
+   enforced. The resolver computes barycentric coordinates and
+   populates an `excess: float | None` field on
+   `InterpolationRecord`; the emit-time guard raises `BridgeError`
+   naming the offending slave node + its excess when
+   `excess > tolerance`.
+2. **Mixed-host silent drop** — `_collect_host_elems` previously
+   kept only Gmsh element types 2 (tri3) and 4 (tet4); quad / hex /
+   prism / pyramid / tri6 / tet10 were silently dropped. A
+   transition-region mesh (hex + a few tets) would project embedded
+   nodes in the hex region onto distant tets (extrapolation again).
+   The collector now retains all supported host types; mixed-host
+   configurations the C++ `ASDEmbeddedNodeElement` parser cannot
+   consume raise at build time, not at OpenSees runtime.
+3. **Bad Rnode count** — the C++ parser only accepts 3 (tri host)
+   or 4 (tet host) Rnodes; 5+ are misread as flag positions, 2
+   aborts in `setDomain`. A build-time guard raises `BridgeError`
+   naming the offending record's Rnode count.
+
 ## Regions interaction (ADR 0024)
 
 Per ADR 0024 `emitter.region(tag, -node n1 n2 ..., -ele e1 e2 ...)`
@@ -164,13 +200,29 @@ per-rank fan-out begins; it is the same scalar on every rank.
 All rank-emitted blocks must agree on every numeric tag:
 
 - node tags (including foreign-declared nodes via `node(...)`),
-- element tags,
+- element tags (**including ASDEmbeddedNodeElement tags** — see
+  note below),
 - phantom-node tags (per §"Phantom-node policy" above),
 - region tags (per §"Regions interaction" above),
 - integration tags,
 - geomTransf tags,
 - material / section tags,
 - pattern / time-series / recorder tags.
+
+**Embedded-element tag namespace (PR #329).** Embedded-element
+tags share the canonical `TagAllocator`'s `"element"` counter — the
+same per-kind counter that structural elements use. They are NOT
+allocated from a separate reserved range. The retired
+`_allocate_embedded_tag_base` helper returned a static `1_000_000`
+base that `_emit_surface_couplings_for_rank` restarted on every
+rank, so two distinct embedded records on different ranks both
+received tag `1_000_000` — a determinism violation that produced
+silent solver collisions. The fix threads the bridge's canonical
+`TagAllocator` through `emit_mp_constraints` /
+`emit_mp_constraints_partitioned` / `_emit_surface_couplings` /
+`_emit_surface_couplings_for_rank` so every embedded element tag
+comes from `tags.allocate("element")`. Locked by
+[`test_emit_partitioned_embedded.py`](../../../../tests/opensees/integration/test_emit_partitioned_embedded.py).
 
 `TagAllocator` already produces a single canonical numbering at build
 time, not rank-local — there is exactly one producer per
