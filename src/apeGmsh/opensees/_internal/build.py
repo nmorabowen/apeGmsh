@@ -1429,7 +1429,7 @@ def _sanitize_raw_token(token: str) -> str:
 
 
 def emit_mp_constraints(
-    emitter: "Emitter", fem: "FEMData",
+    emitter: "Emitter", fem: "FEMData", tags: TagAllocator,
 ) -> None:
     """Fan out the broker's MP-constraint records onto ``emitter``.
 
@@ -1566,7 +1566,7 @@ def emit_mp_constraints(
     #    ASDEmbeddedNodeElement.
     # -------------------------------------------------------------------
     if surface_constraints is not None:
-        _emit_surface_couplings(emitter, surface_constraints)
+        _emit_surface_couplings(emitter, surface_constraints, tags)
 
 
 # ---------------------------------------------------------------------------
@@ -1749,7 +1749,7 @@ def _emit_kinematic_couplings(
 
 
 def _emit_surface_couplings(
-    emitter: "Emitter", surface_constraints: object,
+    emitter: "Emitter", surface_constraints: object, tags: TagAllocator,
 ) -> None:
     """Emit ``element ASDEmbeddedNodeElement`` per
     :class:`InterpolationRecord` row (covers ``tie`` / ``distributing``
@@ -1763,12 +1763,12 @@ def _emit_surface_couplings(
     ($Rnode1..$RnodeN); ASDEmbeddedNodeElement uses isoparametric
     interpolation over those corners internally, so the per-record
     weights from :class:`InterpolationRecord` are NOT emitted here
-    (they survive in the FEM record for round-tripping).  Each
-    emitted line allocates a fresh integer element tag from a
-    per-call counter — these tags are file-internal and do not
-    collide with bridge-allocated element tags because the
-    ASDEmbeddedNodeElement vocabulary uses the ``element`` family
-    namespace.
+    (they survive in the FEM record for round-tripping).  Each emitted
+    line allocates a fresh integer element tag from the bridge's
+    canonical :class:`TagAllocator` (``"element"`` kind) so embedded-
+    node element tags share the global element-tag namespace and never
+    collide with structural elements or with each other under
+    partitioned emit (ADR 0027 §"Tag determinism").
     """
     from apeGmsh._kernel.records._constraints import InterpolationRecord
 
@@ -1776,18 +1776,10 @@ def _emit_surface_couplings(
     if interps is None:
         return
 
-    # File-internal counter — start high enough to avoid colliding with
-    # whatever the bridge has allocated for structural elements.  The
-    # actual tag values are only meaningful to the emitter (they need
-    # to be distinct per emit pass).
-    next_tag = _allocate_embedded_tag_base(emitter)
-
     for rec in interps():
         if not isinstance(rec, InterpolationRecord):
             continue
         _emit_name(emitter, rec.name)
-        ele_tag = next_tag
-        next_tag += 1
         # ASDEmbeddedNodeElement OpenSees signature:
         #   element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 $Rnode2 $Rnode3 <$Rnode4>
         # where $Cnode is the CONSTRAINED (embedded / slave) node and
@@ -1796,24 +1788,10 @@ def _emit_surface_couplings(
         # — weights are recorded under the FEM record but not emitted
         # here; ASDEmbeddedNodeElement uses isoparametric interpolation
         # over the host element's corners internally.
+        ele_tag = tags.allocate("element")
         cnode = int(rec.slave_node)
         args: list[int | float] = [int(mn) for mn in rec.master_nodes]
         emitter.embeddedNode(ele_tag, cnode, *args)
-
-
-def _allocate_embedded_tag_base(emitter: "Emitter") -> int:
-    """Return a starting element tag for ASDEmbeddedNodeElement emits.
-
-    The base is offset above any bridge-allocated element tag so
-    embedded-node tags never collide.  Static offset chosen by the
-    spec; emitters with stricter tag-collision needs can override by
-    pre-populating a higher counter.
-    """
-    # Lazy peek at any ``_orientation_tag_counter`` (H5Emitter) or
-    # similar hint on the emitter; default to 1_000_000 which is well
-    # outside the typical bridge-allocated range for mesh elements.
-    base = 1_000_000
-    return base
 
 
 def _emit_name(emitter: "Emitter", name: object) -> None:
@@ -2290,6 +2268,7 @@ def emit_mp_constraints_partitioned(
     node_owners: dict[int, set[int]],
     element_owner: dict[int, int],
     foreign_node_ndf: int | None,
+    tags: TagAllocator,
 ) -> None:
     """Per-rank MP-constraint fan-out (ADR 0027 §"Decision").
 
@@ -2393,7 +2372,7 @@ def emit_mp_constraints_partitioned(
     # ASDEmbeddedNodeElement: only the host-element-owning rank emits.
     if surface_constraints is not None and plan.embedded_records:
         _emit_surface_couplings_for_rank(
-            emitter, plan.embedded_records,
+            emitter, plan.embedded_records, tags,
         )
 
 
@@ -2517,34 +2496,27 @@ def _plan_rank_constraints(
                         _add_foreign_or_phantom(int(pair.slave_node))
 
     if surface_constraints is not None:
-        # ASDEmbeddedNodeElement ownership: bound to the rank that owns
-        # the host element. We allocate file-internal element tags
-        # canonically (per-call counter) and only the host-element-
-        # owning rank emits.  Per ADR 0027 §"ASDEmbeddedNodeElement
-        # ownership". Since the host element of an
-        # ASDEmbeddedNodeElement is an *implied* element (not in
-        # fem.elements), we use the first master node id as the proxy
-        # for ownership — the surface constraint's interpolation
-        # touches a real master element, so its corner nodes all live
-        # on the same rank (the partitioner does not split element
-        # connectivity).
+        # ASDEmbeddedNodeElement ownership (ADR 0027 §"ASDEmbeddedNode-
+        # Element ownership"): emit on the SINGLE rank that can locally
+        # assemble the host element — i.e. the rank that owns every
+        # one of its master nodes.  Computed as
+        # ``min(intersection(node_owners[m] for m in masters))``: the
+        # intersection picks ranks where every corner node is present
+        # (local or boundary-shared), and ``min`` deterministically
+        # selects one canonical owner so every rank's planner agrees on
+        # which rank emits.  Empty intersection means the corner nodes
+        # split across partitions and the element cannot be assembled
+        # on any single rank — fail-loud, naming the offending record.
         interps_iter = getattr(surface_constraints, "interpolations", None)
         if interps_iter is not None:
             for rec in interps_iter():
                 if not isinstance(rec, InterpolationRecord):
                     continue
-                # Host ownership: the rank that owns ALL master nodes
-                # of the host element. In the partitioner this is
-                # exactly the rank that owns the host element since the
-                # master nodes form one element's connectivity. We pick
-                # the first master node's owner-set; any rank in that
-                # set is the host's rank (and the masters are
-                # guaranteed co-resident).
                 masters = [int(mn) for mn in rec.master_nodes]
                 if not masters:
                     continue
-                host_owners = node_owners.get(masters[0], set())
-                if partition_rank in host_owners:
+                canonical_rank = _canonical_host_rank(rec, masters, node_owners)
+                if partition_rank == canonical_rank:
                     embedded.append(rec)
                     # Declare any foreign master/slave nodes.
                     for mn in masters:
@@ -2677,19 +2649,70 @@ def _emit_kinematic_couplings_filtered(
             )
 
 
+def _canonical_host_rank(
+    rec: object,
+    masters: list[int],
+    node_owners: dict[int, set[int]],
+) -> int:
+    """Return the single rank that emits the embeddedNode line for ``rec``.
+
+    The canonical host rank is ``min(intersection(node_owners[m] for m
+    in masters))``: every master must be present (locally owned or
+    boundary-shared) on the chosen rank so OpenSees can assemble the
+    element from local + foreign-declared nodes, and ``min`` picks one
+    deterministic rank when several qualify.
+
+    Raises
+    ------
+    ValueError
+        When the intersection is empty — the host element's corner
+        nodes are split across partitions and no single rank can
+        assemble it.  ADR 0027 §"ASDEmbeddedNodeElement ownership"
+        treats this as a partitioner-input bug, not a recoverable
+        condition.
+    """
+    intersection: set[int] | None = None
+    for m in masters:
+        owners = node_owners.get(int(m), set())
+        intersection = (
+            set(owners) if intersection is None
+            else intersection & owners
+        )
+    if not intersection:
+        slave = getattr(rec, "slave_node", "?")
+        name = getattr(rec, "name", None) or "<unnamed>"
+        raise ValueError(
+            f"ASDEmbeddedNodeElement {name!r} (slave={slave}, "
+            f"masters={masters}) has no rank that owns every master "
+            f"node — host element corners are split across partitions. "
+            f"Per-master owners: "
+            f"{ {m: sorted(node_owners.get(int(m), set())) for m in masters} }"
+        )
+    return min(intersection)
+
+
 def _emit_surface_couplings_for_rank(
-    emitter: "Emitter", records: tuple[object, ...],
+    emitter: "Emitter",
+    records: tuple[object, ...],
+    tags: TagAllocator,
 ) -> None:
-    """Emit ASDEmbeddedNodeElement lines for the host-rank surface couplings."""
+    """Emit ASDEmbeddedNodeElement lines for the host-rank surface couplings.
+
+    Element tags come from the bridge's canonical :class:`TagAllocator`
+    (``"element"`` kind), which is shared across all ranks of the same
+    emit pass — so a record landing on rank K and a different record
+    landing on rank K+1 receive distinct globally-unique tags (ADR 0027
+    §"Tag determinism").  The previous static ``1_000_000`` base
+    collided across ranks because each rank restarted the counter
+    independently.
+    """
     from apeGmsh._kernel.records._constraints import InterpolationRecord
 
-    next_tag = _allocate_embedded_tag_base(emitter)
     for rec in records:
         if not isinstance(rec, InterpolationRecord):
             continue
         _emit_name(emitter, rec.name)
-        ele_tag = next_tag
-        next_tag += 1
+        ele_tag = tags.allocate("element")
         cnode = int(rec.slave_node)
         args: list[int | float] = [int(mn) for mn in rec.master_nodes]
         emitter.embeddedNode(ele_tag, cnode, *args)

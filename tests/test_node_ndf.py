@@ -1001,6 +1001,7 @@ def test_phantom_nodes_unchanged_after_s2(g):
     )
     from apeGmsh._kernel.records._kinds import ConstraintKind
     from apeGmsh.opensees._internal.build import emit_mp_constraints
+    from apeGmsh.opensees._internal.tag_allocator import TagAllocator
     from apeGmsh.opensees._internal.tag_resolution import is_phantom_node
     from apeGmsh.opensees.emitter.h5 import H5Emitter
     from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -1042,7 +1043,7 @@ def test_phantom_nodes_unchanged_after_s2(g):
 
     # 1. RecordingEmitter — phantom nodes emit with ndf=6.
     rec = RecordingEmitter()
-    emit_mp_constraints(rec, cast(Any, fem))
+    emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
     phantom_emits = [
         (args, kwargs)
         for name, args, kwargs in rec.calls
@@ -1067,7 +1068,7 @@ def test_phantom_nodes_unchanged_after_s2(g):
         h5e.node(int(nid), float(xyz[0]), float(xyz[1]), float(xyz[2]))
     # Then drive MP constraints — populates the phantom predicate set
     # AND emits the phantom nodes.
-    emit_mp_constraints(h5e, cast(Any, fem))
+    emit_mp_constraints(h5e, cast(Any, fem), TagAllocator())
     # The H5 emitter accumulates phantom_node_tags via the predicate.
     assert sorted(h5e._phantom_node_tags) == [200, 201], (
         f"phantom_node_tags must contain only the phantom tags 200, 201; "

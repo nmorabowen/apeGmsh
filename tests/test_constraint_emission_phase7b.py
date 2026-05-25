@@ -36,6 +36,7 @@ from apeGmsh._kernel.records._constraints import (
 from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees._internal.build import emit_mp_constraints
+from apeGmsh.opensees._internal.tag_allocator import TagAllocator
 from apeGmsh.opensees.emitter.h5 import H5Emitter
 from apeGmsh.opensees.emitter.py import PyEmitter
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
@@ -367,7 +368,7 @@ class TestEmitMpConstraintsFanout:
     def test_no_constraints_no_calls(self) -> None:
         fem = make_two_column_frame()
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         assert rec.calls == []
 
     def test_equal_dof_record_dispatches(self) -> None:
@@ -380,7 +381,7 @@ class TestEmitMpConstraintsFanout:
             ),
         ])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         names = [c[0] for c in rec.calls]
         assert names == ["equalDOF"]
         assert rec.calls[0] == ("equalDOF", (2, 4, 1, 2, 3), {})
@@ -394,7 +395,7 @@ class TestEmitMpConstraintsFanout:
             ),
         ])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         assert rec.calls[0] == ("rigidLink", ("beam", 1, 3), {})
 
     def test_rigid_rod_pair_record_dispatches_to_bar(self) -> None:
@@ -406,7 +407,7 @@ class TestEmitMpConstraintsFanout:
             ),
         ])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         assert rec.calls[0] == ("rigidLink", ("bar", 1, 3), {})
 
     def test_rigid_diaphragm_group_record_dispatches(self) -> None:
@@ -420,7 +421,7 @@ class TestEmitMpConstraintsFanout:
             ),
         ])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         # perp_dirn=3 derived from plane_normal=(0, 0, 1).
         assert rec.calls[0] == ("rigidDiaphragm", (3, 1, 2, 3, 4), {})
 
@@ -434,7 +435,7 @@ class TestEmitMpConstraintsFanout:
             ),
         ])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         # One rigidLink per (master, slave) pair.
         names = [c[0] for c in rec.calls]
         assert names == ["rigidLink", "rigidLink", "rigidLink"]
@@ -452,7 +453,7 @@ class TestEmitMpConstraintsFanout:
             ),
         ])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         # equalDOF preserves the per-DOF selectivity.
         names = [c[0] for c in rec.calls]
         assert names == ["equalDOF", "equalDOF", "equalDOF"]
@@ -499,7 +500,7 @@ class TestEmitMpConstraintsFanout:
         )
         fem.add_node_constraints([n2s])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         names = [c[0] for c in rec.calls]
         # Expected order: 2 phantom nodes, 2 rigid links, 2 equal_dofs.
         assert names == [
@@ -522,7 +523,7 @@ class TestEmitMpConstraintsFanout:
         )
         fem.add_surface_constraints([interp])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         names = [c[0] for c in rec.calls]
         assert names == ["embeddedNode"]
         # ASDEmbeddedNodeElement signature: $tag $Cnode $Rnode1 $Rnode2 ...
@@ -559,7 +560,7 @@ class TestEmitMpConstraintsFanout:
         )
         fem.add_surface_constraints([coupling])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         names = [c[0] for c in rec.calls]
         assert names == ["embeddedNode", "embeddedNode"]
 
@@ -599,7 +600,7 @@ class TestRequiredGates:
         )
         fem.add_node_constraints([n2s])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
 
         node_idx: int | None = None
         ref_idx: int | None = None
@@ -668,7 +669,7 @@ class TestRequiredGates:
         )
         fem.add_node_constraints([n2s_a, n2s_b])
         rec = RecordingEmitter()
-        emit_mp_constraints(rec, cast(Any, fem))
+        emit_mp_constraints(rec, cast(Any, fem), TagAllocator())
         node_emits = [
             c for c in rec.calls
             if c[0] == "node" and len(c[1]) >= 1 and c[1][0] == 200
@@ -692,7 +693,7 @@ class TestRequiredGates:
             ),
         ])
         e = TclEmitter()
-        emit_mp_constraints(e, cast(Any, fem))
+        emit_mp_constraints(e, cast(Any, fem), TagAllocator())
         lines = e.lines()
         idx = lines.index("# floor_1")
         assert lines[idx + 1].startswith("rigidDiaphragm")

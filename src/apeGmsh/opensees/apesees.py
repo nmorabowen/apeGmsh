@@ -632,7 +632,7 @@ class BuiltModel:
         self._emit_broker_loads(emitter, tags)
 
         # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).
-        emit_mp_constraints(emitter, self.fem)
+        emit_mp_constraints(emitter, self.fem, tags)
 
         # 7c. Auto-emit constraint handler when MP constraints present.
         self._maybe_auto_emit_constraint_handler(emitter, pre_element)
@@ -1138,6 +1138,7 @@ class BuiltModel:
                     node_owners=node_owners,
                     element_owner=element_owner,
                     foreign_node_ndf=int(self.ndf),
+                    tags=tags,
                 )
 
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
