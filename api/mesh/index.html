@@ -4770,23 +4770,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="remove_duplicate_nodes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#apeGmsh.mesh._mesh_editing._Editing.remove_duplicate_nodes--parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Parameters
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
         
           <li class="md-nav__item">
@@ -9709,23 +9692,6 @@
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="remove_duplicate_nodes">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#apeGmsh.mesh._mesh_editing._Editing.remove_duplicate_nodes--parameters" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Parameters
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
@@ -18083,14 +18049,16 @@ g.mesh.editing.relocate_nodes(tag=(2, 5))
 
 
 <a href="#apeGmsh.mesh._mesh_editing._Editing.remove_duplicate_nodes" class="headerlink" title="Permanent link">&para;</a></h3>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">remove_duplicate_nodes</span><span class="p">(</span><span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">&#39;_Editing&#39;</span>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">remove_duplicate_nodes</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="s1">&#39;_Editing&#39;</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
 
         <p>Merge nodes that share the same position within tolerance.</p>
-<h5 id="apeGmsh.mesh._mesh_editing._Editing.remove_duplicate_nodes--parameters">Parameters<a class="headerlink" href="#apeGmsh.mesh._mesh_editing._Editing.remove_duplicate_nodes--parameters" title="Permanent link">&para;</a></h5>
-<p>verbose : if True (default), print how many nodes were merged.</p>
+<p>Node removal is <strong>always</strong> announced on stdout — there is no
+silent mode. Deleting nodes from a meshed model is a
+destructive operation; the visibility floor is intentional so
+that an unexpected dedup never hides in a long pipeline log.</p>
 
 
             <details class="mkdocstrings-source">
@@ -18115,25 +18083,25 @@ g.mesh.editing.relocate_nodes(tag=(2, 5))
 <span class="normal"><a href="#__codelineno-0-272">272</a></span>
 <span class="normal"><a href="#__codelineno-0-273">273</a></span>
 <span class="normal"><a href="#__codelineno-0-274">274</a></span>
-<span class="normal"><a href="#__codelineno-0-275">275</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-255"><a id="__codelineno-0-255" name="__codelineno-0-255"></a><span class="k">def</span><span class="w"> </span><span class="nf">remove_duplicate_nodes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">verbose</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;_Editing&quot;</span><span class="p">:</span>
+<span class="normal"><a href="#__codelineno-0-275">275</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-255"><a id="__codelineno-0-255" name="__codelineno-0-255"></a><span class="k">def</span><span class="w"> </span><span class="nf">remove_duplicate_nodes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;_Editing&quot;</span><span class="p">:</span>
 </span><span id="__span-0-256"><a id="__codelineno-0-256" name="__codelineno-0-256"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
 </span><span id="__span-0-257"><a id="__codelineno-0-257" name="__codelineno-0-257"></a><span class="sd">    Merge nodes that share the same position within tolerance.</span>
 </span><span id="__span-0-258"><a id="__codelineno-0-258" name="__codelineno-0-258"></a>
-</span><span id="__span-0-259"><a id="__codelineno-0-259" name="__codelineno-0-259"></a><span class="sd">    Parameters</span>
-</span><span id="__span-0-260"><a id="__codelineno-0-260" name="__codelineno-0-260"></a><span class="sd">    ----------</span>
-</span><span id="__span-0-261"><a id="__codelineno-0-261" name="__codelineno-0-261"></a><span class="sd">    verbose : if True (default), print how many nodes were merged.</span>
-</span><span id="__span-0-262"><a id="__codelineno-0-262" name="__codelineno-0-262"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-263"><a id="__codelineno-0-263" name="__codelineno-0-263"></a>    <span class="n">before</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">getNodes</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span>
-</span><span id="__span-0-264"><a id="__codelineno-0-264" name="__codelineno-0-264"></a>    <span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">removeDuplicateNodes</span><span class="p">()</span>
-</span><span id="__span-0-265"><a id="__codelineno-0-265" name="__codelineno-0-265"></a>    <span class="n">after</span>  <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">getNodes</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span>
-</span><span id="__span-0-266"><a id="__codelineno-0-266" name="__codelineno-0-266"></a>    <span class="n">removed</span> <span class="o">=</span> <span class="n">before</span> <span class="o">-</span> <span class="n">after</span>
-</span><span id="__span-0-267"><a id="__codelineno-0-267" name="__codelineno-0-267"></a>    <span class="k">if</span> <span class="n">verbose</span><span class="p">:</span>
-</span><span id="__span-0-268"><a id="__codelineno-0-268" name="__codelineno-0-268"></a>        <span class="k">if</span> <span class="n">removed</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
-</span><span id="__span-0-269"><a id="__codelineno-0-269" name="__codelineno-0-269"></a>            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove_duplicate_nodes: merged </span><span class="si">{</span><span class="n">removed</span><span class="si">}</span><span class="s2"> &quot;</span>
-</span><span id="__span-0-270"><a id="__codelineno-0-270" name="__codelineno-0-270"></a>                  <span class="sa">f</span><span class="s2">&quot;node(s) (</span><span class="si">{</span><span class="n">before</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">after</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
-</span><span id="__span-0-271"><a id="__codelineno-0-271" name="__codelineno-0-271"></a>        <span class="k">else</span><span class="p">:</span>
-</span><span id="__span-0-272"><a id="__codelineno-0-272" name="__codelineno-0-272"></a>            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove_duplicate_nodes: no duplicates found &quot;</span>
-</span><span id="__span-0-273"><a id="__codelineno-0-273" name="__codelineno-0-273"></a>                  <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">before</span><span class="si">}</span><span class="s2"> nodes unchanged)&quot;</span><span class="p">)</span>
+</span><span id="__span-0-259"><a id="__codelineno-0-259" name="__codelineno-0-259"></a><span class="sd">    Node removal is **always** announced on stdout — there is no</span>
+</span><span id="__span-0-260"><a id="__codelineno-0-260" name="__codelineno-0-260"></a><span class="sd">    silent mode. Deleting nodes from a meshed model is a</span>
+</span><span id="__span-0-261"><a id="__codelineno-0-261" name="__codelineno-0-261"></a><span class="sd">    destructive operation; the visibility floor is intentional so</span>
+</span><span id="__span-0-262"><a id="__codelineno-0-262" name="__codelineno-0-262"></a><span class="sd">    that an unexpected dedup never hides in a long pipeline log.</span>
+</span><span id="__span-0-263"><a id="__codelineno-0-263" name="__codelineno-0-263"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-264"><a id="__codelineno-0-264" name="__codelineno-0-264"></a>    <span class="n">before</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">getNodes</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span>
+</span><span id="__span-0-265"><a id="__codelineno-0-265" name="__codelineno-0-265"></a>    <span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">removeDuplicateNodes</span><span class="p">()</span>
+</span><span id="__span-0-266"><a id="__codelineno-0-266" name="__codelineno-0-266"></a>    <span class="n">after</span>  <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">gmsh</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">getNodes</span><span class="p">()[</span><span class="mi">0</span><span class="p">])</span>
+</span><span id="__span-0-267"><a id="__codelineno-0-267" name="__codelineno-0-267"></a>    <span class="n">removed</span> <span class="o">=</span> <span class="n">before</span> <span class="o">-</span> <span class="n">after</span>
+</span><span id="__span-0-268"><a id="__codelineno-0-268" name="__codelineno-0-268"></a>    <span class="k">if</span> <span class="n">removed</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+</span><span id="__span-0-269"><a id="__codelineno-0-269" name="__codelineno-0-269"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove_duplicate_nodes: merged </span><span class="si">{</span><span class="n">removed</span><span class="si">}</span><span class="s2"> &quot;</span>
+</span><span id="__span-0-270"><a id="__codelineno-0-270" name="__codelineno-0-270"></a>              <span class="sa">f</span><span class="s2">&quot;node(s) (</span><span class="si">{</span><span class="n">before</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">after</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</span><span id="__span-0-271"><a id="__codelineno-0-271" name="__codelineno-0-271"></a>    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-0-272"><a id="__codelineno-0-272" name="__codelineno-0-272"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove_duplicate_nodes: no duplicates found &quot;</span>
+</span><span id="__span-0-273"><a id="__codelineno-0-273" name="__codelineno-0-273"></a>              <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">before</span><span class="si">}</span><span class="s2"> nodes unchanged)&quot;</span><span class="p">)</span>
 </span><span id="__span-0-274"><a id="__codelineno-0-274" name="__codelineno-0-274"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_mesh</span><span class="o">.</span><span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;remove_duplicate_nodes() removed=</span><span class="si">{</span><span class="n">removed</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </span><span id="__span-0-275"><a id="__codelineno-0-275" name="__codelineno-0-275"></a>    <span class="k">return</span> <span class="bp">self</span>
 </span></code></pre></div></td></tr></table></div>
