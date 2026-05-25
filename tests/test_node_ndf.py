@@ -683,3 +683,393 @@ def test_composite_list_and_dunders(g):
     rep = repr(g.node_ndf)
     assert "NodeNDFComposite" in rep
     assert "default" in rep
+
+
+# =====================================================================
+# 12. S2 emit-side wiring (ADR 0033)
+# =====================================================================
+# Each test exercises one of the documented S2 contract points:
+#   12.1 mixed-ndf shell-on-solid emit (headline use case)
+#   12.2 no-overrides byte-identical emit
+#   12.3 apeSees.model() validator raises BridgeError
+#   12.4 OpenSeesModel.from_h5() validator raises BridgeError
+#   12.5 OpenSeesModel.from_compose_buffers() validator raises BridgeError
+#   12.6 H5 round-trip preserves per-node ndf
+#   12.7 from_msh emits with envelope (no -ndf tokens)
+#   12.8 phantom nodes still emit ndf=6 under the new predicate
+
+def _capture_owned_node_calls(fem):
+    """Drive ``apeSees(fem).build().emit(RecordingEmitter())`` and
+    return only the owned-node calls keyed by tag.
+
+    Returns ``{tag: kwargs}`` for every ``node()`` call captured —
+    excludes phantom-emit calls (they sit in the constraints pass,
+    which fires AFTER element/node emission for the FEM's own nodes).
+    The headline S2 contract is "broker per-node ndf travels to the
+    emitted node call"; this helper isolates that surface.
+    """
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    ops = apeSees(fem)
+    # Use ndf=6 so the envelope covers any per-node 6 the user declared.
+    ops.model(ndm=3, ndf=6)
+    bm = ops.build()
+    rec = RecordingEmitter()
+    bm.emit(rec)
+    # The bridge emits FEM-owned nodes first (no MP-constraint pass on
+    # this minimal fixture); collect the ``node()`` calls keyed by tag.
+    owned: dict[int, dict] = {}
+    for name, args, kwargs in rec.calls:
+        if name != "node":
+            continue
+        owned[int(args[0])] = kwargs
+    return owned
+
+
+def test_emit_mixed_ndf_shell_on_solid_flat(g):
+    """Headline S2 use case — mixed-ndf model emits per-node ``-ndf K``.
+
+    Build a solid box with a top-face PG, declare the top face as
+    ``ndf=6`` (shell-like) and the rest as ``ndf=3`` (solid-like).
+    The owned-node emit pass must source the ndf from the broker:
+    top-face nodes get ``ndf=6``, every other node gets ``ndf=3``.
+    """
+    top_tag, _ = _build_two_box_model(g)
+    g.node_ndf.set("Top", ndf=6)
+    g.node_ndf.set_default(ndf=3)
+
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    top_nodes = _top_node_ids(top_tag)
+    assert top_nodes, "top face must carry at least one mesh node"
+
+    owned = _capture_owned_node_calls(fem)
+
+    # Every FEM node must have been emitted exactly once.
+    expected_tags = {int(t) for t in fem.nodes.ids}
+    assert set(owned.keys()) == expected_tags, (
+        f"emit missed nodes: expected {expected_tags}, got {set(owned.keys())}"
+    )
+
+    for nid, kwargs in owned.items():
+        expected = 6 if nid in top_nodes else 3
+        assert kwargs.get("ndf") == expected, (
+            f"node {nid}: expected emitted ndf={expected}, got {kwargs!r}"
+        )
+
+
+def test_emit_no_overrides_byte_identical(g):
+    """A uniform-ndf model with no ``g.node_ndf`` calls emits NO per-node
+    ``-ndf`` overrides — the envelope from ``apeSees.model(ndf=K)``
+    supplies every node's DOF count.
+
+    Locks down the S2 backcompat promise: existing scripts that never
+    touched ``g.node_ndf`` produce byte-identical output (no spurious
+    ``-ndf`` tokens added to owned-node emit).  String-search on the
+    captured emitter output for the absence of ``-ndf``.
+    """
+    # Build a uniform-ndf model.  Crucially: NO g.node_ndf calls.
+    g.model.geometry.add_box(0.0, 0.0, 0.0, 10.0, 10.0, 10.0, label='Body')
+    g.model.sync()
+    g.mesh.sizing.set_global_size(5.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+    owned = _capture_owned_node_calls(fem)
+    assert owned, "fixture must emit at least one owned node"
+
+    # No per-node -ndf overrides — every node call has empty kwargs.
+    for nid, kwargs in owned.items():
+        assert "ndf" not in kwargs, (
+            f"S2 backcompat regressed: node {nid} emitted with ndf={kwargs['ndf']} "
+            f"despite no g.node_ndf declarations.  Envelope must win for "
+            f"undeclared nodes."
+        )
+
+    # String-search on a real py-deck emission for the same fixture.
+    # The model directive itself carries ``-ndf`` (``ops.model('basic',
+    # '-ndm', 3, '-ndf', 3)``) which is correct — we only assert that
+    # no PER-NODE override is emitted (``ops.node(..., '-ndf', K)`` or
+    # ``-ndf K`` tail on a node line).
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.emitter.py import PyEmitter
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    bm = ops.build()
+    emitter = PyEmitter()
+    bm.emit(emitter)
+    node_lines = [ln for ln in emitter.lines() if "ops.node(" in ln]
+    assert node_lines, "fixture must produce at least one ops.node line"
+    for line in node_lines:
+        assert "-ndf" not in line, (
+            f"S2 backcompat regressed: node line contains -ndf override "
+            f"despite no g.node_ndf declarations.  Line: {line!r}"
+        )
+
+
+def test_validator_at_apesees_model_raises_bridgeerror(g):
+    """``apeSees(fem).model(ndm=3, ndf=3)`` after declaring
+    ``g.node_ndf.set('Top', ndf=6)`` raises ``BridgeError`` naming
+    the offending node and the fix.  Validator site 1 of 3.
+    """
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    top_tag, _ = _build_two_box_model(g)
+    g.node_ndf.set("Top", ndf=6)
+    g.node_ndf.set_default(ndf=3)
+
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    ops = apeSees(fem)
+    # ndf=3 envelope cannot host a node declared with ndf=6.
+    with pytest.raises(BridgeError) as exc_info:
+        ops.model(ndm=3, ndf=3)
+    msg = str(exc_info.value)
+    assert "ndf=6" in msg, f"BridgeError must name the declared ndf: {msg!r}"
+    assert "ndf=" in msg and ("raise" in msg or "model" in msg), (
+        f"BridgeError must name the fix (raise envelope ndf): {msg!r}"
+    )
+
+
+def test_validator_at_from_h5_raises_bridgeerror(g, tmp_path: Path):
+    """``OpenSeesModel.from_h5(path)`` raises ``BridgeError`` when the
+    stored envelope is smaller than the largest per-node declaration.
+    Validator site 2 of 3 — catches hand-mutated or hand-built H5
+    files that bypass ``apeSees.model``.
+    """
+    from apeGmsh.opensees import apeSees, OpenSeesModel
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    # Build + write a valid mixed-ndf model (envelope=6 covers per-node 6).
+    top_tag, _ = _build_two_box_model(g)
+    g.node_ndf.set("Top", ndf=6)
+    g.node_ndf.set_default(ndf=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    out = tmp_path / "mixed_ndf_model.h5"
+    ops.h5(str(out))
+
+    # Hand-mutate /meta.ndf down to 3 — the stored per-node ndf=6
+    # entries now exceed the envelope.  The bridge stamps the envelope
+    # at /meta.ndf (h5_reader.open reads it from there).
+    with h5py.File(out, "r+") as f:
+        assert "meta" in f, "writer regressed: /meta missing"
+        f["meta"].attrs["ndf"] = 3
+
+    with pytest.raises(BridgeError) as exc_info:
+        OpenSeesModel.from_h5(str(out))
+    assert "ndf=" in str(exc_info.value)
+
+
+def test_validator_at_from_compose_buffers_raises_bridgeerror(g):
+    """``OpenSeesModel.from_compose_buffers`` raises ``BridgeError``
+    when the H5Emitter's envelope is below the broker's per-node max.
+    Validator site 3 of 3 — programmatic compose flows that bypass
+    ``apeSees.model``.
+    """
+    from apeGmsh.opensees import OpenSeesModel
+    from apeGmsh.opensees._internal.build import BridgeError
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+
+    top_tag, _ = _build_two_box_model(g)
+    g.node_ndf.set("Top", ndf=6)
+    g.node_ndf.set_default(ndf=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+    # Hand-build an emitter with the *wrong* envelope (3 < the broker's 6).
+    emitter = H5Emitter()
+    emitter.model(ndm=3, ndf=3)  # < max(broker._ndf) = 6
+
+    with pytest.raises(BridgeError) as exc_info:
+        OpenSeesModel.from_compose_buffers(
+            fem, emitter, snapshot_id="test",
+        )
+    assert "ndf=" in str(exc_info.value)
+
+
+def test_h5_round_trip_preserves_per_node_ndf(g, tmp_path: Path):
+    """Build a mixed-ndf FEM, write H5, read back via ``OpenSeesModel``,
+    re-emit via ``_replay_into``.  The per-node ndf must survive the
+    round-trip — query ``fem.nodes.ndf_for(tag)`` on the rehydrated
+    broker and confirm shell-node tags still resolve to 6.
+    """
+    from apeGmsh.opensees import apeSees, OpenSeesModel
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+
+    top_tag, _ = _build_two_box_model(g)
+    g.node_ndf.set("Top", ndf=6)
+    g.node_ndf.set_default(ndf=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    top_nodes = _top_node_ids(top_tag)
+    assert top_nodes
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    out = tmp_path / "mixed_ndf_round_trip.h5"
+    ops.h5(str(out))
+
+    # Read back as OpenSeesModel.
+    om = OpenSeesModel.from_h5(str(out))
+
+    # 1. Broker survives the round-trip with per-node ndf intact.
+    for nid in top_nodes:
+        assert om._fem.nodes.ndf_for(int(nid)) == 6, (
+            f"shell node {nid} lost its ndf=6 across H5 round-trip"
+        )
+
+    # 2. Re-emit via _populate_emitter → _replay_into and confirm
+    #    per-node ``-ndf K`` overrides survive.
+    rec = RecordingEmitter()
+    om._populate_emitter(rec)
+    emitted_ndf: dict[int, int | None] = {}
+    for name, args, kwargs in rec.calls:
+        if name == "node":
+            emitted_ndf[int(args[0])] = kwargs.get("ndf")
+    for nid in top_nodes:
+        assert emitted_ndf.get(int(nid)) == 6, (
+            f"shell node {nid} re-emitted with ndf={emitted_ndf.get(int(nid))}, "
+            f"expected 6.  Tuple widening in _populate_emitter regressed."
+        )
+
+
+def test_from_msh_emits_with_envelope(tmp_path: Path):
+    """Save a model to ``.msh``, load via ``from_msh``,
+    ``apeSees(fem).model(ndm=3, ndf=6)``.  ``from_msh`` leaves
+    ``_ndf=None`` (S2 design) so every ``ndf_for`` call raises
+    ``LookupError`` and the emit-side ``try/except`` absorbs it,
+    falling back to the envelope.  The emitted deck must carry NO
+    per-node ``-ndf`` tokens — every node inherits the envelope.
+
+    Does NOT take the ``g`` fixture: ``FEMData.from_msh`` opens its
+    own gmsh session.
+    """
+    from apeGmsh import apeGmsh
+    from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.opensees import apeSees
+    from apeGmsh.opensees.emitter.py import PyEmitter
+
+    msh_path = tmp_path / "box.msh"
+    with apeGmsh(model_name="from_msh_envelope_src", verbose=False) as g:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, 10.0, 10.0, 10.0, label='Body')
+        g.model.sync()
+        g.mesh.sizing.set_global_size(5.0)
+        g.mesh.generation.generate(dim=3)
+        import gmsh
+        gmsh.write(str(msh_path))
+
+    fem = FEMData.from_msh(str(msh_path), dim=3)
+    assert fem.nodes._ndf is None  # S2 design — empty channel.
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)
+    bm = ops.build()
+    emitter = PyEmitter()
+    bm.emit(emitter)
+    # Per-node ``-ndf`` overrides must be absent (model directive's
+    # ``-ndf 6`` is the envelope and is correct).  Check only node
+    # lines: ``ops.node(...)``.
+    node_lines = [ln for ln in emitter.lines() if "ops.node(" in ln]
+    assert node_lines, "from_msh fixture must emit owned nodes"
+    for line in node_lines:
+        assert "-ndf" not in line, (
+            f"from_msh path regressed: node line contains -ndf override "
+            f"despite _ndf=None broker (envelope must win).  Line: "
+            f"{line!r}"
+        )
+
+
+def test_phantom_nodes_unchanged_after_s2(g):
+    """The phantom-node emit pass still produces ``ops.node(tag, ...,
+    ndf=6)`` for every synthesized phantom, regardless of the FEM's
+    per-node ndf channel.  This is the consumer-facing regression
+    test for the side-channel → predicate-set refactor (ADR 0033):
+    the new ``is_phantom_node(emitter, tag)`` predicate must
+    correctly identify phantoms, AND the H5 emitter must still record
+    them in ``/opensees/constraints/phantom_node_tags``.
+
+    Uses the existing two-column fixture from
+    ``test_constraint_emission_phase7b.py`` (a hand-built
+    NodeToSurfaceRecord with deterministic phantom tags 200, 201).
+    """
+    from typing import cast, Any
+
+    import numpy as np
+
+    from apeGmsh._kernel.records._constraints import (
+        NodePairRecord, NodeToSurfaceRecord,
+    )
+    from apeGmsh._kernel.records._kinds import ConstraintKind
+    from apeGmsh.opensees._internal.build import emit_mp_constraints
+    from apeGmsh.opensees._internal.tag_resolution import is_phantom_node
+    from apeGmsh.opensees.emitter.h5 import H5Emitter
+    from apeGmsh.opensees.emitter.recording import RecordingEmitter
+    from tests.opensees.fixtures.fem_stub import make_two_column_frame
+
+    fem = make_two_column_frame()
+    n2s = NodeToSurfaceRecord(
+        kind=ConstraintKind.NODE_TO_SURFACE,
+        master_node=100,
+        slave_nodes=[2, 4],
+        phantom_nodes=[200, 201],
+        phantom_coords=np.array([
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ]),
+        rigid_link_records=[
+            NodePairRecord(
+                kind=ConstraintKind.RIGID_BEAM,
+                master_node=100, slave_node=200,
+            ),
+            NodePairRecord(
+                kind=ConstraintKind.RIGID_BEAM,
+                master_node=100, slave_node=201,
+            ),
+        ],
+        equal_dof_records=[
+            NodePairRecord(
+                kind=ConstraintKind.EQUAL_DOF,
+                master_node=200, slave_node=2, dofs=[1, 2, 3],
+            ),
+            NodePairRecord(
+                kind=ConstraintKind.EQUAL_DOF,
+                master_node=201, slave_node=4, dofs=[1, 2, 3],
+            ),
+        ],
+        dofs=[1, 2, 3],
+    )
+    fem.add_node_constraints([n2s])
+
+    # 1. RecordingEmitter — phantom nodes emit with ndf=6.
+    rec = RecordingEmitter()
+    emit_mp_constraints(rec, cast(Any, fem))
+    phantom_emits = [
+        (args, kwargs)
+        for name, args, kwargs in rec.calls
+        if name == "node"
+    ]
+    assert len(phantom_emits) == 2
+    assert phantom_emits[0] == ((200, 0.0, 0.0, 1.0), {"ndf": 6})
+    assert phantom_emits[1] == ((201, 1.0, 0.0, 1.0), {"ndf": 6})
+
+    # 2. is_phantom_node predicate — must classify phantoms correctly
+    #    after emit_mp_constraints has installed the set.
+    assert is_phantom_node(rec, 200) is True
+    assert is_phantom_node(rec, 201) is True
+    assert is_phantom_node(rec, 100) is False  # master, not phantom
+    assert is_phantom_node(rec, 999) is False  # unknown tag
+
+    # 3. H5 emitter — phantoms land in /opensees/constraints/phantom_node_tags.
+    h5e = H5Emitter()
+    h5e.model(ndm=3, ndf=3)
+    # Pre-emit FEM-owned nodes (regulars carry no ndf=6 here).
+    for nid, xyz in zip(fem.nodes.ids, fem.nodes.coords):
+        h5e.node(int(nid), float(xyz[0]), float(xyz[1]), float(xyz[2]))
+    # Then drive MP constraints — populates the phantom predicate set
+    # AND emits the phantom nodes.
+    emit_mp_constraints(h5e, cast(Any, fem))
+    # The H5 emitter accumulates phantom_node_tags via the predicate.
+    assert sorted(h5e._phantom_node_tags) == [200, 201], (
+        f"phantom_node_tags must contain only the phantom tags 200, 201; "
+        f"got {h5e._phantom_node_tags}"
+    )
