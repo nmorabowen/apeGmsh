@@ -668,7 +668,7 @@ class BuiltModel:
         overrides: "dict[tuple[int, int], int] | None" = None,
         base_resolver: object = None,
     ) -> None:
-        """Phase SSI-2.A / 2.B: emit each stage block in registration order.
+        """Phase SSI-2.A / 2.B / 2.D: emit each stage block in registration order.
 
         Per stage:
 
@@ -680,18 +680,28 @@ class BuiltModel:
            ``element`` commands for elements whose pg is activated
            by this stage.  Tags come from the global ``element_plan``
            (pre-allocated upfront so cross-stage tag identity holds).
-        4. **(Phase SSI-2.B)** ``domain_change()`` — if any topology
-           was added in this stage, tell OpenSees to rebuild its
-           DOF map before the analysis chain emits.
-        5. Stage's initial_stress records (parameter declarations +
+        4. **(Phase SSI-2.D PR-B)** Stage-bound ``fix`` + ``mass`` —
+           emit per-record ``emitter.fix(node, *dofs)`` and
+           ``emitter.mass(node, *values)`` for entries in
+           ``stage.fix_records`` / ``stage.mass_records``.  Validators
+           V1 / V2 (PR-A) already gated these at build time.  PR-C
+           will add stage-bound ``region`` emit at this same slot.
+        5. ``domain_change()`` — fires if this stage added ANY
+           topology OR any stage-bound BC (Phase SSI-2.D unifies the
+           gate).  Single barrier per stage; the next analysis-chain
+           bind post-``wipeAnalysis`` reads the Domain fresh so the
+           dirty flag is decorative for chain rebuild but load-
+           bearing for any in-place mid-stage mutation we may add
+           later.
+        6. Stage's initial_stress records (parameter declarations +
            step_hook_ramp procs + addToParameter calls, exactly the
            same shape as the Phase SSI-1 non-staged global emit).
-        6. Analysis-chain primitives — emit each via its ``_emit``
+        7. Analysis-chain primitives — emit each via its ``_emit``
            (the bridge skipped these in the pre_element pass).
-        7. ``emitter.analyze(steps=, dt=)`` — auto-wraps with hook
+        8. ``emitter.analyze(steps=, dt=)`` — auto-wraps with hook
            dispatcher calls if any step_hook_ramp registered this
            stage (the emitter tracks ``_step_hooks_registered``).
-        8. ``stage_close()`` — loadConst + wipeAnalysis + hook clear.
+        9. ``stage_close()`` — loadConst + wipeAnalysis + hook clear.
 
         Single-partition dispatch arm.  For MP-partitioned models with
         stages, the dispatch goes through
@@ -772,11 +782,30 @@ class BuiltModel:
                     else:
                         spec._emit(emitter, ele_tag)
 
-            # 4. domainChange — only if this stage added topology.
-            if owned_nodes or owned_specs:
+            # 4. Stage-bound BCs (Phase SSI-2.D PR-B): fix + mass.
+            # Per-record fan-out via _resolve_node_target (same as the
+            # global path).  Records emit in registration order.  PR-C
+            # will insert stage-bound region emit at this same slot,
+            # between mass and the unified domain_change below.
+            for rec in stage.fix_records:
+                for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                    emitter.fix(int(node_tag), *rec.dofs)
+            for rec in stage.mass_records:
+                for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                    emitter.mass(int(node_tag), *rec.values)
+
+            # 5. domainChange — unified gate: fires if this stage added
+            # ANY topology OR any stage-bound BC.  Single barrier per
+            # stage.  PR-C extends the gate with ``stage.region_records``.
+            if (
+                owned_nodes
+                or owned_specs
+                or stage.fix_records
+                or stage.mass_records
+            ):
                 emitter.domain_change()
 
-            # 5. Initial stress.
+            # 6. Initial stress.
             if stage.initial_stress_records:
                 name_to_param_tags = emit_initial_stress_global(
                     stage.initial_stress_records, emitter, tags,
@@ -788,7 +817,7 @@ class BuiltModel:
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
-            # 6. Analysis chain.
+            # 7. Analysis chain.
             for chain in (
                 stage.constraints, stage.numberer, stage.system,
                 stage.test, stage.algorithm, stage.integrator,
@@ -798,10 +827,10 @@ class BuiltModel:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
 
-            # 7. Analyze loop (auto-wraps with hook dispatcher calls).
+            # 8. Analyze loop (auto-wraps with hook dispatcher calls).
             emitter.analyze(steps=stage.n_increments, dt=stage.dt)
 
-            # 8. Stage close — loadConst + wipeAnalysis + hook clear.
+            # 9. Stage close — loadConst + wipeAnalysis + hook clear.
             emitter.stage_close()
 
     # -- Partitioned emit path (ADR 0027) ---------------------------------
@@ -1154,15 +1183,20 @@ class BuiltModel:
         overrides: "dict[tuple[int, int], int] | None",
         base_resolver: object,
     ) -> None:
-        """Phase SSI-2.C: emit each stage block in registration order under MP.
+        """Phase SSI-2.C / 2.D: emit each stage block in registration order under MP.
 
         Per stage:
 
         1. ``stage_open(name)``.
-        2. **(only if the stage activates topology)** Per-rank loop:
-           ``partition_open(rank)``; emit owned stage-bound nodes + owned
-           stage-bound elements; ``partition_close()``. Then a single
-           ``domain_change()`` global so every rank rebuilds its DOF map.
+        2. **(only if the stage activates topology OR carries stage-
+           bound BCs — Phase SSI-2.D unified gate)** Per-rank loop:
+           ``partition_open(rank)``; emit owned stage-bound nodes +
+           owned stage-bound elements + per-rank-filtered stage-bound
+           ``fix`` / ``mass`` lines (Phase SSI-2.D PR-B); ``partition_close()``.
+           Then a single GLOBAL ``domain_change()`` so every rank
+           rebuilds its DOF map.  Per-rank brackets are SKIPPED for
+           ranks with no content (Phase SSI-2.D) so the Py emitter
+           never produces an empty ``if getPID() == K:`` block.
         3. **(only if the stage carries initial-stress records)**
            Initial-stress globals (parameter declarations + step_hook
            procs) emit GLOBALLY, then a per-rank loop emits the
@@ -1208,14 +1242,56 @@ class BuiltModel:
             has_activation = bool(
                 owned_nodes_this_stage or owned_specs_this_stage
             )
+            has_bcs = bool(
+                stage.fix_records or stage.mass_records
+            )
 
-            # 2. Per-rank topology emit for stage-owned nodes + elements.
-            if has_activation:
+            # Phase SSI-2.D PR-B: pre-resolve stage-bound BC targets
+            # ONCE (rank-independent), then filter per rank below.
+            # Each entry is (record, resolved_node_id).
+            fix_targets: list[tuple[FixRecord, int]] = [
+                (rec, int(nid))
+                for rec in stage.fix_records
+                for nid in self._resolve_node_target(rec.pg, rec.nodes)
+            ]
+            mass_targets: list[tuple[MassRecord, int]] = [
+                (rec, int(nid))
+                for rec in stage.mass_records
+                for nid in self._resolve_node_target(rec.pg, rec.nodes)
+            ]
+
+            # 2. Per-rank topology + BC emit.  Unified gate (Phase
+            # SSI-2.D): open the rank's bracket if it has ANY content
+            # (owned nodes, owned elements, or owned BCs).  Empty-
+            # bracket ranks are skipped so the Py emitter never
+            # produces an empty ``if getPID() == K:`` block.
+            if has_activation or has_bcs:
                 for rank, part in enumerate(partitions):
                     rank_owned = {int(n) for n in part.node_ids}
                     rank_stage_nodes = sorted(
                         rank_owned & owned_nodes_this_stage
                     )
+                    rank_fix = [
+                        (rec, nid) for rec, nid in fix_targets
+                        if nid in rank_owned
+                    ]
+                    rank_mass = [
+                        (rec, nid) for rec, nid in mass_targets
+                        if nid in rank_owned
+                    ]
+                    rank_has_elements = any(
+                        element_owner.get(int(eid)) == rank
+                        for _spec, sub in owned_specs_this_stage
+                        for eid, _conn, _tag in sub
+                    )
+                    rank_has_content = bool(
+                        rank_stage_nodes
+                        or rank_has_elements
+                        or rank_fix
+                        or rank_mass
+                    )
+                    if not rank_has_content:
+                        continue
                     emitter.partition_open(rank)
                     try:
                         for nid in rank_stage_nodes:
@@ -1246,11 +1322,19 @@ class BuiltModel:
                                 partition_rank=rank,
                                 element_owner=element_owner,
                             )
+                        # Phase SSI-2.D PR-B: per-rank stage-bound BCs.
+                        # Targets pre-resolved above; per-rank filter
+                        # via ``rank_owned`` intersection mirrors the
+                        # existing INV-4 fan-out convention.
+                        for rec, nid in rank_fix:
+                            emitter.fix(nid, *rec.dofs)
+                        for rec, nid in rank_mass:
+                            emitter.mass(nid, *rec.values)
                     finally:
                         emitter.partition_close()
 
                 # 3. Global ``domain_change`` — rebuild DOF map on every
-                # rank after topology activation.  Single global call;
+                # rank after topology+BC activation.  Single global call;
                 # OpenSeesMP executes it locally on each rank.
                 emitter.domain_change()
 
@@ -2394,6 +2478,45 @@ class apeSees:
     def fem(self) -> "FEMData":
         return self._fem
 
+    # -- Read-only union views over global + stage-bound BC pools --------
+    # Phase SSI-2.D PR-B introspection symmetry (Red #19).  Tooling
+    # that inspects ``bridge._fix_records`` to count fix declarations
+    # would otherwise silently miss stage-bound fixes registered via
+    # ``s.fix(...)``.  These properties return frozen tuples carrying
+    # the union, with each entry tagged by its origin tier.
+
+    @property
+    def all_fix_records(self) -> "tuple[tuple[str, FixRecord], ...]":
+        """All fix records — global + every stage's pool.
+
+        Returns a tuple of ``(origin, record)`` pairs where ``origin``
+        is either ``"global"`` or ``f"stage {stage.name!r}"``.  Order:
+        global pool first (in registration order), then each stage in
+        ``stage_records`` order, then each record within a stage in
+        registration order.
+        """
+        out: list[tuple[str, FixRecord]] = [
+            ("global", rec) for rec in self._fix_records
+        ]
+        for stage in self._stage_records:
+            origin = f"stage {stage.name!r}"
+            out.extend((origin, rec) for rec in stage.fix_records)
+        return tuple(out)
+
+    @property
+    def all_mass_records(self) -> "tuple[tuple[str, MassRecord], ...]":
+        """All mass records — global + every stage's pool.
+
+        Same shape as :attr:`all_fix_records`.
+        """
+        out: list[tuple[str, MassRecord]] = [
+            ("global", rec) for rec in self._mass_records
+        ]
+        for stage in self._stage_records:
+            origin = f"stage {stage.name!r}"
+            out.extend((origin, rec) for rec in stage.mass_records)
+        return tuple(out)
+
     # -- Flat methods ----------------------------------------------------
 
     def model(self, *, ndm: int, ndf: int) -> None:
@@ -3316,6 +3439,11 @@ class _StageBuilder:
         "_bridge", "_name",
         "_initial_stress_records",
         "_activated_pgs",
+        # Phase SSI-2.D (PR-B): stage-bound BC pools.  PR-C will add
+        # ``_region_records`` and ``_recorder_specs``; the StageRecord
+        # dataclass already carries all four (default empty).
+        "_fix_records",
+        "_mass_records",
         "_test", "_algorithm", "_integrator",
         "_constraints", "_numberer", "_system", "_analysis",
         "_n_increments", "_dt",
@@ -3327,6 +3455,11 @@ class _StageBuilder:
         self._name = name
         self._initial_stress_records: list[InitialStressRecord] = []
         self._activated_pgs: list[str] = []
+        # Phase SSI-2.D (PR-B): stage-bound BC pools — populated by
+        # :meth:`fix` and :meth:`mass`.  ``_region_records`` and
+        # ``_recorder_specs`` slots land in PR-C.
+        self._fix_records: list[FixRecord] = []
+        self._mass_records: list[MassRecord] = []
         self._test: Primitive | None = None
         self._algorithm: Primitive | None = None
         self._integrator: Primitive | None = None
@@ -3384,6 +3517,9 @@ class _StageBuilder:
             n_increments=int(self._n_increments),
             dt=None if self._dt is None else float(self._dt),
             activated_pgs=tuple(self._activated_pgs),
+            fix_records=tuple(self._fix_records),
+            mass_records=tuple(self._mass_records),
+            # PR-C populates region_records + recorder_specs.
         )
         self._bridge._stage_records.append(record)
         return False
@@ -3418,6 +3554,104 @@ class _StageBuilder:
             f"Stage {self._name!r}.add: unsupported record type "
             f"{type(record).__name__!r}.  Phase SSI-2.A supports "
             "InitialStressRecord only; future versions may extend."
+        )
+
+    def fix(
+        self,
+        *,
+        pg: str | None = None,
+        nodes: "Iterable[int | Node] | None" = None,
+        dofs: tuple[int, ...],
+    ) -> None:
+        """Apply homogeneous SP constraints (``fix``) bound to this stage.
+
+        Signature mirrors :meth:`apeSees.fix` verbatim: exactly one of
+        ``pg`` / ``nodes`` must be supplied; ``nodes`` accepts a mix
+        of plain integer tags and :class:`Node` instances; ``dofs``
+        is a tuple of 0/1 flags per ndf.  The bridge expands ``pg``
+        to a per-node fan-out at emit time, same as the global
+        :meth:`apeSees.fix` path.
+
+        Stage-bound fix lines emit **inside this stage's block**, after
+        the stage's topology (nodes + elements activated via
+        :meth:`activate`) and before the stage's initial-stress
+        records.  Per-rank fan-out under MP follows the same INV-4
+        rules as the global path: each rank only emits ``fix`` for
+        nodes it owns.
+
+        Validators V1 / V2 (Phase SSI-2.D PR-A) gate this at build
+        time — see :meth:`apeSees._run_staged_bc_validators`.
+
+        Parameters
+        ----------
+        pg
+            Physical group whose nodes receive the fix.  XOR with
+            ``nodes``.
+        nodes
+            Explicit list of node tags (or :class:`Node` instances).
+            XOR with ``pg``.
+        dofs
+            ``ndf``-length tuple of 0/1 flags — ``1`` means fix that
+            DOF, ``0`` leaves it free.
+
+        Raises
+        ------
+        ValueError
+            If both or neither of ``pg`` / ``nodes`` is supplied.
+        """
+        if (pg is None) == (nodes is None):
+            raise ValueError(
+                f"Stage {self._name!r}.fix: supply exactly one of "
+                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
+            )
+        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        self._fix_records.append(
+            FixRecord(pg=pg, nodes=nodes_tuple, dofs=tuple(dofs)),
+        )
+
+    def mass(
+        self,
+        *,
+        pg: str | None = None,
+        nodes: "Iterable[int | Node] | None" = None,
+        values: tuple[float, ...],
+    ) -> None:
+        """Attach lumped nodal mass bound to this stage.
+
+        Signature mirrors :meth:`apeSees.mass` verbatim.  Stage-bound
+        mass lines emit alongside stage-bound fix lines (see
+        :meth:`fix` for the emit-position rationale).
+
+        OpenSees ``setMass`` silently OVERWRITES a node's mass on
+        repeated calls.  Validator V2 (Phase SSI-2.D PR-A) refuses
+        the same node receiving mass in more than one tier (global +
+        any stage, or stage A + stage B) at build time so the
+        physics change is not silent.
+
+        Parameters
+        ----------
+        pg
+            Physical group whose nodes receive the mass.  XOR with
+            ``nodes``.
+        nodes
+            Explicit list of node tags (or :class:`Node` instances).
+            XOR with ``pg``.
+        values
+            ``ndf``-length tuple of mass values per DOF.
+
+        Raises
+        ------
+        ValueError
+            If both or neither of ``pg`` / ``nodes`` is supplied.
+        """
+        if (pg is None) == (nodes is None):
+            raise ValueError(
+                f"Stage {self._name!r}.mass: supply exactly one of "
+                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
+            )
+        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        self._mass_records.append(
+            MassRecord(pg=pg, nodes=nodes_tuple, values=tuple(values)),
         )
 
     def activate(self, *, pgs: "Iterable[str]") -> None:
