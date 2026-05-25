@@ -1474,6 +1474,8 @@ def emit_mp_constraints(
     ``elements.constraints`` accessors — broker constraints are
     purely additive on top of any other bridge state.
     """
+    from .tag_resolution import set_phantom_node_tags
+
     nodes = getattr(fem, "nodes", None)
     elements = getattr(fem, "elements", None)
     node_constraints = (
@@ -1484,6 +1486,20 @@ def emit_mp_constraints(
         if elements is not None
         else None
     )
+
+    # -------------------------------------------------------------------
+    # 0. Pre-load the phantom-tag predicate on the emitter so the H5
+    #    emitter can classify subsequent ``node()`` calls (ADR 0033 —
+    #    stateless replacement for the prior phantom-mode flag).  The
+    #    set is computed ONCE from ``NodeToSurfaceRecord.phantom_nodes``
+    #    and never mutated; phantom tags are disjoint from real broker
+    #    tags so this is safe to install before any emission.
+    # -------------------------------------------------------------------
+    if node_constraints is not None:
+        phantom_tags = set(
+            _gather_phantom_nodes(node_constraints).keys()
+        )
+        set_phantom_node_tags(emitter, phantom_tags)
 
     # -------------------------------------------------------------------
     # 1. Phantom-node pre-step — emit synthesized phantom nodes BEFORE
@@ -1552,35 +1568,31 @@ def _emit_phantom_nodes(
     records — paranoid-cheap; the resolver maintains a single counter,
     but the set check is one line.
 
-    Sets the H5 emitter's ``phantom_node_mode`` side-channel for the
-    duration of the per-tag fan-out so the H5 emitter classifies
-    every node call inside this loop as a phantom (S2 / ADR 0033 —
-    real broker nodes can also pass ``ndf=K`` now, so the explicit
-    flag replaces the old "``ndf is not None``" heuristic).
+    The H5 emitter's phantom-vs-real-broker discriminator is the
+    stateless :func:`is_phantom_node` predicate, pre-loaded on the
+    emitter by :func:`emit_mp_constraints` before this helper runs
+    (S2 / ADR 0033 — real broker nodes can also pass ``ndf=K`` now,
+    so the explicit predicate replaces the old "``ndf is not None``"
+    heuristic).  No flag flipping needed here.
     """
-    from .tag_resolution import set_phantom_node_mode
     n2s_iter = getattr(node_constraints, "node_to_surfaces", None)
     if n2s_iter is None:
         return
     seen: set[int] = set()
-    set_phantom_node_mode(emitter, True)
-    try:
-        for rec in n2s_iter():
-            coords = rec.phantom_coords
-            if coords is None:
+    for rec in n2s_iter():
+        coords = rec.phantom_coords
+        if coords is None:
+            continue
+        for tag, xyz in zip(rec.phantom_nodes, coords):
+            t = int(tag)
+            if t in seen:
                 continue
-            for tag, xyz in zip(rec.phantom_nodes, coords):
-                t = int(tag)
-                if t in seen:
-                    continue
-                seen.add(t)
-                x, y, z = (float(c) for c in xyz)
-                # Per-node ``-ndf 6`` override — phantoms are 6-DOF even
-                # when the surrounding slaves are 3-DOF (standard OpenSees
-                # idiom for mixed-ndf models).
-                emitter.node(t, x, y, z, ndf=6)
-    finally:
-        set_phantom_node_mode(emitter, False)
+            seen.add(t)
+            x, y, z = (float(c) for c in xyz)
+            # Per-node ``-ndf 6`` override — phantoms are 6-DOF even
+            # when the surrounding slaves are 3-DOF (standard OpenSees
+            # idiom for mixed-ndf models).
+            emitter.node(t, x, y, z, ndf=6)
 
 
 def _emit_rigid_links(
@@ -2283,7 +2295,7 @@ def emit_mp_constraints_partitioned(
        ASDEmbeddedNodeElement) so cross-rank text is byte-identical
        per INV-1.
     """
-    from .tag_resolution import set_phantom_node_mode
+    from .tag_resolution import set_phantom_node_tags
     nodes = getattr(fem, "nodes", None)
     elements = getattr(fem, "elements", None)
     node_constraints = (
@@ -2305,6 +2317,13 @@ def emit_mp_constraints_partitioned(
         else {}
     )
 
+    # Pre-load the phantom-tag predicate on the emitter (ADR 0033 —
+    # stateless replacement for the prior phantom-mode flag).
+    # Per-rank brokers see identical phantom tags (the resolver
+    # canonicalises across ranks per ADR 0027 INV-3), so this set is
+    # consistent across the OpenSeesMP fan-out.
+    set_phantom_node_tags(emitter, set(phantom_coords.keys()))
+
     # Collect which constraints will emit on this rank, plus all the
     # foreign-node tags they reference (replicate-on-both / replicate-
     # everywhere-with-a-slave rules from ADR 0027).
@@ -2323,13 +2342,9 @@ def emit_mp_constraints_partitioned(
     # Phantoms first (their tags are 6-DOF regardless of model ndf,
     # mirroring the unpartitioned phantom-node-first invariant within
     # this rank's block per ADR 0027 §"Phantom-node policy").
-    set_phantom_node_mode(emitter, True)
-    try:
-        for tag in sorted(plan.referenced_phantoms):
-            xyz = phantom_coords[tag]
-            emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
-    finally:
-        set_phantom_node_mode(emitter, False)
+    for tag in sorted(plan.referenced_phantoms):
+        xyz = phantom_coords[tag]
+        emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
     # Foreign nodes — per-node ndf via broker lookup; envelope
     # fallback on LookupError (S2 / ADR 0033).  OpenSeesMP per-rank
     # brokers carry identical ``_ndf`` arrays (lineage-folded per
