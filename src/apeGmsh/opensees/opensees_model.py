@@ -798,6 +798,15 @@ class OpenSeesModel:
         # declared via ``g.node_ndf`` (shell-on-solid).  ``ndf_for``
         # raises ``LookupError`` for undeclared nodes; we pass ``None``
         # in that case so the envelope ``ops.model(ndm, ndf=K)`` wins.
+        #
+        # Why widen the tuple instead of having ``_replay_into``
+        # consult the broker directly?  ``_replay_into`` is a
+        # FEM-agnostic free function that walks a typed-record graph;
+        # it does not (and should not) take a ``FEMData`` parameter.
+        # ``self._fem`` is reachable here at the OpenSeesModel
+        # boundary, so we resolve the per-node ndf at the lookup
+        # site and let the result travel in the tuple.  This keeps
+        # ``_replay_into`` decoupled from the broker.
         def _ndf_or_none(nid: int) -> int | None:
             try:
                 return int(self._fem.nodes.ndf_for(int(nid)))
