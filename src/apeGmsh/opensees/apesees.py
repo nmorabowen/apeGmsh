@@ -44,6 +44,7 @@ from ._internal.build import (
     emit_pattern_spec,
     emit_recorder_spec,
     emit_transform_specs,
+    expand_pg_to_elements,
     expand_pg_to_nodes,
     is_partitioned,
     topological_order,
@@ -325,6 +326,25 @@ class BuiltModel:
     initial_stress_records:  tuple[InitialStressRecord, ...] = ()
     stage_records:           tuple[StageRecord, ...] = ()
 
+    def _claimed_recorder_ids(self) -> "set[int]":
+        """``id(...)``-set of recorders claimed by stage builders
+        via ``s.recorder(spec)`` (Phase SSI-2.D PR-C).
+
+        Recorders in this set stay in ``self.primitives`` so their
+        allocated tag remains available via ``tag_for[id(p)]``, but
+        the global post-element recorder emit loop SKIPS them — each
+        is emitted instead inside its owning stage's block, after the
+        stage's regions and analysis chain, so the recorder line is
+        parsed by OpenSees AFTER the stage-bound regions it may
+        reference have been declared (recorder member lists cache at
+        parse time — TclRecorderCommands.cpp:276, 1331+).
+        """
+        return {
+            id(r)
+            for stage in self.stage_records
+            for r in stage.recorder_specs
+        }
+
     def emit(self, emitter: Emitter) -> int:
         """Drive ``emitter`` over the model, returning ``analyze``'s exit value.
 
@@ -518,8 +538,11 @@ class BuiltModel:
             )
             # Validate that BC pools (global + per-stage) respect the
             # ownership-tier rules — see ``_run_staged_bc_validators``
-            # for the H1 / V1 / V2 / V3 surface (Phase SSI-2.D).
-            self._run_staged_bc_validators(node_owner_stage)
+            # for the H1 / V1 / V2 / V3 / V4 surface (Phase SSI-2.D).
+            self._run_staged_bc_validators(
+                node_owner_stage,
+                element_owner_stage,
+            )
 
         # 1a. Nodes — emit every node from the FEM snapshot, EXCEPT
         # nodes bound to a stage (those emit inside that stage's
@@ -627,12 +650,17 @@ class BuiltModel:
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             )
 
-        # 8. Patterns + recorders.
+        # 8. Patterns + recorders.  Phase SSI-2.D PR-C: recorders
+        # claimed by ``s.recorder(spec)`` are SKIPPED here — they
+        # emit inside their owning stage's block.
+        claimed_recorder_ids = self._claimed_recorder_ids()
         for p in post_element:
             tag = self.tag_for[id(p)]
             if isinstance(p, Pattern):
                 emit_pattern_spec(p, emitter, tag, self.fem)
             elif isinstance(p, Recorder):
+                if id(p) in claimed_recorder_ids:
+                    continue
                 emit_recorder_spec(
                     p, emitter, tag, self.fem,
                     tags=tags,
@@ -782,26 +810,30 @@ class BuiltModel:
                     else:
                         spec._emit(emitter, ele_tag)
 
-            # 4. Stage-bound BCs (Phase SSI-2.D PR-B): fix + mass.
-            # Per-record fan-out via _resolve_node_target (same as the
-            # global path).  Records emit in registration order.  PR-C
-            # will insert stage-bound region emit at this same slot,
-            # between mass and the unified domain_change below.
+            # 4. Stage-bound BCs (Phase SSI-2.D PR-B + PR-C): fix +
+            # mass + region.  Per-record fan-out via _resolve_node_target
+            # (same as the global path).  Records emit in registration
+            # order; regions group records by name within this stage,
+            # allocate one tag per name (V3 guarantees no cross-scope
+            # name collision), and emit one ``region $tag -node ...``
+            # per name.
             for rec in stage.fix_records:
                 for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                     emitter.fix(int(node_tag), *rec.dofs)
             for rec in stage.mass_records:
                 for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                     emitter.mass(int(node_tag), *rec.values)
+            self._emit_stage_regions(stage, emitter, tags)
 
             # 5. domainChange — unified gate: fires if this stage added
             # ANY topology OR any stage-bound BC.  Single barrier per
-            # stage.  PR-C extends the gate with ``stage.region_records``.
+            # stage.
             if (
                 owned_nodes
                 or owned_specs
                 or stage.fix_records
                 or stage.mass_records
+                or stage.region_records
             ):
                 emitter.domain_change()
 
@@ -827,10 +859,24 @@ class BuiltModel:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
 
-            # 8. Analyze loop (auto-wraps with hook dispatcher calls).
+            # 8. Stage-bound recorders (Phase SSI-2.D PR-C) — emit
+            # AFTER the chain so the recorder sees the bound analysis
+            # chain, BEFORE analyze so the recorder captures the
+            # stage's analyze steps.  Same emit_recorder_spec helper
+            # as the global path; the recorder's tag was allocated
+            # at ops.recorder.X(...) call time and remains valid.
+            for spec in stage.recorder_specs:
+                spec_tag = self.tag_for[id(spec)]
+                emit_recorder_spec(
+                    spec, emitter, spec_tag, self.fem,
+                    tags=tags,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                )
+
+            # 9. Analyze loop (auto-wraps with hook dispatcher calls).
             emitter.analyze(steps=stage.n_increments, dt=stage.dt)
 
-            # 9. Stage close — loadConst + wipeAnalysis + hook clear.
+            # 10. Stage close — loadConst + wipeAnalysis + hook clear.
             emitter.stage_close()
 
     # -- Partitioned emit path (ADR 0027) ---------------------------------
@@ -895,14 +941,17 @@ class BuiltModel:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            # Phase SSI-2.D: run BC ownership-tier validators (H1 / V1 /
-            # V2 / V3).  Previously omitted on the partitioned path —
-            # the flat path validated at :meth:`_emit_flat` but the
-            # equivalent check on the partitioned path was missing, so
-            # a global ``fix`` on a stage-bound node would slip through
-            # under MP and crash OpenSees at parse time.  Same call as
-            # the flat path; bug-fix for both old H1 and new V1/V2/V3.
-            self._run_staged_bc_validators(node_owner_stage)
+            # Phase SSI-2.D: run BC ownership-tier validators (H1 /
+            # V1 / V2 / V3 / V4).  Previously omitted on the
+            # partitioned path — the flat path validated at
+            # :meth:`_emit_flat` but the equivalent check on the
+            # partitioned path was missing, so a global ``fix`` on a
+            # stage-bound node would slip through under MP and crash
+            # OpenSees at parse time.  Same call as the flat path.
+            self._run_staged_bc_validators(
+                node_owner_stage,
+                element_owner_stage,
+            )
 
         partitions = list(self.fem.partitions)
         node_owners = build_node_partition_owners(self.fem)
@@ -1134,8 +1183,14 @@ class BuiltModel:
         # branch is bypassed (the region was emitted per-rank).  All
         # other recorders (Node / Element / RecorderDeclaration / MPCO
         # without filter) route through emit_recorder_spec unchanged.
+        # Phase SSI-2.D PR-C: recorders claimed by ``s.recorder(spec)``
+        # are SKIPPED here — they emit inside their owning stage's
+        # block.
+        claimed_recorder_ids = self._claimed_recorder_ids()
         for p in post_element:
             if not isinstance(p, Recorder):
+                continue
+            if id(p) in claimed_recorder_ids:
                 continue
             tag = self.tag_for[id(p)]
             plan_entry = mpco_filter_plan.get(id(p))
@@ -1243,12 +1298,14 @@ class BuiltModel:
                 owned_nodes_this_stage or owned_specs_this_stage
             )
             has_bcs = bool(
-                stage.fix_records or stage.mass_records
+                stage.fix_records
+                or stage.mass_records
+                or stage.region_records
             )
 
-            # Phase SSI-2.D PR-B: pre-resolve stage-bound BC targets
-            # ONCE (rank-independent), then filter per rank below.
-            # Each entry is (record, resolved_node_id).
+            # Phase SSI-2.D PR-B + PR-C: pre-resolve stage-bound BC
+            # targets ONCE (rank-independent), then filter per rank
+            # below.  Each entry is (record, resolved_node_id).
             fix_targets: list[tuple[FixRecord, int]] = [
                 (rec, int(nid))
                 for rec in stage.fix_records
@@ -1259,6 +1316,22 @@ class BuiltModel:
                 for rec in stage.mass_records
                 for nid in self._resolve_node_target(rec.pg, rec.nodes)
             ]
+            # Pre-compute the union of all stage-bound region member
+            # node ids so each rank can quickly check whether it owns
+            # any region member.  Region records merge by name later
+            # inside the per-rank fan-out via
+            # :meth:`_emit_stage_regions_partitioned`.
+            region_target_nodes: set[int] = set()
+            for rec in stage.region_records:
+                for nid in self._resolve_node_target(rec.pg, rec.nodes):
+                    region_target_nodes.add(int(nid))
+
+            # Per-stage region tag cache (Phase SSI-2.D PR-C): the
+            # SAME tag must survive across every rank that emits its
+            # rank-intersection of a stage-bound region.  Fresh per
+            # stage so stage-2's regions don't accidentally re-use
+            # stage-1's tags.
+            stage_region_tag_cache: dict[str, int] = {}
 
             # 2. Per-rank topology + BC emit.  Unified gate (Phase
             # SSI-2.D): open the rank's bracket if it has ANY content
@@ -1279,6 +1352,9 @@ class BuiltModel:
                         (rec, nid) for rec, nid in mass_targets
                         if nid in rank_owned
                     ]
+                    rank_has_region_members = bool(
+                        region_target_nodes & rank_owned
+                    )
                     rank_has_elements = any(
                         element_owner.get(int(eid)) == rank
                         for _spec, sub in owned_specs_this_stage
@@ -1289,6 +1365,7 @@ class BuiltModel:
                         or rank_has_elements
                         or rank_fix
                         or rank_mass
+                        or rank_has_region_members
                     )
                     if not rank_has_content:
                         continue
@@ -1322,14 +1399,23 @@ class BuiltModel:
                                 partition_rank=rank,
                                 element_owner=element_owner,
                             )
-                        # Phase SSI-2.D PR-B: per-rank stage-bound BCs.
-                        # Targets pre-resolved above; per-rank filter
-                        # via ``rank_owned`` intersection mirrors the
-                        # existing INV-4 fan-out convention.
+                        # Phase SSI-2.D PR-B + PR-C: per-rank stage-
+                        # bound BCs (fix + mass + region).  Targets
+                        # pre-resolved above; per-rank filter via
+                        # ``rank_owned`` intersection mirrors the
+                        # existing INV-4 fan-out convention.  Region
+                        # emit threads the per-stage tag cache so all
+                        # contributing ranks emit the SAME tag for
+                        # each region name.
                         for rec, nid in rank_fix:
                             emitter.fix(nid, *rec.dofs)
                         for rec, nid in rank_mass:
                             emitter.mass(nid, *rec.values)
+                        self._emit_stage_regions_partitioned(
+                            stage, emitter, tags,
+                            owned_nodes=rank_owned,
+                            region_tag_cache=stage_region_tag_cache,
+                        )
                     finally:
                         emitter.partition_close()
 
@@ -1367,10 +1453,25 @@ class BuiltModel:
                     chain_tag = self.tag_for[id(chain)]
                     chain._emit(emitter, chain_tag)
 
-            # 6. Analyze loop (auto-wraps with hook dispatcher calls).
+            # 6. Stage-bound recorders (Phase SSI-2.D PR-C) — emit
+            # GLOBALLY (no per-rank wrap; recorders write to disk,
+            # one declaration is sufficient under MP, same convention
+            # as the global recorder pass).  Emit AFTER the chain so
+            # the recorder sees the bound analysis chain; BEFORE
+            # analyze so the recorder captures the stage's analyze
+            # steps.
+            for spec in stage.recorder_specs:
+                spec_tag = self.tag_for[id(spec)]
+                emit_recorder_spec(
+                    spec, emitter, spec_tag, self.fem,
+                    tags=tags,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                )
+
+            # 7. Analyze loop (auto-wraps with hook dispatcher calls).
             emitter.analyze(steps=stage.n_increments, dt=stage.dt)
 
-            # 7. Stage close — loadConst + wipeAnalysis + hook clear.
+            # 8. Stage close — loadConst + wipeAnalysis + hook clear.
             emitter.stage_close()
 
     # -- Model-level fix / mass fan-out -----------------------------------
@@ -1378,7 +1479,9 @@ class BuiltModel:
     # -- Staged-BC validators (Phase SSI-2.D, PR-A) -----------------------
 
     def _run_staged_bc_validators(
-        self, node_owner_stage: "dict[int, int]",
+        self,
+        node_owner_stage: "dict[int, int]",
+        element_owner_stage: "dict[int, int] | None" = None,
     ) -> None:
         """Run every BC-tier validator in order; raise on the first
         offender batch.
@@ -1396,14 +1499,26 @@ class BuiltModel:
           mass across global + per-stage tiers (Phase SSI-2.D, PR-A).
         - **V3** — region ``name=`` collision across scopes (Phase
           SSI-2.D, PR-A).
+        - **V4** — stage N's recorder targets a node owned by stage
+          M > N OR an element owned by stage M > N (Phase SSI-2.D,
+          PR-C).  Recorder lines parse at deck-read time and bind to
+          the topology that exists at that point; a recorder
+          referencing not-yet-emitted topology would crash OpenSees
+          at parse time.
 
-        V4 (stage-bound recorder cross-scope) lands in PR-C alongside
-        the ``s.recorder`` builder method.
+        ``element_owner_stage`` is optional only for backwards-
+        compatibility with the PR-A signature; callers that exercise
+        recorder validation must supply it (both
+        :meth:`_emit_flat` and :meth:`_emit_partitioned` do).
         """
         self._validate_no_stage_bound_node_targets(node_owner_stage)
         self._validate_stage_bound_node_targets(node_owner_stage)
         self._validate_no_duplicate_fix_mass_across_tiers(node_owner_stage)
         self._validate_region_scope_invariants()
+        self._validate_stage_bound_recorder_targets(
+            node_owner_stage,
+            element_owner_stage or {},
+        )
 
     # -- Ownership-tier helpers (PR-A: shared by H1 + V1) -----------------
 
@@ -1737,6 +1852,171 @@ class BuiltModel:
                 + "\n".join(preview) + extra
             )
 
+    def _recorder_node_targets(self, spec: "Recorder") -> "tuple[int, ...]":
+        """Return the FEM node ids a recorder spec resolves to.
+
+        Handles :class:`recorder.Node` (``pg`` / ``nodes``) and
+        :class:`recorder.MPCO` (``nodes_pg`` / ``nodes``).  Returns an
+        empty tuple for recorder kinds that don't target nodes
+        (e.g. :class:`recorder.Element`-only or
+        :class:`RecorderDeclaration`).
+        """
+        from .recorder import MPCO as MPCORec
+        from .recorder import Node as NodeRec
+        if isinstance(spec, NodeRec):
+            if spec.pg is not None:
+                return expand_pg_to_nodes(self.fem, spec.pg)
+            return spec.nodes or ()
+        if isinstance(spec, MPCORec):
+            if spec.nodes_pg is not None:
+                return expand_pg_to_nodes(self.fem, spec.nodes_pg)
+            return spec.nodes or ()
+        return ()
+
+    def _recorder_element_targets(
+        self, spec: "Recorder",
+    ) -> "tuple[int, ...]":
+        """Return the FEM element ids a recorder spec resolves to.
+
+        Handles :class:`recorder.Element` (``pg`` / ``elements``) and
+        :class:`recorder.MPCO` (``elements_pg`` / ``elements``).
+        Returns an empty tuple for recorder kinds that don't target
+        elements.
+
+        ``expand_pg_to_elements`` returns ``[(eid, conn), ...]`` —
+        this helper extracts just the eid component.
+        """
+        from .recorder import Element as ElementRec
+        from .recorder import MPCO as MPCORec
+        if isinstance(spec, ElementRec):
+            if spec.pg is not None:
+                return tuple(
+                    int(eid) for eid, _conn in
+                    expand_pg_to_elements(self.fem, spec.pg)
+                )
+            return spec.elements or ()
+        if isinstance(spec, MPCORec):
+            if spec.elements_pg is not None:
+                return tuple(
+                    int(eid) for eid, _conn in
+                    expand_pg_to_elements(self.fem, spec.elements_pg)
+                )
+            return spec.elements or ()
+        return ()
+
+    def _build_fem_eid_owner_stage_map(
+        self,
+        element_owner_stage: "dict[int, int]",
+    ) -> "dict[int, int]":
+        """Invert ``element_owner_stage`` (keyed by ``id(Element)``) into
+        a ``fem_eid → stage_index`` map for V4's element-target checks.
+
+        Walks ``self.primitives``, picks out registered Element
+        specs, and for each spec whose ``id(...)`` lives in
+        ``element_owner_stage``, expands its ``pg=`` to FEM eids and
+        maps each eid to the owning stage index.
+
+        Globally-emitted elements are absent from the map.
+        """
+        out: dict[int, int] = {}
+        for spec in self.primitives:
+            if not isinstance(spec, Element):
+                continue
+            sidx = element_owner_stage.get(id(spec))
+            if sidx is None:
+                continue
+            pg = getattr(spec, "pg", None)
+            if not pg:
+                continue
+            for eid, _conn in expand_pg_to_elements(self.fem, pg):
+                out[int(eid)] = sidx
+        return out
+
+    def _validate_stage_bound_recorder_targets(
+        self,
+        node_owner_stage: "dict[int, int]",
+        element_owner_stage: "dict[int, int]",
+    ) -> None:
+        """V4: stage N's recorders may target only globally-emitted
+        topology or topology owned by stage M <= N.
+
+        Recorder lines (``recorder Node ...`` / ``Element ...`` /
+        ``mpco ...``) parse at deck-read time and bind to the
+        topology that exists at that point.  A stage-N recorder
+        targeting a node owned by stage M > N would reference a not-
+        yet-emitted node and crash OpenSees at parse time.
+
+        Same ownership-tier rule as V1 / H1 but applied to:
+
+        - :class:`recorder.Node` (node targets)
+        - :class:`recorder.Element` (element targets)
+        - :class:`recorder.MPCO` (both node and element targets)
+
+        Builds the ``fem_eid → stage_index`` reverse map ad-hoc since
+        ``compute_stage_ownership`` returns ``element_owner_stage``
+        keyed by ``id(spec)``, not by FEM eid.
+
+        :class:`RecorderDeclaration` instances are silently passed —
+        Phase 9's declaration shape doesn't carry a direct
+        ``pg`` / ``nodes`` / ``elements`` selector validated here.
+        """
+        if not self.stage_records:
+            return
+        fem_eid_to_stage = self._build_fem_eid_owner_stage_map(
+            element_owner_stage,
+        )
+        offenders_per_stage: "list[tuple[str, list[str]]]" = []
+        for stage_idx, stage in enumerate(self.stage_records):
+            if not stage.recorder_specs:
+                continue
+            stage_offenders: list[str] = []
+            for spec in stage.recorder_specs:
+                spec_label = type(spec).__name__
+                # Node targets.
+                for nid in self._recorder_node_targets(spec):
+                    owner = node_owner_stage.get(int(nid))
+                    if owner is not None and owner > stage_idx:
+                        owner_name = self.stage_records[owner].name
+                        stage_offenders.append(
+                            f"  • {spec_label} recorder targets node "
+                            f"{nid} → owned by LATER stage {owner_name!r} "
+                            f"(index {owner})"
+                        )
+                # Element targets.
+                for eid in self._recorder_element_targets(spec):
+                    owner = fem_eid_to_stage.get(int(eid))
+                    if owner is not None and owner > stage_idx:
+                        owner_name = self.stage_records[owner].name
+                        stage_offenders.append(
+                            f"  • {spec_label} recorder targets element "
+                            f"{eid} → owned by LATER stage {owner_name!r} "
+                            f"(index {owner})"
+                        )
+            if stage_offenders:
+                offenders_per_stage.append((stage.name, stage_offenders))
+        if not offenders_per_stage:
+            return
+        chunks: list[str] = []
+        for stage_name, lines in offenders_per_stage:
+            preview = lines[:10]
+            extra = (
+                f"\n  • ... and {len(lines) - 10} more"
+                if len(lines) > 10 else ""
+            )
+            chunks.append(
+                f"Stage {stage_name!r} recorders reference topology "
+                f"owned by a LATER stage:\n" + "\n".join(preview) + extra
+            )
+        raise BridgeError(
+            "Stage-bound recorders reference topology that only "
+            "comes online in a later stage — the ``recorder`` line "
+            "parses at deck-read time and would bind to non-existent "
+            "nodes/elements, crashing OpenSees at parse time.  Move "
+            "the recorder onto a later-stage ``s.recorder(...)`` "
+            "binding, or use globally-emitted targets only."
+            "\n\n" + "\n\n".join(chunks)
+        )
+
     def _emit_fixes(self, emitter: Emitter) -> None:
         for rec in self.fix_records:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
@@ -1799,6 +2079,87 @@ class BuiltModel:
                 continue
             tag = tags.allocate("region")
             emitter.region(tag, "-node", *node_list)
+
+    def _emit_stage_regions(
+        self,
+        stage: "StageRecord",
+        emitter: Emitter,
+        tags: TagAllocator,
+    ) -> None:
+        """Single-partition fan-out for one stage's region pool.
+
+        Mirrors :meth:`_emit_regions` shape but operates on
+        ``stage.region_records`` rather than ``self.region_records``:
+        groups records by ``name`` in first-seen order, merges members
+        across same-name records (de-duping by node tag, first-seen
+        order preserved), allocates ONE region tag per name, emits one
+        ``region $tag -node n1 n2 ...`` per name.
+
+        V3 (Phase SSI-2.D PR-A) guarantees no name collision across
+        scopes, so each stage's name set is disjoint from every other
+        stage's and from the global pool — tag allocation through the
+        shared ``tags.allocate("region")`` counter produces disjoint
+        tags by construction.
+        """
+        if not stage.region_records:
+            return
+        by_name: dict[str, list[int]] = {}
+        seen_per_name: dict[str, set[int]] = {}
+        for rec in stage.region_records:
+            bucket = by_name.setdefault(rec.name, [])
+            seen = seen_per_name.setdefault(rec.name, set())
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                if node_tag not in seen:
+                    seen.add(node_tag)
+                    bucket.append(node_tag)
+        for name, node_list in by_name.items():
+            if not node_list:
+                continue
+            tag = tags.allocate("region")
+            emitter.region(tag, "-node", *node_list)
+
+    def _emit_stage_regions_partitioned(
+        self,
+        stage: "StageRecord",
+        emitter: Emitter,
+        tags: TagAllocator,
+        owned_nodes: set[int],
+        region_tag_cache: dict[str, int],
+    ) -> None:
+        """Per-rank fan-out for one stage's region pool (MP path).
+
+        Mirrors :meth:`_emit_regions_partitioned`: same name-merging
+        semantics, per-rank ``owned_nodes`` intersection, INV-4 empty-
+        intersection skip.  The ``region_tag_cache`` is shared across
+        the per-rank loop FOR THIS STAGE so all contributing ranks
+        agree on the tag — the cache is keyed by region NAME (within
+        this stage), not stage-mangled, because V3 already guarantees
+        no cross-stage name collision.
+
+        The caller (``_emit_stages_partitioned``) constructs a FRESH
+        cache per stage so stage-2's regions don't accidentally
+        adopt stage-1's tags.
+        """
+        if not stage.region_records:
+            return
+        by_name: dict[str, list[int]] = {}
+        seen_per_name: dict[str, set[int]] = {}
+        for rec in stage.region_records:
+            bucket = by_name.setdefault(rec.name, [])
+            seen = seen_per_name.setdefault(rec.name, set())
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                if node_tag not in seen:
+                    seen.add(node_tag)
+                    bucket.append(node_tag)
+        for name, node_list in by_name.items():
+            owned_list = [n for n in node_list if int(n) in owned_nodes]
+            if not owned_list:
+                continue
+            tag = region_tag_cache.get(name)
+            if tag is None:
+                tag = tags.allocate("region")
+                region_tag_cache[name] = tag
+            emitter.region(tag, "-node", *owned_list)
 
     def _emit_regions_partitioned(
         self,
@@ -2445,6 +2806,14 @@ class apeSees:
         # (post-merge cleanup, red-team M4).  None when no stage is
         # being built.  Cleared by ``_StageBuilder.__exit__``.
         self._open_stage_builder: "_StageBuilder | None" = None
+        # Phase SSI-2.D (PR-C) recorder claiming: when ``s.recorder(rec)``
+        # PULLs a registered recorder spec into a stage's pool, the
+        # spec's ``id(...)`` lands here so the global post-element
+        # emit loop knows to SKIP it (the stage's emit will drive
+        # ``_emit_recorder_spec`` inside the stage block instead).
+        # The recorder stays in ``_primitives`` so its allocated tag
+        # remains discoverable via ``tag_for[id(p)]``.
+        self._stage_claimed_recorder_ids: set[int] = set()
         # Resolve the sentinel: unset → Cartesian() (Z-up). Explicit
         # None disables the auto-default (2D models).
         if isinstance(default_orientation, _UnsetType):
@@ -2515,6 +2884,48 @@ class apeSees:
         for stage in self._stage_records:
             origin = f"stage {stage.name!r}"
             out.extend((origin, rec) for rec in stage.mass_records)
+        return tuple(out)
+
+    @property
+    def all_region_records(
+        self,
+    ) -> "tuple[tuple[str, RegionAssignmentRecord], ...]":
+        """All region records — global + every stage's pool.
+
+        Phase SSI-2.D PR-C introspection symmetry (matches the
+        :attr:`all_fix_records` / :attr:`all_mass_records` shape).
+        Validator V3 (PR-A) guarantees no ``name=`` collision across
+        scopes, so the user-facing name is unambiguous per
+        ``(origin, record)`` pair.
+        """
+        out: list[tuple[str, RegionAssignmentRecord]] = [
+            ("global", rec) for rec in self._region_records
+        ]
+        for stage in self._stage_records:
+            origin = f"stage {stage.name!r}"
+            out.extend((origin, rec) for rec in stage.region_records)
+        return tuple(out)
+
+    @property
+    def all_recorder_specs(self) -> "tuple[tuple[str, Recorder], ...]":
+        """All recorder specs — global + every stage's pool.
+
+        Global recorders are sourced from ``self._primitives``
+        filtered to :class:`Recorder` instances and EXCLUDING any
+        spec claimed by ``s.recorder(...)``; the per-stage entries
+        come from each :class:`StageRecord`'s ``recorder_specs``.
+        Origin is ``"global"`` or ``f"stage {stage.name!r}"``.
+        """
+        out: list[tuple[str, Recorder]] = []
+        for prim in self._primitives:
+            if not isinstance(prim, Recorder):
+                continue
+            if id(prim) in self._stage_claimed_recorder_ids:
+                continue
+            out.append(("global", prim))
+        for stage in self._stage_records:
+            origin = f"stage {stage.name!r}"
+            out.extend((origin, rec) for rec in stage.recorder_specs)
         return tuple(out)
 
     # -- Flat methods ----------------------------------------------------
@@ -3439,11 +3850,11 @@ class _StageBuilder:
         "_bridge", "_name",
         "_initial_stress_records",
         "_activated_pgs",
-        # Phase SSI-2.D (PR-B): stage-bound BC pools.  PR-C will add
-        # ``_region_records`` and ``_recorder_specs``; the StageRecord
-        # dataclass already carries all four (default empty).
+        # Phase SSI-2.D (PR-B + PR-C): stage-bound BC + recorder pools.
         "_fix_records",
         "_mass_records",
+        "_region_records",
+        "_recorder_specs",
         "_test", "_algorithm", "_integrator",
         "_constraints", "_numberer", "_system", "_analysis",
         "_n_increments", "_dt",
@@ -3455,11 +3866,12 @@ class _StageBuilder:
         self._name = name
         self._initial_stress_records: list[InitialStressRecord] = []
         self._activated_pgs: list[str] = []
-        # Phase SSI-2.D (PR-B): stage-bound BC pools — populated by
-        # :meth:`fix` and :meth:`mass`.  ``_region_records`` and
-        # ``_recorder_specs`` slots land in PR-C.
+        # Phase SSI-2.D PR-B: stage-bound BC pools (fix + mass).
         self._fix_records: list[FixRecord] = []
         self._mass_records: list[MassRecord] = []
+        # Phase SSI-2.D PR-C: stage-bound region + recorder pools.
+        self._region_records: list[RegionAssignmentRecord] = []
+        self._recorder_specs: list[Recorder] = []
         self._test: Primitive | None = None
         self._algorithm: Primitive | None = None
         self._integrator: Primitive | None = None
@@ -3519,7 +3931,8 @@ class _StageBuilder:
             activated_pgs=tuple(self._activated_pgs),
             fix_records=tuple(self._fix_records),
             mass_records=tuple(self._mass_records),
-            # PR-C populates region_records + recorder_specs.
+            region_records=tuple(self._region_records),
+            recorder_specs=tuple(self._recorder_specs),
         )
         self._bridge._stage_records.append(record)
         return False
@@ -3653,6 +4066,120 @@ class _StageBuilder:
         self._mass_records.append(
             MassRecord(pg=pg, nodes=nodes_tuple, values=tuple(values)),
         )
+
+    def region(
+        self,
+        *,
+        name: str,
+        pg: str | None = None,
+        nodes: "Iterable[int | Node] | None" = None,
+    ) -> None:
+        """Assign nodes to a named OpenSees Region bound to this stage.
+
+        Signature mirrors :meth:`apeSees.region` verbatim.  Stage-bound
+        regions emit **inside this stage's block**, alongside the
+        stage's ``fix`` / ``mass`` lines and before the
+        ``domain_change`` barrier.
+
+        Under MP the per-stage region tag is allocated once on the
+        first rank that contributes members, then re-used across every
+        rank that owns members of the same region — same INV-4
+        convention the global path uses, but cached per-stage so two
+        stages with regions named ``"foo"`` get distinct tags.
+        Validator V3 (Phase SSI-2.D PR-A) refuses same-``name``
+        regions across scopes, so within any single stage every
+        ``name=`` resolves to one unique tag.
+
+        Parameters
+        ----------
+        name
+            Region label.  Must be unique across global + every
+            stage's region pool (V3).  Mangle the label to make scope
+            explicit when the same conceptual region appears in
+            multiple stages (e.g. ``lining_rayleigh_stage2``).
+        pg
+            Physical group whose nodes join the region.  XOR with
+            ``nodes``.
+        nodes
+            Explicit node list.  XOR with ``pg``.
+
+        Raises
+        ------
+        ValueError
+            If ``name`` is empty or if both / neither of
+            ``pg`` / ``nodes`` is supplied.
+        """
+        if not name:
+            raise ValueError(
+                f"Stage {self._name!r}.region: name= must be non-empty."
+            )
+        if (pg is None) == (nodes is None):
+            raise ValueError(
+                f"Stage {self._name!r}.region: supply exactly one of "
+                f"pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
+            )
+        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        self._region_records.append(
+            RegionAssignmentRecord(
+                name=str(name), pg=pg, nodes=nodes_tuple,
+            ),
+        )
+
+    def recorder(self, spec: Recorder) -> None:
+        """Bind a previously-registered recorder to this stage (PULL).
+
+        ``spec`` is a :class:`Recorder` constructed and registered via
+        ``ops.recorder.Node(...)`` / ``ops.recorder.Element(...)`` /
+        ``ops.recorder.MPCO(...)``.  The recorder keeps its allocated
+        tag and stays in the bridge's ``_primitives`` list, but its
+        ``id(...)`` lands in
+        :attr:`apeSees._stage_claimed_recorder_ids` so the global
+        post-element emit loop SKIPS it — the stage's emit pass
+        invokes :func:`emit_recorder_spec` inside the stage block
+        instead, AFTER the stage's region declarations and analysis
+        chain so the recorder sees fully-populated regions when
+        OpenSees parses the ``recorder`` line.
+
+        Mirrors the :meth:`add` PULL semantics for
+        :class:`InitialStressRecord`; stage-bound recorders ARE
+        bridge primitives with registration side effects (tag
+        allocation), so PULL is the natural shape.
+
+        Parameters
+        ----------
+        spec
+            A :class:`Recorder` instance already registered with the
+            bridge.
+
+        Raises
+        ------
+        TypeError
+            If ``spec`` is not a :class:`Recorder` instance.
+        ValueError
+            If ``spec`` is not in the bridge's ``_primitives`` (never
+            registered through ``ops.recorder.X(...)``) or has
+            already been claimed by another stage (double-add).
+        """
+        if not isinstance(spec, Recorder):
+            raise TypeError(
+                f"Stage {self._name!r}.recorder: expected a Recorder "
+                f"instance (constructed via ops.recorder.Node / "
+                f"Element / MPCO); got {type(spec).__name__!r}."
+            )
+        if id(spec) in self._bridge._stage_claimed_recorder_ids:
+            raise ValueError(
+                f"Stage {self._name!r}.recorder: recorder spec already "
+                "claimed by another stage — each recorder may bind to "
+                "at most one stage."
+            )
+        if spec not in self._bridge._primitives:
+            raise ValueError(
+                f"Stage {self._name!r}.recorder: recorder spec not in "
+                "the bridge's _primitives — was it registered through "
+                "this bridge's ``ops.recorder.X(...)`` namespace?"
+            )
+        self._bridge._stage_claimed_recorder_ids.add(id(spec))
+        self._recorder_specs.append(spec)
 
     def activate(self, *, pgs: "Iterable[str]") -> None:
         """Mark element PGs as activated by this stage (Phase SSI-2.B).
