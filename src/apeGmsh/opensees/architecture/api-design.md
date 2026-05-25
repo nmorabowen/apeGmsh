@@ -520,10 +520,14 @@ Limitations:
 multi-stage analysis. Each stage emits its own analysis chain, its
 own ramped initial-stress records, optional stage-bound topology
 activation, optional stage-bound BCs / recorders (`s.fix` / `s.mass`
-/ `s.region` / `s.recorder` — Phase SSI-2.D), an `analyze` loop, and
-an inter-stage cleanup block (`loadConst -time 0.0` +
-`wipeAnalysis` + hook-list clear). Combining stages with MP
-partitions is supported (Phase SSI-2.C).
+/ `s.region` / `s.recorder` — Phase SSI-2.D), optional stage-bound
+MP constraints (`s.embedded` / `s.equal_dof` / `s.rigid_link` /
+`s.rigid_diaphragm` / `s.kinematic_coupling` / `s.tie` /
+`s.distributing` / `s.node_to_surface` / `s.node_to_surface_spring`
+— Phase SSI-2.D extension), an `analyze` loop, and an inter-stage
+cleanup block (`loadConst -time 0.0` + `wipeAnalysis` + hook-list
+clear). Combining stages with MP partitions is supported (Phase
+SSI-2.C).
 
 ```python
 ops = apeSees(fem)
@@ -566,11 +570,24 @@ with ops.stage(name="insitu") as s:
 lining_recorder = ops.recorder.Element(
     file="lining_force.out", response=("globalForce",), pg="Lining",
 )
+# Phase SSI-2.D extension: name the MP constraint at apeGmsh time so
+# the stage can claim it by name at bridge time.
+g.constraints.embedded(
+    host_label="Rock", embedded_label="Lining",
+    name="lining_embed", stiffness=1e8,
+)
 with ops.stage(name="excavate") as s:
     s.activate(pgs=["Lining"])                 # element-PG activation
     s.fix(pg="LiningAnchor", dofs=(1, 1, 1))   # SSI-2.D: stage-bound fix
     s.mass(pg="Lining", values=(100.0, 100.0, 100.0))  # stage-bound mass
     s.region(name="lining_rayleigh", pg="Lining")      # for Rayleigh damping
+    s.embedded(name="lining_embed")            # SSI-2.D ext: claim MP constraint
+    s.initial_stress(                          # SSI-2.D ext: PUSH mirror of
+        name="lining_install",                 # ops.initial_stress, no s.add step
+        pg="Lining",
+        sigma_xx=-100.0, sigma_yy=-100.0, sigma_zz=-100.0,
+        ramp_steps=5,
+    )
     s.recorder(lining_recorder)                # PULL: claim from global pool
     s.analysis(
         test=test_norm, algorithm=algo_newton,
@@ -599,6 +616,8 @@ ops.tcl("staged.tcl", run=True)
 | `s.mass(*, pg=None, nodes=None, values)` | optional | **PUSH model** (Phase SSI-2.D). Stage-bound nodal mass. Mirrors `apeSees.mass`. V2 refuses (node)-duplicate across tiers since OpenSees `setMass` silently overwrites. |
 | `s.region(*, name, pg=None, nodes=None)` | optional | **PUSH model** (Phase SSI-2.D). Stage-bound named region. Per-stage tag cache under MP so all contributing ranks agree on one tag per (stage, name). V3 refuses same `name=` across scopes; mangle the label (`lining_r_stage2`) if you really mean a per-stage region with conceptual continuity. |
 | `s.recorder(spec)` | optional | **PULL model** (Phase SSI-2.D). `spec` is a `Recorder` registered via `ops.recorder.Node` / `Element` / `MPCO`. The spec keeps its allocated tag and stays in `bridge._primitives`, but the bridge marks it claimed so the global post-element recorder emit loop skips it; the stage emit drives it AFTER the chain and BEFORE `analyze`. V4 refuses targets owned by a later stage. Same spec claimed by two stages raises `ValueError`. |
+| `s.initial_stress(*, name, pg=None, elements=None, sigma_xx, sigma_yy, sigma_zz, ramp_steps, lambda_install=1.0)` | optional | **PUSH model** (Phase SSI-2.D extension). Stage-bound initial-stress mirror of `ops.initial_stress(...)`. Creates the `InitialStressRecord` directly in this stage's pool, no intermediate `s.add(record)` step. Coexists with the existing `s.add(InitialStressRecord)` PULL path; pick by style. Byte-identical decks. PUSH is safe because side effects (parameter tag allocation, ramp proc emission) fire at emit time, not at call time — ADR 0034 §5b. |
+| `s.embedded(*, name)` / `s.tie(*, name)` / `s.distributing(*, name)` / `s.equal_dof(*, name)` / `s.rigid_link(*, name)` / `s.rigid_diaphragm(*, name)` / `s.kinematic_coupling(*, name)` / `s.node_to_surface(*, name)` / `s.node_to_surface_spring(*, name)` | optional | **CLAIM-by-name model** (Phase SSI-2.D extension). Each method claims resolved MP-constraint records previously named at apeGmsh time via `g.constraints.<kind>(..., name=...)`. The records stay on the FEMData broker but the bridge marks them claimed so the global MP-constraint emit pass skips them; the stage emit pass drives them AFTER stage regions and BEFORE the stage's `domain_change`. Missing name → `ValueError`. Double-claim across two stages → `ValueError`. Why CLAIM not PUSH: the kernel resolver needs a live `gmsh` model + parts registry that are typically gone by bridge time — ADR 0034 §5a. **`s.tied_contact` / `s.mortar` are deferred** (SurfaceCouplingRecord nesting + mortar NIY; see [_DEFERRED.md](_DEFERRED.md)). |
 | `s.analysis(test=, algorithm=, integrator=, constraints=, numberer=, system=, analysis=)` | required | All seven kwargs. Each must be a primitive already registered with the bridge. Second call raises `ValueError`. |
 | `s.run(n_increments=, dt=None)` | required | Sets analyze-loop length + step size. Second call raises `ValueError`; `n_increments < 1` raises `ValueError`. |
 | Clean `__exit__` | — | Validates `analysis_set` + `run_set`; appends a frozen `StageRecord` to the bridge. Exception in the body propagates and the in-progress stage is discarded. |

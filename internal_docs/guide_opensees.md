@@ -315,34 +315,76 @@ Distributed/body loads (gravity, surface pressure) are **not** patterns
 | `.sp(fem)` (homogeneous `face_sp`) | `ops.fix(pg=…, dofs=…)` |
 | `.sp(fem)` (prescribed `face_sp`) | `p.sp(pg=…, dof=…, value=…)` |
 | gravity via `g.loads.gravity(...)` | element `body_force=(b1,b2,b3)` param |
-| `.constraints(fem, tie_penalty=)` | **deferred -- no path** (§4.4) |
+| `.constraints(fem, tie_penalty=)` | `g.constraints.X(...)` resolves into `FEMData` and emits automatically (§4.4); stage-bind via `s.X(name=...)` |
 
-### 4.4 Multi-point constraints are DEFERRED
+### 4.4 Multi-point constraints
 
-> ⚠️ Multi-point constraints (`tie` / `rigid_link` / `equal_dof` /
-> `rigid_diaphragm` / `node_to_surface` / `tied_contact` / `mortar`,
-> and embedded rebar) are **deferred** in `apeSees` -- there is **no
-> OpenSees emission path**. The `Emitter` protocol exposes only
-> `node / fix / mass / element / sp`; there is no `equalDOF`,
-> `rigidLink`, `rigidDiaphragm`, or `ASDEmbeddedNodeElement`. This is
-> deferred by design (ADR 0009;
-> `src/apeGmsh/opensees/architecture/_DEFERRED.md`).
+MP constraints declared on the session via `g.constraints.*` (`tie`,
+`embedded`, `equal_dof`, `rigid_link`, `rigid_diaphragm`,
+`kinematic_coupling`, `node_to_surface`, `distributing`,
+`tied_contact`) resolve into `FEMData` and **emit automatically** as
+part of the runnable Tcl / Py deck (Phase 7b, ADR 0022). The
+`Emitter` protocol carries `equalDOF`, `rigidLink`, `rigidDiaphragm`,
+and `embeddedNode` methods; the bridge orchestrates per-kind fan-out
+via `emit_mp_constraints` between the element emission and pattern
+emission passes.
 
-Consequences:
+```python
+# Declare at apeGmsh time:
+g.constraints.embedded(
+    host_label="Rock", embedded_label="Rebar",
+    name="rebar_embed", stiffness=1.0e8,
+)
 
-- Declare the constraints on the session as usual -- they resolve into
-  `FEMData` and are persisted into the **`model.h5` neutral zone** by
-  `ops.h5(path)`, so the **viewer / `Results`** render them.
-- They are **not** written to any runnable Tcl/Py/Live deck. A model
-  whose load path depends on a tie / rigid link will be **wrong** if
-  you run the emitted deck as-is.
-- To run such a model today, hand-emit the constraint commands by
-  iterating `fem.nodes.constraints` / `fem.elements.constraints` into
-  raw openseespy yourself, or wait for the deferred feature.
+# Use as usual:
+ops = apeSees(fem)
+# ... materials / elements ...
+ops.tcl("model.tcl")  # the embed lines appear automatically
+```
 
-Homogeneous fixities (`ops.fix`) and prescribed displacements
-(`p.sp`) **do** have a path -- only the multi-point couplings are
-deferred.
+The `Transformation` constraint handler is auto-emitted when any MP
+constraint is present (warning visible on stdout); pass an explicit
+`ops.constraints.X()` to override.
+
+**Stage-bound routing (Phase SSI-2.D extension).** For staged decks
+(`with ops.stage(...) as s:` blocks), an MP constraint can be
+**claimed by name** for a specific stage so it emits inside that
+stage's block instead of the global pre-stage pass — required when
+the constraint references nodes that only come online via
+`s.activate(pgs=[...])` in a later stage. Name the constraint at
+apeGmsh time, then claim it inside the stage block:
+
+```python
+g.constraints.embedded(
+    host_label="Rock", embedded_label="Lining",
+    name="lining_embed", stiffness=1.0e8,
+)
+# ... mesh, FEMData, apeSees(fem) ...
+
+with ops.stage(name="install_lining") as s:
+    s.activate(pgs=["Lining"])
+    s.embedded(name="lining_embed")  # claim — emits inside this stage
+    s.analysis(...)
+    s.run(n_increments=10, dt=0.1)
+```
+
+Available CLAIM verbs: `s.embedded`, `s.tie`, `s.distributing`,
+`s.equal_dof`, `s.rigid_link`, `s.rigid_diaphragm`,
+`s.kinematic_coupling`, `s.node_to_surface`,
+`s.node_to_surface_spring`. `s.tied_contact` / `s.mortar` are
+deferred (see [_DEFERRED.md](../src/apeGmsh/opensees/architecture/_DEFERRED.md)).
+Forgetting to claim is caught by the V1 ownership-tier validator
+with an actionable error pointing at the offending node and stage.
+
+Deck consequences:
+
+- Constraints emit automatically into `ops.tcl(path)` / `ops.py(path)`
+  output. The model runs end-to-end without hand-editing.
+- The `model.h5` neutral zone persists the resolved records under
+  `/opensees/constraints/*` for the viewer / `Results`.
+- For multi-stage decks, name your constraints up front
+  (`name="..."` on every `g.constraints.X(...)` call you intend to
+  stage-bind) — claim-by-name requires it.
 
 
 ## 5. Building the Model -- `build()`
@@ -375,8 +417,9 @@ ops.tcl("model.tcl")
 
 Produces a complete OpenSees Tcl input file: model builder, nodes,
 materials/sections/transforms, element connectivity with
-physical-group comments, fix commands, nodal masses, and load
-patterns. Multi-point constraints are **not** emitted (deferred -- §4.4).
+physical-group comments, fix commands, nodal masses, load patterns,
+and MP constraints (`equalDOF`, `rigidLink`, `rigidDiaphragm`,
+`ASDEmbeddedNodeElement` — §4.4).
 
 ### 6.2 openseespy script -- `ops.py(path)`
 
@@ -581,21 +624,22 @@ system). Append your analysis block or source/import the generated
 file from a driver script. Recorders, if you declared them on
 `ops.recorder.*`, *are* emitted.
 
-### Tie / non-conformal interfaces are DEFERRED
+### Tie / non-conformal interfaces emit automatically
 
 You can declare ties for non-matching meshes on the session:
 
 ```python
-g.constraints.tie("ColumnTop", "SlabBottom", dofs=[1, 2, 3])
+g.constraints.tie("ColumnTop", "SlabBottom", dofs=[1, 2, 3],
+                  name="col_slab_tie")
 ```
 
-The tie resolves into `FEMData` and persists into `model.h5` for the
-**viewer / `Results`**, but `apeSees` has **no OpenSees emission path**
-for it (deferred -- §4.4). A model whose load path depends on a tie
-will be wrong if you run the emitted deck as-is. To run such a model
-today, hand-emit the constraint commands from `fem.nodes.constraints` /
-`fem.elements.constraints` into raw openseespy yourself, or wait for
-the deferred feature.
+The tie resolves into `FEMData`, persists into `model.h5` for the
+viewer / `Results`, **and** emits into the runnable Tcl / Py deck as
+`ASDEmbeddedNodeElement` lines (Phase 7b, ADR 0022). Pass `name=` if
+you'll need to stage-bind the constraint via
+`s.tie(name="col_slab_tie")` inside a stage block (see §4.4).
+`s.tied_contact` / `s.mortar` remain deferred for stage-binding — see
+[_DEFERRED.md](../src/apeGmsh/opensees/architecture/_DEFERRED.md).
 
 ### Loads/masses/SP are not ingested
 

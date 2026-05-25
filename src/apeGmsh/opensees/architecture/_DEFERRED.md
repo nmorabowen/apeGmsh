@@ -220,6 +220,81 @@ Trigger this work when a real consumer needs stage-bound MPCO
 with filters under MP. Today's call sites use whole-model MPCO
 (no filter) or filtered MPCO at global scope only.
 
+### `s.tied_contact` / `s.mortar` stage-bound claim
+
+The Phase SSI-2.D extension (ADR 0034 §5a) ships nine claim-by-
+name methods on `_StageBuilder` (`s.embedded`, `s.equal_dof`,
+`s.rigid_link`, `s.rigid_diaphragm`, `s.kinematic_coupling`,
+`s.tie`, `s.distributing`, `s.node_to_surface`,
+`s.node_to_surface_spring`) — but `s.tied_contact` and `s.mortar`
+are intentionally omitted:
+
+- **`s.tied_contact`** — `tied_contact` records resolve to a
+  `SurfaceCouplingRecord` whose nested `slave_records: list[
+  InterpolationRecord]` is what actually emits via the
+  `interpolations()` iterator at global emit time. The
+  `_ExcludeClaimedConstraints` filter operates on outer-record
+  identity (`id(rec)` of the `SurfaceCouplingRecord`); the nested
+  slaves have distinct ids and slip through the global exclusion
+  filter. Result: claiming a `tied_contact` by id would leave the
+  slave interpolations emitting in BOTH the global pre-stage pass
+  AND the stage block — double emission, which crashes OpenSees
+  with duplicate element tag.
+- **`s.mortar`** — kernel-side `g.constraints.mortar(...)` raises
+  `NotImplementedError` ([ConstraintsComposite.py:1180](../../core/ConstraintsComposite.py))
+  pending a real implementation of the ∫ψ·N dΓ Lagrange-multiplier
+  coupling; the stage-bound claim version stays deferred until
+  there are records to claim.
+
+Lifting `s.tied_contact`: extend `_ExcludeClaimedConstraints.
+interpolations()` to also filter nested slaves when their parent
+`SurfaceCouplingRecord` is claimed (probably by carrying a
+parent-id map alongside the claim set), or claim individual
+slave InterpolationRecord ids directly (requires the user to
+name the slaves, which isn't ergonomic).
+
+Trigger this work when an SSI deck legitimately needs to stage-
+bind a `tied_contact` interface — most lining/excavation models
+use `embedded` (volume host) or `tie` (surface host) instead.
+
+### Implicit promotion of `g.constraints.*` records to stages (Path A)
+
+The Phase SSI-2.D extension shipped CLAIM-by-name (Path D2 from
+the scoping conversation) rather than implicit derivation in
+`compute_stage_ownership` (Path A). The forgotten-claim failure
+mode — user adds a new embed at apeGmsh time, forgets to claim
+it inside the appropriate stage block, deck routes it to the
+global pre-stage pass and crashes when stage-bound nodes don't
+exist yet at parse time — was the principal critique against the
+shipped approach. Today the V1-style ownership-tier validator
+catches the resulting "stage N node referenced by global record"
+failure with a clear offender list, but the user still has to
+edit the stage block to fix it.
+
+Lifting via implicit promotion would extend
+`compute_stage_ownership` to walk constraint records and promote
+them to a stage when ALL referenced nodes resolve to that stage's
+node ownership (and fail loud on cross-stage spans). Architectural
+concerns flagged in the scoping critique: (a) it's a "third
+pattern" relative to ADR 0034's PUSH/PULL/CLAIM trichotomy;
+(b) PG is the authoring spine — implicit promotion arguably
+matches the existing pattern (materials/sections/loads/masses
+all derive from PG ownership). The CLAIM-by-name shipping
+decision was driven by the wish to keep the architecture surface
+narrow (and to ship sooner for the Cerro Lindo SSI V5 forcing
+function).
+
+Trigger this work if the forgotten-claim failure becomes a real
+authoring footgun across SSI decks (more than the occasional
+"oops, forgot `name=`"). Likely won't lift soon — CLAIM-by-name
+covers the canonical SSI workflow ergonomically, and Path A's
+"third pattern" concern from the architecture critics still
+holds.
+
+Lives in `_internal/build.py::compute_stage_ownership` (would
+gain constraint-record promotion logic) + `apesees.py::
+_run_staged_bc_validators` (a new V6 for cross-stage spans).
+
 ## Cylindrical / Spherical in 2-D models
 
 `Cylindrical(axis=(0,0,1))` for a 2-D model would be meaningful

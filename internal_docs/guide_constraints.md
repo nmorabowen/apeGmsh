@@ -359,6 +359,49 @@ fem.elements.constraints.summary()    # kind, count, n_interpolations
 ```
 
 
+## 6.5 Stage-binding constraints in apeSees (SSI workflows)
+
+When using `apeSees` to emit a multi-stage analysis deck, any
+constraint can be **claimed by name** for a specific stage so it
+emits inside that stage's block instead of the global pre-stage
+MP-constraint pass. This is what you want when the constraint
+references nodes / elements that only come online via
+`s.activate(pgs=[...])` in a later stage — emitting globally would
+reference nodes that don't exist at parse time and crash OpenSees.
+
+Name the constraint when you declare it:
+
+```python
+# At apeGmsh time — name= is the contract for stage routing later:
+g.constraints.embedded(
+    host_label="Rock", embedded_label="Lining",
+    name="lining_embed", stiffness=1e8,
+)
+```
+
+Then inside the stage block, claim by that name:
+
+```python
+# At apeSees bridge time:
+with ops.stage(name="install_lining") as s:
+    s.activate(pgs=["Lining"])
+    s.embedded(name="lining_embed")    # claim — emits here, not globally
+    s.analysis(...)
+    s.run(n_increments=10, dt=0.1)
+```
+
+Available CLAIM verbs on `_StageBuilder`: `s.embedded`, `s.tie`,
+`s.distributing`, `s.equal_dof`, `s.rigid_link`,
+`s.rigid_diaphragm`, `s.kinematic_coupling`, `s.node_to_surface`,
+`s.node_to_surface_spring`. `s.tied_contact` and `s.mortar` are
+deferred — see [_DEFERRED.md](../src/apeGmsh/opensees/architecture/_DEFERRED.md).
+Forgetting to claim is caught at build time by the V1 ownership-
+tier validator with an actionable offender list.
+
+Full guide: `guide_opensees.md` §4.4 "Multi-point constraints" and
+ADR 0034 §5a "Stage-bound constraints via CLAIM-by-name".
+
+
 ## 7. Guidelines
 
 - **Start with `equal_dof`** — it covers 80% of constraint needs.
@@ -379,3 +422,5 @@ fem.elements.constraints.summary()    # kind, count, n_interpolations
 - `guide_fem_broker.md` — how the broker organizes constraints
 - `guide_loads.md` — the analogous two-stage pipeline for loads
 - `guide_basics.md` — session lifecycle
+- `guide_opensees.md` §4.4 — MP constraint emit + stage-binding in
+  `apeSees` (SSI-2.D extension)

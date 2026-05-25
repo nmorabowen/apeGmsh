@@ -36,11 +36,29 @@ The staged-analysis work ships in four phases:
   before `analyze` so they capture the stage's analyze steps. Ships
   with four ownership-tier validators (V1-V4) plus a unified
   `domain_change` gate.
+- **Phase SSI-2.D extension — stage-bound MP constraints +
+  `s.initial_stress` PUSH.** Adds nine CLAIM-by-name builder methods
+  (`s.embedded`, `s.equal_dof`, `s.rigid_link`, `s.rigid_diaphragm`,
+  `s.kinematic_coupling`, `s.tie`, `s.distributing`,
+  `s.node_to_surface`, `s.node_to_surface_spring`) that route resolved
+  MP-constraint records into a per-stage pool; the records emit inside
+  the stage block (after regions, before `domain_change`) rather than
+  in the global pre-stage MP-constraint pass. Adds `s.initial_stress`
+  as a PUSH mirror of `ops.initial_stress(...)` alongside the existing
+  `s.add(InitialStressRecord)` PULL path. CLAIM-by-name (rather than
+  direct-create) because the kernel constraint resolver needs a live
+  `gmsh` model + parts registry that are typically gone by bridge time
+  ([ADR 0034](decisions/0034-stage-bound-bcs-and-recorders.md) §5a/5b).
+  Forcing function: the Cerro Lindo SSI V5 cimbra-installation deck
+  where embedded constraints leaking into the global pre-stage block
+  caused Newton divergence at step 2 (ADR 0034 §5c).
 
 The user surface is unified — `_StageBuilder` carries `activate`,
-`fix`, `mass`, `region`, `recorder`, `add`, `analysis`, and `run`
-as verbs in the same context manager. The deck layout below shows
-the combined effect.
+`fix`, `mass`, `region`, `recorder`, `add`, `initial_stress`,
+`embedded` / `equal_dof` / `rigid_link` / `rigid_diaphragm` /
+`kinematic_coupling` / `tie` / `distributing` / `node_to_surface` /
+`node_to_surface_spring`, `analysis`, and `run` as verbs in the same
+context manager. The deck layout below shows the combined effect.
 
 ## Deck layout
 
@@ -103,6 +121,9 @@ element FourNodeTetrahedron 88 ...
 fix 451 1 1 1             # SSI-2.D: stage-bound fix on stage-bound node
 mass 452 100.0 100.0 100.0 # SSI-2.D: stage-bound mass
 region 17 -node 451 452   # SSI-2.D: stage-bound region (per-stage tag)
+element ASDEmbeddedNodeElement 200 999 451 452 453 -K 1e+08
+                          # SSI-2.D ext: stage-bound MP constraint
+                          # claimed via s.embedded(name="lining_embed")
 domainChange              # tell OpenSees to rebuild the DOF map
 parameter 200 ...         # stage's initial_stress (PR-A)
 proc excavate_stress {...}
@@ -140,9 +161,25 @@ The line-by-line emission order is:
      by name within this stage, one tag per name allocated from the
      shared `TagAllocator`. V3 guarantees no cross-scope name
      collision so tags stay disjoint across stages and globals.
+   - **Stage-bound MP constraints** (Phase SSI-2.D extension) — the
+     stage's `stage_constraint_records` pool, claimed earlier via
+     `s.embedded(name=...)` / `s.equal_dof(name=...)` /
+     `s.rigid_link(name=...)` / `s.rigid_diaphragm(name=...)` /
+     `s.kinematic_coupling(name=...)` / `s.tie(name=...)` /
+     `s.distributing(name=...)` / `s.node_to_surface(name=...)` /
+     `s.node_to_surface_spring(name=...)`. The records are wrapped in
+     a `_StageConstraintAdapter` and the six per-kind emit helpers
+     (`_emit_phantom_nodes`, `_emit_rigid_links`, `_emit_equal_dofs`,
+     `_emit_rigid_diaphragms`, `_emit_kinematic_couplings`,
+     `_emit_surface_couplings`) are reused unchanged. The bridge's
+     `_claimed_constraint_ids()` is passed to the global emit
+     orchestrators so claimed records are excluded from the pre-stage
+     pass via the `_ExcludeClaimedConstraints` adapter — no double
+     emission.
    - `domain_change()` — **unified gate (Phase SSI-2.D)**: fires if
      the stage added ANY topology (nodes / elements) OR any stage-
-     bound BC (fix / mass / region). Single barrier per stage.
+     bound BC (fix / mass / region) OR any stage-bound MP constraint.
+     Single barrier per stage.
    - Stage's `initial_stress` records — `parameter` declarations +
      `step_hook_ramp` proc bodies + `addToParameter` calls. Same
      shape as the Phase SSI-1 non-staged global emit, scoped here.
@@ -488,18 +525,24 @@ consistent across rules.
 | **`remove sp` / mass-zero-out across stages** — stage-bound BCs are APPEND-ONLY in Phase SSI-2.D. A stage cannot release a prior stage's fix or zero out a prior stage's mass via `s.fix` / `s.mass`. For excavation-style decks that genuinely need to release support during construction, users currently drop to raw Tcl for the release step. | A new `s.remove_sp(...)` / `s.zero_mass(...)` verb on `_StageBuilder` + emit hooks calling `remove sp $node $dof` / `node $N mass 0 0 0`. |
 | **MPCO recorders with filters under stages** — stage-bound MPCO recorders DO claim through `s.recorder(spec)` but the per-rank filter-region planning (`_plan_partitioned_mpco_recorders`) currently only runs in the global emit pass. A stage-bound MPCO with a filter would fall through `emit_recorder_spec`'s materialize path and emit the filter region INSIDE the stage block instead of pre-allocated — works but doesn't reuse the cross-rank tag-identity infra. | Pre-allocate stage MPCO filter regions alongside the per-stage region tag cache; thread `_region_tag` into the materialised spec the same way the global path does. |
 | **Cross-stage region union** — V3 refuses same region `name=` across scopes. A region whose conceptual identity spans multiple stages currently requires explicit per-stage mangling (`lining_r_stage2`, `lining_r_stage3`) and client-side aggregation of the per-stage recorder outputs. Lifting V3 to allow opt-in name continuity would either need OpenSees `region` extension (doesn't exist; `MeshRegion` membership is immutable post-construction — MeshRegion.cpp:82-85) or deferred emit of the unified region to the LAST contributing stage (loses recorder coverage for earlier stages). | Likely won't lift — the workaround is correct OpenSees usage and the alternatives degrade behavior. |
+| **`s.tied_contact` / `s.mortar` stage-bound claim** — Phase SSI-2.D extension ships nine MP-constraint claim methods on `_StageBuilder` but `s.tied_contact` is omitted: `tied_contact` resolves to a `SurfaceCouplingRecord` whose nested `slave_records: list[InterpolationRecord]` is what emits via the `interpolations()` iterator. `_ExcludeClaimedConstraints` filters on outer-record identity; the nested slaves slip through and would double-emit. `s.mortar` is omitted because `g.constraints.mortar(...)` is kernel-NIY. | Extend `_ExcludeClaimedConstraints.interpolations()` to filter nested slaves when their parent `SurfaceCouplingRecord` is claimed, or accept per-slave naming as the user contract. See [_DEFERRED.md](_DEFERRED.md) §"`s.tied_contact` / `s.mortar` stage-bound claim". |
+| **Implicit promotion of `g.constraints.*` to stages (Path A)** — Phase SSI-2.D extension shipped CLAIM-by-name rather than implicit derivation in `compute_stage_ownership`. The forgotten-claim failure mode (user adds an embed at apeGmsh time, forgets to claim inside a stage, deck crashes at parse time because stage-bound nodes don't exist yet) is caught by the V1-style validator with a clear offender list but still requires the user to edit the stage block. | `compute_stage_ownership` gains constraint-record promotion logic + a V6 validator for cross-stage spans. Likely won't lift soon — CLAIM-by-name covers the canonical SSI workflow ergonomically. See [_DEFERRED.md](_DEFERRED.md) §"Implicit promotion of `g.constraints.*` records to stages". |
 
 ## File map
 
 | Concern | Source |
 |---|---|
 | User surface (`ops.stage`, `_StageBuilder`) | [`apesees.py`](../apesees.py) `class _StageBuilder` |
-| `StageRecord` dataclass (+ SSI-2.D `fix_records` / `mass_records` / `region_records` / `recorder_specs`) | [`_internal/build.py`](../_internal/build.py) `class StageRecord` |
+| `StageRecord` dataclass (+ SSI-2.D `fix_records` / `mass_records` / `region_records` / `recorder_specs` + SSI-2.D ext `stage_constraint_records`) | [`_internal/build.py`](../_internal/build.py) `class StageRecord` |
 | `InitialStressRecord` dataclass | [`_internal/build.py`](../_internal/build.py) `class InitialStressRecord` |
 | Per-stage emit pipeline (single-partition) | [`apesees.py`](../apesees.py) `BuiltModel._emit_stages_flat` |
 | Per-stage emit pipeline (MP — Phase SSI-2.C / SSI-2.D) | [`apesees.py`](../apesees.py) `BuiltModel._emit_stages_partitioned` |
 | Per-stage region emit helpers (Phase SSI-2.D PR-C) | [`apesees.py`](../apesees.py) `_emit_stage_regions` / `_emit_stage_regions_partitioned` |
 | Recorder claiming + skip in global emit | [`apesees.py`](../apesees.py) `apeSees._stage_claimed_recorder_ids`, `BuiltModel._claimed_recorder_ids` |
+| Stage-bound MP-constraint claim + skip in global emit (SSI-2.D ext) | [`apesees.py`](../apesees.py) `apeSees._stage_claimed_constraint_ids`, `BuiltModel._claimed_constraint_ids`, `_StageBuilder._claim_constraints_by_name` |
+| Stage-bound MP-constraint emit orchestrators (SSI-2.D ext) | [`_internal/build.py`](../_internal/build.py) `emit_stage_mp_constraints`, `emit_stage_mp_constraints_partitioned`, `_StageConstraintAdapter`, `_ExcludeClaimedConstraints` |
+| Stage-bound MP-constraint builder methods (SSI-2.D ext) | [`apesees.py`](../apesees.py) `_StageBuilder.embedded` / `.tie` / `.distributing` / `.equal_dof` / `.rigid_link` / `.rigid_diaphragm` / `.kinematic_coupling` / `.node_to_surface` / `.node_to_surface_spring` |
+| `s.initial_stress(...)` PUSH builder + shared validation helper (SSI-2.D ext) | [`apesees.py`](../apesees.py) `_StageBuilder.initial_stress`, `_build_initial_stress_record` |
 | `apeSees.h5` fail-loud guard (#313) | [`apesees.py`](../apesees.py) `apeSees.h5` |
 | Ownership computation | [`_internal/build.py`](../_internal/build.py) `compute_stage_ownership` |
 | Tag pre-allocation | [`_internal/build.py`](../_internal/build.py) `allocate_element_tags` |
@@ -538,6 +581,10 @@ consistent across rules.
 | [`tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py`](../../../../tests/opensees/integration/test_emit_partitioned_stage_bound_bcs.py) | Phase SSI-2.D PR-B — per-rank fix/mass routing on owning rank, zero leak into global scope, single global `domain_change`, empty-bracket skip on non-contributing rank, BC-only stage drives per-rank loop. |
 | [`tests/opensees/unit/test_stage_bound_region_recorder.py`](../../../../tests/opensees/unit/test_stage_bound_region_recorder.py) | Phase SSI-2.D PR-C — `s.region` / `s.recorder` builder positive + negative; recorder type / membership / double-claim checks; global-emit skip on claimed; slot ordering (chain → recorder → analyze; region → `domain_change`); V4 positive + negative; `all_region_records` / `all_recorder_specs` introspection. |
 | [`tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py`](../../../../tests/opensees/integration/test_emit_partitioned_stage_bound_regions.py) | Phase SSI-2.D PR-C — cross-rank region shares tag (per-stage tag cache), single-rank region skips non-contributing ranks (INV-4), per-stage tag cache scoping across stages, global+stage tag disjointness. |
+| [`tests/opensees/unit/test_stage_initial_stress_push.py`](../../../../tests/opensees/unit/test_stage_initial_stress_push.py) | Phase SSI-2.D extension — `s.initial_stress(...)` PUSH ↔ `s.add(record)` PULL byte-identical deck parity; return-record contract; stage-scoped error-message prefix. |
+| [`tests/opensees/unit/test_stage_embedded_claim.py`](../../../../tests/opensees/unit/test_stage_embedded_claim.py) | Phase SSI-2.D extension — `s.embedded(name=...)` claim semantics: pool population, double-claim refusal, missing-name fail-loud, empty-name fail-loud, global-emit skip on claimed, unclaimed-record passthrough. |
+| [`tests/opensees/unit/test_stage_constraint_siblings.py`](../../../../tests/opensees/unit/test_stage_constraint_siblings.py) | Phase SSI-2.D extension — smoke tests for `s.equal_dof` / `s.rigid_link` / `s.rigid_diaphragm` / `s.kinematic_coupling` / `s.tie` / `s.distributing` claim-and-route into stage block. |
+| [`tests/opensees/unit/test_stage_constraint_e2e_2stage.py`](../../../../tests/opensees/unit/test_stage_constraint_e2e_2stage.py) | Phase SSI-2.D extension — Cerro Lindo SSI V5 forcing-function fix: 2-stage SSI deck structure with cimbra + embed inside stage 2, `domainChange` AFTER constraint emit and BEFORE analysis chain, no leak into stage 1 or pre-stage block. |
 
 ## Cross-references
 
