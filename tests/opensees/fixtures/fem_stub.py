@@ -173,6 +173,12 @@ class _NodesStub:
         self._id_to_idx = {int(n): i for i, n in enumerate(self._ids)}
         self._pgs = {k: list(v) for k, v in node_pgs.items()}
         self.labels = _NodeLabelsStub(labels or {})
+        # Per-node ndf channel — mirrors :attr:`NodeComposite._ndf`
+        # (S2 / ADR 0033).  ``None`` means "no declarations" — every
+        # ``ndf_for`` call raises ``LookupError`` (matching the real
+        # broker's fail-loud contract).  Tests that need per-node ndf
+        # populate it via :meth:`set_per_node_ndf`.
+        self._ndf: ndarray | None = None
 
     @property
     def ids(self) -> ndarray:
@@ -231,17 +237,45 @@ class _NodesStub:
             partition=partition, dim=dim,
         )
 
+    def set_per_node_ndf(self, mapping: dict[int, int]) -> None:
+        """Install per-node ndf declarations (S5 — partitioned mixed-ndf
+        tests).
+
+        Mirrors the real broker's :attr:`NodeComposite._ndf` int8 array.
+        Each ``{node_id: ndf}`` entry stamps the value at the matching
+        index; nodes absent from ``mapping`` keep the sentinel ``0`` and
+        :meth:`ndf_for` raises ``LookupError`` for them — matching the
+        real broker's "uncovered nodes raise" contract.  Callers that
+        want a default-for-everything declaration must populate every
+        node-id explicitly (mirrors ``g.node_ndf.set_default`` +
+        resolver, which produces a positive value for every id).
+        """
+        arr = np.zeros(len(self._ids), dtype=np.int8)
+        for nid, ndf in mapping.items():
+            idx = self._id_to_idx[int(nid)]
+            arr[idx] = int(ndf)
+        self._ndf = arr
+
     def ndf_for(self, nid: int) -> int:
         """Mirror the real :meth:`NodeComposite.ndf_for` fail-loud
         behaviour for stub-based bridge tests (S2).
 
-        The stub never carries declared ndf — there is no
-        ``g.node_ndf`` composite behind it.  Raises ``LookupError`` so
-        the S2 emit-site ``try/except LookupError`` path fires and
-        falls back to the envelope ``ndf=K`` from ``apeSees.model``.
-        DO NOT return 0 or the envelope value — that would mask
-        emit-side bugs that the real broker would have caught.
+        Default (no :meth:`set_per_node_ndf` call) — every node raises
+        ``LookupError`` so the S2 emit-site ``try/except`` falls back to
+        the apeSees envelope (the bridge's ``model -ndf K``).  Tests
+        that need declared per-node ndf (S5 — partitioned mixed-ndf
+        shell-on-solid) populate :attr:`_ndf` via
+        :meth:`set_per_node_ndf`; uncovered nodes still raise (the
+        sentinel-zero is treated as "undeclared" matching the real
+        broker).
         """
+        if self._ndf is not None:
+            idx = self._id_to_idx.get(int(nid))
+            if idx is None:
+                raise KeyError(f"node id {nid} not in fixture")
+            val = int(self._ndf[idx])
+            if val > 0:
+                return val
         raise LookupError(
             f"test stub: no per-node ndf declared (node {nid})"
         )
