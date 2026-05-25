@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331)
 
 ### CHANGED — boolean.fragment default (BREAKING)
 
@@ -149,6 +149,75 @@
   MPI runtime needed for emit-semantics assertions. Test-only PR;
   zero production code changes. Closes the S1 + S2 + S5
   shell-to-solid coupling stream.
+
+### FIXED — Embedded-element pipeline: tag namespace + intersection host-rank + fail-loud guards
+
+- **PR #329 — canonical TagAllocator + intersection host-rank rule
+  for partitioned `ASDEmbeddedNodeElement`.** Two latent partition-
+  emit bugs in the surface-coupling fan-out:
+
+  1. **Global tag collision under partitioning.** The retired
+     `_allocate_embedded_tag_base` returned a static `1_000_000`
+     and `_emit_surface_couplings_for_rank` restarted its per-call
+     counter from that base on every rank — so two distinct embedded
+     records emitted on different ranks both received tag
+     `1_000_000`, violating [ADR 0027](src/apeGmsh/opensees/architecture/decisions/0027-cross-partition-mp-constraints.md) §"Tag determinism".
+  2. **Duplicate emit on boundary-shared masters.**
+     `_plan_rank_constraints` used `if partition_rank in
+     node_owners[masters[0]]` — when `masters[0]` was a partition-
+     boundary node owned by multiple ranks, every owning rank's plan
+     included the record and the `embeddedNode` line emitted on each
+     (duplicate stiffness contribution at solve time).
+
+  Fix: thread the bridge's canonical `TagAllocator` through
+  `emit_mp_constraints` / `emit_mp_constraints_partitioned` /
+  `_emit_surface_couplings` / `_emit_surface_couplings_for_rank` —
+  embedded element tags now come from `tags.allocate("element")`,
+  sharing the global element-tag namespace and guaranteed unique
+  across ranks. Intersection host-rank rule: the unique owner of
+  an embedded record is the host element's owning rank, NOT every
+  rank in `node_owners[masters[0]]`. New integration test
+  `tests/opensees/integration/test_emit_partitioned_embedded.py`
+  (~435 lines) locks both fixes end-to-end. ADR 0027 §"ASDEmbeddedNodeElement
+  ownership" + §"Tag determinism" extended to document the canonical-
+  allocator share and the intersection rule so future readers don't
+  reintroduce either bug.
+
+- **PR #331 — three fail-loud guards on the embedded resolver / emit
+  path.** Three resolver/emit-time silent-wrongs that produced
+  "valid-looking" decks with broken physics:
+
+  1. **Off-host extrapolation.** `resolve_embedded` accepted the
+     closest host candidate regardless of barycentric excess, so an
+     embedded node OUTSIDE every host element produced an
+     `InterpolationRecord` with NEGATIVE shape-function weights —
+     extrapolation, not interpolation. `EmbeddedDef.tolerance` was
+     documented as "not currently enforced" and did nothing. New
+     `excess: float | None` field on `InterpolationRecord` carries
+     the barycentric excess from the resolver; the emit-time guard
+     in `build.py` raises `BridgeError` naming the offending slave
+     node + its excess when the resolver returns `excess > tolerance`.
+  2. **Mixed-host silent drop.** `_collect_host_elems` kept only
+     Gmsh element types 2 (tri3) and 4 (tet4); quad4, hex8, prism,
+     pyramid, tri6, tet10, and any other type were silently dropped.
+     A user meshing the host with hex + a few tets (transition
+     region) saw only the tet subset, with embedded nodes in the hex
+     region projecting onto distant tets (extrapolation again). The
+     collector now retains all supported host element types; mixed-
+     host configurations that the C++ ASDEmbeddedNodeElement parser
+     cannot consume raise at build time, not at OpenSees runtime.
+  3. **Bad Rnode count reaching the C++ parser.** The C++
+     `ASDEmbeddedNodeElement` only accepts 3 (tri host) or 4 (tet
+     host) Rnodes; 5+ are misread as flag positions, 2 aborts in
+     `setDomain`. Hand-built records bypassing the resolver could
+     deliver any count and crash OpenSees at runtime. New build-time
+     guard raises `BridgeError` naming the offending record's Rnode
+     count.
+
+  Combined coverage: 81 new lines in `tests/test_constraint_emission.py`
+  + 80 new lines in `tests/test_constraint_resolver.py` lock the
+  three guards on positive + negative cases. Full suite: 6733
+  passed.
 
 ### ADDED — Phase SSI-2.D: stage-bound BCs and recorders (ADR 0034)
 
