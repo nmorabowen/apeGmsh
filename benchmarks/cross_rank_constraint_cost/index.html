@@ -3847,17 +3847,14 @@
 
 
 <h1 id="cross-rank-constraint-cost-adr-0038-v1-scope-gate">Cross-rank constraint cost — ADR 0038 §"v1 scope gate"<a class="headerlink" href="#cross-rank-constraint-cost-adr-0038-v1-scope-gate" title="Permanent link">&para;</a></h1>
-<p>Last run: no runs yet — populated by nightly <code>benchmarks.yml</code> workflow</p>
+<p>Last run: 2026-05-26 17:05:06 UTC</p>
 <h2 id="thresholds-adr-0038-v1-scope-gate-10k-4-ranks">Thresholds (ADR 0038 §"v1 scope gate", 10k × 4 ranks)<a class="headerlink" href="#thresholds-adr-0038-v1-scope-gate-10k-4-ranks" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>deck_emit_sec     &lt; 5.0</code></li>
 <li><code>deck_parse_py_sec &lt; 2.0</code></li>
 <li><code>deck_lines        &lt; 500_000</code></li>
-<li><code>peak_rss_mb       &lt; 1_500</code></li>
+<li><code>peak_rss_mb       &lt; 1500.0</code></li>
 </ul>
-<p>The 10k × 4 cell (10 000 embedded line nodes × 4 ranks ×
-<code>tet_host_line_embed</code>) is the gate. Smaller cells provide a scaling
-trace; larger cells inform the 100k-fail fallback branch.</p>
 <h2 id="results">Results<a class="headerlink" href="#results" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -3877,255 +3874,252 @@ trace; larger cells inform the 100k-fail fallback branch.</p>
 <td style="text-align: right;">100</td>
 <td style="text-align: right;">2</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_014</td>
+<td style="text-align: right;">0.036</td>
+<td style="text-align: right;">0.012</td>
+<td style="text-align: right;">111.1</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100</td>
 <td style="text-align: right;">2</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_414</td>
+<td style="text-align: right;">0.007</td>
+<td style="text-align: right;">0.019</td>
+<td style="text-align: right;">112.8</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100</td>
 <td style="text-align: right;">4</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_020</td>
+<td style="text-align: right;">0.006</td>
+<td style="text-align: right;">0.012</td>
+<td style="text-align: right;">114.6</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100</td>
 <td style="text-align: right;">4</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_420</td>
+<td style="text-align: right;">0.009</td>
+<td style="text-align: right;">0.018</td>
+<td style="text-align: right;">113.0</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100</td>
 <td style="text-align: right;">8</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_032</td>
+<td style="text-align: right;">0.007</td>
+<td style="text-align: right;">0.012</td>
+<td style="text-align: right;">113.0</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100</td>
 <td style="text-align: right;">8</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_432</td>
+<td style="text-align: right;">0.010</td>
+<td style="text-align: right;">0.018</td>
+<td style="text-align: right;">113.4</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">1_000</td>
 <td style="text-align: right;">2</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">10_014</td>
+<td style="text-align: right;">0.051</td>
+<td style="text-align: right;">0.146</td>
+<td style="text-align: right;">118.6</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">1_000</td>
 <td style="text-align: right;">2</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">14_014</td>
+<td style="text-align: right;">0.071</td>
+<td style="text-align: right;">0.202</td>
+<td style="text-align: right;">160.7</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">1_000</td>
 <td style="text-align: right;">4</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">10_020</td>
+<td style="text-align: right;">0.056</td>
+<td style="text-align: right;">0.120</td>
+<td style="text-align: right;">165.2</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">1_000</td>
 <td style="text-align: right;">4</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">14_020</td>
+<td style="text-align: right;">0.080</td>
+<td style="text-align: right;">0.177</td>
+<td style="text-align: right;">165.7</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">1_000</td>
 <td style="text-align: right;">8</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">10_032</td>
+<td style="text-align: right;">0.067</td>
+<td style="text-align: right;">0.121</td>
+<td style="text-align: right;">170.0</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">1_000</td>
 <td style="text-align: right;">8</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">14_032</td>
+<td style="text-align: right;">0.092</td>
+<td style="text-align: right;">0.176</td>
+<td style="text-align: right;">163.9</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">10_000</td>
 <td style="text-align: right;">2</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">100_014</td>
+<td style="text-align: right;">0.581</td>
+<td style="text-align: right;">1.451</td>
+<td style="text-align: right;">323.9</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">10_000</td>
 <td style="text-align: right;">2</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">140_014</td>
+<td style="text-align: right;">0.804</td>
+<td style="text-align: right;">1.958</td>
+<td style="text-align: right;">334.7</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">10_000</td>
 <td style="text-align: right;">4</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: right;">100_020</td>
+<td style="text-align: right;">0.611</td>
+<td style="text-align: right;">1.354</td>
+<td style="text-align: right;">489.2</td>
+<td style="text-align: center;">PASS</td>
 </tr>
 <tr>
 <td style="text-align: right;">10_000</td>
 <td style="text-align: right;">4</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: center;">—</td>
+<td style="text-align: right;">140_020</td>
+<td style="text-align: right;">0.912</td>
+<td style="text-align: right;">1.920</td>
+<td style="text-align: right;">499.6</td>
+<td style="text-align: center;">PASS</td>
 </tr>
 <tr>
 <td style="text-align: right;">10_000</td>
 <td style="text-align: right;">8</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">100_032</td>
+<td style="text-align: right;">0.755</td>
+<td style="text-align: right;">1.333</td>
+<td style="text-align: right;">340.6</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">10_000</td>
 <td style="text-align: right;">8</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">140_032</td>
+<td style="text-align: right;">1.051</td>
+<td style="text-align: right;">1.975</td>
+<td style="text-align: right;">346.0</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100_000</td>
 <td style="text-align: right;">2</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_000_014</td>
+<td style="text-align: right;">5.413</td>
+<td style="text-align: right;">14.632</td>
+<td style="text-align: right;">2591.1</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100_000</td>
 <td style="text-align: right;">2</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_400_014</td>
+<td style="text-align: right;">7.773</td>
+<td style="text-align: right;">20.229</td>
+<td style="text-align: right;">4988.3</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100_000</td>
 <td style="text-align: right;">4</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_000_020</td>
+<td style="text-align: right;">6.030</td>
+<td style="text-align: right;">13.111</td>
+<td style="text-align: right;">4960.4</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100_000</td>
 <td style="text-align: right;">4</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_400_020</td>
+<td style="text-align: right;">8.703</td>
+<td style="text-align: right;">19.188</td>
+<td style="text-align: right;">4991.5</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100_000</td>
 <td style="text-align: right;">8</td>
 <td>tet_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_000_032</td>
+<td style="text-align: right;">7.434</td>
+<td style="text-align: right;">13.127</td>
+<td style="text-align: right;">4950.6</td>
 <td style="text-align: center;">—</td>
 </tr>
 <tr>
 <td style="text-align: right;">100_000</td>
 <td style="text-align: right;">8</td>
 <td>hex_host_line_embed</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
-<td style="text-align: right;">—</td>
+<td style="text-align: right;">1_400_032</td>
+<td style="text-align: right;">10.414</td>
+<td style="text-align: right;">19.673</td>
+<td style="text-align: right;">5031.9</td>
 <td style="text-align: center;">—</td>
 </tr>
 </tbody>
 </table>
 <h2 id="decision-gate-status">Decision gate status<a class="headerlink" href="#decision-gate-status" title="Permanent link">&para;</a></h2>
-<p>PENDING — awaits first nightly run.</p>
-<p>Per ADR 0038 §"v1 scope gate":</p>
 <ul>
-<li><strong>All thresholds pass at 10k × 4</strong> → proceed to Phase 2 (full feature).</li>
-<li><strong>10k × 4 passes but 100k × 8 fails</strong> → proceed with
-  <code>WARN_INTERFACE_SIZE = 50_000</code> hard warning at compose time.</li>
-<li><strong>Any threshold breaches at 10k × 4</strong> → abandon the full feature in
-  v1; ship Phase 2 + stripped Phase 3 (mesh-cache-only <code>g.compose()</code>;
-  any cross-module MP-constraint raises <code>ComposeUnsupportedError</code>).</li>
+<li><code>deck_emit_sec</code>     pass: <strong>True</strong></li>
+<li><code>deck_parse_py_sec</code> pass: <strong>True</strong></li>
+<li><code>deck_lines</code>        pass: <strong>True</strong></li>
+<li><code>peak_rss_mb</code>       pass: <strong>True</strong></li>
 </ul>
+<p><strong>Overall: PASS</strong> — proceed to Phase 2 (full feature).</p>
 
 
 
