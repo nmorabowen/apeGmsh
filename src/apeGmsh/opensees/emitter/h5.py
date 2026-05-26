@@ -1230,6 +1230,28 @@ class H5Emitter:
     def domain_change(self) -> None:
         """No-op — Phase SSI-2.B archival deferred (apeSees.h5 fails loud)."""
 
+    # -- Staged-analysis mutators (Phase SSI-2.E) ---------------------------
+    # All five no-op for the same reason ``stage_open`` / ``stage_close`` /
+    # ``domain_change`` do: staged H5 is fail-loud at ``apeSees.h5(path)``
+    # (#313 guard).  When the guard lifts (schema bump opensees
+    # 2.7.0 → 2.8.0 per ADR 0023) these methods will write to
+    # ``/opensees/stages/<stage>/mutators/``.
+
+    def set_time(self, t: float) -> None:
+        del t
+
+    def set_creep(self, on: bool) -> None:
+        del on
+
+    def reset(self) -> None:
+        pass
+
+    def remove_sp(self, node: int, dof: int) -> None:
+        del node, dof
+
+    def remove_element(self, tag: int) -> None:
+        del tag
+
     # =====================================================================
     # Protocol — Analysis chain
     # =====================================================================

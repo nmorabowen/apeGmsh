@@ -173,32 +173,53 @@ Lives in `apesees.py::h5` (the bridge-side guard, #313) and
 `emitter/h5.py::addToParameter` / `step_hook_ramp` / `stage_open`
 / `stage_close` / `domain_change` (the schema-side no-ops).
 
-### `remove sp` / mass-zero-out across stages
+### ✅ `remove sp` / `remove element` / mass overwrite / time-state mutators (Phase SSI-2.E, SHIPPED 2026-05)
 
-Stage-bound BCs declared via `s.fix(...)` / `s.mass(...)` are
-APPEND-ONLY in Phase SSI-2.D. A stage cannot release a prior
-stage's SP constraint or zero out a prior stage's mass through
-the builder. For excavation-style decks that genuinely need to
-release support during construction (e.g. removing a temporary
-shoring fix between stages), users currently drop to raw Tcl for
-the release step.
+Phase SSI-2.E lifted the append-only restriction with five new
+`_StageBuilder` verbs:
 
-Lifting requires a new `s.remove_sp(*, pg=None, nodes=None,
-dofs)` verb (emits `remove sp $node $dof`) and a
-`s.zero_mass(*, pg=None, nodes=None)` verb (emits
-`node $N mass 0 0 0`). Both would extend `StageRecord` with
-removal-records fields and a per-stage emit pass running
-alongside the existing `s.fix` / `s.mass` pass.
+- `s.remove_sp(*, pg=, nodes=, dofs=)` — emits `remove sp $node
+  $dof`; releases prior-tier SP constraints.
+- `s.remove_element(*, pg=, elements=)` — emits `remove element
+  $tag`; drops elements from the Domain mid-analysis.
+  `elements=` is FEM eids per the recorder.Element convention,
+  translated through `fem_eid_to_ops_tag` at emit time.
+- `s.mass(..., overwrite=True)` — relaxes validator V2 when the
+  user opts in to mid-run mass overwrite (acknowledging the
+  `Domain::setMass` silent overwrite).
+- `s.set_time(t)` / `s.set_creep(on)` — emit `setTime` /
+  `setCreep 1|0` right after `stage_open`; overrides the prior
+  stage_close's `loadConst -time 0.0` reset / toggles creep for
+  time-dependent concrete materials.
+- `s.reset()` — emits the bare OpenSees `reset` between the
+  stage's recorder declarations and its analyze loop.
 
-Open design question: should removals queue on a per-stage
-"release list" that emits BEFORE the stage's new BCs, or AFTER?
-Before is the conservative reading (release the old, then apply
-the new); after lets a stage atomically replace a BC by issuing
-`remove sp` + `fix` for the same target.
+Validators V5 (remove_sp targets must reference a prior-tier SP)
+and V6 (remove_element targets must reference a prior-tier
+element) gate the new verbs at build time. V2 was widened to
+subtract `s.remove_sp` targets from the fix alive set so the
+atomic-replace pattern (release prior + re-fix in the same
+stage) passes both validators.
 
-Lives in `apesees.py::_StageBuilder` (would gain the new verbs)
-and the stage emit blocks in `_emit_stages_flat` /
-`_emit_stages_partitioned`.
+The "removal BEFORE new BCs" design question landed on **BEFORE**
+(the conservative reading): within a stage block, removals emit
+between topology and the new fix/mass/region/MP block. Atomic
+replace works by construction.
+
+Lives in `_internal/build.py` (`SPRemovalRecord`,
+`ElementRemovalRecord`, `MassRecord.overwrite`,
+`StageRecord.{remove_sp_records, remove_element_records, set_time,
+set_creep_on, pre_analyze_reset}`), `apesees.py`
+(`_StageBuilder.{remove_sp, remove_element, set_time, set_creep,
+reset}`; V5 / V6 validators), and per-emitter implementations of
+the five new Protocol methods (`set_time` / `set_creep` /
+`reset` / `remove_sp` / `remove_element`). Tests in
+`tests/opensees/unit/test_stage_ssi_2e_mutators.py`.
+
+Live execution of staged models that use these verbs is still
+deferred (the live emitter raises at `stage_open`); the verbs
+work for the Tcl / Py emit paths and are no-ops on H5
+(staged-H5 archival remains fail-loud at `apeSees.h5(path)`).
 
 ### MPCO recorders with filters under stages
 

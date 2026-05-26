@@ -296,3 +296,20 @@ class RecordingEmitter:
 
     def domain_change(self) -> None:
         self.calls.append(("domain_change", (), {}))
+
+    # -- Staged-analysis mutators (Phase SSI-2.E) ---------------------------
+
+    def set_time(self, t: float) -> None:
+        self.calls.append(("set_time", (float(t),), {}))
+
+    def set_creep(self, on: bool) -> None:
+        self.calls.append(("set_creep", (bool(on),), {}))
+
+    def reset(self) -> None:
+        self.calls.append(("reset", (), {}))
+
+    def remove_sp(self, node: int, dof: int) -> None:
+        self.calls.append(("remove_sp", (int(node), int(dof)), {}))
+
+    def remove_element(self, tag: int) -> None:
+        self.calls.append(("remove_element", (int(tag),), {}))

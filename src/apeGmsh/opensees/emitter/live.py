@@ -465,6 +465,27 @@ class LiveOpsEmitter:
         """
         self._ops.domainChange()
 
+    # -- Staged-analysis mutators (Phase SSI-2.E) ---------------------------
+    # Same rationale as :meth:`domain_change`: reachable only outside the
+    # staged emit path (which raises at ``stage_open``).  Forwards to
+    # openseespy so live callers driving a hand-rolled multi-step workflow
+    # have these primitives available.
+
+    def set_time(self, t: float) -> None:
+        self._ops.setTime(float(t))
+
+    def set_creep(self, on: bool) -> None:
+        self._ops.setCreep(1 if on else 0)
+
+    def reset(self) -> None:
+        self._ops.reset()
+
+    def remove_sp(self, node: int, dof: int) -> None:
+        self._ops.remove("sp", int(node), int(dof))
+
+    def remove_element(self, tag: int) -> None:
+        self._ops.remove("element", int(tag))
+
     # -- Stress control (Phase SSI-1: initial_stress + ramping hooks) -------
 
     def addToParameter(

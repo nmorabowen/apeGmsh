@@ -430,6 +430,38 @@ class PyEmitter:
             self._step_hooks_registered = False
         self._lines.indent = prev_indent
 
+    # -- Staged-analysis mutators (Phase SSI-2.E) ---------------------------
+
+    def set_time(self, t: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call("setTime", float(t)))
+        self._lines.indent = prev_indent
+
+    def set_creep(self, on: bool) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call("setCreep", 1 if on else 0))
+        self._lines.indent = prev_indent
+
+    def reset(self) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call("reset"))
+        self._lines.indent = prev_indent
+
+    def remove_sp(self, node: int, dof: int) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call("remove", "sp", int(node), int(dof)))
+        self._lines.indent = prev_indent
+
+    def remove_element(self, tag: int) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(_ops_call("remove", "element", int(tag)))
+        self._lines.indent = prev_indent
+
     def _emit_hook_ramp_function(
         self,
         name: str,

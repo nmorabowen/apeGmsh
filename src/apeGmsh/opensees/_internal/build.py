@@ -226,11 +226,72 @@ class FixRecord:
 
 @dataclass(frozen=True, slots=True)
 class MassRecord:
-    """One ``mass`` directive registered through ``apeSees.mass``."""
+    """One ``mass`` directive registered through ``apeSees.mass`` or
+    ``_StageBuilder.mass``.
+
+    ``overwrite`` (Phase SSI-2.E) opts the record out of validator V2's
+    cross-tier duplicate-mass check.  V2 normally refuses a second
+    mass assignment to a node already mass-assigned in an earlier tier
+    because OpenSees ``Domain::setMass`` silently overwrites and the
+    physics change would otherwise be silent.  Stage-bound callers that
+    deliberately want to mid-run reassign mass — e.g. swap a temporary
+    construction mass for a permanent one — pass ``overwrite=True`` to
+    acknowledge the overwrite explicitly.  Emits the same ``mass`` line
+    either way (OpenSees has no syntactic distinction); the flag is a
+    build-time validator-bypass marker only.
+    """
 
     pg: str | None
     nodes: tuple[int, ...] | None
     values: tuple[float, ...]
+    overwrite: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SPRemovalRecord:
+    """One ``s.remove_sp`` directive — releases SP constraints on a set
+    of nodes for a stage (Phase SSI-2.E).
+
+    Stage-bound only — no top-level ``apeSees.remove_sp``.  Either
+    ``pg`` or ``nodes`` is non-None (validated at the call site).  The
+    build pipeline expands ``pg`` into a per-node fan-out at emit time,
+    one ``emitter.remove_sp(node, dof)`` per (node, dof) pair.
+
+    Validator V5 (Phase SSI-2.E) refuses any record whose target SP was
+    not declared in an earlier scope (global ``apeSees.fix`` pool or a
+    strictly-earlier stage's ``s.fix`` pool) or that was already removed
+    by an earlier stage's ``s.remove_sp``.  Same-stage ``s.fix`` does
+    NOT make an SP available for same-stage removal — the removal emits
+    before the fix in the stage block, so the SP doesn't exist yet at
+    the remove line.
+    """
+
+    pg: str | None
+    nodes: tuple[int, ...] | None
+    dofs: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ElementRemovalRecord:
+    """One ``s.remove_element`` directive — drops elements from the
+    Domain mid-analysis (Phase SSI-2.E).
+
+    Stage-bound only.  Either ``pg`` or ``elements`` is non-None
+    (validated at the call site).  The build pipeline expands ``pg``
+    via ``expand_pg_to_elements`` into per-element fan-out at emit
+    time, one ``emitter.remove_element(tag)`` per element.
+
+    Validator V6 (Phase SSI-2.E) refuses any record whose target
+    element was not previously emitted in an earlier scope (globally
+    emitted OR activated by a strictly-earlier stage's
+    ``s.activate(pgs=)``) or that was already removed by an earlier
+    stage.  Element nodes are NOT removed by ``remove element`` — they
+    remain in the Domain and may continue to carry SP / mass / load
+    declarations from other tiers.
+    """
+
+    pg: str | None
+    elements: tuple[int, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,6 +400,26 @@ class StageRecord:
     # appends resolved records here.  Default ``()`` keeps existing
     # construction sites and tests working unmodified.
     stage_constraint_records: tuple["ConstraintRecord", ...] = ()
+    # Phase SSI-2.E: between-stage Domain mutators.  Removals emit
+    # BEFORE the stage's new fix / mass / region lines so a stage can
+    # release a prior-stage support and immediately re-apply a new
+    # value to the same target.  Validators V5 (remove_sp) and V6
+    # (remove_element) gate these at build time — see
+    # ``_validate_remove_sp_targets`` / ``_validate_remove_element_targets``.
+    remove_sp_records: tuple[SPRemovalRecord, ...] = ()
+    remove_element_records: tuple[ElementRemovalRecord, ...] = ()
+    # Phase SSI-2.E: time-state mutators.  ``set_time`` overrides the
+    # ``loadConst -time 0.0`` reset that the previous stage's
+    # ``stage_close`` emitted (useful when the next stage's pseudo-
+    # time should start at a non-zero value); emitted right after
+    # ``stage_open``.  ``set_creep_on`` toggles creep for time-
+    # dependent concrete materials, emitted alongside ``set_time``.
+    # ``pre_analyze_reset`` requests the ``reset`` command right before
+    # the stage's ``analyze`` (rarely used; the bare OpenSees
+    # ``reset`` wipes Domain state back to the last ``setTime``).
+    set_time: float | None = None
+    set_creep_on: bool | None = None
+    pre_analyze_reset: bool = False
 
 
 @dataclass(frozen=True, slots=True)

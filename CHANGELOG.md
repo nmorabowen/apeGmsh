@@ -1,6 +1,99 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036)
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036)
+
+### ADDED — Phase SSI-2.E between-stage Domain mutators
+
+Five new `_StageBuilder` verbs lift the append-only restriction on
+stage-bound BCs declared in Phase SSI-2.D.  Closes the
+`_DEFERRED.md` §"`remove sp` / mass-zero-out across stages" item.
+
+- **`s.remove_sp(*, pg=None, nodes=None, dofs)`** — releases prior-
+  tier SP constraints. Emits `remove sp $node $dof` per resolved
+  `(node, dof)` pair, INSIDE the stage block and BEFORE any new
+  stage-bound `fix` / `mass` / `region` / MP-constraint lines. The
+  emit position locks the canonical atomic-replace pattern:
+  release prior + re-fix in the same stage works by construction.
+
+- **`s.remove_element(*, pg=None, elements=None)`** — drops elements
+  from the Domain mid-analysis. Emits `remove element $tag`. The
+  `elements=` parameter takes FEM eids (matching the
+  `recorder.Element` convention); the bridge translates to
+  OpenSees ops tags via `fem_eid_to_ops_tag` at emit time so the
+  emitted line carries the same tag the rest of the deck uses.
+
+- **`s.mass(..., overwrite=True)`** — opts the record out of
+  validator V2's cross-tier duplicate-mass refusal. The emitted
+  `mass` line is byte-identical with or without the flag (OpenSees
+  `Domain::setMass` silently overwrites); the flag is purely a
+  build-time validator-bypass marker acknowledging the
+  intentional overwrite. `apeSees.mass(...)` accepts the same
+  kwarg for symmetry.
+
+- **`s.set_time(t)` / `s.set_creep(on)`** — emit `setTime $t` /
+  `setCreep 0|1` right after `stage_open`. Useful for stages whose
+  pseudo-time should begin at a non-zero value (overriding the
+  prior `stage_close`'s `loadConst -time 0.0` reset) or to toggle
+  creep for time-dependent concrete materials.
+
+- **`s.reset()`** — emits the bare OpenSees `reset` command
+  between the stage's recorder declarations and its analyze loop.
+  Rarely needed; kept for parity with the OpenSees surface.
+
+#### Validators
+
+- **V5** — `s.remove_sp` target must reference an SP declared in
+  the global `apeSees.fix` pool OR in a strictly-earlier stage's
+  `s.fix` pool, AND not already removed by an earlier stage.
+  Same-stage `s.fix` does NOT count (fix emits AFTER remove_sp in
+  the stage block).
+
+- **V6** — `s.remove_element` target must reference an element
+  emitted globally OR activated by this stage / a strictly-earlier
+  stage AND not already removed. PG-typo case (`pg=` resolves to
+  nothing on the FEM snapshot) surfaces a dedicated offender line.
+
+- **V2 widened** — the existing duplicate-fix-mass validator now
+  subtracts `s.remove_sp` targets from the fix alive set on
+  encountering each stage, so the atomic-replace pattern
+  (release prior + re-fix same DOF in same stage) passes both V5
+  and V2.
+
+#### Protocol
+
+`Emitter` protocol gains five new methods (`set_time`,
+`set_creep`, `reset`, `remove_sp`, `remove_element`). Per-emitter
+implementations:
+
+- **Tcl / Py**: emit the corresponding OpenSees command (`setTime
+  $t`, `setCreep 1|0`, `reset`, `remove sp $node $dof`, `remove
+  element $tag`).
+- **Live**: forwards to `self._ops.{setTime, setCreep, reset,
+  remove("sp", ...), remove("element", ...)}`. Unreachable on the
+  staged path (which raises at `stage_open` in live), but works
+  for non-staged custom workflows.
+- **H5**: no-op (mirrors the existing `stage_open` / `stage_close`
+  no-ops; the `apeSees.h5(path)` guard on staged models still
+  applies).
+- **Recording**: tuple capture for tests.
+
+#### Build pipeline
+
+`_emit_stages_flat` and `_emit_stages_partitioned` widen the
+unified `domain_change` gate to fire on removals (a stage that
+ONLY does `s.remove_sp` still emits `domain_change` so the next
+analysis chain bind sees a fresh DOF map). Element tag allocation
+moves earlier in the staged path so V6 can resolve
+`elements=[fem_eid]` user inputs against the live
+`fem_eid_to_ops_tag` map.
+
+#### Tests
+
+`tests/opensees/unit/test_stage_ssi_2e_mutators.py` — 34 tests
+covering builder positive/negative, dataclass field shapes,
+single-partition emit position, Tcl emit text, V5 / V6 ownership-
+tier rules, V2 relaxation with `overwrite=True`, and the
+end-to-end atomic-replace pattern.
 
 ### ADDED — embedded-host decomposition for non-simplex / higher-order hosts (ADR 0036)
 
