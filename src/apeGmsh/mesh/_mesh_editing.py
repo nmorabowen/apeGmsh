@@ -8,7 +8,7 @@ mesh topology or embeds lower-dim entities, plus the STL -> discrete
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable, Literal
 
 import gmsh
 import numpy as np
@@ -18,6 +18,15 @@ if TYPE_CHECKING:
 
 
 from apeGmsh._types import DimTag
+
+
+#: Gmsh element-type codes for line elements (curve dim=1).
+#: Line4 (type 26, cubic edges from order-3 meshes) is deferred per
+#: ADR 0037 §Future work; the dim != 1 / Line4 guard in
+#: :meth:`_Editing.split_higher_order_lines` will route it once the
+#: generalisation lands.
+_GMSH_LINE2 = 1   # 2-node line
+_GMSH_LINE3 = 8   # 3-node line (second-order)
 
 
 class _Editing:
@@ -558,6 +567,288 @@ class _Editing:
         raise RuntimeError(
             f"crack: no adjacent volume tet found for face entity "
             f"(dim=2, tag={face_tag})."
+        )
+
+    def split_higher_order_lines(
+        self,
+        physical_group: str | Iterable[str],
+        *,
+        policy: Literal["forbid", "split", "constrain"],
+        dim: int = 1,
+    ) -> "_Editing":
+        """
+        Demote higher-order line elements (Line3) on the named PG(s) to
+        the 1st-order Line2 elements that OpenSees beam-columns require.
+
+        2nd-order continuum meshes (quadratic shells, solid tet10s, etc.)
+        propagate their order to every line entity in the same Gmsh
+        model — even line entities the user intended as frame elements
+        get meshed as Line3 (Gmsh type 8, three nodes ``(i, j, mid)``).
+        OpenSees beam-columns are strictly 2-node 1st-order, so the
+        bridge raises at ``_check_two_nodes`` whenever it sees a Line3
+        in a frame PG.  This method is the broker-side resolution:
+        rewrite the mesh so the bridge sees only Line2 on the named
+        PG(s), keeping the continuum side untouched.
+
+        Three policies pick what happens to the mid-side node:
+
+        * ``"split"`` — each Line3 ``(i, j, mid)`` is replaced by two
+          Line2 elements ``(i, mid)`` and ``(mid, j)`` on the SAME dim=1
+          entity (PG membership tracks at entity level — no rebinding).
+          The mid-node becomes a real FE node with its own DOFs.
+          Exact subdivision for prismatic elastic frames; for distributed-
+          plasticity frames the integration-point count doubles (each
+          sub-element gets its own N-IP rule), which can shift hinge
+          locations under softening / cyclic degradation.  Concentrated-
+          plasticity integration rules (``HingeRadau``, ``HingeRadauTwo``,
+          ``HingeMidpoint``, ``HingeEndpoint``) are structurally
+          incompatible with this policy — splitting puts the calibrated
+          end-region hinges in the wrong places.  Use ``"forbid"`` if
+          you must lock in 1st-order lines, or fall back to "this PG
+          stays 1st-order in the mesh"; ``"constrain"`` is reserved
+          but not implemented this round.
+        * ``"constrain"`` — RESERVED but NOT IMPLEMENTED this round.
+          The kinematically clean answer (mid-node interpolated linearly
+          from i and j via a 2-master/1-slave constraint) requires an
+          OpenSees primitive that does not exist today:
+          ``ASDEmbeddedNodeElement`` accepts exactly 3 or 4 retained
+          nodes (ADR 0036), so a Line2 master pair (2 nodes) cannot be
+          expressed.  A future round paired with upstream OpenSees work
+          (new element class accepting N-retained-node coupling, or a
+          new MP_Constraint primitive) will land this policy.  Raises
+          ``NotImplementedError`` until then.
+        * ``"forbid"`` — fail-loud if the named PG(s) contain any Line3
+          element.  Use as a build-time invariant lock when you must
+          guarantee a PG remained 1st-order through meshing.
+
+        Call timing: AFTER ``g.mesh.generation.generate(...)`` (the
+        method operates on the live mesh), BEFORE
+        ``g.mesh.queries.get_fem_data(...)`` (the snapshot must see the
+        rewritten topology).  Never call inside a stage block — the
+        mesh edit is global and must complete before the bridge builds.
+
+        Parameters
+        ----------
+        physical_group
+            PG name (``str``) or iterable of PG names (``list``/
+            ``tuple``).  Required — there is no "split everything"
+            mode, callers must name what they're rewriting.  Each name
+            must already exist as a physical group of ``dim``; unknown
+            names raise ``KeyError`` naming the missing one.
+        policy
+            ``"forbid"`` / ``"split"`` / ``"constrain"`` — see above.
+            Required kwarg; no default in the spirit of fail-loud:
+            destructive mesh mutation should never happen by accident.
+        dim
+            Dimension of the higher-order lines.  Currently only ``1``
+            is supported; ``dim != 1`` raises ``NotImplementedError``.
+            Future work (line4, cubic edges from order-3 meshes) lands
+            via the same kwarg.
+
+        Returns
+        -------
+        _Editing  (self, for chaining)
+
+        Raises
+        ------
+        NotImplementedError
+            ``policy="constrain"`` (deferred to a follow-up paired with
+            upstream OpenSees work — ADR 0036 future track).
+            ``dim != 1`` (line4 / cubic lines are out of scope this
+            round; structure permits adding them with the same kwarg).
+        RuntimeError
+            ``policy="forbid"`` and any named PG contains at least one
+            Line3 element.  Message names the offending PG and count.
+        KeyError
+            A named PG does not exist at ``dim``.
+        ValueError
+            ``policy`` is not one of the three accepted values.
+
+        Example
+        -------
+        ::
+
+            # Quadratic shell + frame model.  The 2nd-order shell mesh
+            # forces every line entity to Line3; the frame PG needs
+            # to come back to Line2 before the bridge sees it.
+            g.mesh.generation.generate(dim=3)
+            g.mesh.editing.split_higher_order_lines(
+                "Beams", policy="split",
+            )
+            fem = g.mesh.queries.get_fem_data(dim=3)
+            ops = apeSees(fem)
+            ops.element.elasticBeamColumn(pg="Beams", ...)  # works now
+        """
+        if policy not in ("forbid", "split", "constrain"):
+            raise ValueError(
+                f"split_higher_order_lines: policy must be 'forbid', "
+                f"'split', or 'constrain'; got {policy!r}."
+            )
+        if dim != 1:
+            raise NotImplementedError(
+                f"split_higher_order_lines: dim={dim} is not supported "
+                "this round (only dim=1 / Line3 is implemented).  Cubic "
+                "lines (Line4, Gmsh type 26) from order-3 meshes are "
+                "deferred to a follow-up that generalizes this verb to "
+                "higher-order lines."
+            )
+        if policy == "constrain":
+            raise NotImplementedError(
+                "split_higher_order_lines: policy='constrain' is "
+                "reserved but not implemented this round.  The "
+                "kinematically clean linear-interp mid-node constraint "
+                "requires an OpenSees primitive that does not exist "
+                "today (ASDEmbeddedNodeElement needs 3-4 retained "
+                "nodes per ADR 0036; a Line2 master pair has 2).  Use "
+                "policy='split' or policy='forbid' this round, or "
+                "track the follow-up that pairs this work with "
+                "upstream OpenSees changes."
+            )
+
+        physical = getattr(self._mesh._parent, "physical", None)
+        if physical is None:
+            raise RuntimeError(
+                "split_higher_order_lines: session has no 'physical' "
+                "composite — physical groups are required to name what "
+                "to rewrite."
+            )
+
+        if isinstance(physical_group, str):
+            pg_names: tuple[str, ...] = (physical_group,)
+        else:
+            pg_names = tuple(physical_group)
+        if not pg_names:
+            raise ValueError(
+                "split_higher_order_lines: physical_group must be a "
+                "non-empty PG name or iterable of names."
+            )
+
+        # Resolve every PG to its entity list before doing any
+        # mutation, so we fail loud on unknown names before touching
+        # the mesh.
+        pg_entities: list[tuple[str, list[int]]] = []
+        for name in pg_names:
+            pg_tag = physical.get_tag(dim, name)
+            if pg_tag is None:
+                raise KeyError(
+                    f"split_higher_order_lines: no physical group named "
+                    f"{name!r} at dim={dim}.  Create it first via "
+                    f"g.physical.add_curve(..., name={name!r})."
+                )
+            ents = [
+                int(e)
+                for e in gmsh.model.getEntitiesForPhysicalGroup(
+                    dim, pg_tag,
+                )
+            ]
+            pg_entities.append((name, ents))
+
+        # For policy="forbid", scan every entity for Line3 elements
+        # and raise on first hit.  For "split", do the surgery
+        # entity-by-entity.
+        total_split = 0
+        for name, ents in pg_entities:
+            n_line3_in_pg = 0
+            for ent in ents:
+                line3_tags, line3_conn = self._gather_line3(ent)
+                if not line3_tags:
+                    continue
+                n_line3_in_pg += len(line3_tags)
+                if policy == "forbid":
+                    continue   # accumulate then raise at end of PG
+                # policy == "split"
+                self._replace_line3_with_line2_pair(
+                    ent, line3_tags, line3_conn,
+                )
+                total_split += len(line3_tags)
+            if policy == "forbid" and n_line3_in_pg > 0:
+                raise RuntimeError(
+                    f"split_higher_order_lines: PG {name!r} (dim={dim}) "
+                    f"contains {n_line3_in_pg} Line3 element(s); "
+                    f"policy='forbid' refuses to rewrite the mesh.  "
+                    "Re-mesh the source curve(s) at order 1, or call "
+                    "this method with policy='split' to demote them."
+                )
+
+        if policy == "split":
+            if total_split > 0:
+                print(
+                    f"split_higher_order_lines: demoted {total_split} "
+                    f"Line3 -> 2x Line2 across "
+                    f"{len(pg_names)} PG(s)"
+                )
+            else:
+                print(
+                    f"split_higher_order_lines: no Line3 elements found "
+                    f"on PG(s) {list(pg_names)} — no-op"
+                )
+        self._mesh._log(
+            f"split_higher_order_lines(pg={list(pg_names)}, "
+            f"policy={policy!r}, dim={dim}) -> split={total_split}"
+        )
+        return self
+
+    @staticmethod
+    def _gather_line3(
+        entity_tag: int,
+    ) -> tuple[list[int], list[tuple[int, int, int]]]:
+        """Walk ``entity_tag`` (dim=1) and return ``(line3_tags,
+        line3_conn)`` for every Line3 (Gmsh type 8) element on it.
+
+        Returns empty lists when the entity has no Line3 elements (all
+        Line2, or no mesh).
+        """
+        types, tags, nodes = gmsh.model.mesh.getElements(
+            dim=1, tag=entity_tag,
+        )
+        out_tags: list[int] = []
+        out_conn: list[tuple[int, int, int]] = []
+        for etype, ttags, tnodes in zip(types, tags, nodes):
+            if int(etype) != _GMSH_LINE3:
+                continue
+            # tnodes is a flat array of length 3 * len(ttags) — three
+            # node tags per Line3 in the order (i, j, mid).
+            flat = [int(n) for n in tnodes]
+            for k, line_tag in enumerate(ttags):
+                base = 3 * k
+                out_tags.append(int(line_tag))
+                out_conn.append((flat[base], flat[base + 1], flat[base + 2]))
+        return out_tags, out_conn
+
+    @staticmethod
+    def _replace_line3_with_line2_pair(
+        entity_tag: int,
+        line3_tags: list[int],
+        line3_conn: list[tuple[int, int, int]],
+    ) -> None:
+        """Surgically rewrite ``line3_tags`` on ``entity_tag`` into
+        2× Line2 pairs ``(i, mid)`` + ``(mid, j)``.
+
+        The mid-side node is preserved as a real FE node (it already
+        existed as the side-node of each parent Line3).  PG membership
+        tracks at the entity level, so the new Line2s automatically
+        inherit the parent PG affiliation.  Fresh element tags are
+        allocated above the current ``maxElementTag`` so no collision
+        is possible.
+        """
+        if not line3_tags:
+            return
+        gmsh.model.mesh.removeElements(1, entity_tag, line3_tags)
+
+        # Allocate 2N fresh tags above the current max.
+        base = int(gmsh.model.mesh.getMaxElementTag()) + 1
+        new_tags: list[int] = []
+        new_nodes: list[int] = []
+        for k, (n_i, n_j, n_mid) in enumerate(line3_conn):
+            new_tags.append(base + 2 * k)       # tag for (i, mid)
+            new_tags.append(base + 2 * k + 1)   # tag for (mid, j)
+            new_nodes.extend([n_i, n_mid, n_mid, n_j])
+
+        gmsh.model.mesh.addElements(
+            1, entity_tag,
+            elementTypes=[_GMSH_LINE2],
+            elementTags=[new_tags],
+            nodeTags=[new_nodes],
         )
 
     def affine_transform(

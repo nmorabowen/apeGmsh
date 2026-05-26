@@ -114,6 +114,52 @@ def _check_two_nodes(type_name: str, nodes: tuple[int, ...]) -> None:
     :func:`current_element_nodes`; if a non-line PG sneaks through the
     error surfaces here.
     """
+    if len(nodes) == 3:
+        # Specific guidance for the most common cause: a 2nd-order
+        # continuum mesh (quadratic shell, tet10, etc.) propagated
+        # its order to every line entity in the model, including the
+        # frame PG.  The mid-side node is a real Gmsh node but
+        # OpenSees beams are strictly 2-node 1st-order.  The broker
+        # has a verb that demotes Line3 -> 2x Line2 in place.
+        # Per ADR 0037, the cleanest fix is to re-mesh the frame PG
+        # at order 1 (separate Gmsh model) when the calibrated
+        # nonlinear column response matters; ``policy='split'`` is the
+        # in-place fix that doubles integration points; ``policy='forbid'``
+        # is the build-time invariant lock.
+        raise ValueError(
+            f"{type_name}: expected 2 node tags (line element i, j), "
+            f"got 3.  This PG contains a 3-node line (Gmsh Line3, "
+            "typical when the continuum part of the mesh is 2nd-order). "
+            "Cleanest fix: re-mesh the frame curves at order 1 in a "
+            "separate Gmsh model and merge.  Alternative (in-place): "
+            "call g.mesh.editing.split_higher_order_lines(\"YourPG\", "
+            "policy='split') BEFORE g.mesh.queries.get_fem_data(...); "
+            "this doubles integration points per beam (see ADR 0037). "
+            "Use policy='forbid' to lock in 1st-order lines as a build "
+            "invariant."
+        )
+        # NOTE: policy='constrain' is reserved but not implemented
+        # this round; see ADR 0037 for the deferred linear-interp
+        # mid-node constraint path (gated on upstream OpenSees work
+        # per ADR 0036).
+    if len(nodes) == 4:
+        # Cubic edge from an order-3 continuum mesh (Gmsh Line4,
+        # type 26).  No split path is implemented this round —
+        # split_higher_order_lines explicitly raises NotImplementedError
+        # for dim != 1 / cubic lines.  Pointing the user at the same
+        # verb is still the right hint: the deferral message will tell
+        # them to re-mesh at order <= 2 (or wait for the line4
+        # generalisation tracked in ADR 0037 §Future work).
+        raise ValueError(
+            f"{type_name}: expected 2 node tags (line element i, j), "
+            f"got 4.  This PG contains a 4-node line (Gmsh Line4 / "
+            "cubic edge, typical of order-3 continuum meshes).  No "
+            "in-place demotion is available this round — re-mesh the "
+            "frame curves at order 1 in a separate Gmsh model and "
+            "merge.  Future work generalising "
+            "g.mesh.editing.split_higher_order_lines to Line4 is "
+            "tracked in ADR 0037 §Future work."
+        )
     if len(nodes) != 2:
         raise ValueError(
             f"{type_name}: expected 2 node tags (line element i, j), "
