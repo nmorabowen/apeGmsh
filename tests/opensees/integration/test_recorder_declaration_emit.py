@@ -39,6 +39,30 @@ from tests.opensees.fixtures.fem_stub import (
 )
 
 
+def _register_dummy_beam(ops, pg: str) -> None:
+    """Register an elasticBeamColumn spec on ``pg`` so the bridge
+    actually emits OpenSees elements at the PG's FEM eids.
+
+    Element-level recorder tests need the bridge's
+    ``fem_eid_to_ops_tag`` map to cover the targeted FEM eids — without
+    a registered Element primitive the map is empty and
+    :func:`_resolve_element_targets` raises ``BridgeError``.  This
+    helper supplies the minimum geomTransf + elasticBeamColumn pair
+    that the fan-out needs.
+
+    Tag side-effects (relevant to assertions):
+      * The spec itself consumes element-kind tag 1 via ``_register``.
+      * Fan-out instances get tags 2, 3, ... per FEM eid in PG order.
+
+    So FEM eid N maps to ops_tag (N + 1).
+    """
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg=pg, transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Namespace declare() — registration + shorthand expansion + D8 binding
 # ---------------------------------------------------------------------------
@@ -257,6 +281,7 @@ class TestDeclareElementsCategory:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             elements=("nodal_resisting_force_x",),
             pg="Cols",
@@ -273,8 +298,10 @@ class TestDeclareElementsCategory:
         assert args[0] == "Element"
         assert "-ele" in args
         ele_idx = args.index("-ele")
-        # PG "Cols" = element 1
-        assert args[ele_idx + 1] == 1
+        # PG "Cols" = FEM eid 1; spec consumed element-kind tag 1, so
+        # the fan-out instance gets ops_tag 2.  The recorder must
+        # target the OpenSees tag, not the FEM eid.
+        assert args[ele_idx + 1] == 2
         # globalForce token at the end (matches the canonical's
         # routing in _response_catalog).
         assert args[-1] == "globalForce"
@@ -285,6 +312,7 @@ class TestDeclareElementsCategory:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             elements=("nodal_resisting_force_local_x",),
             pg="Cols",
@@ -299,12 +327,71 @@ class TestDeclareElementsCategory:
         _, args, _ = recorder_calls[0]
         assert args[-1] == "localForce"
 
+    def test_elements_pg_translates_fem_eids_to_ops_tags(self) -> None:
+        """Regression: RecorderDeclaration's ``elements`` category
+        resolves selectors to FEM eids, then translates through
+        ``fem_eid_to_ops_tag`` so ``-ele`` carries the OpenSees tags
+        the bridge actually emitted — not the raw FEM eids.
+
+        Mirrors ``test_element_recorder_pg_resolves_to_explicit_element_ids``
+        in ``test_full_emit_recording.py`` (the typed-``Element``
+        recorder analogue).  Before this fix the RecorderDeclaration
+        path passed raw FEM eids straight to ``-ele``, silently
+        targeting the wrong elements whenever a spec consumed an
+        allocator slot in ``_register``.
+        """
+        fem = make_two_column_frame_with_labels_and_selection()
+        # PG "Cols" -> FEM eids (1, 2); spec consumes element-kind
+        # tag 1; fan-out gives ops_tags (2, 3) for (eid 1, eid 2).
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
+        ops.recorder.declare(
+            elements=("nodal_resisting_force_x",),
+            ids=(1, 2),
+        )
+        bm = ops.build()
+        rec = RecordingEmitter()
+        bm.emit(rec)
+
+        recorder_calls = [c for c in rec.calls if c[0] == "recorder"]
+        assert len(recorder_calls) == 1
+        _, args, _ = recorder_calls[0]
+        ele_idx = args.index("-ele")
+        # Critical: ops_tags (2, 3), NOT FEM eids (1, 2)
+        assert args[ele_idx + 1 : ele_idx + 3] == (2, 3)
+
+    def test_elements_missing_eid_raises_bridge_error(self) -> None:
+        """Regression: targeting a FEM eid that no Element primitive
+        emitted raises ``BridgeError`` with a helpful message.
+
+        Before the fix this silently wrote a recorder line targeting
+        an OpenSees tag that didn't exist; the output file would have
+        nothing but the time column.  After the fix the user sees a
+        loud error naming the missing eid.
+        """
+        fem = make_two_node_beam()  # FEM eid 1 in PG "Cols"
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        # NO Element primitive registered → fem_eid_to_ops_tag is empty.
+        ops.recorder.declare(
+            elements=("nodal_resisting_force_x",),
+            pg="Cols",
+        )
+        bm = ops.build()
+        rec = RecordingEmitter()
+        with pytest.raises(
+            BridgeError, match="FEM element id 1.*no Element primitive",
+        ):
+            bm.emit(rec)
+
 
 class TestDeclareGaussCategory:
     def test_gauss_stress_emit(self) -> None:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             gauss=("stress_xx", "stress_yy"),
             pg="Cols",
@@ -324,6 +411,7 @@ class TestDeclareGaussCategory:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             gauss=("strain_xx",),
             pg="Cols",
@@ -344,6 +432,7 @@ class TestDeclareGaussCategory:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             gauss=("stress_xx", "strain_yy"),
             pg="Cols",
@@ -366,6 +455,7 @@ class TestDeclareLineStationsCategory:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             line_stations=("axial_force", "bending_moment_y"),
             pg="Cols",
@@ -403,12 +493,11 @@ class TestDeclareCrossCategory:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
-        # ids=(1,) for nodes is node tag 1; for elements it's
-        # element tag 1. Use the per-category pg= would be cleaner
-        # in practice, but for testing equivalence ids= matches.
-        # (Cross-category records sharing one selector is a
-        # commit-3c polish; for now we test one category at a time
-        # in the multi-record case.)
+        _register_dummy_beam(ops, pg="Cols")
+        # ids=(1,) for nodes is node tag 1; for elements it's FEM
+        # eid 1 — which is translated through fem_eid_to_ops_tag
+        # before landing in -ele.  See _register_dummy_beam for the
+        # tag arithmetic (FEM eid 1 -> ops_tag 2).
         ops.recorder.declare(
             nodes=("displacement_x",),
             ids=(1,),
@@ -599,6 +688,7 @@ class TestDeclareLabelSelector:
         fem = make_two_column_frame_with_labels_and_selection()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             elements="nodal_resisting_force_x", label="east_column",
         )
@@ -609,8 +699,9 @@ class TestDeclareLabelSelector:
         assert len(recorder_calls) == 1
         _, args, _ = recorder_calls[0]
         ele_idx = args.index("-ele")
-        # east_column label = element 2
-        assert args[ele_idx + 1] == 2
+        # east_column label = FEM eid 2; spec consumed element-kind tag
+        # 1, fan-out gives FEM eid 1 -> ops_tag 2 and FEM eid 2 -> 3.
+        assert args[ele_idx + 1] == 3
 
     def test_unknown_label_raises_bridge_error(self) -> None:
         fem = make_two_column_frame_with_labels_and_selection()
@@ -647,6 +738,7 @@ class TestDeclareSelectionSelector:
         fem = make_two_column_frame_with_labels_and_selection()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             elements="nodal_resisting_force_x", selection="upper_band",
         )
@@ -657,8 +749,9 @@ class TestDeclareSelectionSelector:
         assert len(recorder_calls) == 1
         _, args, _ = recorder_calls[0]
         ele_idx = args.index("-ele")
-        # upper_band selection = elements 1, 2
-        assert args[ele_idx + 1 : ele_idx + 3] == (1, 2)
+        # upper_band selection = FEM eids (1, 2); spec consumed
+        # element-kind tag 1 so FEM eid 1 -> ops_tag 2 and 2 -> 3.
+        assert args[ele_idx + 1 : ele_idx + 3] == (2, 3)
 
     def test_selection_without_mesh_selection_raises(self) -> None:
         # make_two_node_beam has mesh_selection=None
@@ -779,6 +872,7 @@ class TestDeclareRawElements:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             raw_elements=("customResponse",), pg="Cols",
         )
@@ -795,6 +889,7 @@ class TestDeclareRawElements:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             raw_gauss=("customGauss",), pg="Cols",
         )
@@ -822,6 +917,7 @@ class TestDeclareLineStationsRawIp:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
+        _register_dummy_beam(ops, pg="Cols")
         ops.recorder.declare(
             raw_line_stations=("section.shear",),
             pg="Cols",

@@ -1108,7 +1108,9 @@ def emit_recorder_spec(
     recorder emit pass.
     """
     if isinstance(spec, RecorderDeclaration):
-        _emit_recorder_declaration(spec, emitter, fem)
+        _emit_recorder_declaration(
+            spec, emitter, fem, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+        )
         return
     materialised = spec.materialize(
         emitter, fem, tags, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
@@ -1124,6 +1126,8 @@ def _emit_recorder_declaration(
     decl: RecorderDeclaration,
     emitter: "Emitter",
     fem: "FEMData",
+    *,
+    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
 ) -> None:
     """Walk a :class:`RecorderDeclaration` and emit one
     ``emitter.recorder(...)`` call per (ops_token, target_set) group.
@@ -1131,6 +1135,17 @@ def _emit_recorder_declaration(
     Per Phase 9 commit 3a, only the ``"nodes"`` category is handled
     end-to-end. Other categories raise :class:`NotImplementedError`
     pointing at the follow-up commits.
+
+    ``fem_eid_to_ops_tag`` is the bridge-built ``{fem_eid: ops_tag}``
+    map.  Element-level records (``elements`` / ``line_stations`` /
+    ``gauss``) translate FEM eids through this map before writing
+    ``-ele`` arg lists — without it the recorder would target the raw
+    FEM eids, which silently differ from the emitted OpenSees tags
+    whenever an Element primitive consumed an allocator slot in
+    ``_register``.  Mirrors the typed-``Element`` recorder
+    materialise path (``recorder.py``) so both emit routes resolve to
+    the same ops_tag list.  Legacy direct callers (no bridge) pass
+    ``None`` and fall back to raw FEM eids.
     """
     from .._recorder_translate import (
         element_record_response_tokens,
@@ -1178,6 +1193,7 @@ def _emit_recorder_declaration(
                 _emit_element_level_record(
                     record, decl, emitter, fem,
                     element_record_response_tokens,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
         finally:
             emitter.recorder_declaration_end()
@@ -1339,6 +1355,8 @@ def _emit_element_level_record(
     emitter: "Emitter",
     fem: "FEMData",
     response_tokens: object,  # callable; passed in to keep imports local
+    *,
+    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
 ) -> None:
     """Emit one element-level :class:`RecorderRecord` (elements / gauss /
     line_stations).
@@ -1353,8 +1371,16 @@ def _emit_element_level_record(
     ``integrationPoints`` recorder writing to ``<file>_gpx.out`` —
     consumed by the .out transcoder when reading the line-station
     results back into a :class:`LineStationSlab`.
+
+    ``fem_eid_to_ops_tag`` translates resolved FEM eids into emitted
+    OpenSees element tags so ``-ele`` arg lists match the OpenSees
+    domain.  ``None`` (legacy direct callers / no-bridge tests) falls
+    back to raw FEM eids, which is only correct when no Element
+    primitive consumed an allocator slot.
     """
-    elem_ids = _resolve_element_targets(record, fem)
+    elem_ids = _resolve_element_targets(
+        record, fem, fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+    )
     if not elem_ids:
         return
 
@@ -1416,6 +1442,8 @@ def _emit_element_level_record(
 
 def _resolve_element_targets(
     record: RecorderRecord, fem: "FEMData",
+    *,
+    fem_eid_to_ops_tag: "dict[int, int] | None" = None,
 ) -> tuple[int, ...]:
     """Resolve an element-level :class:`RecorderRecord`'s selectors to
     a flat tuple of element tags.
@@ -1423,9 +1451,19 @@ def _resolve_element_targets(
     Supports ``ids=`` (mutex with named selectors) and the named
     selectors ``pg=`` / ``label=`` / ``selection=`` (composable — same
     union/dedup contract as :func:`_resolve_node_targets`).
+
+    When ``fem_eid_to_ops_tag`` is supplied (the standard bridge
+    path), the resolved FEM eids are translated to emitted OpenSees
+    element tags before being returned — so the caller can write them
+    straight into ``-ele`` arg lists without re-translating.  A FEM
+    eid that maps to no ops_tag raises :class:`BridgeError` (the user
+    targeted an element id that no ``ops.element.X(pg=...)``
+    primitive emitted).  ``None`` falls back to raw FEM eids (legacy
+    direct callers / no-bridge tests).
     """
     if record.ids is not None:
-        return tuple(int(i) for i in record.ids)
+        fem_eids = tuple(int(i) for i in record.ids)
+        return _translate_to_ops_tags(fem_eids, fem_eid_to_ops_tag, record)
 
     chunks: list[Iterable[int]] = []
     for pg_name in record.pg:
@@ -1445,6 +1483,38 @@ def _resolve_element_targets(
             if t not in seen:
                 seen.add(t)
                 out.append(t)
+    return _translate_to_ops_tags(tuple(out), fem_eid_to_ops_tag, record)
+
+
+def _translate_to_ops_tags(
+    fem_eids: tuple[int, ...],
+    fem_eid_to_ops_tag: "dict[int, int] | None",
+    record: "RecorderRecord",
+) -> tuple[int, ...]:
+    """Translate FEM eids → emitted OpenSees element tags.
+
+    Mirrors the typed-``Element`` recorder ``materialize`` path
+    (``recorder.py``).  ``None`` map = legacy direct caller, returns
+    fem_eids verbatim.  A FEM eid not present in the map indicates the
+    user targeted an element that no Element primitive emitted →
+    :class:`BridgeError`.
+    """
+    if fem_eid_to_ops_tag is None:
+        return fem_eids
+    out: list[int] = []
+    for eid in fem_eids:
+        ops_tag = fem_eid_to_ops_tag.get(int(eid))
+        if ops_tag is None:
+            raise BridgeError(
+                f"recorder declaration record (name={record.name!r}, "
+                f"category={record.category!r}) resolves to FEM element "
+                f"id {int(eid)} but no Element primitive was emitted at "
+                f"that id (would silently target a wrong OpenSees tag). "
+                "Either drop it from the recorder's selectors, or declare "
+                "an ``ops.element.X(pg=...)`` primitive whose pg includes "
+                "that element."
+            )
+        out.append(int(ops_tag))
     return tuple(out)
 
 
