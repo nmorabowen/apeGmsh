@@ -3643,6 +3643,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#staged-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Staged analysis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#orientation-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5253,6 +5264,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#staged-analysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Staged analysis
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#orientation-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5781,11 +5803,42 @@ pattern <strong>after</strong> the session closes:</p>
 </span></code></pre></div>
 <p>The legacy <code>g.opensees</code> session composite and its sub-composites
 (<code>materials</code> / <code>elements</code> / <code>ingest</code> / <code>inspect</code> /
-<code>export</code>) were removed in Phase 8 of the bridge teardown (ADR
-0009).  <code>apeSees</code> has <strong>no ingest and no auto-resolution</strong> — loads,
-masses, and SPs must be re-declared explicitly on <code>ops</code>; MP
-constraints are deferred (see the gold reference in
-<code>skills/apegmsh/references/opensees-bridge.md</code>).</p>
+<code>export</code>) were removed in Phase 8 of the bridge teardown
+(<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0009-no-backwards-compat-with-solvers.md">ADR 0009</a>).
+<code>apeSees</code> has <strong>no ingest and no auto-resolution</strong> for loads,
+masses, and SPs — those must be re-declared explicitly on <code>ops</code>
+(<code>ops.fix(pg=, dofs=)</code>, <code>ops.mass(pg=, values=)</code>,
+<code>ops.pattern.Plain(...) as p: p.load(pg=, forces=)</code>).</p>
+<p>Since the teardown, the bridge has been progressively widened:</p>
+<ul>
+<li><strong>MP constraints emit automatically</strong> from <code>fem.nodes.constraints</code>
+  / <code>fem.elements.constraints</code>
+  (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0022-mp-constraint-emission-fanout.md">ADR 0022</a>,
+  Phase 7b) — <code>equalDOF</code> / <code>rigidLink</code> / <code>rigidDiaphragm</code> /
+  <code>ASDEmbeddedNodeElement</code> lines land in the runnable Tcl/Py
+  deck without an <code>ingest</code> step. The <code>apeSees.h5(path)</code> write
+  target persists per-record details under
+  <code>/opensees/constraints/</code> (additive minor schema bump 2.6.0 →
+  2.7.0). Auto-emits a <code>Transformation</code> constraint handler when
+  MP constraints are present and the user has not declared one.</li>
+<li><strong>Staged analysis</strong> ships via <code>ops.stage(name)</code> —
+  see <a href="#staged-analysis">Staged analysis</a> below for the user-
+  surface walkthrough, and the in-repo internals doc at
+  <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/staged-analysis.md">staged-analysis.md</a>
+  for the per-stage emit pipeline.</li>
+<li><strong>Read-side broker.</strong>
+  <code>OpenSeesModel.from_h5(path, fem_root=)</code> provides a frozen
+  read-only view of the persisted <code>/opensees/</code> zone with the
+  embedded <code>FEMData</code> lazily attached
+  (<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0019-opensees-model-read-side-broker.md">ADR 0019</a>).
+  Re-emit via <code>om.build("tcl", path)</code> / <code>om.build("py", path)</code>
+  / <code>om.build("live")</code> without rehydrating the apeSees
+  primitives.</li>
+</ul>
+<p>For the full user-facing surface (typed materials, sections,
+elements, recorders, patterns, analysis chain, staged analysis,
+SSI helpers, cuts and sweeps), see the in-repo
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/api-design.md">api-design.md</a>.</p>
 <h2 id="public-surface">Public surface<a class="headerlink" href="#public-surface" title="Permanent link">&para;</a></h2>
 
 
@@ -8473,7 +8526,50 @@ sweeps
 
     </div>
 
-</div><h2 id="orientation-helpers">Orientation helpers<a class="headerlink" href="#orientation-helpers" title="Permanent link">&para;</a></h2>
+</div><h2 id="staged-analysis">Staged analysis<a class="headerlink" href="#staged-analysis" title="Permanent link">&para;</a></h2>
+<p>Multi-stage workflows (in-situ stress install → excavate →
+lining install → dynamic shake, or any other sequence of
+<code>analyze</code> blocks with Domain mutations between them) use
+the <code>ops.stage(name)</code> context manager:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">with</span> <span class="n">ops</span><span class="o">.</span><span class="n">stage</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;excavate&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">s</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">s</span><span class="o">.</span><span class="n">activate</span><span class="p">(</span><span class="n">pgs</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Lining&quot;</span><span class="p">])</span>               <span class="c1"># bring new elements online</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">s</span><span class="o">.</span><span class="n">fix</span><span class="p">(</span><span class="n">pg</span><span class="o">=</span><span class="s2">&quot;LiningAnchor&quot;</span><span class="p">,</span> <span class="n">dofs</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span> <span class="c1"># stage-bound BC</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">s</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;lining_embed&quot;</span><span class="p">)</span>          <span class="c1"># claim MP constraint by name</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">s</span><span class="o">.</span><span class="n">analysis</span><span class="p">(</span><span class="n">test</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">integrator</span><span class="o">=</span><span class="err">…</span><span class="p">,</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>               <span class="n">constraints</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">numberer</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">system</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">analysis</span><span class="o">=</span><span class="err">…</span><span class="p">)</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">s</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">n_increments</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.05</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Each stage emits its own analysis chain + analyze loop with an
+explicit inter-stage cleanup (<code>loadConst -time 0.0</code> +
+<code>wipeAnalysis</code>). Between-stage Domain mutators (<code>s.remove_sp</code>
+/ <code>s.remove_element</code> / <code>s.set_time</code> / <code>s.set_creep</code> /
+<code>s.reset</code> / <code>s.mass(overwrite=True)</code>) lift the append-only
+constraint from earlier phases and unlock the atomic-replace
+pattern (release prior support + re-fix the same DOF in one
+stage).</p>
+<p>Five validators gate stage-bound BCs at build time (H1 / V1 / V2
+/ V3 / V4) and two more cover the SSI-2.E removal verbs (V5 /
+V6). Each raises <code>BridgeError</code> with a clear offender list when
+a stage references topology that doesn't yet exist or has
+already been removed.</p>
+<p>Tcl + Py text emit are the supported execution paths for staged
+decks today. Live execution (<code>ops.analyze</code> / <code>ops.eigen</code>)
+refuses staged models with <code>NotImplementedError</code> — emit via
+<code>ops.tcl(p, run=True)</code> / <code>ops.py(p, run=True)</code> for the
+OpenSees subprocess. H5 archival of staged structure is also
+deferred (<code>apeSees.h5(path)</code> is fail-loud on a staged build per
+PR <a href="https://github.com/nmorabowen/apeGmsh/pull/313">#313</a>).</p>
+<p>The full lifecycle table, builder verbs, validator surface, MP
+partitioned + staged emit (Phase SSI-2.C), and the SSI-1
+initial-stress ramp live in
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/api-design.md">architecture/api-design.md</a>
+§"Staged analysis"; the internals (deck layout, ownership
+computation, hook dispatcher, per-emitter dialect divergence,
+cleanup contract) live in
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/staged-analysis.md">architecture/staged-analysis.md</a>
+and
+<a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/emitter.md">architecture/emitter.md</a>.</p>
+<h2 id="orientation-helpers">Orientation helpers<a class="headerlink" href="#orientation-helpers" title="Permanent link">&para;</a></h2>
 <p>Used as the <code>orientation=</code> argument on the typed geom_transf
 primitives (<code>Linear</code> / <code>PDelta</code> / <code>Corotational</code>).</p>
 
@@ -8738,8 +8834,9 @@ orientation = Spherical(origin=(0, 0, 0))
 
 </div><h2 id="recorders">Recorders<a class="headerlink" href="#recorders" title="Permanent link">&para;</a></h2>
 <p>Standalone recorder declaration helper. Recorder declarations live on
-<code>ops.recorder.*</code> in the <code>apeSees</code> bridge.</p>
-<!-- TODO(apeSees migration): apeGmsh.opensees.recorder — verify new module path under apeGmsh.opensees after Phase 8.3b lands -->
+<code>ops.recorder.*</code> in the <code>apeSees</code> bridge (typed primitives —
+<code>Node</code> / <code>Element</code> / <code>MPCO</code> / declarative fan-out via
+<code>ops.recorder.declare(...)</code>).</p>
 
 
 <div class="doc doc-object doc-module">
