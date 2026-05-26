@@ -4361,6 +4361,89 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#embedded-host-mesh-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embedded — host mesh compatibility
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Embedded — host mesh compatibility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-linear-coupling-contract-host_couplinglinear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The linear-coupling contract (host_coupling="linear")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#warning-on-midside-bearing-hosts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warning on midside-bearing hosts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-hex-coupling-asymmetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-hex coupling asymmetry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixed-dim-host-fail-loud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixed-dim host fail-loud
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#off-host-fail-loud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Off-host fail-loud
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-rebar-in-hex-meshed-concrete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example — rebar in hex-meshed concrete
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#apeGmsh._kernel.defs.constraints.TieDef" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7207,6 +7290,89 @@
   
     <nav class="md-nav" aria-label="Tier 3 — Node-to-Surface">
       <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#embedded-host-mesh-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Embedded — host mesh compatibility
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Embedded — host mesh compatibility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-linear-coupling-contract-host_couplinglinear" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The linear-coupling contract (host_coupling="linear")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#warning-on-midside-bearing-hosts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Warning on midside-bearing hosts
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-hex-coupling-asymmetry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-hex coupling asymmetry
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mixed-dim-host-fail-loud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixed-dim host fail-loud
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#off-host-fail-loud" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Off-host fail-loud
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#example-rebar-in-hex-meshed-concrete" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example — rebar in hex-meshed concrete
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
         
           <li class="md-nav__item">
   <a href="#apeGmsh._kernel.defs.constraints.TieDef" class="md-nav__link">
@@ -11921,6 +12087,157 @@ any constraint handler gymnastics. Conditioning stays good.</p>
 <p>A slave node is constrained to the displacement field of a master
 surface or volume through shape-function interpolation. Handles
 non-matching meshes, distributed loads, and embedded reinforcement.</p>
+<h3 id="embedded-host-mesh-compatibility">Embedded — host mesh compatibility<a class="headerlink" href="#embedded-host-mesh-compatibility" title="Permanent link">&para;</a></h3>
+<p><code>g.constraints.embedded(host_label, embedded_label, ...)</code> accepts any
+standard structural mesh on the host side. The collector decomposes
+non-simplex and higher-order hosts into linear sub-tris / sub-tets
+using corner nodes only, then dispatches to the existing C++
+<code>ASDEmbeddedNodeElement</code> (which accepts 3- or 4-node retained sets).</p>
+<table>
+<thead>
+<tr>
+<th>Gmsh etype</th>
+<th>Code</th>
+<th>Host-side decomposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>tri3 (CST)</td>
+<td>2</td>
+<td>identity (1 tri per host)</td>
+</tr>
+<tr>
+<td>tet4</td>
+<td>4</td>
+<td>identity (1 tet per host)</td>
+</tr>
+<tr>
+<td>quad4</td>
+<td>3</td>
+<td>2 tris via (0,2) diagonal split</td>
+</tr>
+<tr>
+<td>hex8</td>
+<td>5</td>
+<td>6 right-handed Kuhn tets (shared main diagonal)</td>
+</tr>
+<tr>
+<td>prism6</td>
+<td>6</td>
+<td>3 tets</td>
+</tr>
+<tr>
+<td>pyramid5</td>
+<td>7</td>
+<td>2 tets</td>
+</tr>
+<tr>
+<td>tri6 (LST)</td>
+<td>9</td>
+<td>corners only → 1 tri (midsides discarded)</td>
+</tr>
+<tr>
+<td>tet10</td>
+<td>11</td>
+<td>corners only → 1 tet</td>
+</tr>
+<tr>
+<td>pyramid13</td>
+<td>14</td>
+<td>corners only → 2 tets</td>
+</tr>
+<tr>
+<td>quad8 / quad9</td>
+<td>16/10</td>
+<td>corners only → 2 tris</td>
+</tr>
+<tr>
+<td>hex20</td>
+<td>17</td>
+<td>corners only → 6 Kuhn tets</td>
+</tr>
+<tr>
+<td>prism15</td>
+<td>18</td>
+<td>corners only → 3 tets</td>
+</tr>
+</tbody>
+</table>
+<p>Sub-element rows are <strong>virtual</strong> — they do not correspond to elements
+in the gmsh mesh. They exist purely as a coupling-layer fabrication
+so the linear-shape-function coupling of <code>ASDEmbeddedNodeElement</code>
+works against any supported host topology.</p>
+<h4 id="the-linear-coupling-contract-host_couplinglinear">The linear-coupling contract (<code>host_coupling="linear"</code>)<a class="headerlink" href="#the-linear-coupling-contract-host_couplinglinear" title="Permanent link">&para;</a></h4>
+<p>The embedded coupling is always <strong>linear</strong> over 3 or 4 corner nodes,
+regardless of the host's native interpolation order. An LST plate's
+quadratic curvature, a hex8's bilinear twist mode, a quad9's
+biquadratic field — none are seen by the embedded node. The embed
+sees only the linear corner-to-corner stretch of whichever sub-tri /
+sub-tet contains it.</p>
+<p><code>EmbeddedDef.host_coupling</code> is a reserved keyword that pins this
+behaviour. Only <code>"linear"</code> is currently accepted. The keyword is
+reserved (not just documented) so a future <code>"trilinear"</code> /
+<code>"biquadratic"</code> option — which would require a new OpenSees element
+class supporting N-node retained sets — can land without breaking
+existing models.</p>
+<h4 id="warning-on-midside-bearing-hosts">Warning on midside-bearing hosts<a class="headerlink" href="#warning-on-midside-bearing-hosts" title="Permanent link">&para;</a></h4>
+<p>The first time the collector decomposes a host that carries midside
+nodes (tri6, tet10, quad8, quad9, hex20, prism15, pyramid13), one
+<code>UserWarning</code> fires per <code>(etype, entity)</code> pointing at the
+linear-coupling consequence. Acknowledge by setting
+<code>host_coupling="linear"</code> explicitly on the <code>embedded(...)</code> call.</p>
+<p>If you chose LST / quad8 / hex20 specifically for curvature fidelity,
+the embed will not give it to you — either accept the linear coupling
+or wait for the <code>HostProjector</code> work (deferred; see ADR 0036).</p>
+<h4 id="per-hex-coupling-asymmetry">Per-hex coupling asymmetry<a class="headerlink" href="#per-hex-coupling-asymmetry" title="Permanent link">&para;</a></h4>
+<p>Two embedded nodes inside the same hex8 may couple to <strong>different</strong>
+4-corner subsets depending on which of the 6 Kuhn sub-tets contains
+each one. This is geometrically correct under linear coupling but
+can surprise readers of the resolved records. The Kuhn decomposition
+is symmetric (orientation-independent across adjacent hexes), so
+there is no neighbour-hex-dependence in the choice.</p>
+<h4 id="mixed-dim-host-fail-loud">Mixed-dim host fail-loud<a class="headerlink" href="#mixed-dim-host-fail-loud" title="Permanent link">&para;</a></h4>
+<p>A host part / physical group that combines 2D entities (shell, quad
+plate) and 3D entities (brick, tet volume) raises at collection
+time. The linear coupling cannot pick between sub-tris and sub-tets
+deterministically (kNN centroid search would dispatch based on
+opaque proximity, which is opaque physics). Split the host into two
+separate <code>g.constraints.embedded(...)</code> calls — one for the 2D part,
+one for the 3D part.</p>
+<h4 id="off-host-fail-loud">Off-host fail-loud<a class="headerlink" href="#off-host-fail-loud" title="Permanent link">&para;</a></h4>
+<p>An embedded node that falls outside every host sub-element by more
+than <code>EmbeddedDef.tolerance</code> (default <code>1.0</code> from the factory; the
+class default is <code>0.0</code> for strictly-inside) raises naming the
+offending slave node and its barycentric excess. Either fix the
+geometry / mesh so the embed lies inside the host, or widen
+<code>tolerance=</code> explicitly if extrapolation is intentional.</p>
+<p>See <a href="https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0036-embedded-host-decomposition.md">ADR 0036</a>
+for the full decision record (Kuhn-table orientation invariants,
+alternatives rejected, <code>HostProjector</code> RFC deferral).</p>
+<h4 id="example-rebar-in-hex-meshed-concrete">Example — rebar in hex-meshed concrete<a class="headerlink" href="#example-rebar-in-hex-meshed-concrete" title="Permanent link">&para;</a></h4>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">apeGmsh</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">with</span> <span class="n">apeGmsh</span><span class="p">(</span><span class="n">model_name</span><span class="o">=</span><span class="s2">&quot;rc_block&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="c1"># ... CAD import, parts, etc. ...</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="c1"># Hex-meshed concrete host, line-meshed rebar curve</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">g</span><span class="o">.</span><span class="n">constraints</span><span class="o">.</span><span class="n">embedded</span><span class="p">(</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="n">host_label</span><span class="o">=</span><span class="s2">&quot;concrete_block_hex&quot;</span><span class="p">,</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="n">embedded_label</span><span class="o">=</span><span class="s2">&quot;rebar_curve&quot;</span><span class="p">,</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="n">stiffness</span><span class="o">=</span><span class="mf">1.0e8</span><span class="p">,</span>        <span class="c1"># STKO-parity penalty (ADR 0035)</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>        <span class="c1"># host_coupling=&quot;linear&quot; is the default; setting it</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        <span class="c1"># explicitly acknowledges the linear-coupling contract</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>        <span class="c1"># if your host carries midside nodes.</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="p">)</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>    <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">generation</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="n">fem</span> <span class="o">=</span> <span class="n">g</span><span class="o">.</span><span class="n">mesh</span><span class="o">.</span><span class="n">queries</span><span class="o">.</span><span class="n">get_fem_data</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    <span class="c1"># Embedded records land on fem.elements.constraints as</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    <span class="c1"># InterpolationRecord; each rebar node couples to 4 of the</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>    <span class="c1"># 8 corners of the hex that contains it (one of 6 Kuhn</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>    <span class="c1"># sub-tets — see the per-hex asymmetry note above).</span>
+</span></code></pre></div>
 
 
 <div class="doc doc-object doc-class">
