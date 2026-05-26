@@ -21,7 +21,7 @@ adapter consumes it through the ``H5ModelReader`` Protocol.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import ClassVar, Mapping
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,16 @@ class ComposeRecord:
     # convention used elsewhere in this package (see
     # ``_constraints.py`` ``dofs: list[int] = field(default_factory=list)``).
     properties: Mapping[str, str | int | float] = field(default_factory=dict)
+
+    # ADR 0038 §"Merge semantics" — a source's own ``composed_from``
+    # provenance is the nested-compose case.  3B.2a does NOT lift
+    # nested provenance into the host bundle (deferred to ADR 0038
+    # §"Nested composition" / Phase 3E.1's provenance graft); 3B.2a
+    # treats source ComposeRecords as DEFER (drop silently, just like
+    # DISCARD, until 3E.1 wires the graft).  ``None`` sentinel makes
+    # the compose rewriter skip this record kind without falling
+    # through to the default scan.
+    tag_rewrite_spec: ClassVar[None] = None
 
     def __repr__(self) -> str:
         rot = "" if self.rotate is None else ", rotate=..."

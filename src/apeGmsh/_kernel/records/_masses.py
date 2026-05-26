@@ -11,6 +11,7 @@ The corresponding pre-mesh :class:`MassDef` definitions live in
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 
 @dataclass
@@ -28,6 +29,14 @@ class MassRecord:
     node_id: int = 0
     mass: tuple = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     name: str | None = None
+
+    # ADR 0038 §"Tag-reference rewrite checklist" — node_id is the
+    # tag reference; ``name`` is the optional caller label.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("node_id",),
+        "tag_fields_array": (),
+        "name_fields": ("name",),
+    }
 
 
 __all__ = ["MassRecord"]

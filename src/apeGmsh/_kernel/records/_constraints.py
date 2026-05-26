@@ -14,6 +14,7 @@ All records ultimately express the linear MPC equation::
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 import numpy as np
 from numpy import ndarray
@@ -28,9 +29,24 @@ class ConstraintRecord:
 
     Every record expresses (or can be expanded to) the general
     linear MPC equation:  u_slave = C · u_master.
+
+    ADR 0038 §"Tag-reference rewrite checklist" — every concrete
+    subclass below declares a ``tag_rewrite_spec`` class attribute
+    (``ClassVar``) naming the tag-bearing + name-bearing fields the
+    Phase 3B.2a compose rewriter must offset / namespace-prefix.  The
+    base class has no spec on its own — it is never instantiated bare.
     """
     kind: str
     name: str | None = None
+
+    # The base class has no tag-bearing fields.  Concrete subclasses
+    # override this ClassVar; the compose rewriter iterates the
+    # registry and applies each spec uniformly.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": (),
+        "tag_fields_array": (),
+        "name_fields": (),
+    }
 
 
 @dataclass
@@ -59,6 +75,15 @@ class NodePairRecord(ConstraintRecord):
     dofs: list[int] = field(default_factory=list)
     offset: ndarray | None = None
     penalty_stiffness: float | None = None
+
+    # ADR 0038 §"Tag-reference rewrite checklist" — master_node and
+    # slave_node are tag-references; ``name`` is the optional caller
+    # label that gets namespace-prefixed.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("master_node", "slave_node"),
+        "tag_fields_array": (),
+        "name_fields": ("name",),
+    }
 
     def constraint_matrix(self, ndof: int = 6) -> ndarray:
         """
@@ -144,6 +169,14 @@ class NodeGroupRecord(ConstraintRecord):
     offsets: ndarray | None = None
     plane_normal: ndarray | None = None
 
+    # ADR 0038 §"Tag-reference rewrite checklist" — master_node (scalar)
+    # and slave_nodes (array) per the cover set.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("master_node",),
+        "tag_fields_array": ("slave_nodes",),
+        "name_fields": ("name",),
+    }
+
     def expand_to_pairs(self) -> list[NodePairRecord]:
         """
         Expand this group constraint into individual
@@ -222,6 +255,17 @@ class InterpolationRecord(ConstraintRecord):
     rotational: bool = False
     pressure: bool = False
 
+    # ADR 0038 §"Tag-reference rewrite checklist" — slave_node (scalar)
+    # and master_nodes (array) per the cover set; the InterpolationRecord
+    # is the host-element-tag carrier for embedded/tied constraints, but
+    # the resolved record dataclass stores the full master_nodes list, so
+    # there's no separate host_element_tag field to rewrite here.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("slave_node",),
+        "tag_fields_array": ("master_nodes",),
+        "name_fields": ("name",),
+    }
+
     def constraint_matrix(self, ndof: int = 3) -> ndarray:
         """
         Build the constraint matrix C of shape
@@ -269,6 +313,17 @@ class SurfaceCouplingRecord(ConstraintRecord):
     slave_nodes: list[int] = field(default_factory=list)
     dofs: list[int] = field(default_factory=list)
 
+    # ADR 0038 §"Tag-reference rewrite checklist" — master_nodes /
+    # slave_nodes arrays.  ``slave_records`` is a list of
+    # :class:`InterpolationRecord` and is rewritten recursively by the
+    # compose engine (each child has its own spec).
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": (),
+        "tag_fields_array": ("master_nodes", "slave_nodes"),
+        "name_fields": ("name",),
+        "nested_records": ("slave_records",),
+    }
+
 
 @dataclass
 class NodeToSurfaceRecord(ConstraintRecord):
@@ -313,6 +368,18 @@ class NodeToSurfaceRecord(ConstraintRecord):
     rigid_link_records: list[NodePairRecord] = field(default_factory=list)
     equal_dof_records: list[NodePairRecord] = field(default_factory=list)
     dofs: list[int] = field(default_factory=lambda: [1, 2, 3])
+
+    # ADR 0038 §"Tag-reference rewrite checklist" — master_node (scalar)
+    # plus slave_nodes / phantom_nodes (arrays).  The nested
+    # ``rigid_link_records`` / ``equal_dof_records`` are
+    # :class:`NodePairRecord` lists; the compose engine rewrites them
+    # recursively via their own spec.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("master_node",),
+        "tag_fields_array": ("slave_nodes", "phantom_nodes"),
+        "name_fields": ("name",),
+        "nested_records": ("rigid_link_records", "equal_dof_records"),
+    }
 
     def expand(self) -> list[NodePairRecord]:
         """
