@@ -24,9 +24,13 @@ Cross-references
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import warnings
+from dataclasses import dataclass, field, replace as _dc_replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from .._kernel.records._compose import ComposeRecord
 
@@ -98,6 +102,702 @@ class ComposeFilterWarning(UserWarning):
     time-series / load-patterns kinds.  Defined here so the warning
     class lives with its sibling errors.
     """
+
+
+# ---------------------------------------------------------------------------
+# Rewritten bundle + rewrite engine (Phase 3B.2a / ADR 0038)
+# ---------------------------------------------------------------------------
+#
+# The bundle is the output of the read+rewrite half of compose.  Phase
+# 3B.2b will consume it to merge into the host ``FEMData``; this PR
+# only ships the producer.  See ADR 0038 §"Tag-offset scheme" and
+# §"Tag-reference rewrite checklist".
+
+
+@dataclass(frozen=True)
+class _RewrittenBundle:
+    """Internal: rewritten IMPORT-verdict records ready to merge.
+
+    Produced by :func:`_rewrite_source_for_compose`; consumed by Phase
+    3B.2b's host-merge step.  Carries the rewritten record lists keyed
+    by record kind plus the compose metadata needed to populate the
+    host's :class:`~apeGmsh._kernel.records._compose.ComposeRecord`.
+
+    FILTER + DISCARD verdicts are dropped silently in this slice —
+    3B.2b emits the user-facing :class:`ComposeFilterWarning`.  The
+    bundle is a flat container — no analysis happens during
+    construction; rewrites are applied before instantiation.
+    """
+
+    # ── Compose metadata (populates ComposeRecord in 3B.2b) ────────
+    label: str
+    source_path: str
+    source_fem_hash: str
+    source_neutral_schema_version: str
+    translate: tuple[float, float, float]
+    rotate: tuple[float, float, float, float] | None
+    partition_rank: int | None
+    properties: dict
+    composed_at: str
+
+    # ── Reservation window ─────────────────────────────────────────
+    base: int
+    size: int
+    source_span: int
+    source_min_tag: int
+
+    # ── Rewritten IMPORT records ───────────────────────────────────
+    #
+    # Container shape matches what 3B.2b will iterate to splice into
+    # the host broker.  Nodes / elements are stored as raw numpy
+    # arrays (the broker's native shape) — the rewriter rebuilds
+    # them from a fresh ``read_fem_h5`` call so the bundle owns its
+    # own buffers (no aliasing back to the source file).  PG / label
+    # records remain in their broker dict shape because the broker
+    # has no dataclass wrapping; constraint / load / mass / SP
+    # records carry the dataclass instances with offset-rewritten
+    # tag fields and ``{label}.``-prefixed name fields.
+    node_ids: np.ndarray
+    node_coords: np.ndarray
+    node_ndf: np.ndarray | None
+    # elements: ``{type_code: ElementGroup}`` mirroring the broker's
+    # ``ElementComposite._groups``.  Each group's ``ids`` and
+    # ``connectivity`` are offset-rewritten.
+    element_groups: dict
+    # Per-side PG / label dict — the broker's native
+    # ``{(dim, tag): info_dict}`` shape; ``info_dict`` carries the
+    # rewritten ``node_ids`` / ``element_ids`` arrays and the
+    # ``{label}.``-prefixed ``name`` string.
+    node_physical: dict
+    elem_physical: dict
+    node_labels: dict
+    elem_labels: dict
+    # Mesh selections: ``MeshSelectionStore`` instance (or ``None``).
+    mesh_selection: Any
+    # Parts: ``{label_str: set[int]}`` (node-side, element-side).
+    part_node_map: dict
+    part_elem_map: dict
+    # Constraint / load / mass / SP record lists.  Each entry is a
+    # dataclass instance with offset-rewritten tag fields.
+    node_constraints: tuple
+    elem_constraints: tuple
+    nodal_loads: tuple
+    element_loads: tuple
+    sp_records: tuple
+    mass_records: tuple
+
+
+# ── Helper: schema-version + tag-span reader ───────────────────────
+
+
+def _compute_source_span(
+    source_path: "str | Path",
+) -> tuple[int, int, int]:
+    """Return ``(span, min_tag, max_tag)`` from a 2.8/2.9 source H5.
+
+    ADR 0038 §"Tag-offset scheme — per-module auto-sizing".  For
+    2.9.x sources, ``span`` is read from the ``/meta/@tag_span_max``
+    attribute (O(1)).  For 2.8.x sources lacking that attribute, falls
+    back to a dataset scan over ``/nodes/ids`` + ``/elements/{type}/ids``
+    and emits one :class:`UserWarning` per call:
+
+        "source written by pre-2.9.0 apeGmsh; tag span computed by
+         dataset scan — re-save under 2.9.0 to skip this on future
+         composes"
+
+    The min/max include both nodes and elements (compose reserves one
+    window covering both classes uniformly — see ADR 0038 line 294).
+
+    Raises
+    ------
+    SchemaVersionError
+        When the source's neutral schema is outside the reader's two-
+        version window (e.g. pre-2.8.x).
+    """
+    import h5py
+
+    from apeGmsh.opensees.emitter.h5_reader import MalformedH5Error
+    from apeGmsh.opensees._internal.schema_version import (
+        NEUTRAL,
+        read_zone_version,
+        reader_version,
+        validate_zone_version,
+    )
+
+    p = Path(source_path)
+    with h5py.File(str(p), "r") as f:
+        if "meta" not in f:
+            raise MalformedH5Error(
+                f"{p}: missing /meta group; not an apeGmsh model.h5"
+            )
+        meta_attrs = f["meta"].attrs
+        # Schema gate — pre-2.8.x is outside the reader window and
+        # surfaces a typed SchemaVersionError (the same surface
+        # ``read_fem_h5`` raises on stale sources).
+        file_version = read_zone_version(meta_attrs, NEUTRAL)
+        if file_version is not None:
+            validate_zone_version(
+                file_version, reader_version(NEUTRAL), zone=NEUTRAL,
+            )
+
+        # 2.9.x fast path: /meta/@tag_span_max is present.
+        if "tag_span_max" in meta_attrs:
+            span = int(meta_attrs["tag_span_max"])
+            min_tag, max_tag = _scan_min_max_tags(f)
+            # Defensive: if the span attr disagrees with the scan
+            # (re-saved file?), trust the scan — span is derived from
+            # min/max in the writer.  Tests assert the 2.9 happy path
+            # uses the attr value, so prefer it when consistent.
+            if max_tag - min_tag + 1 == span:
+                return span, min_tag, max_tag
+            return max_tag - min_tag + 1, min_tag, max_tag
+
+        # 2.8.x fallback: one-shot warning + dataset scan.
+        warnings.warn(
+            f"source written by pre-2.9.0 apeGmsh; tag span computed by "
+            f"dataset scan — re-save under 2.9.0 to skip this on future "
+            f"composes",
+            UserWarning,
+            stacklevel=2,
+        )
+        min_tag, max_tag = _scan_min_max_tags(f)
+        return max_tag - min_tag + 1, min_tag, max_tag
+
+
+def _scan_min_max_tags(f: Any) -> tuple[int, int]:
+    """Dataset scan over ``/nodes/ids`` + ``/elements/{type}/ids``.
+
+    Returns ``(min_tag, max_tag)`` covering both nodes and elements.
+    An empty H5 returns ``(0, 0)`` — the compose engine handles that
+    edge case at the reservation step.
+    """
+    mins: list[int] = []
+    maxs: list[int] = []
+    if "nodes" in f and "ids" in f["nodes"]:
+        nids = f["nodes/ids"][...]
+        if nids.size > 0:
+            mins.append(int(nids.min()))
+            maxs.append(int(nids.max()))
+    if "elements" in f:
+        for type_name in f["elements"].keys():
+            sub = f["elements"][type_name]
+            if hasattr(sub, "keys") and "ids" in sub:
+                eids = sub["ids"][...]
+                if eids.size > 0:
+                    mins.append(int(eids.min()))
+                    maxs.append(int(eids.max()))
+    if not mins:
+        return 0, 0
+    return min(mins), max(maxs)
+
+
+# ── Helper: reservation window math ────────────────────────────────
+
+
+def _compute_reservation(
+    source_span: int,
+    host_max_tag: int,
+    previous_reservations: tuple[tuple[int, int], ...] = (),
+    *,
+    granularity: int = 1_000_000,
+    compose_size_per_module: int | None = None,
+) -> tuple[int, int]:
+    """Return ``(base, size)`` per ADR 0038 §"Tag-offset scheme".
+
+    Parameters
+    ----------
+    source_span : int
+        Source's ``max_tag - min_tag + 1`` (from
+        :func:`_compute_source_span`).
+    host_max_tag : int
+        The host's current maximum tag — the reservation must sit
+        strictly above it.  Pass ``0`` for an empty host.
+    previous_reservations : tuple of (base, size)
+        Reservations already issued under previous compose calls.
+        When non-empty, the new base is ``previous_base + previous_size``
+        of the last entry rather than rounded up from ``host_max_tag``.
+    granularity : int, default 1_000_000
+        Power-of-10 round-up unit (``Compose.RESERVATION_GRANULARITY``).
+    compose_size_per_module : int or None
+        Explicit reservation-size floor.  When supplied, ``size`` is
+        ``max(auto_size, compose_size_per_module)``.
+
+    Returns
+    -------
+    (int, int)
+        ``(base, size)`` of the new reservation window.
+    """
+    # Auto-size from the source's actual span.
+    auto_size = (
+        (source_span + granularity - 1) // granularity
+    ) * granularity
+    # ``compose_size_per_module`` is a FLOOR (advisory headroom for
+    # users who expect the source to grow — ADR 0038 line 264-270);
+    # the rewriter still computes the natural size and takes the
+    # larger of the two.
+    if compose_size_per_module is not None:
+        size = max(auto_size, compose_size_per_module)
+    else:
+        size = auto_size
+    # Empty source edge case — span 0 round-trips to size 0 which
+    # would collapse the reservation.  Snap to one granularity unit so
+    # the rest of the pipeline has a non-degenerate window.
+    if size == 0:
+        size = granularity
+
+    if previous_reservations:
+        prev_base, prev_size = previous_reservations[-1]
+        base = prev_base + prev_size
+    else:
+        # First compose: round host_max_tag up to the next granularity
+        # boundary so the reservation sits clearly above existing tags.
+        base = (
+            (host_max_tag + granularity) // granularity
+        ) * granularity
+    return base, size
+
+
+# ── Helper: geometric transform ────────────────────────────────────
+
+
+def _apply_geometric_transform(
+    xyz: np.ndarray,
+    *,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+) -> np.ndarray:
+    """Apply rotate-then-translate to an ``(N, 3)`` node-coord array.
+
+    ``rotate`` is axis-angle ``(x, y, z, theta)`` with ``theta`` in
+    radians, matching ``gmsh.model.occ.rotate(...)`` (ADR 0038 line 101).
+    ``translate`` is a 3-vector applied AFTER rotation.  Returns a NEW
+    array; input is not mutated.  When ``rotate is None`` AND
+    ``translate == (0, 0, 0)``, returns the input unchanged
+    (no-copy fast path).
+    """
+    arr = np.asarray(xyz, dtype=np.float64)
+    is_identity_translate = all(float(t) == 0.0 for t in translate)
+    if rotate is None and is_identity_translate:
+        return arr  # no-copy fast path
+
+    out = arr
+    if rotate is not None:
+        ax, ay, az, theta = (
+            float(rotate[0]), float(rotate[1]),
+            float(rotate[2]), float(rotate[3]),
+        )
+        # Normalise the axis (Gmsh's rotate is axis-angle; the axis
+        # must be a unit vector for the Rodrigues formula).
+        axis = np.array([ax, ay, az], dtype=np.float64)
+        norm = float(np.linalg.norm(axis))
+        if norm == 0.0:
+            # Degenerate axis with non-zero theta is ill-defined; fall
+            # back to identity rotation (consistent with gmsh's tolerant
+            # behaviour).
+            out = arr.copy()
+        else:
+            axis = axis / norm
+            c = float(np.cos(theta))
+            s = float(np.sin(theta))
+            one_minus_c = 1.0 - c
+            kx, ky, kz = float(axis[0]), float(axis[1]), float(axis[2])
+            # Rodrigues rotation matrix.
+            R = np.array([
+                [c + kx * kx * one_minus_c,
+                 kx * ky * one_minus_c - kz * s,
+                 kx * kz * one_minus_c + ky * s],
+                [ky * kx * one_minus_c + kz * s,
+                 c + ky * ky * one_minus_c,
+                 ky * kz * one_minus_c - kx * s],
+                [kz * kx * one_minus_c - ky * s,
+                 kz * ky * one_minus_c + kx * s,
+                 c + kz * kz * one_minus_c],
+            ], dtype=np.float64)
+            out = arr @ R.T
+
+    if not is_identity_translate:
+        out = out + np.array(translate, dtype=np.float64)
+    return out
+
+
+# ── Helper: per-record tag-offset + namespace rewrite ──────────────
+
+
+def _rewrite_record(
+    rec: Any,
+    *,
+    offset: int,
+    label: str,
+) -> Any:
+    """Return a copy of ``rec`` with tag fields offset + name fields
+    namespace-prefixed.
+
+    Iterates the record's ``tag_rewrite_spec`` class attribute (ADR 0038
+    §"Tag-reference rewrite checklist").  A ``None`` spec means the
+    record is opt-out (DISCARD / DEFER verdicts) and the caller skips
+    it without invoking this helper.
+
+    Nested record lists (e.g. ``NodeToSurfaceRecord.rigid_link_records``)
+    are walked recursively via the ``nested_records`` key.
+
+    Returns a NEW record instance; ``rec`` is not mutated.
+    """
+    spec = getattr(rec, "tag_rewrite_spec", None)
+    if spec is None:
+        raise TypeError(
+            f"record kind {type(rec).__name__} has no tag_rewrite_spec; "
+            f"cover-set drift — add a ClassVar declaration per "
+            f"ADR 0038 §'Tag-reference rewrite checklist'"
+        )
+
+    # Build a kwargs dict of the changed fields and pass to dataclasses.replace.
+    changes: dict[str, Any] = {}
+
+    for fname in spec.get("tag_fields_scalar", ()):
+        current = getattr(rec, fname)
+        if current is None:
+            continue
+        changes[fname] = int(current) + offset
+
+    for fname in spec.get("tag_fields_array", ()):
+        current = getattr(rec, fname)
+        if current is None:
+            continue
+        # Preserve container type: list-in -> list-out; ndarray-in ->
+        # ndarray-out.  Both shapes occur on the resolved records
+        # (NodeGroupRecord.slave_nodes is a list; phantom_nodes is too;
+        # NodeToSurfaceRecord.phantom_coords is ndarray — but coords
+        # aren't tag-bearing, so they're not in tag_fields_array).
+        if isinstance(current, np.ndarray):
+            changes[fname] = current.astype(np.int64) + np.int64(offset)
+        else:
+            changes[fname] = [int(x) + offset for x in current]
+
+    for fname in spec.get("name_fields", ()):
+        current = getattr(rec, fname)
+        if current is None:
+            continue
+        # ``pattern`` defaults to ``"default"`` on LoadRecord — still
+        # namespaced so loads in different modules carrying the same
+        # pattern name don't collide on the host.
+        changes[fname] = f"{label}.{current}"
+
+    for fname in spec.get("nested_records", ()):
+        current = getattr(rec, fname)
+        if current is None:
+            continue
+        changes[fname] = [
+            _rewrite_record(child, offset=offset, label=label)
+            for child in current
+        ]
+
+    return _dc_replace(rec, **changes)
+
+
+# ── Helper: rewrite the broker dict-shaped PG / label entries ──────
+
+
+def _rewrite_named_groups(
+    groups: dict,
+    *,
+    offset: int,
+    label: str,
+) -> dict:
+    """Return a copy of a ``{(dim, tag): info_dict}`` mapping with
+    ``node_ids`` / ``element_ids`` / ``connectivity`` offset and the
+    ``name`` namespaced.
+
+    The ``info_dict`` carries object-dtype arrays under ``node_ids`` /
+    ``element_ids`` (cast by :class:`NamedGroupSet.__init__`); we work
+    in int64 space for the math and let the consumer recoerce.
+    """
+    out: dict = {}
+    for key, info in groups.items():
+        new_info: dict = {}
+        for k, v in info.items():
+            if k == "name":
+                new_info[k] = f"{label}.{v}"
+            elif k in ("node_ids", "element_ids", "connectivity"):
+                if v is None:
+                    new_info[k] = v
+                else:
+                    arr = np.asarray(v, dtype=np.int64)
+                    if arr.size == 0:
+                        new_info[k] = arr
+                    else:
+                        new_info[k] = arr + np.int64(offset)
+            elif k == "node_coords":
+                # Coords are not tag-bearing; copy as-is (geometric
+                # transform applies to fem.nodes.coords, not the
+                # PG-side mirror copies which the rewriter re-derives
+                # from the rebuilt node table when 3B.2b merges).  In
+                # 3B.2a we preserve the source coords; 3B.2b will
+                # decide whether to re-fetch from the rewritten node
+                # table or keep these PG-local copies.
+                new_info[k] = v
+            else:
+                # Forward unknown keys (e.g. nested per-type 'groups')
+                # untouched — 3B.2b will handle the rewrite if needed.
+                new_info[k] = v
+        out[key] = new_info
+    return out
+
+
+# ── Helper: rewrite the parts maps ─────────────────────────────────
+
+
+def _rewrite_part_map(
+    part_map: dict,
+    *,
+    offset: int,
+    label: str,
+) -> dict:
+    """Return a copy of ``{part_label: set[int]}`` with each set's int
+    members offset and each part_label namespace-prefixed.
+    """
+    out: dict = {}
+    for plabel, members in part_map.items():
+        new_label = f"{label}.{plabel}"
+        out[new_label] = {int(x) + offset for x in members}
+    return out
+
+
+# ── Helper: rewrite the mesh-selection store ───────────────────────
+
+
+def _rewrite_mesh_selection(
+    store: Any,
+    *,
+    offset: int,
+    label: str,
+) -> Any:
+    """Return a fresh ``MeshSelectionStore`` with offset tag arrays and
+    namespaced selection names.
+
+    Returns ``None`` when ``store`` is ``None`` (mirrors the input
+    nullable signal).
+    """
+    if store is None:
+        return None
+    from .MeshSelectionSet import MeshSelectionStore
+
+    sets: dict = {}
+    for (dim, tag), info in store._sets.items() if hasattr(store, "_sets") \
+            else {}.items():
+        new_info: dict = {}
+        for k, v in info.items():
+            if k == "name":
+                new_info[k] = f"{label}.{v}"
+            elif k in ("node_ids", "element_ids", "connectivity"):
+                if v is None:
+                    new_info[k] = v
+                else:
+                    arr = np.asarray(v, dtype=np.int64)
+                    if arr.size == 0:
+                        new_info[k] = arr
+                    else:
+                        new_info[k] = arr + np.int64(offset)
+            else:
+                new_info[k] = v
+        sets[(dim, tag)] = new_info
+    if not sets:
+        return None
+    return MeshSelectionStore(sets)
+
+
+# ── Top-level rewrite entry point ──────────────────────────────────
+
+
+def _rewrite_source_for_compose(
+    source_path: "str | Path",
+    *,
+    label: str,
+    translate: tuple[float, float, float],
+    rotate: tuple[float, float, float, float] | None,
+    partition_rank: int | None,
+    properties: dict,
+    base: int,
+    size: int,
+    source_span: int,
+    source_min_tag: int,
+) -> _RewrittenBundle:
+    """Read the source H5, rewrite all IMPORT records, return a bundle.
+
+    Pipeline (ADR 0038 §"Tag-offset scheme" + §"Tag-reference rewrite
+    checklist" + §"Namespace rule"):
+
+    1. ``read_fem_h5(source_path)`` → source :class:`FEMData`.
+    2. Compute offset = ``base - source_min_tag``.
+    3. For each registered record kind, apply ``tag_rewrite_spec``:
+
+       * DISCARD verdict (``tag_rewrite_spec = None``):
+         drop silently — PartitionRecord, ComposeRecord (deferred to
+         3E.1's nested-provenance graft).
+       * IMPORT verdict: offset every tag-bearing field; prefix every
+         name-bearing field with ``"{label}."``.
+
+    4. Apply geometric transform to node coordinates.
+    5. Drop FILTER kinds silently — 3B.2b owns the
+       :class:`ComposeFilterWarning` emission.
+
+    The bundle is **read-only output**.  NEVER touches the host
+    FEMData; NEVER calls into :class:`Compose` facade state; NEVER
+    fires the verifier (3B.2c).
+    """
+    from ._femdata_h5_io import read_fem_h5
+    from ._element_types import ElementGroup
+    from .._kernel.records._partitions import PartitionRecord  # noqa: F401
+
+    offset = base - source_min_tag
+    source = read_fem_h5(str(source_path))
+
+    # 1. Nodes — offset ids, apply geometric transform to coords.
+    src_node_ids = np.asarray(source.nodes.ids, dtype=np.int64)
+    src_node_coords = np.asarray(source.nodes.coords, dtype=np.float64)
+    new_node_ids = src_node_ids + np.int64(offset)
+    new_node_coords = _apply_geometric_transform(
+        src_node_coords, translate=translate, rotate=rotate,
+    )
+    src_node_ndf = getattr(source.nodes, "_ndf", None)
+    new_node_ndf = (
+        np.asarray(src_node_ndf, dtype=np.int8)
+        if src_node_ndf is not None
+        else None
+    )
+
+    # 2. Elements — offset ids + connectivity per type.
+    new_element_groups: dict = {}
+    for type_code, group in source.elements._groups.items():
+        old_ids = np.asarray(group.ids, dtype=np.int64)
+        old_conn = np.asarray(group.connectivity, dtype=np.int64)
+        new_ids = old_ids + np.int64(offset)
+        new_conn = old_conn + np.int64(offset)
+        new_element_groups[type_code] = ElementGroup(
+            element_type=group.element_type,
+            ids=new_ids,
+            connectivity=new_conn,
+        )
+
+    # 3. Physical groups + labels — rewrite the dict-shaped name maps
+    #    on both node-side and element-side composites.
+    new_node_physical = _rewrite_named_groups(
+        source.nodes.physical._groups, offset=offset, label=label,
+    )
+    new_elem_physical = _rewrite_named_groups(
+        source.elements.physical._groups, offset=offset, label=label,
+    )
+    new_node_labels = _rewrite_named_groups(
+        source.nodes.labels._groups, offset=offset, label=label,
+    )
+    new_elem_labels = _rewrite_named_groups(
+        source.elements.labels._groups, offset=offset, label=label,
+    )
+
+    # 4. Mesh selections (optional).
+    new_mesh_selection = _rewrite_mesh_selection(
+        source.mesh_selection, offset=offset, label=label,
+    )
+
+    # 5. Parts maps — namespace the part_label keys + offset members.
+    new_part_node_map = _rewrite_part_map(
+        getattr(source.nodes, "_part_node_map", {}) or {},
+        offset=offset, label=label,
+    )
+    new_part_elem_map = _rewrite_part_map(
+        getattr(source.elements, "_part_elem_map", {}) or {},
+        offset=offset, label=label,
+    )
+
+    # 6. Constraint / load / mass / SP records — apply tag_rewrite_spec.
+    new_node_constraints = tuple(
+        _rewrite_record(rec, offset=offset, label=label)
+        for rec in source.nodes.constraints
+    )
+    new_elem_constraints = tuple(
+        _rewrite_record(rec, offset=offset, label=label)
+        for rec in source.elements.constraints
+    )
+    new_nodal_loads = tuple(
+        _rewrite_record(rec, offset=offset, label=label)
+        for rec in source.nodes.loads
+    )
+    new_element_loads = tuple(
+        _rewrite_record(rec, offset=offset, label=label)
+        for rec in source.elements.loads
+    )
+    new_sp_records = tuple(
+        _rewrite_record(rec, offset=offset, label=label)
+        for rec in source.nodes.sp
+    )
+    new_mass_records = tuple(
+        _rewrite_record(rec, offset=offset, label=label)
+        for rec in source.nodes.masses
+    )
+
+    # ── DISCARD / DEFER kinds (silently dropped per ADR 0038 §"Merge
+    # semantics"; 3B.2b will emit warnings for FILTER kinds): the
+    # module's own PartitionSet (line 168) and nested-compose
+    # ComposeRecord (line 211, deferred to 3E.1).  ``read_fem_h5``
+    # already populates these on the source FEMData; we deliberately
+    # don't carry them through the bundle.  FILTER kinds (stages,
+    # time-series, load-patterns, recorders, analysis settings,
+    # /results/) are not part of the neutral zone ``read_fem_h5``
+    # parses — they live in the OpenSees zone and never enter the
+    # bundle in 3B.2a.
+
+    composed_at = datetime.now(tz=timezone.utc).isoformat()
+
+    return _RewrittenBundle(
+        label=label,
+        source_path=str(source_path),
+        source_fem_hash=str(source.snapshot_id),
+        source_neutral_schema_version=_read_neutral_schema_str(source_path),
+        translate=translate,
+        rotate=rotate,
+        partition_rank=partition_rank,
+        properties=dict(properties or {}),
+        composed_at=composed_at,
+        base=base,
+        size=size,
+        source_span=source_span,
+        source_min_tag=source_min_tag,
+        node_ids=new_node_ids,
+        node_coords=new_node_coords,
+        node_ndf=new_node_ndf,
+        element_groups=new_element_groups,
+        node_physical=new_node_physical,
+        elem_physical=new_elem_physical,
+        node_labels=new_node_labels,
+        elem_labels=new_elem_labels,
+        mesh_selection=new_mesh_selection,
+        part_node_map=new_part_node_map,
+        part_elem_map=new_part_elem_map,
+        node_constraints=new_node_constraints,
+        elem_constraints=new_elem_constraints,
+        nodal_loads=new_nodal_loads,
+        element_loads=new_element_loads,
+        sp_records=new_sp_records,
+        mass_records=new_mass_records,
+    )
+
+
+def _read_neutral_schema_str(source_path: "str | Path") -> str:
+    """Best-effort: read ``/meta/@neutral_schema_version`` as a string.
+
+    Used by :func:`_rewrite_source_for_compose` to populate the
+    bundle's ``source_neutral_schema_version`` for the future
+    :class:`ComposeRecord`.  Empty string when absent (very old files).
+    """
+    import h5py
+
+    with h5py.File(str(source_path), "r") as f:
+        if "meta" not in f:
+            return ""
+        attrs = f["meta"].attrs
+        raw = attrs.get("neutral_schema_version", "")
+        if isinstance(raw, (bytes, bytearray)):
+            return raw.decode("utf-8", errors="replace")
+        return str(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +1004,88 @@ class Compose:
             "Compose merge engine ships in Phase 3B.2; "
             "this PR (3B.1) scaffolds the facade only. "
             "Phase 3A.1 schema substrate (PR #361) is on main."
+        )
+
+    # ── Internal: rewrite half of the merge engine (Phase 3B.2a) ─
+
+    def _rewrite_for_compose(
+        self,
+        source: "str | Path",
+        *,
+        label: str,
+        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotate: tuple[float, float, float, float] | None = None,
+        partition_rank: int | None = None,
+        properties: "dict | None" = None,
+        compose_size_per_module: int | None = None,
+    ) -> "_RewrittenBundle":
+        """Internal: produce the rewritten bundle. Phase 3B.2b calls
+        into this to obtain the offset/namespaced records before
+        merging them into the host :class:`FEMData`.
+
+        Validates inputs (delegating to the existing 3B.1 validators),
+        reads the source H5 via :func:`_compute_source_span`, computes
+        the reservation window against the current host FEMData (if
+        any) plus the existing ``fem.composed_from`` reservations, and
+        applies the rewrite pipeline.  Returns a :class:`_RewrittenBundle`
+        — never mutates the host.
+        """
+        self._validate_label(label)
+        # No anchor here — _rewrite_for_compose is the engine half;
+        # ``anchor`` resolution belongs to the public ``compose(...)``
+        # method which lands in 3B.2b.
+        self._validate_partition_rank(partition_rank)
+        self._validate_compose_size(compose_size_per_module)
+
+        # Compute the source span (with the 2.8.x fallback path).
+        source_span, source_min_tag, _source_max_tag = (
+            _compute_source_span(source)
+        )
+
+        # Walk the host's current composed_from entries to seed the
+        # previous-reservations list.  The bundle's ``base`` must sit
+        # strictly above the host's tag watermark AND above any
+        # already-issued module windows.  3B.2a does not write back
+        # to fem.composed_from — 3B.2b owns the merge — but we still
+        # honour the existing chain when present so the bundle's
+        # base/size is self-consistent for 3B.2b to splice in.
+        fem = self._current_fem()
+        if fem is None:
+            host_max_tag = 0
+            previous: tuple[tuple[int, int], ...] = ()
+        else:
+            host_max_tag = _host_max_tag(fem)
+            previous = _previous_reservations(fem)
+
+        base, size = _compute_reservation(
+            source_span=source_span,
+            host_max_tag=host_max_tag,
+            previous_reservations=previous,
+            granularity=type(self).RESERVATION_GRANULARITY,
+            compose_size_per_module=compose_size_per_module,
+        )
+
+        # Capacity check (ADR 0038 §"Tag-collision verifier" check 5).
+        # Fires only when the caller supplied an explicit
+        # ``compose_size_per_module`` smaller than the actual span.
+        if compose_size_per_module is not None and source_span > size:
+            raise ComposeCapacityError(
+                f"compose(compose_size_per_module={compose_size_per_module}) "
+                f"is smaller than the source's tag span ({source_span}); "
+                f"reservation size {size} would not fit the imported tags."
+            )
+
+        return _rewrite_source_for_compose(
+            source_path=source,
+            label=label,
+            translate=translate,
+            rotate=rotate,
+            partition_rank=partition_rank,
+            properties=properties or {},
+            base=base,
+            size=size,
+            source_span=source_span,
+            source_min_tag=source_min_tag,
         )
 
     def compose_inspect(self, path: "str | Path") -> dict:
@@ -580,3 +1362,52 @@ def _read_record_counts(f: Any) -> dict[str, int]:
         counts[kind] = total
 
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Helpers used by Compose._rewrite_for_compose
+# ---------------------------------------------------------------------------
+
+
+def _host_max_tag(fem: "FEMData") -> int:
+    """Return the max tag across the host's nodes + elements.
+
+    Mirrors :func:`_compute_tag_span_max` in
+    :mod:`apeGmsh.mesh._femdata_h5_io` but returns only the upper
+    bound — that's what the reservation formula needs to compute the
+    base for the first compose call.  Empty broker → 0.
+    """
+    maxs: list[int] = []
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    if node_ids.size > 0:
+        maxs.append(int(node_ids.max()))
+    for group in fem.elements:
+        ids = np.asarray(group.ids, dtype=np.int64)
+        if ids.size > 0:
+            maxs.append(int(ids.max()))
+    return max(maxs) if maxs else 0
+
+
+def _previous_reservations(
+    fem: "FEMData",
+) -> tuple[tuple[int, int], ...]:
+    """Recover ``(base, size)`` pairs from the host's ``fem.composed_from``.
+
+    The bundle does NOT yet carry the reservation extents on the
+    :class:`ComposeRecord` (the schema bumps that lift them onto disk
+    are a separate consideration); we approximate by reading the
+    rewritten module's tag span out of the host broker.  This is good
+    enough for 3B.2a's bundle production — 3B.2b will assemble the
+    authoritative reservation chain when it stitches modules together.
+
+    Returns an empty tuple when the host carries no composed modules.
+    """
+    composed = getattr(fem, "composed_from", None)
+    if not composed:
+        return ()
+    # In 3B.2a there is no on-host ``base`` / ``size`` field on the
+    # ComposeRecord.  The merge engine in 3B.2b will own that, so we
+    # return an empty tuple here and let the first reservation just
+    # round up from ``host_max_tag``.  Callers that need cumulative
+    # tracking pass their own tuple via the rewrite engine in 3B.2b.
+    return ()

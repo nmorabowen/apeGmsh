@@ -11,6 +11,7 @@ The corresponding pre-mesh :class:`LoadDef` definitions live in
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 
 @dataclass
@@ -19,6 +20,14 @@ class LoadRecord:
     kind: str
     pattern: str = "default"
     name: str | None = None
+
+    # ADR 0038 §"Tag-reference rewrite checklist" — Phase 3B.2a
+    # rewrite cover-set declaration.  Subclasses override.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": (),
+        "tag_fields_array": (),
+        "name_fields": (),
+    }
 
 
 @dataclass
@@ -34,6 +43,15 @@ class NodalLoadRecord(LoadRecord):
     force_xyz: tuple[float, float, float] | None = None
     moment_xyz: tuple[float, float, float] | None = None
 
+    # ADR 0038 §"Tag-reference rewrite checklist" — node_id is a tag
+    # reference.  ``name`` is the optional caller label; ``pattern`` is
+    # the load-pattern name — both get namespace-prefixed.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("node_id",),
+        "tag_fields_array": (),
+        "name_fields": ("name", "pattern"),
+    }
+
 
 @dataclass
 class ElementLoadRecord(LoadRecord):
@@ -42,6 +60,14 @@ class ElementLoadRecord(LoadRecord):
     element_id: int = 0
     load_type: str = ""             # "beamUniform", "surfacePressure", "bodyForce", ...
     params: dict = field(default_factory=dict)
+
+    # ADR 0038 §"Tag-reference rewrite checklist" — element_id is a
+    # tag reference; pattern + name are string-keyed surfaces.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("element_id",),
+        "tag_fields_array": (),
+        "name_fields": ("name", "pattern"),
+    }
 
 
 @dataclass
@@ -57,6 +83,14 @@ class SPRecord(LoadRecord):
     dof: int = 1                    # 1-based DOF index
     value: float = 0.0
     is_homogeneous: bool = True
+
+    # ADR 0038 §"Tag-reference rewrite checklist" — node_id is a tag
+    # reference; pattern + name are string-keyed surfaces.
+    tag_rewrite_spec: ClassVar[dict] = {
+        "tag_fields_scalar": ("node_id",),
+        "tag_fields_array": (),
+        "name_fields": ("name", "pattern"),
+    }
 
 
 __all__ = [

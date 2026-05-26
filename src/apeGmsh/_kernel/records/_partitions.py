@@ -22,6 +22,7 @@ through ``extract_partitions``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 
@@ -51,6 +52,12 @@ class PartitionRecord:
     node_ids: np.ndarray
     element_ids: np.ndarray
     weight_sum: float | None = None
+
+    # ADR 0038 §"Merge semantics" — module's own PartitionSet is
+    # DISCARD: the host re-partitions per the 3-layer rank model
+    # (line 168).  ``None`` sentinel makes the compose rewriter skip
+    # this record kind without falling through to the default scan.
+    tag_rewrite_spec: ClassVar[None] = None
 
     @property
     def n_nodes(self) -> int:
