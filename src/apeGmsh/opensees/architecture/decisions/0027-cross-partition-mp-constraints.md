@@ -323,7 +323,13 @@ unchanged.
   an integration test for a frame with a floor diaphragm
   partitioned across 4 ranks, asserting the emitted Tcl/Py decks
   run under OpenSeesMP and the modal periods match a single-rank
-  baseline.
+  baseline.  `test_emit_partitioned_embedded.py` also adds
+  `test_cross_rank_embedded_with_rebar_nodes_owned`, which calls
+  `get_fem_data(dim=None)` so rebar (1D) nodes participate in METIS
+  and the production-realistic cnode-on-rank-A / host-tet-on-rank-B
+  case actually surfaces in the emitted Tcl + Py decks (the prior
+  `dim=3` view masked it by dropping rebar nodes from every
+  partition's `node_ids`).
 
 - **Runtime cost.** Constraint redundancy across ranks is a known
   property of OpenSeesMP — the constraint handler dedupes equivalent

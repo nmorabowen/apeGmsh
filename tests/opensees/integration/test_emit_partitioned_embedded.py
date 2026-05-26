@@ -433,3 +433,391 @@ def test_real_resolver_partitioned_embedded_does_not_fail_loud() -> None:
         f"degenerate: no embedded emit landed on any rank — per-rank "
         f"counts: { {r: len(c) for r, c in embedded.items()} }"
     )
+
+
+# ---------------------------------------------------------------------
+# Cross-rank rebar — dim=None (production-realistic shape)
+# ---------------------------------------------------------------------
+#
+# The dim=3 view above filters all 1D rebar elements out of every
+# partition's ``node_ids`` — rebar nodes simply do not appear in any
+# rank's owner set, so the embed pipeline never sees a truly cross-rank
+# case (cnode natively owned by rank A, host-tet emit on rank B).  With
+# ``dim=None`` rebar nodes participate in METIS' partition assignment
+# and the cross-partition foreign-node declaration path actually fires.
+# This test locks the post-decl ordering and broker-truth correspondence
+# the ADR 0027 §"ASDEmbeddedNodeElement ownership" / INV-2 rules require
+# under that more realistic shape.
+
+
+def _parse_tcl_deck_by_rank(
+    deck_text: str,
+) -> dict[int, list[tuple[str, list[str]]]]:
+    """Split a partitioned Tcl deck into ``{rank: [(cmd, tokens), ...]}``.
+
+    Recognises ``if {[getPID] == K} {`` rank-open headers and matches
+    them to the closing ``}`` at the outer indent. Inside each rank
+    block, each non-blank line is split into ``(cmd, tokens)`` where
+    ``cmd`` is the first whitespace-delimited token. The relative
+    order of lines within a rank is preserved.
+    """
+    import re
+
+    rank_re = re.compile(r"^\s*if\s*\{\[getPID\]\s*==\s*(\d+)\}\s*\{\s*$")
+    out: dict[int, list[tuple[str, list[str]]]] = {}
+    cur_rank: int | None = None
+    cur_depth = 0
+    for raw in deck_text.splitlines():
+        if cur_rank is None:
+            m = rank_re.match(raw)
+            if m:
+                cur_rank = int(m.group(1))
+                cur_depth = 1
+                out.setdefault(cur_rank, [])
+            continue
+        # Track brace nesting so an inner ``{...}`` does not prematurely
+        # close the rank block.
+        opens = raw.count("{")
+        closes = raw.count("}")
+        cur_depth += opens - closes
+        if cur_depth <= 0:
+            cur_rank = None
+            cur_depth = 0
+            continue
+        body = raw.strip()
+        if not body or body.startswith("#"):
+            continue
+        tokens = body.split()
+        out[cur_rank].append((tokens[0], tokens[1:]))
+    return out
+
+
+def _parse_py_deck_by_rank(
+    deck_text: str,
+) -> dict[int, list[tuple[str, list[str]]]]:
+    """Split a partitioned Py deck into ``{rank: [(method, args), ...]}``.
+
+    Recognises ``if getPID() == K:`` rank-open headers; the rank block
+    runs until the first line that returns to column 0 (Python's
+    indentation rule). Inside, ``ops.<method>(<args>)`` lines are split
+    into ``(method, [arg_token, ...])`` where each arg token is the
+    raw repr written by the emitter (``int`` → ``"123"``,
+    ``float`` → ``"1.5"`` etc.).
+    """
+    import re
+
+    rank_re = re.compile(r"^if\s+getPID\(\)\s*==\s*(\d+):\s*$")
+    call_re = re.compile(r"^\s*ops\.(\w+)\((.*)\)\s*$")
+    out: dict[int, list[tuple[str, list[str]]]] = {}
+    cur_rank: int | None = None
+    for raw in deck_text.splitlines():
+        if cur_rank is None:
+            m = rank_re.match(raw)
+            if m:
+                cur_rank = int(m.group(1))
+                out.setdefault(cur_rank, [])
+            continue
+        # Empty line keeps the block open; first non-empty line at
+        # column 0 (no leading whitespace) closes it.
+        if raw.strip() == "":
+            continue
+        if not (raw.startswith(" ") or raw.startswith("\t")):
+            cur_rank = None
+            # Fall through and re-evaluate the header on this line.
+            m = rank_re.match(raw)
+            if m:
+                cur_rank = int(m.group(1))
+                out.setdefault(cur_rank, [])
+            continue
+        m = call_re.match(raw)
+        if m is None:
+            continue
+        method = m.group(1)
+        body = m.group(2)
+        args = [tok.strip() for tok in body.split(",")] if body else []
+        out[cur_rank].append((method, args))
+    return out
+
+
+def _broker_node_xyz(fem: object, tag: int) -> tuple[float, float, float]:
+    nodes = fem.nodes  # type: ignore[attr-defined]
+    idx = nodes.index(int(tag))
+    xyz = nodes.coords[idx]
+    return float(xyz[0]), float(xyz[1]), float(xyz[2])
+
+
+def _broker_node_ndf(
+    fem: object, tag: int, *, envelope_ndf: int,
+) -> int:
+    """Mirror ``_emit_node_with_broker_ndf`` truth — broker-declared
+    value when available, envelope fallback on :class:`LookupError`.
+    """
+    nodes = fem.nodes  # type: ignore[attr-defined]
+    try:
+        return int(nodes.ndf_for(int(tag)))
+    except LookupError:
+        return int(envelope_ndf)
+
+
+def test_cross_rank_embedded_with_rebar_nodes_owned(tmp_path) -> None:
+    """ADR 0027 §"ASDEmbeddedNodeElement ownership" — when rebar nodes
+    are owned by partitions (``dim=None``, line elements participate in
+    METIS), the cnode of an embed record can be natively owned by a
+    different rank than the host tet. The host-element rank must be
+    the sole emitter, with the foreign cnode declared at broker-truth
+    coordinates / ndf before the ``ASDEmbeddedNodeElement`` line.
+
+    Locks the production-realistic shape that the existing dim=3 test
+    obscures: with dim=3 only 3D records reach any rank's ``node_ids``,
+    so the broker never sees a foreign-rebar-cnode case.
+    """
+    from apeGmsh import apeGmsh
+    from apeGmsh.opensees import apeSees
+
+    with apeGmsh(model_name="part_embedded_rebar_owned", verbose=False) as g:
+        # Long thin concrete box (host) — 4.0 x 0.4 x 0.4
+        box = g.model.geometry.add_box(0.0, 0.0, 0.0, 4.0, 0.4, 0.4)
+        # Rebar line along the long axis at the box centroid
+        p0 = g.model.geometry.add_point(0.0, 0.2, 0.2, lc=0.4)
+        p1 = g.model.geometry.add_point(4.0, 0.2, 0.2, lc=0.4)
+        rebar = g.model.geometry.add_line(p0, p1)
+        g.model.sync()
+
+        g.physical.add(3, [box],   name="concrete")
+        g.physical.add(1, [rebar], name="rebar")
+
+        g.mesh.sizing.set_global_size(0.4)
+        g.mesh.generation.generate(3)
+
+        # Embedded coupling: rebar nodes → tet host shape functions.
+        g.constraints.embedded("concrete", "rebar")
+
+        g.mesh.partitioning.partition(2)
+
+        # Production-realistic shape: line + tet elements both
+        # participate in METIS, so rebar nodes land in a partition's
+        # ``node_ids`` and the truly-cross-rank case (cnode native on
+        # rank A, embed emit on rank B) shows up.
+        fem = g.mesh.queries.get_fem_data(dim=None)
+
+    assert len(fem.partitions) == 2, (
+        f"expected 2 partitions; got {len(fem.partitions)}"
+    )
+    interps = list(fem.elements.constraints.interpolations())
+    assert len(interps) > 0, (
+        "resolver produced no embedded InterpolationRecords — geometry "
+        "or PG labels did not exercise the embedded resolution path"
+    )
+
+    # Per-rank node ownership view — the same shape the build pipeline
+    # uses to decide cross-rank foreign-node declarations.
+    rank_node_ids: dict[int, set[int]] = {
+        rank: {int(n) for n in part.node_ids}
+        for rank, part in enumerate(fem.partitions)
+    }
+
+    # Emit Tcl + Py decks to disk and parse them back per-rank.
+    tcl_path = tmp_path / "deck.tcl"
+    py_path = tmp_path / "deck.py"
+    envelope_ndf = 3
+    ops_tcl = apeSees(cast("object", fem))
+    ops_tcl.model(ndm=3, ndf=envelope_ndf)
+    ops_tcl.tcl(str(tcl_path))
+    ops_py = apeSees(cast("object", fem))
+    ops_py.model(ndm=3, ndf=envelope_ndf)
+    ops_py.py(str(py_path))
+
+    tcl_per_rank = _parse_tcl_deck_by_rank(tcl_path.read_text())
+    py_per_rank = _parse_py_deck_by_rank(py_path.read_text())
+
+    assert set(tcl_per_rank.keys()) == {0, 1}, (
+        f"Tcl deck should expose both ranks; got {sorted(tcl_per_rank)}"
+    )
+    assert set(py_per_rank.keys()) == {0, 1}, (
+        f"Py deck should expose both ranks; got {sorted(py_per_rank)}"
+    )
+
+    # ----- Tcl-side extraction --------------------------------------------
+    # ``embed_rank``: rank where the line emitted.
+    # ``ele_tag, cnode, masters``: ints parsed from the deck.
+    # ``node_decls_before``: {node_tag: (xyz, ndf_or_None)} for every
+    # ``node`` line that PRECEDES the embed line in this rank's block.
+    def _collect_tcl_embeds(per_rank):
+        embeds = []
+        for rank, lines in per_rank.items():
+            node_decls: dict[int, tuple[tuple[float, float, float], int | None]] = {}
+            for cmd, tokens in lines:
+                if cmd == "node":
+                    nid = int(tokens[0])
+                    x, y, z = (
+                        float(tokens[1]), float(tokens[2]), float(tokens[3])
+                    )
+                    ndf_val: int | None = None
+                    if "-ndf" in tokens[4:]:
+                        idx = tokens.index("-ndf")
+                        ndf_val = int(tokens[idx + 1])
+                    node_decls[nid] = ((x, y, z), ndf_val)
+                elif cmd == "element" and tokens and tokens[0] == "ASDEmbeddedNodeElement":
+                    body = tokens[1:]
+                    ele_tag = int(body[0])
+                    cnode = int(body[1])
+                    # Master nodes run until the first flag token
+                    # (``-rot`` / ``-p`` / ``-K`` / ``-KP``).
+                    masters: list[int] = []
+                    for tok in body[2:]:
+                        if tok.startswith("-"):
+                            break
+                        masters.append(int(tok))
+                    embeds.append({
+                        "rank": rank,
+                        "ele_tag": ele_tag,
+                        "cnode": cnode,
+                        "masters": tuple(masters),
+                        "node_decls_before": dict(node_decls),
+                    })
+            # ``node_decls`` keeps accumulating across multiple embed
+            # lines on the same rank — that's intentional. Each embed's
+            # snapshot above captures decls that appeared earlier in the
+            # block.
+        return embeds
+
+    def _collect_py_embeds(per_rank):
+        embeds = []
+        for rank, lines in per_rank.items():
+            node_decls: dict[int, tuple[tuple[float, float, float], int | None]] = {}
+            for method, args in lines:
+                if method == "node":
+                    nid = int(args[0])
+                    x, y, z = (
+                        float(args[1]), float(args[2]), float(args[3])
+                    )
+                    ndf_val: int | None = None
+                    # ``ops.node(tag, x, y, z, '-ndf', 3)`` — flag args
+                    # are repr'd as quoted strings by the emitter.
+                    tail = args[4:]
+                    for i, a in enumerate(tail):
+                        if a in ("'-ndf'", '"-ndf"'):
+                            ndf_val = int(tail[i + 1])
+                            break
+                    node_decls[nid] = ((x, y, z), ndf_val)
+                elif method == "element" and args and args[0] in (
+                    "'ASDEmbeddedNodeElement'", '"ASDEmbeddedNodeElement"',
+                ):
+                    body = args[1:]
+                    ele_tag = int(body[0])
+                    cnode = int(body[1])
+                    masters: list[int] = []
+                    for tok in body[2:]:
+                        if tok.startswith("'-") or tok.startswith('"-'):
+                            break
+                        masters.append(int(tok))
+                    embeds.append({
+                        "rank": rank,
+                        "ele_tag": ele_tag,
+                        "cnode": cnode,
+                        "masters": tuple(masters),
+                        "node_decls_before": dict(node_decls),
+                    })
+        return embeds
+
+    tcl_embeds = _collect_tcl_embeds(tcl_per_rank)
+    py_embeds = _collect_py_embeds(py_per_rank)
+
+    assert tcl_embeds, "Tcl deck has no ASDEmbeddedNodeElement lines"
+    assert py_embeds, "Py deck has no ASDEmbeddedNodeElement lines"
+
+    def _is_cross_rank(emb: dict) -> bool:
+        # Cnode is "foreign" on the emit rank when no partition record
+        # for that rank claims the cnode in its ``node_ids``.
+        return emb["cnode"] not in rank_node_ids[emb["rank"]]
+
+    tcl_cross = [e for e in tcl_embeds if _is_cross_rank(e)]
+    py_cross = [e for e in py_embeds if _is_cross_rank(e)]
+
+    # (a) ≥4 truly cross-rank records in the Tcl deck.
+    assert len(tcl_cross) >= 4, (
+        f"expected at least 4 truly cross-rank embedded records in "
+        f"Tcl deck; got {len(tcl_cross)} out of {len(tcl_embeds)} total. "
+        f"Per-rank embed counts: "
+        f"{ {r: sum(1 for e in tcl_embeds if e['rank']==r) for r in rank_node_ids} }"
+    )
+
+    # (b) Each cross-rank record emits on exactly one rank — no mirror
+    # on the foreign-cnode-owning rank.
+    tcl_keys_by_rank: dict[tuple, set[int]] = {}
+    for e in tcl_embeds:
+        key = (e["cnode"], e["masters"])
+        tcl_keys_by_rank.setdefault(key, set()).add(e["rank"])
+    for e in tcl_cross:
+        key = (e["cnode"], e["masters"])
+        ranks = tcl_keys_by_rank[key]
+        assert ranks == {e["rank"]}, (
+            f"cross-rank embed cnode={e['cnode']} masters={e['masters']} "
+            f"should emit only on host-element rank {e['rank']}; "
+            f"got emit ranks {sorted(ranks)}"
+        )
+
+    # (c) For each cross-rank record: the foreign cnode is declared
+    # via a ``node`` line BEFORE the embed line on the host-element rank.
+    for e in tcl_cross:
+        assert e["cnode"] in e["node_decls_before"], (
+            f"Tcl: foreign cnode {e['cnode']} not declared before "
+            f"ASDEmbeddedNodeElement on rank {e['rank']} "
+            f"(node decls seen: {sorted(e['node_decls_before'])[:10]}...)"
+        )
+
+    # (d) Foreign-cnode xyz matches broker truth.
+    # (e) Foreign-cnode ndf matches broker truth (envelope fallback when
+    #     no per-node declaration exists — `_emit_node_with_broker_ndf`).
+    for e in tcl_cross:
+        (xyz, ndf_val) = e["node_decls_before"][e["cnode"]]
+        truth_xyz = _broker_node_xyz(fem, e["cnode"])
+        for got, want in zip(xyz, truth_xyz):
+            assert abs(got - want) < 1e-9, (
+                f"Tcl: foreign cnode {e['cnode']} xyz {xyz} != "
+                f"broker xyz {truth_xyz}"
+            )
+        truth_ndf = _broker_node_ndf(
+            fem, e["cnode"], envelope_ndf=envelope_ndf,
+        )
+        assert ndf_val == truth_ndf, (
+            f"Tcl: foreign cnode {e['cnode']} ndf {ndf_val} != "
+            f"broker/envelope ndf {truth_ndf}"
+        )
+
+    # (f) Same assertions hold for the Py deck. Combine (b)-(e) in one
+    # pass for compactness.
+    assert len(py_cross) >= 4, (
+        f"expected at least 4 truly cross-rank embedded records in "
+        f"Py deck; got {len(py_cross)} out of {len(py_embeds)} total"
+    )
+    py_keys_by_rank: dict[tuple, set[int]] = {}
+    for e in py_embeds:
+        key = (e["cnode"], e["masters"])
+        py_keys_by_rank.setdefault(key, set()).add(e["rank"])
+    for e in py_cross:
+        key = (e["cnode"], e["masters"])
+        ranks = py_keys_by_rank[key]
+        assert ranks == {e["rank"]}, (
+            f"Py: cross-rank embed cnode={e['cnode']} masters={e['masters']} "
+            f"should emit only on host-element rank {e['rank']}; "
+            f"got emit ranks {sorted(ranks)}"
+        )
+        assert e["cnode"] in e["node_decls_before"], (
+            f"Py: foreign cnode {e['cnode']} not declared before "
+            f"ASDEmbeddedNodeElement on rank {e['rank']}"
+        )
+        (xyz, ndf_val) = e["node_decls_before"][e["cnode"]]
+        truth_xyz = _broker_node_xyz(fem, e["cnode"])
+        for got, want in zip(xyz, truth_xyz):
+            assert abs(got - want) < 1e-9, (
+                f"Py: foreign cnode {e['cnode']} xyz {xyz} != "
+                f"broker xyz {truth_xyz}"
+            )
+        truth_ndf = _broker_node_ndf(
+            fem, e["cnode"], envelope_ndf=envelope_ndf,
+        )
+        assert ndf_val == truth_ndf, (
+            f"Py: foreign cnode {e['cnode']} ndf {ndf_val} != "
+            f"broker/envelope ndf {truth_ndf}"
+        )
