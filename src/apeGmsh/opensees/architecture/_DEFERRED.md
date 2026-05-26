@@ -295,6 +295,226 @@ Lives in `_internal/build.py::compute_stage_ownership` (would
 gain constraint-record promotion logic) + `apesees.py::
 _run_staged_bc_validators` (a new V6 for cross-stage spans).
 
+### `s.remove_mp(name=)` — mid-stage MP constraint removal
+
+Phase SSI-2.E shipped `s.remove_sp` and `s.remove_element` but
+deferred the symmetric `s.remove_mp` (release of `equal_dof` /
+`rigid_link` / `rigid_diaphragm` / `embedded` constraints
+between stages). Deferral was decided after a four-agent
+architecture / API / OpenSees-semantics / use-case critique pass
+(May 2026); the verdict was unanimous: ship nothing, document
+the trigger.
+
+OpenSees support is present and unambiguous — the Tcl parser at
+`SRC/tcl/commands.cpp:6223-6247` exposes both `remove mp -tag
+$mpTag` (single MP by tag) and `remove mp $constrainedNodeTag`
+(cascade — removes every MP whose constrained node matches).
+The C++ Domain methods are `Domain::removeMP_Constraint(int
+tag)` at Domain.cpp:1265 and `Domain::removeMP_Constraints(int
+nodeTag)` at Domain.cpp:1286. Neither cascades to other
+constraints or to the constrained / retained nodes themselves
+(consequence: `s.remove_element` on a host element does NOT
+release MP constraints on its nodes — those must be removed
+explicitly).
+
+The apeGmsh-side blockers are two:
+
+1. **No per-record MP tag tracking in emit today.** The fan-out
+   helpers in `_internal/build.py::emit_mp_constraints`
+   (`_emit_rigid_links`, `_emit_equal_dofs`,
+   `_emit_rigid_diaphragms`, `_emit_kinematic_couplings`) emit
+   pure OpenSees commands with no `tags.allocate("MPconstraint")`
+   call. Only `_emit_surface_couplings` (ASDEmbeddedNodeElement)
+   allocates an element tag — so the only MP kind that has a
+   per-record handle today is the embedded one. To support
+   `s.remove_mp -tag` for the other kinds, the emit helpers
+   would need to thread an allocator through and persist the
+   resulting `name → tag` map for the stage emit pass to read
+   back. See the "MP per-record tag tracking" follow-up entry
+   below for the enabling-refactor shape.
+
+2. **Architecture surface concern — UN-CLAIM is a fourth
+   pattern.** ADR 0034 ships PUSH / PULL / CLAIM. CLAIM-by-name
+   acquires a globally-resolved constraint into a stage's pool
+   so the global emit skips it. UN-CLAIM would mean "a stage
+   claims a CLAIMED record from an earlier stage's pool to emit
+   `remove mp` against it" — that's a fourth routing rule
+   adjacent to CLAIM, with its own validator surface (V7?). The
+   `_DEFERRED.md` "Implicit promotion" entry already documents
+   the cost of adding a third pattern; adding a fourth without a
+   forcing function would erode the architecture-critique floor
+   ADR 0034 §"Alternatives considered" sets.
+
+**Trigger:** a real SSI deck with reusable temporary shoring —
+an `equal_dof` / `rigid_link` installed for one excavation lift
+and released before the next — that cannot be served by
+removing the host element via `s.remove_element` on the temp-
+strut PG. The Cerro Lindo SSI V5 deck does not have this
+pattern (the cimbra-rock embed is permanent). Until a deck
+forces it, the deferral holds.
+
+**Available workarounds today:**
+
+- Remove the host elements via `s.remove_element` on the
+  temp-PG. OpenSees does NOT auto-cascade, but if the
+  constrained/retained nodes are themselves owned only by the
+  removed elements, the MP becomes inert at the next analysis
+  chain bind (post `wipeAnalysis`).
+- Drive raw `remove mp` lines via a custom Tcl postamble per
+  stage, outside the apeGmsh emit pass.
+- Issue `wipeAnalysis` + re-emit-without via a fresh `apeSees`
+  instance per stage segment (heavy; loses the cross-stage tag
+  identity guarantees).
+
+**File map for the eventual implementation:**
+
+- `_internal/build.py` — extend `MassRecord`-style records with
+  a frozen `MPConstraintRemovalRecord(name=, kind=)` per kind;
+  the per-kind emit helpers would also need per-record name +
+  tag tracking on the way out.
+- `apesees.py::_StageBuilder` — add `s.remove_embedded(name=)` /
+  `s.remove_equal_dof(name=)` / `s.remove_rigid_link(name=)` /
+  `s.remove_rigid_diaphragm(name=)` / `s.remove_kinematic_coupling(name=)`
+  (per-kind verbs; a single `s.remove_mp(name=)` is ambiguous
+  because `name=` is not unique across kinds — see ADR 0034
+  §5a `_claim_constraints_by_name` which filters by
+  `(name, kind, scope)` for exactly this reason).
+- `apesees.py::_run_staged_bc_validators` — V7 "remove_mp target
+  must reference a claimed-or-global MP from a strictly-earlier
+  scope."
+- Per-emitter Protocol method `remove_mp_constraint(tag=)` (or
+  the cascade-by-node form); plus matching no-op H5 / capture
+  Recording / live forward.
+
+### `s.add_node(...)` / `s.add_element(...)` — runtime topology authoring
+
+Deferred indefinitely after the May 2026 four-agent critique
+pass. Three of four critics returned the same verdict:
+DO-NOT-SHIP. The fourth (OpenSees-semantics auditor) confirmed
+the mechanics work — `Domain::addNode` at Domain.cpp:498 calls
+`setDomain(this)` + `domainChange()`; `Domain::addElement` at
+Domain.cpp:444 calls `setDomain(this)`, `update()`, and
+`domainChange()` — `update()` at line 474 captures the
+element's initial state at the CURRENT deformed configuration,
+not zero stress. So mid-run topology IS legal at the OpenSees
+level.
+
+The deferral is architectural, not mechanical.
+
+**Invariants at risk:**
+
+- **FEMData-is-the-snapshot.** The bridge's read surface is
+  `self._bridge._fem` everywhere. `_claim_constraints_by_name`,
+  `compute_stage_ownership`, `allocate_element_tags`,
+  `_recorder_node_targets`, `_recorder_element_targets`, V1-V6
+  ownership maps — all consume FEMData. A `s.add_node` /
+  `s.add_element` verb would have to maintain a parallel
+  "stage-local broker" that participates in every one of those
+  consumers. That's not a verb; it's a second authoring axis.
+- **ADR 0027 cross-rank tag determinism.** Element tag
+  allocation runs once globally via `allocate_element_tags`
+  before any partition fan-out. Mid-stage allocation would
+  either require user-supplied tags (a regression from the
+  bridge's tag-management model) or rank-divergent allocator
+  state (a silent ADR 0027 INV-1 break).
+- **ADR 0021 lineage chain.** `model_hash = blake2b(fem_hash ||
+  canonical_opensees_zone_bytes)`. Stage-local nodes / elements
+  not in FEMData would either widen the canonical opensees
+  zone (requiring the still-unshipped `/opensees/stages/`
+  schema bump per ADR 0023 / ADR 0029 INV-8) or silently lose
+  chain-of-custody on a class of deck mutations.
+- **ADR 0014 viewer-pure-H5-consumer.** The viewer can already
+  not open staged-model H5 (the `apeSees.h5(path)` fail-loud
+  guard, #313). Adding stage-local topology pushes the
+  eventual `/opensees/stages/` schema and the matching
+  `ViewerData.from_h5` surface even wider.
+
+**The use-case skeptic found ZERO consumers in the codebase**:
+no example, no test, no TODO, no `_DEFERRED.md` entry, no
+Cerro Lindo SSI workflow needs either verb. The existing
+declarative-upfront + `s.activate(pgs=...)` path (Phase SSI-2.B,
+ADR 0030) covers every staged-topology workflow that has
+surfaced. Cohesive-zone modelling (`examples/02_cohesive_zones.ipynb`)
+pre-builds duplicated interface nodes upfront and does not
+propagate at runtime.
+
+**Trigger:** a real workflow where new node coordinates depend
+on **RUNTIME state** — XFEM crack-tip nodes whose position
+follows the propagation front, contact-detected nodes whose
+coordinates come from runtime collision pairs, adaptive
+remeshing — AND the team explicitly accepts the months-long
+refactor of the FEMData-is-snapshot invariant (touching
+ADR 0014 / 0019 / 0021 / 0027 simultaneously). Neither
+trigger has been observed in five SSI phases; the bet that
+neither will surface in the foreseeable future is reasonable.
+
+**Available workarounds today:**
+
+- **Part fragment + `s.activate(pgs=...)`** — declare the new
+  topology in a separate apeGmsh Part, fragment it into the
+  assembly so it shares boundary nodes, give it its own PG,
+  and birth-activate via `s.activate`. Strictly stronger than
+  `s.add_*`: PG-rooted, typed, participates in every validator,
+  archivable in H5, partitionable. This is what Cerro Lindo
+  SSI V5 does for the cimbra (ADR 0034 §5c).
+- **Pre-declared "control" nodes** — for the single-node use
+  case (a control node for a multi-point spring, a beam-on-
+  elastic-foundation reaction node), author the node in a
+  synthetic `g.parts.Part` upfront. It lands in FEMData; every
+  downstream consumer sees it. No `s.add_node` needed.
+
+**Verdict:** indefinite deferral. If the FEMData immutability
+invariant ever does need to relax, that's an ADR-level decision
+on the broker side first, with the staged verbs following as a
+downstream consequence — not the other way round.
+
+### MP per-record tag tracking — enabling refactor for `s.remove_mp` and future swap verbs
+
+Independent of any immediate consumer, the per-record tag-
+identity gap in the MP emit fan-out is a worthwhile target for
+opportunistic landing.
+
+Today, `_internal/build.py::emit_mp_constraints` and its
+per-kind helpers (`_emit_rigid_links`, `_emit_equal_dofs`,
+`_emit_rigid_diaphragms`, `_emit_kinematic_couplings`) write
+pure OpenSees commands with no allocator interaction — the
+emitted `equalDOF $m $s 1 2 3` line is anonymous. Only the
+surface-coupling helper allocates an element tag (because
+ASDEmbeddedNodeElement is parsed by the Tcl `element` parser,
+not `equalDOF` / `rigidLink`). Consequence: an apeGmsh-side
+record has no stable on-deck identity for any of the four
+unbound MP kinds.
+
+This blocks every future "mutate an MP after the fact" verb,
+not just `s.remove_mp` — also any hypothetical `s.swap_mp` or
+`s.update_mp_stiffness` (relevant for damper / spring
+substitutions in nonlinear time history).
+
+**Refactor shape** (not yet planned for any PR):
+
+- Thread `tags.allocate("MPconstraint")` through each per-kind
+  emit helper (after `_emit_phantom_nodes`).
+- Persist a per-stage / per-broker `mp_name_to_tag` map on the
+  bridge so the stage emit pass can read it back.
+- Emit one comment line per MP carrying the apeGmsh `name=`
+  before the OpenSees command, for human-readable decks (the
+  Tcl `# mp_name=foo (tag=42)` shape).
+- Update the H5 schema (`/opensees/constraints/{equalDOF,
+  rigidLink, rigidDiaphragm}` compound dtypes) to add a `tag`
+  column — schema bump opensees 2.7.0 → 2.8.0 per ADR 0023,
+  reader window stays at two versions so existing readers
+  tolerate the addition.
+
+**Trigger:** any first consumer (`s.remove_mp`, `s.swap_mp`,
+H5 readback of MP identity), OR a quiet PR that just lands the
+plumbing because the architecture surface gets cleaner.
+
+**Cost estimate (informational):** 1-2 days of code + tests +
+schema bump. Lives in `_internal/build.py::emit_mp_constraints`
+and `emitter/h5.py::_write_mp_constraints`. The Tcl / Py / Live
+/ Recording emitters are unaffected because the tag is just
+another integer in the existing command.
+
 ## Cylindrical / Spherical in 2-D models
 
 `Cylindrical(axis=(0,0,1))` for a 2-D model would be meaningful
