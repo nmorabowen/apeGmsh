@@ -167,6 +167,13 @@ silent-wrong configurations the original pipeline would emit:
    The collector now retains all supported host types; mixed-host
    configurations the C++ `ASDEmbeddedNodeElement` parser cannot
    consume raise at build time, not at OpenSees runtime.
+
+   *Renamed `_collect_host_elems` → `_collect_host_subelements` in
+   ADR 0036 (May 2026), when the collector grew the full
+   decomposition table for quad / hex / prism / pyramid /
+   higher-order hosts.  Mixed-dim host (2D + 3D combined in one
+   PG) now fail-loud at collection time rather than silently
+   dropping the 2D side.*
 3. **Bad Rnode count** — the C++ parser only accepts 3 (tri host)
    or 4 (tet host) Rnodes; 5+ are misread as flag positions, 2
    aborts in `setDomain`. A build-time guard raises `BridgeError`

@@ -51,21 +51,19 @@ def test_embedded_factory_accepts_entity_scoping():
 
 
 # ---------------------------------------------------------------------
-# Phase 2 repro — mixed-host element types silently dropped
+# Host-decomposition contract (extends Phase 2)
 # ---------------------------------------------------------------------
 #
-# ``_collect_host_elems`` (ConstraintsComposite.py:1493) keeps only
-# Gmsh element types 2 (tri3) and 4 (tet4); every other type — quad4
-# (etype 3), hex8 (etype 5), prism (6), tet10 (11), … — is silently
-# dropped.  A user with a mixed mesh (e.g. transition between hex and
-# tet, or quad-recombined surface adjacent to a triangulated one) gets
-# the supported subset and no warning; embedded nodes that fall into
-# the dropped region project onto the nearest tri/tet (often distant)
-# producing extrapolation weights, exactly the same wrong-physics
-# failure as the off-host bug.
+# ``_collect_host_subelements`` (renamed from ``_collect_host_elems``)
+# now decomposes quad4 / hex8 / higher-order hosts into linear sub-tris
+# / sub-tets using corner nodes only, so ``ASDEmbeddedNodeElement``
+# (which only accepts 3-node or 4-node retained sets) can consume any
+# supported host topology.  The coupling stays linear-over-corners
+# regardless of the host's native interpolation order — see
+# :class:`EmbeddedDef` ``host_coupling="linear"`` for the contract.
 #
-# Phase 2 fix: raise when the host PG contains any element type other
-# than tri3/tet4, with a clear message naming the offending type.
+# Supported: tri3, tri6, quad4, quad8, quad9 (2D); tet4, tet10, hex8,
+# hex20 (3D).  Prism (etype 6/18) and pyramid (etype 7) still raise.
 
 
 def test_embedded_emit_rejects_unsupported_rnode_count():
@@ -101,10 +99,15 @@ def test_embedded_emit_rejects_unsupported_rnode_count():
         _check_embedded_rnode_count(too_few)
 
 
-def test_quad4_host_raises_with_clear_message():
-    """A quad-meshed (recombined) host surface fails loud at
-    ``_collect_host_elems``, naming quad4 as the unsupported type —
-    not a misleading downstream 'host has no elements' message.
+def test_quad4_host_decomposed_to_triangles():
+    """A quad-meshed (recombined) host surface decomposes into 2 tris
+    per quad (split along the (0,2) diagonal), so
+    ``ASDEmbeddedNodeElement`` (3-node retained set) can consume it
+    via the linear corner-node coupling contract.
+
+    The returned rows have shape (n_quads * 2, 3) and the unique node
+    set equals the union of all quad corner nodes — no nodes
+    fabricated, no real corners dropped.
     """
     import gmsh
 
@@ -119,16 +122,69 @@ def test_quad4_host_raises_with_clear_message():
         g.physical.add(2, [surf], name="concrete")
 
         # Sanity: the mesh actually contains quad4 (etype 3) elements.
-        etypes, _, _ = gmsh.model.mesh.getElements(dim=2, tag=surf)
-        assert 3 in [int(e) for e in etypes], (
+        etypes, etags_by_type, enodes = gmsh.model.mesh.getElements(
+            dim=2, tag=surf)
+        codes = [int(e) for e in etypes]
+        assert 3 in codes, (
             f"setup precondition: expected quad4 (etype 3) in the "
-            f"recombined mesh; got etypes={[int(e) for e in etypes]}"
+            f"recombined mesh; got etypes={codes}"
+        )
+        n_quads = len(etags_by_type[codes.index(3)])
+
+        rows = ConstraintsComposite._collect_host_subelements(
+            [(2, surf)])
+
+        # Two tris per quad, all length-3.
+        assert rows.shape == (2 * n_quads, 3), (
+            f"expected {2 * n_quads} tri rows from {n_quads} quads, "
+            f"got shape={rows.shape}"
         )
 
-        # Direct call to the collector — currently returns empty,
-        # which is the silent drop.  After Phase 2 fix it must raise.
-        with pytest.raises(ValueError, match="quad4|element type 3|hex|unsupported"):
-            ConstraintsComposite._collect_host_elems([(2, surf)])
+        # Every quad corner node appears in the returned rows.
+        quad_nodes = np.unique(
+            np.asarray(enodes[codes.index(3)], dtype=int))
+        assert set(quad_nodes) == set(np.unique(rows)), (
+            "decomposed tris must reference exactly the union of "
+            "quad corner nodes — no fabrication, no drop"
+        )
+
+
+def test_prism_host_still_raises_actionably():
+    """Prism (etype 6) is in the unsupported bucket per the linear-
+    coupling scope.  The error must name prism explicitly and point
+    at the remesh-or-issue escape hatch — not a generic 'unknown
+    type' message.
+    """
+    import gmsh
+
+    from apeGmsh.core.ConstraintsComposite import ConstraintsComposite
+
+    with apeGmsh(model_name="prism_host_unsupported", verbose=False) as g:
+        # A short extruded prism: triangulated bottom face,
+        # extrude generates prism6 in the volume.
+        surf = g.model.geometry.add_rectangle(0.0, 0.0, 0.0, 1.0, 1.0)
+        g.model.sync()
+        out = gmsh.model.occ.extrude(
+            [(2, surf)], 0.0, 0.0, 0.5, numElements=[1], recombine=False)
+        g.model.sync()
+        vol_tag = next(t for d, t in out if d == 3)
+        gmsh.option.setNumber("Mesh.RecombineAll", 0)
+        g.mesh.sizing.set_global_size(0.5)
+        g.mesh.generation.generate(3)
+
+        etypes, _, _ = gmsh.model.mesh.getElements(dim=3, tag=vol_tag)
+        codes = [int(e) for e in etypes]
+        # Either prism (6) or hex (5) depending on Gmsh's extrude
+        # decisions — skip cleanly if no prism produced.
+        if 6 not in codes:
+            pytest.skip(
+                f"extrude produced {codes}, not prism6 — Gmsh's "
+                f"extrude heuristic varies; skip rather than test "
+                f"a different host type")
+
+        with pytest.raises(ValueError, match="prism|not yet supported"):
+            ConstraintsComposite._collect_host_subelements(
+                [(3, vol_tag)])
 
 
 def _diaphragm(master, slaves, normal):

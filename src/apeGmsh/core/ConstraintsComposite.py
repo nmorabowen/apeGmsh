@@ -89,6 +89,46 @@ _RESOLVER_METHOD: dict[type, str] = {
 
 _FACE_TYPES = (TieDef, TiedContactDef, MortarDef)
 
+# Decomposition of a hex8 into 6 right-handed (positive-volume) Kuhn
+# tets that share the main diagonal (vertex 0 → vertex 6).  Indices
+# refer to Gmsh hex8 vertex ordering (bottom face [0,1,2,3] CCW from
+# +z, top face [4,5,6,7] aligned above).  Used by
+# ``_collect_host_subelements`` to virtualise hex8 / hex20 hosts into
+# tet sub-elements that ``ASDEmbeddedNodeElement`` accepts; the table
+# does NOT correspond to elements in the gmsh mesh — it is a coupling
+# decomposition only.  See ``test_embedded_decomposition.py`` for the
+# positive-volume + Gmsh-ordering invariant guards.
+HEX8_TO_6_TETS = np.array([
+    [0, 1, 2, 6],
+    [0, 2, 3, 6],
+    [0, 3, 7, 6],
+    [0, 7, 4, 6],
+    [0, 4, 5, 6],
+    [0, 5, 1, 6],
+], dtype=int)
+
+# Decomposition of a prism6 (3-node triangle bottom + top, with
+# vertical edges) into 3 right-handed Kuhn-style tets sharing the
+# diagonal (vertex 0 → vertex 5).  Indices refer to Gmsh prism6
+# vertex ordering (bottom triangle [0, 1, 2], top triangle [3, 4, 5]
+# aligned above).  Each tet is positive-volume in the canonical Gmsh
+# reference coordinates; see ``test_embedded_decomposition.py``.
+PRISM6_TO_3_TETS = np.array([
+    [0, 1, 2, 5],
+    [0, 1, 5, 4],
+    [0, 4, 5, 3],
+], dtype=int)
+
+# Decomposition of a pyramid5 (square base + apex) into 2 tets
+# sharing the (0, 2) diagonal of the base, both sharing the apex
+# (vertex 4).  Indices refer to Gmsh pyramid5 vertex ordering
+# (base [0, 1, 2, 3] CCW from +z, apex node 4).  Each tet is
+# positive-volume in the canonical Gmsh reference coordinates.
+PYRAMID5_TO_2_TETS = np.array([
+    [0, 1, 2, 4],
+    [0, 2, 3, 4],
+], dtype=int)
+
 _ConstraintT = TypeVar("_ConstraintT", bound=ConstraintDef)
 
 
@@ -889,6 +929,7 @@ class ConstraintsComposite:
                  host_entities=None, embedded_entities=None,
                  stiffness=1.0e18, stiffness_p=None,
                  rotational=False, pressure=False,
+                 host_coupling="linear",
                  name=None) -> EmbeddedDef:
         """Embed lower-dimensional elements inside a host volume or
         surface.
@@ -898,14 +939,25 @@ class ConstraintsComposite:
         host shape functions. Used for **rebar in concrete**,
         stiffeners in shells, fibres in composite hosts, etc.
 
-        Currently supports:
+        Supported host element types:
 
-        * **3-D host:** tet4 (Gmsh element type 4) volumes.
-        * **2-D host:** tri3 (Gmsh element type 2) surfaces.
+        * **3-D host:** tet4 (etype 4), tet10 (11), hex8 (5),
+          hex20 (17), prism6 (6), prism15 (18), pyramid5 (7),
+          pyramid13 (14).
+        * **2-D host:** tri3 / CST (etype 2), tri6 / LST (9),
+          quad4 (3), quad8 (16), quad9 (10).
 
-        Higher-order or hex/quad hosts are not yet supported and
-        will be silently skipped — fall back to :meth:`tie` if you
-        need that.
+        Non-simplex and higher-order hosts are decomposed to
+        linear sub-tris / sub-tets using corner nodes only (hex8
+        → 6 Kuhn tets; prism6 → 3 tets; pyramid5 → 2 tets;
+        quad4 → 2 tris on the (0,2) diagonal; tri6 / tet10 /
+        hex20 / quad8 / quad9 / prism15 / pyramid13 →
+        corner-only).  The embedded coupling is therefore
+        **linear** regardless of the host's native interpolation
+        order — see ``host_coupling`` and :class:`EmbeddedDef`
+        for the full contract.  A ``UserWarning`` fires once per
+        (host type, entity) the first time a midside-bearing host
+        is decomposed.
 
         The resolver automatically drops embedded nodes that
         coincide with host element corners, since those are
@@ -914,19 +966,29 @@ class ConstraintsComposite:
         Parameters
         ----------
         host_label : str
-            Part label whose tet4/tri3 elements form the host
-            field. Stored internally as ``master_label``.
+            Part label whose host elements form the embedding
+            field.  Stored internally as ``master_label``.
         embedded_label : str
             Part label whose nodes are embedded. Stored as
             ``slave_label``. (Label validation is bypassed for
             ``EmbeddedDef`` — these labels may also be physical
             group names if no part registry is in use.)
         tolerance : float, default 1.0
-            Reserved; not currently enforced (the resolver accepts
-            any located host record).  Retained for API stability.
+            Maximum dimensionless barycentric excess allowed when
+            locating an embedded node inside a host sub-element.
+            ``0.0`` means strictly inside; the default ``1.0``
+            preserves pre-Phase-2 permissive behaviour.  See
+            :class:`EmbeddedDef` for the fail-loud gate.
         host_entities, embedded_entities : list of (dim, tag), optional
             Restrict the host / embedded sides to specific Gmsh
             entities.  When omitted the whole label is used.
+        host_coupling : {"linear"}, default ``"linear"``
+            Reserved keyword pinning the coupling kinematics.  Only
+            ``"linear"`` is currently accepted (coupling to 3 or 4
+            corner nodes via barycentric shape functions, matching
+            ``ASDEmbeddedNodeElement``).  Reserved so that future
+            higher-order options (``"trilinear"``, ``"biquadratic"``)
+            can be added without breaking old models.
         name : str, optional
             Friendly name.
 
@@ -951,13 +1013,23 @@ class ConstraintsComposite:
                 embedded_label="rebar_curve",
                 tolerance=2.0,        # mm
             )
+
+        Same rebar embedded into a hex8 mesh (each rebar node is
+        located inside one of the 6 Kuhn sub-tets of the
+        enclosing hex and coupled to that sub-tet's 4 corners)::
+
+            g.constraints.embedded(
+                host_label="concrete_block_hex",
+                embedded_label="rebar_curve",
+            )
         """
         return self._add_def(EmbeddedDef(
             master_label=host_label, slave_label=embedded_label,
             tolerance=tolerance, host_entities=host_entities,
             embedded_entities=embedded_entities, name=name,
             stiffness=stiffness, stiffness_p=stiffness_p,
-            rotational=rotational, pressure=pressure))
+            rotational=rotational, pressure=pressure,
+            host_coupling=host_coupling))
 
     # Level 2b
     def node_to_surface(self, master, slave, *,
@@ -1419,13 +1491,18 @@ class ConstraintsComposite:
             else self._entities_for_label(defn.slave_label)
         )
 
-        host_elems = self._collect_host_elems(host_entities)
+        host_elems = self._collect_host_subelements(host_entities)
         if host_elems.size == 0:
             raise ValueError(
                 f"embedded: host label {defn.master_label!r} resolved "
-                f"to entities but none carry tet4 (dim=3) or tri3 "
-                f"(dim=2) elements — ASDEmbeddedNodeElement supports "
-                f"only those host types. The constraint cannot be "
+                f"to entities but none carry embeddable host elements. "
+                f"Supported host types: tri3 / tri6 / quad4 / quad8 / "
+                f"quad9 (2D); tet4 / tet10 / hex8 / hex20 / prism6 / "
+                f"prism15 / pyramid5 / pyramid13 (3D).  Non-simplex "
+                f"and higher-order hosts are decomposed to linear "
+                f"sub-tris / sub-tets using corner nodes only — the "
+                f"coupling is linear regardless of the host's native "
+                f"interpolation order.  The constraint cannot be "
                 f"built; fix the host mesh rather than skipping it.")
 
         embedded_nodes: set[int] = set()
@@ -1502,21 +1579,61 @@ class ConstraintsComposite:
         return ents
 
     @staticmethod
-    def _collect_host_elems(
+    def _collect_host_subelements(
         entities: list[tuple[int, int]],
-    ) -> np.ndarray:
-        """Gather tet4 / tri3 connectivity rows from *entities*.
+    ) -> np.ndarray:  # noqa: C901 — single dispatch, kept flat for clarity
+        """Gather virtual tri3 / tet4 sub-element rows from *entities*.
 
-        Gmsh element type codes: 2 = tri3, 4 = tet4. These are the
-        only host types ``ASDEmbeddedNodeElement`` supports.  Any
-        other element type encountered in *entities* (quad4, hex8,
-        prism, pyramid, tri6/tet10/higher-order) raises ``ValueError``
-        naming the offending type and the entity it came from — silent
-        drop would let an embedded node in the dropped region project
-        onto a distant tri/tet (extrapolation, wrong physics, see the
-        off-host case in ``resolve_embedded``).
+        Returns connectivity rows that ``ASDEmbeddedNodeElement``
+        can consume directly: each row is 3 node tags (treated as
+        a tri3 host) or 4 node tags (treated as a tet4 host).
+        Higher-order and non-simplex host elements are decomposed
+        on the fly into sub-tris / sub-tets sharing the host's
+        corner nodes:
+
+        ============== ====== =====================================
+        Gmsh etype     Code   Decomposition (corner nodes only)
+        ============== ====== =====================================
+        tri3 (CST)     2      identity (1 tri per host)
+        tet4           4      identity (1 tet per host)
+        quad4          3      2 tris via (0,2) diagonal split
+        hex8           5      6 right-handed Kuhn tets (see
+                              :data:`HEX8_TO_6_TETS`)
+        prism6         6      3 tets (see :data:`PRISM6_TO_3_TETS`)
+        pyramid5       7      2 tets (see
+                              :data:`PYRAMID5_TO_2_TETS`)
+        tri6 (LST)     9      corners only → 1 tri (midsides
+                              discarded)
+        tet10          11     corners only → 1 tet
+        pyramid13      14     corners only → 2 tets
+        quad8 / quad9  16/10  corners only → 2 tris
+        hex20          17     corners only → 6 Kuhn tets
+        prism15        18     corners only → 3 tets
+        ============== ====== =====================================
+
+        Returned rows are **not** real gmsh elements — they are a
+        coupling-layer fabrication so that the linear-shape-function
+        coupling of ``ASDEmbeddedNodeElement`` works against any
+        supported host topology.  The embedded coupling is
+        consequently linear regardless of the host's native
+        interpolation order; see :class:`EmbeddedDef` for the
+        ``host_coupling="linear"`` contract.
+
+        Any other element type (prism6, prism15, pyramid5, line,
+        point, …) raises ``ValueError`` naming the offending etype
+        and entity — silent drop would let an embedded node in the
+        dropped region project onto a distant sub-element
+        (extrapolation, wrong physics, see the off-host case in
+        ``resolve_embedded``).
+
+        When both tris and tets are produced from the same host
+        (mixed shell+solid PG), the 3D side wins and the 2D rows
+        are dropped — embedded nodes outside the 3D hull will then
+        fail-loud at the resolver's barycentric gate.  Split the
+        host PG if you need both.
         """
         import gmsh
+        import warnings as _warnings
         # Human-readable Gmsh element type names (subset relevant to
         # embedded hosts) — keyed by the integer etype code.
         _ETYPE_NAMES = {
@@ -1525,6 +1642,14 @@ class ConstraintsComposite:
             9: "tri6", 10: "quad9", 11: "tet10", 15: "point1",
             16: "quad8", 17: "hex20", 18: "prism15",
         }
+        # Higher-order etypes whose decomposition discards the host's
+        # native interpolation richness (midside / center nodes) and
+        # falls back to linear-over-corners coupling.  Tracked so we
+        # can emit one ``UserWarning`` per (host type, entity) instead
+        # of one per element — keeps the warning informative without
+        # spamming users with thousands of identical messages.
+        _HIGHER_ORDER_CODES = {9, 10, 11, 14, 16, 17, 18}
+        warned_higher_order: set[tuple[int, int, int]] = set()
         tri_rows: list[np.ndarray] = []
         tet_rows: list[np.ndarray] = []
         for dim, tag in entities:
@@ -1537,23 +1662,111 @@ class ConstraintsComposite:
                 if len(nodes) == 0:
                     continue
                 code = int(etype)
-                if code == 2:
+                # One warning per (etype, entity) — fires the first
+                # time a higher-order host hits the decomposition
+                # path so the user knows the embed coupling is
+                # linear regardless of the host's native order.
+                if (code in _HIGHER_ORDER_CODES
+                        and (code, int(dim), int(tag))
+                        not in warned_higher_order):
+                    warned_higher_order.add(
+                        (code, int(dim), int(tag)))
+                    _warnings.warn(
+                        f"embedded: host entity (dim={dim}, tag={tag}) "
+                        f"carries {_ETYPE_NAMES.get(code, code)} "
+                        f"elements — decomposing to corner-node-only "
+                        f"linear sub-elements.  The embedded coupling "
+                        f"will be linear regardless of the host's "
+                        f"native interpolation order; quadratic / "
+                        f"bilinear / trilinear host kinematics will "
+                        f"NOT be felt by the embedded node.  Set "
+                        f"`host_coupling=` explicitly on the "
+                        f"`embedded(...)` call to acknowledge.",
+                        UserWarning, stacklevel=4,
+                    )
+                if code == 2:                              # tri3 (CST)
                     tri_rows.append(
                         np.asarray(nodes, dtype=int).reshape(-1, 3))
-                elif code == 4:
+                elif code == 4:                            # tet4
                     tet_rows.append(
                         np.asarray(nodes, dtype=int).reshape(-1, 4))
+                elif code == 3:                            # quad4
+                    q = np.asarray(nodes, dtype=int).reshape(-1, 4)
+                    tri_rows.append(q[:, [0, 1, 2]])
+                    tri_rows.append(q[:, [0, 2, 3]])
+                elif code == 5:                            # hex8
+                    h = np.asarray(nodes, dtype=int).reshape(-1, 8)
+                    for tet_idx in HEX8_TO_6_TETS:
+                        tet_rows.append(h[:, tet_idx])
+                elif code == 9:                            # tri6 (LST)
+                    tri_rows.append(
+                        np.asarray(nodes, dtype=int)
+                        .reshape(-1, 6)[:, :3])
+                elif code == 11:                           # tet10
+                    tet_rows.append(
+                        np.asarray(nodes, dtype=int)
+                        .reshape(-1, 10)[:, :4])
+                elif code in (16, 10):                     # quad8 / quad9
+                    n_per_elem = {16: 8, 10: 9}[code]
+                    q = (np.asarray(nodes, dtype=int)
+                         .reshape(-1, n_per_elem)[:, :4])
+                    tri_rows.append(q[:, [0, 1, 2]])
+                    tri_rows.append(q[:, [0, 2, 3]])
+                elif code == 17:                           # hex20
+                    h = (np.asarray(nodes, dtype=int)
+                         .reshape(-1, 20)[:, :8])
+                    for tet_idx in HEX8_TO_6_TETS:
+                        tet_rows.append(h[:, tet_idx])
+                elif code == 6:                            # prism6
+                    p = np.asarray(nodes, dtype=int).reshape(-1, 6)
+                    for tet_idx in PRISM6_TO_3_TETS:
+                        tet_rows.append(p[:, tet_idx])
+                elif code == 18:                           # prism15
+                    p = (np.asarray(nodes, dtype=int)
+                         .reshape(-1, 15)[:, :6])
+                    for tet_idx in PRISM6_TO_3_TETS:
+                        tet_rows.append(p[:, tet_idx])
+                elif code == 7:                            # pyramid5
+                    p = np.asarray(nodes, dtype=int).reshape(-1, 5)
+                    for tet_idx in PYRAMID5_TO_2_TETS:
+                        tet_rows.append(p[:, tet_idx])
+                elif code == 14:                           # pyramid13
+                    p = (np.asarray(nodes, dtype=int)
+                         .reshape(-1, 13)[:, :5])
+                    for tet_idx in PYRAMID5_TO_2_TETS:
+                        tet_rows.append(p[:, tet_idx])
                 else:
                     name = _ETYPE_NAMES.get(code, f"etype={code}")
                     raise ValueError(
                         f"embedded: host entity (dim={dim}, tag={tag}) "
-                        f"carries {name} elements; ASDEmbeddedNodeElement "
-                        f"supports only tri3 (etype 2) or tet4 (etype 4) "
-                        f"host elements.  Re-mesh the host with a tri3 / "
-                        f"tet4 algorithm, or restrict the host PG to the "
-                        f"sub-entities that are tet4/tri3-meshed."
+                        f"carries {name} elements.  ASDEmbeddedNodeElement "
+                        f"hosts supported: tri3 / tri6 / quad4 / quad8 / "
+                        f"quad9 (2D); tet4 / tet10 / hex8 / hex20 / "
+                        f"prism6 / prism15 / pyramid5 / pyramid13 (3D).  "
+                        f"Higher-order and non-tet hosts are decomposed "
+                        f"to linear sub-elements using corner nodes only "
+                        f"— the embedded coupling is linear regardless "
+                        f"of the host's native interpolation order.  "
+                        f"Got an etype not in the supported set; remesh "
+                        f"the host or open an issue."
                     )
-        # Prefer 3D host if present; otherwise fall back to 2D tris.
+        # Mixed-dim host (shell PG + brick PG combined) is fail-loud:
+        # an embedded node near the shell/brick interface would couple
+        # to either side's corners depending on opaque kNN search
+        # outcome — different physics, silently chosen.  Split the
+        # host PG into two ``embedded`` constraints if you really
+        # need both.
+        if tet_rows and tri_rows:
+            raise ValueError(
+                "embedded: host entities produced BOTH 2D sub-tris "
+                "and 3D sub-tets — the linear coupling cannot pick "
+                "between them deterministically (kNN would dispatch "
+                "an embedded node to either side based on centroid "
+                "proximity, which is opaque physics).  Split the "
+                "host into separate `g.constraints.embedded(...)` "
+                "calls — one for the 2D part, one for the 3D part — "
+                "or restrict the host PG to a single dimensionality."
+            )
         if tet_rows:
             return np.vstack(tet_rows)
         if tri_rows:

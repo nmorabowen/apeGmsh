@@ -15680,7 +15680,7 @@
     },
     {
      "node": "constraint.resolver",
-     "action": "_resolve_embedded: _entities_for_label (g.parts or PG), _collect_host_elems gathers tet4/tri3 conn, gmsh getNodes for embedded nodes minus host corners, ConstraintResolver.resolve_embedded barycentric-locates",
+     "action": "_resolve_embedded: _entities_for_label (g.parts or PG), _collect_host_subelements gathers virtual tri/tet rows (tri3/tri6/quad4/quad8/quad9 in 2D; tet4/tet10/hex8/hex20/prism6/prism15/pyramid5/pyramid13 in 3D; non-simplex / higher-order hosts decomposed to linear sub-elements via HEX8/PRISM6/PYRAMID5 Kuhn tables — see ADR 0036), gmsh getNodes for embedded nodes minus host corners, ConstraintResolver.resolve_embedded barycentric-locates",
      "passes": "host_elems ndarray + embedded set[int] -> list[InterpolationRecord(kind=embedded,slave_node,master_nodes,weights,dofs=[1,2,3])]",
      "to": "records"
     },

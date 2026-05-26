@@ -1,6 +1,65 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · topology safety nets (P1/P3) + arc-line wire docs
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036)
+
+### ADDED — embedded-host decomposition for non-simplex / higher-order hosts (ADR 0036)
+
+- **`g.constraints.embedded(...)` now accepts non-simplex and
+  higher-order hosts** without remeshing.  Previously the collector
+  raised on any host element type other than tri3 / tet4, forcing
+  users to either remesh their hex/quad concrete blocks as tets or
+  hand-build the `ASDEmbeddedNodeElement` directly in Tcl/Python.
+  The decomposition runs apeGmsh-side only — no OpenSees changes,
+  no H5 schema bump — by virtualising the host into linear sub-tris
+  / sub-tets that the C++ element already accepts (it stores
+  retained tags without validating their source; see
+  [`ASDEmbeddedNodeElement.cpp:293-322`](https://github.com/OpenSees/OpenSees/blob/master/SRC/element/CEqElement/ASDEmbeddedNodeElement.cpp)).
+
+  Supported host etypes (2D): tri3 (CST), tri6 (LST), quad4,
+  quad8, quad9.  Supported (3D): tet4, tet10, hex8 (6 Kuhn tets),
+  hex20, prism6 (3 tets), prism15, pyramid5 (2 tets), pyramid13.
+  Prism and pyramid use Kuhn-style decompositions verified
+  positive-volume against
+  `gmsh.model.mesh.getElementProperties(etype)`.
+
+- **Reserved `host_coupling="linear"` keyword on `EmbeddedDef` and
+  `embedded(...)`** pins the coupling kinematics so a future
+  `"trilinear"` / `"biquadratic"` option (requiring a new OpenSees
+  element class that supports N-node retained sets) can be added
+  without breaking existing models.  Pre-existing models keep
+  producing identical results because `"linear"` is the default.
+
+- **One `UserWarning` per (etype, entity)** when a midside-bearing
+  host (tri6, tet10, quad8, quad9, hex20, prism15, pyramid13) hits
+  the decomposition path.  The warning surfaces the linear-coupling
+  consequence so a user who chose LST for bending curvature knows
+  the embed only sees the corner-to-corner linear stretch.  Set
+  `host_coupling="linear"` explicitly on the call to acknowledge.
+
+- **Mixed-dim host fail-loud.**  A host PG that combines 2D and 3D
+  entities raises a clear error at collection time — the linear
+  coupling cannot pick between them deterministically (kNN
+  centroid search would dispatch based on opaque proximity).
+  Split the host PG into two `embedded(...)` calls instead.
+
+- **`tests/test_embedded_decomposition.py`** locks the new
+  invariants: Kuhn / prism / pyramid orientation tables match
+  Gmsh's canonical reference coords; each decomposition partitions
+  its reference cell with no gaps or overlaps; the quad4 split
+  covers any convex quad; end-to-end resolver run on a hex8 mesh
+  produces an `InterpolationRecord` with 4 master nodes drawn
+  from the host's 8 corners; sliver-tet hosts either resolve with
+  bounded weights or fail-loud (never silent nonsense); the
+  higher-order warning fires exactly once per (etype, entity); the
+  `host_coupling` keyword reservation rejects unimplemented
+  values.
+
+- **Renames `_collect_host_elems` → `_collect_host_subelements`.**
+  The collector now returns virtual sub-element rows (not real
+  gmsh elements), so the name change makes the new contract
+  explicit.  Private API only — no downstream user surface
+  affected.  ADR 0027 §"Mixed-host silent drop" historical
+  reference updated; `docs/api-flows/*` regenerated.
 
 ### ADDED — topology safety nets and coincident-node diagnostic
 

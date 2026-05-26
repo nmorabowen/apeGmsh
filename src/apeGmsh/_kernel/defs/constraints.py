@@ -374,6 +374,35 @@ class EmbeddedDef(ConstraintDef):
         accepting an extrapolated node silently produces an
         ``ASDEmbeddedNodeElement`` with negative shape-function
         weights and the wrong physics.
+    host_coupling : {"linear"}
+        Reserved keyword that pins the coupling kinematics for this
+        embed.  Only ``"linear"`` is currently accepted: the embedded
+        node is coupled to **3 or 4 corner nodes** of a host tri/tet
+        sub-element via linear barycentric shape functions, matching
+        the kinematics of OpenSees ``ASDEmbeddedNodeElement``.
+
+        For non-simplex / higher-order hosts (tri6, tet10, quad4,
+        quad8, quad9, hex8, hex20, prism6, prism15, pyramid5,
+        pyramid13) the
+        ``ConstraintsComposite._collect_host_subelements`` collector
+        decomposes the host into linear sub-tris / sub-tets using
+        corner nodes only and ignores midside nodes.  Consequence:
+        the embedded coupling does NOT see the host's native
+        bilinear / trilinear / quadratic displacement field — only
+        a linear projection over the corner subset that brackets
+        the embedded point.
+
+        Per-hex asymmetry: two embedded nodes inside the same hex8
+        may couple to *different* 4-corner subsets depending on
+        which of the 6 Kuhn sub-tets contains each one.  This is
+        geometrically correct under linear coupling but can surprise
+        readers of the resolved records.
+
+        The keyword is reserved (not just documented) so that a
+        future ``"trilinear"`` / ``"biquadratic"`` option can be
+        added without changing the public API; pre-existing models
+        will keep producing identical numerical results because
+        ``"linear"`` stays the default.
     """
     kind: str = field(init=False, default="embedded")
     host_entities: list[tuple[int, int]] | None = None
@@ -383,12 +412,24 @@ class EmbeddedDef(ConstraintDef):
     stiffness_p: float | None = None
     rotational: bool = False
     pressure: bool = False
+    host_coupling: str = "linear"
 
     def __post_init__(self) -> None:
         _validate_asd_embedded_options(
             self.rotational, self.pressure, self.stiffness_p,
             "EmbeddedDef",
         )
+        if self.host_coupling != "linear":
+            raise ValueError(
+                f"EmbeddedDef: host_coupling={self.host_coupling!r} "
+                f"is reserved but not yet implemented.  Only "
+                f"'linear' is currently accepted (coupling to 3 or "
+                f"4 corner nodes via barycentric shape functions, "
+                f"matching ASDEmbeddedNodeElement).  Future values "
+                f"('trilinear' for hex hosts, 'biquadratic' for "
+                f"quadratic hosts) would require a new OpenSees "
+                f"element class that supports higher-order coupling."
+            )
 
 
 # ── Level 2b: Mixed-DOF coupling ────────────────────────────────────
