@@ -92,6 +92,7 @@ this widening drove (see [ADR 0023](decisions/0023-per-zone-schema-versioning.md
 | [0028](decisions/0028-initial-stress-via-parameter-ramping.md) | SSI-1 | `addToParameter`, `step_hook_ramp`; `analyze` behaviour change (auto hook-wrap) | none — H5 archival deferred | Materializes the STKO `stressControl` pattern: parameter declarations + per-step ramp proc + per-rank `addToParameter` fan-out. |
 | [0029](decisions/0029-staged-analysis-context-manager.md) | SSI-2.A | `stage_open`, `stage_close` | none — H5 archival deferred | Brackets a per-stage analysis block. `stage_close` emits the canonical between-stages cleanup. |
 | [0030](decisions/0030-stage-bound-topology-activation.md) | SSI-2.B | `domain_change` | none — runtime state, not model definition | Tells OpenSees to rebuild the renumbered DOF map after a stage's element activation. |
+| PR [#343](https://github.com/nmorabowen/apeGmsh/pull/343) | SSI-2.E | `set_time`, `set_creep`, `reset`, `remove_sp`, `remove_element` | none — Tcl/Py text emit only; staged-H5 stays fail-loud at `apeSees.h5(path)` | Between-stage Domain mutators. Removals emit BEFORE same-stage `fix`/`mass`/`region`/MP-constraint block (atomic-replace pattern). `set_time` / `set_creep` emit right after `stage_open`; `reset` emits between recorder declarations and analyze. |
 
 The current canonical Protocol shape lives in
 [`emitter/base.py`](../emitter/base.py). The header docstring in
@@ -125,6 +126,9 @@ open/close pair; each emitter handles its own dialect.
 | Stage banner (SSI-2.A) | `# === Stage: insitu ===` comment line at indent 0 | same Python comment line |
 | Stage close (SSI-2.A) | `loadConst -time 0.0; wipeAnalysis; ...` | `ops.loadConst(-time=0.0); ops.wipeAnalysis(); ...` |
 | Stress ramp proc (SSI-1) | `proc rock_insitu {} { ... updateParameter ... }` + `lappend _apesees_before_step_hooks rock_insitu` | Python closure captured into the emitter's `_before_step_hooks` list |
+| Time-state mutator (SSI-2.E) | `setTime 10.0` / `setCreep 1` / `reset` | `ops.setTime(10.0)` / `ops.setCreep(1)` / `ops.reset()` |
+| SP removal (SSI-2.E) | `remove sp 5 2` | `ops.remove('sp', 5, 2)` |
+| Element removal (SSI-2.E) | `remove element 87` | `ops.remove('element', 87)` |
 
 Primitives never know which dialect is active.
 
@@ -190,6 +194,65 @@ carries any stage or any `initial_stress` record, pointing the
 user at `ops.tcl(path)` / `ops.py(path)`. The H5-emitter no-ops
 themselves stay reachable from direct `H5Emitter` unit tests; the
 fail-loud landing is at `apesees.py::h5`.
+
+## Phase SSI-2.E — between-stage Domain mutators
+
+Five additional Protocol methods extend the staged-emit surface
+with between-`analyze` Domain mutators (PR
+[#343](https://github.com/nmorabowen/apeGmsh/pull/343); see
+[api-design.md](api-design.md) §"Staged analysis" for the
+`_StageBuilder` user surface):
+
+- **`set_time(t)`** — emits `setTime $t` (Tcl) / `ops.setTime(t)`
+  (Py / Live). Position in the stage block: right after
+  `stage_open`, before topology + BCs + analysis chain. Overrides
+  the prior `stage_close`'s `loadConst -time 0.0` reset when a
+  stage needs to start at non-zero pseudo-time.
+- **`set_creep(on)`** — emits `setCreep 1|0`. Right after
+  `set_time`. Sticky on the OpenSees side; apeSees does NOT
+  auto-reset between stages.
+- **`reset()`** — emits the bare `reset`. Position: between the
+  stage's recorder declarations and its analyze loop. Wipes the
+  Domain back to the last `setTime` call.
+- **`remove_sp(node, dof)`** — emits `remove sp $node $dof` (Tcl)
+  / `ops.remove('sp', node, dof)` (Py / Live). Position: BEFORE
+  the stage's new `fix` / `mass` / `region` / MP-constraint block.
+  Atomic-replace pattern (release prior + re-fix same DOF in same
+  stage) works by construction.
+- **`remove_element(tag)`** — emits `remove element $tag` (Tcl) /
+  `ops.remove('element', tag)` (Py / Live). Same position as
+  `remove_sp`. The element's nodes survive — OpenSees
+  `Domain::removeElement` does NOT cascade to attached MP/SP
+  constraints (verified at
+  [`SRC/domain/domain/Domain.cpp:1127`](https://github.com/OpenSees/OpenSees/blob/master/SRC/domain/domain/Domain.cpp)).
+
+Per-emitter contract:
+
+| Emitter | Behaviour |
+|---|---|
+| `TclEmitter` | All five methods emit at outer indent (consistent with `stage_open` / `stage_close` / `domain_change` banner positioning). |
+| `PyEmitter` | All five methods emit a Python statement at outer indent. The Py output is a runnable script after subprocess execution. |
+| `LiveOpsEmitter` | Forwards to `self._ops.setTime` / `setCreep` / `reset` / `remove('sp', ...)` / `remove('element', ...)`. Reachable from non-staged custom workflows only — staged live execution is refused at `stage_open` (`NotImplementedError`). |
+| `H5Emitter` | All five methods no-op. Same rationale as `stage_open` / `stage_close`: staged-H5 archival is fail-loud at `apeSees.h5(path)` per #313. |
+| `RecordingEmitter` | Captures `("set_time", (t,), {})` / `("set_creep", (on,), {})` / `("reset", (), {})` / `("remove_sp", (node, dof), {})` / `("remove_element", (tag,), {})`. |
+
+The `s.mass(..., overwrite=True)` opt-in flag (Phase SSI-2.E) is
+NOT a new Protocol method — it's a build-time validator-bypass
+marker on the `MassRecord` dataclass that suppresses V2's
+cross-tier duplicate-mass refusal. The emitted `mass` line is
+byte-identical with or without the flag (OpenSees `Domain::setMass`
+silently overwrites on the C++ side; the flag just acknowledges
+that's intentional).
+
+Element tag allocation moves earlier on the staged path (both
+`_emit_flat` and `_emit_partitioned`) so V6 — the
+`s.remove_element` ownership-tier validator — can resolve
+`elements=[fem_eid]` user inputs against the live
+`fem_eid_to_ops_tag` map. See
+[staged-analysis.md](staged-analysis.md) §"Validation surface" for
+the V5 / V6 rules; see
+[`tests/opensees/unit/test_stage_ssi_2e_mutators.py`](../../../../tests/opensees/unit/test_stage_ssi_2e_mutators.py)
+for the 34-test coverage.
 
 ## Execution modes
 

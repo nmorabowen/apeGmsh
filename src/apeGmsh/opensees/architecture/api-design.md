@@ -514,7 +514,7 @@ Limitations:
   it fires in every stage's analyze loop. Gate via the time series
   if that is not desired.
 
-## Staged analysis (Phase SSI-2.A / SSI-2.B / SSI-2.C / SSI-2.D)
+## Staged analysis (Phase SSI-2.A / SSI-2.B / SSI-2.C / SSI-2.D / SSI-2.E)
 
 `ops.stage(name)` opens a context manager that frames one stage of a
 multi-stage analysis. Each stage emits its own analysis chain, its
@@ -524,7 +524,10 @@ activation, optional stage-bound BCs / recorders (`s.fix` / `s.mass`
 MP constraints (`s.embedded` / `s.equal_dof` / `s.rigid_link` /
 `s.rigid_diaphragm` / `s.kinematic_coupling` / `s.tie` /
 `s.distributing` / `s.node_to_surface` / `s.node_to_surface_spring`
-— Phase SSI-2.D extension), an `analyze` loop, and an inter-stage
+— Phase SSI-2.D extension), optional between-stage Domain
+mutators (`s.remove_sp` / `s.remove_element` / `s.set_time` /
+`s.set_creep` / `s.reset`, plus the `overwrite=` flag on
+`s.mass` — Phase SSI-2.E), an `analyze` loop, and an inter-stage
 cleanup block (`loadConst -time 0.0` + `wipeAnalysis` + hook-list
 clear). Combining stages with MP partitions is supported (Phase
 SSI-2.C).
@@ -597,12 +600,49 @@ with ops.stage(name="excavate") as s:
     )
     s.run(n_increments=20, dt=0.05)
 
+# Stage 3 — dynamic shake: release a temporary anchor, switch to
+# Transient, start the dynamic clock at t=0 explicitly, and record
+# the post-installation state.  Phase SSI-2.E:
+#
+#   - ``s.set_time(t=0.0)``  overrides the prior stage_close's
+#     ``loadConst -time 0.0`` (here it's redundant, but shown for
+#     symmetry with workflows where the dynamic clock should start
+#     non-zero, e.g. continuing a multi-record ground motion).
+#   - ``s.remove_sp(...)`` releases an SP fixed in stage 2 so the
+#     anchor node can respond to shaking.  Emits BEFORE the stage's
+#     new fix/mass/region/MP-constraint block (the conservative
+#     removal-before-bind ordering).
+#   - ``s.mass(... overwrite=True)`` swaps the construction mass
+#     installed in stage 2 for a service-condition mass.  V2 (the
+#     duplicate-mass refusal) is relaxed for THIS record only.
+#   - ``s.remove_element(elements=[fem_eid])`` drops a temporary
+#     brace element; ``elements=`` takes FEM eids (matching the
+#     ``recorder.Element`` convention), translated to ops tags via
+#     ``fem_eid_to_ops_tag`` at emit time.
+algo_kn  = ops.algorithm.KrylovNewton()
+integ_nm = ops.integrator.Newmark(gamma=0.5, beta=0.25)
+analy_tr = ops.analysis.Transient()
+with ops.stage(name="shake") as s:
+    s.set_time(t=0.0)                          # SSI-2.E: explicit
+    s.remove_sp(pg="LiningAnchor", dofs=(1, 2, 3))    # SSI-2.E: release stage-2 fix
+    s.remove_element(pg="TemporaryBrace")             # SSI-2.E: drop brace
+    s.mass(pg="Lining", values=(120.0, 120.0, 120.0),
+           overwrite=True)                            # SSI-2.E: swap mass
+    s.analysis(
+        test=test_norm, algorithm=algo_kn,
+        integrator=integ_nm,
+        constraints=constr, numberer=numb, system=sysolv,
+        analysis=analy_tr,
+    )
+    s.run(n_increments=2000, dt=0.005)
+
 # Only Tcl/Py text-emit is supported for staged decks today.  Live
 # execution (``ops.analyze`` / ``ops.eigen``) refuses staged models
 # with NotImplementedError; emit and run a subprocess instead.
 ops.tcl("staged.tcl", run=True)
 # verified: tests/opensees/subprocess/test_stages_subprocess.py
 #           tests/opensees/subprocess/test_stage_activation_subprocess.py
+#           tests/opensees/unit/test_stage_ssi_2e_mutators.py  (Phase SSI-2.E)
 ```
 
 `_StageBuilder` lifecycle:
@@ -613,11 +653,16 @@ ops.tcl("staged.tcl", run=True)
 | `s.add(initial_stress_record)` | optional | Binds an `InitialStressRecord` (returned by `ops.initial_stress(...)`) to this stage. The record is removed from the bridge's global pool. Double-adding a record to two stages raises `ValueError`. Other record types raise `TypeError`. |
 | `s.activate(pgs=[...])` | optional | Marks element-PG names as activated by this stage. Elements + their referenced nodes emit inside the stage block, not in the global pre-stage emit. Same PG activated in two stages raises `BridgeError` at build time. |
 | `s.fix(*, pg=None, nodes=None, dofs)` | optional | **PUSH model** (Phase SSI-2.D). Stage-bound SP constraint. Mirrors `apeSees.fix` signature verbatim; pg XOR nodes. Records emit inside the stage block alongside `s.mass` / `s.region`. Validated at build time by V1 + V2. |
-| `s.mass(*, pg=None, nodes=None, values)` | optional | **PUSH model** (Phase SSI-2.D). Stage-bound nodal mass. Mirrors `apeSees.mass`. V2 refuses (node)-duplicate across tiers since OpenSees `setMass` silently overwrites. |
+| `s.mass(*, pg=None, nodes=None, values, overwrite=False)` | optional | **PUSH model** (Phase SSI-2.D + Phase SSI-2.E `overwrite=` flag). Stage-bound nodal mass. Mirrors `apeSees.mass`. V2 normally refuses (node)-duplicate across tiers since OpenSees `setMass` silently overwrites; pass `overwrite=True` to opt out of V2 for this record only — the emitted `mass` line is byte-identical with or without the flag, but the flag acknowledges the OpenSees overwrite is intentional (typical use: swap a construction mass for a service-condition mass between stages). |
 | `s.region(*, name, pg=None, nodes=None)` | optional | **PUSH model** (Phase SSI-2.D). Stage-bound named region. Per-stage tag cache under MP so all contributing ranks agree on one tag per (stage, name). V3 refuses same `name=` across scopes; mangle the label (`lining_r_stage2`) if you really mean a per-stage region with conceptual continuity. |
 | `s.recorder(spec)` | optional | **PULL model** (Phase SSI-2.D). `spec` is a `Recorder` registered via `ops.recorder.Node` / `Element` / `MPCO`. The spec keeps its allocated tag and stays in `bridge._primitives`, but the bridge marks it claimed so the global post-element recorder emit loop skips it; the stage emit drives it AFTER the chain and BEFORE `analyze`. V4 refuses targets owned by a later stage. Same spec claimed by two stages raises `ValueError`. |
 | `s.initial_stress(*, name, pg=None, elements=None, sigma_xx, sigma_yy, sigma_zz, ramp_steps, lambda_install=1.0)` | optional | **PUSH model** (Phase SSI-2.D extension). Stage-bound initial-stress mirror of `ops.initial_stress(...)`. Creates the `InitialStressRecord` directly in this stage's pool, no intermediate `s.add(record)` step. Coexists with the existing `s.add(InitialStressRecord)` PULL path; pick by style. Byte-identical decks. PUSH is safe because side effects (parameter tag allocation, ramp proc emission) fire at emit time, not at call time — ADR 0034 §5b. |
 | `s.embedded(*, name)` / `s.tie(*, name)` / `s.distributing(*, name)` / `s.equal_dof(*, name)` / `s.rigid_link(*, name)` / `s.rigid_diaphragm(*, name)` / `s.kinematic_coupling(*, name)` / `s.node_to_surface(*, name)` / `s.node_to_surface_spring(*, name)` | optional | **CLAIM-by-name model** (Phase SSI-2.D extension). Each method claims resolved MP-constraint records previously named at apeGmsh time via `g.constraints.<kind>(..., name=...)`. The records stay on the FEMData broker but the bridge marks them claimed so the global MP-constraint emit pass skips them; the stage emit pass drives them AFTER stage regions and BEFORE the stage's `domain_change`. Missing name → `ValueError`. Double-claim across two stages → `ValueError`. Why CLAIM not PUSH: the kernel resolver needs a live `gmsh` model + parts registry that are typically gone by bridge time — ADR 0034 §5a. **`s.tied_contact` / `s.mortar` are deferred** (SurfaceCouplingRecord nesting + mortar NIY; see [_DEFERRED.md](_DEFERRED.md)). |
+| `s.remove_sp(*, pg=None, nodes=None, dofs)` | optional | **PUSH model — RELEASE verb** (Phase SSI-2.E). Releases prior-tier SP constraints. `dofs=` is a tuple of DOF *indices* (1-based, per OpenSees) — one `remove sp $node $dof` line per `(node, dof)` pair. Emits BEFORE the stage's new `fix` / `mass` / `region` / MP-constraint block, so a stage can release a prior-stage support and immediately re-fix the same DOF in one stage (the atomic-replace pattern). V5 refuses targets without a prior-tier SP (global pool OR strictly-earlier stage's `s.fix`); same-stage `s.fix` does NOT count (fix emits AFTER remove_sp). |
+| `s.remove_element(*, pg=None, elements=None)` | optional | **PUSH model — RELEASE verb** (Phase SSI-2.E). Drops elements from the Domain mid-analysis. `elements=` takes FEM eids (matching the `recorder.Element` convention); the bridge translates to OpenSees ops tags via `fem_eid_to_ops_tag` at emit time. Emits BEFORE new BCs (same ordering rule as `s.remove_sp`). Element nodes survive — they may continue to carry SP / mass / load declarations from other tiers; OpenSees `Domain::removeElement` does NOT cascade to attached MP/SP constraints (Domain.cpp:1127). V6 refuses targets without a prior-tier element. |
+| `s.set_time(t)` | optional | **Scalar mutator** (Phase SSI-2.E). Emits `setTime $t` right after `stage_open`. Overrides the prior stage's `stage_close` `loadConst -time 0.0` reset — useful when the next stage's pseudo-time should begin at a non-zero value (e.g. continuing simulated time across multi-record ground-motion runs). Per OpenSees semantics, `setTime` does NOT reset committed state; node displacements / element forces survive. Multiple calls in the same stage — last wins. |
+| `s.set_creep(on: bool)` | optional | **Scalar mutator** (Phase SSI-2.E). Emits `setCreep 1` or `setCreep 0` after `set_time`. Toggles creep for time-dependent concrete materials. STICKY on the OpenSees side — apeSees does NOT auto-reset between stages; re-assert per stage if you need it scoped. |
+| `s.reset()` | optional | **Scalar mutator** (Phase SSI-2.E). Emits the bare OpenSees `reset` command between the stage's recorder declarations and its analyze loop. Wipes the Domain back to the last `setTime` call. Rare; kept for parity with the OpenSees surface so unusual workflows don't have to drop to raw Tcl. Idempotent — multiple `s.reset()` calls produce one emitted `reset` line. |
 | `s.analysis(test=, algorithm=, integrator=, constraints=, numberer=, system=, analysis=)` | required | All seven kwargs. Each must be a primitive already registered with the bridge. Second call raises `ValueError`. |
 | `s.run(n_increments=, dt=None)` | required | Sets analyze-loop length + step size. Second call raises `ValueError`; `n_increments < 1` raises `ValueError`. |
 | Clean `__exit__` | — | Validates `analysis_set` + `run_set`; appends a frozen `StageRecord` to the bridge. Exception in the body propagates and the in-progress stage is discarded. |
@@ -643,13 +688,31 @@ Caveats:
   `(kind, target, node, stage)` tuple. **The workaround is now**
   `s.fix(...)` / `s.mass(...)` / `s.region(...)` inside the owning
   stage's `with` block (Phase SSI-2.D).
-- **Stage-bound BCs / recorders are append-only across stages.** A
-  stage cannot release a prior stage's fix or zero out a prior
-  stage's mass via the SSI-2.D verbs. For excavation-style decks
-  that genuinely need to release support during construction, users
-  currently drop to raw Tcl for the release step. A future
-  `s.remove_sp(...)` / `s.zero_mass(...)` verb would lift this —
-  see [staged-analysis.md](staged-analysis.md) §"Deferred work".
+- **Removals emit BEFORE new BCs within a stage block (Phase
+  SSI-2.E).** `s.remove_sp` / `s.remove_element` lines fire between
+  the stage's topology activation and the stage's `fix` / `mass` /
+  `region` / MP-constraint block. That's the conservative reading
+  of the release-vs-rebind ordering question — same-stage
+  "release prior + re-fix" works as the canonical atomic-replace
+  pattern. Same-stage `s.fix` does NOT count toward making an SP
+  available for the same stage's `s.remove_sp` (V5 refuses); a
+  stage-bound element activated via `s.activate(pgs=)` IS available
+  for same-stage `s.remove_element` (activation emits before
+  removal in the deck). For mass overwrite, use the
+  `s.mass(... overwrite=True)` opt-in instead — OpenSees has no
+  `remove mass` primitive, only `setMass` (which silently
+  overwrites; the flag is a build-time validator-bypass marker).
+- **`s.remove_mp` is still deferred** (release of `equal_dof` /
+  `rigid_link` / `rigid_diaphragm` / `embedded` mid-stage). Phase
+  SSI-2.E shipped the SP and element removal verbs but not the MP
+  removal verb. See [_DEFERRED.md](_DEFERRED.md) §"`s.remove_mp`"
+  for the trigger and architectural rationale (UN-CLAIM as a
+  fourth pattern adjacent to PUSH/PULL/CLAIM). Workaround: remove
+  the host element via `s.remove_element` when the MP's
+  constrained/retained node is owned only by that element; OpenSees
+  does NOT auto-cascade but a `wipeAnalysis` + chain rebind at the
+  next stage_close lets the next stage re-bind without the
+  orphaned MP affecting equilibrium.
 - **PUSH vs PULL builder asymmetry is intentional.** `s.fix` /
   `s.mass` / `s.region` use PUSH (inert dataclasses created on the
   stage directly); `s.add(initial_stress)` and `s.recorder(spec)`
