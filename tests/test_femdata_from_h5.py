@@ -589,8 +589,13 @@ def test_pre_2_8_0_interpolation_payload_decodes_with_defaults(
         f["constraints"].create_dataset("embedded", data=row)
         # Down-stamp the neutral schema version into the prior minor
         # so the two-version reader window still accepts the file.
-        f["meta"].attrs["schema_version"] = "2.7.0"
-        f["meta"].attrs["neutral_schema_version"] = "2.7.0"
+        # Prior-minor floats with the current schema bump: 2.9.0 →
+        # window {2.8.x, 2.9.x}; the test only needs the legacy 7-column
+        # InterpolationRecord payload (NOT the 13-column 2.8.0 dtype) to
+        # exercise the structural-fallback decoder, and that fallback
+        # is keyed on payload-field presence, not on the schema string.
+        f["meta"].attrs["schema_version"] = "2.8.0"
+        f["meta"].attrs["neutral_schema_version"] = "2.8.0"
 
     rebuilt = FEMData.from_h5(str(out))
     es = [

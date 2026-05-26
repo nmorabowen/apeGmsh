@@ -70,6 +70,7 @@ from ._loads import (
     NodalLoadRecord,
     SPRecord,
 )
+from ._compose import ComposeRecord
 from ._masses import MassRecord
 from ._partitions import PartitionRecord
 
@@ -112,6 +113,8 @@ __all__ = [
     "MassRecord",
     # Partition records
     "PartitionRecord",
+    # Compose records (Phase 3A.1)
+    "ComposeRecord",
 ]
 
 

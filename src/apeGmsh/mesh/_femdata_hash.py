@@ -41,6 +41,7 @@ def compute_snapshot_id(fem: "FEMData") -> str:
     _hash_nodes(h, fem)
     _hash_elements(h, fem)
     _hash_physical_groups(h, fem)
+    _hash_composed_from(h, fem)
 
     return h.hexdigest()
 
@@ -103,6 +104,38 @@ def _hash_elements(h: "hashlib._Hash", fem: "FEMData") -> None:
 # ---------------------------------------------------------------------
 # Section: physical groups
 # ---------------------------------------------------------------------
+
+def _hash_composed_from(h: "hashlib._Hash", fem: "FEMData") -> None:
+    """Fold the ``composed_from`` provenance into the digest.
+
+    Phase 3A.1 (ADR 0038).  Skips the channel entirely when
+    ``composed_from`` is empty — the uncomposed case must hash
+    identically to pre-2.9.0 broker objects so existing pin tests stay
+    green.  Records are folded in ascending-label order so a
+    permutation at compose time (different ``Compose.add(...)``
+    sequence) produces the same digest.
+    """
+    composed = getattr(fem, "composed_from", None)
+    if not composed:
+        return
+    h.update(b"COMPOSED|")
+    for rec in composed:
+        h.update(rec.label.encode("utf-8"))
+        h.update(b"|")
+        h.update(rec.source_fem_hash.encode("utf-8"))
+        h.update(b"|")
+        h.update(rec.source_neutral_schema_version.encode("utf-8"))
+        h.update(b"|")
+        h.update(np.asarray(rec.translate, dtype=np.float64).tobytes())
+        if rec.rotate is not None:
+            h.update(b"R")
+            h.update(np.asarray(rec.rotate, dtype=np.float64).tobytes())
+        if rec.partition_rank is not None:
+            h.update(b"P")
+            h.update(int(rec.partition_rank).to_bytes(
+                8, "little", signed=True))
+        h.update(b"|")
+
 
 def _hash_physical_groups(h: "hashlib._Hash", fem: "FEMData") -> None:
     h.update(b"PGS|")

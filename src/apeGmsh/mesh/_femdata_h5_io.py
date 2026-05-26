@@ -64,6 +64,7 @@ if TYPE_CHECKING:
 
 
 __all__ = [
+    "COMPOSED_FROM_SCHEMA_VERSION",
     "NEUTRAL_SCHEMA_VERSION",
     "read_fem_h5",
     "read_neutral_zone_from_group",
@@ -127,10 +128,34 @@ __all__ = [
 #: ``p.dtype.names`` (the same structural-detection pattern that
 #: gates ``sr_*`` and ``name``) and decode with dataclass defaults.
 #:
+#: v2.9.0 (May 2026, Compose v1 Phase 3A.1 / ADR 0038):
+#: additive — adds the optional ``/composed_from/`` provenance
+#: sub-group (one ``{label}`` per composed source module, with
+#: ``source_fem_hash`` / ``source_neutral_schema_version`` /
+#: ``source_path`` / ``translate`` / optional ``rotate`` / optional
+#: ``partition_rank`` / ``composed_at`` attrs plus an optional
+#: ``properties`` sub-attribute group), the ``meta/@tag_span_max``
+#: (int64) attribute used by Phase 3B's ``_compute_source_span`` to
+#: size per-module reservations, and the optional ``module_label``
+#: (variable-length string) parallel dataset on ``/nodes/`` and each
+#: ``/elements/{type}/`` group identifying the source module each row
+#: came from (empty string for host-owned rows; populated by Phase
+#: 3B's merge engine).  Per ADR 0023's two-version reader window,
+#: readers tolerate 2.8.x and 2.9.x; 2.8.x files lack all three
+#: additions and decode cleanly with ``composed_from=()`` and no
+#: ``module_label`` plumbed.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.8.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.9.0"
+
+#: Inner schema-version stamp written on the ``/composed_from/`` group
+#: when ``fem.composed_from`` is non-empty.  Independent of the
+#: neutral-zone schema; ADR 0038 §"Implementation pointer" locks the
+#: initial value at ``"1.0.0"`` so future provenance-shape additions
+#: can bump this independently.
+COMPOSED_FROM_SCHEMA_VERSION: str = "1.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +282,15 @@ def write_meta(
     meta.attrs["ndf"] = int(ndf)
     meta.attrs["snapshot_id"] = str(fem.snapshot_id)
     meta.attrs["model_name"] = str(model_name)
+    # ADR 0038 §"Schema" — tag-span-max (max(max_node, max_elem) -
+    # min(min_node, min_elem) + 1) used by Phase 3B's
+    # ``_compute_source_span`` to size per-module reservations.  Stored
+    # on /meta rather than the file root because the codebase's
+    # convention places every file-level attr under /meta (file-root
+    # attrs are atypical in h5py).  3B reads from
+    # ``meta.attrs["tag_span_max"]``; pre-2.9.0 files lack the attr
+    # and trigger 3B's fallback dataset scan.
+    meta.attrs["tag_span_max"] = int(_compute_tag_span_max(fem))
 
 
 def write_neutral_zone(fem: "FEMData", f: Any) -> None:
@@ -276,6 +310,11 @@ def write_neutral_zone(fem: "FEMData", f: Any) -> None:
     _write_constraints(fem, f)
     _write_loads(fem, f)
     _write_masses(fem, f)
+    # ADR 0038 §"Schema" — optional /composed_from/ provenance group.
+    # Omitted entirely when ``fem.composed_from`` is empty (the
+    # uncomposed case); absence is the right "uncomposed" signal on
+    # disk and keeps pre-2.9.0 round-trip diffs minimal.
+    _write_composed_from(fem, f)
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +331,44 @@ def _derive_ndm(fem: "FEMData") -> int:
     except (AttributeError, ValueError):
         pass
     return 3
+
+
+def _vlen_utf8() -> Any:
+    """Return the h5py variable-length UTF-8 string dtype.
+
+    Local helper to keep the writer's lazy-import discipline — h5py is
+    pulled in only at the write callsites that need it.
+    """
+    import h5py
+    return h5py.string_dtype(encoding="utf-8")
+
+
+def _compute_tag_span_max(fem: "FEMData") -> int:
+    """Compute ``max_tag - min_tag + 1`` across nodes + elements.
+
+    ADR 0038 §"Schema" — written as ``/meta/@tag_span_max`` and read
+    by Phase 3B's ``_compute_source_span`` to size the per-module tag
+    reservation without a full dataset scan.  Combines nodes AND
+    elements into a single span because the per-module reservation
+    must cover both classes uniformly.  Empty mesh → 0.
+    """
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    eid_parts: list[np.ndarray] = []
+    for group in fem.elements:
+        ids = np.asarray(group.ids, dtype=np.int64)
+        if ids.size > 0:
+            eid_parts.append(ids)
+    if node_ids.size == 0 and not eid_parts:
+        return 0
+    mins: list[int] = []
+    maxs: list[int] = []
+    if node_ids.size > 0:
+        mins.append(int(node_ids.min()))
+        maxs.append(int(node_ids.max()))
+    for arr in eid_parts:
+        mins.append(int(arr.min()))
+        maxs.append(int(arr.max()))
+    return int(max(maxs) - min(mins) + 1)
 
 
 def _write_nodes(fem: "FEMData", f: Any) -> None:
@@ -323,6 +400,17 @@ def _write_nodes(fem: "FEMData", f: Any) -> None:
             "ndf", data=np.asarray(ndf, dtype=np.int8),
         )
 
+    # ADR 0038 — per-node ``module_label`` parallel dataset (neutral
+    # schema 2.9.0).  Always written so the compose-aware reader has a
+    # stable shape contract; populated with empty strings in this
+    # Phase 3A.1 PR (Phase 3B's merge engine fills in real values
+    # during compose).  2.8.x readers ignore the extra dataset.
+    nodes_grp.create_dataset(
+        "module_label",
+        data=np.array([""] * node_ids.size, dtype=object),
+        dtype=_vlen_utf8(),
+    )
+
 
 def _write_elements(fem: "FEMData", f: Any) -> None:
     """Write ``/elements/{type}/{ids, connectivity}`` per element type.
@@ -345,10 +433,20 @@ def _write_elements(fem: "FEMData", f: Any) -> None:
         sub.attrs["npe"] = int(et.npe)
         sub.attrs["dim"] = int(et.dim)
         sub.attrs["order"] = int(et.order)
-        sub.create_dataset("ids", data=np.asarray(elem_group.ids, dtype=np.int64))
+        eids = np.asarray(elem_group.ids, dtype=np.int64)
+        sub.create_dataset("ids", data=eids)
         sub.create_dataset(
             "connectivity",
             data=np.asarray(elem_group.connectivity, dtype=np.int64),
+        )
+        # ADR 0038 — per-element ``module_label`` parallel dataset
+        # (neutral schema 2.9.0).  Same shape contract as
+        # ``/nodes/module_label`` — populated with empty strings in
+        # Phase 3A.1; Phase 3B's merge engine fills in real values.
+        sub.create_dataset(
+            "module_label",
+            data=np.array([""] * eids.size, dtype=object),
+            dtype=_vlen_utf8(),
         )
 
 
@@ -492,6 +590,63 @@ def _write_partitions(fem: "FEMData", f: Any) -> None:
         )
         sub.create_dataset("node_ids", data=node_ids)
         sub.create_dataset("element_ids", data=elem_ids)
+
+
+def _write_composed_from(fem: "FEMData", f: Any) -> None:
+    """Write ``/composed_from/{label}/`` for each composed source module.
+
+    ADR 0038 §"Schema" — neutral schema 2.9.0.  One sub-group per
+    :class:`ComposeRecord` on ``fem.composed_from``, attrs carrying
+    the provenance fields (``source_path`` / ``source_fem_hash`` /
+    ``source_neutral_schema_version`` / ``translate`` / optional
+    ``rotate`` / optional ``partition_rank`` / ``composed_at``).
+    Optional ``properties`` mapping is stored under a child
+    ``properties/`` sub-group (one attr per key).
+
+    Omitted entirely when ``fem.composed_from`` is empty — absence is
+    the canonical "uncomposed" signal on disk.  The group carries a
+    ``composed_from_schema_version`` attr (initial value
+    :data:`COMPOSED_FROM_SCHEMA_VERSION`) so future provenance-shape
+    additions can bump independently of the neutral-zone schema.
+    """
+    composed = getattr(fem, "composed_from", None)
+    if not composed:
+        return
+
+    parent = f.create_group("composed_from")
+    parent.attrs["composed_from_schema_version"] = COMPOSED_FROM_SCHEMA_VERSION
+
+    seen_safe: set[str] = set()
+    for rec in composed:
+        label = rec.label
+        safe = label.replace("/", "_") or "_unnamed"
+        if safe in seen_safe:
+            safe = f"{safe}__{len(seen_safe)}"
+        seen_safe.add(safe)
+
+        sub = parent.create_group(safe)
+        sub.attrs["label"] = str(label)
+        sub.attrs["source_path"] = str(rec.source_path)
+        sub.attrs["source_fem_hash"] = str(rec.source_fem_hash)
+        sub.attrs["source_neutral_schema_version"] = str(
+            rec.source_neutral_schema_version
+        )
+        sub.attrs["translate"] = np.asarray(rec.translate, dtype=np.float64)
+        sub.attrs["composed_at"] = str(rec.composed_at)
+        if rec.rotate is not None:
+            sub.attrs["rotate"] = np.asarray(rec.rotate, dtype=np.float64)
+        if rec.partition_rank is not None:
+            sub.attrs["partition_rank"] = int(rec.partition_rank)
+
+        if rec.properties:
+            props = sub.create_group("properties")
+            for k, v in rec.properties.items():
+                # Coerce numeric / string values onto h5py-friendly
+                # attr types.  Phase 3A.1 only persists scalar
+                # str/int/float — anything else surfaces an h5py error
+                # at write time (intentionally; richer property
+                # shapes need a follow-up schema bump).
+                props.attrs[str(k)] = v
 
 
 def _write_parts(fem: "FEMData", f: Any) -> None:
@@ -1277,6 +1432,15 @@ def read_neutral_zone_from_group(
         parent["parts"] if "parts" in parent else None
     )
 
+    # -- composed_from (neutral schema 2.9.0; absent in 2.8.x files) --
+    # ADR 0038 / h5py optional-child .get() hazard: probe with ``in``,
+    # NEVER Group.get on the child name — the latter returns phantom
+    # truthy proxies on some optional-child layouts (the bug fixed in
+    # PR #261).  See ``project_h5py_optional_child_get_hazard``.
+    composed_from = _read_composed_from(
+        parent["composed_from"] if "composed_from" in parent else None
+    )
+
     # -- constraints (split node-side vs element-side by record type) --
     # node_xyz lets _decode_node_to_surface re-derive the exact
     # rigid-beam offsets (phantom_coord − master_coord).
@@ -1335,6 +1499,7 @@ def read_neutral_zone_from_group(
     rebuilt = FEMData(
         nodes=nodes, elements=elements, info=info,
         mesh_selection=mesh_selection,
+        composed_from=composed_from,
     )
 
     # B4 — verify /meta/snapshot_id matches the recomputed hash
@@ -1480,6 +1645,75 @@ def _read_parts(
             if eids.size > 0:
                 elem_map[label] = {int(x) for x in eids}
     return node_map, elem_map
+
+
+def _read_composed_from(parent: Any) -> tuple:
+    """Reconstruct ``ComposeRecord`` tuple from ``/composed_from/``.
+
+    Inverse of :func:`_write_composed_from`.  Returns an empty tuple
+    when ``parent`` is ``None`` (the 2.8.x compatibility path) — the
+    caller turns this into an empty :class:`ComposeSet`.
+
+    Probes optional children with ``in`` rather than ``Group.get`` per
+    the h5py optional-child .get() hazard
+    (``project_h5py_optional_child_get_hazard``).
+    """
+    from apeGmsh._kernel.records._compose import ComposeRecord
+
+    if parent is None:
+        return ()
+
+    records: list[ComposeRecord] = []
+    for key in sorted(parent.keys()):
+        sub = parent[key]
+        if not hasattr(sub, "keys"):
+            continue
+        attrs = sub.attrs
+        label = str(attrs.get("label", key))
+        source_path = str(attrs.get("source_path", ""))
+        source_fem_hash = str(attrs.get("source_fem_hash", ""))
+        source_neutral_schema_version = str(
+            attrs.get("source_neutral_schema_version", "")
+        )
+        translate_raw = attrs.get("translate", np.zeros(3, dtype=np.float64))
+        translate = tuple(
+            float(x) for x in np.asarray(translate_raw, dtype=np.float64)
+            .reshape(-1)[:3]
+        )
+        rotate: tuple[float, float, float, float] | None = None
+        if "rotate" in attrs:
+            rotate_raw = np.asarray(attrs["rotate"], dtype=np.float64).reshape(-1)
+            rotate = tuple(float(x) for x in rotate_raw[:4])  # type: ignore[assignment]
+        partition_rank: int | None = None
+        if "partition_rank" in attrs:
+            partition_rank = int(attrs["partition_rank"])
+        composed_at = str(attrs.get("composed_at", ""))
+
+        properties: dict = {}
+        # Optional sub-group probed with ``in`` (NOT ``.get``).
+        if "properties" in sub:
+            prop_attrs = sub["properties"].attrs
+            for pk in prop_attrs:
+                raw = prop_attrs[pk]
+                # numpy scalars / 0-d arrays decode to Python scalars
+                if isinstance(raw, np.ndarray) and raw.shape == ():
+                    raw = raw.item()
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="replace")
+                properties[str(pk)] = raw
+
+        records.append(ComposeRecord(
+            label=label,
+            source_path=source_path,
+            source_fem_hash=source_fem_hash,
+            source_neutral_schema_version=source_neutral_schema_version,
+            translate=translate,  # type: ignore[arg-type]
+            rotate=rotate,
+            partition_rank=partition_rank,
+            composed_at=composed_at,
+            properties=properties,
+        ))
+    return tuple(records)
 
 
 def _read_mesh_selections(parent: Any):

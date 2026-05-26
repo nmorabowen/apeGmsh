@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from apeGmsh._kernel.records._loads import NodalLoadRecord, ElementLoadRecord, SPRecord  # noqa: F401
     from apeGmsh._kernel.records._masses import MassRecord  # noqa: F401
     from apeGmsh._kernel.records._partitions import PartitionRecord  # noqa: F401
+    from apeGmsh._kernel.records._compose import ComposeRecord  # noqa: F401
 
 
 # =====================================================================
@@ -1026,3 +1027,103 @@ class PartitionSet:
         if not self._records:
             return "PartitionSet(empty)"
         return f"PartitionSet({len(self._records)} partitions, ids={self.ids})"
+
+
+# =====================================================================
+# ComposeSet — composite for fem.composed_from (Phase 3A.1 / ADR 0038)
+# =====================================================================
+
+class ComposeSet:
+    """Composite over :class:`ComposeRecord` instances on
+    ``fem.composed_from``.
+
+    One record per composed source module, keyed by ``label`` (the
+    namespace prefix assigned at compose time).  Built once in
+    :meth:`FEMData.__init__` from the tuple of records that Phase 3B's
+    ``Compose`` facade attaches at module-merge time (or that the
+    Phase 3A.1 H5 reader recovers from the ``/fem/composed_from/``
+    sub-group).  An empty ``ComposeSet`` is the canonical "uncomposed"
+    signal and is the default at ``FEMData`` construction.
+
+    Mirrors the :class:`PartitionSet` pattern (sorted, read-only,
+    iterable, ``__contains__`` / ``__getitem__`` by key).  Iteration
+    yields :class:`ComposeRecord` instances in ascending label order::
+
+        for rec in fem.composed_from:
+            print(rec.label, rec.source_path)
+
+        if "module_a" in fem.composed_from:
+            ...
+    """
+
+    def __init__(
+        self, records: "tuple[ComposeRecord, ...] | dict[str, ComposeRecord]",
+    ) -> None:
+        # Accept both shapes so callers can hand-build with whichever
+        # is most convenient.  Internally normalise to a dict keyed by
+        # ``label`` and sorted by that key for deterministic iteration.
+        if isinstance(records, dict):
+            items = records
+        else:
+            items = {r.label: r for r in records}
+        self._records: dict[str, "ComposeRecord"] = dict(
+            sorted(items.items())
+        )
+
+    # ── Properties ──────────────────────────────────────────
+
+    @property
+    def ids(self) -> list[str]:
+        """Sorted list of compose labels."""
+        return list(self._records.keys())
+
+    @property
+    def labels(self) -> list[str]:
+        """Alias for :attr:`ids` matching ADR 0038 nomenclature."""
+        return list(self._records.keys())
+
+    # ── Dunder ──────────────────────────────────────────────
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __bool__(self) -> bool:
+        return bool(self._records)
+
+    def __iter__(self) -> Iterator["ComposeRecord"]:
+        """Yield :class:`ComposeRecord` in ascending label order."""
+        return iter(self._records.values())
+
+    def __getitem__(self, label: str) -> "ComposeRecord":
+        """Look up a compose record by label.  Raises ``KeyError`` on miss."""
+        try:
+            return self._records[str(label)]
+        except KeyError:
+            available = list(self._records.keys())
+            raise KeyError(
+                f"Compose label {label!r} not found. Available: {available}"
+            ) from None
+
+    def __contains__(self, label: object) -> bool:
+        try:
+            return str(label) in self._records
+        except (TypeError, ValueError):
+            return False
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ComposeSet):
+            return NotImplemented
+        return self._records == other._records
+
+    # ``__hash__`` deliberately omitted — ``ComposeRecord.properties``
+    # is a ``Mapping`` (dict) which is unhashable.  ``ComposeSet`` is
+    # never used as a dict key or set member; mirrors ``PartitionSet``.
+    __hash__ = None  # type: ignore[assignment]
+
+    def __repr__(self) -> str:
+        if not self._records:
+            return "ComposeSet(empty)"
+        return (
+            f"ComposeSet({len(self._records)} module(s), "
+            f"labels={self.ids})"
+        )

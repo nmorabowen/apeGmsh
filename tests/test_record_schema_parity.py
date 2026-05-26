@@ -353,6 +353,13 @@ def test_record_to_dtype_covers_every_concrete_record() -> None:
             continue
         if name == "PartitionRecord":
             continue
+        # ComposeRecord lives in its own /composed_from/{label}/ group
+        # as attrs (ADR 0038 Phase 3A.1), not under
+        # /constraints|loads|masses, so it has no _record_h5
+        # payload-dtype factory by design — same exemption as
+        # PartitionRecord.
+        if name == "ComposeRecord":
+            continue
         concrete_records.add(obj)
 
     catalogued = set(RECORD_TO_DTYPE.keys())

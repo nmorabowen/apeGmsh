@@ -75,8 +75,9 @@ def test_schema_version_pin():
     additive changes to the neutral zone (S1b added /nodes/ndf at
     2.7.0; the ADR-0035 follow-up extended interpolation_payload_dtype
     + surface_coupling sr_* lane to round-trip embedded -K/-KP/-rot/-p
-    at 2.8.0)."""
-    assert NEUTRAL_SCHEMA_VERSION == "2.8.0"
+    at 2.8.0; ADR 0038 Phase 3A.1 added /composed_from/, tag_span_max,
+    and module_label parallel datasets at 2.9.0)."""
+    assert NEUTRAL_SCHEMA_VERSION == "2.9.0"
 
 
 # =====================================================================
@@ -190,19 +191,22 @@ def test_ndf_round_trip_through_h5(g, tmp_path: Path):
 # =====================================================================
 
 def test_legacy_2_7_0_file_without_ndf_loads_with_none(g, tmp_path: Path):
-    """A 2.7.0-shaped file with no /nodes/ndf dataset loads cleanly
-    under the 2.8.0 reader, leaving ``_ndf=None``.
+    """A prior-minor-shaped file with no /nodes/ndf dataset loads
+    cleanly under the current reader, leaving ``_ndf=None``.
 
     Originally written for the 2.6.0 → 2.7.0 bump and asserted the
-    reader *synthesised* an all-zero sentinel.  After the 2.7.0 →
-    2.8.0 bump, 2.6.0 is outside the two-version window (the
-    synthesis branch at ``_femdata_h5_io.py:1224`` is now only
-    reachable for pre-2.7.0 files, which the schema-validation
-    gate refuses upstream — dead path).  What the reader is
-    actually expected to do for 2.7.0+ files with no ``/nodes/ndf``
-    is the second branch at line 1226: leave ``_ndf=None``.  Both
+    reader *synthesised* an all-zero sentinel.  After successive
+    minor bumps (now at 2.9.0 with the 2.8.x window), 2.7.0 is
+    outside the two-version window; the synthesis branch is
+    therefore only reachable for pre-2.7.0 files, which the schema-
+    validation gate refuses upstream (dead path).  What the reader
+    is actually expected to do for 2.7.0+ files with no
+    ``/nodes/ndf`` is the second branch: leave ``_ndf=None``.  Both
     None and all-zero hash identically under the S2 fold gate, so
     the snapshot_id integrity check still fires.
+
+    The downgrade stamp here is whatever the current prior-minor
+    accepts (2.8.0 at time of 2.9.0 reader).
     """
     g.model.geometry.add_box(0.0, 0.0, 0.0, 10.0, 10.0, 10.0, label='Body')
     g.model.sync()
@@ -220,8 +224,12 @@ def test_legacy_2_7_0_file_without_ndf_loads_with_none(g, tmp_path: Path):
             "no-declarations FEM."
         )
         del f["nodes"]["ndf"]
-        f["meta"].attrs["schema_version"] = "2.7.0"
-        f["meta"].attrs["neutral_schema_version"] = "2.7.0"
+        # Down-stamp into the current prior-minor (within the two-
+        # version window).  Tracks NEUTRAL_PRIOR_MINOR — auto-floats
+        # with the schema bump.
+        from tests.fixtures.schema import NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["schema_version"] = NEUTRAL_PRIOR_MINOR
+        f["meta"].attrs["neutral_schema_version"] = NEUTRAL_PRIOR_MINOR
         assert "snapshot_id" in f["meta"].attrs, (
             "writer regressed: /meta/snapshot_id was not stored."
         )

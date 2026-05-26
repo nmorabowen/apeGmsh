@@ -59,8 +59,9 @@ from ._group_set import (
 from .._kernel.record_sets import (
     NodeConstraintSet, SurfaceConstraintSet,
     NodalLoadSet, SPSet, ElementLoadSet, MassSet,
-    PartitionSet,
+    PartitionSet, ComposeSet,
 )
+from .._kernel.records._compose import ComposeRecord
 from .._kernel.records._partitions import PartitionRecord
 from ._element_types import ElementTypeInfo
 from .._kernel.payloads import (
@@ -1334,12 +1335,26 @@ class FEMData:
         elements: ElementComposite,
         info: MeshInfo,
         mesh_selection: "MeshSelectionStore | None" = None,
+        composed_from: "ComposeSet | tuple[ComposeRecord, ...] | None" = None,
     ) -> None:
         self.nodes    = nodes
         self.elements = elements
         self.info     = info
         self.mesh_selection = mesh_selection
         self.inspect  = InspectComposite(self)
+        # ── Compose provenance (Phase 3A.1 / ADR 0038) ───────────
+        # ``fem.composed_from`` is a :class:`ComposeSet` exposing one
+        # record per composed source module (label-keyed, sorted).
+        # Default is an empty set — the canonical "uncomposed" signal.
+        # Phase 3B's ``Compose`` facade is the producer; the H5 reader
+        # rehydrates it from the optional ``/composed_from/`` sub-group
+        # when present.
+        if composed_from is None:
+            self.composed_from: ComposeSet = ComposeSet(())
+        elif isinstance(composed_from, ComposeSet):
+            self.composed_from = composed_from
+        else:
+            self.composed_from = ComposeSet(tuple(composed_from))
         # Wire the sibling NodeComposite onto the ElementComposite so
         # fem.elements.select(...) can compute element centroids
         # in-memory (no live Gmsh session needed — works for
