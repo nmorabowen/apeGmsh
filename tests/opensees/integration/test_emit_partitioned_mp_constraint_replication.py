@@ -19,6 +19,9 @@ from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.emitter.tcl import TclEmitter
 
+from tests.opensees._helpers.partition_diff import (
+    assert_partition_blocks_equivalent,
+)
 from tests.opensees.fixtures.fem_stub import (
     make_two_column_frame_partitioned,
 )
@@ -185,5 +188,12 @@ def test_tcl_text_byte_identical_across_ranks_for_cross_partition() -> None:
         f"equalDOF must appear once per rank under cross-partition replication; "
         f"got {equal_dof_lines!r}"
     )
-    # INV-1: text must be byte-identical.
-    assert equal_dof_lines[0] == equal_dof_lines[1]
+    # INV-1: cross-partition constraint text must be byte-identical
+    # modulo foreign-node decl prefixes.  The extracted equalDOF lines
+    # carry no node decls themselves, so the helper degenerates to a
+    # straight byte-compare; routing through it keeps the assertion
+    # uniform across all INV-1 tests.
+    assert_partition_blocks_equivalent(
+        equal_dof_lines[0], equal_dof_lines[1],
+        label="equalDOF cross-partition",
+    )

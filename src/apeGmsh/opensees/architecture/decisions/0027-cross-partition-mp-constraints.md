@@ -272,11 +272,21 @@ unchanged.
 
 ## Invariants
 
-- **INV-1.** A cross-partition MP constraint emits **byte-identical**
+- **INV-1.** A cross-partition MP constraint emits **byte-identical
   text inside every owning rank's `partition_open(rank)` /
-  `partition_close()` block. The argument order, the trailing
-  whitespace, the line terminator, and any preceding
-  `mp_constraint_comment` line all match across ranks.
+  `partition_close()` block, *modulo foreign-node decl prefixes*.**
+  The argument order, the trailing whitespace, the line terminator,
+  and any preceding `mp_constraint_comment` line all match across
+  ranks. The intentional textual divergence — native-side
+  `node(tag, *xyz)` decls omit `-ndf` (the envelope ndf set via
+  `apeSees.model(ndm=, ndf=)` applies), while foreign-side decls
+  force `-ndf <broker_ndf>` (per `_emit_node_with_broker_ndf` in
+  `opensees/_internal/build.py`) — is the only allowed difference;
+  everything else must match byte-for-byte. The contract test uses
+  `assert_partition_blocks_equivalent()` (see
+  `tests/opensees/_helpers/partition_diff.py`) which strips
+  foreign-node decl lines from both blocks before comparing the
+  remaining content byte-for-byte.
 
 - **INV-2.** A foreign node tag referenced by a replicated constraint
   is declared (via `node(tag, *xyz, ndf=...)`) on the foreign-side

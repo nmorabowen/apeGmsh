@@ -26,6 +26,9 @@ from apeGmsh._kernel.records._constraints import NodeGroupRecord
 from apeGmsh._kernel.records._kinds import ConstraintKind
 from apeGmsh.opensees import apeSees
 
+from tests.opensees._helpers.partition_diff import (
+    assert_partition_blocks_equivalent,
+)
 from tests.opensees.fixtures.fem_stub import (
     make_two_column_frame_partitioned,
 )
@@ -148,8 +151,10 @@ def test_runnable_partitioned_tcl_deck_shape() -> None:
             f"node {tag} (owner rank 1) must appear in rank-1 block"
         )
 
-    # 5. Cross-partition rigidDiaphragm — INV-1: text identical on
-    # both ranks.
+    # 5. Cross-partition rigidDiaphragm — INV-1: text byte-identical
+    # on both ranks (modulo foreign-node decl prefixes; the
+    # rigidDiaphragm line itself has no node decls so the helper
+    # degenerates to a straight byte-compare here).
     rd_lines_rank0 = [
         ln.strip() for ln in blocks[0].split("\n") if "rigidDiaphragm" in ln
     ]
@@ -158,9 +163,9 @@ def test_runnable_partitioned_tcl_deck_shape() -> None:
     ]
     assert len(rd_lines_rank0) == 1
     assert len(rd_lines_rank1) == 1
-    assert rd_lines_rank0 == rd_lines_rank1, (
-        "INV-1: cross-partition rigidDiaphragm must be byte-identical "
-        "across ranks"
+    assert_partition_blocks_equivalent(
+        rd_lines_rank0[0], rd_lines_rank1[0],
+        label="rigidDiaphragm cross-partition",
     )
 
     # 6. Analysis commands must NOT be inside any partition block.
