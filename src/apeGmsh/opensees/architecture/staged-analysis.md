@@ -52,12 +52,32 @@ The staged-analysis work ships in four phases:
   Forcing function: the Cerro Lindo SSI V5 cimbra-installation deck
   where embedded constraints leaking into the global pre-stage block
   caused Newton divergence at step 2 (ADR 0034 §5c).
+- **Phase SSI-2.E — between-stage Domain mutators.** Lifts the
+  append-only restriction on stage-bound BCs with five new verbs:
+  `s.remove_sp(*, pg=, nodes=, dofs=)` (emits `remove sp $node $dof`),
+  `s.remove_element(*, pg=, elements=)` (emits `remove element $tag`;
+  `elements=` is FEM eids per the recorder.Element convention),
+  `s.mass(..., overwrite=True)` (relaxes V2 for the intentional-
+  overwrite case), and the imperative time-state mutators
+  `s.set_time(t)` / `s.set_creep(on)` / `s.reset()`.  Removals emit
+  BEFORE the stage's new fix / mass / region / MP-constraint block
+  (the conservative reading); same-stage release-then-re-fix becomes
+  the canonical atomic-replace pattern.  Widens the `Emitter`
+  Protocol with five methods (`set_time`, `set_creep`, `reset`,
+  `remove_sp`, `remove_element`); H5 archival deferred (the existing
+  `apeSees.h5(...)` fail-loud guard on staged models still covers).
+  Adds validators V5 (`s.remove_sp` target must reference a prior-
+  tier SP) and V6 (`s.remove_element` target must reference a prior-
+  tier element); V2 was extended to subtract `s.remove_sp` targets
+  from the fix alive set so the atomic-replace pattern passes both
+  validators.
 
 The user surface is unified — `_StageBuilder` carries `activate`,
 `fix`, `mass`, `region`, `recorder`, `add`, `initial_stress`,
 `embedded` / `equal_dof` / `rigid_link` / `rigid_diaphragm` /
 `kinematic_coupling` / `tie` / `distributing` / `node_to_surface` /
-`node_to_surface_spring`, `analysis`, and `run` as verbs in the same
+`node_to_surface_spring`, `remove_sp`, `remove_element`, `set_time`,
+`set_creep`, `reset`, `analysis`, and `run` as verbs in the same
 context manager. The deck layout below shows the combined effect.
 
 ## Deck layout
@@ -522,7 +542,7 @@ consistent across rules.
 |---|---|
 | **Live execution of staged models** — `apeSees.analyze` / `apeSees.eigen` currently raise `NotImplementedError` when stages are present. Lifting requires staging the analysis-chain re-binding, per-stage analyze loops, `loadConst` / `wipeAnalysis` interleaving, and hook-list clearing inside `LiveOpsEmitter`. Tcl + Py text emit are the supported execution paths. | `emitter/live.py::stage_open` / `stage_close` (currently raise); `apesees.py::analyze` / `eigen` (currently refuse). |
 | **H5 archival of staged structure + initial_stress + stage-bound BCs/recorders** — `H5Emitter` no-ops on `addToParameter` / `step_hook_ramp` / `stage_open` / `stage_close` / `domain_change`. Because that silent-drop would round-trip into a non-staged flat model, `apeSees.h5(path)` is **guarded** (#313) — it raises `NotImplementedError` when `self._stage_records` or `self._initial_stress_records` is non-empty, pointing the user at `ops.tcl(path)` / `ops.py(path)`. A future schema bump (per [ADR 0023](decisions/0023-per-zone-schema-versioning.md)) from `opensees_schema_version` `2.11.0` → `2.12.0` would persist per-stage primitive lists + BC pools + recorder claims under `/opensees/stages/`, lift the guard, and restore round-trip parity. | `apesees.py::h5` (bridge-side guard); `emitter/h5.py::addToParameter / step_hook_ramp / stage_open / stage_close / domain_change` (schema-side no-ops). |
-| **`remove sp` / mass-zero-out across stages** — stage-bound BCs are APPEND-ONLY in Phase SSI-2.D. A stage cannot release a prior stage's fix or zero out a prior stage's mass via `s.fix` / `s.mass`. For excavation-style decks that genuinely need to release support during construction, users currently drop to raw Tcl for the release step. | A new `s.remove_sp(...)` / `s.zero_mass(...)` verb on `_StageBuilder` + emit hooks calling `remove sp $node $dof` / `node $N mass 0 0 0`. |
+| **~~`remove sp` / mass-zero-out across stages~~** — **SHIPPED Phase SSI-2.E (2026-05).** `s.remove_sp(...)` + `s.remove_element(...)` + `s.mass(..., overwrite=True)` are the live verbs; removals emit BEFORE same-stage fix / mass / region / MP-constraint blocks. Atomic-replace pattern (release prior + re-fix in same stage) is the canonical usage. Validators V5 / V6 gate at build time; V2 subtracts `s.remove_sp` targets from the fix alive set. See [_DEFERRED.md](_DEFERRED.md) §"`remove sp` / `remove element` / mass overwrite / time-state mutators (Phase SSI-2.E)". |
 | **MPCO recorders with filters under stages** — stage-bound MPCO recorders DO claim through `s.recorder(spec)` but the per-rank filter-region planning (`_plan_partitioned_mpco_recorders`) currently only runs in the global emit pass. A stage-bound MPCO with a filter would fall through `emit_recorder_spec`'s materialize path and emit the filter region INSIDE the stage block instead of pre-allocated — works but doesn't reuse the cross-rank tag-identity infra. | Pre-allocate stage MPCO filter regions alongside the per-stage region tag cache; thread `_region_tag` into the materialised spec the same way the global path does. |
 | **Cross-stage region union** — V3 refuses same region `name=` across scopes. A region whose conceptual identity spans multiple stages currently requires explicit per-stage mangling (`lining_r_stage2`, `lining_r_stage3`) and client-side aggregation of the per-stage recorder outputs. Lifting V3 to allow opt-in name continuity would either need OpenSees `region` extension (doesn't exist; `MeshRegion` membership is immutable post-construction — MeshRegion.cpp:82-85) or deferred emit of the unified region to the LAST contributing stage (loses recorder coverage for earlier stages). | Likely won't lift — the workaround is correct OpenSees usage and the alternatives degrade behavior. |
 | **`s.tied_contact` / `s.mortar` stage-bound claim** — Phase SSI-2.D extension ships nine MP-constraint claim methods on `_StageBuilder` but `s.tied_contact` is omitted: `tied_contact` resolves to a `SurfaceCouplingRecord` whose nested `slave_records: list[InterpolationRecord]` is what emits via the `interpolations()` iterator. `_ExcludeClaimedConstraints` filters on outer-record identity; the nested slaves slip through and would double-emit. `s.mortar` is omitted because `g.constraints.mortar(...)` is kernel-NIY. | Extend `_ExcludeClaimedConstraints.interpolations()` to filter nested slaves when their parent `SurfaceCouplingRecord` is claimed, or accept per-slave naming as the user contract. See [_DEFERRED.md](_DEFERRED.md) §"`s.tied_contact` / `s.mortar` stage-bound claim". |

@@ -494,6 +494,38 @@ class TclEmitter:
             self._step_hooks_registered = False
         self._lines.indent = prev_indent
 
+    # -- Staged-analysis mutators (Phase SSI-2.E) ---------------------------
+
+    def set_time(self, t: float) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(f"setTime {repr(float(t))}")
+        self._lines.indent = prev_indent
+
+    def set_creep(self, on: bool) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(f"setCreep {1 if on else 0}")
+        self._lines.indent = prev_indent
+
+    def reset(self) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append("reset")
+        self._lines.indent = prev_indent
+
+    def remove_sp(self, node: int, dof: int) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(f"remove sp {int(node)} {int(dof)}")
+        self._lines.indent = prev_indent
+
+    def remove_element(self, tag: int) -> None:
+        prev_indent = self._lines.indent
+        self._lines.indent = ""
+        self._lines.append(f"remove element {int(tag)}")
+        self._lines.indent = prev_indent
+
     def _emit_hook_ramp_proc(
         self,
         name: str,

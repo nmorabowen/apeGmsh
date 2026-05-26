@@ -339,6 +339,52 @@ class Emitter(Protocol):
     # analysis chain emits.
     def domain_change(self) -> None: ...
 
+    # -- Staged-analysis mutators (Phase SSI-2.E, May 2026) ---------------
+    # Five between-stage Domain mutators closing the "remove sp / remove
+    # element / mass-zero-out / time-state-management" deferred items
+    # tracked in ``architecture/_DEFERRED.md`` §"Staged-analysis follow-
+    # ups".  All five are reachable from ``_StageBuilder`` verbs
+    # (``s.set_time``, ``s.set_creep``, ``s.reset``, ``s.remove_sp``,
+    # ``s.remove_element``) and emit inside the owning stage's block.
+    # H5 archival is deferred and fail-loud at ``apeSees.h5(path)`` — the
+    # H5 emitter no-ops, mirroring the existing stage_open / stage_close
+    # no-ops (see ADR 0029 INV-8).
+    #
+    # ``set_time(t)`` emits ``setTime $t`` (Tcl) / ``ops.setTime(t)`` (Py)
+    # / ``self._ops.setTime(t)`` (Live).  Used at the start of a stage to
+    # override the ``loadConst -time 0.0`` reset that the previous
+    # stage's ``stage_close`` emitted — e.g. when the second stage's
+    # dynamic clock should begin at a non-zero value.
+    def set_time(self, t: float) -> None: ...
+
+    # ``set_creep(on)`` emits ``setCreep 1|0`` (Tcl) / ``ops.setCreep(1|0)``.
+    # Toggles creep for time-dependent concrete materials.  Sticky across
+    # stages on the OpenSees side — apeSees does NOT auto-reset between
+    # stages; the user re-asserts the desired state per stage.
+    def set_creep(self, on: bool) -> None: ...
+
+    # ``reset()`` emits the bare OpenSees ``reset`` command, which wipes
+    # the Domain state back to the last ``setTime`` call.  Emitted right
+    # before the stage's ``analyze`` when ``s.reset()`` was called on the
+    # stage builder.  Rarely needed — kept for parity with the OpenSees
+    # surface so unusual workflows don't have to drop to raw Tcl.
+    def reset(self) -> None: ...
+
+    # ``remove_sp(node, dof)`` emits ``remove sp $node $dof`` (Tcl) /
+    # ``ops.remove('sp', node, dof)`` (Py / Live).  Removes one homogeneous
+    # SP constraint.  Stage builders call this once per ``(node, dof)``
+    # pair in a stage's removal pool, emitted BEFORE the stage's new
+    # ``fix`` / ``mass`` lines so a stage can release a prior-stage
+    # support and then immediately re-fix the same DOF with a new value.
+    def remove_sp(self, node: int, dof: int) -> None: ...
+
+    # ``remove_element(tag)`` emits ``remove element $tag`` (Tcl) /
+    # ``ops.remove('element', tag)`` (Py / Live).  Removes one element
+    # from the Domain.  The element's nodes survive — they belong to the
+    # Domain independently and may be referenced by surviving elements
+    # or future stage activations.
+    def remove_element(self, tag: int) -> None: ...
+
     # -- Eigen (one-shot, returns values from live emitter) ---------------
     # Issues ``eigen [solver] $numModes`` — does not require an
     # ``analysis <Type>`` chain.  The live emitter returns the list of

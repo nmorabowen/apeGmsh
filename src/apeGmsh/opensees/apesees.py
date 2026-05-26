@@ -26,10 +26,12 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Sequence, TypeVar
 
 from ._internal.build import (
     BridgeError,
+    ElementRemovalRecord,
     FixRecord,
     InitialStressRecord,
     MassRecord,
     RegionAssignmentRecord,
+    SPRemovalRecord,
     StageRecord,
     _emit_node_with_broker_ndf,
     allocate_element_tags,
@@ -556,16 +558,32 @@ class BuiltModel:
         # block; everything else stays in this global pre-stage emit.
         element_owner_stage: dict[int, int] = {}
         node_owner_stage: dict[int, int] = {}
+        # Phase SSI-2.E: pre-allocate element tags upfront when staged
+        # so V6 (``s.remove_element`` validator) can resolve explicit
+        # ``elements=`` user inputs against the live tag map.  Element
+        # emit later in this method re-uses ``element_plan`` instead of
+        # re-allocating.  TagAllocator is per-kind so this does not
+        # disturb the ``geomTransf`` / ``material`` / etc. counters.
+        element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]] | None" = None
+        fem_eid_to_ops_tag: dict[int, int] | None = None
         if staged:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
+            element_plan = allocate_element_tags(elements, self.fem, tags)
+            fem_eid_to_ops_tag = {
+                eid: ele_tag
+                for _, sub in element_plan
+                for eid, _conn, ele_tag in sub
+            }
             # Validate that BC pools (global + per-stage) respect the
             # ownership-tier rules — see ``_run_staged_bc_validators``
-            # for the H1 / V1 / V2 / V3 / V4 surface (Phase SSI-2.D).
+            # for the H1 / V1 / V2 / V3 / V4 / V5 / V6 surface
+            # (Phase SSI-2.D + SSI-2.E).
             self._run_staged_bc_validators(
                 node_owner_stage,
                 element_owner_stage,
+                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
             )
 
         # 1a. Nodes — emit every node from the FEM snapshot, EXCEPT
@@ -608,12 +626,16 @@ class BuiltModel:
         # emit runs.  Then emit only globally-owned elements here;
         # stage-bound elements emit in their stage's block via
         # ``_emit_stages_flat`` below.
-        element_plan = allocate_element_tags(elements, self.fem, tags)
-        fem_eid_to_ops_tag: dict[int, int] = {
-            eid: ele_tag
-            for _, sub in element_plan
-            for eid, _conn, ele_tag in sub
-        }
+        # Phase SSI-2.E: in the staged case the allocation already
+        # happened earlier in this method (so V6 could resolve
+        # explicit ``elements=`` targets); reuse the prior plan.
+        if element_plan is None:
+            element_plan = allocate_element_tags(elements, self.fem, tags)
+            fem_eid_to_ops_tag = {
+                eid: ele_tag
+                for _, sub in element_plan
+                for eid, _conn, ele_tag in sub
+            }
         for spec, sub in element_plan:
             if id(spec) in element_owner_stage:
                 continue  # stage-bound — emit inside the stage block.
@@ -798,6 +820,15 @@ class BuiltModel:
         for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
 
+            # Phase SSI-2.E: set_time + set_creep emit right after
+            # stage_open so they override the previous stage_close's
+            # ``loadConst -time 0.0`` and so the stage's analyze loop
+            # sees the right creep state from line 1.
+            if stage.set_time is not None:
+                emitter.set_time(float(stage.set_time))
+            if stage.set_creep_on is not None:
+                emitter.set_creep(bool(stage.set_creep_on))
+
             # 2. Owned nodes.  S2 (ADR 0033): per-node ndf via broker.
             owned_nodes = stage_owned_nodes.get(stage_idx, [])
             for nid in owned_nodes:
@@ -844,6 +875,36 @@ class BuiltModel:
                     else:
                         spec._emit(emitter, ele_tag)
 
+            # Phase SSI-2.E: removals emit BEFORE new BCs so a stage
+            # can release a prior-tier support and immediately re-fix
+            # the same DOF / re-bind the same element in this stage.
+            # Validators V5 / V6 already gated these at build time.
+            for rem in stage.remove_sp_records:
+                for node_tag in self._resolve_node_target(
+                    rem.pg, rem.nodes,
+                ):
+                    for dof in rem.dofs:
+                        emitter.remove_sp(int(node_tag), int(dof))
+            for rem in stage.remove_element_records:
+                # ``elements=`` from the user is a list of FEM eids
+                # (matching the recorder.Element convention); translate
+                # to OpenSees ops tags at emit time.
+                if rem.pg is not None:
+                    fem_eids_for_emit: "Iterable[int]" = (
+                        int(eid)
+                        for eid, _conn in expand_pg_to_elements(
+                            self.fem, rem.pg,
+                        )
+                    )
+                else:
+                    fem_eids_for_emit = (
+                        int(eid) for eid in (rem.elements or ())
+                    )
+                for fem_eid in fem_eids_for_emit:
+                    ops_tag = fem_eid_to_ops_tag.get(int(fem_eid))
+                    if ops_tag is not None:
+                        emitter.remove_element(int(ops_tag))
+
             # 4. Stage-bound BCs (Phase SSI-2.D PR-B + PR-C): fix +
             # mass + region.  Per-record fan-out via _resolve_node_target
             # (same as the global path).  Records emit in registration
@@ -869,7 +930,11 @@ class BuiltModel:
 
             # 5. domainChange — unified gate: fires if this stage added
             # ANY topology OR any stage-bound BC OR any stage-bound
-            # constraint.  Single barrier per stage.
+            # constraint.  Phase SSI-2.E widens the gate to include
+            # ``s.remove_sp`` / ``s.remove_element`` removals: they
+            # too mutate the Domain's SP / element set and therefore
+            # need the renumbered DOF map rebuild before the stage's
+            # analysis chain binds.  Single barrier per stage.
             if (
                 owned_nodes
                 or owned_specs
@@ -877,6 +942,8 @@ class BuiltModel:
                 or stage.mass_records
                 or stage.region_records
                 or stage.stage_constraint_records
+                or stage.remove_sp_records
+                or stage.remove_element_records
             ):
                 emitter.domain_change()
 
@@ -915,6 +982,14 @@ class BuiltModel:
                     tags=tags,
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
+
+            # Phase SSI-2.E: pre-analyze reset, if requested.  Emits
+            # ``reset`` between the recorder declarations and the
+            # analyze loop; wipes the Domain back to the last
+            # ``setTime`` call.  Rare; kept for parity with the
+            # OpenSees surface.
+            if stage.pre_analyze_reset:
+                emitter.reset()
 
             # 9. Analyze loop (auto-wraps with hook dispatcher calls).
             emitter.analyze(steps=stage.n_increments, dt=stage.dt)
@@ -980,20 +1055,34 @@ class BuiltModel:
         # Phase SSI-2.C: compute stage ownership for partitioned + staged.
         element_owner_stage: dict[int, int] = {}
         node_owner_stage: dict[int, int] = {}
+        # Phase SSI-2.E: see ``_emit_flat`` for the pre-allocate
+        # rationale.  Same shape under MP — ``allocate_element_tags`` is
+        # called once globally and the per-rank fan-out reads back tags
+        # from the resulting plan.
+        early_element_plan: "list[tuple[Element, list[tuple[int, tuple[int, ...], int]]]] | None" = None
+        early_fem_eid_to_ops_tag: dict[int, int] | None = None
         if staged:
             element_owner_stage, node_owner_stage = compute_stage_ownership(
                 self.stage_records, elements, self.fem,
             )
-            # Phase SSI-2.D: run BC ownership-tier validators (H1 /
-            # V1 / V2 / V3 / V4).  Previously omitted on the
-            # partitioned path — the flat path validated at
-            # :meth:`_emit_flat` but the equivalent check on the
-            # partitioned path was missing, so a global ``fix`` on a
-            # stage-bound node would slip through under MP and crash
-            # OpenSees at parse time.  Same call as the flat path.
+            early_element_plan = allocate_element_tags(elements, self.fem, tags)
+            early_fem_eid_to_ops_tag = {
+                eid: ele_tag
+                for _, sub in early_element_plan
+                for eid, _conn, ele_tag in sub
+            }
+            # Phase SSI-2.D + SSI-2.E: run BC ownership-tier validators
+            # (H1 / V1 / V2 / V3 / V4 / V5 / V6).  Previously omitted
+            # on the partitioned path for H1-V4 — the flat path
+            # validated at :meth:`_emit_flat` but the equivalent check
+            # on the partitioned path was missing, so a global ``fix``
+            # on a stage-bound node would slip through under MP and
+            # crash OpenSees at parse time.  Same call as the flat
+            # path; V5 + V6 cover the SSI-2.E removal verbs.
             self._run_staged_bc_validators(
                 node_owner_stage,
                 element_owner_stage,
+                fem_eid_to_ops_tag=early_fem_eid_to_ops_tag,
             )
 
         partitions = list(self.fem.partitions)
@@ -1029,15 +1118,23 @@ class BuiltModel:
         # tags up rather than re-allocating, so cross-rank tag identity
         # holds for every element (the rank-K block uses the same
         # element tag as the owning rank's block).
-        element_plan = allocate_element_tags(elements, self.fem, tags)
-        # Global fem-eid → ops-tag map; used by the initial_stress
-        # per-rank ``addToParameter`` fan-out to translate the user's
-        # FEM element selection into OpenSees element tags (Phase
-        # SSI-1).
-        fem_eid_to_ops_tag: dict[int, int] = {}
-        for _, sub in element_plan:
-            for eid, _conn, ele_tag in sub:
-                fem_eid_to_ops_tag[int(eid)] = int(ele_tag)
+        # Phase SSI-2.E: in the staged case the allocation already
+        # happened earlier in this method (so V6 could resolve
+        # ``s.remove_element`` explicit ``elements=`` targets); reuse
+        # the prior plan.
+        if early_element_plan is not None:
+            element_plan = early_element_plan
+            fem_eid_to_ops_tag = early_fem_eid_to_ops_tag  # type: ignore[assignment]
+        else:
+            element_plan = allocate_element_tags(elements, self.fem, tags)
+            # Global fem-eid → ops-tag map; used by the initial_stress
+            # per-rank ``addToParameter`` fan-out to translate the user's
+            # FEM element selection into OpenSees element tags (Phase
+            # SSI-1).
+            fem_eid_to_ops_tag = {}
+            for _, sub in element_plan:
+                for eid, _conn, ele_tag in sub:
+                    fem_eid_to_ops_tag[int(eid)] = int(ele_tag)
 
         # Initial stress — global side (parameter declarations + proc +
         # lappend) emits ONCE outside any ``partition_open`` block.
@@ -1349,6 +1446,14 @@ class BuiltModel:
         for stage_idx, stage in enumerate(self.stage_records):
             emitter.stage_open(stage.name)
 
+            # Phase SSI-2.E: set_time + set_creep emit GLOBALLY right
+            # after stage_open (outside any partition_open block —
+            # OpenSeesMP executes them locally on every rank).
+            if stage.set_time is not None:
+                emitter.set_time(float(stage.set_time))
+            if stage.set_creep_on is not None:
+                emitter.set_creep(bool(stage.set_creep_on))
+
             owned_nodes_this_stage = stage_owned_nodes.get(stage_idx, set())
             owned_specs_this_stage = stage_owned_specs.get(stage_idx, [])
             has_activation = bool(
@@ -1359,6 +1464,11 @@ class BuiltModel:
                 or stage.mass_records
                 or stage.region_records
                 or stage.stage_constraint_records
+            )
+            # Phase SSI-2.E: removals contribute to the unified
+            # domain_change gate and per-rank empty-bracket-skip logic.
+            has_removals = bool(
+                stage.remove_sp_records or stage.remove_element_records
             )
 
             # Phase SSI-2.D PR-B + PR-C: pre-resolve stage-bound BC
@@ -1391,12 +1501,48 @@ class BuiltModel:
             # stage-1's tags.
             stage_region_tag_cache: dict[str, int] = {}
 
+            # Phase SSI-2.E: pre-resolve removal targets ONCE per stage
+            # (rank-independent), then filter per rank.  Same shape as
+            # fix_targets / mass_targets above.
+            remove_sp_targets: "list[tuple[int, int]]" = []
+            for rem in stage.remove_sp_records:
+                for nid in self._resolve_node_target(rem.pg, rem.nodes):
+                    for dof in rem.dofs:
+                        remove_sp_targets.append((int(nid), int(dof)))
+            remove_element_targets: "list[int]" = []
+            for rem in stage.remove_element_records:
+                # ``elements=`` from the user is a list of FEM eids
+                # (matching the recorder.Element convention); translate
+                # to OpenSees ops tags at emit time.
+                if rem.pg is not None:
+                    fem_eid_iter: "Iterable[int]" = (
+                        int(eid)
+                        for eid, _conn in expand_pg_to_elements(
+                            self.fem, rem.pg,
+                        )
+                    )
+                else:
+                    fem_eid_iter = (
+                        int(eid) for eid in (rem.elements or ())
+                    )
+                for fem_eid in fem_eid_iter:
+                    ops_tag = fem_eid_to_ops_tag.get(int(fem_eid))
+                    if ops_tag is not None:
+                        remove_element_targets.append(int(ops_tag))
+            # Build a fem_eid lookup for explicit ops_tag → fem_eid
+            # mapping (needed for per-rank routing of remove_element).
+            ops_tag_to_fem_eid: dict[int, int] = {
+                int(v): int(k)
+                for k, v in fem_eid_to_ops_tag.items()
+            }
+
             # 2. Per-rank topology + BC emit.  Unified gate (Phase
             # SSI-2.D): open the rank's bracket if it has ANY content
-            # (owned nodes, owned elements, or owned BCs).  Empty-
-            # bracket ranks are skipped so the Py emitter never
+            # (owned nodes, owned elements, or owned BCs).  Phase
+            # SSI-2.E widens with removals (remove_sp / remove_element).
+            # Empty-bracket ranks are skipped so the Py emitter never
             # produces an empty ``if getPID() == K:`` block.
-            if has_activation or has_bcs:
+            if has_activation or has_bcs or has_removals:
                 for rank, part in enumerate(partitions):
                     rank_owned = {int(n) for n in part.node_ids}
                     rank_stage_nodes = sorted(
@@ -1418,12 +1564,29 @@ class BuiltModel:
                         for _spec, sub in owned_specs_this_stage
                         for eid, _conn, _tag in sub
                     )
+                    # Phase SSI-2.E: per-rank removal filtering.
+                    # remove_sp replicates on every rank that has the
+                    # node (mirrors fix's INV-4 fan-out).  remove_element
+                    # fires only on the rank that owns the element
+                    # (single owner per fem_eid).
+                    rank_remove_sp = [
+                        (nid, dof) for nid, dof in remove_sp_targets
+                        if nid in rank_owned
+                    ]
+                    rank_remove_element = [
+                        tag for tag in remove_element_targets
+                        if element_owner.get(
+                            ops_tag_to_fem_eid.get(tag, -1)
+                        ) == rank
+                    ]
                     rank_has_content = bool(
                         rank_stage_nodes
                         or rank_has_elements
                         or rank_fix
                         or rank_mass
                         or rank_has_region_members
+                        or rank_remove_sp
+                        or rank_remove_element
                     )
                     if not rank_has_content:
                         continue
@@ -1460,6 +1623,17 @@ class BuiltModel:
                                 partition_rank=rank,
                                 element_owner=element_owner,
                             )
+                        # Phase SSI-2.E: per-rank removals emit BEFORE
+                        # new BCs so a stage can release a prior-tier
+                        # support and immediately re-fix in the same
+                        # stage.  remove_sp replicates on every rank
+                        # that has the node (INV-4 fan-out, mirrors
+                        # fix); remove_element fires only on the rank
+                        # owning the element.
+                        for nid, dof in rank_remove_sp:
+                            emitter.remove_sp(nid, dof)
+                        for ops_tag in rank_remove_element:
+                            emitter.remove_element(ops_tag)
                         # Phase SSI-2.D PR-B + PR-C: per-rank stage-
                         # bound BCs (fix + mass + region).  Targets
                         # pre-resolved above; per-rank filter via
@@ -1545,6 +1719,11 @@ class BuiltModel:
                     fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
+            # Phase SSI-2.E: pre-analyze reset (global; emits ``reset``
+            # outside any partition block — each rank applies locally).
+            if stage.pre_analyze_reset:
+                emitter.reset()
+
             # 7. Analyze loop (auto-wraps with hook dispatcher calls).
             emitter.analyze(steps=stage.n_increments, dt=stage.dt)
 
@@ -1559,6 +1738,8 @@ class BuiltModel:
         self,
         node_owner_stage: "dict[int, int]",
         element_owner_stage: "dict[int, int] | None" = None,
+        *,
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
     ) -> None:
         """Run every BC-tier validator in order; raise on the first
         offender batch.
@@ -1574,6 +1755,10 @@ class BuiltModel:
           (Phase SSI-2.D, PR-A).
         - **V2** — duplicate ``(node, DOF)`` fix or duplicate ``node``
           mass across global + per-stage tiers (Phase SSI-2.D, PR-A).
+          Phase SSI-2.E: subtracts stage-bound ``s.remove_sp``
+          targets from the fix alive set (atomic-replace pattern);
+          ``mass`` records with ``overwrite=True`` bypass the
+          duplicate-mass refusal.
         - **V3** — region ``name=`` collision across scopes (Phase
           SSI-2.D, PR-A).
         - **V4** — stage N's recorder targets a node owned by stage
@@ -1582,11 +1767,25 @@ class BuiltModel:
           the topology that exists at that point; a recorder
           referencing not-yet-emitted topology would crash OpenSees
           at parse time.
+        - **V5** — stage N's ``s.remove_sp`` targets an SP that is
+          not alive in any earlier scope at this point (Phase SSI-2.E).
+          An SP is "alive" if declared in the global ``apeSees.fix``
+          pool or in a strictly-earlier stage's ``s.fix`` pool AND
+          not already removed by an earlier stage.  Same-stage
+          ``s.fix`` does NOT count — fix emits AFTER remove_sp in
+          the same stage's block.
+        - **V6** — stage N's ``s.remove_element`` targets an element
+          that is not alive at this point (Phase SSI-2.E).  An
+          element is alive if globally emitted OR activated by this
+          stage / a strictly-earlier stage AND not already removed.
 
         ``element_owner_stage`` is optional only for backwards-
         compatibility with the PR-A signature; callers that exercise
         recorder validation must supply it (both
         :meth:`_emit_flat` and :meth:`_emit_partitioned` do).
+        ``fem_eid_to_ops_tag`` is required for V6 to validate explicit
+        ``elements=`` targets against the live tag map; when None,
+        V6 falls back to PG-only validation.
         """
         self._validate_no_stage_bound_node_targets(node_owner_stage)
         self._validate_stage_bound_node_targets(node_owner_stage)
@@ -1595,6 +1794,11 @@ class BuiltModel:
         self._validate_stage_bound_recorder_targets(
             node_owner_stage,
             element_owner_stage or {},
+        )
+        self._validate_remove_sp_targets()
+        self._validate_remove_element_targets(
+            element_owner_stage or {},
+            fem_eid_to_ops_tag or {},
         )
 
     # -- Ownership-tier helpers (PR-A: shared by H1 + V1) -----------------
@@ -1840,6 +2044,14 @@ class BuiltModel:
                 for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                     prior = mass_owner.get(int(node_tag))
                     if prior is not None:
+                        # Phase SSI-2.E: overwrite=True opts out of V2.
+                        # The user is acknowledging the OpenSees setMass
+                        # overwrite is intentional.  Update the owner so a
+                        # subsequent record on the same node still gets
+                        # checked against THIS one.
+                        if rec.overwrite:
+                            mass_owner[int(node_tag)] = tier
+                            continue
                         offenders.append(
                             f"  • mass on node {node_tag} "
                             f"declared in {prior!r} AND in {tier!r}"
@@ -1847,10 +2059,24 @@ class BuiltModel:
                     else:
                         mass_owner[int(node_tag)] = tier
 
+        def _scan_remove_sp(records: "Iterable[SPRemovalRecord]") -> None:
+            """Phase SSI-2.E: a stage-bound s.remove_sp invalidates the
+            prior alive (node, DOF) registration so a same-stage
+            s.fix(...) on that target doesn't trip V2.  Removal emits
+            BEFORE fix within a stage block, so the ordering is
+            consistent with the actual OpenSees command sequence.
+            """
+            for rec in records:
+                for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                    for dof in rec.dofs:
+                        fix_owner.pop((int(node_tag), int(dof)), None)
+
         _scan_fix(self.fix_records, "global pool")
         _scan_mass(self.mass_records, "global pool")
         for stage in self.stage_records:
             tier = f"stage {stage.name!r}"
+            # Same-stage emission order: removals BEFORE new fix.
+            _scan_remove_sp(stage.remove_sp_records)
             _scan_fix(stage.fix_records, tier)
             _scan_mass(stage.mass_records, tier)
         if offenders:
@@ -2091,6 +2317,206 @@ class BuiltModel:
             "nodes/elements, crashing OpenSees at parse time.  Move "
             "the recorder onto a later-stage ``s.recorder(...)`` "
             "binding, or use globally-emitted targets only."
+            "\n\n" + "\n\n".join(chunks)
+        )
+
+    # -- V5 / V6 — Phase SSI-2.E removal-target validators ---------------
+
+    def _validate_remove_sp_targets(self) -> None:
+        """V5: every ``s.remove_sp`` target must reference an SP that
+        is alive at the point where the ``remove sp`` line emits.
+
+        An SP is "alive" at the start of stage N if:
+
+        * declared in the global ``apeSees.fix`` pool, OR
+        * declared in a strictly-earlier stage's ``s.fix`` pool,
+
+        AND it was not removed by a strictly-earlier stage's
+        ``s.remove_sp``.  Same-stage ``s.fix`` does NOT count — fix
+        emits AFTER remove_sp in the same stage's block, so the SP
+        does not yet exist when remove_sp parses.
+
+        Within a single stage's ``remove_sp_records`` list, the same
+        ``(node, dof)`` may not appear twice (the second emit would
+        target an already-removed SP).
+        """
+        if not self.stage_records:
+            return
+        # (node, DOF_1based) currently in the OpenSees Domain as an SP.
+        alive: dict[tuple[int, int], str] = {}
+
+        # Seed with the global pool's SPs (fix dofs with flag==1).
+        for rec in self.fix_records:
+            for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                for dof_idx, flag in enumerate(rec.dofs, start=1):
+                    if flag:
+                        alive[(int(node_tag), dof_idx)] = "global pool"
+
+        offenders_per_stage: "list[tuple[str, list[str]]]" = []
+        for stage in self.stage_records:
+            stage_offenders: list[str] = []
+            for rec in stage.remove_sp_records:
+                for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                    for dof in rec.dofs:
+                        key = (int(node_tag), int(dof))
+                        prior = alive.pop(key, None)
+                        if prior is None:
+                            stage_offenders.append(
+                                f"  • s.remove_sp targets node "
+                                f"{node_tag} DOF {dof} — no active SP "
+                                "at this point (not declared in an "
+                                "earlier scope, or already removed by "
+                                "an earlier stage / earlier record)"
+                            )
+            if stage_offenders:
+                offenders_per_stage.append((stage.name, stage_offenders))
+            # After this stage's removals, its own fix records add to
+            # the alive set so later stages see them.  Same-stage fix
+            # does NOT count toward same-stage removal (see seed
+            # comment above).
+            for rec in stage.fix_records:
+                for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
+                    for dof_idx, flag in enumerate(rec.dofs, start=1):
+                        if flag:
+                            alive[(int(node_tag), dof_idx)] = (
+                                f"stage {stage.name!r}"
+                            )
+        if not offenders_per_stage:
+            return
+        chunks: list[str] = []
+        for stage_name, lines in offenders_per_stage:
+            preview = lines[:10]
+            extra = (
+                f"\n  • ... and {len(lines) - 10} more"
+                if len(lines) > 10 else ""
+            )
+            chunks.append(
+                f"Stage {stage_name!r} s.remove_sp targets:\n"
+                + "\n".join(preview) + extra
+            )
+        raise BridgeError(
+            "Stage-bound s.remove_sp targets an SP that doesn't exist "
+            "at the point of removal — OpenSees ``remove sp`` would "
+            "error at parse time.  Either declare the SP in the "
+            "global ``ops.fix`` pool or in a strictly-earlier stage's "
+            "``s.fix(...)``, or drop the s.remove_sp call.  Same-stage "
+            "``s.fix`` does NOT count: fix emits AFTER remove_sp in "
+            "the same stage block."
+            "\n\n" + "\n\n".join(chunks)
+        )
+
+    def _validate_remove_element_targets(
+        self,
+        element_owner_stage: "dict[int, int]",
+        fem_eid_to_ops_tag: "dict[int, int]",
+    ) -> None:
+        """V6: every ``s.remove_element`` target must reference an
+        element that is alive at the point where the ``remove element``
+        line emits.
+
+        Validates in FEM-eid space (matching the recorder convention —
+        :class:`recorder.Element` also takes ``elements=[fem_eid, ...]``
+        from the user and translates to OpenSees tags at emit time).
+
+        An element is "alive" at the point a stage's removal block
+        emits if it was emitted in an earlier deck position AND not
+        previously removed.  Earlier positions are:
+
+        * the global pre-stage element fan-out (specs NOT in
+          ``element_owner_stage``), OR
+        * a strictly-earlier stage's activation, OR
+        * this same stage's activation (activation emits BEFORE the
+          removal block within the stage).
+
+        Within a single stage's ``remove_element_records`` list, the
+        same FEM eid may not appear twice.
+        """
+        if not self.stage_records:
+            return
+        # fem_eid → tier label currently alive in the Domain.
+        alive_fem: dict[int, str] = {}
+
+        # Build stage_idx → list[fem_eid] for stage-activated elements.
+        stage_activated_fem: dict[int, list[int]] = {}
+        for spec in self.primitives:
+            if not isinstance(spec, Element):
+                continue
+            pg = getattr(spec, "pg", None)
+            if not pg:
+                continue
+            sidx = element_owner_stage.get(id(spec))
+            if sidx is None:
+                # Globally-emitted spec — alive from the start.
+                for fem_eid, _conn in expand_pg_to_elements(self.fem, pg):
+                    # ``fem_eid_to_ops_tag`` is a sanity check the
+                    # element survived tag allocation; the alive set
+                    # itself is keyed by fem_eid.
+                    if int(fem_eid) in fem_eid_to_ops_tag:
+                        alive_fem[int(fem_eid)] = "global pool"
+            else:
+                for fem_eid, _conn in expand_pg_to_elements(self.fem, pg):
+                    if int(fem_eid) in fem_eid_to_ops_tag:
+                        stage_activated_fem.setdefault(sidx, []).append(
+                            int(fem_eid),
+                        )
+
+        offenders_per_stage: "list[tuple[str, list[str]]]" = []
+        for stage_idx, stage in enumerate(self.stage_records):
+            # Stage activation emits BEFORE the removal block in the
+            # same stage, so a stage may remove what it just activated.
+            for fem_eid in stage_activated_fem.get(stage_idx, []):
+                alive_fem[fem_eid] = f"stage {stage.name!r}"
+            stage_offenders: list[str] = []
+            for rec in stage.remove_element_records:
+                fem_eids_to_check: list[int] = []
+                if rec.pg is not None:
+                    try:
+                        for fem_eid, _conn in expand_pg_to_elements(
+                            self.fem, rec.pg,
+                        ):
+                            fem_eids_to_check.append(int(fem_eid))
+                    except BridgeError:
+                        stage_offenders.append(
+                            f"  • s.remove_element pg={rec.pg!r} — "
+                            "physical group not found on the FEM "
+                            "snapshot"
+                        )
+                        continue
+                elif rec.elements is not None:
+                    fem_eids_to_check.extend(int(t) for t in rec.elements)
+                for fem_eid in fem_eids_to_check:
+                    prior = alive_fem.pop(fem_eid, None)
+                    if prior is None:
+                        stage_offenders.append(
+                            f"  • s.remove_element targets FEM eid "
+                            f"{fem_eid} — no active element at this "
+                            "point (not declared in an earlier scope, "
+                            "not activated by this stage or an earlier "
+                            "stage, or already removed by an earlier "
+                            "stage / earlier record)"
+                        )
+            if stage_offenders:
+                offenders_per_stage.append((stage.name, stage_offenders))
+        if not offenders_per_stage:
+            return
+        chunks: list[str] = []
+        for stage_name, lines in offenders_per_stage:
+            preview = lines[:10]
+            extra = (
+                f"\n  • ... and {len(lines) - 10} more"
+                if len(lines) > 10 else ""
+            )
+            chunks.append(
+                f"Stage {stage_name!r} s.remove_element targets:\n"
+                + "\n".join(preview) + extra
+            )
+        raise BridgeError(
+            "Stage-bound s.remove_element targets an element that "
+            "doesn't exist at the point of removal — OpenSees "
+            "``remove element`` would error at runtime.  Either "
+            "declare the element globally / via an earlier stage's "
+            "``s.activate(pgs=...)``, or drop the s.remove_element "
+            "call."
             "\n\n" + "\n\n".join(chunks)
         )
 
@@ -3116,11 +3542,17 @@ class apeSees:
         pg: str | None = None,
         nodes: Iterable[int | Node] | None = None,
         values: tuple[float, ...],
+        overwrite: bool = False,
     ) -> None:
         """Attach lumped nodal mass.
 
         Exactly one of ``pg`` / ``nodes`` must be supplied. ``nodes``
         accepts plain integers or :class:`Node` instances.
+
+        ``overwrite`` (Phase SSI-2.E) opts the record out of validator
+        V2's cross-tier duplicate-mass check.  Rare at the global tier
+        but kept for symmetry with the stage-bound :meth:`_StageBuilder.mass`
+        — see that method for the typical use case.
         """
         if (pg is None) == (nodes is None):
             raise ValueError(
@@ -3129,7 +3561,10 @@ class apeSees:
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
         self._mass_records.append(
-            MassRecord(pg=pg, nodes=nodes_tuple, values=tuple(values)),
+            MassRecord(
+                pg=pg, nodes=nodes_tuple, values=tuple(values),
+                overwrite=bool(overwrite),
+            ),
         )
 
     def initial_stress(
@@ -3998,6 +4433,16 @@ class _StageBuilder:
         # s.equal_dof / s.rigid_link / s.tie / s.tied_contact /
         # s.kinematic_coupling / s.node_to_surface.
         "_stage_constraint_records",
+        # Phase SSI-2.E: between-stage Domain mutators.  Removal pools
+        # emit BEFORE the stage's new fix / mass / region lines; the
+        # three scalar fields emit at well-defined slots (set_time +
+        # set_creep right after stage_open; pre_analyze_reset right
+        # before analyze).
+        "_remove_sp_records",
+        "_remove_element_records",
+        "_set_time",
+        "_set_creep_on",
+        "_pre_analyze_reset",
         "_test", "_algorithm", "_integrator",
         "_constraints", "_numberer", "_system", "_analysis",
         "_n_increments", "_dt",
@@ -4019,6 +4464,12 @@ class _StageBuilder:
         # ConstraintRecord instances.  Emit-time dispatches by
         # isinstance into the six per-kind emit helpers.
         self._stage_constraint_records: list["ConstraintRecord"] = []
+        # Phase SSI-2.E: between-stage Domain mutators.
+        self._remove_sp_records: list[SPRemovalRecord] = []
+        self._remove_element_records: list[ElementRemovalRecord] = []
+        self._set_time: float | None = None
+        self._set_creep_on: bool | None = None
+        self._pre_analyze_reset: bool = False
         self._test: Primitive | None = None
         self._algorithm: Primitive | None = None
         self._integrator: Primitive | None = None
@@ -4081,6 +4532,11 @@ class _StageBuilder:
             region_records=tuple(self._region_records),
             recorder_specs=tuple(self._recorder_specs),
             stage_constraint_records=tuple(self._stage_constraint_records),
+            remove_sp_records=tuple(self._remove_sp_records),
+            remove_element_records=tuple(self._remove_element_records),
+            set_time=self._set_time,
+            set_creep_on=self._set_creep_on,
+            pre_analyze_reset=self._pre_analyze_reset,
         )
         self._bridge._stage_records.append(record)
         return False
@@ -4475,18 +4931,27 @@ class _StageBuilder:
         pg: str | None = None,
         nodes: "Iterable[int | Node] | None" = None,
         values: tuple[float, ...],
+        overwrite: bool = False,
     ) -> None:
         """Attach lumped nodal mass bound to this stage.
 
-        Signature mirrors :meth:`apeSees.mass` verbatim.  Stage-bound
-        mass lines emit alongside stage-bound fix lines (see
-        :meth:`fix` for the emit-position rationale).
+        Signature mirrors :meth:`apeSees.mass` verbatim, plus the
+        Phase SSI-2.E ``overwrite=`` flag.  Stage-bound mass lines
+        emit alongside stage-bound fix lines (see :meth:`fix` for the
+        emit-position rationale).
 
         OpenSees ``setMass`` silently OVERWRITES a node's mass on
         repeated calls.  Validator V2 (Phase SSI-2.D PR-A) refuses
         the same node receiving mass in more than one tier (global +
         any stage, or stage A + stage B) at build time so the
         physics change is not silent.
+
+        Pass ``overwrite=True`` to opt out of V2 for this record only —
+        the user is acknowledging the OpenSees ``setMass`` overwrite is
+        intentional (e.g. swapping a temporary construction mass for a
+        permanent one between stages).  The emitted ``mass`` line is
+        byte-identical with or without the flag; the difference is
+        purely a build-time validator-bypass marker.
 
         Parameters
         ----------
@@ -4498,6 +4963,9 @@ class _StageBuilder:
             XOR with ``pg``.
         values
             ``ndf``-length tuple of mass values per DOF.
+        overwrite
+            When ``True``, V2 skips the cross-tier duplicate-mass
+            check for this record.  Defaults to ``False`` (V2 active).
 
         Raises
         ------
@@ -4511,8 +4979,171 @@ class _StageBuilder:
             )
         nodes_tuple = _iter_tags(nodes) if nodes is not None else None
         self._mass_records.append(
-            MassRecord(pg=pg, nodes=nodes_tuple, values=tuple(values)),
+            MassRecord(
+                pg=pg, nodes=nodes_tuple, values=tuple(values),
+                overwrite=bool(overwrite),
+            ),
         )
+
+    # -- Phase SSI-2.E: between-stage Domain mutators --------------------
+
+    def remove_sp(
+        self,
+        *,
+        pg: str | None = None,
+        nodes: "Iterable[int | Node] | None" = None,
+        dofs: tuple[int, ...],
+    ) -> None:
+        """Release prior-tier SP constraints on a set of nodes / DOFs
+        within this stage (Phase SSI-2.E).
+
+        Stage-bound only.  The emitted ``remove sp $node $dof`` lines
+        fire BEFORE the stage's new ``fix`` / ``mass`` / ``region``
+        lines, so a stage can release a prior-stage support and then
+        re-fix the same DOF with a new value in the same stage block.
+
+        Validator V5 (Phase SSI-2.E) refuses targets whose SP was not
+        declared in an earlier scope (global pool OR strictly-earlier
+        stage's ``s.fix`` pool), or that was already removed by an
+        earlier stage's ``s.remove_sp``.
+
+        Parameters
+        ----------
+        pg
+            Physical group whose nodes have SPs released.  XOR with
+            ``nodes``.
+        nodes
+            Explicit list of node tags (or :class:`Node` instances).
+            XOR with ``pg``.
+        dofs
+            DOF indices to release per node.  Per OpenSees convention,
+            DOFs are 1-based — ``(1, 2, 3)`` releases the first three
+            DOFs at every resolved node.  Unlike :meth:`fix`, these
+            are DOF *indices* (one ``remove sp`` line per index), not
+            a fixity flag vector.
+
+        Raises
+        ------
+        ValueError
+            If both or neither of ``pg`` / ``nodes`` is supplied, or
+            if ``dofs`` is empty.
+        """
+        if (pg is None) == (nodes is None):
+            raise ValueError(
+                f"Stage {self._name!r}.remove_sp: supply exactly one "
+                f"of pg= or nodes= (got pg={pg!r}, nodes={nodes!r})."
+            )
+        dofs_tuple = tuple(int(d) for d in dofs)
+        if not dofs_tuple:
+            raise ValueError(
+                f"Stage {self._name!r}.remove_sp: dofs= must contain "
+                "at least one DOF index."
+            )
+        nodes_tuple = _iter_tags(nodes) if nodes is not None else None
+        self._remove_sp_records.append(
+            SPRemovalRecord(
+                pg=pg, nodes=nodes_tuple, dofs=dofs_tuple,
+            ),
+        )
+
+    def remove_element(
+        self,
+        *,
+        pg: str | None = None,
+        elements: "Iterable[int] | None" = None,
+    ) -> None:
+        """Drop elements from the Domain mid-analysis within this stage
+        (Phase SSI-2.E).
+
+        Stage-bound only.  The emitted ``remove element $tag`` lines
+        fire BEFORE the stage's new ``fix`` / ``mass`` / ``region`` /
+        MP-constraint lines so the same stage can release legacy
+        elements and immediately bind new BCs to the survivors.
+
+        Element nodes are NOT removed — they remain in the Domain and
+        may continue to carry SP / mass / load declarations from other
+        tiers.  Use :meth:`remove_sp` separately if you also want to
+        drop SP constraints from those orphaned nodes.
+
+        Validator V6 (Phase SSI-2.E) refuses targets that were not
+        previously emitted in an earlier scope (globally emitted OR
+        activated by a strictly-earlier stage's ``s.activate(pgs=)``),
+        or that were already removed by an earlier stage.
+
+        Parameters
+        ----------
+        pg
+            Physical group whose elements are removed.  XOR with
+            ``elements``.
+        elements
+            Explicit list of FEM element ids (NOT OpenSees ops tags)
+            — matches the :class:`recorder.Element` convention.  The
+            bridge translates FEM eids to OpenSees ops tags via the
+            pre-allocated ``fem_eid_to_ops_tag`` map at emit time, so
+            the emitted ``remove element $tag`` line carries the
+            OpenSees tag the rest of the deck uses.  XOR with ``pg``.
+
+        Raises
+        ------
+        ValueError
+            If both or neither of ``pg`` / ``elements`` is supplied.
+        """
+        if (pg is None) == (elements is None):
+            raise ValueError(
+                f"Stage {self._name!r}.remove_element: supply exactly "
+                f"one of pg= or elements= (got pg={pg!r}, "
+                f"elements={elements!r})."
+            )
+        elements_tuple = (
+            None if elements is None else tuple(int(e) for e in elements)
+        )
+        self._remove_element_records.append(
+            ElementRemovalRecord(pg=pg, elements=elements_tuple),
+        )
+
+    def set_time(self, t: float) -> None:
+        """Override the stage's starting pseudo-time (Phase SSI-2.E).
+
+        Emits ``setTime $t`` at the top of the stage block — right
+        after ``stage_open``.  Overrides the ``loadConst -time 0.0``
+        reset that the previous stage's ``stage_close`` emitted.
+        Useful when the dynamic clock of a transient stage should
+        begin at a non-zero value (e.g. continuing simulated time
+        across multi-record ground motion runs).
+
+        Idempotent at the call-site level: a second ``s.set_time(...)``
+        in the same stage overwrites the prior value (only the last
+        wins).  Per OpenSees semantics, ``setTime`` does NOT reset
+        committed state — node displacements / element forces survive.
+        """
+        self._set_time = float(t)
+
+    def set_creep(self, on: bool) -> None:
+        """Toggle creep for time-dependent concrete materials in this
+        stage (Phase SSI-2.E).
+
+        Emits ``setCreep 1`` or ``setCreep 0`` near the top of the
+        stage block (after ``set_time``).  Sticky on the OpenSees side
+        — apeSees does NOT auto-reset between stages.  Re-assert the
+        desired state per stage if you need it scoped.
+
+        A second call in the same stage overwrites the prior value.
+        """
+        self._set_creep_on = bool(on)
+
+    def reset(self) -> None:
+        """Request a ``reset`` command right before this stage's
+        ``analyze`` (Phase SSI-2.E).
+
+        Emits the bare OpenSees ``reset`` command, which wipes the
+        Domain state back to the last ``setTime`` call.  Rarely
+        needed — kept for parity with the OpenSees surface so unusual
+        workflows don't have to drop to raw Tcl.
+
+        Idempotent: multiple ``s.reset()`` calls on the same stage
+        produce a single emitted ``reset`` line.
+        """
+        self._pre_analyze_reset = True
 
     def region(
         self,
