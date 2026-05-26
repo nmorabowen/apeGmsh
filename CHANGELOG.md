@@ -1,6 +1,40 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036)
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix
+
+### ADDED — higher-order line broker split (ADR 0037, #349)
+
+- **`g.mesh.editing.split_higher_order_lines(physical_group, *, policy, dim=1)`** — broker-side resolution to the 2nd-order-continuum + frame hard-stop. When a quadratic continuum part (shell, tet10, etc.) propagates Gmsh's global mesh order to every line entity in the model, frame PGs end up with 3-node Line3 elements that OpenSees beam-columns refuse at `_check_two_nodes`. The new verb demotes them in place to 2-node Line2s before the bridge ever sees them.
+
+  Three policies:
+
+  - **`"forbid"`** — raise `RuntimeError` if any Line3 present, naming the PG and count. Use as a build-time invariant lock when a PG must remain 1st-order through meshing.
+  - **`"split"`** — for each Line3 `(i, j, mid)`, remove the Line3 from its dim=1 entity via `gmsh.model.mesh.removeElements` and add two Line2 pairs `(i, mid)` + `(mid, j)` to the **same** entity via `gmsh.model.mesh.addElements` with type=1. The mid-side node, formerly a Gmsh side-node carrying no FE DOFs, becomes an endpoint of two Line2 elements and acquires DOFs in the OpenSees domain. PG membership tracks at entity level (no rebinding); no new gmsh nodes are minted.
+  - **`"constrain"`** — RESERVED, raises `NotImplementedError`. The kinematically clean answer (mid-node linearly interpolated from i and j) requires an OpenSees primitive that doesn't exist today: `ASDEmbeddedNodeElement` accepts exactly 3 or 4 retained nodes per ADR 0036, so a 2-master Line2 pair can't be expressed. Gated on upstream OpenSees work on the same future track as ADR 0036's HostProjector RFC.
+
+- **Sequencing.** Call **after** `g.mesh.generation.generate(...)`, **before** `g.mesh.queries.get_fem_data(...)` and `g.mesh.partitioning.partition(...)`. Never inside a stage block — the mesh edit is global and must complete before the bridge builds.
+
+- **Concentrated-plasticity trap (documented, not enforced).** `policy="split"` on a PG that hosts a `forceBeamColumn` / `dispBeamColumn` with `HingeRadau` / `HingeRadauTwo` / `HingeMidpoint` / `HingeEndpoint` integration places the calibrated end-region hinges in the wrong locations (each sub-element inherits the parent rule → four hinges per parent at the wrong stations). The docstring and ADR 0037 §Consequences flag this; runtime bridge-side detection deferred until it bites.
+
+- **`_check_two_nodes` sharpened.** The bridge guard at [`opensees/element/beam_column.py`](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/element/beam_column.py) gains explicit 3-node and 4-node branches that name the new verb in the error message. Per ADR 0037 INV-1: this is a *friendlier loud-fail message*, not bridge awareness of higher-order topology — the bridge still refuses to emit a beam with three nodes; it just tells the user where to go.
+
+- **`tests/test_mesh_editing_split_higher_order_lines.py`** locks the new invariants: policy dispatch, `dim` guard, unknown-PG `KeyError`, empty-iterable `ValueError`, `policy="forbid"` raise message + Line2 no-op, `policy="split"` count + PG membership + mid-node preservation + Line2 connectivity assertion (the load-bearing invariant: `(i, mid)` + `(mid, j)` pairs), idempotency on Line2-only PG, iterable input, multi-PG split, mixed-order-per-entity surgery (the persistent record of the one-off gmsh spike), and end-to-end through the bridge's `elasticBeamColumn` fan-out.
+
+- **No schema bump anywhere.** Per ADR 0037 INV-3: bridge surface (`/opensees/*` zones, `element_meta`, `tag_recorder`, transform fan-out) is untouched; the FEMData snapshot is consistent topology after split (no parallel "macro-origin" state).
+
+- **Deferred** (ADR 0037 §Future work): `policy="constrain"` (gated on upstream OpenSees primitive); `dim=2` / Line4 cubic edges (additive once needed); bridge-time concentrated-plasticity enforcement.
+
+### FIXED — RecorderDeclaration element fan-out resolves FEM eids to ops_tags (#348)
+
+- **`ops.recorder.declare(elements=...)` / `gauss=...` / `line_stations=...`** now translates FEM eids through the bridge's `fem_eid_to_ops_tag` map before writing `-ele` arg lists. Previously the RecorderDeclaration emit path (`_emit_recorder_declaration` → `_emit_element_level_record` → `_resolve_element_targets` in [`opensees/_internal/build.py`](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/_internal/build.py)) passed raw FEM eids straight into `-ele`, silently targeting the wrong OpenSees tags whenever any `ops.element.X(pg=...)` spec consumed an allocator slot in `_register` (which is always — `_kind_of` groups specs and fan-out instances under the same `"element"` kind).
+
+- **Consistency restored.** The typed-`Element` recorder path ([`opensees/recorder.py:286-305`](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/recorder.py)) already had this translation; this fix brings `RecorderDeclaration` to parity. Both routes now resolve identically and raise `BridgeError` when a target eid maps to no ops_tag, with the eid in the message.
+
+- **New `_translate_to_ops_tags` helper** centralizes the translation so the same fail-loud message fires from all three element-recorder emit sites (canonical Element, raw Element, integrationPoints pairing for line_stations).
+
+- **Backward compatible.** Legacy direct callers (no bridge, e.g. unit tests of `materialize()`) pass `fem_eid_to_ops_tag=None` and get raw eids — only the through-bridge emit path applies the translation.
+
+- **12 pre-existing tests updated** in `tests/opensees/integration/test_recorder_declaration_emit.py` (they had asserted the buggy passthrough by targeting FEM eid 1 with no Element primitive registered). Now register an `elasticBeamColumn` via a new `_register_dummy_beam` helper and assert the translated ops_tag (FEM eid 1 → ops_tag 2, because the spec consumes element-kind slot 1). **2 new regression tests**: `test_elements_pg_translates_fem_eids_to_ops_tags` (positive) and `test_elements_missing_eid_raises_bridge_error` (loud-fail).
 
 ### ADDED — Phase SSI-2.E between-stage Domain mutators
 
