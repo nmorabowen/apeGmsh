@@ -664,8 +664,9 @@ def _from_msh(
     from .FEMData import (
         NodeComposite, ElementComposite, MeshInfo, _compute_bandwidth,
     )
+    from .._session import _gmsh_acquire, _gmsh_release
 
-    gmsh.initialize()
+    _gmsh_acquire()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.merge(str(path))
@@ -707,6 +708,6 @@ def _from_msh(
             partitions=partitions or None,
         )
     finally:
-        gmsh.finalize()
+        _gmsh_release()
 
     return cls(nodes=nodes, elements=elements, info=info)

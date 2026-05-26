@@ -19,11 +19,69 @@ Subclasses MUST define ``_COMPOSITES`` as a class-level tuple of
 from __future__ import annotations
 
 import importlib
+import threading
 from typing import ClassVar
 
 import gmsh
 
 from ._optional import MissingOptionalDependency
+
+
+# ----------------------------------------------------------------------
+# gmsh init refcount
+# ----------------------------------------------------------------------
+# gmsh holds a single process-wide runtime: ``gmsh.initialize()`` is
+# idempotent (extra calls log a warning) but ``gmsh.finalize()`` tears
+# the runtime down regardless of who is still using it.  When sessions
+# nest — e.g. a ``Part`` opened inside an ``apeGmsh`` session, or a
+# ``from_msh`` helper that pops its own session inside a larger
+# workflow — the inner ``end()`` would otherwise finalize gmsh out
+# from under the outer session.
+#
+# The module-level refcount below is shared by every ``_SessionBase``
+# subclass and every standalone helper that needs gmsh briefly.  Pair
+# every ``_gmsh_acquire()`` with exactly one ``_gmsh_release()``; the
+# release is the only thing that may call ``gmsh.finalize()``, and
+# only when the refcount returns to zero.
+_GMSH_INIT_LOCK = threading.Lock()
+_GMSH_INIT_COUNT = 0
+
+
+def _gmsh_acquire() -> None:
+    """Increment the gmsh init refcount.
+
+    Calls ``gmsh.initialize()`` exactly once (the first acquire when
+    gmsh is not already initialized).  Subsequent acquires are no-ops
+    on the gmsh runtime.  Safe across threads via the lock; safe
+    across nested sessions via the refcount.  Idempotent on already-
+    initialized gmsh (defensive against external init).
+    """
+    global _GMSH_INIT_COUNT
+    with _GMSH_INIT_LOCK:
+        if _GMSH_INIT_COUNT == 0:
+            if not gmsh.isInitialized():
+                gmsh.initialize()
+        _GMSH_INIT_COUNT += 1
+
+
+def _gmsh_release() -> None:
+    """Decrement the gmsh init refcount.
+
+    Calls ``gmsh.finalize()`` only when the last session releases
+    (refcount hits 0).  Raises ``RuntimeError`` if the refcount
+    underflows — a release without a matching acquire indicates a
+    session-lifecycle bug.
+    """
+    global _GMSH_INIT_COUNT
+    with _GMSH_INIT_LOCK:
+        if _GMSH_INIT_COUNT <= 0:
+            raise RuntimeError(
+                "gmsh release without matching acquire — session lifecycle bug"
+            )
+        _GMSH_INIT_COUNT -= 1
+        if _GMSH_INIT_COUNT == 0:
+            if gmsh.isInitialized():
+                gmsh.finalize()
 
 
 class _SessionBase:
@@ -74,7 +132,7 @@ class _SessionBase:
             )
         if verbose is not None:
             self._verbose = verbose
-        gmsh.initialize()
+        _gmsh_acquire()
         gmsh.model.add(self.name)
         if self._verbose:
             print(f"Gmsh version: {gmsh.__version__}")
@@ -101,7 +159,7 @@ class _SessionBase:
                         f"autosave to {save_to} failed: {exc!r}",
                         stacklevel=2,
                     )
-            gmsh.finalize()
+            _gmsh_release()
             self._active = False
 
     # Context-manager support
