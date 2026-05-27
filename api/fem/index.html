@@ -3777,6 +3777,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#apeGmsh.mesh.FEMData.FEMData.compose_tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        compose_tree
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#apeGmsh.mesh.FEMData.FEMData.with_mass" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5106,6 +5117,17 @@
     <span class="md-ellipsis">
       
         compose
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#apeGmsh.mesh.FEMData.FEMData.compose_tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        compose_tree
       
     </span>
   </a>
@@ -8854,21 +8876,27 @@ parameter contract; <code>max_compose_depth</code> is the only
 <div class="doc doc-object doc-function">
 
 
-<h4 id="apeGmsh.mesh.FEMData.FEMData.with_mass" class="doc doc-heading">
-            <span class="doc doc-object-name doc-function-name">with_mass</span>
+<h4 id="apeGmsh.mesh.FEMData.FEMData.compose_tree" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">compose_tree</span>
 
 
-<a href="#apeGmsh.mesh.FEMData.FEMData.with_mass" class="headerlink" title="Permanent link">&para;</a></h4>
-<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">with_mass</span><span class="p">(</span><span class="n">record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">&#39;FEMData&#39;</span>
+<a href="#apeGmsh.mesh.FEMData.FEMData.compose_tree" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">compose_tree</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="s1">&#39;tuple&#39;</span>
 </span></code></pre></div>
 
     <div class="doc doc-contents ">
 
-        <p>Return a new :class:<code>FEMData</code> with <code>record</code> appended to
-<code>nodes.masses</code>.</p>
-<p>Pure transform.  <code>self</code> is unchanged.  Only
-:class:<code>~apeGmsh._kernel.records._masses.MassRecord</code> is
-accepted; anything else raises <code>TypeError</code>.</p>
+        <p>Derived nested-compose tree view of <code>self.composed_from</code>.</p>
+<p>Reconstructs the nested-compose hierarchy from this FEMData's
+flat <code>composed_from</code> chain (per PR #369's flat-graft
+storage).  Returns a tuple of root
+:class:<code>~apeGmsh.mesh._compose.ComposeTreeNode</code> instances;
+each root carries its :class:<code>ComposeRecord</code> plus any direct
+children parsed from joined labels via the separator-
+alternation rule (depth-1 <code>.</code>, depth-2 <code>/</code>, depth-3
+<code>.</code>, ...).</p>
+<p>Empty tuple when <code>self.composed_from</code> is empty (an
+uncomposed FEMData).</p>
 
 
             <details class="mkdocstrings-source">
@@ -8889,25 +8917,86 @@ accepted; anything else raises <code>TypeError</code>.</p>
 <span class="normal"><a href="#__codelineno-0-1935">1935</a></span>
 <span class="normal"><a href="#__codelineno-0-1936">1936</a></span>
 <span class="normal"><a href="#__codelineno-0-1937">1937</a></span>
-<span class="normal"><a href="#__codelineno-0-1938">1938</a></span>
-<span class="normal"><a href="#__codelineno-0-1939">1939</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1922"><a id="__codelineno-0-1922" name="__codelineno-0-1922"></a><span class="k">def</span><span class="w"> </span><span class="nf">with_mass</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;FEMData&quot;</span><span class="p">:</span>
-</span><span id="__span-0-1923"><a id="__codelineno-0-1923" name="__codelineno-0-1923"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a new :class:`FEMData` with ``record`` appended to</span>
-</span><span id="__span-0-1924"><a id="__codelineno-0-1924" name="__codelineno-0-1924"></a><span class="sd">    ``nodes.masses``.</span>
-</span><span id="__span-0-1925"><a id="__codelineno-0-1925" name="__codelineno-0-1925"></a>
-</span><span id="__span-0-1926"><a id="__codelineno-0-1926" name="__codelineno-0-1926"></a><span class="sd">    Pure transform.  ``self`` is unchanged.  Only</span>
-</span><span id="__span-0-1927"><a id="__codelineno-0-1927" name="__codelineno-0-1927"></a><span class="sd">    :class:`~apeGmsh._kernel.records._masses.MassRecord` is</span>
-</span><span id="__span-0-1928"><a id="__codelineno-0-1928" name="__codelineno-0-1928"></a><span class="sd">    accepted; anything else raises ``TypeError``.</span>
-</span><span id="__span-0-1929"><a id="__codelineno-0-1929" name="__codelineno-0-1929"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1930"><a id="__codelineno-0-1930" name="__codelineno-0-1930"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.._kernel.records._masses</span><span class="w"> </span><span class="kn">import</span> <span class="n">MassRecord</span>
-</span><span id="__span-0-1931"><a id="__codelineno-0-1931" name="__codelineno-0-1931"></a>
-</span><span id="__span-0-1932"><a id="__codelineno-0-1932" name="__codelineno-0-1932"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">record</span><span class="p">,</span> <span class="n">MassRecord</span><span class="p">):</span>
-</span><span id="__span-0-1933"><a id="__codelineno-0-1933" name="__codelineno-0-1933"></a>        <span class="n">new_set</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">_with_record</span><span class="p">(</span><span class="n">record</span><span class="p">)</span>
-</span><span id="__span-0-1934"><a id="__codelineno-0-1934" name="__codelineno-0-1934"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_replaced</span><span class="p">(</span>
-</span><span id="__span-0-1935"><a id="__codelineno-0-1935" name="__codelineno-0-1935"></a>            <span class="n">nodes</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_replaced_nodes</span><span class="p">(</span><span class="n">masses</span><span class="o">=</span><span class="n">new_set</span><span class="p">))</span>
-</span><span id="__span-0-1936"><a id="__codelineno-0-1936" name="__codelineno-0-1936"></a>    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
-</span><span id="__span-0-1937"><a id="__codelineno-0-1937" name="__codelineno-0-1937"></a>        <span class="sa">f</span><span class="s2">&quot;FEMData.with_mass: unsupported record type &quot;</span>
-</span><span id="__span-0-1938"><a id="__codelineno-0-1938" name="__codelineno-0-1938"></a>        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">record</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">!r}</span><span class="s2"> — expected MassRecord.&quot;</span>
-</span><span id="__span-0-1939"><a id="__codelineno-0-1939" name="__codelineno-0-1939"></a>    <span class="p">)</span>
+<span class="normal"><a href="#__codelineno-0-1938">1938</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1922"><a id="__codelineno-0-1922" name="__codelineno-0-1922"></a><span class="k">def</span><span class="w"> </span><span class="nf">compose_tree</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;tuple&quot;</span><span class="p">:</span>
+</span><span id="__span-0-1923"><a id="__codelineno-0-1923" name="__codelineno-0-1923"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Derived nested-compose tree view of ``self.composed_from``.</span>
+</span><span id="__span-0-1924"><a id="__codelineno-0-1924" name="__codelineno-0-1924"></a>
+</span><span id="__span-0-1925"><a id="__codelineno-0-1925" name="__codelineno-0-1925"></a><span class="sd">    Reconstructs the nested-compose hierarchy from this FEMData&#39;s</span>
+</span><span id="__span-0-1926"><a id="__codelineno-0-1926" name="__codelineno-0-1926"></a><span class="sd">    flat ``composed_from`` chain (per PR #369&#39;s flat-graft</span>
+</span><span id="__span-0-1927"><a id="__codelineno-0-1927" name="__codelineno-0-1927"></a><span class="sd">    storage).  Returns a tuple of root</span>
+</span><span id="__span-0-1928"><a id="__codelineno-0-1928" name="__codelineno-0-1928"></a><span class="sd">    :class:`~apeGmsh.mesh._compose.ComposeTreeNode` instances;</span>
+</span><span id="__span-0-1929"><a id="__codelineno-0-1929" name="__codelineno-0-1929"></a><span class="sd">    each root carries its :class:`ComposeRecord` plus any direct</span>
+</span><span id="__span-0-1930"><a id="__codelineno-0-1930" name="__codelineno-0-1930"></a><span class="sd">    children parsed from joined labels via the separator-</span>
+</span><span id="__span-0-1931"><a id="__codelineno-0-1931" name="__codelineno-0-1931"></a><span class="sd">    alternation rule (depth-1 ``.``, depth-2 ``/``, depth-3</span>
+</span><span id="__span-0-1932"><a id="__codelineno-0-1932" name="__codelineno-0-1932"></a><span class="sd">    ``.``, ...).</span>
+</span><span id="__span-0-1933"><a id="__codelineno-0-1933" name="__codelineno-0-1933"></a>
+</span><span id="__span-0-1934"><a id="__codelineno-0-1934" name="__codelineno-0-1934"></a><span class="sd">    Empty tuple when ``self.composed_from`` is empty (an</span>
+</span><span id="__span-0-1935"><a id="__codelineno-0-1935" name="__codelineno-0-1935"></a><span class="sd">    uncomposed FEMData).</span>
+</span><span id="__span-0-1936"><a id="__codelineno-0-1936" name="__codelineno-0-1936"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1937"><a id="__codelineno-0-1937" name="__codelineno-0-1937"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">._compose</span><span class="w"> </span><span class="kn">import</span> <span class="n">_build_compose_tree</span>
+</span><span id="__span-0-1938"><a id="__codelineno-0-1938" name="__codelineno-0-1938"></a>    <span class="k">return</span> <span class="n">_build_compose_tree</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">composed_from</span><span class="p">))</span>
+</span></code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="apeGmsh.mesh.FEMData.FEMData.with_mass" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">with_mass</span>
+
+
+<a href="#apeGmsh.mesh.FEMData.FEMData.with_mass" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="language-python doc-signature highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">with_mass</span><span class="p">(</span><span class="n">record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">&#39;FEMData&#39;</span>
+</span></code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return a new :class:<code>FEMData</code> with <code>record</code> appended to
+<code>nodes.masses</code>.</p>
+<p>Pure transform.  <code>self</code> is unchanged.  Only
+:class:<code>~apeGmsh._kernel.records._masses.MassRecord</code> is
+accepted; anything else raises <code>TypeError</code>.</p>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1940">1940</a></span>
+<span class="normal"><a href="#__codelineno-0-1941">1941</a></span>
+<span class="normal"><a href="#__codelineno-0-1942">1942</a></span>
+<span class="normal"><a href="#__codelineno-0-1943">1943</a></span>
+<span class="normal"><a href="#__codelineno-0-1944">1944</a></span>
+<span class="normal"><a href="#__codelineno-0-1945">1945</a></span>
+<span class="normal"><a href="#__codelineno-0-1946">1946</a></span>
+<span class="normal"><a href="#__codelineno-0-1947">1947</a></span>
+<span class="normal"><a href="#__codelineno-0-1948">1948</a></span>
+<span class="normal"><a href="#__codelineno-0-1949">1949</a></span>
+<span class="normal"><a href="#__codelineno-0-1950">1950</a></span>
+<span class="normal"><a href="#__codelineno-0-1951">1951</a></span>
+<span class="normal"><a href="#__codelineno-0-1952">1952</a></span>
+<span class="normal"><a href="#__codelineno-0-1953">1953</a></span>
+<span class="normal"><a href="#__codelineno-0-1954">1954</a></span>
+<span class="normal"><a href="#__codelineno-0-1955">1955</a></span>
+<span class="normal"><a href="#__codelineno-0-1956">1956</a></span>
+<span class="normal"><a href="#__codelineno-0-1957">1957</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1940"><a id="__codelineno-0-1940" name="__codelineno-0-1940"></a><span class="k">def</span><span class="w"> </span><span class="nf">with_mass</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;FEMData&quot;</span><span class="p">:</span>
+</span><span id="__span-0-1941"><a id="__codelineno-0-1941" name="__codelineno-0-1941"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return a new :class:`FEMData` with ``record`` appended to</span>
+</span><span id="__span-0-1942"><a id="__codelineno-0-1942" name="__codelineno-0-1942"></a><span class="sd">    ``nodes.masses``.</span>
+</span><span id="__span-0-1943"><a id="__codelineno-0-1943" name="__codelineno-0-1943"></a>
+</span><span id="__span-0-1944"><a id="__codelineno-0-1944" name="__codelineno-0-1944"></a><span class="sd">    Pure transform.  ``self`` is unchanged.  Only</span>
+</span><span id="__span-0-1945"><a id="__codelineno-0-1945" name="__codelineno-0-1945"></a><span class="sd">    :class:`~apeGmsh._kernel.records._masses.MassRecord` is</span>
+</span><span id="__span-0-1946"><a id="__codelineno-0-1946" name="__codelineno-0-1946"></a><span class="sd">    accepted; anything else raises ``TypeError``.</span>
+</span><span id="__span-0-1947"><a id="__codelineno-0-1947" name="__codelineno-0-1947"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1948"><a id="__codelineno-0-1948" name="__codelineno-0-1948"></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">.._kernel.records._masses</span><span class="w"> </span><span class="kn">import</span> <span class="n">MassRecord</span>
+</span><span id="__span-0-1949"><a id="__codelineno-0-1949" name="__codelineno-0-1949"></a>
+</span><span id="__span-0-1950"><a id="__codelineno-0-1950" name="__codelineno-0-1950"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">record</span><span class="p">,</span> <span class="n">MassRecord</span><span class="p">):</span>
+</span><span id="__span-0-1951"><a id="__codelineno-0-1951" name="__codelineno-0-1951"></a>        <span class="n">new_set</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span><span class="o">.</span><span class="n">masses</span><span class="o">.</span><span class="n">_with_record</span><span class="p">(</span><span class="n">record</span><span class="p">)</span>
+</span><span id="__span-0-1952"><a id="__codelineno-0-1952" name="__codelineno-0-1952"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_replaced</span><span class="p">(</span>
+</span><span id="__span-0-1953"><a id="__codelineno-0-1953" name="__codelineno-0-1953"></a>            <span class="n">nodes</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_replaced_nodes</span><span class="p">(</span><span class="n">masses</span><span class="o">=</span><span class="n">new_set</span><span class="p">))</span>
+</span><span id="__span-0-1954"><a id="__codelineno-0-1954" name="__codelineno-0-1954"></a>    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+</span><span id="__span-0-1955"><a id="__codelineno-0-1955" name="__codelineno-0-1955"></a>        <span class="sa">f</span><span class="s2">&quot;FEMData.with_mass: unsupported record type &quot;</span>
+</span><span id="__span-0-1956"><a id="__codelineno-0-1956" name="__codelineno-0-1956"></a>        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">record</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">!r}</span><span class="s2"> — expected MassRecord.&quot;</span>
+</span><span id="__span-0-1957"><a id="__codelineno-0-1957" name="__codelineno-0-1957"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
@@ -8936,33 +9025,33 @@ see <code>internal_docs/Results_architecture.md</code> (Phase 9).</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/apeGmsh/mesh/FEMData.py</code></summary>
-              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1941">1941</a></span>
-<span class="normal"><a href="#__codelineno-0-1942">1942</a></span>
-<span class="normal"><a href="#__codelineno-0-1943">1943</a></span>
-<span class="normal"><a href="#__codelineno-0-1944">1944</a></span>
-<span class="normal"><a href="#__codelineno-0-1945">1945</a></span>
-<span class="normal"><a href="#__codelineno-0-1946">1946</a></span>
-<span class="normal"><a href="#__codelineno-0-1947">1947</a></span>
-<span class="normal"><a href="#__codelineno-0-1948">1948</a></span>
-<span class="normal"><a href="#__codelineno-0-1949">1949</a></span>
-<span class="normal"><a href="#__codelineno-0-1950">1950</a></span>
-<span class="normal"><a href="#__codelineno-0-1951">1951</a></span>
-<span class="normal"><a href="#__codelineno-0-1952">1952</a></span>
-<span class="normal"><a href="#__codelineno-0-1953">1953</a></span>
-<span class="normal"><a href="#__codelineno-0-1954">1954</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1941"><a id="__codelineno-0-1941" name="__codelineno-0-1941"></a><span class="k">def</span><span class="w"> </span><span class="nf">viewer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">blocking</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-0-1942"><a id="__codelineno-0-1942" name="__codelineno-0-1942"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Open a non-interactive mesh viewer from this snapshot.</span>
-</span><span id="__span-0-1943"><a id="__codelineno-0-1943" name="__codelineno-0-1943"></a>
-</span><span id="__span-0-1944"><a id="__codelineno-0-1944" name="__codelineno-0-1944"></a><span class="sd">    Currently disabled — the legacy ``Results.from_fem(...).viewer()``</span>
-</span><span id="__span-0-1945"><a id="__codelineno-0-1945" name="__codelineno-0-1945"></a><span class="sd">    path was removed when the Results module was rebuilt. The new</span>
-</span><span id="__span-0-1946"><a id="__codelineno-0-1946" name="__codelineno-0-1946"></a><span class="sd">    flow is being designed as part of the viewer rebuild project;</span>
-</span><span id="__span-0-1947"><a id="__codelineno-0-1947" name="__codelineno-0-1947"></a><span class="sd">    see ``internal_docs/Results_architecture.md`` (Phase 9).</span>
-</span><span id="__span-0-1948"><a id="__codelineno-0-1948" name="__codelineno-0-1948"></a><span class="sd">    &quot;&quot;&quot;</span>
-</span><span id="__span-0-1949"><a id="__codelineno-0-1949" name="__codelineno-0-1949"></a>    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
-</span><span id="__span-0-1950"><a id="__codelineno-0-1950" name="__codelineno-0-1950"></a>        <span class="s2">&quot;fem.viewer() relied on the legacy Results class which has &quot;</span>
-</span><span id="__span-0-1951"><a id="__codelineno-0-1951" name="__codelineno-0-1951"></a>        <span class="s2">&quot;been rebuilt. The replacement is part of the viewer rebuild &quot;</span>
-</span><span id="__span-0-1952"><a id="__codelineno-0-1952" name="__codelineno-0-1952"></a>        <span class="s2">&quot;project (Phase 9 in Results_architecture.md). For mesh-only &quot;</span>
-</span><span id="__span-0-1953"><a id="__codelineno-0-1953" name="__codelineno-0-1953"></a>        <span class="s2">&quot;viewing in the meantime, use g.mesh.viewer() with no args.&quot;</span>
-</span><span id="__span-0-1954"><a id="__codelineno-0-1954" name="__codelineno-0-1954"></a>    <span class="p">)</span>
+              <div class="language-python highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1959">1959</a></span>
+<span class="normal"><a href="#__codelineno-0-1960">1960</a></span>
+<span class="normal"><a href="#__codelineno-0-1961">1961</a></span>
+<span class="normal"><a href="#__codelineno-0-1962">1962</a></span>
+<span class="normal"><a href="#__codelineno-0-1963">1963</a></span>
+<span class="normal"><a href="#__codelineno-0-1964">1964</a></span>
+<span class="normal"><a href="#__codelineno-0-1965">1965</a></span>
+<span class="normal"><a href="#__codelineno-0-1966">1966</a></span>
+<span class="normal"><a href="#__codelineno-0-1967">1967</a></span>
+<span class="normal"><a href="#__codelineno-0-1968">1968</a></span>
+<span class="normal"><a href="#__codelineno-0-1969">1969</a></span>
+<span class="normal"><a href="#__codelineno-0-1970">1970</a></span>
+<span class="normal"><a href="#__codelineno-0-1971">1971</a></span>
+<span class="normal"><a href="#__codelineno-0-1972">1972</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-1959"><a id="__codelineno-0-1959" name="__codelineno-0-1959"></a><span class="k">def</span><span class="w"> </span><span class="nf">viewer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">blocking</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-0-1960"><a id="__codelineno-0-1960" name="__codelineno-0-1960"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Open a non-interactive mesh viewer from this snapshot.</span>
+</span><span id="__span-0-1961"><a id="__codelineno-0-1961" name="__codelineno-0-1961"></a>
+</span><span id="__span-0-1962"><a id="__codelineno-0-1962" name="__codelineno-0-1962"></a><span class="sd">    Currently disabled — the legacy ``Results.from_fem(...).viewer()``</span>
+</span><span id="__span-0-1963"><a id="__codelineno-0-1963" name="__codelineno-0-1963"></a><span class="sd">    path was removed when the Results module was rebuilt. The new</span>
+</span><span id="__span-0-1964"><a id="__codelineno-0-1964" name="__codelineno-0-1964"></a><span class="sd">    flow is being designed as part of the viewer rebuild project;</span>
+</span><span id="__span-0-1965"><a id="__codelineno-0-1965" name="__codelineno-0-1965"></a><span class="sd">    see ``internal_docs/Results_architecture.md`` (Phase 9).</span>
+</span><span id="__span-0-1966"><a id="__codelineno-0-1966" name="__codelineno-0-1966"></a><span class="sd">    &quot;&quot;&quot;</span>
+</span><span id="__span-0-1967"><a id="__codelineno-0-1967" name="__codelineno-0-1967"></a>    <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+</span><span id="__span-0-1968"><a id="__codelineno-0-1968" name="__codelineno-0-1968"></a>        <span class="s2">&quot;fem.viewer() relied on the legacy Results class which has &quot;</span>
+</span><span id="__span-0-1969"><a id="__codelineno-0-1969" name="__codelineno-0-1969"></a>        <span class="s2">&quot;been rebuilt. The replacement is part of the viewer rebuild &quot;</span>
+</span><span id="__span-0-1970"><a id="__codelineno-0-1970" name="__codelineno-0-1970"></a>        <span class="s2">&quot;project (Phase 9 in Results_architecture.md). For mesh-only &quot;</span>
+</span><span id="__span-0-1971"><a id="__codelineno-0-1971" name="__codelineno-0-1971"></a>        <span class="s2">&quot;viewing in the meantime, use g.mesh.viewer() with no args.&quot;</span>
+</span><span id="__span-0-1972"><a id="__codelineno-0-1972" name="__codelineno-0-1972"></a>    <span class="p">)</span>
 </span></code></pre></div></td></tr></table></div>
             </details>
     </div>
