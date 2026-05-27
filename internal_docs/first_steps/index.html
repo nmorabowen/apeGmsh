@@ -7745,14 +7745,16 @@ wrong if you wanted separate materials for each.</p>
   the warning, either adopt them with <code>g.parts.from_model()</code>
   first, or accept that they'll participate in fragmentation but
   not be tracked in the registry.</li>
-<li><strong><code>fragment(cleanup_free=False)</code> is the default.</strong> Pass
-  <code>cleanup_free=True</code> opt-in to drop dim-2 surfaces that don't
-  bound a volume — useful for killing remnants of a cutting plane
-  that extended past your solid. The default preserves all
-  surfaces so shells on top of solids (shell-on-solid coupling)
-  survive the operation. In pure 2D models the cleanup auto-skips
-  even when requested (otherwise it would kill every surface in
-  sight).</li>
+<li><strong><code>fragment(cleanup_free=True)</code> is the default.</strong> The topology
+  sweep reaps dim-2 surfaces that don't bound a volume AND aren't
+  user-intentional (not in <code>model._metadata</code>, no label).  Shells
+  you explicitly created via <code>add_rectangle</code> / <code>add_plane_surface</code>
+  / <code>add_cutting_plane</code> are protected (their metadata entry marks
+  them intentional), so shell-on-solid coupling survives the
+  operation.  Pass <code>cleanup_free=False</code> only when you need OCC's
+  raw output (no sweep, no stale-metadata reap).  In pure 2D
+  models the cleanup auto-skips (no volumes means every surface
+  would look "free").</li>
 </ul>
 <hr />
 <h2 id="lesson-8-cad-import-principles-and-pitfalls">Lesson 8 — CAD import: principles and pitfalls<a class="headerlink" href="#lesson-8-cad-import-principles-and-pitfalls" title="Permanent link">&para;</a></h2>
