@@ -6,9 +6,12 @@ These tests pin the two bugs fixed by ``feat/shell-solid-fragment``:
 1. ``parts.fragment_all`` now includes lower-dim entities (shells) in
    the OCC fragment call so they fragment conformally against solids
    instead of being silently excluded.
-2. ``boolean.fragment(cleanup_free=False)`` (the new default) no
-   longer silently deletes free shell surfaces sitting on a volume's
-   face.
+2. ``boolean.fragment`` no longer silently deletes free shell surfaces
+   sitting on a volume's face.  The current default is
+   ``cleanup_free=True`` and the topology sweep (``sweep_dangling``)
+   protects ``add_*``-registered shells because they live in
+   ``model._metadata`` — same outcome the original fix delivered, via
+   a safer mechanism.
 
 Conformity is verified at the Gmsh-entity level via
 ``gmsh.model.mesh.getNodes(dim, tag)`` — the shell's mesh nodes and

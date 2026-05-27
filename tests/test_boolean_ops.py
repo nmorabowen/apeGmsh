@@ -133,12 +133,17 @@ class TestFragment:
 
     def test_fragment_2d_preserves_surfaces_with_default_cleanup(self, g):
         """2D fragment must not drop surfaces under the default
-        ``cleanup_free=False``.
+        ``cleanup_free=True`` (topology sweep).
 
-        Regression: in a 2D model every surface has zero upward-volume
-        adjacency, so the old `cleanup_free=True` default deleted all
-        surfaces and produced an empty model. The new default
-        preserves them; this test pins that behavior.
+        Regression: the previous centroid-in-bbox heuristic, when
+        active, deleted every adjacency-free surface — which in a
+        2D model is every surface (there are no volumes to bound).
+        Two layers now protect:
+        1. ``boolean.fragment`` short-circuits the sweep entirely
+           when ``getEntities(3)`` is empty.
+        2. Even if it ran, ``sweep_dangling`` would classify every
+           ``add_*``-registered surface as user-intentional via
+           ``_metadata``.
         """
         p_BL = g.model.geometry.add_point(0.0, 0.0, 0.0, lc=0.5)
         p_BR = g.model.geometry.add_point(2.0, 0.0, 0.0, lc=0.5)

@@ -2237,12 +2237,20 @@ class _Geometry:
     def validate_pre_mesh(self) -> None:
         """Raise :class:`GeometryValidationError` if any orphans exist.
 
-        Mirrors :meth:`MassesComposite.validate_pre_mesh` /
-        :meth:`LoadsComposite.validate_pre_mesh` /
-        :meth:`ConstraintsComposite.validate_pre_mesh` — wired into
-        :meth:`Mesh.generate` (when adopted by that codepath) so
-        orphan geometry fails fast instead of silently corrupting
-        downstream mesh tags.
+        **Opt-in — NOT auto-invoked by :meth:`Mesh.generate`.**  The
+        sibling validators on Loads / Constraints / Masses ARE auto-
+        invoked because they're closed-world (they only check string
+        targets the composite itself recorded).  This one is open-
+        world: it scans every live OCC entity and asks "is this user-
+        intentional?" via the ``_metadata`` and ``g.labels`` channels.
+        Workflows that build geometry via raw ``gmsh.model.geo.*`` /
+        ``gmsh.model.occ.*`` (bypassing ``_metadata``) or attach
+        entities only to raw user PGs (bypassing ``g.labels``) would
+        false-positive on every legitimate model — so auto-wiring is
+        deferred to a follow-up that splits the sweep into a
+        metadata-stale check (safe to auto-fire) and the full orphan-
+        presence check (stays opt-in).  Users who want fail-fast
+        orphan checking inside their build script call this directly.
         """
         from ._geometry_errors import GeometryValidationError
         orphans = self.find_orphans()
