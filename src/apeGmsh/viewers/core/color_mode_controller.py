@@ -142,6 +142,10 @@ class ColorModeController:
             self._color_mgr.set_idle_fn(self._partition_idle)
         elif mode == "Module":
             self._color_mgr.set_idle_fn(self._module_idle)
+        elif mode == "Module: Root":
+            self._color_mgr.set_idle_fn(self._module_idle_by_root)
+        elif mode == "Module: Leaf":
+            self._color_mgr.set_idle_fn(self._module_idle_by_leaf)
         elif mode == "Quality":
             self._enter_quality_mode()
             self._mode = mode
@@ -261,6 +265,76 @@ class ColorModeController:
         # get different colors in different sessions. crc32 is stable.
         # `_phys_group_idle` above still uses hash() — pre-existing
         # behavior, separate followup.
+        idx = zlib.crc32(dominant.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
+        return _GROUP_PALETTE_RGB[idx]
+
+    def _module_idle_by_root(self, dt: "DimTag") -> np.ndarray:
+        """Color by **root** module of a nested compose label.
+
+        Phase 3F.2d. Projects each owning element's joined label
+        (e.g. ``"bayP/frameA"``) onto its root component (``"bayP"``)
+        before the dominant-label / palette lookup. All modules sharing
+        the same depth-1 ancestor color identically — useful for "show
+        me the top-level subsystems" inspection on deeply-nested
+        composes.
+
+        Single-level (depth-1) labels project to themselves, so this
+        mode behaves identically to ``"Module"`` on flat composes.
+        Uncomposed sources degrade to ``_FALLBACK_RGB`` (same as
+        :meth:`_module_idle`).
+        """
+        from apeGmsh.mesh._compose import _split_joined_label
+        return self._module_idle_projected(
+            dt, lambda label: _split_joined_label(label)[0]
+        )
+
+    def _module_idle_by_leaf(self, dt: "DimTag") -> np.ndarray:
+        """Color by **leaf** module of a nested compose label.
+
+        Phase 3F.2d. Projects each owning element's joined label
+        (e.g. ``"bayP/frameA"``) onto its leaf component (``"frameA"``)
+        before the dominant-label / palette lookup. All modules
+        sharing the same leaf name across sub-trees color identically
+        — useful for "where do all the ``frameA`` instances live?"
+        cross-cuts.
+
+        Single-level (depth-1) labels project to themselves. Uncomposed
+        sources degrade to ``_FALLBACK_RGB``.
+        """
+        from apeGmsh.mesh._compose import _split_joined_label
+        return self._module_idle_projected(
+            dt, lambda label: _split_joined_label(label)[-1]
+        )
+
+    def _module_idle_projected(self, dt: "DimTag", projector) -> np.ndarray:
+        """Shared body for ``_module_idle_by_root`` / ``_by_leaf``.
+
+        Mirrors :meth:`_module_idle`'s degraded-fallback contract:
+        same short-circuits on missing ViewerData / ``has_modules`` /
+        no owning elements / all-host-owned. The only difference is
+        that each label is run through ``projector(label) -> str``
+        before being collected into the Counter for dominant-label
+        resolution.
+
+        ``projector`` is called only on non-``None`` labels (host-
+        owned rows are filtered before projection); a malformed label
+        (one that doesn't match the alternation rule) propagates
+        ``ComposeError`` upward — fail-loud, not silent.
+        """
+        view = self._view
+        if view is None or not view.elements.has_modules:
+            return _FALLBACK_RGB
+        eids = self._scene.brep_to_elems.get(dt)
+        if not eids:
+            return _FALLBACK_RGB
+        labels: list[str] = []
+        for eid in eids:
+            label = view.elements.module_for(int(eid))
+            if label is not None:
+                labels.append(projector(label))
+        if not labels:
+            return _FALLBACK_RGB
+        dominant = Counter(labels).most_common(1)[0][0]
         idx = zlib.crc32(dominant.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
         return _GROUP_PALETTE_RGB[idx]
 

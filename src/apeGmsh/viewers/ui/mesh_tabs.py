@@ -114,7 +114,16 @@ class MeshInfoTab:
 # DisplayTab — color mode, labels, wireframe
 # ======================================================================
 
-COLOR_MODES = ["Default", "Element Type", "Physical Group", "Partition", "Module", "Quality"]
+COLOR_MODES = [
+    "Default",
+    "Element Type",
+    "Physical Group",
+    "Partition",
+    "Module",
+    "Module: Root",
+    "Module: Leaf",
+    "Quality",
+]
 
 
 class DisplayTab:
