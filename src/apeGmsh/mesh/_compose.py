@@ -248,6 +248,232 @@ def _join_module_label(outer: str, inner: str, *, result_depth: int) -> str:
     return f"{outer}{sep}{inner}"
 
 
+# ── Tree view (compose_tree) — derived from flat composed_from ─────
+
+
+def _split_joined_label(label: str) -> tuple[str, ...]:
+    """Inverse of :func:`_join_module_label`: split a joined label into
+    its per-depth component tuple.
+
+    A joined label is built by progressively joining components with
+    the depth-N separator picked by :func:`_separator_for_depth`.  For
+    a result-depth-N label, the LEFTMOST separator is at depth N (the
+    outermost join), the next is at depth N-1, and so on down to
+    depth 2 (the join between the last two components).  This helper
+    walks the label left-to-right, validates that each separator
+    matches the expected depth-N alternation, and returns the
+    components as a tuple in outer-to-inner order.
+
+    Examples
+    --------
+    >>> _split_joined_label("partA")
+    ('partA',)
+    >>> _split_joined_label("outer/inner")
+    ('outer', 'inner')
+    >>> _split_joined_label("top.assemblyM/partA")
+    ('top', 'assemblyM', 'partA')
+
+    Raises
+    ------
+    ComposeError
+        When a separator at position k from the left does not match
+        ``_separator_for_depth(N - k + 1)`` — i.e. the label was not
+        produced by :func:`_join_module_label` and the alternation
+        rule is violated.  This is the fail-loud signal the spec
+        calls out (a label like ``"top/foo/bar"`` — `/` at the
+        outermost depth where `.` is expected).
+    """
+    if not label:
+        return ()
+    n = _label_depth(label)
+    if n == 1:
+        return (label,)
+    # Collect separator positions in left-to-right order.
+    sep_positions = [
+        i for i, ch in enumerate(label) if ch in _DEPTH_SEPARATORS
+    ]
+    # n - 1 == len(sep_positions) by construction of _label_depth.
+    # Validate each separator's identity against the alternation rule.
+    for k, idx in enumerate(sep_positions, start=1):
+        expected_depth = n - k + 1
+        expected_sep = _separator_for_depth(expected_depth)
+        if label[idx] != expected_sep:
+            raise ComposeError(
+                f"compose_tree: joined label {label!r} violates the "
+                f"separator-alternation rule at position {idx} "
+                f"(separator {label[idx]!r} at depth {expected_depth}, "
+                f"expected {expected_sep!r} per ADR 0038 §'Nested "
+                f"composition'). The label was not produced by "
+                f"_join_module_label and cannot be parsed."
+            )
+    # Split at the validated separator positions.
+    components: list[str] = []
+    prev = 0
+    for idx in sep_positions:
+        components.append(label[prev:idx])
+        prev = idx + 1
+    components.append(label[prev:])
+    # Defensive: empty component slots indicate two adjacent separators
+    # or a leading/trailing separator — fail-loud (cannot round-trip).
+    for c in components:
+        if not c:
+            raise ComposeError(
+                f"compose_tree: joined label {label!r} has an empty "
+                f"component (adjacent separators or leading/trailing "
+                f"separator); not a valid _join_module_label output."
+            )
+    return tuple(components)
+
+
+@dataclass(frozen=True)
+class ComposeTreeNode:
+    """One node in a derived compose-tree view of ``fem.composed_from``.
+
+    A :class:`ComposeTreeNode` reconstructs the nested-compose
+    hierarchy from the flat-graft storage shipped by PR #369: each
+    record in :attr:`FEMData.composed_from` carries its full joined
+    label (``"outer.middle/inner"`` etc.) and surfaces as a top-level
+    entry.  :meth:`FEMData.compose_tree` parses those joined labels
+    via :func:`_split_joined_label` and returns a tuple of root
+    nodes, each carrying its direct children recursively.
+
+    Parameters
+    ----------
+    label : str
+        The component name at this level — i.e. the original
+        user-supplied ``label=`` from the compose call that produced
+        this node.  For nested composes this is the leaf component
+        (e.g. ``"partA"``), NOT the joined label
+        (e.g. ``"outer/partA"``); the joined label lives on
+        :attr:`record`.
+    record : ComposeRecord
+        The flat :class:`ComposeRecord` from ``fem.composed_from``
+        corresponding to this node.  Its ``label`` is the joined
+        joined label (full path from the root).
+    children : tuple[ComposeTreeNode, ...]
+        Direct child nodes — composes that were nested INSIDE this
+        one at the next depth.  Empty tuple for leaf nodes.
+
+    Notes
+    -----
+    Frozen and hashable — mirrors the rest of the compose package's
+    frozen-dataclass conventions (:class:`ComposeRecord`,
+    :class:`ComposedModule`, :class:`_RewrittenBundle`).
+    """
+
+    label: str
+    record: "ComposeRecord"
+    children: "tuple[ComposeTreeNode, ...]" = ()
+
+
+def _build_compose_tree(
+    records: "tuple[ComposeRecord, ...]",
+) -> "tuple[ComposeTreeNode, ...]":
+    """Build a tuple of root :class:`ComposeTreeNode` from a flat
+    ``composed_from`` tuple.
+
+    Each record's joined label is parsed via
+    :func:`_split_joined_label` into per-depth components; the tree
+    is assembled by inserting each (components, record) pair at the
+    path described by the components.
+
+    Per the flat-graft contract (PR #369), every non-leaf path-prefix
+    also appears as its own top-level :class:`ComposeRecord` in the
+    flat list (e.g. depth-3 host has ``["bayP", "bayP/assemblyM",
+    "bayP.assemblyM/partA"]``), so the tree-builder finds a record at
+    every node it constructs.
+
+    Parameters
+    ----------
+    records : tuple[ComposeRecord, ...]
+        Flat compose records, typically ``tuple(fem.composed_from)``.
+
+    Returns
+    -------
+    tuple[ComposeTreeNode, ...]
+        Root nodes in sorted (compose-label) order.  Empty tuple
+        when ``records`` is empty (an uncomposed FEMData).
+    """
+    if not records:
+        return ()
+    # Index records by their joined label for O(1) lookup during the
+    # depth-first tree build.  ComposeSet already enforces uniqueness
+    # by joined label, but we accept any tuple here.
+    by_label: dict[str, "ComposeRecord"] = {rec.label: rec for rec in records}
+
+    # Group records by their depth-1 root component.  Walk every
+    # record once, split it, and bucket by ``components[0]``.
+    roots_to_descendants: dict[str, list[tuple[tuple[str, ...], "ComposeRecord"]]] = {}
+    for rec in records:
+        components = _split_joined_label(rec.label)
+        # Defensive: _split_joined_label returned () only for the
+        # empty-label case; ComposeLabelError forbids empty user labels
+        # so this should be unreachable on valid records.
+        if not components:
+            raise ComposeError(
+                f"compose_tree: record {rec!r} has an empty joined label; "
+                "this should be unreachable per ComposeLabelError."
+            )
+        root = components[0]
+        roots_to_descendants.setdefault(root, []).append((components, rec))
+
+    def _build_subtree(
+        prefix_components: tuple[str, ...],
+    ) -> "ComposeTreeNode":
+        """Build the subtree rooted at the record whose components
+        equal ``prefix_components``."""
+        # Reconstruct the joined label inside-out: start from the
+        # innermost (leaf) component at depth 1, then wrap each outer
+        # component using the depth-N separator from
+        # :func:`_join_module_label`.  E.g. for components
+        # ``("bayP", "assemblyM", "partA")``: start ``"partA"`` →
+        # wrap with ``"assemblyM"`` at depth 2 → ``"assemblyM/partA"``
+        # → wrap with ``"bayP"`` at depth 3 →
+        # ``"bayP.assemblyM/partA"``.
+        join_label = prefix_components[-1]
+        for k in range(len(prefix_components) - 1, 0, -1):
+            outer = prefix_components[k - 1]
+            result_depth = len(prefix_components) - k + 1
+            join_label = _join_module_label(
+                outer, join_label, result_depth=result_depth,
+            )
+        record = by_label.get(join_label)
+        if record is None:
+            # Shouldn't happen given the flat-graft contract, but
+            # surface it loudly if a record is missing — caller
+            # passed a malformed records tuple.
+            raise ComposeError(
+                f"compose_tree: missing record for joined label "
+                f"{join_label!r}; the flat-graft contract requires "
+                f"every ancestor path to appear as a top-level "
+                f"ComposeRecord."
+            )
+        # Find direct children: any record whose components are
+        # exactly ``prefix_components + (next_comp,)`` for some next.
+        prefix_len = len(prefix_components)
+        child_components_seen: set[tuple[str, ...]] = set()
+        for components, _rec in roots_to_descendants[prefix_components[0]]:
+            if len(components) == prefix_len + 1 and (
+                components[:prefix_len] == prefix_components
+            ):
+                child_components_seen.add(components)
+        children = tuple(
+            _build_subtree(c)
+            for c in sorted(child_components_seen)
+        )
+        return ComposeTreeNode(
+            label=prefix_components[-1],
+            record=record,
+            children=children,
+        )
+
+    roots = tuple(
+        _build_subtree((root_name,))
+        for root_name in sorted(roots_to_descendants.keys())
+    )
+    return roots
+
+
 def _read_source_composed_from(source_path: "str | Path") -> tuple:
     """Best-effort read of a source H5's ``/composed_from/`` group.
 
@@ -1583,6 +1809,37 @@ class Compose:
             "composed_from": composed_from,
             "properties": {},
         }
+
+    def compose_tree(self) -> "tuple[ComposeTreeNode, ...]":
+        """Derived tree view of the host's nested-compose hierarchy.
+
+        Reconstructs the nested-compose tree from the host's flat
+        ``fem.composed_from`` chain.  Returns a tuple of root
+        :class:`ComposeTreeNode` instances — each carrying its
+        :class:`ComposeRecord` plus any direct children parsed from
+        the joined labels via the separator-alternation rule
+        (depth-1 ``.``, depth-2 ``/``, depth-3 ``.``, ...).
+
+        Empty tuple for an uncomposed FEMData or a session that has
+        not yet extracted a FEMData snapshot.
+
+        See :meth:`FEMData.compose_tree` — the canonical primitive
+        this session shim delegates to.  Companion to
+        :meth:`compose_list` (flat-view) and :meth:`compose_inspect`
+        (single-source-H5 view).
+
+        Notes
+        -----
+        Storage stays flat per PR #369; the tree is a derived view,
+        not a separate on-disk representation.  Joined labels parse
+        unambiguously because :class:`ComposeLabelError` forbids
+        ``.`` and ``/`` in user-supplied ``label=``, so every
+        separator in a joined label sits at a known depth.
+        """
+        fem = self._current_fem()
+        if fem is None:
+            return ()
+        return fem.compose_tree()
 
     def compose_list(self) -> tuple[ComposedModule, ...]:
         """Composed modules currently on the host session.
