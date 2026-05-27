@@ -52,6 +52,8 @@ import numpy as np
 if TYPE_CHECKING:
     import h5py
 
+    from apeGmsh.mesh.FEMData import FEMData
+
 
 __all__ = [
     "Lineage",
@@ -59,6 +61,7 @@ __all__ = [
     "LINEAGE_GROUP",
     "WARNING_PREFIX",
     "canonical_bytes",
+    "compose_hash",
     "compute_fem_hash",
     "compute_model_hash",
     "compute_results_hash",
@@ -429,6 +432,62 @@ def compute_fem_hash(neutral_group: "h5py.Group") -> str:
     from apeGmsh.mesh._femdata_h5_io import read_neutral_zone_from_group
 
     fem = read_neutral_zone_from_group(neutral_group, label="<lineage>")
+    # Route through the compose-aware wrapper (ADR 0038 §"Lineage
+    # chain extension" / D4) so the H5-side rehydrate path picks up
+    # any future evolution of the per-module hash composition without
+    # needing a parallel edit here.
+    return compose_hash(fem)
+
+
+def compose_hash(fem: "FEMData") -> str:
+    """Return the compose-aware ``fem_hash`` for ``fem``.
+
+    Canonical compose-aware entry point for the FEM-layer hash per
+    ADR 0038 §"Lineage chain extension" (D4 — compose-aware hash
+    wrapper).  Routing all ``fem_hash`` callsites through this
+    wrapper future-proofs the chain against ``canonical_bytes()`` /
+    ``compute_snapshot_id`` implementation drift: the wrapper owns
+    the "sort by ``module_label`` before hashing" contract that
+    locks INV-1's compose-order invariance structurally rather than
+    relying on the internal iteration order of any one helper.
+
+    Today's implementation delegates to
+    :attr:`FEMData.snapshot_id`, which folds ``composed_from`` per
+    :func:`apeGmsh.mesh._femdata_hash._hash_composed_from` —
+    records sorted by ``label`` so ``compose(A) → compose(B)`` and
+    ``compose(B) → compose(A)`` produce the same digest.  On an
+    uncomposed FEMData (``fem.composed_from == ()``) the
+    ``COMPOSED|`` block is skipped entirely, so the digest is
+    **byte-identical to the pre-2.9.0 snapshot_id** — pre-existing
+    pin tests and bind-contract round-trips stay green by
+    construction.
+
+    The wrapper is the stable name external callers should use; if
+    a future refactor introduces per-module ``canonical_bytes()``
+    methods (per ADR 0038 §"Lineage chain extension" example), the
+    internals of :func:`compose_hash` change but the API surface
+    does not.
+
+    Parameters
+    ----------
+    fem
+        Any object satisfying the :class:`FEMData` ``snapshot_id``
+        contract.  Test doubles that implement ``snapshot_id`` as a
+        property also work — the wrapper is not type-narrowed beyond
+        the duck-typed protocol.
+
+    Returns
+    -------
+    str
+        32-character hex digest (blake2b-128) — same width and
+        algorithm as :attr:`FEMData.snapshot_id`.
+
+    See also
+    --------
+    compute_fem_hash : H5-side counterpart that rehydrates a
+        neutral zone into a :class:`FEMData` before calling this
+        wrapper's underlying snapshot path.
+    """
     return str(fem.snapshot_id)
 
 
