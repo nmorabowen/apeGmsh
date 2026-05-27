@@ -32,7 +32,7 @@ from __future__ import annotations
 import builtins
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterator
 
 from .._internal.schema_version import (
     OPENSEES,
@@ -56,6 +56,8 @@ from .._internal.typed_records import (
 
 if TYPE_CHECKING:
     import h5py
+
+    from apeGmsh._kernel.records._compose import ComposeRecord
 
 
 __all__ = [
@@ -1029,6 +1031,177 @@ class H5Model:
         if ds is None:
             return None
         return ds[:]
+
+    # -- Compose provenance (Schema 2.9.0; ADR 0038 / Phase 3D.1) -------
+    #
+    # The three methods below widen the H5ModelReader Protocol (ADR 0026)
+    # with compose-awareness so viewers + cuts + future foreign adapters
+    # can query the composition graph of a loaded model without coupling
+    # to the writer-side ``FEMData`` API.  Backward compatible: schema
+    # 2.8.x files (no ``/composed_from/`` group, no ``module_label``
+    # parallel datasets) decode as "uncomposed" — iter yields nothing,
+    # ``composed_for_*`` returns ``None`` for every id.
+    #
+    # Probes optional children with ``in`` (H5Lexists), NOT
+    # ``Group.get()`` — per the h5py optional-child .get() hazard
+    # (``project_h5py_optional_child_get_hazard`` PR #261).
+
+    def iter_composed_from(self) -> Iterator["ComposeRecord"]:
+        """Yield each :class:`ComposeRecord` on this model in module-label order.
+
+        Reads ``/composed_from/{safe_label}/`` per ADR 0038 §"Schema".
+        Yields nothing when the file is uncomposed (the ``/composed_from/``
+        group is omitted by the writer when ``fem.composed_from`` is
+        empty — absence is the canonical "uncomposed" signal on disk)
+        or when the file pre-dates schema 2.9.0.
+
+        The order is *sorted by storage key* — the writer's
+        ``safe = label.replace("/", "_")`` derivation makes this
+        equivalent to "sorted by ``ComposeRecord.label``" for the
+        common case where labels don't contain ``/``.  Nested-compose
+        labels (Phase 3E) will land their own ordering contract.
+        """
+        from apeGmsh._kernel.records._compose import ComposeRecord
+
+        if "composed_from" not in self._f:
+            return
+        parent = self._f["composed_from"]
+        # ``hasattr(.keys)`` filters out the case where a stray non-group
+        # ended up at this key — mirrors ``_read_composed_from`` in the
+        # broker reader.
+        if not hasattr(parent, "keys"):
+            return
+        import numpy as np
+
+        for key in sorted(parent.keys()):
+            sub = parent[key]
+            if not hasattr(sub, "keys"):
+                continue
+            attrs = sub.attrs
+            label = str(attrs.get("label", key))
+            source_path = str(attrs.get("source_path", ""))
+            source_fem_hash = str(attrs.get("source_fem_hash", ""))
+            source_neutral_schema_version = str(
+                attrs.get("source_neutral_schema_version", "")
+            )
+            translate_raw = attrs.get(
+                "translate", np.zeros(3, dtype=np.float64),
+            )
+            translate = tuple(
+                float(x) for x in np.asarray(
+                    translate_raw, dtype=np.float64,
+                ).reshape(-1)[:3]
+            )
+            rotate: tuple[float, float, float, float] | None = None
+            if "rotate" in attrs:
+                rotate_raw = np.asarray(
+                    attrs["rotate"], dtype=np.float64,
+                ).reshape(-1)
+                rotate = tuple(  # type: ignore[assignment]
+                    float(x) for x in rotate_raw[:4]
+                )
+            partition_rank: int | None = None
+            if "partition_rank" in attrs:
+                partition_rank = int(attrs["partition_rank"])
+            composed_at = str(attrs.get("composed_at", ""))
+
+            properties: dict[str, Any] = {}
+            if "properties" in sub:
+                prop_attrs = sub["properties"].attrs
+                for pk in prop_attrs:
+                    raw = prop_attrs[pk]
+                    if isinstance(raw, np.ndarray) and raw.shape == ():
+                        raw = raw.item()
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", errors="replace")
+                    properties[str(pk)] = raw
+
+            yield ComposeRecord(
+                label=label,
+                source_path=source_path,
+                source_fem_hash=source_fem_hash,
+                source_neutral_schema_version=source_neutral_schema_version,
+                translate=translate,  # type: ignore[arg-type]
+                rotate=rotate,
+                partition_rank=partition_rank,
+                composed_at=composed_at,
+                properties=properties,
+            )
+
+    def composed_for_node(self, node_id: int) -> str | None:
+        """Return the module label that owns ``node_id``, or ``None`` for host.
+
+        ``None`` is returned for both "host-owned" (the
+        ``/nodes/module_label`` row is the empty string) and "not
+        present" (the file pre-dates schema 2.9.0, the
+        ``module_label`` parallel dataset is absent, or ``node_id``
+        does not appear in ``/nodes/ids``).  Callers that need to
+        distinguish the two cases must consult :meth:`nodes` directly.
+
+        The conflated-``None`` return matches the convention of
+        :meth:`analysis` and :meth:`masses` (which also collapse
+        "absent" and "empty" into ``None``).
+        """
+        if "nodes" not in self._f:
+            return None
+        nodes_grp = self._f["nodes"]
+        if "ids" not in nodes_grp or "module_label" not in nodes_grp:
+            return None
+        import numpy as np
+
+        ids = np.asarray(nodes_grp["ids"][:], dtype=np.int64)
+        matches = np.flatnonzero(ids == int(node_id))
+        if matches.size == 0:
+            return None
+        row = int(matches[0])
+        labels = nodes_grp["module_label"][:]
+        if row >= len(labels):
+            return None
+        raw = labels[row]
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+        label = str(raw)
+        return label if label else None
+
+    def composed_for_element(self, element_id: int) -> str | None:
+        """Return the module label that owns ``element_id``, or ``None``.
+
+        Walks every ``/elements/{type}/`` sub-group looking for
+        ``element_id`` in the type's ``ids`` dataset; returns the
+        matching row's ``module_label`` value when found.  Returns
+        ``None`` for the same conflated reasons as
+        :meth:`composed_for_node` — host-owned (empty string label),
+        schema 2.8.x file (no ``module_label`` dataset), or
+        ``element_id`` not present in any element-type group.
+        """
+        if "elements" not in self._f:
+            return None
+        elements_grp = self._f["elements"]
+        if not hasattr(elements_grp, "keys"):
+            return None
+        import numpy as np
+
+        target = int(element_id)
+        for type_name in elements_grp:
+            sub = elements_grp[type_name]
+            if not hasattr(sub, "keys"):
+                continue
+            if "ids" not in sub or "module_label" not in sub:
+                continue
+            ids = np.asarray(sub["ids"][:], dtype=np.int64)
+            matches = np.flatnonzero(ids == target)
+            if matches.size == 0:
+                continue
+            row = int(matches[0])
+            labels = sub["module_label"][:]
+            if row >= len(labels):
+                return None
+            raw = labels[row]
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            label = str(raw)
+            return label if label else None
+        return None
 
     def _read_named_index(
         self, group_name: str,
