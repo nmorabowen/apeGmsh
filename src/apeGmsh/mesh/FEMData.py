@@ -1793,6 +1793,7 @@ class FEMData:
         partition_rank: int | None = None,
         properties: "dict | None" = None,
         compose_size_per_module: int | None = None,
+        max_compose_depth: int | None = None,
     ) -> "FEMData":
         """Return a new :class:`FEMData` extending this chain with a
         composed module.
@@ -1873,6 +1874,15 @@ class FEMData:
             )
 
         # 4. Rewrite the source into an offset/namespaced bundle.
+        #    Phase 3E.1: forward max_compose_depth so the rewriter's
+        #    depth gate fires before any rewrite work runs.  ``None``
+        #    means "use the default" (DEFAULT_MAX_COMPOSE_DEPTH = 3).
+        from ._compose import DEFAULT_MAX_COMPOSE_DEPTH as _DEFAULT_MAX_DEPTH
+        depth_cap = (
+            max_compose_depth
+            if max_compose_depth is not None
+            else _DEFAULT_MAX_DEPTH
+        )
         bundle = _rewrite_source_for_compose(
             source_path=source,
             label=label,
@@ -1884,6 +1894,7 @@ class FEMData:
             size=size,
             source_span=source_span,
             source_min_tag=source_min_tag,
+            max_compose_depth=depth_cap,
         )
 
         # 5. Emit FILTER warnings (stages / time-series / patterns).

@@ -33,6 +33,9 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .._kernel.records._compose import ComposeRecord
+from ..core._compose_errors import (
+    ComposeDepthExceededError as _CoreComposeDepthExceededError,
+)
 
 if TYPE_CHECKING:
     from .._core import apeGmsh
@@ -76,12 +79,25 @@ class ComposeCapacityError(ComposeError, ValueError):
     """
 
 
-class ComposeDepthExceededError(ComposeError, ValueError):
+class ComposeDepthExceededError(
+    _CoreComposeDepthExceededError, ComposeError,
+):
     """Nested-compose depth exceeds ``max_compose_depth`` per ADR 0038
-    §"Namespace rule".
+    §"Nested composition".
 
-    Raised by the merge engine in Phase 3B.2; defined here so the
-    typed-error surface for compose-time failures is complete.
+    Phase 3E.1 wires the check into the merge engine.  The canonical
+    error class lives at
+    :class:`apeGmsh.core._compose_errors.ComposeDepthExceededError`;
+    this facade-side subclass also inherits from :class:`ComposeError`
+    so callers using ``except ComposeError`` continue to catch it
+    alongside the other facade compose errors
+    (:class:`ComposeLabelError`, :class:`ComposeAnchorError`,
+    :class:`ComposeCapacityError`,
+    :class:`ComposeNamespaceCollisionError`).
+
+    Inheritance order: ``_CoreComposeDepthExceededError`` first so
+    ``isinstance(err, apeGmsh.core._compose_errors.ComposeDepthExceededError)``
+    holds for code outside the mesh package.
     """
 
 
@@ -102,6 +118,156 @@ class ComposeFilterWarning(UserWarning):
     time-series / load-patterns kinds.  Defined here so the warning
     class lives with its sibling errors.
     """
+
+
+# ---------------------------------------------------------------------------
+# Nested composition — depth tracking + separator alternation (Phase 3E.1)
+# ---------------------------------------------------------------------------
+#
+# ADR 0038 §"Nested composition" — three coupled rules for composing
+# a source that is itself a composed assembly:
+#
+#   1. Depth limit: ``source_depth >= max_compose_depth`` raises
+#      :class:`ComposeDepthExceededError`.  Default ``max_compose_depth = 3``.
+#   2. Separator alternation: at depth N the outer namespace separator
+#      flips ``.`` ↔ ``/`` so depth boundaries stay parseable.  Convention:
+#      depth 1 = ``.``, depth 2 = ``/``, depth 3 = ``.``, ... (odd = ``.``,
+#      even = ``/``).
+#   3. Provenance graft: source's existing ``composed_from`` records get
+#      their labels re-prefixed with the outer label (using the depth-N
+#      separator) and surface in the host's flat ``composed_from`` chain.
+
+#: Default cap on nested-compose depth per ADR 0038 §"Nested composition".
+#: Class constant on :class:`Compose`; the public ``compose(...)`` method
+#: also accepts ``max_compose_depth=N`` as a per-call override.
+DEFAULT_MAX_COMPOSE_DEPTH: int = 3
+
+#: Separators allowed at compose-namespace boundaries.  The first entry
+#: is the canonical "outer" separator at depth 1; the alternation rule
+#: walks this tuple modulo ``len(_DEPTH_SEPARATORS)``.
+_DEPTH_SEPARATORS: tuple[str, ...] = (".", "/")
+
+
+def _separator_for_depth(depth: int) -> str:
+    """Return the namespace separator for a compose at *result* depth.
+
+    ADR 0038 §"Nested composition" — depth 1 (first compose) uses ``.``;
+    depth 2 uses ``/``; depth 3 uses ``.``; ... and so on (odd → ``.``,
+    even → ``/``).  The alternation makes nesting depth structurally
+    visible to anyone parsing the joined label.
+
+    Parameters
+    ----------
+    depth : int
+        The result depth — i.e. ``source_depth + 1``.  Must be ``>= 1``;
+        depth 0 (no compose at all) does not appear in any label and
+        callers should not query the separator for it.
+
+    Returns
+    -------
+    str
+        ``"."`` when ``depth`` is odd, ``"/"`` when ``depth`` is even.
+    """
+    if depth < 1:
+        raise ValueError(
+            f"depth must be >= 1, got {depth} — depth 0 has no separator"
+        )
+    # depth 1 → index 0 → "."; depth 2 → index 1 → "/"; depth 3 → 0 → ".".
+    return _DEPTH_SEPARATORS[(depth - 1) % len(_DEPTH_SEPARATORS)]
+
+
+def _label_depth(label: str) -> int:
+    """Return the compose depth encoded in a joined module label.
+
+    A label without any separator is depth 1 (the leaf of a single
+    compose); each additional separator (either ``.`` or ``/``) marks
+    one more level of nesting.
+
+    Examples
+    --------
+    >>> _label_depth("bolt")
+    1
+    >>> _label_depth("partA.bolt_head")
+    2
+    >>> _label_depth("assemblyM/partA.bolt_head")
+    3
+    >>> _label_depth("bayP.assemblyM/partA.bolt_head")
+    4
+    """
+    if not label:
+        return 0
+    seps = sum(1 for ch in label if ch in _DEPTH_SEPARATORS)
+    return seps + 1
+
+
+def _compose_depth_of_records(records: "tuple[ComposeRecord, ...]") -> int:
+    """Return the max compose depth across a ``composed_from`` tuple.
+
+    Returns 0 when ``records`` is empty (an uncomposed FEMData).
+    Otherwise the result is the max :func:`_label_depth` across the
+    record labels — a flat-graft tuple's depth equals the highest
+    joined-label depth in the chain.
+    """
+    if not records:
+        return 0
+    return max(_label_depth(rec.label) for rec in records)
+
+
+def _join_module_label(outer: str, inner: str, *, result_depth: int) -> str:
+    """Prefix ``inner`` with ``outer`` using the depth-N separator.
+
+    Used by the provenance graft when ``outer`` is being composed
+    around a source whose ``composed_from`` already carries
+    ``inner``-labeled records.  The result's depth is ``result_depth``
+    (``= _label_depth(inner) + 1`` for the grafted entry, or
+    ``result_depth = 1 + source_depth`` for the new top-level entry
+    when ``inner`` is empty / leaf-only).
+
+    Parameters
+    ----------
+    outer : str
+        The new top-level compose label assigned by the caller.
+        Validated upstream to contain no separators.
+    inner : str
+        The pre-existing joined label from the source's
+        ``composed_from``.  May contain mixed ``.`` / ``/`` separators
+        from earlier composes.
+    result_depth : int
+        The depth at which the joined label sits in the resulting
+        host's ``composed_from`` chain.  Drives the separator choice.
+
+    Returns
+    -------
+    str
+        ``"{outer}{sep}{inner}"`` where ``sep`` = depth-``result_depth``
+        separator.  When ``inner`` is empty, returns ``outer``.
+    """
+    if not inner:
+        return outer
+    sep = _separator_for_depth(result_depth)
+    return f"{outer}{sep}{inner}"
+
+
+def _read_source_composed_from(source_path: "str | Path") -> tuple:
+    """Best-effort read of a source H5's ``/composed_from/`` group.
+
+    Returns an empty tuple when the source is uncomposed (no
+    ``/composed_from/`` group on disk) or pre-2.9.0 (the group can't
+    exist on those schemas).  Used by the depth check to validate
+    nested-compose limits before any merge work runs.
+
+    Probes optional children with ``in`` per the h5py optional-child
+    ``.get()`` hazard (``project_h5py_optional_child_get_hazard``).
+    """
+    import h5py
+
+    from ._femdata_h5_io import _read_composed_from
+
+    p = Path(source_path)
+    with h5py.File(str(p), "r") as f:
+        if "composed_from" not in f:
+            return ()
+        return _read_composed_from(f["composed_from"])
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +351,22 @@ class _RewrittenBundle:
     element_loads: tuple
     sp_records: tuple
     mass_records: tuple
+    # Nested provenance graft (Phase 3E.1 / ADR 0038 §"Nested
+    # composition"): the source's own ``composed_from`` records,
+    # each with its ``label`` already re-prefixed with the outer
+    # compose label via :func:`_join_module_label` (so the merge
+    # engine can splice them directly into the host's flat
+    # ``composed_from`` chain).  Empty tuple when the source is
+    # uncomposed (the depth-1 case).
+    grafted_compose_records: tuple = ()
+    # Pre-joined module_label arrays for nodes / elements (Phase 3E.1).
+    # When the source is depth-0 (uncomposed) these are ``None`` and
+    # the merge engine falls back to the simple "stamp every row with
+    # ``bundle.label``" path.  When the source is nested, each row's
+    # joined label is ``label`` for source-host-owned rows or
+    # ``{label}{sep}{inner}`` for rows that came from a prior compose.
+    node_module_label_joined: "np.ndarray | None" = None
+    element_module_label_joined: "dict[int, np.ndarray] | None" = None
 
 
 # ── Helper: schema-version + tag-span reader ───────────────────────
@@ -423,6 +605,41 @@ def _apply_geometric_transform(
 # ── Helper: per-record tag-offset + namespace rewrite ──────────────
 
 
+def _prefix_namespaced_name(
+    outer_label: str, inner_name: str | None,
+) -> str | None:
+    """Prefix a namespaced *name* (PG name, label, part label, …) with
+    ``outer_label`` honouring the depth-N alternation rule (Phase
+    3E.1 / ADR 0038 §"Nested composition").
+
+    Convention for names that are *not* compose labels: an
+    uncomposed leaf carries 0 separators; each prior compose adds
+    one separator at the outer boundary.  The new outer prefix's
+    separator is therefore at depth = ``(seps in inner) + 1``:
+
+    * ``inner = "top_flange"`` (0 seps) → depth 1, sep ``.``,
+      result ``"outer.top_flange"``.
+    * ``inner = "conn_a.top_flange"`` (1 sep) → depth 2, sep ``/``,
+      result ``"outer/conn_a.top_flange"``.
+    * ``inner = "frame/conn_a.top_flange"`` (2 seps) → depth 3,
+      sep ``.``, result ``"outer.frame/conn_a.top_flange"``.
+
+    Note that compose *labels* (entries in ``fem.composed_from``)
+    are a different namespace where the leaf is at depth 1 rather
+    than depth 0; use :func:`_join_module_label` for those.
+
+    Returns ``None`` unchanged when ``inner_name`` is ``None``; the
+    caller decides whether to short-circuit.
+    """
+    if inner_name is None:
+        return None
+    inner = str(inner_name)
+    seps = sum(1 for ch in inner if ch in _DEPTH_SEPARATORS)
+    depth = seps + 1
+    sep = _separator_for_depth(depth)
+    return f"{outer_label}{sep}{inner}"
+
+
 def _rewrite_record(
     rec: Any,
     *,
@@ -439,6 +656,12 @@ def _rewrite_record(
 
     Nested record lists (e.g. ``NodeToSurfaceRecord.rigid_link_records``)
     are walked recursively via the ``nested_records`` key.
+
+    Name prefixing honours the depth-N separator alternation rule
+    (Phase 3E.1 / ADR 0038 §"Nested composition") via
+    :func:`_prefix_namespaced_name` — a leaf name uses ``.``; a name
+    that already carries one inner separator uses ``/`` at the outer
+    boundary; and so on.
 
     Returns a NEW record instance; ``rec`` is not mutated.
     """
@@ -479,8 +702,10 @@ def _rewrite_record(
             continue
         # ``pattern`` defaults to ``"default"`` on LoadRecord — still
         # namespaced so loads in different modules carrying the same
-        # pattern name don't collide on the host.
-        changes[fname] = f"{label}.{current}"
+        # pattern name don't collide on the host.  Depth-N alternation
+        # (Phase 3E.1) preserves the inner separator structure when
+        # the source carries nested-compose names.
+        changes[fname] = _prefix_namespaced_name(label, current)
 
     for fname in spec.get("nested_records", ()):
         current = getattr(rec, fname)
@@ -516,7 +741,10 @@ def _rewrite_named_groups(
         new_info: dict = {}
         for k, v in info.items():
             if k == "name":
-                new_info[k] = f"{label}.{v}"
+                # Phase 3E.1: depth-N alternation when ``v`` carries
+                # inner separators from earlier composes; depth-1 ``.``
+                # for leaf names (the common case).
+                new_info[k] = _prefix_namespaced_name(label, v)
             elif k in ("node_ids", "element_ids", "connectivity"):
                 if v is None:
                     new_info[k] = v
@@ -554,10 +782,16 @@ def _rewrite_part_map(
 ) -> dict:
     """Return a copy of ``{part_label: set[int]}`` with each set's int
     members offset and each part_label namespace-prefixed.
+
+    Phase 3E.1: when a part_label already carries inner separators
+    from a nested-compose source, the outer prefix uses the next-
+    depth separator per :func:`_prefix_namespaced_name`.
     """
     out: dict = {}
     for plabel, members in part_map.items():
-        new_label = f"{label}.{plabel}"
+        new_label = _prefix_namespaced_name(label, plabel)
+        if new_label is None:  # plabel was None (defensive)
+            continue
         out[new_label] = {int(x) + offset for x in members}
     return out
 
@@ -587,7 +821,8 @@ def _rewrite_mesh_selection(
         new_info: dict = {}
         for k, v in info.items():
             if k == "name":
-                new_info[k] = f"{label}.{v}"
+                # Phase 3E.1 depth-N alternation.
+                new_info[k] = _prefix_namespaced_name(label, v)
             elif k in ("node_ids", "element_ids", "connectivity"):
                 if v is None:
                     new_info[k] = v
@@ -620,6 +855,7 @@ def _rewrite_source_for_compose(
     size: int,
     source_span: int,
     source_min_tag: int,
+    max_compose_depth: int = DEFAULT_MAX_COMPOSE_DEPTH,
 ) -> _RewrittenBundle:
     """Read the source H5, rewrite all IMPORT records, return a bundle.
 
@@ -650,6 +886,51 @@ def _rewrite_source_for_compose(
 
     offset = base - source_min_tag
     source = read_fem_h5(str(source_path))
+
+    # ── Nested composition (Phase 3E.1 / ADR 0038 §"Nested composition")
+    #
+    # 1. Compute source depth from the source's own ``composed_from``
+    #    chain.  Fail-loud BEFORE any rewrite work runs if composing
+    #    this source would push past ``max_compose_depth``.
+    # 2. Compute the result depth + the depth-N separator used to glue
+    #    the outer label onto inner (grafted) labels.
+    # 3. Build the grafted ``ComposeRecord`` tuple — each source record
+    #    gets its ``label`` re-prefixed with ``{outer_label}{sep}``.
+    source_composed_from = tuple(source.composed_from) if (
+        source.composed_from
+    ) else ()
+    source_depth = _compose_depth_of_records(source_composed_from)
+    if source_depth >= max_compose_depth:
+        raise ComposeDepthExceededError(
+            f"compose(label={label!r}, source={str(source_path)!r}) would "
+            f"exceed max_compose_depth={max_compose_depth}: source's own "
+            f"compose depth is {source_depth} (max label depth in "
+            f"source.composed_from), and composing it would create a "
+            f"depth-{source_depth + 1} entry on the host. Lift the cap "
+            f"with max_compose_depth=N or flatten the source via "
+            f"re-baking before composing."
+        )
+    result_depth = source_depth + 1
+    depth_sep = _separator_for_depth(result_depth)
+
+    # Re-prefix the source's existing composed_from records.
+    from .._kernel.records._compose import ComposeRecord as _ComposeRecord
+    grafted_records = tuple(
+        _ComposeRecord(
+            label=_join_module_label(label, rec.label, result_depth=(
+                _label_depth(rec.label) + 1
+            )),
+            source_path=rec.source_path,
+            source_fem_hash=rec.source_fem_hash,
+            source_neutral_schema_version=rec.source_neutral_schema_version,
+            translate=rec.translate,
+            rotate=rec.rotate,
+            partition_rank=rec.partition_rank,
+            composed_at=rec.composed_at,
+            properties=dict(rec.properties) if rec.properties else {},
+        )
+        for rec in source_composed_from
+    )
 
     # 1. Nodes — offset ids, apply geometric transform to coords.
     src_node_ids = np.asarray(source.nodes.ids, dtype=np.int64)
@@ -734,16 +1015,42 @@ def _rewrite_source_for_compose(
         for rec in source.nodes.masses
     )
 
+    # 7. Joined module_label arrays (Phase 3E.1).  The source's
+    #    per-row ``_module_label`` arrays carry inner labels from
+    #    earlier composes; we re-prefix each non-empty inner with
+    #    ``{label}{sep_for_inner_depth}{inner}``.  Empty source rows
+    #    (source's own host content) become a plain ``{label}``
+    #    stamp.  When the source is uncomposed (depth 0), the
+    #    bundle leaves these as ``None`` so the merge engine takes
+    #    its simple stamp-every-row-with-bundle.label path.
+    node_module_label_joined: "np.ndarray | None" = None
+    element_module_label_joined: "dict[int, np.ndarray] | None" = None
+    if source_depth > 0:
+        src_node_ml = getattr(source.nodes, "_module_label", None)
+        if src_node_ml is not None:
+            node_module_label_joined = _rewrite_module_labels(
+                src_node_ml, outer_label=label,
+            )
+        # else: the source carries no nested module_label dataset on
+        # nodes — falls through to the merge engine's default stamp.
+        src_elem_ml = getattr(source.elements, "_module_label", None)
+        if src_elem_ml:
+            element_module_label_joined = {
+                code: _rewrite_module_labels(arr, outer_label=label)
+                for code, arr in src_elem_ml.items()
+            }
+
     # ── DISCARD / DEFER kinds (silently dropped per ADR 0038 §"Merge
     # semantics"; 3B.2b will emit warnings for FILTER kinds): the
     # module's own PartitionSet (line 168) and nested-compose
-    # ComposeRecord (line 211, deferred to 3E.1).  ``read_fem_h5``
-    # already populates these on the source FEMData; we deliberately
-    # don't carry them through the bundle.  FILTER kinds (stages,
-    # time-series, load-patterns, recorders, analysis settings,
-    # /results/) are not part of the neutral zone ``read_fem_h5``
-    # parses — they live in the OpenSees zone and never enter the
-    # bundle in 3B.2a.
+    # ComposeRecord (line 211, now handled by 3E.1's provenance graft
+    # via ``grafted_records`` above).  ``read_fem_h5`` already
+    # populates these on the source FEMData; the PartitionSet is
+    # deliberately not carried through the bundle.  FILTER kinds
+    # (stages, time-series, load-patterns, recorders, analysis
+    # settings, /results/) are not part of the neutral zone
+    # ``read_fem_h5`` parses — they live in the OpenSees zone and
+    # never enter the bundle in 3B.2a.
 
     composed_at = datetime.now(tz=timezone.utc).isoformat()
 
@@ -778,7 +1085,42 @@ def _rewrite_source_for_compose(
         element_loads=new_element_loads,
         sp_records=new_sp_records,
         mass_records=new_mass_records,
+        grafted_compose_records=grafted_records,
+        node_module_label_joined=node_module_label_joined,
+        element_module_label_joined=element_module_label_joined,
     )
+
+
+def _rewrite_module_labels(
+    src_labels: np.ndarray,
+    *,
+    outer_label: str,
+) -> np.ndarray:
+    """Re-prefix an array of inner module labels with ``outer_label``.
+
+    Phase 3E.1 / ADR 0038 §"Nested composition".  For each row:
+
+    * Empty inner → ``outer_label`` (the source's host content becomes
+      the new module-leaf).
+    * Non-empty inner → ``{outer_label}{sep}{inner}`` where ``sep`` is
+      the depth-N separator for the joined label's depth (``_label_depth
+      (inner) + 1``).
+
+    Returns a fresh ``object``-dtype ndarray; the input is not mutated.
+    """
+    out: list[str] = []
+    for raw in src_labels:
+        if isinstance(raw, (bytes, bytearray)):
+            inner = raw.decode("utf-8", errors="replace")
+        else:
+            inner = str(raw) if raw is not None else ""
+        if not inner:
+            out.append(outer_label)
+        else:
+            depth = _label_depth(inner) + 1
+            sep = _separator_for_depth(depth)
+            out.append(f"{outer_label}{sep}{inner}")
+    return np.array(out, dtype=object)
 
 
 def _read_neutral_schema_str(source_path: "str | Path") -> str:
@@ -916,6 +1258,21 @@ class Compose:
     #: engine.
     RESERVATION_GRANULARITY: int = 1_000_000
 
+    #: Default cap on nested-compose depth per ADR 0038
+    #: §"Nested composition".  Mirrors
+    #: :data:`DEFAULT_MAX_COMPOSE_DEPTH` at module scope so callers
+    #: can lift the cap class-wide (e.g. for a deep-hierarchy run)
+    #: without passing ``max_compose_depth=`` on every call:
+    #:
+    #: .. code:: python
+    #:
+    #:     class MyCompose(Compose):
+    #:         MAX_COMPOSE_DEPTH = 5
+    #:
+    #: Per-call ``max_compose_depth=N`` on :meth:`compose` overrides
+    #: the class-level default for that single invocation.
+    MAX_COMPOSE_DEPTH: int = DEFAULT_MAX_COMPOSE_DEPTH
+
     def __init__(self, session: "apeGmsh") -> None:
         self._session = session
 
@@ -931,7 +1288,7 @@ class Compose:
         anchor: str | None = None,
         partition_rank: int | None = None,
         properties: "dict[str, Any] | None" = None,
-        max_compose_depth: int = 3,
+        max_compose_depth: "int | None" = None,
         compose_size_per_module: int | None = None,
     ) -> ComposedModule:
         """Merge a previously-saved apeGmsh model into the host session.
@@ -962,11 +1319,14 @@ class Compose:
             Free-form provenance dict round-tripped through
             ``/composed_from/{label}/properties`` on the host's next
             ``g.save()``.
-        max_compose_depth : int, default 3
-            Hard cap on nested-compose depth — raises
-            :class:`ComposeDepthExceededError` from the verifier in
-            Phase 3B.2.  No-op in 3B.1 (validation only; the engine
-            stub fires first).
+        max_compose_depth : int or None, default None
+            Per-call override of the class-level
+            :data:`MAX_COMPOSE_DEPTH` (default 3).  Raises
+            :class:`ComposeDepthExceededError` when the source's own
+            ``composed_from`` depth would push the result past the
+            cap.  ``None`` falls back to the class-level default; pass
+            an explicit integer to lift the cap for a single compose
+            call.  See ADR 0038 §"Nested composition" (Phase 3E.1).
         compose_size_per_module : int | None
             Explicit reservation-size floor per ADR 0038 §"Tag-offset
             scheme".  ``None`` means "auto-size from the source's
@@ -997,10 +1357,27 @@ class Compose:
         self._validate_translate_rotate_anchor(translate, anchor)
         self._validate_partition_rank(partition_rank)
         self._validate_compose_size(compose_size_per_module)
-        # ``properties`` is exercised by the merge engine; ``max_compose_depth``
-        # is accepted today but enforced by Phase 3E.1's nested-compose
-        # verifier (no-op here per ADR 0038 §"Namespace rule").
-        _ = max_compose_depth  # acknowledged, not enforced in 3B.2c
+        # ``properties`` is exercised by the merge engine;
+        # ``max_compose_depth`` is forwarded to the rewriter, which
+        # performs the nested-compose depth check before any rewrite
+        # work (Phase 3E.1 / ADR 0038 §"Nested composition").  ``None``
+        # falls back to the class-level :data:`MAX_COMPOSE_DEPTH` so
+        # subclasses can override the default without touching every
+        # call site.
+        if max_compose_depth is None:
+            max_compose_depth = type(self).MAX_COMPOSE_DEPTH
+        if not isinstance(max_compose_depth, int) or isinstance(
+            max_compose_depth, bool,
+        ):
+            raise ValueError(
+                "compose(max_compose_depth=...) must be an int, got "
+                f"{type(max_compose_depth).__name__}"
+            )
+        if max_compose_depth < 1:
+            raise ValueError(
+                "compose(max_compose_depth=...) must be >= 1, got "
+                f"{max_compose_depth}"
+            )
 
         parent = self._session
 
@@ -1025,6 +1402,7 @@ class Compose:
             partition_rank=partition_rank,
             properties=properties,
             compose_size_per_module=compose_size_per_module,
+            max_compose_depth=max_compose_depth,
         )
 
         # Update session state.
@@ -1060,6 +1438,7 @@ class Compose:
         partition_rank: int | None = None,
         properties: "dict | None" = None,
         compose_size_per_module: int | None = None,
+        max_compose_depth: "int | None" = None,
     ) -> "_RewrittenBundle":
         """Internal: produce the rewritten bundle. Phase 3B.2b calls
         into this to obtain the offset/namespaced records before
@@ -1117,6 +1496,13 @@ class Compose:
                 f"reservation size {size} would not fit the imported tags."
             )
 
+        # Phase 3E.1: resolve nested-compose cap from the kwarg or the
+        # class-level :data:`MAX_COMPOSE_DEPTH` default.
+        depth_cap = (
+            max_compose_depth
+            if max_compose_depth is not None
+            else type(self).MAX_COMPOSE_DEPTH
+        )
         return _rewrite_source_for_compose(
             source_path=source,
             label=label,
@@ -1128,6 +1514,7 @@ class Compose:
             size=size,
             source_span=source_span,
             source_min_tag=source_min_tag,
+            max_compose_depth=depth_cap,
         )
 
     def compose_inspect(self, path: "str | Path") -> dict:
@@ -1555,14 +1942,22 @@ def _merge_bundle_into_fem(
     #      rows are stamped with the bundle's label.  Always allocate
     #      so the writer + ``ComposedModule.pgs()`` introspection
     #      have a deterministic shape after the first compose.
+    #      Phase 3E.1: when the bundle carries a pre-joined module
+    #      label array (nested-compose case), use it instead of the
+    #      flat stamp so depth-N rows inherit the joined inner label.
     host_ml = getattr(fem.nodes, "_module_label", None)
     if host_ml is None:
         host_ml_arr = np.array([""] * host_node_ids.size, dtype=object)
     else:
         host_ml_arr = np.asarray(host_ml, dtype=object)
-    bundle_ml_arr = np.array(
-        [bundle.label] * bundle_node_ids.size, dtype=object,
-    )
+    if bundle.node_module_label_joined is not None:
+        bundle_ml_arr = np.asarray(
+            bundle.node_module_label_joined, dtype=object,
+        )
+    else:
+        bundle_ml_arr = np.array(
+            [bundle.label] * bundle_node_ids.size, dtype=object,
+        )
     new_node_module_label = np.concatenate([host_ml_arr, bundle_ml_arr])
 
     # ── 4. Elements — merge per-type groups ─────────────────────
@@ -1586,7 +1981,17 @@ def _merge_bundle_into_fem(
         b_ids = np.asarray(bundle_group.ids, dtype=np.int64)
         b_conn = np.asarray(bundle_group.connectivity, dtype=np.int64)
         b_size = b_ids.size
-        b_label_arr = np.array([bundle.label] * b_size, dtype=object)
+        # Phase 3E.1: use bundle's pre-joined element labels when
+        # present (nested-compose case); fall back to flat-stamp.
+        if (
+            bundle.element_module_label_joined is not None
+            and code in bundle.element_module_label_joined
+        ):
+            b_label_arr = np.asarray(
+                bundle.element_module_label_joined[code], dtype=object,
+            )
+        else:
+            b_label_arr = np.array([bundle.label] * b_size, dtype=object)
         if code in new_element_groups:
             host_group = new_element_groups[code]
             merged_ids = np.concatenate([
@@ -1694,7 +2099,8 @@ def _merge_bundle_into_fem(
         types=new_types,
     )
 
-    # ── 10. Extend composed_from with a new ComposeRecord ──────
+    # ── 10. Extend composed_from with a new ComposeRecord +
+    #        the grafted nested-provenance records (Phase 3E.1).
     new_record = ComposeRecord(
         label=bundle.label,
         source_path=bundle.source_path,
@@ -1707,7 +2113,10 @@ def _merge_bundle_into_fem(
         properties=dict(bundle.properties),
     )
     existing_records = tuple(fem.composed_from) if fem.composed_from else ()
-    new_composed_from = ComposeSet((*existing_records, new_record))
+    grafted = tuple(bundle.grafted_compose_records or ())
+    new_composed_from = ComposeSet(
+        (*existing_records, new_record, *grafted),
+    )
 
     new_fem = FEMData(
         nodes=new_nodes,

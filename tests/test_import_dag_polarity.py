@@ -78,6 +78,18 @@ PKGS = {"core", "mesh", "viz", "results", "_kernel", "fem"}
 # (``results/_result_engine.py``, ``mesh/_live_engine.py``) are pure
 # ``typing``-only leaves with no eager cross-package import, so they
 # add NO triple.
+#
+# Phase 3E.1 same-commit reviewed delta: the
+# ``ComposeDepthExceededError`` exception class moved into the
+# canonical ``apeGmsh.core._compose_errors`` module (where the other
+# compose verifier errors already live — ``PartTagCollisionError``,
+# ``ComposeInvariantError``, ``ComposeCapacityError``).  The facade-
+# side class at ``mesh/_compose.py`` now thin-aliases that core class
+# via ``from ..core._compose_errors import ComposeDepthExceededError
+# as _CoreComposeDepthExceededError``.  This adds ONE downward
+# ``mesh → core`` eager edge.  The dependency is one-way: ``core``
+# never imports from ``mesh``, so no cycle is reintroduced — the
+# P1-K invariant ("no ``core <-> mesh`` triple survives") holds.
 BASELINE = {
     ("_kernel", "fem", "_kernel/resolvers/_mass_resolver.py"),
     ("core", "_kernel", "core/ConstraintsComposite.py"),
@@ -93,6 +105,8 @@ BASELINE = {
     ("core", "_kernel", "core/constraints/defs.py"),
     ("core", "_kernel", "core/loads/defs.py"),
     ("core", "_kernel", "core/masses/defs.py"),
+    # Phase 3E.1: reviewed downward edge — see header comment above.
+    ("mesh", "core", "mesh/_compose.py"),
     ("mesh", "_kernel", "mesh/FEMData.py"),
     ("mesh", "_kernel", "mesh/PhysicalGroups.py"),
     ("mesh", "_kernel", "mesh/__init__.py"),
