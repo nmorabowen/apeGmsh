@@ -644,6 +644,19 @@ def _write_composed_from(fem: "FEMData", f: Any) -> None:
     seen_safe: set[str] = set()
     for rec in composed:
         label = rec.label
+        # Sanitize joined labels (e.g. "bayP/frameA" from nested
+        # compose, PR #369) into HDF5-legal group names by replacing
+        # "/" with "_". KNOWN COSMETIC: two distinct labels "a/b" and
+        # "a_b" both sanitize to "a_b" — the dedup suffix below makes
+        # the file legal but the suffix is order-dependent
+        # (uses len(seen_safe) as a counter), so re-saving the same
+        # FEMData in a different iteration order can produce different
+        # __N suffixes on the affected groups. The verbatim ``label``
+        # attribute (line below) round-trips correctly regardless, so
+        # this is an INTERNAL LAYOUT detail, not a public-surface
+        # hazard — readers pull from ``attrs["label"]``, never from
+        # the group name. ADR 0038 amendment 2026-05-27 documents
+        # this as cosmetic-only; see PR #369 implementation audit.
         safe = label.replace("/", "_") or "_unnamed"
         if safe in seen_safe:
             safe = f"{safe}__{len(seen_safe)}"
