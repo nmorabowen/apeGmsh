@@ -1919,6 +1919,24 @@ class FEMData:
         new_fem._last_compose_bundle = bundle  # type: ignore[attr-defined]
         return new_fem
 
+    def compose_tree(self) -> "tuple":
+        """Derived nested-compose tree view of ``self.composed_from``.
+
+        Reconstructs the nested-compose hierarchy from this FEMData's
+        flat ``composed_from`` chain (per PR #369's flat-graft
+        storage).  Returns a tuple of root
+        :class:`~apeGmsh.mesh._compose.ComposeTreeNode` instances;
+        each root carries its :class:`ComposeRecord` plus any direct
+        children parsed from joined labels via the separator-
+        alternation rule (depth-1 ``.``, depth-2 ``/``, depth-3
+        ``.``, ...).
+
+        Empty tuple when ``self.composed_from`` is empty (an
+        uncomposed FEMData).
+        """
+        from ._compose import _build_compose_tree
+        return _build_compose_tree(tuple(self.composed_from))
+
     def with_mass(self, record) -> "FEMData":
         """Return a new :class:`FEMData` with ``record`` appended to
         ``nodes.masses``.

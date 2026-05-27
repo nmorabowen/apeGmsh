@@ -334,6 +334,13 @@ class apeGmsh(_SessionBase):
         """
         return self._compose_facade().compose_list()
 
+    def compose_tree(self) -> "tuple":
+        """Derived nested-compose tree view of this session's modules.
+
+        See :meth:`apeGmsh.mesh._compose.Compose.compose_tree`.
+        """
+        return self._compose_facade().compose_tree()
+
     def _compose_facade(self) -> "Compose":
         """Lazy-instantiate the single per-session :class:`Compose` facade.
 
