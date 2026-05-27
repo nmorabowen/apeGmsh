@@ -1203,6 +1203,87 @@ class H5Model:
             return label if label else None
         return None
 
+    def bulk_module_labels_for_nodes(self) -> dict[int, str]:
+        """Return ``{node_id: module_label}`` for every non-host node.
+
+        Bulk equivalent of :meth:`composed_for_node` for the viewer's
+        per-entity coloring path (Phase 3F.2a — schema 2.9.0 / ADR
+        0038).  Reads the full ``/nodes/ids`` + ``/nodes/module_label``
+        parallel datasets in one pass; host-owned rows (empty-string
+        label) are excluded from the returned mapping.
+
+        Returns an empty dict for pre-2.9.0 archives (the
+        ``module_label`` dataset is absent) and for archives written
+        with no compose merges (the dataset is present but every row
+        is the empty string — the broker's writer always emits it now,
+        but every row is ``""`` until a ``compose()`` call runs).
+
+        Probes optional children with ``in`` (H5Lexists) per the h5py
+        optional-child .get() hazard documented in PR #261.
+        """
+        out: dict[int, str] = {}
+        if "nodes" not in self._f:
+            return out
+        nodes_grp = self._f["nodes"]
+        if "ids" not in nodes_grp or "module_label" not in nodes_grp:
+            return out
+        import numpy as np
+
+        ids = np.asarray(nodes_grp["ids"][:], dtype=np.int64)
+        labels = nodes_grp["module_label"][:]
+        n = min(len(ids), len(labels))
+        for i in range(n):
+            raw = labels[i]
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            label = str(raw)
+            if label == "":
+                continue
+            out[int(ids[i])] = label
+        return out
+
+    def bulk_module_labels_for_elements(self) -> dict[int, str]:
+        """Return ``{element_id: module_label}`` for every non-host element.
+
+        Bulk equivalent of :meth:`composed_for_element` — walks every
+        ``/elements/{type}/`` sub-group and joins its ``ids`` with its
+        ``module_label`` parallel dataset (schema 2.9.0 / ADR 0038).
+        Host-owned rows (empty-string label) are excluded.
+
+        Returns an empty dict for pre-2.9.0 archives and for archives
+        with no compose merges (same conflation as
+        :meth:`bulk_module_labels_for_nodes`).
+
+        Probes optional children with ``in`` (H5Lexists) per the h5py
+        optional-child .get() hazard documented in PR #261.
+        """
+        out: dict[int, str] = {}
+        if "elements" not in self._f:
+            return out
+        elements_grp = self._f["elements"]
+        if not hasattr(elements_grp, "keys"):
+            return out
+        import numpy as np
+
+        for type_name in elements_grp:
+            sub = elements_grp[type_name]
+            if not hasattr(sub, "keys"):
+                continue
+            if "ids" not in sub or "module_label" not in sub:
+                continue
+            ids = np.asarray(sub["ids"][:], dtype=np.int64)
+            labels = sub["module_label"][:]
+            n = min(len(ids), len(labels))
+            for i in range(n):
+                raw = labels[i]
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="replace")
+                label = str(raw)
+                if label == "":
+                    continue
+                out[int(ids[i])] = label
+        return out
+
     def _read_named_index(
         self, group_name: str,
     ) -> dict[str, dict[str, Any]]:

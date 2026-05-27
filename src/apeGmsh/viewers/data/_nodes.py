@@ -274,6 +274,7 @@ class ViewerNodes:
         "_coords",
         "_id_to_idx",
         "_boundary_node_ids",
+        "_module_by_nid",
         "physical",
         "labels",
         "selection",
@@ -296,6 +297,7 @@ class ViewerNodes:
         masses: MassView,
         constraints: NodeConstraintView,
         boundary_node_ids: "frozenset[int] | None" = None,
+        module_by_nid: dict[int, str] | None = None,
     ) -> None:
         self._ids = np.asarray(ids, dtype=np.int64)
         self._coords = np.asarray(coords, dtype=np.float64)
@@ -308,6 +310,21 @@ class ViewerNodes:
             frozenset(int(n) for n in boundary_node_ids)
             if boundary_node_ids else frozenset()
         )
+        # FEM node id -> compose-module label (schema 2.9.0 /
+        # ADR 0038).  Populated from the broker's per-node
+        # ``_module_label`` object ndarray (from_fem path) or from
+        # ``/nodes/module_label`` (h5 path via
+        # :meth:`H5Model.bulk_module_labels_for_nodes`).  Host-owned
+        # rows carry the empty-string label on the wire and are
+        # excluded from this mapping, so ``module_for(host_nid)``
+        # returns ``None``.  Empty for uncomposed FEMData, pre-2.9.0
+        # archives, and any source with no module-label metadata.
+        # Nested-compose labels are the full joined form (e.g.
+        # ``"bayP/frameA"``).
+        self._module_by_nid: dict[int, str] = {
+            int(k): str(v) for k, v in (module_by_nid or {}).items()
+            if str(v) != ""
+        }
         self.physical = physical
         self.labels = labels
         self.selection = selection
@@ -339,6 +356,23 @@ class ViewerNodes:
     def has_boundary_nodes(self) -> bool:
         """True when the source carries cross-rank boundary nodes."""
         return bool(self._boundary_node_ids)
+
+    def module_for(self, node_id: int) -> "str | None":
+        """Return the compose-module label that owns a FEM node id, or
+        ``None`` when the node is host-owned (no compose origin) or
+        the source carries no module-label metadata at all (uncomposed
+        FEMData, pre-2.9.0 archive).
+
+        For nested-compose models the label is the full joined label
+        (e.g. ``"bayP/frameA"``) — host-rows always read as ``None``."""
+        return self._module_by_nid.get(int(node_id))
+
+    @property
+    def has_modules(self) -> bool:
+        """True when at least one node carries a compose-module label
+        (schema 2.9.0 / ADR 0038 — composed FEMData or composed
+        ``model.h5``)."""
+        return bool(self._module_by_nid)
 
     def index(self, nid: int) -> int:
         """Array index for a node ID.  O(1) after first call."""
@@ -395,11 +429,30 @@ def viewer_nodes_from_fem(fem: Any) -> ViewerNodes:
             cs_rows.append(_constraint_row_from_record(rec))
     constraints = NodeConstraintView(cs_rows)
 
+    # Per-node compose-module label (schema 2.9.0 / ADR 0038).
+    # ``_module_label`` on the broker is an ``ndarray(N,) object``
+    # parallel to ``nodes.ids``.  Host rows are empty strings and
+    # are filtered out by the ``ViewerNodes`` ctor.  Falls back to
+    # an empty mapping for uncomposed FEMData (``_module_label is
+    # None``) — ``has_modules`` will then be ``False``.
+    module_by_nid: dict[int, str] = {}
+    node_ml = getattr(fem.nodes, "_module_label", None)
+    if node_ml is not None and len(node_ml) == len(ids):
+        for i in range(len(ids)):
+            lbl = node_ml[i]
+            if lbl is None:
+                continue
+            s = str(lbl)
+            if s == "":
+                continue
+            module_by_nid[int(ids[i])] = s
+
     return ViewerNodes(
         ids=ids, coords=coords,
         physical=physical, labels=labels, selection=selection,
         loads=loads, sp=sp, masses=masses,
         constraints=constraints,
+        module_by_nid=module_by_nid or None,
     )
 
 

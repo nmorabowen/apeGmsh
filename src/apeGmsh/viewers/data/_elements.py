@@ -167,6 +167,7 @@ class ViewerElements:
         "_types",
         "_vecxz_by_eid",
         "_partition_by_eid",
+        "_module_by_eid",
         "physical",
         "labels",
         "selection",
@@ -185,6 +186,7 @@ class ViewerElements:
         constraints: SurfaceConstraintView,
         vecxz: dict[int, ndarray] | None = None,
         partition_by_eid: dict[int, int] | None = None,
+        module_by_eid: dict[int, str] | None = None,
     ) -> None:
         self._groups = list(groups)
         self._types = [g.element_type for g in self._groups]
@@ -201,6 +203,23 @@ class ViewerElements:
         # files, and the from_fem path (FEMData has no rank labelling).
         self._partition_by_eid: dict[int, int] = {
             int(k): int(v) for k, v in (partition_by_eid or {}).items()
+        }
+        # FEM element id -> compose-module label (schema 2.9.0 /
+        # ADR 0038).  Populated from the broker's per-element
+        # ``_module_label`` dict (from_fem path) or from each
+        # ``/elements/{type}/module_label`` parallel dataset (h5 path
+        # via :meth:`H5Model.bulk_module_labels_for_elements`).
+        # Host-owned rows carry the empty-string label on the wire and
+        # are excluded from this mapping, so ``module_for(host_eid)``
+        # returns ``None``.  Empty for uncomposed FEMData, pre-2.9.0
+        # archives, and any source that has no module-label metadata
+        # at all.  For nested-compose models the label is the full
+        # joined label produced by
+        # :func:`apeGmsh.mesh._compose._join_module_label` (e.g.
+        # ``"bayP/frameA"``).
+        self._module_by_eid: dict[int, str] = {
+            int(k): str(v) for k, v in (module_by_eid or {}).items()
+            if str(v) != ""
         }
         self.physical = physical
         self.labels = labels
@@ -231,6 +250,23 @@ class ViewerElements:
         """True when at least one element carries an OpenSeesMP rank
         label (schema 2.10.0 partition zone present and non-trivial)."""
         return bool(self._partition_by_eid)
+
+    def module_for(self, element_id: int) -> "str | None":
+        """Return the compose-module label that owns a FEM element id, or
+        ``None`` when the element is host-owned (no compose origin) or
+        the source carries no module-label metadata at all (uncomposed
+        FEMData, pre-2.9.0 archive).
+
+        For nested-compose models the label is the full joined label
+        (e.g. ``"bayP/frameA"``) — host-rows always read as ``None``."""
+        return self._module_by_eid.get(int(element_id))
+
+    @property
+    def has_modules(self) -> bool:
+        """True when at least one element carries a compose-module label
+        (schema 2.9.0 / ADR 0038 — composed FEMData or composed
+        ``model.h5``)."""
+        return bool(self._module_by_eid)
 
     def __iter__(self) -> Iterator[ViewerElementGroup]:
         return iter(self._groups)
@@ -297,8 +333,33 @@ def viewer_elements_from_fem(fem: Any) -> ViewerElements:
             cs_rows.append(row)
     constraints = SurfaceConstraintView(cs_rows)
 
+    # Per-element compose-module label (schema 2.9.0 / ADR 0038).
+    # ``_module_label`` on the broker is ``dict[type_code, ndarray(N,)
+    # object dtype]`` aligned 1:1 with each ``ElementGroup.ids``.  Host
+    # rows are empty strings and are filtered out by the
+    # ``ViewerElements`` ctor.  Falls back to an empty mapping for
+    # uncomposed FEMData (``_module_label is None``) — ``has_modules``
+    # will then be ``False``.
+    module_by_eid: dict[int, str] = {}
+    ml_dict = getattr(fem.elements, "_module_label", None)
+    if ml_dict:
+        for g in fem.elements:
+            arr = ml_dict.get(int(g.element_type.code))
+            if arr is None:
+                continue
+            ids = np.asarray(g.ids, dtype=np.int64)
+            for i in range(min(len(ids), len(arr))):
+                lbl = arr[i]
+                if lbl is None:
+                    continue
+                s = str(lbl)
+                if s == "":
+                    continue
+                module_by_eid[int(ids[i])] = s
+
     return ViewerElements(
         groups=groups,
         physical=physical, labels=labels, selection=selection,
         loads=loads, constraints=constraints,
+        module_by_eid=module_by_eid or None,
     )

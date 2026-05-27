@@ -222,6 +222,16 @@ class ViewerData:
         partition_by_eid = _decode_partition_by_eid(model)
         boundary_node_ids = _decode_boundary_node_ids(model)
 
+        # Compose-module labels (schema 2.9.0 / ADR 0038 — Phase 3F.2a).
+        # Bulk equivalent of :meth:`H5Model.composed_for_node` /
+        # ``composed_for_element`` for the viewer's per-entity colouring
+        # path.  Both helpers return empty dicts for pre-2.9.0 archives,
+        # uncomposed models, and foreign-format adapters that don't
+        # implement the bulk methods — the missing surfaces look the
+        # same at this layer.
+        module_by_nid = _decode_module_by_nid(model)
+        module_by_eid = _decode_module_by_eid(model)
+
         nodes = ViewerNodes(
             ids=ids, coords=coords,
             physical=node_physical, labels=node_labels,
@@ -231,6 +241,7 @@ class ViewerData:
             masses=MassView(masses_rows),
             constraints=NodeConstraintView(node_cs_rows),
             boundary_node_ids=boundary_node_ids,
+            module_by_nid=module_by_nid or None,
         )
 
         # Per-element geomTransf vecxz — the schema-aware transforms ↔
@@ -250,6 +261,7 @@ class ViewerData:
             constraints=SurfaceConstraintView(elem_cs_rows),
             vecxz=vecxz,
             partition_by_eid=partition_by_eid,
+            module_by_eid=module_by_eid or None,
         )
 
         return cls(
@@ -362,6 +374,36 @@ def _decode_boundary_node_ids(model: Any) -> "frozenset[int]":
     for rec in recs:
         out.update(int(n) for n in rec.boundary_node_ids)
     return frozenset(out)
+
+
+def _decode_module_by_nid(model: Any) -> dict[int, str]:
+    """Return ``{node_id: module_label}`` via the reader's bulk accessor.
+
+    Schema 2.9.0 (ADR 0038 — Phase 3F.2a).  Uses
+    :meth:`H5Model.bulk_module_labels_for_nodes` when present; foreign
+    adapters (LS-DYNA d3plot, xDMF) that don't implement the bulk method
+    degrade to an empty dict via ``getattr`` rather than swallowing a
+    runtime exception.
+    """
+    fn = getattr(model, "bulk_module_labels_for_nodes", None)
+    if fn is None:
+        return {}
+    return fn()
+
+
+def _decode_module_by_eid(model: Any) -> dict[int, str]:
+    """Return ``{element_id: module_label}`` via the reader's bulk accessor.
+
+    Schema 2.9.0 (ADR 0038 — Phase 3F.2a).  Uses
+    :meth:`H5Model.bulk_module_labels_for_elements` when present;
+    foreign adapters that don't implement the bulk method degrade to
+    an empty dict via ``getattr`` rather than swallowing a runtime
+    exception.
+    """
+    fn = getattr(model, "bulk_module_labels_for_elements", None)
+    if fn is None:
+        return {}
+    return fn()
 
 
 def _decode_element_groups(model: Any) -> list[ViewerElementGroup]:
