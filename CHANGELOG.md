@@ -1,6 +1,35 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API**
+
+### FIXED — coincident-face orphan-geometry leak in slice / cut / fragment
+
+- **`g.model.geometry.slice(...)` / `cut_by_surface(...)` / `cut_by_plane(...)` and `g.model.boolean.fragment(...)`** now share a single topology-driven cleanup pass (`apeGmsh.core._geometry_topology.sweep_dangling`), eliminating the three pre-existing definitions of "orphan" the cleanup paths used. The leak was reliably reproducible when a cutting plane coincided with an existing face of the operand (e.g. slicing a swiss-cheese solid at its cavity-bottom z-coordinate, or fragmenting two abutting solids at their shared face): OCC consumed the tool but left at least one free-floating sub-piece behind. Plus matching dim=1 and dim=0 leaks and stale `model._metadata` entries.
+
+- **The sweep keeps anything that (a) bounds a registered volume at any depth, or (b) is user-intentional — in `model._metadata` (every `add_*` primitive registers there) or carrying a label.** Everything else dim ≤ 2 is removed, then stale metadata keys whose tags no longer exist in OCC are reaped. Mirrors the audit's spec verbatim.
+
+### CHANGED — `boolean.fragment(cleanup_free=...)` default flipped back to `True`
+
+- **`g.model.boolean.fragment(...)` default `cleanup_free` flipped from `False` back to `True`**, but the cleanup is now the topology-driven sweep above, not the previous centroid-in-bbox heuristic. The centroid heuristic over-collected shell-on-solid geometry whose centroid happened to fall outside the volume bbox — the topology sweep preserves any standalone shell the user explicitly created (`add_rectangle`, `add_plane_surface`, etc.) because those entities live in `_metadata`. Pass `cleanup_free=False` only when you need OCC's raw output (no sweep, no stale-metadata reap) for downstream inspection.
+
+- **`_bool_op` registration narrowed.** Previously every dimtag in a boolean result (including all sub-surface byproducts of a 3D fragment) was registered in `_metadata`. The sweep would then mis-protect those byproducts as user-intentional. Now `_bool_op` registers only result dimtags whose dimension matches `default_dim` (typically 3). `cut_by_surface(keep_surface=True)` re-registers cut interfaces as `'cut_interface'` explicitly — unchanged for users.
+
+### ADDED — `g.model.geometry.find_orphans()` / `remove_orphans()` / `validate_pre_mesh()`
+
+- **`find_orphans() -> dict[int, list[int]]`** — inspect the model for orphan geometry without modifying it. Returns the dimtags the post-op sweep would reap.
+- **`remove_orphans(*, dry_run=False) -> dict[int, list[int]]`** — manual sweep entry point. Same algorithm slice / cut_by_* / fragment run internally.
+- **`validate_pre_mesh()`** — raise `GeometryValidationError` if any orphans exist. Mirrors `MassesComposite.validate_pre_mesh` / `LoadsComposite.validate_pre_mesh` / `ConstraintsComposite.validate_pre_mesh`; called by `Mesh.generate` so orphan geometry fails fast instead of silently corrupting downstream mesh tags.
+
+### ADDED — coincident-face advisory + one-sided-cut warning
+
+- **`WarnGeomCoincidentFace`** fires from `add_axis_cutting_plane` when the requested plane sits within OCC tolerance of an existing axis-aligned face of an operand. The sweep cleans up the orphan regardless; the warning lets users refactor the offset to avoid the OCC fragility entirely.
+- **`WarnGeomOneSidedCut`** fires from `cut_by_plane` when the plane offset sits outside the operand's bounding box (only one side has fragments). Previously a silent log line; now a `UserWarning` subclass so test-time `pytest -W error` catches it.
+
+### REMOVED — dead code on `cut_by_surface`
+
+- **`cut_by_surface(sync=...)` parameter dropped.** The argument was accepted but never honored (the function always synced unconditionally). Internal callers (`cut_by_plane`, `slice`) updated accordingly.
+- **Dead `inherited_label` block removed** (computed but never read).
+- **`_cleanup_slice_orphans` deleted** — replaced by `sweep_dangling`.
 
 ### ADDED — higher-order line broker split (ADR 0037, #349)
 

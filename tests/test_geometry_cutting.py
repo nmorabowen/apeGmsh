@@ -218,3 +218,223 @@ class TestSlice:
         for tag in pieces:
             labels = g.labels.labels_for_entity(3, tag)
             assert "half" in labels
+
+
+# =====================================================================
+# Coincident-face orphan-leak regressions  (audit-confirmed bug class)
+# =====================================================================
+
+class TestSliceCoincidentFaceOrphans:
+    """Slice operations whose cutting plane sits at the same coordinate
+    as an existing face used to leave a stranded surface (and lower-dim
+    leaks) behind.  Pins the fix added with the :func:`sweep_dangling`
+    helper — these are the four failure modes the audit confirmed.
+    """
+
+    def test_slice_coincident_with_cavity_face_no_orphans(self, g):
+        """Outer box minus inner box, then slice at the cavity bottom.
+
+        Before the fix this left:
+        - 1 free-floating surface spanning the full x/y extent at
+          z=cavity-bottom
+        - 4 stranded boundary curves
+        - 4 stranded corner points
+        - 9 stale ``_metadata`` entries (consumed cutting-plane tags)
+
+        After the fix: zero of everything.
+        """
+        import warnings
+        from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
+
+        g.model.geometry.add_box(-3.3, -0.8, -0.9, 6.6, 1.6, 0.9, label="outer")
+        g.model.geometry.add_box(-3.025, -0.675, -0.6, 6.05, 1.35, 0.6, label="inner")
+        g.model.boolean.cut(objects=["outer"], tools=["inner"], label="shell")
+
+        # The coincident-face advisory is expected; suppress it from
+        # bubbling so the test stays focused on the orphan invariant.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", WarnGeomCoincidentFace)
+            g.model.geometry.slice(solid="shell", axis="z", offset=-0.6)
+
+        orphans = g.model.geometry.find_orphans()
+        assert orphans == {0: [], 1: [], 2: []}, (
+            f"coincident-face cavity-bottom slice still leaks: {orphans}"
+        )
+
+        live = {(d, t) for d in range(4)
+                for _, t in gmsh.model.getEntities(d)}
+        stale = [dt for dt in g.model._metadata if dt not in live]
+        assert not stale, f"stale metadata after slice: {stale}"
+
+    def test_slice_coincident_with_swiss_cheese_inner_face(self, g):
+        """Same as above but at the cavity TOP plane (z=0.0 in this
+        layout).  Verifies the bug class isn't asymmetric in z.
+        """
+        import warnings
+        from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
+
+        g.model.geometry.add_box(-3.3, -0.8, -0.9, 6.6, 1.6, 0.9, label="outer")
+        g.model.geometry.add_box(-3.025, -0.675, -0.6, 6.05, 1.35, 0.6, label="inner")
+        g.model.boolean.cut(objects=["outer"], tools=["inner"], label="shell")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", WarnGeomCoincidentFace)
+            g.model.geometry.slice(solid="shell", axis="z", offset=0.0)
+
+        orphans = g.model.geometry.find_orphans()
+        assert orphans == {0: [], 1: [], 2: []}, (
+            f"coincident-face cavity-top slice still leaks: {orphans}"
+        )
+
+    def test_slice_idempotent_resliced_same_plane(self, g):
+        """Slicing twice at the same offset must not produce new
+        entities at ANY dim — the second slice is a no-op beyond the
+        (already-present) inter-fragment face.  Snapshot every dim so
+        a regression that produced a new bounded surface or stray
+        curve slips through dim=3-only checks would still be caught.
+        """
+        import warnings
+        from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
+
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 2, label="col")
+        g.model.geometry.slice(solid="col", axis="z", offset=1.0)
+
+        ents_after_first = {
+            d: sorted(t for _, t in gmsh.model.getEntities(d))
+            for d in range(4)
+        }
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", WarnGeomCoincidentFace)
+            g.model.geometry.slice(solid="col", axis="z", offset=1.0)
+        ents_after_second = {
+            d: sorted(t for _, t in gmsh.model.getEntities(d))
+            for d in range(4)
+        }
+
+        assert ents_after_first == ents_after_second, (
+            f"idempotent slice changed entity set: "
+            f"first={ents_after_first} second={ents_after_second}"
+        )
+        assert g.model.geometry.find_orphans() == {0: [], 1: [], 2: []}
+
+    def test_slice_classify_empty_side_warns_but_returns(self, g):
+        """When the plane offset sits outside the solid bbox, one side
+        of ``classify=True`` is empty.  The op must emit
+        :class:`WarnGeomOneSidedCut` (was a silent log line) and still
+        return the ``(above, below)`` tuple so callers that pattern-
+        match don't crash.
+        """
+        from apeGmsh.core._geometry_errors import WarnGeomOneSidedCut
+
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="b")
+        with pytest.warns(WarnGeomOneSidedCut):
+            result = g.model.geometry.slice(
+                solid="b", axis="z", offset=10.0, classify=True,
+            )
+        assert isinstance(result, tuple) and len(result) == 2
+
+    def test_slice_via_label_resolves_multiple_volumes(self, g):
+        """Two boxes both labeled ``"deck"`` get sliced together when
+        ``slice("deck", ...)`` is called.  Fragments inherit the label,
+        each half spans exactly z=0..0.5 or z=0.5..1, and no orphans
+        appear.
+        """
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="deck")
+        g.model.geometry.add_box(5, 0, 0, 1, 1, 1, label="deck")
+        pieces = g.model.geometry.slice(
+            "deck", axis="z", offset=0.5, label="deck",
+        )
+        assert len(pieces) == 4, (
+            f"expected 4 fragments (2 boxes x 2 halves), got {pieces}"
+        )
+        for tag in pieces:
+            assert "deck" in g.labels.labels_for_entity(3, tag)
+            _, _, zmin, _, _, zmax = gmsh.model.getBoundingBox(3, tag)
+            extent = zmax - zmin
+            assert abs(extent - 0.5) < 1e-6, (
+                f"fragment {tag} has z-extent {extent}, expected 0.5 — "
+                f"slice did not happen at z=0.5"
+            )
+        assert g.model.geometry.find_orphans() == {0: [], 1: [], 2: []}
+
+    def test_slice_no_dim1_or_dim0_orphans(self, g):
+        """The audit found dim=1 and dim=0 leaks alongside the surface
+        leak.  Walk both dimensions explicitly so a regression that
+        only fixes the surface sweep would fail here.
+        """
+        import warnings
+        from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
+
+        g.model.geometry.add_box(-3.3, -0.8, -0.9, 6.6, 1.6, 0.9, label="outer")
+        g.model.geometry.add_box(-3.025, -0.675, -0.6, 6.05, 1.35, 0.6, label="inner")
+        g.model.boolean.cut(objects=["outer"], tools=["inner"], label="shell")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", WarnGeomCoincidentFace)
+            g.model.geometry.slice(solid="shell", axis="z", offset=-0.6)
+
+        gmsh.model.occ.synchronize()
+        # Rebuild the volume-boundary closure inline so the test does
+        # not depend on the internal helper's exact API.
+        keep = set()
+        for d_v, v in gmsh.model.getEntities(3):
+            keep.add((d_v, v))
+            faces = gmsh.model.getBoundary(
+                [(3, v)], oriented=False, recursive=False,
+            )
+            face_dts = [(abs(d), abs(t)) for d, t in faces]
+            keep.update(face_dts)
+            if face_dts:
+                curves = gmsh.model.getBoundary(
+                    face_dts, oriented=False, recursive=False, combined=False,
+                )
+                curve_dts = [(abs(d), abs(t)) for d, t in curves]
+                keep.update(curve_dts)
+                if curve_dts:
+                    points = gmsh.model.getBoundary(
+                        curve_dts, oriented=False,
+                        recursive=False, combined=False,
+                    )
+                    keep.update((abs(d), abs(t)) for d, t in points)
+
+        dim1_orphans = [t for _, t in gmsh.model.getEntities(1)
+                        if (1, t) not in keep]
+        dim0_orphans = [t for _, t in gmsh.model.getEntities(0)
+                        if (0, t) not in keep]
+        assert dim1_orphans == [], f"dim=1 orphans: {dim1_orphans}"
+        assert dim0_orphans == [], f"dim=0 orphans: {dim0_orphans}"
+
+
+class TestCoincidentFaceWarning:
+    """Pin the advisory that fires before the orphan-prone cut runs."""
+
+    def test_coincident_face_warning_fires_for_cavity_bottom(self, g):
+        """Slicing at exactly the cavity-bottom z-coordinate of a
+        swiss-cheese solid is the canonical coincident-face case;
+        :class:`WarnGeomCoincidentFace` must fire so users can choose
+        to refactor the offset.
+        """
+        from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
+
+        g.model.geometry.add_box(-3.3, -0.8, -0.9, 6.6, 1.6, 0.9, label="outer")
+        g.model.geometry.add_box(-3.025, -0.675, -0.6, 6.05, 1.35, 0.6, label="inner")
+        g.model.boolean.cut(objects=["outer"], tools=["inner"], label="shell")
+        with pytest.warns(WarnGeomCoincidentFace):
+            g.model.geometry.slice(solid="shell", axis="z", offset=-0.6)
+
+    def test_no_coincident_warning_for_clear_plane(self, g):
+        """Slicing far from any existing face must NOT trigger the
+        coincident-face advisory.
+        """
+        import warnings
+        from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
+
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            g.model.geometry.slice(axis="z", offset=0.37)
+        coincid = [w for w in caught
+                   if issubclass(w.category, WarnGeomCoincidentFace)]
+        assert coincid == [], (
+            f"spurious coincident-face warning on non-coincident slice: "
+            f"{[str(w.message) for w in coincid]}"
+        )

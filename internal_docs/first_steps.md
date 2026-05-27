@@ -841,14 +841,16 @@ wrong if you wanted separate materials for each.
   the warning, either adopt them with `g.parts.from_model()`
   first, or accept that they'll participate in fragmentation but
   not be tracked in the registry.
-- **`fragment(cleanup_free=False)` is the default.** Pass
-  `cleanup_free=True` opt-in to drop dim-2 surfaces that don't
-  bound a volume — useful for killing remnants of a cutting plane
-  that extended past your solid. The default preserves all
-  surfaces so shells on top of solids (shell-on-solid coupling)
-  survive the operation. In pure 2D models the cleanup auto-skips
-  even when requested (otherwise it would kill every surface in
-  sight).
+- **`fragment(cleanup_free=True)` is the default.** The topology
+  sweep reaps dim-2 surfaces that don't bound a volume AND aren't
+  user-intentional (not in `model._metadata`, no label).  Shells
+  you explicitly created via `add_rectangle` / `add_plane_surface`
+  / `add_cutting_plane` are protected (their metadata entry marks
+  them intentional), so shell-on-solid coupling survives the
+  operation.  Pass `cleanup_free=False` only when you need OCC's
+  raw output (no sweep, no stale-metadata reap).  In pure 2D
+  models the cleanup auto-skips (no volumes means every surface
+  would look "free").
 
 ---
 

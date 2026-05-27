@@ -12,6 +12,7 @@ import gmsh
 
 from apeGmsh.core.Part import Part
 from apeGmsh.core._section_placement import apply_placement
+from ._builder import silent_section_slices
 from ._classify import (
     classify_angle_outer_faces,
     classify_end_faces,
@@ -115,10 +116,11 @@ def W_solid(
         tr.extrude(profile, 0, 0, length)
 
         # Slice into 7 hex-compatible regions
-        geo.slice(axis='x', offset=-tw / 2)
-        geo.slice(axis='x', offset=tw / 2)
-        geo.slice(axis='y', offset=h / 2)
-        geo.slice(axis='y', offset=-h / 2)
+        with silent_section_slices():
+            geo.slice(axis='x', offset=-tw / 2)
+            geo.slice(axis='x', offset=tw / 2)
+            geo.slice(axis='y', offset=h / 2)
+            geo.slice(axis='y', offset=-h / 2)
 
         # Label by structural role
         classify_w_volumes(h, tw, tf, bf, part.labels)
@@ -389,8 +391,9 @@ def angle_solid(
             tr.extrude(surfs[0], 0, 0, length)
 
         # Slice at the corner junction
-        geo.slice(axis='x', offset=t)
-        geo.slice(axis='y', offset=t)
+        with silent_section_slices():
+            geo.slice(axis='x', offset=t)
+            geo.slice(axis='y', offset=t)
 
         # Label by structural role
         h_tags = []
@@ -479,9 +482,10 @@ def channel_solid(
             tr.extrude(surfs[0], 0, 0, length)
 
         # Slice for hex readiness
-        geo.slice(axis='x', offset=tw)
-        geo.slice(axis='y', offset=h / 2)
-        geo.slice(axis='y', offset=-h / 2)
+        with silent_section_slices():
+            geo.slice(axis='x', offset=tw)
+            geo.slice(axis='y', offset=h / 2)
+            geo.slice(axis='y', offset=-h / 2)
 
         # Label by role
         from ._classify import classify_w_volumes
@@ -556,9 +560,10 @@ def tee_solid(
             tr.extrude(surfs[0], 0, 0, length)
 
         # Slice at the flange-stem junction
-        geo.slice(axis='x', offset=-tw / 2)
-        geo.slice(axis='x', offset=tw / 2)
-        geo.slice(axis='y', offset=0)
+        with silent_section_slices():
+            geo.slice(axis='x', offset=-tw / 2)
+            geo.slice(axis='x', offset=tw / 2)
+            geo.slice(axis='y', offset=0)
 
         # Label by role
         flange_tags = []

@@ -4,8 +4,9 @@ from typing import TYPE_CHECKING
 
 import gmsh
 
+from ._geometry_topology import sweep_dangling
 from ._helpers import Tag, resolve_to_dimtags
-from .Labels import pg_preserved, cleanup_label_pgs
+from .Labels import pg_preserved
 from apeGmsh._types import EntityRefs
 
 if TYPE_CHECKING:
@@ -96,7 +97,18 @@ class _Boolean:
                     self._model._metadata.pop(dt, None)
 
         tags = [t for _, t in result]
+        # Register only the target-dim outputs as user-intentional —
+        # ``fragment`` returns ALL surviving entities of every dim
+        # (split surfaces, edges, etc.) as byproducts, and stashing
+        # those in ``_metadata`` would confuse :func:`sweep_dangling`
+        # into preserving structural orphans (the overhang half of a
+        # fragmented cutting plane).  ``cut_by_surface`` re-registers
+        # the cut interface explicitly when ``keep_surface=True`` —
+        # that path is the right channel for "I want this surface
+        # tracked", not a side effect of the boolean.
         for d, t in result:
+            if int(d) != int(default_dim):
+                continue
             self._model._register(d, t, None, fn_name)
 
         # Apply the label override.  Strip input-side labels off the
@@ -210,7 +222,7 @@ class _Boolean:
         dim           : int  = 3,
         remove_object : bool = True,
         remove_tool   : bool = True,
-        cleanup_free  : bool = False,
+        cleanup_free  : bool = True,
         sync          : bool = True,
     ) -> list[Tag]:
         """
@@ -227,24 +239,20 @@ class _Boolean:
         dim : target dimension for bare integer tags in *objects*
             (default 3).
         remove_object, remove_tool : passed to OCC (default True).
-        cleanup_free : bool
-            When True, remove any "free" surfaces that do not bound a
-            volume after the fragment operation.  Useful for dropping
-            exterior remnants of cutting planes that overhang the
-            solid.  Defaults to ``False`` (changed from ``True``): the
-            cleanup heuristic also deleted shell surfaces attached to
-            volume faces (shell-on-solid workflows) whose centroid sat
-            outside the volume bounding box, silently destroying the
-            user's geometry.  Pass ``cleanup_free=True`` explicitly
-            when you know the model only produces stray exterior
-            surfaces, or delete unwanted surfaces by hand with
-            ``gmsh.model.occ.remove`` after the fragment.  When True,
-            free surfaces whose centroid sits INSIDE some volume bbox
-            are still preserved (embedded interior surfaces such as
-            future crack planes); the centroid-inside-bbox test is the
-            *only* preservation rule — a shell whose centroid lies
-            outside every volume bbox is deleted even if it shares
-            an edge / boundary curve with a volume face.
+        cleanup_free : bool, default True
+            When True, run :func:`sweep_dangling` after the fragment to
+            reap free-floating dim<=2 entities that bound no surviving
+            volume AND are not user-intentional (not in
+            ``model._metadata``, not carrying a label).  The previous
+            centroid-in-bbox heuristic over-collected shell-on-solid
+            geometry whose centroid happened to fall outside a volume
+            bbox; the topology-driven sweep preserves any standalone
+            shell the user explicitly created (``add_rectangle``,
+            ``add_plane_surface``, etc.) because those entities live
+            in ``_metadata``.  Default flipped to ``True`` once the
+            safer sweep landed; pass ``cleanup_free=False`` only when
+            you need OCC's raw output (no orphan removal, no stale-
+            metadata reap) for downstream inspection.
         sync : synchronise the OCC kernel (default True).
 
         Returns
@@ -257,51 +265,13 @@ class _Boolean:
             remove_object, remove_tool, sync,
         )
 
-        # ``cleanup_free`` removes dim=2 surfaces that have no upward
-        # adjacency to a volume — useful after a 3D fragment to drop
-        # stray cutting-plane remnants. In a 2D-only model every
-        # surface has no volume neighbour (there ARE no volumes), so
-        # the sweep would destroy every surface in the model. Skip
-        # the cleanup when no 3D entities exist.
-        # An embedded interior surface (e.g. a future crack plane) is
-        # also adjacency-free, so we keep any free surface whose
-        # centroid falls inside some volume's bounding box; only
-        # surfaces clearly outside every volume are deleted.
-        # NOTE on shell-on-solid: the cleanup_free=True path is
-        # opt-in and removes ALL adjacency-free overhang surfaces
-        # outside volume bboxes — both genuine cutting-plane remnants
-        # AND shell-wall portions that extend beyond the volume face
-        # they sit on. Shell-on-solid workflows must use the default
-        # cleanup_free=False (changed from True for exactly this
-        # reason) so user-declared shells survive.
+        # In a 2D-only model every surface is "free" (there ARE no
+        # volumes to bound), so the sweep would destroy every surface
+        # the user created.  ``sweep_dangling`` protects metadata-
+        # registered surfaces by definition, but skipping the sweep
+        # in the 2D-only case is cheaper and avoids any debate about
+        # what "orphan" means without volumes.
         if cleanup_free and gmsh.model.getEntities(3):
-            vol_bboxes = [
-                gmsh.model.getBoundingBox(3, vt)
-                for _, vt in gmsh.model.getEntities(3)
-            ]
-            free: list[tuple[int, int]] = []
-            for _, tag_s in gmsh.model.getEntities(2):
-                up, _ = gmsh.model.getAdjacencies(2, tag_s)
-                if len(up) != 0:
-                    continue
-                cx, cy, cz = gmsh.model.occ.getCenterOfMass(2, tag_s)
-                inside_any = any(
-                    xmin <= cx <= xmax
-                    and ymin <= cy <= ymax
-                    and zmin <= cz <= zmax
-                    for xmin, ymin, zmin, xmax, ymax, zmax in vol_bboxes
-                )
-                if not inside_any:
-                    free.append((2, tag_s))
-            if free:
-                gmsh.model.occ.remove(free, recursive=True)
-                if sync:
-                    gmsh.model.occ.synchronize()
-                for dt in free:
-                    self._model._metadata.pop(dt, None)
-                cleanup_label_pgs(free)
-                self._model._log(
-                    f"fragment cleanup: removed {len(free)} free surface(s)"
-                )
+            sweep_dangling(self._model)
 
         return result

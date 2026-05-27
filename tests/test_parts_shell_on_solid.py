@@ -98,13 +98,21 @@ def test_fragment_pair_shell_to_solid_succeeds(g):
 
 
 def test_boolean_fragment_default_preserves_shell_surface_on_volume(g):
-    """Default cleanup_free=False keeps shells when they sit on a volume face."""
+    """Default `cleanup_free=True` (topology sweep) keeps a shell sitting
+    on a volume face.
+
+    The shell is registered via ``add_rectangle`` so it lives in
+    ``model._metadata`` — :func:`sweep_dangling` classifies anything
+    in metadata as user-intentional and preserves it.  The mechanism
+    is different from the pre-fix behavior (which relied on
+    `cleanup_free=False` as the default to skip the sweep entirely),
+    but the outcome is the same: shell-on-solid coupling works.
+    """
     box_tag = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
     shell_tag = g.model.geometry.add_rectangle(0, 0, 1, 1, 1)
 
-    # Default invocation — cleanup_free should default to False so the
-    # shell isn't auto-deleted just because it's a free dim=2 sitting
-    # on top of a volume.
+    # Default invocation — the shell survives because ``add_rectangle``
+    # registered it in _metadata; the topology sweep protects it.
     g.model.boolean.fragment(
         objects=[(3, box_tag)], tools=[(2, shell_tag)],
     )
@@ -123,12 +131,20 @@ def test_boolean_fragment_default_preserves_shell_surface_on_volume(g):
     )
 
 
-def test_boolean_fragment_explicit_cleanup_free_still_works(g):
-    """Opt-in cleanup_free=True remains available for callers that want it."""
-    # Two volumes: one inside another. cleanup_free=True should still
-    # remove free dim=2 surfaces that aren't bounding any volume.
+def test_boolean_fragment_cleanup_free_preserves_user_added_shell(g):
+    """``cleanup_free=True`` (now the default) uses the topology-driven
+    :func:`sweep_dangling` instead of the old centroid-in-bbox
+    heuristic.  Surfaces registered via ``add_rectangle`` /
+    ``add_plane_surface`` / ``add_cutting_plane`` are user-intentional
+    (they appear in ``model._metadata``) and the sweep preserves them
+    even when they sit far from any volume — the old heuristic deleted
+    them, silently destroying shell-on-solid workflows.
+
+    Use OCC directly when you genuinely need a sweep-removable orphan
+    surface (one with no metadata, no label binding).
+    """
     box_tag = g.model.geometry.add_box(0, 0, 0, 2, 2, 2)
-    # A free orphan rectangle far away (no volume bounds it).
+    # A user-added rectangle — registered in metadata, hence preserved.
     orphan_tag = g.model.geometry.add_rectangle(10, 10, 10, 1, 1)
     gmsh.model.occ.synchronize()
 
@@ -137,14 +153,47 @@ def test_boolean_fragment_explicit_cleanup_free_still_works(g):
     )
 
     gmsh.model.occ.synchronize()
-    # The orphan rectangle (far from any volume) should be cleaned up
-    # when cleanup_free=True is explicitly requested.
+    # The user-added rectangle survives the sweep — its metadata entry
+    # marks it as intentional standalone geometry.
     surfaces_far = []
     for dim, tag in gmsh.model.getEntities(2):
         cx, cy, cz = gmsh.model.occ.getCenterOfMass(dim, tag)
-        if cx > 5:  # the orphan was at x=10
+        if cx > 5:
             surfaces_far.append(tag)
-    assert len(surfaces_far) == 0, (
-        f"cleanup_free=True should have removed orphan rectangle "
-        f"(found {len(surfaces_far)} surfaces with x>5)"
+    assert len(surfaces_far) >= 1, (
+        "cleanup_free=True regressed: user-added shell (registered via "
+        "add_rectangle) was deleted by the sweep. The topology-driven "
+        "sweep is supposed to preserve metadata-registered standalone "
+        "geometry."
+    )
+
+
+def test_boolean_fragment_cleanup_free_removes_unregistered_orphan(g):
+    """The topology sweep DOES remove dim<=2 entities created outside
+    the ``add_*`` registry — e.g. one injected via raw OCC.  This
+    pins the half of the contract the previous test inverted: only
+    user-intentional (metadata or labeled) entities are protected.
+    """
+    box_tag = g.model.geometry.add_box(0, 0, 0, 2, 2, 2)
+    # Inject a rectangle bypassing add_rectangle so it has no
+    # metadata entry and no label.
+    raw_pts = [gmsh.model.occ.addPoint(*p) for p in [
+        (10, 10, 10), (11, 10, 10), (11, 11, 10), (10, 11, 10),
+    ]]
+    raw_lines = [
+        gmsh.model.occ.addLine(raw_pts[i], raw_pts[(i + 1) % 4])
+        for i in range(4)
+    ]
+    raw_loop = gmsh.model.occ.addCurveLoop(raw_lines)
+    raw_surf = gmsh.model.occ.addPlaneSurface([raw_loop])
+    gmsh.model.occ.synchronize()
+    assert (2, raw_surf) not in g.model._metadata
+
+    g.model.geometry.remove_orphans()
+
+    gmsh.model.occ.synchronize()
+    surfaces_far = [t for _, t in gmsh.model.getEntities(2)
+                    if gmsh.model.occ.getCenterOfMass(2, t)[0] > 5]
+    assert surfaces_far == [], (
+        f"sweep failed to remove unregistered orphan: {surfaces_far}"
     )
