@@ -23,6 +23,7 @@ Supported modes
 """
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 import gmsh
@@ -138,6 +139,8 @@ class ColorModeController:
             self._color_mgr.set_idle_fn(self._phys_group_idle)
         elif mode == "Partition":
             self._color_mgr.set_idle_fn(self._partition_idle)
+        elif mode == "Module":
+            self._color_mgr.set_idle_fn(self._module_idle)
         elif mode == "Quality":
             self._enter_quality_mode()
             self._mode = mode
@@ -212,6 +215,48 @@ class ColorModeController:
             return _FALLBACK_RGB
         dominant = int(np.bincount(np.asarray(ranks, dtype=np.int64)).argmax())
         return _GROUP_PALETTE_RGB[dominant % len(_GROUP_PALETTE_RGB)]
+
+    def _module_idle(self, dt: "DimTag") -> np.ndarray:
+        """Color one BRep entity by its dominant compose-module label.
+
+        Schema 2.9.0 / ADR 0038. Mirror of :meth:`_partition_idle` for
+        the compose-provenance dimension: each FEM element carries a
+        joined module label (e.g. ``"bayP/frameA"`` for a nested
+        compose) and the BRep entity is colored by the most-common
+        label across its owning elements. The full joined label is
+        used as-is — distinct nesting paths get distinct colors.
+
+        Reuses ``_GROUP_PALETTE_RGB`` (same palette as ``Physical
+        Group`` and ``Partition``); the active mode label disambiguates
+        contextually and there's no maintenance cost to a second
+        palette.
+
+        Degrades to ``_FALLBACK_RGB`` when:
+
+        * No ViewerData is bound (``from_fem``-only viewers with no
+          OpenSees enrichment).
+        * The view carries no module labelling (``has_modules ==
+          False`` — uncomposed FEMData, pre-2.9.0 archives).
+        * The DimTag has no elements in the scene, or every owning
+          element has ``module_for(eid) is None`` (host-owned, or
+          unlabelled in the source).
+        """
+        view = self._view
+        if view is None or not view.elements.has_modules:
+            return _FALLBACK_RGB
+        eids = self._scene.brep_to_elems.get(dt)
+        if not eids:
+            return _FALLBACK_RGB
+        labels: list[str] = []
+        for eid in eids:
+            label = view.elements.module_for(int(eid))
+            if label is not None:
+                labels.append(label)
+        if not labels:
+            return _FALLBACK_RGB
+        dominant = Counter(labels).most_common(1)[0][0]
+        idx = abs(hash(dominant)) % len(_GROUP_PALETTE_RGB)
+        return _GROUP_PALETTE_RGB[idx]
 
     def _repaint(self) -> None:
         # Single batched recolor — one VTK rebind per dim, not per entity.
