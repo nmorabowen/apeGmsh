@@ -402,12 +402,21 @@ def _write_nodes(fem: "FEMData", f: Any) -> None:
 
     # ADR 0038 — per-node ``module_label`` parallel dataset (neutral
     # schema 2.9.0).  Always written so the compose-aware reader has a
-    # stable shape contract; populated with empty strings in this
-    # Phase 3A.1 PR (Phase 3B's merge engine fills in real values
-    # during compose).  2.8.x readers ignore the extra dataset.
+    # stable shape contract.  Populated with the broker's stored
+    # ``_module_label`` array when present (Phase 3B.2c onwards); falls
+    # back to empty strings for legacy fixtures + the uncomposed case.
+    # 2.8.x readers ignore the extra dataset.
+    mlbl = getattr(fem.nodes, "_module_label", None)
+    if mlbl is not None and len(mlbl) == node_ids.size:
+        ml_data = np.array(
+            [str(x) if x is not None else "" for x in mlbl],
+            dtype=object,
+        )
+    else:
+        ml_data = np.array([""] * node_ids.size, dtype=object)
     nodes_grp.create_dataset(
         "module_label",
-        data=np.array([""] * node_ids.size, dtype=object),
+        data=ml_data,
         dtype=_vlen_utf8(),
     )
 
@@ -441,11 +450,27 @@ def _write_elements(fem: "FEMData", f: Any) -> None:
         )
         # ADR 0038 — per-element ``module_label`` parallel dataset
         # (neutral schema 2.9.0).  Same shape contract as
-        # ``/nodes/module_label`` — populated with empty strings in
-        # Phase 3A.1; Phase 3B's merge engine fills in real values.
+        # ``/nodes/module_label`` — Phase 3B.2c onwards stamps real
+        # values for compose-merged rows; falls back to empty strings
+        # for the uncomposed case + legacy fixtures.
+        ml_dict = getattr(fem.elements, "_module_label", None)
+        if (
+            ml_dict is not None
+            and elem_group.type_code in ml_dict
+            and len(ml_dict[elem_group.type_code]) == eids.size
+        ):
+            elem_ml_data = np.array(
+                [
+                    str(x) if x is not None else ""
+                    for x in ml_dict[elem_group.type_code]
+                ],
+                dtype=object,
+            )
+        else:
+            elem_ml_data = np.array([""] * eids.size, dtype=object)
         sub.create_dataset(
             "module_label",
-            data=np.array([""] * eids.size, dtype=object),
+            data=elem_ml_data,
             dtype=_vlen_utf8(),
         )
 
@@ -1381,9 +1406,33 @@ def read_neutral_zone_from_group(
         else:
             node_ndf = None
 
+    # ADR 0038 — per-node module_label parallel dataset (2.9.0).  Only
+    # carry it when at least one entry is non-empty (uncomposed case
+    # keeps ``_module_label=None`` so the snapshot_id hash + repr
+    # stay byte-identical with pre-2.9.0 fixtures).
+    node_module_label: "np.ndarray | None" = None
+    if "module_label" in nodes_grp:
+        raw_ml = nodes_grp["module_label"][...]
+        decoded_ml = np.array(
+            [
+                x.decode("utf-8", errors="replace")
+                if isinstance(x, (bytes, bytearray))
+                else str(x)
+                for x in raw_ml
+            ],
+            dtype=object,
+        )
+        if any(s != "" for s in decoded_ml):
+            node_module_label = decoded_ml
+
     # -- elements (per-type subgroups) --
     element_groups: dict[int, ElementGroup] = {}
     types_meta: list[ElementTypeInfo] = []
+    # Per-type module_label arrays (neutral schema 2.9.0).  Populated
+    # only when the dataset is non-empty (i.e. at least one row carries
+    # a non-empty label) — saves the uncomposed common case from
+    # round-tripping with an all-empty-string array.
+    elem_module_labels: dict[int, np.ndarray] = {}
     elem_grp = parent["elements"] if "elements" in parent else None
     if elem_grp is not None:
         for type_name in sorted(elem_grp.keys()):
@@ -1408,6 +1457,23 @@ def read_neutral_zone_from_group(
             element_groups[info.code] = ElementGroup(
                 element_type=info, ids=ids, connectivity=conn,
             )
+            # ADR 0038 — module_label parallel dataset; presence-
+            # detected via ``in`` per the h5py optional-child .get()
+            # hazard.  Only carry it when at least one entry is
+            # non-empty (the compose-empty fast path).
+            if "module_label" in sub:
+                raw = sub["module_label"][...]
+                decoded = np.array(
+                    [
+                        x.decode("utf-8", errors="replace")
+                        if isinstance(x, (bytes, bytearray))
+                        else str(x)
+                        for x in raw
+                    ],
+                    dtype=object,
+                )
+                if any(s != "" for s in decoded):
+                    elem_module_labels[info.code] = decoded
 
     # -- physical_groups + labels (root-level union of node + elem sides) --
     node_pgs, elem_pgs = _read_named_index_at_root(
@@ -1476,6 +1542,7 @@ def read_neutral_zone_from_group(
         partitions=partitions or None,
         part_node_map=part_node_map or None,
         ndf=node_ndf,
+        module_label=node_module_label,
     )
     elements = ElementComposite(
         groups=element_groups,
@@ -1485,6 +1552,7 @@ def read_neutral_zone_from_group(
         loads=element_loads,
         partitions=partitions or None,
         part_elem_map=part_elem_map or None,
+        module_label=elem_module_labels or None,
     )
     info = MeshInfo(
         n_nodes=len(node_ids),

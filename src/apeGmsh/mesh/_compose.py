@@ -997,14 +997,56 @@ class Compose:
         self._validate_translate_rotate_anchor(translate, anchor)
         self._validate_partition_rank(partition_rank)
         self._validate_compose_size(compose_size_per_module)
-        # ``properties`` and ``max_compose_depth`` are exercised by the
-        # Phase 3B.2 engine — no 3B.1 surface beyond accepting them.
+        # ``properties`` is exercised by the merge engine; ``max_compose_depth``
+        # is accepted today but enforced by Phase 3E.1's nested-compose
+        # verifier (no-op here per ADR 0038 §"Namespace rule").
+        _ = max_compose_depth  # acknowledged, not enforced in 3B.2c
 
-        raise NotImplementedError(
-            "Compose merge engine ships in Phase 3B.2; "
-            "this PR (3B.1) scaffolds the facade only. "
-            "Phase 3A.1 schema substrate (PR #361) is on main."
+        parent = self._session
+
+        # Ensure the session has a current ``_fem`` chain head.  On a
+        # newly-begun session this triggers the canonical extraction
+        # from gmsh + def lists; on a chain-phase session (built via
+        # ``apeGmsh.from_h5``) ``_fem`` is already populated.
+        if getattr(parent, "_fem", None) is None:
+            parent._fem = parent.mesh.queries.get_fem_data()
+
+        # Run the canonical transform.  ``FEMData.compose`` validates
+        # again (cheap; keeps the primitive callable standalone) and
+        # returns a new FEMData with the bundle merged in plus a
+        # ``_last_compose_bundle`` attribute carrying the bundle for
+        # replay.
+        new_fem = parent._fem.compose(
+            source,
+            label=label,
+            translate=translate,
+            rotate=rotate,
+            anchor=anchor,
+            partition_rank=partition_rank,
+            properties=properties,
+            compose_size_per_module=compose_size_per_module,
         )
+
+        # Update session state.
+        parent._fem = new_fem
+        bundle = getattr(new_fem, "_last_compose_bundle", None)
+        if bundle is not None:
+            existing = getattr(parent, "_compose_bundles", ())
+            parent._compose_bundles = (*existing, bundle)
+
+        # Bump + re-mark fresh so subsequent ``get_fem_data()`` calls
+        # see the merged snapshot as the current chain head.
+        if hasattr(parent, "_bump_fem_counter"):
+            parent._bump_fem_counter()
+        if hasattr(parent, "_mark_fem_fresh"):
+            parent._mark_fem_fresh()
+
+        # Provenance handle — the new ComposeRecord is the last entry
+        # in the result's composed_from chain.  ``ComposeSet`` iterates
+        # in ascending-label order, so look up by label rather than
+        # index.
+        new_record = new_fem.composed_from[label]
+        return ComposedModule(record=new_record, _fem=new_fem)
 
     # ── Internal: rewrite half of the merge engine (Phase 3B.2a) ─
 
@@ -1185,14 +1227,24 @@ class Compose:
         session was constructed but never ``begin()``-ed, or
         ``get_fem_data()`` would raise because gmsh has no mesh).
         Used by :meth:`compose_list` to gracefully degrade.
+
+        Chain-phase sessions (built via :meth:`apeGmsh.from_h5`) carry
+        ``_fem`` directly with no gmsh state behind them; fall back to
+        that cached snapshot when ``mesh.queries`` is unavailable.
         """
+        # Chain-phase short-circuit: prefer the cached chain head.
+        cached = getattr(self._session, "_fem", None)
+        if cached is not None and getattr(
+            self._session, "_fem_from_h5", False,
+        ):
+            return cached
         try:
             return self._session.mesh.queries.get_fem_data()
         except Exception:
             # Intentionally swallow — compose_list is read-only and
             # must not blow up when called pre-mesh.  Real errors
             # surface elsewhere.
-            return None
+            return cached  # may still be None — caller handles it
 
     # ── Validators ────────────────────────────────────────────────
 
@@ -1411,3 +1463,406 @@ def _previous_reservations(
     # round up from ``host_max_tag``.  Callers that need cumulative
     # tracking pass their own tuple via the rewrite engine in 3B.2b.
     return ()
+
+
+# ---------------------------------------------------------------------------
+# Merge engine (Phase 3B.2c / ADR 0038)
+# ---------------------------------------------------------------------------
+
+
+def _merge_bundle_into_fem(
+    fem: "FEMData",
+    bundle: "_RewrittenBundle",
+) -> "FEMData":
+    """Return a new :class:`FEMData` extending ``fem`` with ``bundle``.
+
+    Pure transform — ``fem`` is unchanged; the returned :class:`FEMData`
+    carries every record in both predecessors merged into a single
+    snapshot.  The bundle's records were offset + namespace-rewritten
+    by :func:`_rewrite_source_for_compose`, so there are no tag /
+    PG-name collisions to resolve here (ADR 0038 §"Tag-offset scheme"
+    + §"Namespace rule" guarantees that).
+
+    Merge rules (ADR 0038 §"Merge semantics"):
+
+    * Nodes / elements / PGs / labels / mesh-selections / parts /
+      constraints / loads / masses / SP: concatenate (host first,
+      bundle second).  PG / label dicts merge by key with no
+      duplicates by construction (namespace rule).
+    * ``fem.composed_from``: extended with a new :class:`ComposeRecord`
+      built from the bundle's metadata.
+    * ``module_label`` parallel arrays: host rows keep their existing
+      label (empty string for host-owned rows, prior compose label
+      for prior-composed rows); bundle's rows are stamped with the
+      bundle's label.
+    """
+    from .FEMData import (
+        FEMData, NodeComposite, ElementComposite, MeshInfo,
+        _compute_bandwidth,
+    )
+    from ._element_types import ElementGroup
+    from .._kernel.records._compose import ComposeRecord
+    from .._kernel.record_sets import ComposeSet
+
+    # ── 1. Concatenate node ids + coords ─────────────────────────
+    host_node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    host_node_coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    bundle_node_ids = np.asarray(bundle.node_ids, dtype=np.int64)
+    bundle_node_coords = np.asarray(bundle.node_coords, dtype=np.float64)
+    new_node_ids = np.concatenate([host_node_ids, bundle_node_ids])
+    new_node_coords = (
+        np.concatenate([host_node_coords, bundle_node_coords], axis=0)
+        if host_node_coords.size or bundle_node_coords.size
+        else np.zeros((0, 3), dtype=np.float64)
+    )
+
+    # ── 2. Node ndf — concatenate when either side declares it ──
+    host_ndf = getattr(fem.nodes, "_ndf", None)
+    bundle_ndf = bundle.node_ndf
+    if host_ndf is None and bundle_ndf is None:
+        new_ndf: "np.ndarray | None" = None
+    else:
+        host_part = (
+            np.asarray(host_ndf, dtype=np.int8)
+            if host_ndf is not None
+            else np.zeros(host_node_ids.shape, dtype=np.int8)
+        )
+        bundle_part = (
+            np.asarray(bundle_ndf, dtype=np.int8)
+            if bundle_ndf is not None
+            else np.zeros(bundle_node_ids.shape, dtype=np.int8)
+        )
+        new_ndf = np.concatenate([host_part, bundle_part])
+
+    # ── 3. Node module_label — host rows keep their label; bundle
+    #      rows are stamped with the bundle's label.  Always allocate
+    #      so the writer + ``ComposedModule.pgs()`` introspection
+    #      have a deterministic shape after the first compose.
+    host_ml = getattr(fem.nodes, "_module_label", None)
+    if host_ml is None:
+        host_ml_arr = np.array([""] * host_node_ids.size, dtype=object)
+    else:
+        host_ml_arr = np.asarray(host_ml, dtype=object)
+    bundle_ml_arr = np.array(
+        [bundle.label] * bundle_node_ids.size, dtype=object,
+    )
+    new_node_module_label = np.concatenate([host_ml_arr, bundle_ml_arr])
+
+    # ── 4. Elements — merge per-type groups ─────────────────────
+    new_element_groups: dict[int, ElementGroup] = dict(fem.elements._groups)
+    # Build a parallel new module_label dict aligned with the result
+    # groups.  Seed with what's already on the host (may be None).
+    host_elem_ml = getattr(fem.elements, "_module_label", None)
+    new_elem_module_label: dict[int, np.ndarray] = {}
+    for code, host_group in new_element_groups.items():
+        host_size = host_group.ids.size
+        if host_elem_ml is not None and code in host_elem_ml:
+            new_elem_module_label[code] = np.asarray(
+                host_elem_ml[code], dtype=object,
+            )
+        else:
+            new_elem_module_label[code] = np.array(
+                [""] * host_size, dtype=object,
+            )
+
+    for code, bundle_group in bundle.element_groups.items():
+        b_ids = np.asarray(bundle_group.ids, dtype=np.int64)
+        b_conn = np.asarray(bundle_group.connectivity, dtype=np.int64)
+        b_size = b_ids.size
+        b_label_arr = np.array([bundle.label] * b_size, dtype=object)
+        if code in new_element_groups:
+            host_group = new_element_groups[code]
+            merged_ids = np.concatenate([
+                np.asarray(host_group.ids, dtype=np.int64), b_ids,
+            ])
+            merged_conn = np.concatenate([
+                np.asarray(host_group.connectivity, dtype=np.int64),
+                b_conn,
+            ], axis=0)
+            new_element_groups[code] = ElementGroup(
+                element_type=host_group.element_type,
+                ids=merged_ids,
+                connectivity=merged_conn,
+            )
+            new_elem_module_label[code] = np.concatenate([
+                new_elem_module_label[code], b_label_arr,
+            ])
+        else:
+            # New type only present in the bundle.
+            new_element_groups[code] = ElementGroup(
+                element_type=bundle_group.element_type,
+                ids=b_ids,
+                connectivity=b_conn,
+            )
+            new_elem_module_label[code] = b_label_arr
+
+    # ── 5. Physical groups + labels — merge dicts (namespace-prefixed
+    #      keys / names guarantee no collisions per ADR 0038 §"Namespace
+    #      rule")
+    new_node_pgs = _merged_named_groups(
+        fem.nodes.physical._groups, bundle.node_physical,
+    )
+    new_elem_pgs = _merged_named_groups(
+        fem.elements.physical._groups, bundle.elem_physical,
+    )
+    new_node_labels = _merged_named_groups(
+        fem.nodes.labels._groups, bundle.node_labels,
+    )
+    new_elem_labels = _merged_named_groups(
+        fem.elements.labels._groups, bundle.elem_labels,
+    )
+
+    # ── 6. Mesh selection store — combine host's + bundle's ────
+    new_mesh_selection = _merged_mesh_selection(
+        fem.mesh_selection, bundle.mesh_selection,
+    )
+
+    # ── 7. Parts maps — merge dicts (keys namespace-prefixed) ──
+    new_part_node_map: dict = dict(
+        getattr(fem.nodes, "_part_node_map", {}) or {}
+    )
+    for k, v in (bundle.part_node_map or {}).items():
+        new_part_node_map[k] = set(v)
+    new_part_elem_map: dict = dict(
+        getattr(fem.elements, "_part_elem_map", {}) or {}
+    )
+    for k, v in (bundle.part_elem_map or {}).items():
+        new_part_elem_map[k] = set(v)
+
+    # ── 8. Build the new FEMData with merged composites ────────
+    from ._group_set import PhysicalGroupSet, LabelSet
+
+    new_nodes = NodeComposite(
+        node_ids=new_node_ids,
+        node_coords=new_node_coords,
+        physical=PhysicalGroupSet(new_node_pgs),
+        labels=LabelSet(new_node_labels),
+        constraints=list(fem.nodes.constraints),
+        loads=list(fem.nodes.loads),
+        sp=list(fem.nodes.sp),
+        masses=list(fem.nodes.masses),
+        partitions=getattr(fem.nodes, "_partitions", None) or None,
+        part_node_map=new_part_node_map or None,
+        ndf=new_ndf,
+        module_label=new_node_module_label,
+    )
+    new_elements = ElementComposite(
+        groups=new_element_groups,
+        physical=PhysicalGroupSet(new_elem_pgs),
+        labels=LabelSet(new_elem_labels),
+        constraints=list(fem.elements.constraints),
+        loads=list(fem.elements.loads),
+        partitions=getattr(fem.elements, "_partitions", None) or None,
+        part_elem_map=new_part_elem_map or None,
+        module_label=new_elem_module_label,
+    )
+
+    # ── 9. Recompute MeshInfo so summary / bandwidth reflect the
+    #      merged geometry.  Element-type infos are rebuilt from the
+    #      merged groups (counts change).
+    new_types = []
+    for code, grp in new_element_groups.items():
+        et = grp.element_type
+        # ``ElementTypeInfo`` is a frozen dataclass; recreate with
+        # the updated count.
+        from ._element_types import make_type_info
+        new_types.append(make_type_info(
+            code=et.code, gmsh_name=et.gmsh_name, dim=et.dim,
+            order=et.order, npe=et.npe, count=int(grp.ids.size),
+        ))
+    new_info = MeshInfo(
+        n_nodes=int(new_node_ids.size),
+        n_elems=int(sum(g.ids.size for g in new_element_groups.values())),
+        bandwidth=_compute_bandwidth(new_element_groups),
+        types=new_types,
+    )
+
+    # ── 10. Extend composed_from with a new ComposeRecord ──────
+    new_record = ComposeRecord(
+        label=bundle.label,
+        source_path=bundle.source_path,
+        source_fem_hash=bundle.source_fem_hash,
+        source_neutral_schema_version=bundle.source_neutral_schema_version,
+        translate=bundle.translate,
+        rotate=bundle.rotate,
+        partition_rank=bundle.partition_rank,
+        composed_at=bundle.composed_at,
+        properties=dict(bundle.properties),
+    )
+    existing_records = tuple(fem.composed_from) if fem.composed_from else ()
+    new_composed_from = ComposeSet((*existing_records, new_record))
+
+    new_fem = FEMData(
+        nodes=new_nodes,
+        elements=new_elements,
+        info=new_info,
+        mesh_selection=new_mesh_selection,
+        composed_from=new_composed_from,
+    )
+
+    # ── 11. Now append the bundle's records via the with_*
+    #       transforms.  This routes through the existing
+    #       constraint / load / mass dispatch and avoids re-implementing
+    #       the routing logic.  Cheap per-record clone of the
+    #       FEMData (shallow copy + record-set replace) — fine for
+    #       compose-time merges.
+    for rec in bundle.node_constraints:
+        new_fem = new_fem.with_constraint(rec)
+    for rec in bundle.elem_constraints:
+        new_fem = new_fem.with_constraint(rec)
+    for rec in bundle.nodal_loads:
+        new_fem = new_fem.with_load(rec)
+    for rec in bundle.element_loads:
+        new_fem = new_fem.with_load(rec)
+    for rec in bundle.sp_records:
+        new_fem = new_fem.with_load(rec)
+    for rec in bundle.mass_records:
+        new_fem = new_fem.with_mass(rec)
+
+    return new_fem
+
+
+def _merged_named_groups(
+    host_groups: dict, bundle_groups: dict,
+) -> dict:
+    """Merge two ``{(dim, tag): info_dict}`` mappings.
+
+    Bundle keys are guaranteed distinct from host keys by the
+    namespace rule (ADR 0038 §"Namespace rule") — bundle ``info["name"]``
+    has been prefixed with ``"{label}."`` so PG-name uniqueness is
+    structural.  Key collisions on the ``(dim, tag)`` int pair are
+    avoided because the bundle's rewriter offset the tags into the
+    bundle's reservation window.
+    """
+    out = dict(host_groups)
+    for key, info in bundle_groups.items():
+        # If by some accident a (dim, tag) collision occurs (e.g. dim=0
+        # tag=0 PG-name-only entry), bump the tag side by a large offset
+        # so the host's entry survives.  This is defensive — the
+        # namespace rule should make this branch unreachable in
+        # practice.
+        if key in out:
+            d, t = key
+            shifted_key = (d, t + 1_000_000_000)
+            out[shifted_key] = info
+        else:
+            out[key] = info
+    return out
+
+
+def _merged_mesh_selection(host_store: Any, bundle_store: Any) -> Any:
+    """Merge two :class:`MeshSelectionStore` instances into one.
+
+    ``None`` on either side falls back to the other; both ``None``
+    returns ``None``.  Both populated returns a fresh store with the
+    union of their entries (namespace rule prevents name collisions
+    on the bundle side).
+    """
+    if host_store is None and bundle_store is None:
+        return None
+    if host_store is None:
+        return bundle_store
+    if bundle_store is None:
+        return host_store
+    from .MeshSelectionSet import MeshSelectionStore
+
+    merged: dict = {}
+    if hasattr(host_store, "_sets"):
+        merged.update(host_store._sets)
+    if hasattr(bundle_store, "_sets"):
+        for key, info in bundle_store._sets.items():
+            # Defensive collision handling (same as _merged_named_groups).
+            if key in merged:
+                d, t = key
+                merged[(d, t + 1_000_000_000)] = info
+            else:
+                merged[key] = info
+    if not merged:
+        return None
+    return MeshSelectionStore(merged)
+
+
+# ---------------------------------------------------------------------------
+# FILTER-warning emission (Phase 3B.2c / ADR 0038)
+# ---------------------------------------------------------------------------
+
+
+def _emit_filter_warnings(source_path: "str | Path", label: str) -> None:
+    """Emit one :class:`ComposeFilterWarning` per FILTER kind found.
+
+    Reads the source H5's metadata (no bulk record reads) and emits a
+    user-visible warning for each FILTER-verdict record kind present
+    that is *not* silent.  Per ADR 0038 §"Merge semantics":
+
+    =============== ==================================================
+    FILTER kind     Warning?
+    =============== ==================================================
+    stages          yes — analysis-time, not inherited
+    time-series     yes
+    load-patterns   yes
+    recorders       silent
+    analysis        silent
+    results         silent
+    =============== ==================================================
+    """
+    import h5py
+
+    p = Path(source_path)
+    if not p.exists():
+        return  # caller already handled missing-file; nothing to warn about.
+
+    try:
+        with h5py.File(str(p), "r") as f:
+            # FILTER-verdict groups live in the ``/opensees/`` zone;
+            # absent zone means no analysis content to filter and the
+            # function silently returns.
+            ops_zone = f.get("opensees") if "opensees" in f else None
+            if ops_zone is None or not hasattr(ops_zone, "keys"):
+                return
+            # ``stages`` — STKO-style stage definitions
+            if "stages" in ops_zone:
+                stages = ops_zone["stages"]
+                n = (
+                    len(list(stages.keys()))
+                    if hasattr(stages, "keys")
+                    else 0
+                )
+                if n > 0:
+                    warnings.warn(
+                        f"module {label!r} carries {n} stages; "
+                        f"stages are analysis-time and not inherited "
+                        f"under compose. Re-declare on the host.",
+                        ComposeFilterWarning,
+                        stacklevel=3,
+                    )
+            # ``time_series`` — independent time-series defs
+            if "time_series" in ops_zone:
+                ts = ops_zone["time_series"]
+                n = len(list(ts.keys())) if hasattr(ts, "keys") else 0
+                if n > 0:
+                    warnings.warn(
+                        f"module {label!r} carries {n} time-series; "
+                        f"time-series are analysis-time and not "
+                        f"inherited under compose. Re-declare on the "
+                        f"host.",
+                        ComposeFilterWarning,
+                        stacklevel=3,
+                    )
+            # ``patterns`` — load patterns
+            if "patterns" in ops_zone:
+                pats = ops_zone["patterns"]
+                n = len(list(pats.keys())) if hasattr(pats, "keys") else 0
+                if n > 0:
+                    warnings.warn(
+                        f"module {label!r} carries {n} load patterns; "
+                        f"load patterns are analysis-time and not "
+                        f"inherited under compose. Re-declare on the "
+                        f"host.",
+                        ComposeFilterWarning,
+                        stacklevel=3,
+                    )
+    except (OSError, KeyError):
+        # Read errors are non-fatal for the warning probe — the merge
+        # engine has already loaded the IMPORT records successfully via
+        # the rewrite step.
+        return

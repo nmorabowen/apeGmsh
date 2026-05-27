@@ -202,19 +202,23 @@ def test_compose_anchor_with_nonzero_translate_raises(
         )
 
 
-def test_compose_anchor_with_zero_translate_ok_to_engine_stub(
-    session: apeGmsh, saved_uncomposed_h5: Path,
+def test_compose_anchor_with_zero_translate_passes_validation(
+    saved_uncomposed_h5: Path, tmp_path: Path,
 ) -> None:
     """``anchor=`` with default ``translate=(0, 0, 0)`` passes validation.
 
     Locks the validation-order contract: input gates fire before the
-    Phase 3B.2 engine stub.  If validation fires (anchor+translate
-    conflict), this surfaces :class:`ComposeAnchorError`; if validation
-    passes correctly, the engine stub surfaces
-    :class:`NotImplementedError`.  The test passes only on the latter.
+    engine.  Phase 3B.2c wires the merge engine, so a missing-PG
+    anchor surfaces :class:`ComposeAnchorError` from the resolver
+    rather than ``NotImplementedError``.  Either way, the
+    anchor+translate validator does NOT trip.
     """
-    with pytest.raises(NotImplementedError):
-        session.compose(saved_uncomposed_h5, label="m", anchor="some_pg")
+    # Build a chain-phase session whose FEM has no PG named
+    # ``some_pg`` — anchor resolution must therefore raise
+    # ComposeAnchorError, NOT the older NotImplementedError.
+    g = apeGmsh.from_h5(saved_uncomposed_h5)
+    with pytest.raises(ComposeAnchorError):
+        g.compose(saved_uncomposed_h5, label="m", anchor="some_pg")
 
 
 # ---------------------------------------------------------------------------
@@ -237,17 +241,20 @@ def test_compose_partition_rank_negative_raises(
 # ---------------------------------------------------------------------------
 
 
-def test_compose_merge_engine_stubbed_with_clear_message(
-    session: apeGmsh, saved_uncomposed_h5: Path,
+def test_compose_merge_engine_wired_returns_handle(
+    saved_uncomposed_h5: Path,
 ) -> None:
-    """Valid inputs trip a clearly-tagged :class:`NotImplementedError`.
+    """Valid inputs now return a :class:`ComposedModule` handle.
 
-    The message must name Phase 3B.2 so future-maintainer greps
-    surface the right work item.
+    Phase 3B.2c wires the merge engine: ``g.compose(...)`` no longer
+    stubs out, it returns the live handle for the composed module.
+    This test locks the new contract — a regression to a stub would
+    fail the assertion that the returned record's label matches.
     """
-    with pytest.raises(NotImplementedError) as excinfo:
-        session.compose(saved_uncomposed_h5, label="m")
-    assert "3B.2" in str(excinfo.value)
+    g = apeGmsh.from_h5(saved_uncomposed_h5)
+    handle = g.compose(saved_uncomposed_h5, label="m")
+    assert isinstance(handle, ComposedModule)
+    assert handle.label == "m"
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +372,13 @@ def test_compose_list_populated_from_h5_round_trip(
 
 
 def test_composed_module_introspection_stubbed() -> None:
-    """``pgs`` / ``labels`` / ``record_counts`` raise pending 3B.2."""
+    """``pgs`` / ``labels`` / ``record_counts`` remain stubbed in 3B.2c.
+
+    These methods need the ``module_label`` parallel dataset and a
+    bound ``_fem`` to walk it.  3B.2c ships the dataset population
+    machinery but the ``ComposedModule`` introspection-API surface
+    is folded into the wider 3D / 3E work; the stubs stay until then.
+    """
     rec = _make_record("m")
     handle = ComposedModule(record=rec)
 

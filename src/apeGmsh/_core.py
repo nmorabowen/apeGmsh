@@ -113,6 +113,97 @@ class apeGmsh(_SessionBase):
         self._fem: "FEMData | None" = None
         self._fem_counter: int = 0
         self._fem_counter_at_build: int | None = None
+        # ── Compose state (Phase 3B.2c / ADR 0038) ────────────────
+        # ``_compose_bundles`` holds every ``_RewrittenBundle`` produced
+        # by a ``g.compose(...)`` call on this session in compose-call
+        # order.  When a broker mutation invalidates the cache, the
+        # next ``get_fem_data()`` re-extracts from gmsh + def lists and
+        # then re-applies every stored bundle on top — so the composed
+        # modules survive any subsequent ``g.constraints.X`` / etc.
+        # mutation.
+        #
+        # ``_fem_from_h5`` flags sessions built via
+        # :meth:`apeGmsh.from_h5`: those have no gmsh state, so the
+        # cache-stale path must re-use ``_fem`` as the chain head
+        # rather than re-extracting from absent gmsh.  3B.2c chooses
+        # this scoped-flag approach rather than generalising
+        # ``get_fem_data()`` over a missing-gmsh case because the
+        # alternative — making ``from_gmsh`` tolerate absent gmsh —
+        # would bleed compose-only concerns into every extraction
+        # caller.  3B.2d's resolver refactor takes the cleaner cut.
+        self._compose_bundles: tuple = ()
+        self._fem_from_h5: bool = False
+
+    # ------------------------------------------------------------------
+    # Chain-phase constructor — Phase 3B.2c / ADR 0038
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_h5(
+        cls,
+        path: "str | Path",
+        *,
+        model_name: str | None = None,
+        verbose: bool = False,
+    ) -> "apeGmsh":
+        """Construct a session in chain phase directly from a saved FEMData.
+
+        Skips the gmsh build phase entirely. The loaded FEMData becomes
+        the session's ``_fem`` chain head; ``compose(...)`` /
+        ``compose_inspect(...)`` / ``compose_list()`` and the
+        :meth:`save` API are all functional.  Geometry / mesh / PG
+        operations (``g.model.X``, ``g.mesh.generation.X``, etc.) are
+        NOT supported on a chain-phase session — they have no gmsh
+        state to mutate; calls into them will fail with the underlying
+        gmsh / composite error (the explicit ``ChainPhaseError`` lands
+        in Phase 3B.2d).
+
+        Useful for cross-session composition workflows::
+
+            # Day 1
+            with apeGmsh(model_name="host", save_to="host.h5") as g:
+                ...
+
+            # Day 2
+            g = apeGmsh.from_h5("host.h5")
+            g.compose("module_a.h5", label="A")
+            g.compose("module_b.h5", label="B")
+            g.save("final.h5")
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to a ``model.h5`` written by :meth:`save` /
+            :meth:`FEMData.to_h5`.
+        model_name : str or None
+            Session name (used by :meth:`save` for ``/meta/model_name``).
+            Defaults to the source file's stem.
+        verbose : bool, default False
+            Verbose-mode flag forwarded to the constructor.
+        """
+        from .mesh.FEMData import FEMData
+
+        p = Path(path)
+        loaded_fem = FEMData.from_h5(str(p))
+        name = model_name if model_name is not None else p.stem
+        instance = cls(model_name=name, verbose=verbose)
+        instance._fem = loaded_fem
+        instance._fem_from_h5 = True
+        # Mark the cache fresh so the first ``get_fem_data()`` returns
+        # the loaded chain head without an extraction attempt.
+        instance._mark_fem_fresh()
+        # Instantiate the session composites so chain-phase APIs that
+        # touch ``g.mesh.queries.get_fem_data()`` / ``g.compose`` /
+        # ``g.save`` work without ``begin()`` ever running.  No gmsh
+        # state is created here — composite constructors only require
+        # the parent session, and the gmsh-backed sub-APIs (e.g.
+        # ``g.mesh.generation.generate(...)``) will fail with their
+        # own native gmsh errors if the user accidentally invokes
+        # them on a chain-phase session.  Phase 3B.2d adds the
+        # explicit :class:`ChainPhaseError` raises on those entry
+        # points.
+        instance._create_composites()
+        return instance
 
     # ------------------------------------------------------------------
     # FEMData cache + dirty-bit (Phase 3B.2b-prep / ADR 0038)
@@ -187,10 +278,21 @@ class apeGmsh(_SessionBase):
         return target
 
     def _do_save(self, path: Path) -> None:
-        """Extract the broker snapshot and write it to ``path``."""
+        """Extract the broker snapshot and write it to ``path``.
+
+        Chain-phase sessions (built via :meth:`from_h5`) save the
+        cached ``_fem`` directly — they have no gmsh state to
+        re-extract from.
+        """
         from . import __version__ as _ver
 
-        fem = self.mesh.queries.get_fem_data()
+        if (
+            getattr(self, "_fem_from_h5", False)
+            and getattr(self, "_fem", None) is not None
+        ):
+            fem = self._fem
+        else:
+            fem = self.mesh.queries.get_fem_data()
         fem.to_h5(
             str(path),
             model_name=self.name,

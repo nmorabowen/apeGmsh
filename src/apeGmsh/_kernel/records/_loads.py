@@ -44,12 +44,15 @@ class NodalLoadRecord(LoadRecord):
     moment_xyz: tuple[float, float, float] | None = None
 
     # ADR 0038 §"Tag-reference rewrite checklist" — node_id is a tag
-    # reference.  ``name`` is the optional caller label; ``pattern`` is
-    # the load-pattern name — both get namespace-prefixed.
+    # reference.  ``name`` is the optional caller label and gets
+    # namespace-prefixed.  ``pattern`` is FILTER-verdict (host owns
+    # pattern names; load-patterns themselves don't survive compose
+    # per ADR 0038 §"Merge semantics") — leaving it un-namespaced lets
+    # module loads reference the host's pattern names directly.
     tag_rewrite_spec: ClassVar[dict] = {
         "tag_fields_scalar": ("node_id",),
         "tag_fields_array": (),
-        "name_fields": ("name", "pattern"),
+        "name_fields": ("name",),
     }
 
 
@@ -62,11 +65,12 @@ class ElementLoadRecord(LoadRecord):
     params: dict = field(default_factory=dict)
 
     # ADR 0038 §"Tag-reference rewrite checklist" — element_id is a
-    # tag reference; pattern + name are string-keyed surfaces.
+    # tag reference; ``name`` is namespaced; ``pattern`` is host-owned
+    # (FILTER-verdict per ADR 0038 §"Merge semantics").
     tag_rewrite_spec: ClassVar[dict] = {
         "tag_fields_scalar": ("element_id",),
         "tag_fields_array": (),
-        "name_fields": ("name", "pattern"),
+        "name_fields": ("name",),
     }
 
 
@@ -85,11 +89,12 @@ class SPRecord(LoadRecord):
     is_homogeneous: bool = True
 
     # ADR 0038 §"Tag-reference rewrite checklist" — node_id is a tag
-    # reference; pattern + name are string-keyed surfaces.
+    # reference; ``name`` is namespaced; ``pattern`` is host-owned
+    # (FILTER-verdict per ADR 0038 §"Merge semantics").
     tag_rewrite_spec: ClassVar[dict] = {
         "tag_fields_scalar": ("node_id",),
         "tag_fields_array": (),
-        "name_fields": ("name", "pattern"),
+        "name_fields": ("name",),
     }
 
 

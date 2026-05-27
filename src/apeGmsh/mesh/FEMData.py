@@ -215,6 +215,7 @@ class NodeComposite:
         partitions: dict[int, dict] | None = None,
         part_node_map: dict | None = None,
         ndf: ndarray | None = None,
+        module_label: ndarray | None = None,
     ) -> None:
         self._ids    = _to_object(node_ids)
         self._coords = np.asarray(node_coords, dtype=np.float64)
@@ -252,6 +253,27 @@ class NodeComposite:
                     f"not match node_ids shape {self._ids.shape}."
                 )
             self._ndf = arr
+
+        # Per-node ``module_label`` (Phase 3B.2c / ADR 0038) — object
+        # ndarray of compose labels aligned 1:1 with ``self._ids``.
+        # Empty string for host-owned rows; populated by the compose
+        # merge engine for rows that came from a composed source
+        # module.  ``None`` means the broker was constructed without
+        # any module-label metadata (the uncomposed case + legacy
+        # fixtures); the H5 writer falls back to an empty-string
+        # parallel dataset in that case.
+        self._module_label: ndarray | None
+        if module_label is None:
+            self._module_label = None
+        else:
+            mlbl = np.asarray(module_label, dtype=object)
+            if mlbl.shape != self._ids.shape:
+                raise ValueError(
+                    f"NodeComposite: module_label array shape "
+                    f"{mlbl.shape} does not match node_ids shape "
+                    f"{self._ids.shape}."
+                )
+            self._module_label = mlbl
 
     # ── Public properties ───────────────────────────────────
 
@@ -605,6 +627,7 @@ class ElementComposite:
         loads=None,
         partitions: dict[int, dict] | None = None,
         part_elem_map: dict | None = None,
+        module_label: dict[int, ndarray] | None = None,
     ) -> None:
         self._groups: dict[int, ElementGroup] = dict(groups)
         self.physical = physical
@@ -623,6 +646,32 @@ class ElementComposite:
         # FEM-build time. Lets ``get(target=part_label)`` resolve
         # without a live Gmsh session.
         self._part_elem_map: dict[str, set[int]] = part_elem_map or {}
+
+        # Per-element ``module_label`` (Phase 3B.2c / ADR 0038) —
+        # dict keyed by element-type code, each value an object
+        # ndarray of compose labels aligned 1:1 with the type's
+        # ``ids`` / ``connectivity`` rows.  Empty string for
+        # host-owned rows.  ``None`` (or missing key) means no
+        # module-label metadata is carried for that type; the H5
+        # writer falls back to empty strings.
+        self._module_label: dict[int, ndarray] | None
+        if module_label is None:
+            self._module_label = None
+        else:
+            self._module_label = {}
+            for code, arr in module_label.items():
+                if arr is None:
+                    continue
+                mlbl = np.asarray(arr, dtype=object)
+                grp = self._groups.get(int(code))
+                expected = grp.ids.shape if grp is not None else None
+                if expected is not None and mlbl.shape != expected:
+                    raise ValueError(
+                        f"ElementComposite: module_label[{code}] shape "
+                        f"{mlbl.shape} does not match ids shape "
+                        f"{expected}."
+                    )
+                self._module_label[int(code)] = mlbl
 
     # ── Iteration ───────────────────────────────────────────
 
@@ -1729,6 +1778,123 @@ class FEMData:
             f"ElementLoadRecord, or SPRecord."
         )
 
+    # ------------------------------------------------------------------
+    # Compose primitive — Phase 3B.2c / ADR 0038
+    # ------------------------------------------------------------------
+
+    def compose(
+        self,
+        source: "str | Path",
+        *,
+        label: str,
+        translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotate: tuple[float, float, float, float] | None = None,
+        anchor: str | None = None,
+        partition_rank: int | None = None,
+        properties: "dict | None" = None,
+        compose_size_per_module: int | None = None,
+    ) -> "FEMData":
+        """Return a new :class:`FEMData` extending this chain with a
+        composed module.
+
+        Pure transformation. ``self`` is unchanged.  The returned
+        FEMData's ``composed_from`` chain is
+        ``self.composed_from + (new_record,)`` and every IMPORT-verdict
+        record from the source H5 surfaces on the result, namespaced
+        with ``label`` and offset into a non-overlapping tag window
+        per ADR 0038 §"Tag-offset scheme".
+
+        Geometry / mesh build-phase operations are not part of this
+        primitive — the merge runs entirely against the FEMData
+        broker; no live Gmsh state is touched.  The compose API is
+        the canonical entry point for cross-session composition:
+        ``FEMData.from_h5(path).compose("module.h5", label="A")``.
+
+        Drift hazard: the returned FEMData is decoupled from any
+        live gmsh state on the producing session.  Mutating the
+        session's mesh/PG/label/parts AFTER calling compose without
+        also re-extracting + re-applying the bundle drops the
+        composed module's records on the floor.  The
+        :meth:`apeGmsh.compose` shim handles this via session-level
+        bundle-replay; if you call this primitive directly, replay
+        is your responsibility.
+
+        See :func:`apeGmsh.mesh._compose.Compose.compose` for the full
+        parameter contract; ``max_compose_depth`` is the only
+        ``Compose.compose`` parameter intentionally absent here
+        (depth checks come in Phase 3E.1).
+        """
+        from ._compose import (
+            Compose, ComposeAnchorError,
+            _compute_source_span, _compute_reservation,
+            _rewrite_source_for_compose, _merge_bundle_into_fem,
+            _emit_filter_warnings, _host_max_tag,
+        )
+
+        # 1. Validate inputs — reuse the Compose facade's static
+        #    validators so the contract stays single-sourced.
+        Compose._validate_label(label)
+        Compose._validate_translate_rotate_anchor(translate, anchor)
+        Compose._validate_partition_rank(partition_rank)
+        Compose._validate_compose_size(compose_size_per_module)
+
+        # 2. Resolve anchor → translate when anchor is given.  Anchor
+        #    + non-zero translate already raised above; an unknown
+        #    PG raises ComposeAnchorError with an actionable message.
+        if anchor is not None:
+            translate = _resolve_anchor_to_translate(self, anchor)
+
+        # 3. Compute reservation against host's max_tag.  The merge
+        #    engine doesn't track explicit (base, size) pairs on
+        #    composed_from in this slice (deferred to 3D); each
+        #    new compose simply rounds host_max_tag up to the next
+        #    granularity boundary, which advances naturally as each
+        #    bundle's tags fold into the host's id ranges.
+        host_max_tag = _host_max_tag(self)
+        source_span, source_min_tag, _source_max_tag = (
+            _compute_source_span(source)
+        )
+        base, size = _compute_reservation(
+            source_span=source_span,
+            host_max_tag=host_max_tag,
+            previous_reservations=(),
+            granularity=Compose.RESERVATION_GRANULARITY,
+            compose_size_per_module=compose_size_per_module,
+        )
+
+        # Capacity check (ADR 0038 §"Tag-collision verifier" check 5).
+        if compose_size_per_module is not None and source_span > size:
+            from ._compose import ComposeCapacityError
+            raise ComposeCapacityError(
+                f"compose(compose_size_per_module="
+                f"{compose_size_per_module}) is smaller than the "
+                f"source's tag span ({source_span}); reservation size "
+                f"{size} would not fit the imported tags."
+            )
+
+        # 4. Rewrite the source into an offset/namespaced bundle.
+        bundle = _rewrite_source_for_compose(
+            source_path=source,
+            label=label,
+            translate=translate,
+            rotate=rotate,
+            partition_rank=partition_rank,
+            properties=dict(properties or {}),
+            base=base,
+            size=size,
+            source_span=source_span,
+            source_min_tag=source_min_tag,
+        )
+
+        # 5. Emit FILTER warnings (stages / time-series / patterns).
+        _emit_filter_warnings(source, label)
+
+        # 6. Merge bundle into self → new FEMData.  Cache the bundle
+        #    on the result for the session shim's replay machinery.
+        new_fem = _merge_bundle_into_fem(self, bundle)
+        new_fem._last_compose_bundle = bundle  # type: ignore[attr-defined]
+        return new_fem
+
     def with_mass(self, record) -> "FEMData":
         """Return a new :class:`FEMData` with ``record`` appended to
         ``nodes.masses``.
@@ -1765,3 +1931,48 @@ class FEMData:
 
     def __repr__(self) -> str:
         return self.inspect.summary()
+
+
+# =====================================================================
+# Compose anchor resolution helper (Phase 3B.2c / ADR 0038)
+# =====================================================================
+
+
+def _resolve_anchor_to_translate(
+    fem: FEMData,
+    anchor: str,
+) -> tuple[float, float, float]:
+    """Resolve an anchor PG / label name to its centroid translation.
+
+    Looks up ``anchor`` via the host's physical groups first, then
+    labels.  Centroid is the mean of the resolved node coordinates.
+    Raises :class:`ComposeAnchorError` when the name does not resolve.
+    """
+    from ._compose import ComposeAnchorError
+
+    coords: np.ndarray | None = None
+    try:
+        coords = fem.nodes.physical.node_coords(anchor)
+    except (KeyError, ValueError):
+        coords = None
+    if coords is None or len(coords) == 0:
+        try:
+            coords = fem.nodes.labels.node_coords(anchor)
+        except (KeyError, ValueError):
+            coords = None
+
+    if coords is None or len(coords) == 0:
+        raise ComposeAnchorError(
+            f"compose(anchor={anchor!r}) did not resolve to a "
+            f"non-empty physical group or label on the host. "
+            f"Available PGs: "
+            f"{list(getattr(fem.nodes.physical, '_groups', {}).keys())}; "
+            f"labels: "
+            f"{list(getattr(fem.nodes.labels, '_groups', {}).keys())}."
+        )
+    centroid = np.asarray(coords, dtype=np.float64).mean(axis=0)
+    return (
+        float(centroid[0]),
+        float(centroid[1]),
+        float(centroid[2]),
+    )

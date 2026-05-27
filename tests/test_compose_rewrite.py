@@ -645,21 +645,19 @@ def test_pre_2_8_0_schema_rejected(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Contract pin: g.compose() still raises NotImplementedError in 3B.2a
+# Contract pin: g.compose() returns a ComposedModule handle in 3B.2c
 # ---------------------------------------------------------------------------
 
 
-def test_compose_compose_still_raises_not_implemented(tmp_path: Path) -> None:
-    """``g.compose()`` itself remains stubbed — 3B.2a ships only the
-    rewriter half.
+def test_compose_compose_returns_handle(tmp_path: Path) -> None:
+    """``g.compose()`` is wired end-to-end in Phase 3B.2c.
 
-    Locks the contract that the public entry point isn't wired yet;
-    Phase 3B.2b will replace the NotImplementedError with the
-    rewrite-and-merge call.
+    Locks the contract that the public entry point is no longer a
+    stub.  A chain-phase session (from_h5) keeps the test self-
+    contained — no live gmsh state required.
     """
     fem = _make_fem()
     src = _write_fem_h5(fem, tmp_path / "src.h5")
-    session = apeGmsh(model_name="rewrite_test")
-    with pytest.raises(NotImplementedError) as excinfo:
-        session.compose(src, label="m")
-    assert "3B.2" in str(excinfo.value)
+    g = apeGmsh.from_h5(src)
+    handle = g.compose(src, label="m")
+    assert handle.label == "m"

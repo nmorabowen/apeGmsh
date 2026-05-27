@@ -181,8 +181,47 @@ class _Queries:
             )
             return cached
 
+        # ── Compose-aware re-extraction (Phase 3B.2c / ADR 0038) ──
+        # When the session was built via :meth:`apeGmsh.from_h5` it
+        # carries no gmsh state.  Re-extracting from gmsh would return
+        # an empty FEM and silently drop the loaded chain head.  In
+        # that case treat ``_fem`` as authoritative and re-apply the
+        # stored compose bundles on top (the loaded FEMData already
+        # contains every PRE-from_h5 compose merged in; new bundles
+        # produced AFTER from_h5 still need replay).
+        if (
+            is_default
+            and has_cache
+            and getattr(parent, "_fem_from_h5", False)
+            and parent._fem is not None
+        ):
+            from ._compose import _merge_bundle_into_fem
+            base_fem = parent._fem
+            # If any bundles were created post-from_h5 (i.e. via
+            # ``g.compose(...)`` on this session), ``_fem`` already
+            # has them folded in — bumping the counter on each
+            # compose marks the cache stale, but the same ``_fem``
+            # is the authoritative chain head, so just hand it back
+            # and refresh the freshness marker.
+            parent._mark_fem_fresh()
+            self._mesh._log(
+                f"get_fem_data(dim={dim}) -> chain-phase "
+                f"{base_fem.info.n_nodes} nodes, "
+                f"{base_fem.info.n_elems} elements, "
+                f"bw={base_fem.info.bandwidth}"
+            )
+            return base_fem
+
         result = FEMData.from_gmsh(
             dim=dim, session=parent, remove_orphans=remove_orphans)
+
+        # Re-apply any stored compose bundles in compose-call order so
+        # composed modules survive broker mutations on the session.
+        bundles = getattr(parent, "_compose_bundles", ())
+        if bundles and is_default:
+            from ._compose import _merge_bundle_into_fem
+            for bundle in bundles:
+                result = _merge_bundle_into_fem(result, bundle)
 
         self._mesh._log(
             f"get_fem_data(dim={dim}) -> "
