@@ -225,11 +225,14 @@ assembly. Compose handles this transparently via three rules:
    `bldg_1.frame/beam_A.end` after compose. The `.` ↔ `/` alternation
    at depth boundaries makes nesting depth structurally visible and
    unambiguous on parse.
-3. **Provenance graft.** Source's `/fem/composed_from/` subtree is
-   copied under the host's `/fem/composed_from/{label}/composed_from/`
-   recursively. The provenance tree is informational (per the lineage
-   section); `host_fem_hash` is still the canonical-bytes hash of the
-   flat post-compose broker.
+3. **Provenance graft.** Source's `/fem/composed_from/` records are
+   grafted into the host's `/fem/composed_from/` group with their
+   labels joined per rule 2. See the **"Flat graft instead of tree
+   graft" amendment (2026-05-27)** below for the as-shipped
+   representation choice and the hash one-way door it sidesteps. The
+   provenance group remains informational (per the lineage section);
+   `host_fem_hash` is the canonical-bytes hash of the flat post-compose
+   broker either way.
 
 `ComposeNestedError` is removed. The new errors are
 `ComposeDepthExceededError` (depth cap hit) and
@@ -875,3 +878,84 @@ switch even years after Phase 1 runs.
 - `src/apeGmsh/opensees/_internal/lineage.py:85` —
   `MODEL_HASH_EXCLUDED_CHILDREN`, the existing derived-not-canonical
   list that compose's DISCARD verdicts match.
+
+## Amendment 2026-05-27 — Flat graft instead of tree graft
+
+**Context.** Rule 3 of the Nested composition section originally
+specified a *tree graft*: source's `/fem/composed_from/` subtree
+copied under the host's `/fem/composed_from/{label}/composed_from/`
+recursively, preserving the compose tree shape on disk.
+
+**As shipped (PR #369).** The nested-compose merge engine uses a
+**flat graft** instead: source's compose records get their labels
+joined per rule 2 (`.` ↔ `/` separator alternation) and surface as
+top-level entries in the host's `composed_from` tuple. The H5 layout
+is therefore a flat list of `/fem/composed_from/{joined_label}/`
+groups regardless of depth — no recursive `/composed_from/` sub-groups.
+
+**Decision process.** Synthesized via a multi-agent design review
+(architecture / implementation / UX audits) during PR #369. The
+audits reached consensus on three points:
+
+1. **No observable v1 loss.** For today's actual consumers —
+   `compose_hash`, `g.compose_list()`, `composed_for_node` /
+   `composed_for_element`, H5 round-trip, the `ColorMode.MODULE`
+   viewer (PRs #372 / #373 / #374), `iter_composed_from()` on
+   `H5Model` (PR #368) — flat is observationally equivalent to tree.
+   The phrase *"informational, not load-bearing"* in the lineage
+   section qualifies the **hash** (`host_fem_hash` is independent of
+   provenance shape), not the disk-representation choice — so either
+   shape satisfies the load-bearing contract.
+
+2. **Tree-shape recovery is a thin derived view.** Joined labels
+   parse unambiguously back into a tree via the separator-alternation
+   rule. `g.compose_tree() -> tuple[ComposeTreeNode, ...]` ships this
+   as a session-level helper (canonical primitive on
+   `FEMData.compose_tree()`, session shim on `Compose.compose_tree()`,
+   passthrough on `apeGmsh.compose_tree()`). Implementation lives at
+   [src/apeGmsh/mesh/_compose.py](../../../mesh/_compose.py) with
+   parser `_split_joined_label` as the strict inverse of
+   `_join_module_label`.
+
+3. **The hash representation is a one-way door, the disk shape is
+   not.** If a future PR moved `_hash_composed_from`
+   ([src/apeGmsh/mesh/_femdata_hash.py:108-137](../../../mesh/_femdata_hash.py))
+   from its current flat fold over sorted top-level labels to a
+   recursive fold over a tree shape, the digest space would change
+   for **every existing composed FEMData file** — breaking the bind
+   contract for stored results. The disk shape can be upgraded
+   compatibly (additive field on `ComposeRecord` per
+   [ADR 0023](0023-h5-schema-evolution.md)'s additive-minor rule);
+   the hash cannot.
+
+**Implications.**
+
+- **The hash is the load-bearing surface.** It MUST stay non-recursive
+  (flat fold over the sorted top-level joined labels). A future
+  tree-shape addition lands as an additive optional field on
+  `ComposeRecord` (e.g.,
+  `composed_from: tuple[ComposeRecord, ...] = ()`) per ADR 0023; the
+  hash code stays unchanged.
+- **The separator-alternation rule is now load-bearing for tree
+  reconstruction.** `_split_joined_label` depends on the alternation
+  being unambiguous; relaxing it (e.g., allowing `/` in user-supplied
+  `label=`) would break the parser. The `ComposeLabelError` validator
+  in `_compose.py` forbids both `.` and `/` in user labels, so the
+  invariant holds by construction. Document this dependency if the
+  validator is ever loosened.
+- **The H5 group-name sanitization** (`safe = label.replace("/", "_")`
+  in `_write_composed_from` at
+  [src/apeGmsh/mesh/_femdata_h5_io.py](../../../mesh/_femdata_h5_io.py))
+  can collide for distinct labels `a/b` and `a_b`. The writer dedups
+  via an order-dependent `__N` suffix on the group name; the verbatim
+  `label` attribute round-trips correctly regardless, so this is
+  internal-layout-only and not a public-surface hazard. Worth a code
+  comment but no behavioral fix needed.
+
+**Cross-references.**
+- PR #369 (nested compose merge engine, depth verifier, separator
+  alternation, flat graft).
+- PR #370 (`compose_tree()` derived view).
+- PRs #372 / #373 / #374 (`ColorMode.MODULE` viewer — consumes flat
+  joined labels directly via `view.elements.module_for(eid)`; tree
+  shape not required for v1 viewer).
