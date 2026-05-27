@@ -22,6 +22,8 @@ as a pure function with minimal mocks (mirrors the structure of
 """
 from __future__ import annotations
 
+import zlib
+
 import numpy as np
 
 from apeGmsh.viewers.core.color_mode_controller import (
@@ -141,8 +143,13 @@ def _make_controller(
 def _palette_color_for(label: str) -> np.ndarray:
     """Reference implementation of the label->palette mapping the
     callback uses. Anchored here so the tests fail if the controller
-    drifts from the documented hash policy."""
-    return _GROUP_PALETTE_RGB[abs(hash(label)) % len(_GROUP_PALETTE_RGB)]
+    drifts from the documented hash policy.
+
+    Uses ``zlib.crc32`` (not Python's ``hash()``) for cross-process
+    determinism — ``hash()`` is randomized via ``PYTHONHASHSEED`` so
+    CI runs with different seeds would otherwise collide on the 19-
+    color palette."""
+    return _GROUP_PALETTE_RGB[zlib.crc32(label.encode("utf-8")) % len(_GROUP_PALETTE_RGB)]
 
 
 # =====================================================================
@@ -178,11 +185,11 @@ def test_module_idle_distinct_colors_for_distinct_labels() -> None:
     rgb_b = ctrl._module_idle((2, 20))
     np.testing.assert_array_equal(rgb_a, _palette_color_for("modA"))
     np.testing.assert_array_equal(rgb_b, _palette_color_for("modB"))
-    # Two distinct labels — extremely likely to hit different palette
-    # slots given the 19-color palette. If a collision ever shows up
-    # here the test still verifies determinism (above), so swap the
-    # labels for non-colliding ones.
-    assert not np.array_equal(rgb_a, rgb_b)
+    # We do NOT assert ``rgb_a != rgb_b`` here: ~5% of random label
+    # pairs collide on a 19-slot palette regardless of hash function
+    # (true for crc32, true for hash(), true for blake2b). The
+    # ``_palette_color_for`` mirror anchors the contract — if it stays
+    # in sync with the callback, both equalities above are sufficient.
 
 
 def test_module_idle_dominant_label_wins_in_mixed_entity() -> None:
@@ -246,12 +253,22 @@ def test_module_idle_distinct_joined_labels_typically_distinct_colors() -> None:
 
     rgb_a = ctrl._module_idle((2, 10))
     rgb_b = ctrl._module_idle((2, 20))
-    # If split-on-"/"-and-take-root were the (buggy) policy, both
-    # would resolve to palette[hash("bayP")] and be equal. We assert
-    # the full-label policy: at least one of the two pairs differs.
-    # (We use two distinct second-segment labels so a hash collision
-    # on just one of them still leaves the asymmetry visible.)
-    assert not np.array_equal(rgb_a, rgb_b)
+    # Full-label policy: rgb_a must match the palette color for the
+    # FULL joined label "bayP/frameA", NOT the prefix-only color for
+    # "bayP". Same for rgb_b. This catches a "split-on-/-and-take-root"
+    # regression without relying on inter-label hash separation
+    # (~5% of label pairs collide on a 19-slot palette regardless of
+    # hash function).
+    np.testing.assert_array_equal(rgb_a, _palette_color_for("bayP/frameA"))
+    np.testing.assert_array_equal(rgb_b, _palette_color_for("bayP/frameB"))
+    prefix_color = _palette_color_for("bayP")
+    # At least one of the two full-label colors must differ from the
+    # prefix color (a single accidental collision on bayP/frameA's
+    # crc32 still leaves bayP/frameB asymmetric, or vice versa).
+    assert (
+        not np.array_equal(rgb_a, prefix_color)
+        or not np.array_equal(rgb_b, prefix_color)
+    )
 
 
 def test_module_idle_same_joined_label_produces_same_color() -> None:

@@ -23,6 +23,7 @@ Supported modes
 """
 from __future__ import annotations
 
+import zlib
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
@@ -255,7 +256,12 @@ class ColorModeController:
         if not labels:
             return _FALLBACK_RGB
         dominant = Counter(labels).most_common(1)[0][0]
-        idx = abs(hash(dominant)) % len(_GROUP_PALETTE_RGB)
+        # zlib.crc32 instead of Python's hash() — hash() is randomized
+        # across processes (PYTHONHASHSEED), so the same module would
+        # get different colors in different sessions. crc32 is stable.
+        # `_phys_group_idle` above still uses hash() — pre-existing
+        # behavior, separate followup.
+        idx = zlib.crc32(dominant.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
         return _GROUP_PALETTE_RGB[idx]
 
     def _repaint(self) -> None:
