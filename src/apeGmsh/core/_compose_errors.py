@@ -66,6 +66,34 @@ class ComposeInvariantError(RuntimeError):
     """
 
 
+class ComposeDepthExceededError(RuntimeError, ValueError):
+    """Raised when a nested-compose operation would exceed the
+    configured ``max_compose_depth`` per ADR 0038 §"Nested composition".
+
+    Phase 3E.1.  The source's own ``composed_from`` chain has reached
+    the configured depth cap and composing it into the host would
+    push the new module-entry's depth past the cap.
+
+    The check fires at compose time, before any merge work runs:
+    ``source_depth = 1 + max(child.depth)`` over the source's own
+    ``composed_from`` records (depth 0 for a never-composed source).
+    Composing yields a new entry of depth ``source_depth + 1``; if
+    that exceeds ``max_compose_depth`` (default 3), this error is
+    raised.
+
+    The default of 3 covers the canonical hierarchy connection →
+    frame → building plus one level of headroom.  The cap can be
+    lifted per-call via the ``max_compose_depth=N`` kwarg on
+    :meth:`~apeGmsh.mesh._compose.Compose.compose`.
+
+    Inherits from both :class:`RuntimeError` (matching the other
+    verifier-style errors in this module) AND :class:`ValueError` so
+    callers writing ``except ValueError`` continue to catch it,
+    consistent with the facade-layer compose errors in
+    :mod:`apeGmsh.mesh._compose`.
+    """
+
+
 def chain_phase_guard(session, operation: str) -> None:
     """Tolerant wrapper around ``session._check_chain_phase``.
 
