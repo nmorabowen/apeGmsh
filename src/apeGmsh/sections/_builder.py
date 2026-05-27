@@ -21,6 +21,8 @@ Usage::
 """
 from __future__ import annotations
 
+import warnings
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 import gmsh
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
 
 
 from apeGmsh._logging import _HasLogging
+from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
 from apeGmsh.core._section_placement import apply_placement
 from ._classify import (
     classify_end_faces,
@@ -39,6 +42,25 @@ from ._classify import (
     classify_tee_outer_faces,
     classify_angle_outer_faces,
 )
+
+
+@contextmanager
+def silent_section_slices():
+    """Suppress :class:`WarnGeomCoincidentFace` inside a section builder.
+
+    Parametric section profiles (W, channel, T, double-angle, etc.)
+    deliberately slice at face coordinates (``tw/2``, ``h/2``, ...)
+    to produce hex-friendly sub-volumes.  Every one of those slices
+    coincides with a face of the just-extruded profile and would fire
+    a :class:`WarnGeomCoincidentFace`.  The advisory is meant for
+    user code where the coincidence is accidental; in the section
+    builders it's by design, and the post-op sweep handles the
+    orphan regardless.  Wrap each builder's slice block in this
+    context manager.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", WarnGeomCoincidentFace)
+        yield
 
 
 class _PrefixedLabels:
@@ -287,10 +309,11 @@ class SectionsBuilder(_HasLogging):
             if surfs:
                 tr.extrude(surfs[0], 0, 0, length)
 
-            geo.slice(axis='x', offset=-tw/2)
-            geo.slice(axis='x', offset=tw/2)
-            geo.slice(axis='y', offset=h/2)
-            geo.slice(axis='y', offset=-h/2)
+            with silent_section_slices():
+                geo.slice(axis='x', offset=-tw/2)
+                geo.slice(axis='x', offset=tw/2)
+                geo.slice(axis='y', offset=h/2)
+                geo.slice(axis='y', offset=-h/2)
 
             # Label volumes by structural role
             labels = self._parent.labels
@@ -546,8 +569,9 @@ class SectionsBuilder(_HasLogging):
             if surfs:
                 tr.extrude(surfs[0], 0, 0, length)
 
-            geo.slice(axis='x', offset=t)
-            geo.slice(axis='y', offset=t)
+            with silent_section_slices():
+                geo.slice(axis='x', offset=t)
+                geo.slice(axis='y', offset=t)
 
             lbl = _PrefixedLabels(self._parent.labels, label)
             h_tags, v_tags = [], []
@@ -619,9 +643,10 @@ class SectionsBuilder(_HasLogging):
             if surfs:
                 tr.extrude(surfs[0], 0, 0, length)
 
-            geo.slice(axis='x', offset=tw)
-            geo.slice(axis='y', offset=h/2)
-            geo.slice(axis='y', offset=-h/2)
+            with silent_section_slices():
+                geo.slice(axis='x', offset=tw)
+                geo.slice(axis='y', offset=h/2)
+                geo.slice(axis='y', offset=-h/2)
 
             lbl = _PrefixedLabels(self._parent.labels, label)
             classify_w_volumes(h, tw, tf, bf, lbl)
@@ -682,9 +707,10 @@ class SectionsBuilder(_HasLogging):
             if surfs:
                 tr.extrude(surfs[0], 0, 0, length)
 
-            geo.slice(axis='x', offset=-tw/2)
-            geo.slice(axis='x', offset=tw/2)
-            geo.slice(axis='y', offset=0)
+            with silent_section_slices():
+                geo.slice(axis='x', offset=-tw/2)
+                geo.slice(axis='x', offset=tw/2)
+                geo.slice(axis='y', offset=0)
 
             lbl = _PrefixedLabels(self._parent.labels, label)
             flange_tags, stem_tags = [], []

@@ -49,6 +49,16 @@ class _Generation:
         """Invoke ``validate_pre_mesh`` on every subsystem that has it.
 
         Catches typo'd target names before the (slow) mesher runs.
+
+        Geometry's ``validate_pre_mesh`` is NOT wired here on purpose:
+        it would fire on every workflow that builds geometry via raw
+        ``gmsh.model.geo.add_*`` / ``gmsh.model.occ.add_*`` (which
+        bypasses apeGmsh's ``_metadata`` channel) or attaches entities
+        only to raw user physical groups (which bypass apeGmsh's
+        labels composite).  The validator works correctly — these
+        entities just don't look "user-intentional" to it under the
+        current contract.  Users who want fail-fast orphan checking
+        call ``g.model.geometry.validate_pre_mesh()`` explicitly.
         """
         session = self._mesh._parent
         for attr in ("loads", "constraints", "masses"):

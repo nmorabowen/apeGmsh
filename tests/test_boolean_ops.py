@@ -133,12 +133,17 @@ class TestFragment:
 
     def test_fragment_2d_preserves_surfaces_with_default_cleanup(self, g):
         """2D fragment must not drop surfaces under the default
-        ``cleanup_free=False``.
+        ``cleanup_free=True`` (topology sweep).
 
-        Regression: in a 2D model every surface has zero upward-volume
-        adjacency, so the old `cleanup_free=True` default deleted all
-        surfaces and produced an empty model. The new default
-        preserves them; this test pins that behavior.
+        Regression: the previous centroid-in-bbox heuristic, when
+        active, deleted every adjacency-free surface — which in a
+        2D model is every surface (there are no volumes to bound).
+        Two layers now protect:
+        1. ``boolean.fragment`` short-circuits the sweep entirely
+           when ``getEntities(3)`` is empty.
+        2. Even if it ran, ``sweep_dangling`` would classify every
+           ``add_*``-registered surface as user-intentional via
+           ``_metadata``.
         """
         p_BL = g.model.geometry.add_point(0.0, 0.0, 0.0, lc=0.5)
         p_BR = g.model.geometry.add_point(2.0, 0.0, 0.0, lc=0.5)
@@ -195,56 +200,104 @@ class TestFragment:
                 f"Surface {surf_tag} is free (unbounded) after fragment cleanup"
             )
 
-    def test_fragment_cleanup_free_strict_centroid_check(self, g):
-        """Pins the actual ``cleanup_free=True`` preservation rule:
-        ``centroid-inside-some-volume-bbox`` is the *only* check.
+    def test_fragment_cleanup_free_preserves_user_labeled_shell(self, g):
+        """The topology-driven sweep that replaced the old centroid-in-
+        bbox heuristic preserves user-intentional geometry — any
+        surface in ``model._metadata`` (every ``add_*`` primitive
+        registers there) or carrying a label survives the sweep,
+        regardless of whether its centroid sits inside any volume.
 
-        A shell whose centroid lies OUTSIDE every volume bounding box
-        is deleted even if it shares an edge / boundary curve with a
-        volume face.  The earlier docstring (Bug 5 in the post-#317
-        audit) claimed edge-sharing shells were preserved, but the
-        implementation at ``_model_boolean.py`` only inspects the
-        centroid.  Updating the docstring without this test would
-        let a future contributor silently re-introduce the false
-        claim.
+        This is the contract the audit asked for: shell-on-solid
+        workflows where the user explicitly created a shell that
+        partially overhangs a volume face must not silently lose the
+        shell.  The previous heuristic deleted it whenever the
+        centroid landed outside every volume bbox.
         """
-        # Box at [0,1]³.
         g.model.geometry.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0, label='box')
-        # Shell rectangle in the z=0 plane spanning x in [1, 2] and y in
-        # [0, 1].  Its left edge (x=1, y in [0,1], z=0) coincides with
-        # the box's front-bottom edge — they SHARE a boundary curve.
-        # Centroid (1.5, 0.5, 0.0) is outside the box bbox in x (>1).
-        g.model.geometry.add_rectangle(1.0, 0.0, 0.0, 1.0, 1.0, label='overhang')
-        g.model.sync()
-
-        # Confirm precondition: overhang is dim=2, centroid outside
-        # box bbox in x.
-        overhang_tags = g.labels.entities('overhang', dim=2)
-        assert overhang_tags, "label 'overhang' did not resolve"
-        cx, cy, cz = gmsh.model.occ.getCenterOfMass(2, overhang_tags[0])
-        assert cx > 1.0, (
-            f"Test setup invalid: overhang centroid x={cx} must be "
-            f"OUTSIDE the box bbox (x_max=1.0)"
+        # Shell rectangle whose centroid (1.5, 0.5, 0.0) sits OUTSIDE
+        # the box bbox in x — under the old centroid heuristic this
+        # would have been deleted by ``cleanup_free=True``.
+        g.model.geometry.add_rectangle(
+            1.0, 0.0, 0.0, 1.0, 1.0, label='overhang',
         )
+        g.model.sync()
 
         g.model.boolean.fragment(
             objects='box', tools='overhang', cleanup_free=True,
         )
 
-        # The overhang label no longer resolves to any surviving
-        # dim=2 entity — cleanup_free deleted it (centroid-outside
-        # check), edge-sharing notwithstanding.
-        try:
-            survivors = g.labels.entities('overhang', dim=2)
-        except KeyError:
-            survivors = []
+        # Some piece of the overhang shell must still resolve as a
+        # surviving dim=2 entity (the label may now point at the
+        # fragmented sub-piece(s), but at least one surface tag
+        # carrying the label exists).
+        survivors = g.labels.entities('overhang', dim=2)
         existing_dim2 = {t for _, t in gmsh.model.getEntities(2)}
-        assert not [t for t in survivors if t in existing_dim2], (
-            "cleanup_free=True regressed: edge-sharing-but-centroid-"
-            "outside shell survived.  If this was an intentional API "
-            "change to add the curve-sharing preservation rule, "
-            "update both the test and the docstring at "
-            "_model_boolean.py."
+        live = [t for t in survivors if t in existing_dim2]
+        assert live, (
+            "topology sweep regressed: user-labeled shell-on-solid "
+            "surface was deleted by cleanup_free=True."
+        )
+
+    def test_fragment_coincident_face_solids_no_double_surface(self, g):
+        """Two abutting boxes that share one face must fragment into
+        three surfaces at the shared plane (one outer face from each
+        box plus the shared interior face) — without the topology
+        sweep, the centroid heuristic dropped the shared face.
+
+        Pins the contract: ``fragment`` plus the default
+        ``cleanup_free=True`` produces exactly one shared interior
+        surface at the contact plane, and no orphan stranded face.
+        """
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="left")
+        g.model.geometry.add_box(1, 0, 0, 1, 1, 1, label="right")
+        g.model.boolean.fragment(objects=["left"], tools=["right"])
+
+        # No orphan surfaces.
+        orphans = g.model.geometry.find_orphans()
+        assert orphans[2] == [], (
+            f"fragment of abutting boxes left orphan surfaces: {orphans[2]}"
+        )
+
+        # Both volumes survive.
+        vols = sorted(t for _, t in gmsh.model.getEntities(3))
+        assert len(vols) == 2
+
+        # The shared face is exactly one surface bounded by both
+        # volumes — find it via upward adjacencies.
+        shared = []
+        for _, s in gmsh.model.getEntities(2):
+            up, _ = gmsh.model.getAdjacencies(2, s)
+            if len(up) == 2:
+                shared.append(int(s))
+        assert len(shared) == 1, (
+            f"expected exactly one shared interior face, got {shared}"
+        )
+
+    def test_fragment_cavity_with_coincident_plane_no_orphans(self, g):
+        """A swiss-cheese solid fragmented against a cutting plane
+        coincident with its cavity face leaves no orphan after the
+        topology sweep — even though the coincident-face geometry is
+        exactly the failure mode the audit identified.
+        """
+        import warnings
+        from apeGmsh.core._geometry_errors import WarnGeomCoincidentFace
+
+        g.model.geometry.add_box(-1, -1, -1, 2, 2, 2, label='outer')
+        g.model.geometry.add_box(-0.5, -0.5, -0.5, 1, 1, 1, label='inner')
+        g.model.boolean.cut(objects=['outer'], tools=['inner'], label='shell')
+
+        # Cutting plane coincident with the cavity bottom (z=-0.5).
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', WarnGeomCoincidentFace)
+            plane = g.model.geometry.add_axis_cutting_plane('z', offset=-0.5)
+            g.model.boolean.fragment(
+                objects=['shell'], tools=[(2, plane)],
+            )
+
+        orphans = g.model.geometry.find_orphans()
+        assert orphans == {0: [], 1: [], 2: []}, (
+            f"fragment with coincident cutting plane left orphans: "
+            f"{orphans}"
         )
 
 

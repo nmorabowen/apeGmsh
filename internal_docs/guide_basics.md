@@ -359,13 +359,16 @@ the result map. After a fragment you can keep using
 `g.labels.entities("soil")` and it will return the correct (possibly
 expanded) set of tags.
 
-`fragment` also exposes an opt-in post-processing step. If the
-operation leaves free-floating surface fragments — for example a
-cutting plane that extended past the solid — it removes them when
-`cleanup_free=True`. The default is `cleanup_free=False` so shells
-sitting on top of a solid's face (shell-on-solid coupling) are
-preserved. Pass `cleanup_free=True` explicitly when you want the
-old destructive cleanup.
+`fragment` also runs a topology-driven cleanup pass by default
+(`cleanup_free=True`).  If the operation leaves free-floating surface
+fragments — for example a cutting plane that extended past the
+solid — they are reaped automatically.  Shells you explicitly created
+with `add_rectangle` / `add_plane_surface` / `add_cutting_plane` are
+preserved because they live in `model._metadata` (the sweep keeps
+anything user-intentional, whether or not it bounds a volume), so
+shell-on-solid coupling still works with the default.  Pass
+`cleanup_free=False` only when you want OCC's raw output for
+downstream inspection.
 
 ### Choosing between fragment and fuse — the conformal question
 

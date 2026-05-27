@@ -6,8 +6,9 @@ import gmsh
 import numpy as np
 from numpy import ndarray
 
+from ._geometry_topology import sweep_dangling
 from ._helpers import DimTag, EntityRef, Tag
-from .Labels import pg_preserved, cleanup_label_pgs
+from .Labels import pg_preserved
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -22,6 +23,12 @@ _AXIS_UNIT_VEC: dict[str, ndarray] = {
     'y': np.array([0.0, 1.0, 0.0]),
     'z': np.array([0.0, 0.0, 1.0]),
 }
+
+# Column index inside the (xmin, ymin, zmin, xmax, ymax, zmax) tuple
+# returned by ``gmsh.model.getBoundingBox`` for each axis — used by
+# :meth:`_Geometry._warn_if_coincident_face`.  Add 3 to get the high
+# bound (zmax = idx 5 for axis='z').
+_AXIS_IDX: dict[str, int] = {'x': 0, 'y': 1, 'z': 2}
 
 
 class _Geometry:
@@ -1557,6 +1564,16 @@ class _Geometry:
 
         point = origin_arr + offset * base_normal
 
+        # Coincident-face advisory: an axis-aligned cutting plane that
+        # sits at the same coordinate as an existing face leaves the
+        # tool stranded after OCC ``fragment`` consumes it.  The sweep
+        # picks the orphan up, but warning here lets users refactor
+        # the offset to avoid the coincidence entirely.  Skip tilted
+        # planes — the bbox-degeneracy test below is exact for axis-
+        # aligned planes only.
+        if rotation == 0.0 or rotation_about is None or rotation_about == axis:
+            self._warn_if_coincident_face(axis, point[_AXIS_IDX[axis]])
+
         self._model._log(
             f"add_axis_cutting_plane(axis={axis!r}, offset={offset}, "
             f"origin={tuple(origin_arr)}, rotation={rotation}, "
@@ -1570,6 +1587,49 @@ class _Geometry:
             label=label,
             sync=sync,
         )
+
+    def _warn_if_coincident_face(
+        self,
+        axis: Literal['x', 'y', 'z'],
+        coord: float,
+        *,
+        tol: float = 1e-6,
+    ) -> None:
+        """Emit :class:`WarnGeomCoincidentFace` if any existing face is
+        coplanar with the about-to-be-built axis-aligned plane.
+
+        Test: a face's bbox is degenerate (extent < ``tol``) along the
+        plane's normal axis AND that axis lies within ``tol`` of
+        ``coord``.  Degeneracy plus colocation is sufficient for
+        axis-aligned faces (their bbox collapses to a strip in the
+        normal direction iff they ARE normal-perpendicular).  Skip the
+        check for 2D-only models — there is no fragmentation to
+        worry about and the sweep would never run.
+        """
+        import warnings
+        from ._geometry_errors import WarnGeomCoincidentFace
+        if not gmsh.model.getEntities(3):
+            return
+        axis_idx = _AXIS_IDX[axis]
+        for _, t in gmsh.model.getEntities(2):
+            try:
+                bbox = gmsh.model.getBoundingBox(2, int(t))
+            except Exception:
+                continue
+            lo = bbox[axis_idx]
+            hi = bbox[axis_idx + 3]
+            if abs(hi - lo) <= tol and abs((lo + hi) / 2.0 - coord) <= tol:
+                warnings.warn(
+                    f"axis-aligned cutting plane at {axis}={coord} "
+                    f"coincides with existing surface tag {int(t)} "
+                    f"(bbox {axis} extent {lo}..{hi}). OCC fragment "
+                    f"may leave a stranded surface; the post-op sweep "
+                    f"will reap it, but consider offsetting the plane "
+                    f"to avoid the coincidence.",
+                    WarnGeomCoincidentFace,
+                    stacklevel=4,
+                )
+                return
 
     # ------------------------------------------------------------------
     # Cutting operations
@@ -1646,7 +1706,6 @@ class _Geometry:
         keep_surface   : bool = True,
         remove_original: bool = True,
         label          : str | None = None,
-        sync           : bool = True,
     ) -> list[Tag]:
         """
         Split one or more solids with an arbitrary cutting surface.
@@ -1657,6 +1716,13 @@ class _Geometry:
         does not classify the output pieces — callers that need
         "above/below" semantics should use :meth:`cut_by_plane` (which
         delegates here and adds the classification step).
+
+        After the fragment, :func:`sweep_dangling` reaps any free-floating
+        dim<=2 entities that bound no surviving volume (so callers never
+        see the cutting plane's corner points / edges / trimmed surface
+        as orphans), plus any stale ``_metadata`` entry whose tag was
+        consumed by OCC.  When ``keep_surface=False`` the tool surface
+        itself is forced into the sweep's removal set.
 
         Parameters
         ----------
@@ -1682,8 +1748,6 @@ class _Geometry:
         label : str, optional
             Label applied to every new volume fragment in the
             registry.  Pass ``None`` to leave the fragments unlabelled.
-        sync : bool, default True
-            Synchronise the OCC kernel after the cut.
 
         Returns
         -------
@@ -1722,20 +1786,6 @@ class _Geometry:
         obj_dt = [(3, int(t)) for t in solid_tags]
         tool_dt = [(2, int(surf_tag))]
 
-        # Collect the original labels BEFORE the boolean so we can
-        # propagate them to fragments afterwards.
-        inherited_label = label
-        if inherited_label is None and remove_original:
-            labels_comp = getattr(self._model._parent, 'labels', None)
-            if labels_comp is not None:
-                original_labels: set[str] = set()
-                for t in solid_tags:
-                    original_labels.update(
-                        labels_comp.labels_for_entity(3, int(t))
-                    )
-                if len(original_labels) == 1:
-                    inherited_label = original_labels.pop()
-
         with pg_preserved() as pg:
             out_dimtags, result_map = gmsh.model.occ.fragment(
                 obj_dt,
@@ -1768,6 +1818,13 @@ class _Geometry:
             for t in surviving_surfaces:
                 if (2, t) not in self._model._metadata:
                     self._model._register(2, t, None, 'cut_interface')
+
+        # Reap any free-floating dim<=2 entities OCC left behind.
+        # When the surface is being consumed, force its removal —
+        # add_cutting_plane registers it in _metadata so the default
+        # user-intentional check would preserve it.
+        also = None if keep_surface else {(2, int(surf_tag))}
+        sweep_dangling(self._model, also_remove=also)
 
         self._model._log(
             f"cut_by_surface(solids={solid_tags}, surface={int(surf_tag)}) "
@@ -1868,14 +1925,12 @@ class _Geometry:
         )
 
         # Perform the actual cut via the general surface method.
-        # sync=True so the PG remap and classify step see synced topology.
         fragments = self.cut_by_surface(
             solid,
             plane_tag,
             keep_surface=keep_plane,
             remove_original=remove_original,
             label=None,          # we re-label by side below
-            sync=True,
         )
 
         above_tags, below_tags = self._classify_fragments(
@@ -1885,11 +1940,16 @@ class _Geometry:
         )
 
         if not above_tags or not below_tags:
-            self._model._log(
-                f"cut_by_plane: WARNING plane {plane_tag} produced "
-                f"only one side ({len(above_tags)} above, "
-                f"{len(below_tags)} below) — the plane may not "
-                f"intersect the solid(s)"
+            import warnings
+            from ._geometry_errors import WarnGeomOneSidedCut
+            warnings.warn(
+                f"cut_by_plane: plane {plane_tag} produced only one "
+                f"side ({len(above_tags)} above, {len(below_tags)} "
+                f"below) — the plane likely sits outside the solid's "
+                f"bounding box. Returning the tuple anyway so callers "
+                f"that pattern-match on (above, below) don't crash.",
+                WarnGeomOneSidedCut,
+                stacklevel=2,
             )
 
         if sync:
@@ -2013,46 +2073,6 @@ class _Geometry:
         com = gmsh.model.occ.getCenterOfMass(2, int(surface_tag))
         return np.asarray(com, dtype=float)
 
-    def _cleanup_slice_orphans(
-        self,
-        pre_entities: dict[int, set[int]],
-        keep_vol_tags: set[int],
-    ) -> None:
-        """Remove entities created during a slice that aren't part of the result.
-
-        Syncs the OCC kernel, walks the boundary hierarchy of
-        *keep_vol_tags*, then removes anything new (not in
-        *pre_entities*) that isn't a boundary of a surviving volume.
-        """
-        gmsh.model.occ.synchronize()
-
-        keep_dimtags: set[tuple[int, int]] = {(3, t) for t in keep_vol_tags}
-        for vol_tag in keep_vol_tags:
-            try:
-                for dt in gmsh.model.getBoundary(
-                    [(3, vol_tag)], oriented=False, recursive=True,
-                ):
-                    keep_dimtags.add((abs(dt[0]), abs(dt[1])))
-            except Exception:
-                pass
-
-        removed_dts: list[tuple[int, int]] = []
-        for d in [2, 1, 0]:
-            for _, t in gmsh.model.getEntities(d):
-                if t in pre_entities.get(d, set()):
-                    continue
-                if (d, t) in keep_dimtags:
-                    continue
-                try:
-                    gmsh.model.occ.remove([(d, t)], recursive=False)
-                except Exception:
-                    pass
-                self._model._metadata.pop((d, t), None)
-                removed_dts.append((d, t))
-
-        if removed_dts:
-            cleanup_label_pgs(removed_dts)
-
     # ------------------------------------------------------------------
     # Slice (atomic cut + cleanup)
     # ------------------------------------------------------------------
@@ -2072,8 +2092,12 @@ class _Geometry:
 
         Internally creates a temporary cutting plane, fragments the
         solids, removes the cutting plane (and any trimmed surfaces
-        it left behind), and returns the volume fragments.  No
-        orphaned geometry is left in the model.
+        it left behind), and returns the volume fragments.  Runs
+        :func:`sweep_dangling` after the cut so no orphaned dim<=2
+        geometry survives — even when the cutting plane is coincident
+        with an existing face of the operand.  If the plane is
+        coincident with an existing face, :class:`WarnGeomCoincidentFace`
+        fires first as an advisory; the sweep cleans up regardless.
 
         Parameters
         ----------
@@ -2120,16 +2144,6 @@ class _Geometry:
             # Slice all volumes at x = 0
             g.model.geometry.slice(axis='x', offset=0.0)
         """
-        # Snapshot ALL entities before creating the cutting plane.
-        # After the slice, anything that was created during the
-        # operation but isn't a surviving volume fragment gets
-        # removed.  This catches the cutting-plane corner points,
-        # edges, curve loops, and trimmed surfaces that the old
-        # registry-based cleanup missed.
-        pre_entities: dict[int, set[int]] = {}
-        for d in range(4):
-            pre_entities[d] = {t for _, t in gmsh.model.getEntities(d)}
-
         plane_tag = self.add_axis_cutting_plane(
             axis, offset=offset, sync=False,
         )
@@ -2152,17 +2166,16 @@ class _Geometry:
                 solid, plane_dt,
                 keep_surface=False,
                 label=label,
-                sync=False,
             )
             result = fragments
 
-        # Determine which volume tags are the real output.
-        if classify:
-            keep_vol_tags = set(above) | set(below)
-        else:
-            keep_vol_tags = set(fragments)
-
-        self._cleanup_slice_orphans(pre_entities, keep_vol_tags)
+        # ``cut_by_surface`` already swept dangling geometry once with
+        # ``also_remove={(2, plane_tag)}``; the second sweep here is a
+        # belt-and-braces pass picking up anything the first one
+        # missed (e.g. cutting-plane corner points stranded after the
+        # plane removal).  Idempotent — sweeps stop once nothing is
+        # left to remove.
+        sweep_dangling(self._model, also_remove={(2, plane_tag)})
 
         if sync:
             gmsh.model.occ.synchronize()
@@ -2171,6 +2184,85 @@ class _Geometry:
             f"slice(axis={axis!r}, offset={offset}, classify={classify})"
         )
         return result
+
+    # ------------------------------------------------------------------
+    # Orphan-geometry inspection / cleanup
+    # ------------------------------------------------------------------
+
+    def find_orphans(self) -> dict[int, list[int]]:
+        """Inspect the model for orphan geometry without modifying it.
+
+        Returns the dimtags that :meth:`remove_orphans` (and the
+        post-op sweep that runs internally inside
+        :meth:`slice` / :meth:`cut_by_surface` / :meth:`cut_by_plane`
+        / :meth:`_Boolean.fragment`) would reap: dim<=2 entities that
+        bound no registered volume and are not user-intentional (not
+        in ``model._metadata``, no label).
+
+        Returns
+        -------
+        dict[int, list[int]]
+            ``{0: [...], 1: [...], 2: [...]}`` — orphan tags at every
+            dim <= 2.  An empty list at every key means the model is
+            clean.
+        """
+        return sweep_dangling(self._model, dry_run=True)
+
+    def remove_orphans(
+        self,
+        *,
+        dry_run: bool = False,
+    ) -> dict[int, list[int]]:
+        """Run the orphan sweep manually.
+
+        Identical algorithm to the post-op sweep the cut / fragment
+        operations run internally — exposed so callers can clean up
+        after a hand-written OCC operation or after pickling /
+        re-loading geometry from a side channel.
+
+        Parameters
+        ----------
+        dry_run
+            When True, behave like :meth:`find_orphans` (no
+            modification) but return the same dict shape.
+
+        Returns
+        -------
+        dict[int, list[int]]
+            ``{dim: [tags]}`` — the tags that were (or would be)
+            removed.
+        """
+        return sweep_dangling(self._model, dry_run=dry_run)
+
+    def validate_pre_mesh(self) -> None:
+        """Raise :class:`GeometryValidationError` if any orphans exist.
+
+        **Opt-in — NOT auto-invoked by :meth:`Mesh.generate`.**  The
+        sibling validators on Loads / Constraints / Masses ARE auto-
+        invoked because they're closed-world (they only check string
+        targets the composite itself recorded).  This one is open-
+        world: it scans every live OCC entity and asks "is this user-
+        intentional?" via the ``_metadata`` and ``g.labels`` channels.
+        Workflows that build geometry via raw ``gmsh.model.geo.*`` /
+        ``gmsh.model.occ.*`` (bypassing ``_metadata``) or attach
+        entities only to raw user PGs (bypassing ``g.labels``) would
+        false-positive on every legitimate model — so auto-wiring is
+        deferred to a follow-up that splits the sweep into a
+        metadata-stale check (safe to auto-fire) and the full orphan-
+        presence check (stays opt-in).  Users who want fail-fast
+        orphan checking inside their build script call this directly.
+        """
+        from ._geometry_errors import GeometryValidationError
+        orphans = self.find_orphans()
+        offending = {d: ts for d, ts in orphans.items() if ts}
+        if offending:
+            raise GeometryValidationError(
+                f"geometry carries orphan entities that bound no "
+                f"registered volume: {offending}. Run "
+                f"g.model.geometry.remove_orphans() to sweep them, "
+                f"or call g.model.geometry.find_orphans() to inspect "
+                f"first."
+            )
 
     # ------------------------------------------------------------------
     # Primitives  (dim = 3 solids)
