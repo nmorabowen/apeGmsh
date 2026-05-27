@@ -1786,6 +1786,15 @@ class Compose:
         ``composed_from`` : tuple[ComposeRecord, ...]
             ``ComposeRecord`` entries from ``/composed_from/`` (empty
             for uncomposed sources).
+        ``compose_tree`` : tuple[ComposeTreeNode, ...]
+            Derived tree-view of the source's nested compose hierarchy,
+            reconstructed from the flat ``composed_from`` list via the
+            separator-alternation rule (depth-1 ``.``, depth-2 ``/``,
+            ...). Empty tuple for uncomposed sources. Useful for
+            previewing what ``g.compose_tree()`` would yield AFTER
+            composing this source. Identical to
+            :meth:`compose_tree` semantics — same builder, same
+            ``ComposeTreeNode`` dataclass.
         ``properties`` : dict
             File-level properties slot.  ADR 0038 stores ``properties``
             per-module under each ``/composed_from/{label}/properties/``
@@ -1817,6 +1826,12 @@ class Compose:
                 f["composed_from"] if "composed_from" in f else None
             )
 
+        # Derived tree view of the source's compose hierarchy —
+        # uses the same _build_compose_tree helper as g.compose_tree()
+        # so users can preview the nested shape WITHOUT first composing.
+        # Returns () for uncomposed sources (composed_from is empty).
+        compose_tree = _build_compose_tree(composed_from)
+
         return {
             "fem_hash": fem_hash,
             "neutral_schema_version": neutral_schema_version,
@@ -1825,6 +1840,7 @@ class Compose:
             "label_inventory": label_inventory,
             "record_counts": record_counts,
             "composed_from": composed_from,
+            "compose_tree": compose_tree,
             "properties": {},
         }
 

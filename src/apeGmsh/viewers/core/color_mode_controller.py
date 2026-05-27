@@ -234,7 +234,12 @@ class ColorModeController:
         name = self._scene.brep_to_group.get(dt)
         if name is None:
             return _FALLBACK_RGB
-        idx = abs(hash(name)) % len(_GROUP_PALETTE_RGB)
+        # zlib.crc32 instead of Python's hash() — hash() is randomized
+        # across processes via PYTHONHASHSEED so the same model would
+        # get different group colors in different sessions (and unlucky
+        # CI seeds would land collisions on the 19-color palette).
+        # Mirrors the determinism fix applied to _module_idle in #374.
+        idx = zlib.crc32(name.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
         return _GROUP_PALETTE_RGB[idx]
 
     def _partition_idle(self, dt: "DimTag") -> np.ndarray:
@@ -323,8 +328,7 @@ class ColorModeController:
         # zlib.crc32 instead of Python's hash() — hash() is randomized
         # across processes (PYTHONHASHSEED), so the same module would
         # get different colors in different sessions. crc32 is stable.
-        # `_phys_group_idle` above still uses hash() — pre-existing
-        # behavior, separate followup.
+        # `_phys_group_idle` above uses the same crc32 pattern.
         idx = zlib.crc32(dominant.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
         return _GROUP_PALETTE_RGB[idx]
 
