@@ -470,6 +470,352 @@ class PartsRegistry(_PartsFragmentationMixin):
         )
 
     # ------------------------------------------------------------------
+    # Entry point 5: Parametric DRM-box primitive
+    # ------------------------------------------------------------------
+
+    def add_DRM_box(
+        self,
+        *,
+        x_inner: tuple[float, int],
+        x_layer: tuple[float, int],
+        x_outer: tuple[float, int],
+        y_inner: tuple[float, int],
+        y_layer: tuple[float, int],
+        y_outer: tuple[float, int],
+        z_top: tuple[float, int],
+        z_mid: tuple[float, int],
+        z_bottom: tuple[float, int],
+        center: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        rotation_z_deg: float = 0.0,
+        name: str | None = None,
+        names: dict[str, str] | None = None,
+        apply_transfinite: bool = True,
+        tag_line_pgs: bool = True,
+    ):
+        """Build, place, and tag a Domain-Reduction-Method soil box.
+
+        A DRM box is a layered solid with three concentric regions
+        per lateral axis (inner core | transition layer | outer
+        absorbing layer) and a downward Z stack (top | mid | bottom).
+        The classic symmetric case has ``5 * 5 * 3 = 75`` axis-aligned
+        hex sub-volumes, each meshed structured-hex with per-region
+        element counts.
+
+        ``center=(0, 0, 0)`` puts the top-face centre of the inner
+        box at the origin (free-surface convention).  Rotation is
+        applied CCW about ``+Z`` at ``center``; the rotated frame
+        survives every step (volume PGs, line PGs, transfinite
+        cascade) because we classify by world-coords transformed
+        back to the local frame.
+
+        Parameters
+        ----------
+        x_inner, x_layer, x_outer, y_inner, y_layer, y_outer :
+            ``(size, n_elements)`` tuples — symmetric layered lateral
+            axes.  Each segment's element count drives the
+            transfinite cascade.
+        z_top, z_mid, z_bottom :
+            ``(size, n_elements)`` tuples — downward Z stack with the
+            free surface at ``z = 0`` (inner-box top).
+        center :
+            World-coordinate location for the top-face centre of the
+            inner box.
+        rotation_z_deg :
+            CCW rotation about ``+Z`` applied at ``center``, in
+            degrees.
+        name :
+            Instance label and default PG prefix.  When ``None``,
+            uses ``"drm_box"``.  PGs default to ``inner_box`` /
+            ``transition_box`` / ``outer_box`` (and the matching
+            ``lines_*`` curves); when ``name`` is given they become
+            ``{name}_inner_box`` etc.
+        names :
+            Per-PG override dict.  Keys: ``inner_pg``, ``transition_pg``,
+            ``outer_pg``, ``line_pg_<region>_<axis>`` (e.g.
+            ``line_pg_inner_x``, ``line_pg_top_z``).  Each override
+            replaces the entire PG name (the ``name`` prefix is
+            ignored for that key).
+        apply_transfinite :
+            When True (default), apply the structured-hex transfinite
+            cascade to every sub-volume using the per-region element
+            counts in ``axis_x`` / ``axis_y`` / ``axis_z``.
+        tag_line_pgs :
+            When True (default), tag axis-parallel edges by region
+            into curve PGs ``lines_{region}_{axis}``.  When False,
+            ``result.line_pgs`` is empty.
+
+        Returns
+        -------
+        DRMBoxResult
+            Frozen summary with PG names, Axis1D descriptors, the
+            applied ``center`` and ``rotation_z`` (in radians).
+
+        Example
+        -------
+        ::
+
+            res = g.parts.add_DRM_box(
+                x_inner=(605, 10), x_layer=(10, 1), x_outer=(20, 2),
+                y_inner=(605, 10), y_layer=(10, 1), y_outer=(20, 2),
+                z_top=(50, 5), z_mid=(50, 5), z_bottom=(200, 20),
+                center=(0, 0, 0),
+            )
+            g.mesh.generation.generate(dim=3)
+            # res.inner_pg == "inner_box", res.transition_pg == "transition_box",
+            # res.outer_pg == "outer_box"
+        """
+        import math
+        import numpy as np
+
+        from apeGmsh.parts.drm_box import DRMBox, DRMBoxResult
+
+        instance_label = name or "drm_box"
+
+        # Resolve PG names — ``name`` acts as a prefix unless the user
+        # supplied ``names`` overrides.  When ``name is None`` we keep
+        # the bare defaults so the simple case stays terse.
+        prefix = f"{name}_" if name else ""
+        pg_defaults = {
+            "inner_pg":      f"{prefix}inner_box",
+            "transition_pg": f"{prefix}transition_box",
+            "outer_pg":      f"{prefix}outer_box",
+        }
+        line_pg_defaults: dict[str, str] = {}
+        # Lateral axes carry 3 regions; Z carries 3 regions of its
+        # own.  The dict keys mirror the spec example
+        # ``{'inner_x', 'layer_x', 'top_z'}``.
+        for region in ("inner", "layer", "outer"):
+            for axis in ("x", "y"):
+                line_pg_defaults[f"{region}_{axis}"] = (
+                    f"{prefix}lines_{region}_{axis}"
+                )
+        for region in ("top", "mid", "bottom"):
+            line_pg_defaults[f"{region}_z"] = (
+                f"{prefix}lines_{region}_z"
+            )
+
+        overrides = dict(names or {})
+        for k, default in pg_defaults.items():
+            if k in overrides:
+                pg_defaults[k] = str(overrides[k])
+        # Line-PG override keys look like ``line_pg_inner_x``.
+        for key in list(line_pg_defaults):
+            override_key = f"line_pg_{key}"
+            if override_key in overrides:
+                line_pg_defaults[key] = str(overrides[override_key])
+
+        # ── Build the DRM-box Part in its own session ────────────────
+        # ``Part.begin()`` calls ``gmsh.model.add(part.name)``, which
+        # makes the Part's model the current gmsh model.  The Part's
+        # ``end()`` decrements the gmsh refcount but does NOT switch
+        # the current model back, so without an explicit
+        # ``setCurrent`` here ``self.add(drm)`` would importShapes into
+        # the Part's model (doubling the volume count in the live
+        # session).  Snapshot the assembly's model name first and
+        # restore it after the Part's ``with`` block exits.
+        assembly_model_name = self._parent.name
+        drm = DRMBox(
+            x_inner=x_inner, x_layer=x_layer, x_outer=x_outer,
+            y_inner=y_inner, y_layer=y_layer, y_outer=y_outer,
+            z_top=z_top, z_mid=z_mid, z_bottom=z_bottom,
+            name=f"_drm_part_{instance_label}",
+        )
+        with drm:
+            drm.build()
+        gmsh.model.setCurrent(assembly_model_name)
+        # ``drm`` now has an auto-persisted STEP tempfile.
+
+        theta = math.radians(float(rotation_z_deg))
+        rotate_arg: tuple[float, ...] | None
+        if abs(theta) > 1e-15:
+            # OCC rotate at world origin — then translate.  This
+            # matches ``_apply_transforms``: rotate first about
+            # axis through (0, 0, 0), then translate by ``center``.
+            rotate_arg = (theta, 0.0, 0.0, 1.0)
+        else:
+            rotate_arg = None
+
+        inst = self.add(
+            drm,
+            label=instance_label,
+            translate=center,
+            rotate=rotate_arg,
+        )
+
+        # Release the Part's tempfile — we've imported the geometry
+        # and no longer need the on-disk STEP.  ``drm`` is otherwise
+        # garbage-collected at function exit, but cleanup() here
+        # avoids waiting for GC.
+        drm.cleanup()
+
+        # ── Classify each sub-volume in the local frame ─────────────
+        cx, cy, cz = (float(v) for v in center)
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+
+        def to_local(world_xyz):
+            """Inverse of: rotate CCW about +Z at origin, then translate by center."""
+            wx, wy, wz = world_xyz
+            # subtract translation
+            dx, dy, dz = wx - cx, wy - cy, wz - cz
+            # inverse rotation
+            lx = cos_t * dx + sin_t * dy
+            ly = -sin_t * dx + cos_t * dy
+            lz = dz
+            return lx, ly, lz
+
+        wrap_rank = {"inner": 0, "layer": 1, "outer": 2}
+
+        inner_vols: list[int] = []
+        transition_vols: list[int] = []
+        outer_vols: list[int] = []
+        # ``per_class_counts`` ⇒ list of (vol_tag, nx, ny, nz)
+        per_vol_counts: list[tuple[int, int, int, int]] = []
+
+        for vtag in inst.entities.get(3, []):
+            com_world = self._parent.model.queries.center_of_mass(
+                int(vtag), dim=3,
+            )
+            lx, ly, lz = to_local(com_world)
+            rx = drm.axis_x.region_of(lx)
+            ry = drm.axis_y.region_of(ly)
+            rz = drm.axis_z.region_of(lz)
+            nx = drm.axis_x.count_for(lx)
+            ny = drm.axis_y.count_for(ly)
+            nz = drm.axis_z.count_for(lz)
+            per_vol_counts.append((int(vtag), nx, ny, nz))
+
+            wrap = max(wrap_rank[rx], wrap_rank[ry])
+            if wrap == 0:
+                inner_vols.append(int(vtag))
+            elif wrap == 1:
+                transition_vols.append(int(vtag))
+            else:
+                outer_vols.append(int(vtag))
+            # ``rz`` participates only in line-PG tagging below; the
+            # wrap classification is laterally-driven.
+
+        physical = self._parent.physical
+        if inner_vols:
+            physical.add(3, inner_vols, name=pg_defaults["inner_pg"])
+        if transition_vols:
+            physical.add(3, transition_vols, name=pg_defaults["transition_pg"])
+        if outer_vols:
+            physical.add(3, outer_vols, name=pg_defaults["outer_pg"])
+
+        # ── Optional: transfinite cascade per sub-volume ────────────
+        if apply_transfinite:
+            structured = self._parent.mesh.structured
+            for vtag, nx, ny, nz in per_vol_counts:
+                # Tuple form ``n=(nx, ny, nz)`` orders by principal
+                # axis (closest-global-axis), so it is rotation-safe
+                # by construction — the dict form would require
+                # global-axis-aligned edges and raise here.  Axis1D
+                # stores element counts; ``set_transfinite`` takes
+                # node counts (``n_nodes - 1`` elements per curve).
+                structured.set_transfinite(
+                    (3, vtag),
+                    n=(nx + 1, ny + 1, nz + 1),
+                    recombine=True,
+                )
+
+        # ── Optional: line PGs per (region, axis) ───────────────────
+        line_pgs_out: dict[str, str] = {}
+        if tag_line_pgs:
+            line_groups: dict[str, list[int]] = {
+                k: [] for k in line_pg_defaults
+            }
+            ex = np.array([cos_t, sin_t, 0.0])
+            ey = np.array([-sin_t, cos_t, 0.0])
+            ez = np.array([0.0, 0.0, 1.0])
+
+            for _d, ctag in gmsh.model.getEntities(1):
+                # Classify each curve by midpoint-of-endpoints
+                # transformed to local frame, and by endpoint
+                # direction projected onto each local axis.
+                bnd = gmsh.model.getBoundary(
+                    [(1, int(ctag))], oriented=False, recursive=False,
+                )
+                pts = [b for b in bnd if b[0] == 0]
+                if len(pts) < 2:
+                    continue
+                p0 = np.array(
+                    gmsh.model.getValue(0, int(pts[0][1]), []),
+                    dtype=float,
+                )
+                p1 = np.array(
+                    gmsh.model.getValue(0, int(pts[-1][1]), []),
+                    dtype=float,
+                )
+                d = p1 - p0
+                dn = float(np.linalg.norm(d))
+                if dn < 1e-12:
+                    continue
+                dhat = d / dn
+
+                # Determine which local axis the edge is parallel to
+                # (within ~5° tolerance).  Edges that don't cleanly
+                # align with any local axis are skipped silently —
+                # they shouldn't exist on an axis-aligned box, but
+                # OCC sometimes introduces tiny seam edges.
+                dots = (
+                    float(abs(np.dot(dhat, ex))),
+                    float(abs(np.dot(dhat, ey))),
+                    float(abs(np.dot(dhat, ez))),
+                )
+                axis_idx = int(np.argmax(dots))
+                if dots[axis_idx] < math.cos(math.radians(5.0)):
+                    continue
+
+                mid_world = 0.5 * (p0 + p1)
+                lx, ly, lz = to_local(tuple(mid_world))
+
+                if axis_idx == 0:  # local-X
+                    # Position determined by the OTHER lateral
+                    # coordinate (Y region) and the local-Z region.
+                    # An x-aligned edge in the inner column sits at
+                    # ly within axis_y.inner range, regardless of
+                    # which x segment it spans.  Use Y region.
+                    region = drm.axis_y.region_of(
+                        max(min(ly, drm.axis_y.hi), drm.axis_y.lo)
+                    )
+                    line_groups[f"{region}_x"].append(int(ctag))
+                elif axis_idx == 1:  # local-Y
+                    region = drm.axis_x.region_of(
+                        max(min(lx, drm.axis_x.hi), drm.axis_x.lo)
+                    )
+                    line_groups[f"{region}_y"].append(int(ctag))
+                else:  # local-Z
+                    region = drm.axis_z.region_of(
+                        max(min(lz, drm.axis_z.hi), drm.axis_z.lo)
+                    )
+                    line_groups[f"{region}_z"].append(int(ctag))
+
+            for key, tags in line_groups.items():
+                if not tags:
+                    continue
+                pg_name = line_pg_defaults[key]
+                # Deduplicate — gmsh.model.getEntities(1) shouldn't
+                # repeat tags, but the post-fragment topology can
+                # share interior edges between adjacent sub-volumes,
+                # which is fine since add() merges-on-name.
+                physical.add(1, sorted(set(tags)), name=pg_name)
+                line_pgs_out[key] = pg_name
+
+        return DRMBoxResult(
+            inner_pg=pg_defaults["inner_pg"],
+            transition_pg=pg_defaults["transition_pg"],
+            outer_pg=pg_defaults["outer_pg"],
+            line_pgs=line_pgs_out,
+            axes={
+                "x": drm.axis_x,
+                "y": drm.axis_y,
+                "z": drm.axis_z,
+            },
+            center=(cx, cy, cz),
+            rotation_z=float(theta),
+        )
+
+    # ------------------------------------------------------------------
     # Entry point 4: Import a STEP/IGES file
     # ------------------------------------------------------------------
 
