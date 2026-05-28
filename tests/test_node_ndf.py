@@ -76,8 +76,11 @@ def test_schema_version_pin():
     2.7.0; the ADR-0035 follow-up extended interpolation_payload_dtype
     + surface_coupling sr_* lane to round-trip embedded -K/-KP/-rot/-p
     at 2.8.0; ADR 0038 Phase 3A.1 added /composed_from/, tag_span_max,
-    and module_label parallel datasets at 2.9.0)."""
-    assert NEUTRAL_SCHEMA_VERSION == "2.9.0"
+    and module_label parallel datasets at 2.9.0; B2 split
+    /physical_groups/ + /labels/ into node_side/element_side sub-trees
+    and widened snapshot_id to fold element-side PGs + labels at
+    2.10.0)."""
+    assert NEUTRAL_SCHEMA_VERSION == "2.10.0"
 
 
 # =====================================================================

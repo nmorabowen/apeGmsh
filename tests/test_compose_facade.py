@@ -267,7 +267,7 @@ def test_compose_inspect_returns_metadata_for_uncomposed_source(
 ) -> None:
     """``compose_inspect`` reads schema + inventory metadata only."""
     info = session.compose_inspect(saved_uncomposed_h5)
-    assert info["neutral_schema_version"] == "2.9.0"
+    assert info["neutral_schema_version"] == "2.10.0"
     assert info["tag_span_max"] > 0
     # Uncomposed source has no provenance.
     assert info["composed_from"] == ()

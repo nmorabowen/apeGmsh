@@ -1289,15 +1289,55 @@ class H5Model:
     ) -> dict[str, dict[str, Any]]:
         """Walk a root-level named index (``physical_groups`` or ``labels``).
 
-        Each child group becomes one entry in the returned dict.
+        Neutral schema 2.10.0 (B2): walks ``{group_name}/node_side/``
+        and ``{group_name}/element_side/`` and returns a merged
+        ``{name -> entry}`` dict so the prior single-namespace
+        consumers (viewer, tests) keep working.  When the same name
+        appears on both sides the element-side entry overlays the
+        node-side fields — its ``element_ids`` dataset is the only
+        side-discriminator the existing callers need.  ``{}`` when
+        the root group is absent or both sub-trees are absent.
         """
         parent = self._f.get(group_name)
         if parent is None:
             return {}
         out: dict[str, dict[str, Any]] = {}
+        # PGs + labels use the 2.10.0 sub-tree split; ``mesh_selections``
+        # still uses the flat shape (one entry per safe-name directly
+        # under the root group).  Dispatch by detecting the side groups.
+        has_split = (
+            "node_side" in parent or "element_side" in parent
+        )
+        if has_split:
+            # Walk node_side first, then element_side — element-side
+            # wins on overlapping safe-names so ``element_ids`` (the
+            # only side-discriminator the viewer reads) is reachable.
+            for side in ("node_side", "element_side"):
+                if side not in parent:
+                    continue
+                side_grp = parent[side]
+                if not hasattr(side_grp, "keys"):
+                    continue
+                for sub_name in side_grp:
+                    sub = side_grp[sub_name]
+                    if not hasattr(sub, "keys"):
+                        continue
+                    entry: dict[str, Any] = dict(out.get(sub_name, {}))
+                    entry.update(_attrs_as_dict(sub))
+                    if "node_ids" in sub:
+                        entry["node_ids"] = sub["node_ids"][:]
+                    if "node_coords" in sub:
+                        entry["node_coords"] = sub["node_coords"][:]
+                    if "element_ids" in sub:
+                        entry["element_ids"] = sub["element_ids"][:]
+                    out[sub_name] = entry
+            return out
+        # Flat layout (mesh_selections, or an empty PG/labels group).
         for sub_name in parent:
             sub = parent[sub_name]
-            entry: dict[str, Any] = _attrs_as_dict(sub)
+            if not hasattr(sub, "keys"):
+                continue
+            entry = _attrs_as_dict(sub)
             if "node_ids" in sub:
                 entry["node_ids"] = sub["node_ids"][:]
             if "node_coords" in sub:

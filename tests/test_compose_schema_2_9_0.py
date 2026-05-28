@@ -96,15 +96,15 @@ def _make_simple_fem(
 # ---------------------------------------------------------------------------
 
 
-def test_schema_version_bumped_to_2_9_0(tmp_path: Path) -> None:
-    """Fresh save stamps the new neutral schema version."""
+def test_schema_version_is_2_10_0(tmp_path: Path) -> None:
+    """Fresh save stamps the current neutral schema version (B2 bump 2.9 → 2.10)."""
     fem = _make_simple_fem()
     out = tmp_path / "model.h5"
     fem.to_h5(str(out))
     with h5py.File(out, "r") as f:
-        assert NEUTRAL_SCHEMA_VERSION == "2.9.0"
-        assert f["meta"].attrs["neutral_schema_version"] == "2.9.0"
-        assert f["meta"].attrs["schema_version"] == "2.9.0"
+        assert NEUTRAL_SCHEMA_VERSION == "2.10.0"
+        assert f["meta"].attrs["neutral_schema_version"] == "2.10.0"
+        assert f["meta"].attrs["schema_version"] == "2.10.0"
 
 
 def test_tag_span_max_written_on_save(tmp_path: Path) -> None:
@@ -210,60 +210,6 @@ def test_composed_from_group_round_trip_when_non_empty(tmp_path: Path) -> None:
     minimal = reloaded["minimal"]
     assert minimal.rotate is None
     assert minimal.partition_rank is None
-
-
-# ---------------------------------------------------------------------------
-# 2.8.x backward compatibility
-# ---------------------------------------------------------------------------
-
-
-def test_28_reader_compat(tmp_path: Path) -> None:
-    """A synthetic 2.8.0 H5 loads with empty composed_from and no warnings.
-
-    The reader's two-version window accepts 2.8.x and 2.9.x; the
-    missing ``/composed_from/`` group, ``tag_span_max`` attr, and
-    ``module_label`` datasets are all silently tolerated.
-    """
-    out = tmp_path / "legacy_2_8_0.h5"
-    # Build a minimal 2.8.0-shaped file by writing a current-schema
-    # FEM then downgrading the schema-version attrs + stripping the
-    # new additions.
-    fem = _make_simple_fem()
-    fem.to_h5(str(out))
-    with h5py.File(out, "a") as f:
-        f["meta"].attrs["neutral_schema_version"] = "2.8.0"
-        f["meta"].attrs["schema_version"] = "2.8.0"
-        # 2.8.x didn't carry tag_span_max
-        if "tag_span_max" in f["meta"].attrs:
-            del f["meta"].attrs["tag_span_max"]
-        # 2.8.x lacked module_label datasets
-        if "module_label" in f["nodes"]:
-            del f["nodes/module_label"]
-        for tname in list(f["elements"].keys()):
-            sub = f["elements"][tname]
-            if "module_label" in sub:
-                del sub["module_label"]
-        # 2.8.x had no /composed_from/
-        if "composed_from" in f:
-            del f["composed_from"]
-        # snapshot_id was computed with composed_from empty, so it
-        # already matches the rebuilt-without-composed_from digest.
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        rebuilt = read_fem_h5(str(out))
-
-    # No DeprecationWarning / UserWarning from the schema downgrade.
-    relevant = [
-        w for w in caught
-        if issubclass(w.category, (UserWarning, DeprecationWarning))
-    ]
-    assert relevant == [], (
-        f"Unexpected warnings on 2.8.x load: "
-        f"{[(w.category.__name__, str(w.message)) for w in relevant]}"
-    )
-    assert isinstance(rebuilt.composed_from, ComposeSet)
-    assert len(rebuilt.composed_from) == 0
 
 
 # ---------------------------------------------------------------------------

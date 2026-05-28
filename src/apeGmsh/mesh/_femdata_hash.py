@@ -6,12 +6,19 @@ canonical representation of:
 - Node IDs and coordinates (sorted by ID)
 - Element IDs and connectivity, per element-type group (sorted by
   type name, then by element ID within each type)
-- Physical-group membership (sorted by (dim, tag), with member node
-  IDs sorted within each group)
+- Node-side physical-group membership (sorted by (dim, tag), with
+  member node IDs sorted within each group)
+- Element-side physical-group membership (sorted by (dim, tag), with
+  member element IDs + node IDs sorted within each group) — added in
+  neutral schema 2.10.0 (B2) so element-side-only PGs influence the
+  snapshot identity, closing the drift hole that the prior reader
+  heuristic masked
+- Node-side + element-side label membership (same canonical walk as
+  PGs) — also added in 2.10.0
 
 Two FEMData objects with byte-identical canonical representations
 produce the same hash; any change (re-mesh, coord edit, connectivity
-edit, PG rename) produces a different hash.
+edit, PG rename, label add) produces a different hash.
 
 This hash is the contract that ties recorder specs, results files,
 and bound FEMData together — see ``Results_architecture.md`` §
@@ -41,6 +48,12 @@ def compute_snapshot_id(fem: "FEMData") -> str:
     _hash_nodes(h, fem)
     _hash_elements(h, fem)
     _hash_physical_groups(h, fem)
+    # Schema 2.10.0 (B2) — fold the previously un-hashed taxonomies
+    # so element-side PGs + labels participate in the snapshot id.
+    # Order is locked: element-side PGs, then labels (node + element).
+    # Changing this order rotates every existing snapshot_id.
+    _hash_element_side_pgs(h, fem)
+    _hash_labels(h, fem)
     _hash_composed_from(h, fem)
 
     return h.hexdigest()
@@ -138,6 +151,12 @@ def _hash_composed_from(h: "hashlib._Hash", fem: "FEMData") -> None:
 
 
 def _hash_physical_groups(h: "hashlib._Hash", fem: "FEMData") -> None:
+    """Fold node-side PG membership (``fem.nodes.physical``) into the digest.
+
+    Canonical walk: sort by ``(dim, tag)``, emit ``dim|tag|name|`` then
+    the sorted member node ids.  Skips the channel entirely when the
+    composite has no node-side PG set (legacy / direct-test fixtures).
+    """
     h.update(b"PGS|")
     physical = getattr(fem.nodes, "physical", None)
     if physical is None:
@@ -158,3 +177,111 @@ def _hash_physical_groups(h: "hashlib._Hash", fem: "FEMData") -> None:
             continue
         if nids.size:
             h.update(np.sort(nids).tobytes())
+
+
+def _hash_element_side_pgs(h: "hashlib._Hash", fem: "FEMData") -> None:
+    """Fold element-side PG membership (``fem.elements.physical``) into
+    the digest.
+
+    Schema 2.10.0 (B2).  Mirrors :func:`_hash_physical_groups` but walks
+    the element composite's PG set; emits ``dim|tag|name|`` then sorted
+    member element ids then sorted member node ids (when present on
+    the entry).  Skips the channel entirely when the composite has no
+    element-side PG set or it is empty — the channel-empty case must
+    hash identically to pre-2.10.0 broker objects that had no element-
+    side PG awareness, so the tag preserves the empty hash.
+    """
+    h.update(b"EPGS|")
+    physical = getattr(fem.elements, "physical", None)
+    if physical is None:
+        return
+    try:
+        all_pgs = sorted(physical.get_all())
+    except Exception:
+        return
+    for (dim, tag) in all_pgs:
+        try:
+            name = physical.get_name(dim, tag)
+        except Exception:
+            name = ""
+        h.update(f"{dim}|{tag}|{name}|".encode("utf-8"))
+        try:
+            eids = np.asarray(
+                physical.element_ids((dim, tag)), dtype=np.int64,
+            )
+        except Exception:
+            eids = np.array([], dtype=np.int64)
+        if eids.size:
+            h.update(b"E")
+            h.update(np.sort(eids).tobytes())
+        try:
+            nids = np.asarray(physical.node_ids((dim, tag)), dtype=np.int64)
+        except Exception:
+            nids = np.array([], dtype=np.int64)
+        if nids.size:
+            h.update(b"N")
+            h.update(np.sort(nids).tobytes())
+
+
+def _hash_labels(h: "hashlib._Hash", fem: "FEMData") -> None:
+    """Fold node-side + element-side label membership into the digest.
+
+    Schema 2.10.0 (B2).  Folds ``fem.nodes.labels`` then
+    ``fem.elements.labels`` — each with the same canonical walk used
+    by the PG folds: sort by ``(dim, tag)``, emit ``dim|tag|name|``,
+    then sorted member node ids (and for the element side, sorted
+    member element ids).  Skips the channel entirely when both sides
+    are absent / empty.
+    """
+    h.update(b"LBL|")
+    node_side = getattr(fem.nodes, "labels", None)
+    if node_side is not None:
+        try:
+            keys = sorted(node_side.get_all())
+        except Exception:
+            keys = []
+        for (dim, tag) in keys:
+            try:
+                name = node_side.get_name(dim, tag)
+            except Exception:
+                name = ""
+            h.update(f"N|{dim}|{tag}|{name}|".encode("utf-8"))
+            try:
+                nids = np.asarray(
+                    node_side.node_ids((dim, tag)), dtype=np.int64,
+                )
+            except Exception:
+                continue
+            if nids.size:
+                h.update(np.sort(nids).tobytes())
+
+    elem_side = getattr(fem.elements, "labels", None)
+    if elem_side is not None:
+        try:
+            keys = sorted(elem_side.get_all())
+        except Exception:
+            keys = []
+        for (dim, tag) in keys:
+            try:
+                name = elem_side.get_name(dim, tag)
+            except Exception:
+                name = ""
+            h.update(f"E|{dim}|{tag}|{name}|".encode("utf-8"))
+            try:
+                eids = np.asarray(
+                    elem_side.element_ids((dim, tag)), dtype=np.int64,
+                )
+            except Exception:
+                eids = np.array([], dtype=np.int64)
+            if eids.size:
+                h.update(b"E")
+                h.update(np.sort(eids).tobytes())
+            try:
+                nids = np.asarray(
+                    elem_side.node_ids((dim, tag)), dtype=np.int64,
+                )
+            except Exception:
+                nids = np.array([], dtype=np.int64)
+            if nids.size:
+                h.update(b"N")
+                h.update(np.sort(nids).tobytes())

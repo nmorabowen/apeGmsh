@@ -2033,21 +2033,35 @@ class Compose:
 
 
 def _read_named_group_inventory(f: Any, group_name: str) -> tuple[str, ...]:
-    """Return sorted names of a named-index group (PG / labels) or ()."""
+    """Return sorted names of a named-index group (PG / labels) or ().
+
+    Neutral schema 2.10.0 (B2): the writer splits node-side and
+    element-side entries into ``{group_name}/node_side/`` +
+    ``{group_name}/element_side/`` sub-trees.  This helper walks both
+    and returns the deduplicated union of names — compose-inspect's
+    intent ("what named groups does this archive declare?") is
+    side-agnostic.
+    """
     if group_name not in f:
         return ()
     parent = f[group_name]
-    names: list[str] = []
-    for key in parent.keys():
-        sub = parent[key]
-        if not hasattr(sub, "attrs"):
+    names: set[str] = set()
+    for side in ("node_side", "element_side"):
+        if side not in parent:
             continue
-        name_attr = sub.attrs.get("name", key)
-        names.append(
-            name_attr.decode("utf-8")
-            if isinstance(name_attr, (bytes, bytearray))
-            else str(name_attr)
-        )
+        side_grp = parent[side]
+        if not hasattr(side_grp, "keys"):
+            continue
+        for key in side_grp.keys():
+            sub = side_grp[key]
+            if not hasattr(sub, "attrs"):
+                continue
+            name_attr = sub.attrs.get("name", key)
+            names.add(
+                name_attr.decode("utf-8")
+                if isinstance(name_attr, (bytes, bytearray))
+                else str(name_attr)
+            )
     return tuple(sorted(names))
 
 

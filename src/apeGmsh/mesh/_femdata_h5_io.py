@@ -148,7 +148,7 @@ __all__ = [
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.9.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.10.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -476,11 +476,13 @@ def _write_elements(fem: "FEMData", f: Any) -> None:
 
 
 def _write_physical_groups(fem: "FEMData", f: Any) -> None:
-    """Write ``/physical_groups/{name}/{node_ids, node_coords, element_ids}``.
+    """Write ``/physical_groups/{node_side,element_side}/{safe_name}/...``.
 
-    Union of node-side and element-side PG taxonomies — each (dim, tag)
-    pair appears once with both ``node_ids`` and ``element_ids`` (when
-    the dim supports elements).  Omitted entirely if neither side
+    Neutral schema 2.10.0 split — node-side and element-side PG
+    taxonomies live in separate sub-trees rather than the pre-2.10
+    flat union.  Eliminates the read-time heuristic that misclassified
+    element-side-only PGs as also-node-side (root cause of the
+    snapshot_id drift bug).  Omitted entirely if neither side
     declared any PGs.
     """
     _write_named_index_at_root(
@@ -491,10 +493,10 @@ def _write_physical_groups(fem: "FEMData", f: Any) -> None:
 
 
 def _write_labels(fem: "FEMData", f: Any) -> None:
-    """Write ``/labels/{name}/{node_ids, node_coords, element_ids}``.
+    """Write ``/labels/{node_side,element_side}/{safe_name}/...``.
 
-    Same shape as ``/physical_groups``; the only difference is the
-    source-side label set.
+    Same shape as ``/physical_groups`` (neutral schema 2.10.0 split);
+    the only difference is the source-side label set.
     """
     _write_named_index_at_root(
         fem, f, group_name="labels",
@@ -738,19 +740,59 @@ def _write_named_index_at_root(
     node_side: Any,
     element_side: Any,
 ) -> None:
-    """Combine node-side + element-side named groups under a root index."""
+    """Write ``/{group_name}/{node_side,element_side}/{safe_name}/...``.
+
+    Neutral schema 2.10.0 sub-tree split (B2).  Each side's PG /
+    label set lives in its own sub-tree so the reader never has to
+    infer which side an entry came from.  An entry that exists on
+    both sides (same (dim, tag) declared on both
+    :attr:`NodeComposite.physical` and
+    :attr:`ElementComposite.physical`) is written into both sub-trees
+    — the round-trip preserves the original taxonomies exactly.
+
+    The element-side sub-group writes its OWN ``node_ids`` /
+    ``node_coords`` pulled from the element-side group_set (fixes a
+    latent pre-2.10.0 writer bug where element-side PGs lost their
+    node membership on disk).
+    """
     node_keys = _safe_get_all(node_side)
     elem_keys = _safe_get_all(element_side)
-    all_keys = list(dict.fromkeys(node_keys + elem_keys))
-    if not all_keys:
+    if not node_keys and not elem_keys:
         return
 
     parent = f.create_group(group_name)
+
+    if node_keys:
+        node_parent = parent.create_group("node_side")
+        _write_named_index_side(
+            node_parent, node_side, node_keys,
+            include_element_ids=False,
+        )
+    if elem_keys:
+        elem_parent = parent.create_group("element_side")
+        _write_named_index_side(
+            elem_parent, element_side, elem_keys,
+            include_element_ids=True,
+        )
+
+
+def _write_named_index_side(
+    parent: Any,
+    group_set: Any,
+    keys: list[tuple[int, int]],
+    *,
+    include_element_ids: bool,
+) -> None:
+    """Write one side (node or element) of the named index split.
+
+    Each (dim, tag) becomes a sub-group named by the sanitized
+    ``name`` attr.  Always writes ``node_ids`` + ``node_coords`` from
+    ``group_set``; the element side additionally writes
+    ``element_ids`` when present and non-empty.
+    """
     seen_safe: set[str] = set()
-    for dim, tag in all_keys:
-        name = _safe_get_name(node_side, dim, tag) or _safe_get_name(
-            element_side, dim, tag,
-        ) or f"_unnamed_{dim}_{tag}"
+    for dim, tag in keys:
+        name = _safe_get_name(group_set, dim, tag) or f"_unnamed_{dim}_{tag}"
         safe = name.replace("/", "_")
         if safe in seen_safe:
             safe = f"{safe}__{dim}_{tag}"
@@ -761,12 +803,12 @@ def _write_named_index_at_root(
         sub.attrs["tag"] = int(tag)
         sub.attrs["name"] = name
 
-        nids, ncoords = _named_node_arrays(node_side, dim, tag)
+        nids, ncoords = _named_node_arrays(group_set, dim, tag)
         sub.create_dataset("node_ids", data=nids)
         sub.create_dataset("node_coords", data=ncoords)
 
-        if dim >= 1:
-            eids = _named_element_ids(element_side, dim, tag)
+        if include_element_ids and dim >= 1:
+            eids = _named_element_ids(group_set, dim, tag)
             if eids.size > 0:
                 sub.create_dataset("element_ids", data=eids)
 
@@ -1611,16 +1653,32 @@ def _read_named_index_at_root(
 ) -> tuple[dict[tuple[int, int], dict], dict[tuple[int, int], dict]]:
     """Read a root ``/physical_groups`` or ``/labels`` index.
 
-    The writer combines node-side + element-side keys into one root
-    group per (dim, tag). Reading splits them back: every key lands in
-    both dicts (the node-side gets node_ids/coords; the element-side
-    additionally gets element_ids when the writer recorded any).
+    Neutral schema 2.10.0 sub-tree split (B2): walks
+    ``parent/node_side/`` and ``parent/element_side/`` independently
+    and returns ``(node_dict, elem_dict)`` deterministically — no
+    heuristic, no inference, no shared dataset reuse across sides.
+    Either sub-tree may be absent (writer omits it when its side has
+    no entries); both being absent is the canonical "no PGs / no
+    labels" signal.
     """
     node_dict: dict[tuple[int, int], dict] = {}
     elem_dict: dict[tuple[int, int], dict] = {}
     if parent is None:
         return node_dict, elem_dict
 
+    if "node_side" in parent:
+        _read_named_index_side(parent["node_side"], node_dict)
+    if "element_side" in parent:
+        _read_named_index_side(parent["element_side"], elem_dict)
+
+    return node_dict, elem_dict
+
+
+def _read_named_index_side(
+    parent: Any,
+    out: dict[tuple[int, int], dict],
+) -> None:
+    """Populate ``out`` from one side of the named-index split."""
     for safe_name in parent.keys():
         sub = parent[safe_name]
         if not hasattr(sub, "keys"):
@@ -1641,23 +1699,16 @@ def _read_named_index_at_root(
             else np.zeros((0, 3), dtype=np.float64)
         )
 
-        node_dict[(dim, tag)] = {
-            "name": name,
-            "node_ids": nids,
-            "node_coords": ncoords,
-        }
-        elem_info: dict = {
+        entry: dict = {
             "name": name,
             "node_ids": nids,
             "node_coords": ncoords,
         }
         if "element_ids" in sub:
-            elem_info["element_ids"] = np.asarray(
+            entry["element_ids"] = np.asarray(
                 sub["element_ids"][...], dtype=np.int64,
             )
-        elem_dict[(dim, tag)] = elem_info
-
-    return node_dict, elem_dict
+        out[(dim, tag)] = entry
 
 
 def _read_partitions(

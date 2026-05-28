@@ -139,29 +139,6 @@ def _write_fem_h5(fem: FEMData, path: Path) -> Path:
     return path
 
 
-def _downgrade_to_2_8(path: Path) -> None:
-    """Mutate an in-place H5 to look like a 2.8.0 source.
-
-    Drops ``meta/@tag_span_max`` and ``module_label`` parallel datasets
-    so the reader exercises the fallback path.  ``snapshot_id`` is
-    recomputed against the new shape — leave it alone; the reader's
-    B4 check tolerates the modified file because the rebuild stays
-    compose-empty.
-    """
-    with h5py.File(path, "a") as f:
-        f["meta"].attrs["neutral_schema_version"] = "2.8.0"
-        f["meta"].attrs["schema_version"] = "2.8.0"
-        if "tag_span_max" in f["meta"].attrs:
-            del f["meta"].attrs["tag_span_max"]
-        if "module_label" in f["nodes"]:
-            del f["nodes/module_label"]
-        if "elements" in f:
-            for tname in list(f["elements"].keys()):
-                sub = f["elements"][tname]
-                if "module_label" in sub:
-                    del sub["module_label"]
-
-
 # ---------------------------------------------------------------------------
 # _compute_source_span
 # ---------------------------------------------------------------------------
@@ -179,34 +156,6 @@ def test_compute_source_span_2_9_0(tmp_path: Path) -> None:
     assert span == 1996
     assert min_tag == 5
     assert max_tag == 2000
-
-
-def test_compute_source_span_2_8_0_fallback(tmp_path: Path) -> None:
-    """2.8.0 source: span computed by dataset scan + one UserWarning."""
-    fem = _make_fem(
-        node_ids=np.array([7, 70, 700], dtype=np.int64),
-        elem_ids=np.array([3000, 4000], dtype=np.int64),
-    )
-    src = _write_fem_h5(fem, tmp_path / "src_28.h5")
-    _downgrade_to_2_8(src)
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        span, min_tag, max_tag = _compute_source_span(src)
-
-    relevant = [
-        w for w in caught
-        if issubclass(w.category, UserWarning)
-        and "pre-2.9.0" in str(w.message)
-    ]
-    assert len(relevant) == 1, (
-        f"expected one pre-2.9.0 UserWarning; got "
-        f"{[(w.category.__name__, str(w.message)) for w in caught]}"
-    )
-    # max(700, 4000) − min(7, 3000) + 1 = 3994.
-    assert span == 3994
-    assert min_tag == 7
-    assert max_tag == 4000
 
 
 # ---------------------------------------------------------------------------

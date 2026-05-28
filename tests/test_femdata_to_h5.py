@@ -193,28 +193,36 @@ def test_to_h5_writes_elements_by_type(tmp_path: Path) -> None:
 
 
 def test_to_h5_writes_physical_groups_at_root(tmp_path: Path) -> None:
+    """Schema 2.10: `/physical_groups/` splits into `node_side/` + `element_side/`
+    sub-trees.  The fixture's PG lives on both composites so both sides
+    write an entry; element-side carries `element_ids`."""
     fem = _make_fem()
     out = tmp_path / "pgs.h5"
     fem.to_h5(str(out))
     with h5py.File(out, "r") as f:
-        assert "physical_groups/Slab" in f
-        slab = f["physical_groups/Slab"]
-        assert int(slab.attrs["dim"]) == 2
-        assert int(slab.attrs["tag"]) == 100
-        np.testing.assert_array_equal(slab["node_ids"][:], [2, 3, 5])
-        np.testing.assert_array_equal(slab["element_ids"][:], [20])
+        assert "physical_groups/node_side/Slab" in f
+        assert "physical_groups/element_side/Slab" in f
+        elem_slab = f["physical_groups/element_side/Slab"]
+        assert int(elem_slab.attrs["dim"]) == 2
+        assert int(elem_slab.attrs["tag"]) == 100
+        np.testing.assert_array_equal(elem_slab["node_ids"][:], [2, 3, 5])
+        np.testing.assert_array_equal(elem_slab["element_ids"][:], [20])
+        node_slab = f["physical_groups/node_side/Slab"]
+        np.testing.assert_array_equal(node_slab["node_ids"][:], [2, 3, 5])
 
 
 def test_to_h5_writes_labels_at_root(tmp_path: Path) -> None:
+    """Schema 2.10: `/labels/` splits into `node_side/` + `element_side/`."""
     fem = _make_fem()
     out = tmp_path / "labels.h5"
     fem.to_h5(str(out))
     with h5py.File(out, "r") as f:
-        assert "labels/edge" in f
-        edge = f["labels/edge"]
-        assert int(edge.attrs["dim"]) == 1
-        np.testing.assert_array_equal(edge["node_ids"][:], [1, 2])
-        np.testing.assert_array_equal(edge["element_ids"][:], [10])
+        assert "labels/node_side/edge" in f
+        assert "labels/element_side/edge" in f
+        elem_edge = f["labels/element_side/edge"]
+        assert int(elem_edge.attrs["dim"]) == 1
+        np.testing.assert_array_equal(elem_edge["node_ids"][:], [1, 2])
+        np.testing.assert_array_equal(elem_edge["element_ids"][:], [10])
 
 
 def test_to_h5_writes_constraints_per_kind(tmp_path: Path) -> None:
