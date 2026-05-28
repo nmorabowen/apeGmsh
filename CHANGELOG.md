@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API**
+## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)**
+
+### ADDED — `g.model.geometry.find_stale_metadata()` + `validate_pre_mesh(strict=...)` split
+
+- **`g.model.geometry.find_stale_metadata() -> list[(dim, tag)]`** — closed-world inspection. Walks only the keys apeGmsh primitives recorded in `model._metadata` and returns those whose tag is no longer in OCC. Cannot false-positive on raw `gmsh.model.geo.*` / `gmsh.model.occ.*` workflows because those workflows don't populate `_metadata` in the first place.
+- **`g.model.geometry.validate_pre_mesh(*, strict=False)`** gains the `strict` kwarg:
+  - `strict=False` (default; auto-fired by `Mesh.generate`) — runs `find_stale_metadata()` only. Closed-world. Catches the actual leak class the orphan-sweep PR was chasing: an apeGmsh boolean / cut / fragment op consumed an entity without cleaning its `_metadata` key.
+  - `strict=True` (opt-in) — runs `find_orphans()` and raises on any orphan dim≤2 entity. Open-world. Users opt in when they know their build script stays inside the apeGmsh facade (`_metadata` + `g.labels` channels).
+- **`Mesh.generate` now auto-invokes `g.model.geometry.validate_pre_mesh()`** alongside the loads / constraints / masses validators. Because the default is `strict=False`, raw-gmsh workflows continue to mesh cleanly — only stale apeGmsh-managed metadata trips the auto-check.
+
+The split is the follow-up the PR #378 review backlog asked for. The earlier attempt to auto-wire the full open-world check broke 63 tests across `test_partition_*`, `test_loads_physical_outward`, `test_mesh_editing_crack`, `test_embedded_decomposition`, `test_constraint_emission`, `test_partition_pipeline_e2e` because those workflows build geometry via raw `gmsh.model.geo.addPoint/addLine/addPhysicalGroup`. Splitting the validator into closed-world (auto-fires) and open-world (opt-in) gets the auto-validation back without the false positives.
 
 ### FIXED — coincident-face orphan-geometry leak in slice / cut / fragment
 

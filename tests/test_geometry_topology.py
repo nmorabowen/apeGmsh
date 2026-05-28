@@ -254,23 +254,95 @@ class TestNoOrphansAcrossOps:
 
 
 # =====================================================================
-# validate_pre_mesh
+# find_stale_metadata — the closed-world half of the split sweep
+# =====================================================================
+
+class TestFindStaleMetadata:
+    """``find_stale_metadata`` only inspects ``_metadata`` keys that
+    apeGmsh primitives recorded — so it cannot false-positive on raw
+    ``gmsh.model.geo.*`` workflows by construction.
+    """
+
+    def test_clean_model_has_no_stale_metadata(self, g):
+        """Every key the ``add_*`` primitives recorded points at a
+        live OCC entity in a freshly built clean model.
+        """
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='b')
+        g.model.geometry.add_rectangle(5, 5, 5, 1, 1, label='r')
+        assert g.model.geometry.find_stale_metadata() == []
+
+    def test_polluted_metadata_is_reported(self, g):
+        """Manually injecting a dead dimtag into ``_metadata`` must
+        show up as stale.  Mirrors the post-fragment leak shape that
+        the audit was chasing.
+        """
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        ghost = (2, 9999)
+        g.model._metadata[ghost] = {'kind': 'ghost'}
+        stale = g.model.geometry.find_stale_metadata()
+        assert ghost in stale, (
+            f"injected ghost {ghost} not reported by "
+            f"find_stale_metadata; got {stale}"
+        )
+
+    def test_raw_gmsh_geometry_has_no_stale_metadata(self, g):
+        """A model built entirely via raw ``gmsh.model.geo.*`` (no
+        apeGmsh primitives) populates no ``_metadata`` entries — so
+        ``find_stale_metadata`` returns an empty list regardless of
+        how many entities exist.  This is the key invariant: the
+        closed-world check cannot punish raw-gmsh workflows because
+        it has nothing to inspect for them.
+        """
+        gmsh.model.geo.addPoint(0, 0, 0, 0.5)
+        gmsh.model.geo.addPoint(1, 0, 0, 0.5)
+        gmsh.model.geo.addPoint(1, 1, 0, 0.5)
+        gmsh.model.geo.addPoint(0, 1, 0, 0.5)
+        gmsh.model.geo.addLine(1, 2)
+        gmsh.model.geo.addLine(2, 3)
+        gmsh.model.geo.addLine(3, 4)
+        gmsh.model.geo.addLine(4, 1)
+        gmsh.model.geo.synchronize()
+        assert g.model.geometry.find_stale_metadata() == []
+
+
+# =====================================================================
+# validate_pre_mesh — split contract (strict default False)
 # =====================================================================
 
 class TestValidatePreMesh:
-    """``validate_pre_mesh`` mirrors the other composite's contract:
-    raise loudly when the model is unsafe to mesh."""
+    """``validate_pre_mesh`` has two modes: the default ``strict=False``
+    runs the closed-world metadata-stale check (auto-fired by
+    ``Mesh.generate``); ``strict=True`` runs the open-world
+    ``find_orphans`` check (opt-in).
+    """
 
-    def test_validate_pre_mesh_passes_on_clean_model(self, g):
+    def test_validate_pre_mesh_default_passes_on_clean_model(self, g):
         g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
-        # Must not raise.
+        # Must not raise — clean model, no stale metadata.
         g.model.geometry.validate_pre_mesh()
 
-    def test_validate_pre_mesh_raises_on_orphan_present(self, g):
+    def test_validate_pre_mesh_default_raises_on_stale_metadata(self, g):
+        """``strict=False`` (default) fires on stale metadata."""
         from apeGmsh.core._geometry_errors import GeometryValidationError
 
-        rect = g.model.geometry.add_rectangle(0, 0, 0, 1, 1)
-        # Strip metadata + labels to make it look orphan.
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+        # Inject a stale metadata key (apeGmsh primitives don't
+        # normally produce these, but post-leak the sweep may).
+        g.model._metadata[(2, 9999)] = {'kind': 'leaked'}
+        with pytest.raises(GeometryValidationError):
+            g.model.geometry.validate_pre_mesh()
+
+    def test_validate_pre_mesh_default_ignores_open_world_orphans(self, g):
+        """``strict=False`` does NOT fire on orphan geometry that
+        isn't stale metadata.  Raw-gmsh-only models, dim-2 entities
+        the user dropped from metadata, etc. — none of these trip
+        the default check.  Open-world is opt-in.
+        """
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='box')
+        # Build an orphan in the open-world sense: a rect whose
+        # metadata + labels have been stripped.  ``find_orphans``
+        # would flag it; ``validate_pre_mesh()`` must not.
+        rect = g.model.geometry.add_rectangle(5, 5, 5, 1, 1)
         g.model._metadata.pop((2, rect), None)
         for name in list(g.labels.get_all(dim=2)):
             try:
@@ -278,26 +350,18 @@ class TestValidatePreMesh:
                     g.labels.remove(name, dim=2)
             except KeyError:
                 pass
-        # Need a registered volume — without one, the rectangle would
-        # be the only surface and the sweep would still flag it; but
-        # being explicit avoids accidentally testing the 2D-only edge.
-        g.model.geometry.add_box(5, 5, 5, 1, 1, 1)
-        with pytest.raises(GeometryValidationError):
-            g.model.geometry.validate_pre_mesh()
+        # Precondition: the open-world check WOULD flag the rect.
+        assert g.model.geometry.find_orphans()[2], (
+            "test precondition: open-world check should flag rect"
+        )
+        # Default-strict (False) must not raise.
+        g.model.geometry.validate_pre_mesh()
 
-    def test_mesh_generate_does_not_auto_invoke_geometry_validator(self, g):
-        """``Mesh.generate`` does NOT auto-invoke
-        ``g.model.geometry.validate_pre_mesh()``.  The geometry
-        validator is opt-in because raw ``gmsh.model.geo.*`` /
-        ``gmsh.model.occ.*`` workflows and raw user PGs bypass the
-        ``_metadata`` and label channels the validator uses to
-        decide "user-intentional".  Auto-wiring would false-positive
-        on every such workflow.
-
-        Pin the contract: build a model whose orphans would trigger
-        ``validate_pre_mesh`` if called, and confirm
-        ``Mesh.generate`` succeeds without raising.
+    def test_validate_pre_mesh_strict_raises_on_open_world_orphan(self, g):
+        """``strict=True`` runs ``find_orphans`` — opt-in open-world.
         """
+        from apeGmsh.core._geometry_errors import GeometryValidationError
+
         g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='box')
         rect = g.model.geometry.add_rectangle(5, 5, 5, 1, 1)
         g.model._metadata.pop((2, rect), None)
@@ -307,10 +371,49 @@ class TestValidatePreMesh:
                     g.labels.remove(name, dim=2)
             except KeyError:
                 pass
+        with pytest.raises(GeometryValidationError):
+            g.model.geometry.validate_pre_mesh(strict=True)
 
-        # find_orphans would flag the rect; mesh.generate must NOT
-        # raise GeometryValidationError on its own.
-        orphans = g.model.geometry.find_orphans()
-        assert orphans[2], "test precondition: orphan rect should be flagged"
-        # Should not raise.
-        g.mesh.generation.generate(3)
+
+# =====================================================================
+# Mesh.generate auto-wiring (closed-world only)
+# =====================================================================
+
+class TestMeshGenerateAutoValidate:
+    """``Mesh.generate`` auto-invokes ``validate_pre_mesh()`` with the
+    default ``strict=False`` — catches stale metadata without
+    false-positiving on raw-gmsh workflows.
+    """
+
+    def test_mesh_generate_passes_with_raw_gmsh_geometry(self, g):
+        """A model built entirely via raw ``gmsh.model.geo.*`` (no
+        apeGmsh primitives, no _metadata population) must mesh
+        cleanly.  Regression: the original PR #378 auto-wiring used
+        open-world ``find_orphans`` and broke 63 tests of this shape.
+        """
+        plan, h = 5.0, 3.0
+        lc = 1.5
+        pts = []
+        for x, y, z in [
+            (0, 0, 0), (plan, 0, 0), (plan, plan, 0), (0, plan, 0),
+            (0, 0, h), (plan, 0, h), (plan, plan, h), (0, plan, h),
+        ]:
+            pts.append(gmsh.model.geo.addPoint(x, y, z, lc))
+        cols = [gmsh.model.geo.addLine(pts[i], pts[i + 4]) for i in range(4)]
+        gmsh.model.geo.synchronize()
+        gmsh.model.addPhysicalGroup(1, cols, name="Columns")
+        g.mesh.sizing.set_global_size(lc)
+        # Must not raise.
+        g.mesh.generation.generate(1)
+
+    def test_mesh_generate_raises_on_stale_metadata(self, g):
+        """The auto-wire's whole point: a stale ``_metadata`` key
+        (which means an apeGmsh op left an orphan) raises before the
+        slow mesher runs.
+        """
+        from apeGmsh.core._geometry_errors import GeometryValidationError
+
+        g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label='box')
+        g.model._metadata[(2, 9999)] = {'kind': 'leaked'}
+        with pytest.raises(GeometryValidationError):
+            g.mesh.generation.generate(3)

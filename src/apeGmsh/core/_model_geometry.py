@@ -2234,34 +2234,89 @@ class _Geometry:
         """
         return sweep_dangling(self._model, dry_run=dry_run)
 
-    def validate_pre_mesh(self) -> None:
-        """Raise :class:`GeometryValidationError` if any orphans exist.
+    def find_stale_metadata(self) -> list[DimTag]:
+        """Return ``model._metadata`` keys whose tag is no longer in OCC.
 
-        **Opt-in — NOT auto-invoked by :meth:`Mesh.generate`.**  The
-        sibling validators on Loads / Constraints / Masses ARE auto-
-        invoked because they're closed-world (they only check string
-        targets the composite itself recorded).  This one is open-
-        world: it scans every live OCC entity and asks "is this user-
-        intentional?" via the ``_metadata`` and ``g.labels`` channels.
-        Workflows that build geometry via raw ``gmsh.model.geo.*`` /
-        ``gmsh.model.occ.*`` (bypassing ``_metadata``) or attach
-        entities only to raw user PGs (bypassing ``g.labels``) would
-        false-positive on every legitimate model — so auto-wiring is
-        deferred to a follow-up that splits the sweep into a
-        metadata-stale check (safe to auto-fire) and the full orphan-
-        presence check (stays opt-in).  Users who want fail-fast
-        orphan checking inside their build script call this directly.
+        **Closed-world inspection.**  Walks only the entries the
+        apeGmsh ``add_*`` / boolean / cut / fragment primitives
+        recorded — never the live OCC entity list.  By construction
+        it cannot false-positive on raw ``gmsh.model.geo.*`` /
+        ``gmsh.model.occ.*`` workflows: those workflows don't
+        populate ``_metadata`` in the first place, so any key the
+        check inspects came from apeGmsh's own code, and a stale key
+        means an apeGmsh-managed entity was consumed without a
+        matching cleanup.
+
+        Counterpart to :meth:`find_orphans`, which does the full
+        open-world scan and so MUST stay opt-in (see
+        :meth:`validate_pre_mesh` rationale below).
+
+        Returns
+        -------
+        list[tuple[int, int]]
+            Stale ``(dim, tag)`` keys, in iteration order.  Empty
+            list means every registered key still points at a live
+            OCC entity.
+        """
+        gmsh.model.occ.synchronize()
+        live: set[DimTag] = set()
+        for d in range(4):
+            for _, t in gmsh.model.getEntities(d):
+                live.add((d, int(t)))
+        return [dt for dt in self._model._metadata if dt not in live]
+
+    def validate_pre_mesh(self, *, strict: bool = False) -> None:
+        """Raise :class:`GeometryValidationError` on pre-mesh hazards.
+
+        Two modes, gated by ``strict``:
+
+        - ``strict=False`` (default; what :meth:`Mesh.generate`
+          auto-invokes) — runs :meth:`find_stale_metadata` only.
+          Closed-world.  Catches the actual leak class the audit was
+          chasing: an apeGmsh boolean / cut / fragment op consumed
+          an entity without cleaning its ``_metadata`` key.  Cannot
+          false-positive on raw-``gmsh.model.geo.*`` workflows
+          (they don't populate ``_metadata``).
+        - ``strict=True`` (opt-in) — runs :meth:`find_orphans` and
+          raises on any orphan dim<=2 entity.  Open-world.  Users
+          opt in when they know their build script stays inside the
+          apeGmsh facade (``_metadata`` + ``g.labels`` channels);
+          raw-gmsh users WILL trip it on legitimate models.
+
+        The split is deliberate: closed-world is the auto-fire mode
+        because it cannot punish users for working below the apeGmsh
+        facade.  Open-world is opt-in for the same reason.
+
+        Mirrors :meth:`MassesComposite.validate_pre_mesh` /
+        :meth:`LoadsComposite.validate_pre_mesh` /
+        :meth:`ConstraintsComposite.validate_pre_mesh` (those are
+        intrinsically closed-world; the ``strict=False`` default
+        here matches the same contract — only inspect what the
+        composite itself recorded).
         """
         from ._geometry_errors import GeometryValidationError
-        orphans = self.find_orphans()
-        offending = {d: ts for d, ts in orphans.items() if ts}
-        if offending:
+        if strict:
+            orphans = self.find_orphans()
+            offending = {d: ts for d, ts in orphans.items() if ts}
+            if offending:
+                raise GeometryValidationError(
+                    f"geometry carries orphan entities that bound no "
+                    f"registered volume: {offending}. Run "
+                    f"g.model.geometry.remove_orphans() to sweep them, "
+                    f"or call g.model.geometry.find_orphans() to "
+                    f"inspect first."
+                )
+            return
+        stale = self.find_stale_metadata()
+        if stale:
             raise GeometryValidationError(
-                f"geometry carries orphan entities that bound no "
-                f"registered volume: {offending}. Run "
-                f"g.model.geometry.remove_orphans() to sweep them, "
-                f"or call g.model.geometry.find_orphans() to inspect "
-                f"first."
+                f"model._metadata has stale entries — keys point at "
+                f"tags no longer in OCC: {stale}. An apeGmsh boolean "
+                f"/ cut / fragment op consumed these entities without "
+                f"cleaning their registry entries. Run "
+                f"g.model.geometry.remove_orphans() to sweep them "
+                f"(which also reaps stale metadata), or file an issue "
+                f"naming the operation that produced the leak."
             )
 
     # ------------------------------------------------------------------
