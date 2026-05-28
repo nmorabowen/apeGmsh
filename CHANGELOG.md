@@ -2,6 +2,18 @@
 
 ## Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + `s.initial_stress` PUSH (Phase SSI-2.D extension) · **Phase SSI-2.E between-stage Domain mutators** · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · **higher-order line broker split (ADR 0037)** · RecorderDeclaration element fan-out fix · **orphan-geometry sweep unification + `g.model.geometry` validation API** · **split-sweep auto-validation (closed-world / open-world)** · **raw-PG channel for `_user_intentional`**
 
+### ADDED — CAD-import health diagnostics + scale-aware healing
+
+`g.model.io.diagnose(*, warn=False) -> ImportHealth` is a new **non-mutating** health check for the current OCC geometry: per-dimension entity counts, sliver tallies (edges/faces below `1e-4 · bbox_diagonal`), the bbox diagonal, and a suggested `heal=` tolerance. It never heals, dedupes, or renumbers — the look-before-you-leap counterpart to `heal_shapes` (which does mutate). `ImportHealth.is_suspect` keys on slivers only, so a surface-only import (shell models) does not false-positive.
+
+A new typed `WarnGeomImportHealth` advisory is auto-emitted by `load_step` / `load_iges` / `g.parts.import_step` on a **raw** (un-healed) import when slivers are present — it names the counts and suggests `heal='auto'`. The import is never healed on the user's behalf (healing renumbers entities, so it stays opt-in).
+
+`g.parts.import_step(...)` gains `heal=` / `dedupe=` kwargs (same semantics as `g.model.io.load_step`), closing the gap where the assembly path — the workflow most likely to ingest real external CAD — could not heal at all.
+
+### CHANGED — `heal=True` / `heal="auto"` on import is now scale-aware
+
+`load_step` / `load_iges` (and the new `parts.import_step`) `heal=True` now derives a **scale-aware** tolerance (`≈ 1e-6 · bbox_diagonal`) instead of the legacy absolute `1e-8`. `"auto"` is an explicit alias; a float still overrides. The old `1e-8` default was effectively a no-op heal on any real-world (mm/m-scale) model — `heal=True` now actually heals. `heal=False` (the import default) is unchanged.
+
 ### CHANGED — raw user physical groups now protect entities from the orphan sweep
 
 `apeGmsh.core._geometry_topology._user_intentional` gains a third channel: an entity that participates in ANY physical group (including raw user PGs created via `gmsh.model.addPhysicalGroup` directly) is treated as user-intentional and survives `sweep_dangling` / `find_orphans` / `validate_pre_mesh(strict=True)`.

@@ -798,6 +798,8 @@ class PartsRegistry(_PartsFragmentationMixin):
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
         highest_dim_only: bool = True,
+        heal: bool | float | str = False,
+        dedupe: bool | float = False,
         properties: dict[str, Any] | None = None,
     ) -> Instance:
         """Import a STEP or IGES file as a named instance.
@@ -809,6 +811,16 @@ class PartsRegistry(_PartsFragmentationMixin):
         label : str, optional
             Auto-generated from file stem if omitted.
         translate, rotate : placement transforms.
+        heal : bool, float, or "auto"
+            Heal the imported CAD immediately after import — same
+            semantics as :meth:`g.model.io.load_step <_IO.load_step>`:
+            ``True`` / ``"auto"`` use a scale-aware tolerance, a float
+            overrides, ``False`` (default) imports raw and emits a
+            :class:`WarnGeomImportHealth` advisory if slivers are found.
+            Best-effort for sidecar-carrying parts (healing renumbers,
+            so anchors rebind against the healed geometry).
+        dedupe : bool or float
+            Merge coincident entities after import (and after heal).
         properties : arbitrary metadata.
         """
         file_path = Path(file_path)
@@ -824,6 +836,8 @@ class PartsRegistry(_PartsFragmentationMixin):
             translate=translate,
             rotate=rotate,
             highest_dim_only=highest_dim_only,
+            heal=heal,
+            dedupe=dedupe,
             properties=properties or {},
         )
 
@@ -948,16 +962,56 @@ class PartsRegistry(_PartsFragmentationMixin):
         translate: tuple[float, float, float],
         rotate: tuple[float, ...] | None,
         highest_dim_only: bool,
+        heal: bool | float | str = False,
+        dedupe: bool | float = False,
         properties: dict[str, Any] | None = None,
     ) -> Instance:
         """Import CAD geometry, apply transforms, store instance."""
         if label in self._instances:
             raise ValueError(f"Part label '{label}' already exists.")
 
+        # Snapshot pre-import entities so heal / dedupe (which renumber)
+        # can re-derive the surviving imported set — mirrors
+        # ``_IO._import_shapes``.
+        will_mutate = bool(heal) or bool(dedupe)
+        snapshot: dict[int, set[int]] = (
+            {d: {t for _, t in gmsh.model.getEntities(d)} for d in range(4)}
+            if will_mutate else {}
+        )
+
         raw = gmsh.model.occ.importShapes(
             str(file_path), highestDimOnly=highest_dim_only,
         )
         gmsh.model.occ.synchronize()
+
+        if heal:
+            from ._model_io import _model_bbox_diag, _suggested_heal_tolerance
+            if heal is True or heal == "auto":
+                heal_tol = _suggested_heal_tolerance(_model_bbox_diag())
+            else:
+                heal_tol = float(heal)
+            if raw:
+                self._parent.model.io.heal_shapes(
+                    list(raw), tolerance=heal_tol, sync=True,
+                )
+        if dedupe:
+            dedupe_tol = None if dedupe is True else float(dedupe)
+            self._parent.model.queries.remove_duplicates(
+                tolerance=dedupe_tol, sync=True,
+            )
+        if will_mutate:
+            raw = [
+                (d, t)
+                for d in range(4)
+                for t in sorted(
+                    {t for _, t in gmsh.model.getEntities(d)}
+                    - snapshot.get(d, set())
+                )
+            ]
+        elif not heal:
+            # Raw import: surface a non-mutating health advisory so the
+            # assembly path gets the same signal as g.model.io.load_step.
+            self._parent.model.io.diagnose(warn=True)
 
         # ``importShapes`` returns a flat list with every sub-entity at
         # every dimension, and the same lower-dim tags appear multiple

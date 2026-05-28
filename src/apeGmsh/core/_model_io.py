@@ -1,15 +1,140 @@
 from __future__ import annotations
 
 import math
+import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import gmsh
 
 from ._helpers import Tag, TagsLike
+from ._geometry_errors import WarnGeomImportHealth
 
 if TYPE_CHECKING:
     from .Model import Model
+
+
+# ── CAD-health diagnostics (non-mutating) ────────────────────────────
+#: Edge/face "tiny" threshold, relative to the model's bbox diagonal.
+#: An edge shorter than ``_REL_TINY · diag`` (or a face below that
+#: squared) is flagged as a sliver that commonly defeats meshing /
+#: booleans.  Advisory only — never mutates.
+_REL_TINY: float = 1e-4
+
+#: Suggested heal tolerance, relative to the bbox diagonal.  Used both
+#: by :meth:`_IO.diagnose` (what to print) and by ``heal=True`` /
+#: ``heal="auto"`` on import (what to actually pass to ``healShapes``).
+#: Conservative — small enough not to merge genuine features, large
+#: enough to close the µm-scale gaps typical of exported CAD.
+_REL_HEAL: float = 1e-6
+
+
+def _model_bbox_diag() -> float:
+    """Bounding-box diagonal of the whole model, or ``0.0`` when the
+    model is empty (``getBoundingBox`` returns non-finite extents)."""
+    try:
+        xn, yn, zn, xx, yx, zx = gmsh.model.getBoundingBox(-1, -1)
+    except Exception:
+        return 0.0
+    pts = (xn, yn, zn, xx, yx, zx)
+    if not all(math.isfinite(v) for v in pts):
+        return 0.0
+    return math.dist((xn, yn, zn), (xx, yx, zx))
+
+
+def _suggested_heal_tolerance(diag: float) -> float:
+    """Scale-aware heal tolerance for a model whose bbox diagonal is
+    ``diag``.  Falls back to the legacy absolute ``1e-8`` for an empty
+    / zero-extent model."""
+    return _REL_HEAL * diag if diag > 0 else 1e-8
+
+
+@dataclass(frozen=True)
+class ImportHealth:
+    """Non-mutating health report for imported / current CAD geometry.
+
+    Returned by :meth:`_IO.diagnose`.  Carries the per-dimension entity
+    counts, the sliver tallies, the model scale, and a suggested
+    ``heal=`` tolerance — but never changes the geometry.
+    """
+
+    dim_counts: dict[int, int]
+    highest_dim: int
+    bbox_diag: float
+    short_edges: tuple[int, ...]
+    tiny_faces: tuple[int, ...]
+    suggested_tolerance: float
+
+    @property
+    def n_solids(self) -> int:
+        return self.dim_counts.get(3, 0)
+
+    @property
+    def is_suspect(self) -> bool:
+        """True when slivers are present (the unambiguous dirty-CAD
+        signal).  A surface-only import (``highest_dim < 3``) is *not*
+        treated as suspect on its own — shell models import that way on
+        purpose — so the advisory does not false-positive on them."""
+        return bool(self.short_edges or self.tiny_faces)
+
+    def advisory(self) -> str:
+        return (
+            f"imported geometry: {self.n_solids} solid(s), "
+            f"{len(self.short_edges)} edge(s) shorter than "
+            f"{_REL_TINY:.0e}·diag, {len(self.tiny_faces)} tiny face(s). "
+            f"Slivers commonly defeat meshing / booleans — re-import "
+            f"with heal='auto' (≈ {self.suggested_tolerance:.2e}) or "
+            f"dedupe=True, or call g.model.io.diagnose() to inspect."
+        )
+
+    def __str__(self) -> str:
+        return (
+            f"ImportHealth(solids={self.n_solids}, "
+            f"dims={self.dim_counts}, highest_dim={self.highest_dim}, "
+            f"short_edges={len(self.short_edges)}, "
+            f"tiny_faces={len(self.tiny_faces)}, "
+            f"bbox_diag={self.bbox_diag:.4g}, "
+            f"suggested_tolerance={self.suggested_tolerance:.2e})"
+        )
+
+
+def _compute_health() -> ImportHealth:
+    """Scan the current model (non-mutating) and build an
+    :class:`ImportHealth`.  Sub-entities are read straight from gmsh,
+    so the sliver tallies work even when the import used
+    ``highest_dim_only=True`` (the solids' boundary edges/faces still
+    live in the OCC kernel)."""
+    counts = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
+    highest = max((d for d in range(4) if counts[d]), default=-1)
+    diag = _model_bbox_diag()
+    short_edges: list[int] = []
+    tiny_faces: list[int] = []
+    if diag > 0:
+        edge_tol = _REL_TINY * diag
+        face_tol = edge_tol * edge_tol
+        for _, t in gmsh.model.getEntities(1):
+            try:
+                length = gmsh.model.occ.getMass(1, t)
+            except Exception:
+                continue  # degenerate edge — advisory scan skips it
+            if 0.0 < length < edge_tol:
+                short_edges.append(int(t))
+        for _, t in gmsh.model.getEntities(2):
+            try:
+                area = gmsh.model.occ.getMass(2, t)
+            except Exception:
+                continue
+            if 0.0 < area < face_tol:
+                tiny_faces.append(int(t))
+    return ImportHealth(
+        dim_counts=counts,
+        highest_dim=highest,
+        bbox_diag=diag,
+        short_edges=tuple(short_edges),
+        tiny_faces=tuple(tiny_faces),
+        suggested_tolerance=_suggested_heal_tolerance(diag),
+    )
 
 
 class _DXFImporter:
@@ -230,7 +355,7 @@ class _IO:
         kind           : str,
         highest_dim_only: bool,
         sync           : bool,
-        heal           : bool | float = False,
+        heal           : bool | float | str = False,
         dedupe         : bool | float = False,
         fuse           : bool = False,
         label          : str | None = None,
@@ -275,8 +400,15 @@ class _IO:
         for dim, tag in raw:
             self._model._register(dim, tag, None, kind)
 
+        heal_tol: float | None = None
         if heal:
-            heal_tol = 1e-8 if heal is True else float(heal)
+            # ``heal=True`` / ``heal="auto"`` derive a scale-aware
+            # tolerance from the model bbox (a fixed 1e-8 is meaningless
+            # across unit systems); an explicit float overrides.
+            if heal is True or heal == "auto":
+                heal_tol = _suggested_heal_tolerance(_model_bbox_diag())
+            else:
+                heal_tol = float(heal)
             if raw:
                 self.heal_shapes(list(raw), tolerance=heal_tol, sync=True)
 
@@ -327,7 +459,7 @@ class _IO:
         dim_summary = {d: len(ts) for d, ts in result.items()}
         suffix = ""
         if heal:
-            suffix += f"  healed(tol={1e-8 if heal is True else float(heal)})"
+            suffix += f"  healed(tol={heal_tol:.2e})"
         if dedupe:
             suffix += "  deduped" + (
                 f"(tol={float(dedupe)})" if dedupe is not True else ""
@@ -339,6 +471,14 @@ class _IO:
         self._model._log(
             f"loaded {kind.upper()} <- {file_path.name}  {dim_summary}{suffix}"
         )
+
+        # Advisory: a raw (un-healed) import that shows slivers gets one
+        # non-mutating WarnGeomImportHealth so the user knows to re-run
+        # with heal=. Skipped when the user already healed (the slivers
+        # would be gone) or fused (single survivor, scan is moot).
+        if not heal and not fused:
+            self.diagnose(warn=True)
+
         return result
 
     def load_iges(
@@ -347,7 +487,7 @@ class _IO:
         *,
         highest_dim_only: bool = True,
         sync            : bool = True,
-        heal            : bool | float = False,
+        heal            : bool | float | str = False,
         dedupe          : bool | float = False,
         fuse            : bool = False,
         label           : str | None = None,
@@ -365,11 +505,16 @@ class _IO:
             returned and registered (volumes for solids, surfaces for
             surface models).  Set to False to capture every sub-entity
             (faces, edges, vertices) as well.
-        heal : bool or float
+        heal : bool, float, or "auto"
             Run ``heal_shapes`` on the imported entities immediately
-            after import.  ``True`` uses the default tolerance
-            (``1e-8``); a float overrides it (e.g. ``heal=1e-3`` for
-            mm-scale CAD).  For non-tolerance knobs, call
+            after import.  ``True`` and ``"auto"`` derive a
+            **scale-aware** tolerance from the model bounding box
+            (``≈ 1e-6 · bbox_diagonal``) — a fixed absolute tolerance is
+            meaningless across unit systems.  A float overrides it
+            (e.g. ``heal=1e-3``).  ``False`` (default) imports raw and,
+            if the result shows slivers, emits a non-mutating
+            :class:`WarnGeomImportHealth` advisory (see
+            :meth:`diagnose`).  For non-tolerance knobs, call
             ``heal_shapes()`` directly.
         dedupe : bool or float
             Run ``g.model.queries.remove_duplicates`` after the import
@@ -414,7 +559,7 @@ class _IO:
         *,
         highest_dim_only: bool = True,
         sync            : bool = True,
-        heal            : bool | float = False,
+        heal            : bool | float | str = False,
         dedupe          : bool | float = False,
         fuse            : bool = False,
         label           : str | None = None,
@@ -431,11 +576,16 @@ class _IO:
             If True (default) only the highest-dimension entities are
             returned and registered.  Set to False to include all
             sub-entities.
-        heal : bool or float
+        heal : bool, float, or "auto"
             Run ``heal_shapes`` on the imported entities immediately
-            after import.  ``True`` uses the default tolerance
-            (``1e-8``); a float overrides it (e.g. ``heal=1e-3`` for
-            mm-scale CAD).  For non-tolerance knobs, call
+            after import.  ``True`` and ``"auto"`` derive a
+            **scale-aware** tolerance from the model bounding box
+            (``≈ 1e-6 · bbox_diagonal``) — a fixed absolute tolerance is
+            meaningless across unit systems.  A float overrides it
+            (e.g. ``heal=1e-3``).  ``False`` (default) imports raw and,
+            if the result shows slivers, emits a non-mutating
+            :class:`WarnGeomImportHealth` advisory (see
+            :meth:`diagnose`).  For non-tolerance knobs, call
             ``heal_shapes()`` directly.
         dedupe : bool or float
             Run ``g.model.queries.remove_duplicates`` after the import
@@ -547,6 +697,42 @@ class _IO:
             f"heal_shapes(tol={tolerance}) -> {len(out)} entities output"
         )
         return self
+
+    def diagnose(self, *, warn: bool = False) -> ImportHealth:
+        """Report CAD health of the current model **without mutating it**.
+
+        Scans the live OCC geometry and returns an :class:`ImportHealth`
+        with per-dimension entity counts, sliver tallies (edges / faces
+        far below the model scale), the bbox diagonal, and a suggested
+        ``heal=`` tolerance.  Nothing is healed, deduped, or
+        renumbered — this is the look-before-you-leap counterpart to
+        :meth:`heal_shapes` (which *does* mutate and renumber).
+
+        Parameters
+        ----------
+        warn : bool, default False
+            When True, emit a :class:`WarnGeomImportHealth` advisory if
+            the report :attr:`~ImportHealth.is_suspect` (slivers
+            present).  ``load_step`` / ``load_iges`` use this internally
+            on a raw (un-healed) import.
+
+        Returns
+        -------
+        ImportHealth
+
+        Example
+        -------
+        ::
+
+            g.model.io.load_step("messy.step")        # raw
+            report = g.model.io.diagnose()
+            if report.is_suspect:
+                g.model.io.load_step("messy.step", heal="auto", dedupe=True)
+        """
+        health = _compute_health()
+        if warn and health.is_suspect:
+            warnings.warn(WarnGeomImportHealth(health.advisory()), stacklevel=2)
+        return health
 
     def save_iges(self, file_path: Path | str) -> None:
         """

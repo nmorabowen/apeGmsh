@@ -42,6 +42,25 @@ class WarnGeomCoincidentFace(UserWarning):
     """
 
 
+class WarnGeomImportHealth(UserWarning):
+    """Advisory: a freshly-imported CAD file shows topology that will
+    likely defeat meshing or boolean ops.
+
+    Emitted by :meth:`_IO.load_step` / :meth:`_IO.load_iges` (and the
+    parts import path) after a non-mutating :meth:`_IO.diagnose` scan
+    flags one or more of: no solid formed (imported as loose
+    surfaces/shells), edges or faces far below the model scale, or a
+    suspicious entity-count profile.  The message names the counts and
+    a suggested ``heal=`` tolerance so the user can re-import with
+    healing — the import itself is **never** mutated on the user's
+    behalf (healing renumbers entities, so it stays opt-in).
+
+    Subclass of :class:`UserWarning` so it can be silenced with
+    ``warnings.simplefilter('ignore', WarnGeomImportHealth)`` when
+    callers know their CAD is clean.
+    """
+
+
 class WarnGeomOneSidedCut(UserWarning):
     """Advisory: a plane-cut produced fragments on only one side of
     the plane.
