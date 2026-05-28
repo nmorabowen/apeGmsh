@@ -1,11 +1,13 @@
 # ADR 0043 — Connectivity graph + flexible (split) emit for model chaining
 
-**Status:** PROPOSED 2026-05-28. Authored as a **discussion draft** to
-open the design space — no code has shipped under it. The **Open
-questions** at the end are the agenda; this ADR will be promoted to
-ACCEPTED (with the answers locked, mirroring the
-[ADR 0041](0041-chain-phase-geometry-constraints.md) draft→accept
-flow) once a direction converges.
+**Status:** PROPOSED 2026-05-28 (partially resolved 2026-05-28).
+Authored as a **discussion draft** to open the design space — no code
+has shipped under it. The four architecture-binding open questions
+(Q1 / Q2 / Q8 / Q9) are now **locked** — see **Decisions (resolved
+2026-05-28)** below; the remaining questions (Q3 / Q4 / Q5 / Q6 / Q7 /
+Q10, all mode-B or fragment-detail) stay open and will be settled as
+phase-1 (mode A) lands. Promotion to ACCEPTED follows the
+[ADR 0041](0041-chain-phase-geometry-constraints.md) draft→accept flow.
 
 Builds on / consumes:
 [ADR 0038](0038-compose-model-composition.md) (`g.compose`, the
@@ -343,6 +345,47 @@ This reinforces Open Question 2's recommendation: A first.
     `apeSees` / `Results` (scheduler chains in-process, `transfer` is
     an in-memory hand-off)? Decides the scheduler's execution model and
     the transfer-field's serialization.
+
+## Decisions (resolved 2026-05-28)
+
+The four architecture-binding questions are locked; the rest stay open.
+
+- **Q2 — sequencing → Mode A first.** Build the monolithic path (split
+  emit + `couple`) before the sequential/restart subsystem. A is
+  mostly assembling primitives that already exist (`g.compose` +
+  chain-phase routing) and it forces the tag-namespacing contract that
+  B also needs. B (scheduler + typed transfer-field) is a separate
+  later track.
+- **Q1 — tag allocation → base offsets at compose.** An allocator
+  assigns each part a reserved tag range at compose time, consistent
+  with [ADR 0038](0038-compose-model-composition.md)'s existing
+  "namespaced tag-offset import". Robust by construction; the user
+  never reasons about cross-part collisions. (Note the interaction
+  with the `tag == fem_eid` convention recorders / `ModelData` rely on:
+  offsets shift tags away from raw `fem_eid`, so any recorder /
+  orientation join over a *composed* model must resolve through the
+  per-part offset map, not assume identity. Tracked for phase-1.)
+- **Q9 — graph object → a single `Assembly`.** One object carries both
+  `couple` (A) and `chain` (B) edges — the literal Workbench mental
+  model. No separate `Pipeline` type.
+- **Q8 — round-trip → write-only.** Split decks are emit-only, like
+  `.tcl` / `.py` today; `model.h5` remains the canonical round-trip
+  surface. No fragment parser.
+
+**Still open:** Q3 (graph persistence), Q4 (fragment file layout),
+Q5 (edge ownership / coupling params), Q6 (interface ndf),
+Q7 (mode-B transfer-field format), Q10 (B-edge node = file vs live
+session) — all mode-B or fragment-detail, to be settled as phase-1
+lands.
+
+### Phase 1 (mode A) scope
+
+Per Q1/Q2/Q9, the first slice keys the split off the **existing
+`g.compose` module labels** — fragments are one file per composed
+module plus a driver, with base-offset tags already produced by the
+ADR 0038 import. No new `Assembly` object is required for the initial
+split-emit slice; the explicit `Assembly` graph + `couple`-edge
+declaration layers on top once split emit is proven.
 
 ## References
 
