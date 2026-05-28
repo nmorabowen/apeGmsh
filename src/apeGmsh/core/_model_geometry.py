@@ -1706,6 +1706,7 @@ class _Geometry:
         keep_surface   : bool = True,
         remove_original: bool = True,
         label          : str | None = None,
+        tolerance      : float | None = None,
     ) -> list[Tag]:
         """
         Split one or more solids with an arbitrary cutting surface.
@@ -1748,6 +1749,14 @@ class _Geometry:
         label : str, optional
             Label applied to every new volume fragment in the
             registry.  Pass ``None`` to leave the fragments unlabelled.
+        tolerance : float, optional
+            Override ``Geometry.ToleranceBoolean`` for the duration of
+            the fragment (restored afterwards).  Raise it (e.g.
+            ``tolerance=1e-3`` on a mm-scale model) when a near-
+            coincident cutting surface defeats OCC's default
+            coincidence detection and the cut produces nothing or leaves
+            debris.  ``None`` (default) leaves the global tolerance
+            unchanged.
 
         Returns
         -------
@@ -1786,7 +1795,10 @@ class _Geometry:
         obj_dt = [(3, int(t)) for t in solid_tags]
         tool_dt = [(2, int(surf_tag))]
 
-        with pg_preserved() as pg:
+        from ._model_queries import _temporary_tolerance
+        with pg_preserved() as pg, _temporary_tolerance(
+            tolerance, keys=("Geometry.ToleranceBoolean",),
+        ):
             out_dimtags, result_map = gmsh.model.occ.fragment(
                 obj_dt,
                 tool_dt,
@@ -1843,6 +1855,7 @@ class _Geometry:
         label_above    : str | None = None,
         label_below    : str | None = None,
         sync           : bool = True,
+        tolerance      : float | None = None,
     ) -> tuple[list[Tag], list[Tag]]:
         """
         Split one or more solids with a plane and classify the
@@ -1931,6 +1944,7 @@ class _Geometry:
             keep_surface=keep_plane,
             remove_original=remove_original,
             label=None,          # we re-label by side below
+            tolerance=tolerance,
         )
 
         above_tags, below_tags = self._classify_fragments(
@@ -2086,6 +2100,7 @@ class _Geometry:
         classify: bool = False,
         label   : str | None = None,
         sync    : bool = True,
+        tolerance: float | None = None,
     ) -> list[Tag] | tuple[list[Tag], list[Tag]]:
         """
         Slice solids at an axis-aligned plane in one atomic call.
@@ -2159,6 +2174,7 @@ class _Geometry:
                 label_above=label,
                 label_below=label,
                 sync=False,
+                tolerance=tolerance,
             )
             result: list[Tag] | tuple[list[Tag], list[Tag]] = (above, below)
         else:
@@ -2166,6 +2182,7 @@ class _Geometry:
                 solid, plane_dt,
                 keep_surface=False,
                 label=label,
+                tolerance=tolerance,
             )
             result = fragments
 

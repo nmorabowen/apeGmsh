@@ -91,6 +91,7 @@ class _Boolean:
         remove_tool   : bool = True,
         sync          : bool = True,
         label         : str | None = None,
+        tolerance     : float | None = None,
     ) -> list[Tag]:
         parent = self._model._parent
         # Phase 3B.2d / ADR 0038 — every boolean operation
@@ -128,7 +129,17 @@ class _Boolean:
             parts, obj_dt + tool_dt,
         )
 
-        with pg_preserved() as pg:
+        # Opt-in tolerance override (default None = current global
+        # ``Geometry.ToleranceBoolean``).  Reuses the same context
+        # manager the dedup / make_conformal paths use, so solid
+        # booleans get the near-coincidence lever the curve booleans
+        # already had.  Function-local import mirrors the
+        # ``chain_phase_guard`` idiom above and sidesteps any core
+        # intra-package import-order concern.
+        from ._model_queries import _temporary_tolerance
+        with pg_preserved() as pg, _temporary_tolerance(
+            tolerance, keys=("Geometry.ToleranceBoolean",),
+        ):
             result, result_map = fn(
                 obj_dt, tool_dt,
                 removeObject=remove_object,
@@ -224,6 +235,7 @@ class _Boolean:
         remove_tool   : bool = True,
         sync          : bool = True,
         label         : str | None = None,
+        tolerance     : float | None = None,
     ) -> list[Tag]:
         """
         Boolean union (A \u222a B).  Returns surviving volume tags.
@@ -233,6 +245,12 @@ class _Boolean:
         instead.  Without ``label=``, all input labels survive on the
         merged volume.
 
+        ``tolerance`` optionally overrides ``Geometry.ToleranceBoolean``
+        for the duration of this op (restored after) \u2014 bump it (e.g.
+        ``tolerance=1e-3`` for mm-scale models) when near-coincident
+        faces defeat OCC's default coincidence detection. ``None``
+        (default) leaves the current global tolerance unchanged.
+
         Example
         -------
         ``result = g.model.boolean.fuse(box, sphere, label='merged')``
@@ -240,6 +258,7 @@ class _Boolean:
         return self._bool_op(
             'fuse', objects, tools, dim,
             remove_object, remove_tool, sync, label=label,
+            tolerance=tolerance,
         )
 
     def cut(
@@ -252,12 +271,17 @@ class _Boolean:
         remove_tool   : bool = True,
         sync          : bool = True,
         label         : str | None = None,
+        tolerance     : float | None = None,
     ) -> list[Tag]:
         """
         Boolean difference (A \u2212 B).  Returns surviving volume tags.
 
         When ``label=`` is supplied, the object's label is dropped
         from the result and the new ``label`` is attached instead.
+
+        ``tolerance`` optionally overrides ``Geometry.ToleranceBoolean``
+        for the duration of this op (see :meth:`fuse`); ``None``
+        (default) leaves the current global tolerance unchanged.
 
         Example
         -------
@@ -266,6 +290,7 @@ class _Boolean:
         return self._bool_op(
             'cut', objects, tools, dim,
             remove_object, remove_tool, sync, label=label,
+            tolerance=tolerance,
         )
 
     def intersect(
@@ -278,15 +303,21 @@ class _Boolean:
         remove_tool   : bool = True,
         sync          : bool = True,
         label         : str | None = None,
+        tolerance     : float | None = None,
     ) -> list[Tag]:
         """Boolean intersection (A \u2229 B).  Returns surviving volume tags.
 
         When ``label=`` is supplied, the input labels are dropped from
         the intersection and the new ``label`` is attached instead.
+
+        ``tolerance`` optionally overrides ``Geometry.ToleranceBoolean``
+        for the duration of this op (see :meth:`fuse`); ``None``
+        (default) leaves the current global tolerance unchanged.
         """
         return self._bool_op(
             'intersect', objects, tools, dim,
             remove_object, remove_tool, sync, label=label,
+            tolerance=tolerance,
         )
 
     def fragment(
@@ -299,6 +330,7 @@ class _Boolean:
         remove_tool   : bool = True,
         cleanup_free  : bool = True,
         sync          : bool = True,
+        tolerance     : float | None = None,
     ) -> list[Tag]:
         """
         Boolean fragment \u2014 splits all shapes at their intersections and
@@ -329,6 +361,12 @@ class _Boolean:
             you need OCC's raw output (no orphan removal, no stale-
             metadata reap) for downstream inspection.
         sync : synchronise the OCC kernel (default True).
+        tolerance : float | None
+            Optional override for ``Geometry.ToleranceBoolean`` during
+            the fragment (see :meth:`fuse`) — raise it when shapes touch
+            at near-coincident faces the default tolerance misses.
+            ``None`` (default) leaves the current global tolerance
+            unchanged.
 
         Returns
         -------
@@ -338,6 +376,7 @@ class _Boolean:
         result = self._bool_op(
             'fragment', objects, tools, dim,
             remove_object, remove_tool, sync,
+            tolerance=tolerance,
         )
 
         # In a 2D-only model every surface is "free" (there ARE no
