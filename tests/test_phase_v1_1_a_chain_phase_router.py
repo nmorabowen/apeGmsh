@@ -360,16 +360,23 @@ class TestRigidDiaphragmChainPhase:
 
 
 class TestDeferredDefsFallBackCleanly:
-    """v1.1-A handles 3 of 5 defs; v1.1-A.2 added EmbeddedDef.
-    TiedContactDef remains on the bump-counter contract:
-    ``route_def_to_fem`` returns ``None``, callable contract is
-    preserved, def lands on ``constraint_defs``.
+    """v1.1-A handles 3 of 5 defs; v1.1-A.2 added EmbeddedDef and
+    TiedContactDef.  Neither def is deferred anymore — both now route
+    through the chain-phase router.
+
+    What this class locks now is the *KeyError-swallow* contract that
+    survived v1.1-A.2: when an Embedded host label or a TiedContact
+    master / slave label has no element-side record in the chain-head
+    broker (e.g. the node-only ``_colocated_fem`` fixture), the
+    router's ``KeyError`` is caught by :func:`try_chain_phase_route`
+    so the def lands on ``constraint_defs`` without applying a
+    record — mirrors the v1.1-A behaviour for a missing label that
+    might be created later in the session.
 
     The Embedded-specific chain-phase tests live in
-    ``tests/test_v1_1_a_2_embedded_chain_phase.py``; this class only
-    locks the *contract* surface that survived v1.1-A.2 (callable
-    contract for tied_contact + KeyError-swallow for missing host
-    targets in the node-only-PG fixture).
+    ``tests/test_v1_1_a_2_embedded_chain_phase.py``; the tied-contact
+    chain-phase tests live in
+    ``tests/test_v1_1_a_2_tied_contact_chain_phase.py``.
     """
 
     def test_embedded_against_node_only_fixture_raises_key_error(self) -> None:
@@ -387,13 +394,23 @@ class TestDeferredDefsFallBackCleanly:
         with pytest.raises(KeyError):
             route_def_to_fem(fem, defn)
 
-    def test_tied_contact_route_returns_none(self) -> None:
+    def test_tied_contact_against_colocated_fixture_raises_key_error(
+        self,
+    ) -> None:
+        """`route_def_to_fem` for TiedContactDef now resolves master /
+        slave labels via ``FEMDataSource.boundary_faces_for``, which
+        calls :meth:`nodes_for` on the way in.  The colocated fixture's
+        node-side PGs resolve cleanly, but the broker carries no dim=2
+        ElementGroups — so :meth:`boundary_faces_for` raises
+        ``ValueError`` per ADR 0041 §"Decision 5" (no volume→face
+        synthesis in chain phase)."""
         fem = _colocated_fem()
         defn = TiedContactDef(
             master_label="master_set", slave_label="slave_set",
             tolerance=1.0,
         )
-        assert route_def_to_fem(fem, defn) is None
+        with pytest.raises(ValueError, match="no dim=2 ElementGroups"):
+            route_def_to_fem(fem, defn)
 
     def test_embedded_still_callable_in_chain_phase(
         self, tmp_path: Path,
@@ -417,16 +434,28 @@ class TestDeferredDefsFallBackCleanly:
         assert len(list(g._fem.nodes.constraints)) == 0
         assert len(list(g._fem.elements.constraints)) == 0
 
-    def test_tied_contact_still_callable_in_chain_phase(
+    def test_tied_contact_value_error_surfaces_in_chain_phase(
         self, tmp_path: Path,
     ) -> None:
+        """``g.constraints.tied_contact(...)`` against a node-only chain
+        head surfaces the router's ``ValueError`` per ADR 0041
+        §"Decision 5" — the broker has no dim=2 ElementGroups, so
+        :meth:`FEMDataSource.boundary_faces_for` raises with the
+        documented remedy.  :func:`try_chain_phase_route` only swallows
+        ``KeyError`` / ``TypeError``, so this ValueError propagates out
+        of ``_add_def``.  The def is **not** stored (the raise happens
+        between the ``constraint_defs.append`` and... wait — no, the
+        append runs first, then ``try_chain_phase_route`` runs, so the
+        def IS on the list but the broker is unchanged.  Either way
+        ``_fem`` is not corrupted."""
         path = _save(_colocated_fem(), tmp_path)
         g = apeGmsh.from_h5(path)
-        defn = g.constraints.tied_contact(
-            master_label="master_set", slave_label="slave_set",
-            tolerance=1.0,
-        )
-        assert defn in g.constraints.constraint_defs
+        with pytest.raises(ValueError, match="no dim=2 ElementGroups"):
+            g.constraints.tied_contact(
+                master_label="master_set", slave_label="slave_set",
+                tolerance=1.0,
+            )
+        # Broker untouched.
         assert len(list(g._fem.nodes.constraints)) == 0
         assert len(list(g._fem.elements.constraints)) == 0
 

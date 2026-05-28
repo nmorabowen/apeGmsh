@@ -308,6 +308,127 @@ class FEMDataSource:
             )
         return sub
 
+    def boundary_faces_for(self, target: str) -> np.ndarray:
+        """Return ``ndarray(F, n_fpn)`` of surface face rows owned by *target*.
+
+        Element-side counterpart to :meth:`host_subelements_for` for the
+        tied-contact / mortar code path — resolves ``target`` to a node
+        set via :meth:`nodes_for` (Tier 1 labels → Tier 2 PGs on both
+        node and element sides), then filters the broker's **dim=2
+        element groups** to the connectivity rows whose every node is
+        in that set.  Mirrors the build-phase pattern in
+        :meth:`PartsRegistry.build_face_map`
+        (``src/apeGmsh/core/_parts_registry.py``).
+
+        Parameters
+        ----------
+        target : str
+            Label name (Tier 1) or physical-group name (Tier 2).  Unlike
+            :meth:`host_subelements_for` this method walks the full
+            node-resolution machinery (node-side and element-side
+            tiers) — a tied-contact interface is naturally named by the
+            surface PG that already lives on the node side of the
+            broker.
+
+        Returns
+        -------
+        ndarray
+            ``(n_faces, n_fpn)`` int64 connectivity rows.  Returns
+            ``np.empty((0, 0), dtype=int)`` when dim=2 element groups
+            exist in the broker but no face row is fully owned by the
+            target's node set — consistent with the build-phase
+            :meth:`PartsRegistry.build_face_map` empty-instance
+            convention.
+
+        Raises
+        ------
+        KeyError
+            When ``target`` resolves to no label / PG (propagated from
+            :meth:`nodes_for`).
+        ValueError
+            When the broker contains **no dim=2 ElementGroups at all**
+            (ADR 0041 §"Decision 5" — chain phase does not synthesize
+            faces from volume elements; the broker must already carry
+            the surface mesh).  Also raised when the broker carries
+            multiple dim=2 element-types with different nodes-per-face
+            (e.g. tri3 + quad4) and more than one of them survives the
+            node-ownership filter — the resolver downstream expects a
+            single rectangular ``(n_faces, n_fpn)`` array.
+
+        Notes
+        -----
+        Per ADR 0041 §"Decision 3" this is a separate concrete-class
+        method on :class:`FEMDataSource` (not on the
+        :class:`ResolverSource` Protocol) and §"Decision 5" pins the
+        no-volume-synthesis contract.  When you hit the "no dim=2
+        ElementGroups" ``ValueError``, the remedy is to re-extract the
+        broker with ``dim=None`` (so the surface mesh is captured
+        alongside the volume) and re-save.
+        """
+        fem = self._fem
+
+        # Resolve the target to its node set via the full Tier 1 → 2
+        # walk on both node and element sides.  KeyError propagates.
+        node_ids = self.nodes_for(target)
+        node_set = set(int(n) for n in node_ids)
+
+        # Find every dim=2 ElementGroup in the broker.
+        surface_groups: list[tuple[int, np.ndarray]] = []
+        for code, grp in fem.elements._groups.items():
+            if int(grp.element_type.dim) != 2:
+                continue
+            surface_groups.append(
+                (int(code), np.asarray(grp.connectivity, dtype=np.int64)),
+            )
+
+        if not surface_groups:
+            raise ValueError(
+                f"FEMDataSource.boundary_faces_for: target {target!r} "
+                f"resolves to a node set, but the broker carries no "
+                f"dim=2 ElementGroups — chain phase does not synthesize "
+                f"face connectivity from volume elements (ADR 0041 "
+                f"§\"Decision 5\").  Remedy: re-extract the FEMData "
+                f"with `dim=None` so the surface mesh is captured "
+                f"alongside the volume, then re-save."
+            )
+
+        # Filter each surface group's connectivity to rows fully owned
+        # by the target's node set.  ``np.isin`` against the resolved
+        # set vectorises the same predicate
+        # :meth:`PartsRegistry.build_face_map` uses.
+        if not node_set:
+            return np.empty((0, 0), dtype=np.int64)
+
+        node_arr = np.asarray(sorted(node_set), dtype=np.int64)
+        kept_blocks: list[np.ndarray] = []
+        seen_npe: set[int] = set()
+        for _code, conn in surface_groups:
+            mask = np.all(np.isin(conn, node_arr), axis=1)
+            if not mask.any():
+                continue
+            kept = conn[mask]
+            seen_npe.add(int(kept.shape[1]))
+            kept_blocks.append(kept)
+
+        if not kept_blocks:
+            # dim=2 groups exist but none of their rows are fully owned
+            # by this target — consistent with build_face_map's empty-
+            # instance return.  Caller treats this as "empty interface".
+            return np.empty((0, 0), dtype=np.int64)
+
+        if len(seen_npe) > 1:
+            raise ValueError(
+                f"FEMDataSource.boundary_faces_for: target {target!r} "
+                f"resolves to mixed surface element types with "
+                f"different nodes-per-face ({sorted(seen_npe)}).  The "
+                f"chain-phase tied-contact resolver expects a single "
+                f"rectangular (n_faces, n_fpn) connectivity array.  "
+                f"Split the target into per-element-type sub-PGs and "
+                f"compose them separately."
+            )
+
+        return np.vstack(kept_blocks)
+
     # -- Internal helpers ------------------------------------------
 
     def _element_ids_for_target(self, target: str) -> np.ndarray:

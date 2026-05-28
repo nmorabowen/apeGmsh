@@ -43,14 +43,23 @@ nodes, drops coincident corners, and runs the same pure-numpy
 uses.  Output ``InterpolationRecord`` rows land on
 ``fem.elements.constraints`` via ``with_constraint(record)``.
 
-Deferred (v1.1-A.2 follow-up — `TiedContactDef`)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Tied contact (Compose v1.1-A.2 PR B / ADR 0041)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``TiedContactDef`` needs face-connectivity synthesis (via
-``FEMDataSource.boundary_faces_for``) and ships in the v1.1-A.2
-follow-up PR.  It continues to fall back to the bump-counter pattern
-until then; the def is stored on ``constraint_defs`` but not applied
-to ``_fem`` until a build-phase re-extraction.
+``TiedContactDef`` joined the chain-phase router in v1.1-A.2 PR B via
+the new :meth:`FEMDataSource.boundary_faces_for` element-side query.
+The branch resolves master and slave surface labels to face-
+connectivity arrays (filtering the broker's dim=2 ElementGroups by
+node-ownership per ADR 0041 §"Decision 5"), pulls the master/slave
+node sets via :meth:`FEMDataSource.nodes_for`, and runs the same
+pure-numpy :meth:`ConstraintResolver.resolve_tied_contact` the
+build-phase path uses.  Output ``SurfaceCouplingRecord`` lands on
+``fem.elements.constraints`` via ``with_constraint(record)``.
+
+Per ADR 0041 §"Decision 5", chain phase does NOT synthesize face
+connectivity from volume elements — when the broker has no dim=2
+ElementGroups, :meth:`boundary_faces_for` raises ``ValueError`` with
+the documented "re-extract with `dim=None`" remedy.
 """
 from __future__ import annotations
 
@@ -115,6 +124,7 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
         EqualDOFDef,
         RigidDiaphragmDef,
         RigidLinkDef,
+        TiedContactDef,
     )
     from apeGmsh._kernel.defs.masses import PointMassDef
     from apeGmsh._kernel.defs.loads import PointLoadDef
@@ -213,6 +223,10 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
     # ── EmbeddedDef → InterpolationRecord(s) (Compose v1.1-A.2) ───
     if isinstance(defn, EmbeddedDef):
         return _route_embedded(fem, source, defn)
+
+    # ── TiedContactDef → SurfaceCouplingRecord (v1.1-A.2 PR B) ────
+    if isinstance(defn, TiedContactDef):
+        return _route_tied_contact(fem, source, defn)
 
     # ── Unsupported def shape ─────────────────────────────────────
     return None
@@ -349,6 +363,78 @@ def _route_embedded(fem: "FEMData", source, defn) -> "FEMData":
     for rec in records:
         new_fem = new_fem.with_constraint(rec)
     return new_fem
+
+
+def _route_tied_contact(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``TiedContactDef`` against ``fem`` and append a surface record.
+
+    Mirrors :meth:`ConstraintsComposite._resolve_face_both` over the
+    chain-phase ``FEMDataSource``: pulls master + slave face
+    connectivity via :meth:`FEMDataSource.boundary_faces_for` (which
+    filters the broker's dim=2 ElementGroups by node-ownership per
+    ADR 0041 §"Decision 5"), gathers master and slave node sets via
+    :meth:`FEMDataSource.nodes_for`, and runs
+    :meth:`ConstraintResolver.resolve_tied_contact` — the same pure-
+    numpy resolver the build-phase path uses.
+
+    Returns ``fem`` unchanged when the resolved interface is empty
+    (no master faces survive the node filter, or the resolver
+    produces an empty :class:`SurfaceCouplingRecord`).  Mirrors the
+    :func:`_route_rigid_diaphragm` empty-record guard so an empty
+    interface never produces a phantom constraint record.
+
+    Resolution failures (e.g. an unknown master / slave label) raise
+    :class:`KeyError` from :meth:`boundary_faces_for` /
+    :meth:`nodes_for` and are caught upstream by
+    :func:`try_chain_phase_route` — backward-compat with the v1.1-A
+    KeyError-swallow behaviour.  Broker-shape failures (no dim=2
+    groups, mixed surface element types) raise :class:`ValueError`
+    from :meth:`boundary_faces_for`; those propagate as a hard error
+    to the caller, which is the documented contract for ADR 0041
+    §"Decision 5".
+    """
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    # Master + slave face connectivity from the broker's dim=2 groups.
+    # KeyError on unknown name; ValueError on no-dim=2-groups (both
+    # propagate — KeyError is swallowed upstream).
+    master_face_conn = source.boundary_faces_for(defn.master_label)
+    slave_face_conn = source.boundary_faces_for(defn.slave_label)
+
+    if master_face_conn.size == 0 and slave_face_conn.size == 0:
+        # Empty interface on both sides — nothing to tie.  Return the
+        # broker unchanged (mirrors the build-phase silent skip when
+        # ``build_face_map`` returns an empty array on both sides).
+        return fem
+
+    if master_face_conn.size == 0:
+        # No master faces survive the node filter — the resolver would
+        # need at least one face to project onto.  Return unchanged.
+        return fem
+
+    # Master + slave node sets (full Tier 1 → 2 walk).  KeyError on
+    # unknown name — propagated.
+    master_nodes = {
+        int(t) for t in source.nodes_for(defn.master_label)
+    }
+    slave_nodes = {
+        int(t) for t in source.nodes_for(defn.slave_label)
+    }
+
+    resolver = _build_resolver(fem, ConstraintResolver)
+    record = resolver.resolve_tied_contact(
+        defn, master_face_conn, slave_face_conn,
+        master_nodes, slave_nodes,
+    )
+
+    # An empty record (no slave interpolation records produced) means
+    # nothing was tied — mirror the rigid_diaphragm empty-record
+    # guard so we don't append a phantom constraint with zero rows.
+    if not record.slave_records:
+        return fem
+    return fem.with_constraint(record)
 
 
 def _build_resolver(fem: "FEMData", resolver_cls):
