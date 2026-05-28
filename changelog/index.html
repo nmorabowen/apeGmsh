@@ -3821,6 +3821,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-cad-import-health-diagnostics-scale-aware-healing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — CAD-import health diagnostics + scale-aware healing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-healtrue-healauto-on-import-is-now-scale-aware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — heal=True / heal="auto" on import is now scale-aware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-raw-user-physical-groups-now-protect-entities-from-the-orphan-sweep" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5205,6 +5227,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added-cad-import-health-diagnostics-scale-aware-healing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — CAD-import health diagnostics + scale-aware healing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-healtrue-healauto-on-import-is-now-scale-aware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — heal=True / heal="auto" on import is now scale-aware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed-raw-user-physical-groups-now-protect-entities-from-the-orphan-sweep" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6564,6 +6608,12 @@
 
 <h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
 <h2 id="unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders-embedded-element-pipeline-hardening-329-331-asdembeddednodeelement-option-exposure-adr-0035-stage-bound-constraints-sinitial_stress-push-phase-ssi-2d-extension-phase-ssi-2e-between-stage-domain-mutators-topology-safety-nets-p1p3-arc-line-wire-docs-embedded-host-decomposition-adr-0036-higher-order-line-broker-split-adr-0037-recorderdeclaration-element-fan-out-fix-orphan-geometry-sweep-unification-gmodelgeometry-validation-api-split-sweep-auto-validation-closed-world-open-world-raw-pg-channel-for-_user_intentional">Unreleased — shell-on-solid conformity (S1a + S1b + S2 + S5) · Phase SSI-2.D stage-bound BCs and recorders · embedded-element pipeline hardening (#329 / #331) · ASDEmbeddedNodeElement option exposure (ADR 0035) · stage-bound constraints + <code>s.initial_stress</code> PUSH (Phase SSI-2.D extension) · <strong>Phase SSI-2.E between-stage Domain mutators</strong> · topology safety nets (P1/P3) + arc-line wire docs · embedded-host decomposition (ADR 0036) · <strong>higher-order line broker split (ADR 0037)</strong> · RecorderDeclaration element fan-out fix · <strong>orphan-geometry sweep unification + <code>g.model.geometry</code> validation API</strong> · <strong>split-sweep auto-validation (closed-world / open-world)</strong> · <strong>raw-PG channel for <code>_user_intentional</code></strong><a class="headerlink" href="#unreleased-shell-on-solid-conformity-s1a-s1b-s2-s5-phase-ssi-2d-stage-bound-bcs-and-recorders-embedded-element-pipeline-hardening-329-331-asdembeddednodeelement-option-exposure-adr-0035-stage-bound-constraints-sinitial_stress-push-phase-ssi-2d-extension-phase-ssi-2e-between-stage-domain-mutators-topology-safety-nets-p1p3-arc-line-wire-docs-embedded-host-decomposition-adr-0036-higher-order-line-broker-split-adr-0037-recorderdeclaration-element-fan-out-fix-orphan-geometry-sweep-unification-gmodelgeometry-validation-api-split-sweep-auto-validation-closed-world-open-world-raw-pg-channel-for-_user_intentional" title="Permanent link">&para;</a></h2>
+<h3 id="added-cad-import-health-diagnostics-scale-aware-healing">ADDED — CAD-import health diagnostics + scale-aware healing<a class="headerlink" href="#added-cad-import-health-diagnostics-scale-aware-healing" title="Permanent link">&para;</a></h3>
+<p><code>g.model.io.diagnose(*, warn=False) -&gt; ImportHealth</code> is a new <strong>non-mutating</strong> health check for the current OCC geometry: per-dimension entity counts, sliver tallies (edges/faces below <code>1e-4 · bbox_diagonal</code>), the bbox diagonal, and a suggested <code>heal=</code> tolerance. It never heals, dedupes, or renumbers — the look-before-you-leap counterpart to <code>heal_shapes</code> (which does mutate). <code>ImportHealth.is_suspect</code> keys on slivers only, so a surface-only import (shell models) does not false-positive.</p>
+<p>A new typed <code>WarnGeomImportHealth</code> advisory is auto-emitted by <code>load_step</code> / <code>load_iges</code> / <code>g.parts.import_step</code> on a <strong>raw</strong> (un-healed) import when slivers are present — it names the counts and suggests <code>heal='auto'</code>. The import is never healed on the user's behalf (healing renumbers entities, so it stays opt-in).</p>
+<p><code>g.parts.import_step(...)</code> gains <code>heal=</code> / <code>dedupe=</code> kwargs (same semantics as <code>g.model.io.load_step</code>), closing the gap where the assembly path — the workflow most likely to ingest real external CAD — could not heal at all.</p>
+<h3 id="changed-healtrue-healauto-on-import-is-now-scale-aware">CHANGED — <code>heal=True</code> / <code>heal="auto"</code> on import is now scale-aware<a class="headerlink" href="#changed-healtrue-healauto-on-import-is-now-scale-aware" title="Permanent link">&para;</a></h3>
+<p><code>load_step</code> / <code>load_iges</code> (and the new <code>parts.import_step</code>) <code>heal=True</code> now derives a <strong>scale-aware</strong> tolerance (<code>≈ 1e-6 · bbox_diagonal</code>) instead of the legacy absolute <code>1e-8</code>. <code>"auto"</code> is an explicit alias; a float still overrides. The old <code>1e-8</code> default was effectively a no-op heal on any real-world (mm/m-scale) model — <code>heal=True</code> now actually heals. <code>heal=False</code> (the import default) is unchanged.</p>
 <h3 id="changed-raw-user-physical-groups-now-protect-entities-from-the-orphan-sweep">CHANGED — raw user physical groups now protect entities from the orphan sweep<a class="headerlink" href="#changed-raw-user-physical-groups-now-protect-entities-from-the-orphan-sweep" title="Permanent link">&para;</a></h3>
 <p><code>apeGmsh.core._geometry_topology._user_intentional</code> gains a third channel: an entity that participates in ANY physical group (including raw user PGs created via <code>gmsh.model.addPhysicalGroup</code> directly) is treated as user-intentional and survives <code>sweep_dangling</code> / <code>find_orphans</code> / <code>validate_pre_mesh(strict=True)</code>.</p>
 <p>Closes PR #378 reviewer follow-up #2. The new channel lowers the false-positive rate of the open-world (<code>strict=True</code>) check substantially: raw-gmsh frame workflows that tag their lines with PG names like <code>"Columns"</code> / <code>"Beams"</code> are now protected, even though they bypass apeGmsh's <code>_metadata</code> and <code>g.labels</code> channels entirely.</p>
