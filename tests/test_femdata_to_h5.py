@@ -22,7 +22,12 @@ from apeGmsh.mesh.FEMData import (
 )
 from apeGmsh._kernel.records._constraints import NodeGroupRecord, NodePairRecord
 from apeGmsh._kernel.records._kinds import ConstraintKind
-from tests.fixtures.schema import NEUTRAL_CURRENT
+from tests.fixtures.schema import NEUTRAL_CURRENT, OPENSEES_CURRENT
+from apeGmsh.opensees._internal.schema_version import (
+    ENVELOPE_KEY,
+    NEUTRAL_KEY,
+    OPENSEES_KEY,
+)
 from apeGmsh._kernel.records._loads import (
     ElementLoadRecord,
     NodalLoadRecord,
@@ -160,6 +165,29 @@ def test_to_h5_writes_meta(tmp_path: Path) -> None:
         assert f["meta"].attrs["schema_version"] == NEUTRAL_CURRENT
         assert int(f["meta"].attrs["ndm"]) == 2  # max element dim
         assert f["meta"].attrs["model_name"] == "demo"
+
+
+def test_to_h5_stamps_both_per_zone_keys(tmp_path: Path) -> None:
+    """A broker-only ``fem.to_h5()`` file stamps BOTH per-zone keys —
+    not just the legacy envelope.
+
+    ``write_meta`` forward-stamps ``opensees_schema_version`` even
+    though a broker-only file has no ``/opensees/`` zone, so the file
+    opens cleanly through ``h5_reader.open`` (whose validation runs the
+    opensees per-zone window) without falling back to the envelope.
+    Guarding this here keeps the broker-only path from silently
+    regressing into envelope-fallback dependence — the failure mode the
+    per-zone design (ADR 0023) defends against — since the envelope key
+    alone would still be present and mask the regression.
+    """
+    fem = _make_fem()
+    out = tmp_path / "model.h5"
+    fem.to_h5(str(out))
+    with h5py.File(out, "r") as f:
+        attrs = f["meta"].attrs
+        assert ENVELOPE_KEY in attrs
+        assert attrs[NEUTRAL_KEY] == NEUTRAL_CURRENT
+        assert attrs[OPENSEES_KEY] == OPENSEES_CURRENT
 
 
 def test_to_h5_writes_nodes(tmp_path: Path) -> None:

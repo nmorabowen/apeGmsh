@@ -46,6 +46,8 @@ def _make_element_side_only_fem(
     pg_key: tuple[int, int] = (3, 99),
     label_name: str = "embed_host",
     label_key: tuple[int, int] = (3, 77),
+    node_label_name: str | None = None,
+    node_label_key: tuple[int, int] = (0, 11),
 ) -> FEMData:
     """Build a 1-hex FEMData with an element-side PG + label and NO
     matching node-side entries.
@@ -55,6 +57,11 @@ def _make_element_side_only_fem(
     ``PhysicalGroupSet`` is empty.  Same shape for the label set on
     ``label_key``.  This is the exact configuration the pre-2.10
     reader heuristic mishandled.
+
+    When ``node_label_name`` is given, a node-side label is added on
+    ``node_label_key`` so the node-side branch of the snapshot hash
+    (``_hash_labels``) can be exercised independently of the element
+    side.
     """
     node_ids = np.arange(1, 9, dtype=np.int64)
     coords = np.array(
@@ -99,11 +106,20 @@ def _make_element_side_only_fem(
         physical=PhysicalGroupSet(elem_pgs),
         labels=LabelSet(elem_labels),
     )
+    node_labels: dict = {}
+    if node_label_name is not None:
+        node_labels = {
+            node_label_key: {
+                "name": node_label_name,
+                "node_ids": node_ids.copy(),
+                "node_coords": coords.copy(),
+            },
+        }
     nodes = NodeComposite(
         node_ids=node_ids,
         node_coords=coords,
         physical=PhysicalGroupSet({}),
-        labels=LabelSet({}),
+        labels=LabelSet(node_labels),
     )
     info = MeshInfo(
         n_nodes=node_ids.size,
@@ -185,6 +201,32 @@ class TestElementSideOnlyRoundTrip:
         fem_a = _make_element_side_only_fem(label_name="host_a")
         fem_b = _make_element_side_only_fem(label_name="host_b")
         assert fem_a.snapshot_id != fem_b.snapshot_id
+
+    def test_snapshot_id_includes_node_side_label(
+        self, tmp_path: Path,
+    ) -> None:
+        """The node-side branch of ``_hash_labels`` must fold into the
+        snapshot_id too — completes the channel matrix alongside the
+        element-side label test above.
+
+        Guards against a partial regression that breaks only the
+        node-side label fold (a commonly-used channel via ``g.labels``
+        on points/lines) while leaving the element-side branch — which
+        the test above covers — intact. Such a drift would only warn,
+        never raise, downstream on the lineage chain.
+        """
+        fem_a = _make_element_side_only_fem(node_label_name="pin_a")
+        fem_b = _make_element_side_only_fem(node_label_name="pin_b")
+        assert fem_a.snapshot_id != fem_b.snapshot_id
+
+    def test_snapshot_id_changes_when_node_side_label_added(
+        self, tmp_path: Path,
+    ) -> None:
+        """Adding a node-side label where there was none changes the
+        snapshot_id (the fold is not a no-op for the node side)."""
+        bare = _make_element_side_only_fem()
+        labeled = _make_element_side_only_fem(node_label_name="pin")
+        assert bare.snapshot_id != labeled.snapshot_id
 
 
 if __name__ == "__main__":

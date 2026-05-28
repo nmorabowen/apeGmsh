@@ -34,7 +34,19 @@ class PartitionRecord:
     Parameters
     ----------
     id : int
-        Partition tag as assigned by Gmsh / the partitioner.
+        Partition tag. The convention is **producer-dependent**:
+        Gmsh's partitioner assigns 1-based tags (``1..N``, no rank 0);
+        ``g.compose(...)`` assigns 0-based ranks with the host on
+        ``id=0`` and each composed module on ``1, 2, ...`` (ADR 0038
+        rank model). The OpenSees bridge does **not** read this value
+        as a runtime rank — it derives the 0-based rank from the
+        enumerate position in sorted ``fem.partitions`` (see
+        ``opensees._internal.build.runtime_rank_from_partition_record``,
+        the single source of truth), so the two bases coexist without
+        affecting emission. Note ``fem.{nodes,elements}.select(
+        partition=N)`` keys on this raw ``id``, so its meaning is
+        producer-dependent (``select(partition=0)`` is the host on a
+        composed model but raises on a Gmsh-partitioned one).
     node_ids : ndarray
         ``int64`` array of node IDs in this partition.  Should be
         sorted and de-duplicated upstream — the dataclass does not

@@ -613,20 +613,51 @@ expected to change.
 
 ## 9. Gotchas and known limitations
 
-- **Partition ID conventions: broker is 1-based, runtime is 0-based.**
-  Gmsh assigns `PartitionRecord.id` as `1..N` (Gmsh-side label,
-  preserved on the broker for traceability).  The emitted Tcl /
-  Py runtime gates are `if {[getPID] == K}` with `K in 0..N-1`,
-  matching `OpenSeesMP::getPID()`.  The mapping is
-  `rank == i, fem.partitions[rank].id == rank + 1` — available
-  via plain `enumerate(fem.partitions)`.  This was a bug in
-  schema 2.10.0 (gates were 1-based, so rank 0 had no work and
-  partition N's content was silently dropped under `mpiexec -np
-  N`); schema 2.11.0 fixed it at the build-path seam.  Post-
-  processing scripts should iterate `for rank, rec in
-  enumerate(fem.partitions):` rather than hard-coding rank IDs,
-  and downstream HDF5 readers should treat `partition_NN/rank` /
-  `partition_ids` values as 0-based.
+- **Partition id conventions are producer-dependent; the runtime rank is not.**
+  Three model-building paths can populate `fem.partitions`, and they do
+  **not** share a `PartitionRecord.id` base:
+  - **Gmsh-native** (`g.mesh.partitioning.partition`) — 1-based ids
+    `1..N` (no partition 0), Gmsh's METIS labels.
+  - **`g.compose(...)`** — 0-based ranks: the host owns `id=0` and each
+    composed module gets `1, 2, ...` (ADR 0038 rank model). `host=0`
+    is intentional — it aligns with `OpenSeesMP::getPID()`.
+  - **Parts** (`g.parts.add` + `fragment_all`) — produce **no**
+    partitions; Parts are assembly/labeling units, orthogonal to solver
+    decomposition. Call `partition(...)` (or compose) separately to get
+    ranks.
+
+  The **runtime rank** the bridge emits is producer-independent: it is
+  the 0-based enumerate index over sorted `fem.partitions`
+  (`runtime_rank_from_partition_record` — the single source of truth,
+  **not** `id - 1`). So Gmsh's `id=1` and compose's `id=0` both map to
+  runtime rank 0. The Tcl/Py gates are `if {[getPID] == K}`,
+  `K in 0..N-1`. Iterate `for rank, rec in enumerate(fem.partitions):`
+  rather than hard-coding ids. (Schema 2.10.0 had 1-based gates — a bug
+  where rank 0 had no work and partition N was dropped under `mpiexec
+  -np N`; 2.11.0 fixed it at the build seam.)
+
+  **On disk there are two partition representations, with different
+  bases by design:**
+  - the **neutral zone** `/partitions/{id}/` stores the **raw producer
+    id** (a composed archive has `/partitions/0/` for the host; a Gmsh
+    archive has `/partitions/1/`...). Round-trip-consistent —
+    `select(partition=k)` survives H5 unchanged.
+  - the **OpenSees zone** `/opensees/partitions/partition_NN/` stores
+    the **0-based runtime rank** (`rank` attr / `partition_ids` column,
+    schema 2.11.0), matching `getPID()`.
+
+  A reader that needs the runtime rank must use the OpenSees zone (or
+  re-enumerate `fem.partitions`), **not** the neutral-zone `id`.
+
+- **`select(partition=N)` keys on the raw producer id — its meaning is
+  producer-dependent.** On a Gmsh-partitioned model `select(partition=1)`
+  is the first partition and `select(partition=0)` raises; on a composed
+  model `select(partition=0)` is the host and `select(partition=1)` is
+  the first module. This is a known ergonomic wart, **not** a
+  correctness bug in emitted analysis (the bridge normalizes by
+  position). A producer-agnostic selector (resolve by runtime rank) is a
+  possible future additive API; today, know which producer built your
+  model before keying on a raw partition id.
 
 - **`pymetis` has no PyPI Windows wheel.** Install via
   `conda install -c conda-forge pymetis`, or use Flavor A which

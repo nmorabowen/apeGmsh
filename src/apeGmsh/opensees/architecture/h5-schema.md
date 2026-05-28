@@ -26,8 +26,11 @@ snapshot in memory (geometry only) nor the STKO/MPCO results
 2. **Structured groups, scalar attrs, array datasets.** No
    JSON-blob attributes. HDF5-native types throughout so introspection
    tools work.
-3. **Schema-versioned at the root.** Readers MUST check
-   `/meta/schema_version` and refuse incompatible files.
+3. **Schema-versioned per zone.** Readers MUST check the per-zone
+   key for each zone they read (`neutral_schema_version` /
+   `opensees_schema_version` / `results_schema_version`) and refuse
+   incompatible files — not the legacy `/meta/schema_version`
+   envelope. See [Schema versioning](#versioning).
 4. **Lazy and partial.** `model.h5` may be written at any point in
    the bridge lifecycle; absent groups indicate "user did not declare
    this," not "data is missing." The viewer must tolerate any subset.
@@ -149,18 +152,25 @@ Attributes only.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `schema_version` | string | semver, e.g. `"2.10.0"` (current) |
+| `schema_version` | string | **legacy envelope** — back-compat only; *not* authoritative (see [Schema versioning](#versioning)) |
+| `neutral_schema_version` | string | per-zone version of the broker neutral zone (e.g. `"2.10.0"`) |
+| `opensees_schema_version` | string | per-zone version of the `/opensees/` zone (e.g. `"2.12.0"`); forward-stamped even on broker-only files |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
 | `ndf` | int | DOFs per node |
 | `snapshot_id` | string | hash of FEMData snapshot the bridge was built from |
 | `model_name` | string | user-provided model name |
+| `tag_span_max` | int | `max(max_node,max_elem) - min(min_node,min_elem) + 1`; sizes compose tag-offset reservations (ADR 0038) |
 
-Schema versioning is **strict on major**, **bounded on minor** via
-the two-version reader window
+> The `/meta/lineage/` sub-group (ADR 0021) is additionally stamped by
+> the composer; the composed `results.h5` carries its version keys at
+> the **file root** (not `/meta`) — see [Schema versioning](#versioning).
+
+Schema versioning is **per-zone**, **strict on major**, **bounded on
+minor** via the two-version reader window
 ([ADR 0023](decisions/0023-per-zone-schema-versioning.md)). A reader
-written for `2.Y.*` accepts `2.Y.*` and `2.(Y-1).*` and refuses
+written for `X.Y.*` accepts `X.Y.*` and `X.(Y-1).*` and refuses
 older minors, newer minors, or any other major. The window applies
 to **additive-only** changes; layout-perturbing minor bumps (such
 as the B2 2.10 split of `/physical_groups/` and `/labels/`) walk
@@ -785,8 +795,36 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
 
 ## Versioning
 
-`/meta/schema_version` follows semver, governed by
-[ADR 0023](decisions/0023-per-zone-schema-versioning.md):
+Versioning is **per-zone**. Each producer owns an independent semver
+axis stamped under its own `/meta` key (ADR 0023). They do **not**
+share a number: a file can be `neutral=2.10.0` and `opensees=2.12.0`
+at the same time. The legacy single `/meta/schema_version` envelope
+predates the split and is **non-authoritative** (back-compat only —
+see "Legacy envelope" below).
+
+The central logic lives in
+[`opensees/_internal/schema_version.py`](../_internal/schema_version.py).
+`reader_version(zone)` sources each zone's current value directly from
+the writer's constant, so reader and writer **cannot drift**; readers
+call `validate_zone_version(...)` for each zone before reading it.
+
+### Zone registry
+
+| Zone | `/meta` key | Root paths | Writer constant (source of truth) | Current |
+|---|---|---|---|---|
+| neutral (broker) | `neutral_schema_version` | `/nodes`, `/elements`, `/physical_groups`, `/labels`, `/mesh_selections`, `/constraints`, `/loads`, `/masses`, `/partitions`, `/parts`, `/composed_from` | [`mesh/_femdata_h5_io.py`](../../mesh/_femdata_h5_io.py) `NEUTRAL_SCHEMA_VERSION` | **2.10.0** |
+| opensees (bridge) | `opensees_schema_version` | `/opensees/*` | [`opensees/emitter/h5.py`](../emitter/h5.py) `SCHEMA_VERSION` | **2.12.0** |
+| results | `results_schema_version` | `/stages/*` (composed `results.h5`, at file root) | [`results/schema/_versions.py`](../../results/schema/_versions.py) `RESULTS_SCHEMA_VERSION` | **1.1.0** |
+| cuts (sub-zone of opensees) | — (no own key; rides the opensees zone) | `/opensees/cuts`, `/opensees/sweeps` | [`cuts/_h5_io.py`](../../cuts/_h5_io.py) `V4_SCHEMA_VERSION` | 2.5.0 |
+
+> The registry's *current* values are a snapshot — the writer
+> constants above are the authoritative source. The test
+> [`tests/opensees/h5/test_h5_schema_compat.py`](../../../../tests/opensees/h5/test_h5_schema_compat.py)
+> (`test_reader_version_reflects_writer_constants`) pins reader↔writer
+> agreement; [`tests/fixtures/schema.py`](../../../../tests/fixtures/schema.py)
+> centralizes the values fixtures stamp.
+
+### Bump rules (per zone)
 
 - **Major** bump → breaking change. Readers refuse outright.
 - **Minor** bump → additive (new group, new attribute). Readers
@@ -796,12 +834,34 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
 
 **Window caveat.** The two-version window applies to **additive-only**
 minor bumps. A minor bump that perturbs the canonical bytes of a
-required structure (the B2 layout split at 2.10 being the canonical
-example) walks the window forward and the prior minor falls out of
-reach. See
+required structure (the B2 layout split at neutral 2.10, and the
+opensees 2.11 0-based-rank flip, are the canonical examples) walks the
+window forward and the prior minor falls out of reach. See
 [ADR 0023's 2026-05-28 amendment](decisions/0023-per-zone-schema-versioning.md#amendment--2026-05-28--window-applies-to-additive-only-changes-b2--pr-398).
 
-The current schema version is **`2.10.0`**.
+### Legacy envelope (`/meta/schema_version`)
+
+Pre-Phase-7a files carried a single `schema_version`. Today every
+file apeGmsh writes also stamps the per-zone keys (broker-only files
+forward-stamp `opensees_schema_version` too), so the envelope is read
+**only as a fallback** for genuinely old single-stamp files
+(`read_zone_version(..., envelope_fallback=True)`). Per ADR 0023
+INV-2, **new code must not branch on the envelope** — it is "whichever
+writer wrote last" (the composer and `cuts.persist_to_h5` may each
+overwrite it independently), so its value is not a reliable zone
+marker. The guarantee that the envelope never becomes load-bearing for
+our own output is held by
+`test_to_h5_stamps_both_per_zone_keys` (broker-only) and
+`test_per_zone_keys_written_on_compose` / `_on_native_results`
+(composed).
+
+### Neutral-zone history
+
+The list below is the **neutral-zone** lineage. The opensees zone's
+per-version history is maintained inline in
+[`opensees/emitter/h5.py`](../emitter/h5.py) (`SCHEMA_VERSION`
+docstring), current through **2.12.0**; its post-2.10 additions are
+summarized after this list.
 
 History:
 
@@ -878,6 +938,29 @@ History:
   files cannot be read by the 2.10 reader, the window slid forward.
   ADR 0021 INV-1 retired; ADR 0023 window semantics reframed.
 
+### OpenSees-zone history (post-2.10)
+
+The opensees zone advanced past 2.10 independently of the neutral
+zone (it shares the early lineage above through 2.10; the entries
+below are opensees-only and have no neutral-zone counterpart). Full
+detail lives in the `SCHEMA_VERSION` docstring in
+[`opensees/emitter/h5.py`](../emitter/h5.py):
+
+- `2.11.0` — bug fix: the bridge emits **0-based runtime ranks**
+  (matching `OpenSeesMP::getPID()`) instead of Gmsh's 1-based
+  `PartitionRecord.id`. Per-partition `rank` attrs and the
+  `partition_ids` column on `/opensees/element_meta/{type}` are now
+  in `[0, N-1]`. Group naming (`partition_NN`) is unchanged. Breaking
+  for any reader that mapped `rank`/`partition_ids` to `part.id`
+  directly; the two-version window slid forward (2.10 falls out of
+  reach for the opensees zone).
+- `2.12.0` — ADR 0035 (ASDEmbeddedNodeElement option exposure):
+  `/opensees/constraints/embeddedNode` gains five typed columns —
+  `stiffness` (`-K`), `stiffness_p` (`-KP`) + `has_stiffness_p`
+  sentinel, `rotational` (`-rot`), `pressure` (`-p`). Defaults match
+  the C++ parser, so legacy decks behave identically. Additive — old
+  2.11.x readers ignore the new columns.
+
 A reader skeleton:
 
 ```python
@@ -885,12 +968,17 @@ import h5py
 
 def read_model_h5(path):
     with h5py.File(path, "r") as f:
-        meta = f["/meta"]
-        major = int(meta.attrs["schema_version"].split(".")[0])
+        meta_attrs = f["/meta"].attrs
+        # Read the per-zone key, not the legacy envelope. Both zones
+        # share major 2 today; check the major of the zone you read.
+        version = meta_attrs.get(
+            "neutral_schema_version", meta_attrs.get("schema_version"),
+        )
+        major = int(str(version).split(".")[0])
         if major != 2:
             raise ValueError(
-                f"Unsupported model.h5 schema major version {major}; "
-                f"reader supports v2.x.y"
+                f"Unsupported model.h5 neutral-zone major version "
+                f"{major}; reader supports v2.x.y"
             )
         # Walk the file ...
 ```
