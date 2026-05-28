@@ -49,6 +49,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from typing import Iterable
+
 from .._vocabulary import (
     DERIVED_SCALARS,
     FIBER,
@@ -59,6 +61,7 @@ from .._vocabulary import (
     PER_ELEMENT_NODAL_FORCES,
     STRAIN,
     STRESS,
+    expand_many,
     is_canonical,
 )
 from ._internal.types import Primitive, Recorder
@@ -79,6 +82,9 @@ __all__ = [
     "RecorderRecord",
     "RecorderDeclaration",
     "ALL_RECORDER_CATEGORIES",
+    # Shared declaration builder (used by the bridge namespace AND by
+    # ModelData's hand-written-deck recorder surface)
+    "build_recorder_declaration",
 ]
 
 
@@ -914,3 +920,114 @@ class RecorderDeclaration(Recorder):
             "in apeGmsh.opensees._internal.build; call it via the "
             "bridge build pipeline rather than directly."
         )
+
+
+# ---------------------------------------------------------------------------
+# Shared declaration builder
+# ---------------------------------------------------------------------------
+
+
+def _normalize_str_selector(
+    value: "Iterable[str] | str | None",
+) -> tuple[str, ...]:
+    """Coerce a ``str`` / iterable-of-str / ``None`` into a tuple of strs.
+
+    A single string is wrapped in a one-element tuple (so the caller can
+    write ``pg="Top"`` instead of ``pg=("Top",)``). ``None`` becomes the
+    empty tuple.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    return tuple(value)
+
+
+def build_recorder_declaration(
+    *,
+    ndm: int,
+    ndf: int,
+    nodes: "Iterable[str] | str" = (),
+    elements: "Iterable[str] | str" = (),
+    line_stations: "Iterable[str] | str" = (),
+    gauss: "Iterable[str] | str" = (),
+    raw_nodes: "Iterable[str] | str | None" = None,
+    raw_elements: "Iterable[str] | str | None" = None,
+    raw_line_stations: "Iterable[str] | str | None" = None,
+    raw_gauss: "Iterable[str] | str | None" = None,
+    pg: "str | Iterable[str] | None" = None,
+    label: "str | Iterable[str] | None" = None,
+    selection: "str | Iterable[str] | None" = None,
+    ids: "Iterable[int] | None" = None,
+    dt: float | None = None,
+    n_steps: int | None = None,
+    name: str = "default",
+    record_name: str | None = None,
+    element_class_name: str | None = None,
+    file_root: str = ".",
+) -> RecorderDeclaration:
+    """Construct a :class:`RecorderDeclaration` from declarative kwargs.
+
+    Single source of truth for shorthand expansion (``"displacement"``
+    → ``displacement_x/y/z`` via the bound ``ndm``/``ndf``) and
+    per-category record construction.  Shared by
+    :meth:`apeGmsh.opensees._internal.ns.recorder._RecorderNS.declare`
+    (bridge-owned models) and
+    :meth:`apeGmsh.opensees.ModelData.recorders` (hand-written decks).
+
+    ``ndm`` / ``ndf`` are supplied by the caller (the bridge or
+    ``ModelData`` binds them at declaration time, Phase 9 D8 — the user
+    never repeats ``ndm=``/``ndf=`` here).
+    """
+    pg_tuple = _normalize_str_selector(pg)
+    label_tuple = _normalize_str_selector(label)
+    selection_tuple = _normalize_str_selector(selection)
+    ids_tuple = tuple(int(i) for i in ids) if ids is not None else None
+
+    records: list[RecorderRecord] = []
+
+    # Per-category record construction. Each category produces at most
+    # one record (canonical components + raw tokens combined). A record
+    # is skipped only when both are empty for that category.
+    category_inputs: tuple[
+        tuple[str, "Iterable[str] | str", "Iterable[str] | str | None"], ...
+    ] = (
+        ("nodes",         nodes,         raw_nodes),
+        ("elements",      elements,      raw_elements),
+        ("line_stations", line_stations, raw_line_stations),
+        ("gauss",         gauss,         raw_gauss),
+    )
+    for category, canonical_kw, raw_kw in category_inputs:
+        canonical_seq = _normalize_str_selector(canonical_kw)
+        raw_seq = _normalize_str_selector(raw_kw)
+        if not canonical_seq and not raw_seq:
+            continue
+        components = (
+            expand_many(canonical_seq, ndm=ndm, ndf=ndf)
+            if canonical_seq else ()
+        )
+        records.append(
+            RecorderRecord(
+                category=category,
+                components=components,
+                raw=raw_seq,
+                pg=pg_tuple,
+                label=label_tuple,
+                selection=selection_tuple,
+                ids=ids_tuple,
+                dt=dt,
+                n_steps=n_steps,
+                name=record_name,
+                element_class_name=(
+                    element_class_name if category != "nodes" else None
+                ),
+            )
+        )
+
+    return RecorderDeclaration(
+        records=tuple(records),
+        name=name,
+        ndm=ndm,
+        ndf=ndf,
+        file_root=file_root,
+    )

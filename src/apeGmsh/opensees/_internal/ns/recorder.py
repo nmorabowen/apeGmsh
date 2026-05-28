@@ -15,13 +15,12 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from ...._vocabulary import expand_many
 from ...recorder import (
     MPCO,
     Element,
     Node,
     RecorderDeclaration,
-    RecorderRecord,
+    build_recorder_declaration,
 )
 from ._base import _BridgeNamespace
 
@@ -183,58 +182,26 @@ class _RecorderNS(_BridgeNamespace):
                 "ndm/ndf at declaration time)."
             )
 
-        # Normalize selectors to tuples.
-        pg_tuple = _normalize_str_selector(pg)
-        label_tuple = _normalize_str_selector(label)
-        selection_tuple = _normalize_str_selector(selection)
-        ids_tuple = tuple(int(i) for i in ids) if ids is not None else None
-
-        records: list[RecorderRecord] = []
-
-        # Per-category record construction. Each category produces at
-        # most one record (with both canonical components and raw
-        # tokens combined). A record is skipped only when both are
-        # empty for that category.
-        category_inputs: tuple[
-            tuple[str, Iterable[str] | str, Iterable[str] | str | None], ...
-        ] = (
-            ("nodes",         nodes,         raw_nodes),
-            ("elements",      elements,      raw_elements),
-            ("line_stations", line_stations, raw_line_stations),
-            ("gauss",         gauss,         raw_gauss),
-        )
-        for category, canonical_kw, raw_kw in category_inputs:
-            canonical_seq = _normalize_str_selector(canonical_kw)
-            raw_seq = _normalize_str_selector(raw_kw)
-            if not canonical_seq and not raw_seq:
-                continue
-            components = (
-                expand_many(canonical_seq, ndm=ndm, ndf=ndf)
-                if canonical_seq else ()
-            )
-            records.append(
-                RecorderRecord(
-                    category=category,
-                    components=components,
-                    raw=raw_seq,
-                    pg=pg_tuple,
-                    label=label_tuple,
-                    selection=selection_tuple,
-                    ids=ids_tuple,
-                    dt=dt,
-                    n_steps=n_steps,
-                    name=record_name,
-                    element_class_name=(
-                        element_class_name if category != "nodes" else None
-                    ),
-                )
-            )
-
-        decl = RecorderDeclaration(
-            records=tuple(records),
-            name=name,
+        decl = build_recorder_declaration(
             ndm=ndm,
             ndf=ndf,
+            nodes=nodes,
+            elements=elements,
+            line_stations=line_stations,
+            gauss=gauss,
+            raw_nodes=raw_nodes,
+            raw_elements=raw_elements,
+            raw_line_stations=raw_line_stations,
+            raw_gauss=raw_gauss,
+            pg=pg,
+            label=label,
+            selection=selection,
+            ids=ids,
+            dt=dt,
+            n_steps=n_steps,
+            name=name,
+            record_name=record_name,
+            element_class_name=element_class_name,
             file_root=file_root,
         )
         return self._bridge._register(decl)
@@ -277,19 +244,3 @@ class _RecorderNS(_BridgeNamespace):
                 elements_pg=elements_pg,
             )
         )
-
-
-def _normalize_str_selector(
-    value: Iterable[str] | str | None,
-) -> tuple[str, ...]:
-    """Coerce a ``str`` / iterable-of-str / ``None`` into a tuple of strs.
-
-    A single string is wrapped in a one-element tuple (so the user can
-    write ``pg="Top"`` instead of ``pg=("Top",)``). ``None`` becomes the
-    empty tuple.
-    """
-    if value is None:
-        return ()
-    if isinstance(value, str):
-        return (value,)
-    return tuple(value)

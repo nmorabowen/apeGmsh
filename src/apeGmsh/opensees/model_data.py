@@ -26,9 +26,29 @@ byte-equivalent (modulo ``created_iso``) to ``apeSees(fem).h5()`` for
 the orientation zone, so the viewer / future P2 read path needs zero
 ``ModelData`` awareness.
 
-Scope is locked to orientation: no materials, sections, patterns,
-recorders, analysis, constraints, loads, or masses — those remain the
+Scope is orientation **plus recorders**: no materials, sections,
+patterns, analysis, constraints, loads, or masses — those remain the
 bridge's domain (ADR 0018 INV-5).
+
+Recorders (ADR 0018 amendment).  Hand-written decks need a way to
+declare recorders in canonical vocabulary without dropping down to raw
+``ops.recorder(...)`` lines.  :meth:`recorders` declares them (same
+grammar as ``ops.recorder.declare``); :meth:`attach_recorders` forwards
+them into a live ``openseespy`` session in-process; and
+:meth:`recorder_commands` renders them as Tcl / py script lines for the
+file / subprocess workflow.  Recorders are admitted (unlike materials /
+analysis) because they only *observe* the domain — they declare no
+model state — so they don't reopen the "ModelData owns the model"
+boundary INV-5 draws.
+
+.. warning::
+
+    Recorder selectors resolve to **FEM element / node ids**, so the
+    emitted ``recorder`` commands target *your* ``ops.element`` /
+    ``ops.node`` tags only if those equal the broker fem ids — the same
+    ``tag == fem_eid`` invariant :meth:`oriented_elements` already
+    relies on (see the tag-correspondence caveat above).  A mismatch
+    silently records the wrong entities.
 
 .. note::
 
@@ -55,11 +75,16 @@ bridge's domain (ADR 0018 INV-5).
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable, Literal
 
-from ._internal.build import BridgeError, expand_pg_to_elements
+from ._internal.build import (
+    BridgeError,
+    _emit_recorder_declaration,
+    expand_pg_to_elements,
+)
 from ._internal.compose import _compose_model_h5, _path_stem
 from .emitter.h5 import H5Emitter
+from .recorder import RecorderDeclaration, build_recorder_declaration
 
 
 __all__ = ["ModelData"]
@@ -139,6 +164,12 @@ class ModelData:
         # from the loaded fem on a re-write).  ``None`` on a fresh
         # ``ModelData(fem, ...)`` — broker stamps ``/meta`` as usual.
         self._loaded_snapshot_id: str | None = None
+        # Recorders declared via :meth:`recorders` (ADR 0018
+        # amendment).  Consumed by :meth:`attach_recorders` (live) and
+        # :meth:`recorder_commands` (script lines).  Never written to
+        # ``model.h5`` by :meth:`write` — they describe runtime
+        # observation, not model definition.
+        self._recorder_decls: list[RecorderDeclaration] = []
 
     # -- Read-only views -------------------------------------------------
 
@@ -226,6 +257,150 @@ class ModelData:
             elements=items,
             ndm=self._ndm,
         )
+
+    # -- Recorders (ADR 0018 amendment) ----------------------------------
+
+    def recorders(
+        self,
+        *,
+        nodes: Iterable[str] | str = (),
+        elements: Iterable[str] | str = (),
+        line_stations: Iterable[str] | str = (),
+        gauss: Iterable[str] | str = (),
+        raw_nodes: Iterable[str] | str | None = None,
+        raw_elements: Iterable[str] | str | None = None,
+        raw_line_stations: Iterable[str] | str | None = None,
+        raw_gauss: Iterable[str] | str | None = None,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | None = None,
+        dt: float | None = None,
+        n_steps: int | None = None,
+        name: str = "default",
+        record_name: str | None = None,
+        element_class_name: str | None = None,
+        file_root: str = ".",
+    ) -> RecorderDeclaration:
+        """Declare recorders for a hand-written deck; store on this
+        ``ModelData``.
+
+        Mirrors ``ops.recorder.declare`` exactly (same canonical
+        vocabulary, same selectors), but binds the recorder to *this*
+        ``ModelData``'s ``ndm`` / ``ndf`` rather than a bridge's.  The
+        declaration is materialized into concrete OpenSees ``recorder``
+        commands by :meth:`attach_recorders` (live session) or
+        :meth:`recorder_commands` (script lines).
+
+        Call once per recorder spec; calls accumulate.  See the
+        canonical-component contract on
+        :meth:`apeGmsh.opensees.apeSees.recorder` /
+        ``ops.recorder.declare`` for the full parameter semantics.
+
+        Returns
+        -------
+        The stored :class:`RecorderDeclaration`.
+        """
+        decl = build_recorder_declaration(
+            ndm=self._ndm,
+            ndf=self._ndf,
+            nodes=nodes,
+            elements=elements,
+            line_stations=line_stations,
+            gauss=gauss,
+            raw_nodes=raw_nodes,
+            raw_elements=raw_elements,
+            raw_line_stations=raw_line_stations,
+            raw_gauss=raw_gauss,
+            pg=pg,
+            label=label,
+            selection=selection,
+            ids=ids,
+            dt=dt,
+            n_steps=n_steps,
+            name=name,
+            record_name=record_name,
+            element_class_name=element_class_name,
+            file_root=file_root,
+        )
+        self._recorder_decls.append(decl)
+        return decl
+
+    def attach_recorders(self, ops: Any) -> None:
+        """Forward every declared recorder into a live ``openseespy``
+        session.
+
+        ``ops`` is the caller's already-imported ``openseespy.opensees``
+        module, holding the model the user hand-built.  Each stored
+        :class:`RecorderDeclaration` fans out into one or more
+        ``ops.recorder(...)`` calls, resolving ``pg=`` / ``label=`` /
+        ``selection=`` selectors against the bound :class:`FEMData`.
+
+        Unlike the bridge's whole-model ``LiveOpsEmitter``, this does
+        **not** wipe the domain or re-declare the model — it only issues
+        ``recorder`` calls, so it is safe to call mid-session against an
+        already-populated ``ops`` (the failure mode the bridge's live
+        emitter has, where ``__init__`` calls ``ops.wipe()``).
+
+        Recorders must be declared after the user's ``ops.node`` /
+        ``ops.element`` calls and before ``ops.analyze`` — the usual
+        OpenSees ordering.  See the class ``tag == fem_eid`` warning:
+        selectors resolve to fem ids, so they target the caller's tags
+        only if those equal the fem ids.
+        """
+        sink = _LiveRecorderSink(ops)
+        for decl in self._recorder_decls:
+            _emit_recorder_declaration(
+                decl, sink, self._fem, fem_eid_to_ops_tag=None,
+            )
+
+    def recorder_commands(
+        self, *, target: Literal["py", "tcl"] = "py",
+    ) -> list[str]:
+        """Render every declared recorder as script lines.
+
+        For the file / subprocess workflow (no live session to attach
+        to): the returned lines are pasted into a hand-written ``.py``
+        (``ops.recorder(...)``) or ``.tcl`` (``recorder ...``) deck.
+        Selectors resolve against the bound :class:`FEMData`.
+
+        A leading comment banner records the ``tag == fem_eid``
+        assumption (see the class warning), since the rendered lines
+        target fem ids and the script's own tags must match.
+
+        Parameters
+        ----------
+        target
+            ``"py"`` (default) for openseespy ``ops.recorder(...)``
+            lines, or ``"tcl"`` for ``recorder ...`` lines.
+        """
+        if target == "py":
+            from .emitter.py import PyEmitter
+
+            emitter: Any = PyEmitter()
+            banner = "# recorders assume ops.element/ops.node tags == fem eids"
+        elif target == "tcl":
+            from .emitter.tcl import TclEmitter
+
+            emitter = TclEmitter()
+            banner = "# recorders assume element/node tags == fem eids"
+        else:
+            raise ValueError(
+                f"ModelData.recorder_commands: target must be 'py' or "
+                f"'tcl', got {target!r}."
+            )
+
+        # Drop whatever deck preamble the emitter seeds (PyEmitter
+        # pre-seeds an ``import`` + ``ops.wipe()`` header — pasting that
+        # into the user's live deck would erase their model).  Capture
+        # the pre-fan-out length and return only the recorder lines.
+        prefix_len = len(emitter.lines())
+        for decl in self._recorder_decls:
+            _emit_recorder_declaration(
+                decl, emitter, self._fem, fem_eid_to_ops_tag=None,
+            )
+        recorder_lines = emitter.lines()[prefix_len:]
+        return [banner, *recorder_lines] if recorder_lines else []
 
     # -- Write -----------------------------------------------------------
 
@@ -444,3 +619,44 @@ class ModelData:
                             md._em._orientation_tag_counter = int(ids[i])
 
             return md
+
+
+class _LiveRecorderSink:
+    """Recorder-only emitter forwarding into a live ``openseespy`` module.
+
+    The recorder fan-out (:func:`_emit_recorder_declaration`) touches
+    exactly three emitter methods: :meth:`recorder`,
+    :meth:`recorder_declaration_begin`, :meth:`recorder_declaration_end`.
+    This sink implements only those, so it cannot wipe the domain or
+    re-declare the model the way the bridge's whole-model
+    ``LiveOpsEmitter`` can.  Used by :meth:`ModelData.attach_recorders`.
+    """
+
+    __slots__ = ("_ops",)
+
+    def __init__(self, ops: Any) -> None:
+        self._ops = ops
+
+    def recorder(self, kind: str, *args: "int | float | str") -> None:
+        self._ops.recorder(kind, *args)
+
+    def recorder_declaration_begin(
+        self,
+        *,
+        declaration_name: str,
+        record_name: str | None,
+        category: str,
+        components: tuple[str, ...],
+        raw: tuple[str, ...] = (),
+        pg: tuple[str, ...] = (),
+        label: tuple[str, ...] = (),
+        selection: tuple[str, ...] = (),
+        ids: tuple[int, ...] | None = None,
+        dt: float | None = None,
+        n_steps: int | None = None,
+        file_root: str = ".",
+    ) -> None:
+        """Declaration metadata is archival-only — no-op for a live sink."""
+
+    def recorder_declaration_end(self) -> None:
+        """Declaration metadata is archival-only — no-op for a live sink."""

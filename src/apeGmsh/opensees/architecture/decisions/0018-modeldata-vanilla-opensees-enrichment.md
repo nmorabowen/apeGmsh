@@ -1,6 +1,8 @@
 # ADR 0018 — `ModelData` — declarative `model.h5` enrichment for hand-written OpenSees
 
 **Status:** Accepted (May 2026). Complements ADR 0011; does not supersede it.
+**Amended (May 2026):** scope widened from orientation-only to
+orientation **plus recorders** — see [Amendment — recorders](#amendment--recorders-may-2026).
 
 ## Context
 
@@ -64,6 +66,12 @@ never types a tag, so `fem_eid` is correct by construction. The
 surface is locked to orientation: no materials / sections / patterns /
 recorders / analysis / constraints / loads / masses (charter scope;
 keeps `ModelData` from becoming a second model-authoring API).
+
+> **Amended (May 2026):** recorders are now in scope — see
+> [Amendment — recorders](#amendment--recorders-may-2026). The
+> remaining list (materials / sections / patterns / analysis /
+> constraints / loads / masses) stays out: those *define* model state,
+> while recorders only *observe* it.
 
 ### Schema authority stays single — one new `H5Emitter` method
 
@@ -202,6 +210,113 @@ viewer / future P2 read path needs zero `ModelData` awareness.
   correct; it cannot police the tags the user's recorder wrote. This
   is documented loudly in the class docstring, not faked.
 - A new public class to maintain, though deliberately minimal.
+
+## Amendment — recorders (May 2026)
+
+### Context
+
+The original scope locked `ModelData` to orientation and explicitly
+excluded recorders. In practice the hand-written-deck user who needs
+orientation *also* needs recorders — the results viewer binds two
+things: the orientation join (`model.h5`, which `ModelData` already
+writes) **and** the result files (`.out` / `.mpco`, which recorders
+produce). Without a recorder surface the user must hand-type raw
+`ops.recorder("Node", "-file", …, "-node", …, "-dof", …, "disp")` /
+`ops.recorder("mpco", …)` lines — verbose, and a fresh chance to
+mistype the very tags the orientation join depends on
+(`feedback_no_private_emit_vanilla`: pointing the bridge's whole-model
+`LiveOpsEmitter` at recorders mid-session crashed the kernel because
+its `__init__` calls `ops.wipe()`).
+
+### Decision
+
+Admit recorders to `ModelData` via three methods. They reuse the
+**existing** recorder fan-out (`_internal.build._emit_recorder_declaration`)
+and the **shared** declaration builder (`recorder.build_recorder_declaration`,
+extracted so `ops.recorder.declare` and `ModelData.recorders` have one
+source of truth for shorthand expansion + per-category record
+construction).
+
+```python
+md.recorders(nodes="displacement", pg="Base", file_root="out")  # declare
+md.attach_recorders(ops)                  # forward into a LIVE openseespy session
+lines = md.recorder_commands(target="py") # OR render script lines (py | tcl)
+```
+
+- **`recorders(...)`** — same canonical vocabulary and selectors as
+  `ops.recorder.declare`, bound to `ModelData`'s `ndm`/`ndf`; stores a
+  `RecorderDeclaration`. Calls accumulate.
+- **`attach_recorders(ops)`** — forwards each declaration into the
+  caller's already-imported `openseespy.opensees` module via a
+  recorder-only `_LiveRecorderSink` that implements exactly the three
+  fan-out methods (`recorder` / `recorder_declaration_begin` /
+  `recorder_declaration_end`). It cannot wipe the domain or re-declare
+  the model, so it is safe to call mid-session — the failure mode the
+  bridge's `LiveOpsEmitter` has by design.
+- **`recorder_commands(target="py"|"tcl")`** — for the file /
+  subprocess workflow where there is no live session to attach to.
+  Returns recorder lines only: the deck preamble the `PyEmitter` seeds
+  (`import openseespy …` + `ops.wipe()`) is stripped by capturing the
+  buffer length before fan-out, so pasted lines cannot erase the user's
+  model.
+
+### Why recorders but still not materials / analysis
+
+The original scope lock guarded against `ModelData` becoming a second
+**model-authoring** API. Recorders do not author model state — they
+*observe* a domain that already exists. They declare no nodes,
+elements, materials, sections, patterns, constraints, loads, masses,
+or analysis chain. Admitting them therefore does not reopen the risk
+the lock was protecting against. The excluded list is unchanged for
+everything that *defines* the model.
+
+### Invariants preserved
+
+- **Schema authority single / byte-equivalent output (INV-3 / INV-16).**
+  Recorder declarations are **not** written to `model.h5` by
+  `write()`. They describe runtime observation, not model definition,
+  so `write()` is byte-identical to before for any model and the
+  `H5Emitter` schema is untouched. (Persisting recorder intent into
+  `/opensees/recorders` so the archive is self-describing is a
+  coherent future step, deliberately deferred — it would be the first
+  thing this amendment did *not* do.)
+- **No bridge `_internal` tag side-channels.** `attach_recorders` /
+  `recorder_commands` drive the fan-out with `fem_eid_to_ops_tag=None`,
+  whose documented fallback resolves selectors to raw FEM eids — exactly
+  correct under the `tag == fem_eid` convention below. No `TagAllocator`,
+  no `BuiltModel`, no bridge state.
+- **No new h5py write surface.** The AST guard
+  (`test_model_data_ast_guard.py`) still passes — the new methods touch
+  no HDF5.
+
+### Fail-loud / tag-correspondence
+
+The tag-correspondence caveat in Consequences (negative #2) is now
+**load-bearing for recorders, not just orientation**: recorder
+selectors resolve to FEM ids, so the emitted commands target the user's
+`ops.element` / `ops.node` tags only if those equal the broker fem ids.
+A mismatch *silently* records the wrong entities. As with orientation,
+`ModelData` cannot police the tags the user's live deck used; it is
+documented loudly — a `.. warning::` on the class plus a `# recorders
+assume … tags == fem eids` banner prepended to every
+`recorder_commands` output — not faked into a false guarantee.
+
+### Alternatives considered (amendment)
+
+1. **Live-attach via the bridge's `LiveOpsEmitter`.** Rejected — its
+   constructor calls `ops.wipe()`, erasing the user's hand-built model;
+   it is a whole-model emitter, not a recorder forwarder. The 3-method
+   `_LiveRecorderSink` is the surgical fit.
+2. **String-rendering only (paste into a notebook).** Rejected as the
+   *primary* surface — in a py/notebook session the `ops` module is
+   already live in-process, so copy-paste is pointless friction.
+   Retained as the secondary surface for the file/subprocess workflow,
+   where there is no live session.
+3. **Persist recorders into `model.h5` and re-emit via
+   `OpenSeesModel.build`.** Rejected for now — the hand-written-deck
+   user does not re-emit through `OpenSeesModel`, so it would not serve
+   the live workflow; and it would touch the schema. Deferred, not
+   refused.
 
 ## References
 

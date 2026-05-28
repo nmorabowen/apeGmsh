@@ -128,9 +128,15 @@ without it.** These are the test plan's assertions.
 
 ### P1
 
-10. **Materials / sections / patterns / recorders / analysis /
-    constraints / loads / masses ABSENT from the surface.** → blocks
-    scope metastasis into a second authoring API.
+10. **Materials / sections / patterns / analysis / constraints /
+    loads / masses ABSENT from the surface.** → blocks scope
+    metastasis into a second authoring API. *(Amended May 2026:
+    recorders were removed from this exclusion and added to the
+    surface — they observe the domain rather than define it, so they
+    don't reopen the authoring-API risk. See ADR 0018 "Amendment —
+    recorders". The on-disk invariant at §4 still holds: `ModelData`
+    writes no recorder zone to `model.h5`; the recorder surface emits
+    live / as script lines only.)*
 11. **Explicit write-vs-raise split** (raise on the
     element-meta-without-its-transform partial-correctness trap;
     write+degrade on nothing-injected). → blocks "80% oriented looks
