@@ -230,6 +230,8 @@ class _IO:
         kind           : str,
         highest_dim_only: bool,
         sync           : bool,
+        fuse           : bool = False,
+        label          : str | None = None,
     ) -> dict[int, list[Tag]]:
         """
         Core import helper shared by ``load_iges`` and ``load_step``.
@@ -237,6 +239,11 @@ class _IO:
         Calls ``gmsh.model.occ.importShapes``, captures the returned
         (dim, tag) pairs, registers every imported entity, and returns a
         dimension-indexed dict so callers can address entities immediately.
+
+        When ``fuse=True``, the imported top-dimension entities are
+        unioned via ``g.model.boolean.fuse`` into a single survivor.
+        When ``label`` is given, every surviving imported entity carries
+        that label (or the fused survivor alone, when fuse runs).
 
         Returns
         -------
@@ -252,11 +259,43 @@ class _IO:
 
         result: dict[int, list[Tag]] = {}
         for dim, tag in raw:
+            # Defer label until after optional fuse — fuse consumes its
+            # inputs and re-labels the survivor, so pre-labeling here
+            # would orphan the PG.
             self._model._register(dim, tag, None, kind)
             result.setdefault(dim, []).append(tag)
 
+        fused = False
+        if fuse and result:
+            top_dim = max(result)
+            top_tags = result[top_dim]
+            if len(top_tags) >= 2:
+                merged = self._model.boolean.fuse(
+                    top_tags[:1], top_tags[1:],
+                    dim=top_dim, sync=sync, label=label,
+                )
+                # Lower-dim sub-imports (only present when
+                # highest_dim_only=False) are invalidated by the
+                # volume fuse — drop them from the returned dict.
+                result = {top_dim: merged}
+                fused = True
+
+        if label is not None and not fused:
+            labels_comp = getattr(self._model._parent, 'labels', None)
+            if labels_comp is not None:
+                for dim, tags in result.items():
+                    if tags:
+                        labels_comp.add(dim, tags, name=label)
+
         dim_summary = {d: len(ts) for d, ts in result.items()}
-        self._model._log(f"loaded {kind.upper()} <- {file_path.name}  {dim_summary}")
+        suffix = ""
+        if fused:
+            suffix += "  fused"
+        if label:
+            suffix += f"  label={label!r}"
+        self._model._log(
+            f"loaded {kind.upper()} <- {file_path.name}  {dim_summary}{suffix}"
+        )
         return result
 
     def load_iges(
@@ -265,6 +304,8 @@ class _IO:
         *,
         highest_dim_only: bool = True,
         sync            : bool = True,
+        fuse            : bool = False,
+        label           : str | None = None,
     ) -> dict[int, list[Tag]]:
         """
         Import an IGES file into the current model.
@@ -279,6 +320,17 @@ class _IO:
             returned and registered (volumes for solids, surfaces for
             surface models).  Set to False to capture every sub-entity
             (faces, edges, vertices) as well.
+        fuse : bool
+            If True, union all imported top-dimension entities into a
+            single survivor via ``g.model.boolean.fuse``.  No-op when
+            the import yields fewer than two entities at the top
+            dimension.  Combined with ``highest_dim_only=False``, the
+            lower-dim sub-imports are discarded since the volume fuse
+            invalidates them.
+        label : str, optional
+            Global label attached to all imported entities (or to the
+            fused survivor, when ``fuse=True``).  Resolvable via
+            ``g.labels.entities(name)``.
 
         Returns
         -------
@@ -297,7 +349,8 @@ class _IO:
             result = g.model.boolean.fuse(flange, boss)
         """
         return self._import_shapes(
-            Path(file_path), 'iges', highest_dim_only, sync
+            Path(file_path), 'iges', highest_dim_only, sync,
+            fuse=fuse, label=label,
         )
 
     def load_step(
@@ -306,6 +359,8 @@ class _IO:
         *,
         highest_dim_only: bool = True,
         sync            : bool = True,
+        fuse            : bool = False,
+        label           : str | None = None,
     ) -> dict[int, list[Tag]]:
         """
         Import a STEP file into the current model.
@@ -319,6 +374,17 @@ class _IO:
             If True (default) only the highest-dimension entities are
             returned and registered.  Set to False to include all
             sub-entities.
+        fuse : bool
+            If True, union all imported top-dimension entities into a
+            single survivor via ``g.model.boolean.fuse``.  No-op when
+            the import yields fewer than two entities at the top
+            dimension.  Combined with ``highest_dim_only=False``, the
+            lower-dim sub-imports are discarded since the volume fuse
+            invalidates them.
+        label : str, optional
+            Global label attached to all imported entities (or to the
+            fused survivor, when ``fuse=True``).  Resolvable via
+            ``g.labels.entities(name)``.
 
         Returns
         -------
@@ -329,12 +395,15 @@ class _IO:
         -------
         ::
 
-            imported = g.model.io.load_step("assembly.step")
-            bodies   = imported[3]
-            g.model.transforms.translate(bodies, 0, 0, 50)   # lift the whole import
+            # one-shot: import an assembly, fuse it, and label it
+            imported = g.model.io.load_step(
+                "assembly.step", fuse=True, label="frame",
+            )
+            body = imported[3][0]   # single fused volume
         """
         return self._import_shapes(
-            Path(file_path), 'step', highest_dim_only, sync
+            Path(file_path), 'step', highest_dim_only, sync,
+            fuse=fuse, label=label,
         )
 
     def heal_shapes(
