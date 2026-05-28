@@ -143,7 +143,16 @@ class ViewerWindow:
     # un-interactable corner square every launch. Discard v2 once so
     # the healthy default layout (same path model.viewer uses) is
     # captured and re-saved.
-    _LAYOUT_SCHEMA_VERSION = 3
+    # v4 (2026-05-27): the v3 bump only ran once per user, but
+    # mesh.viewer's outline dock is added AFTER _restore_layout
+    # (mount_dock_spec → win.add_extension_dock from MeshViewer.show)
+    # so Qt's restoreDockWidget can persist a fresh-but-still-degenerate
+    # placement every session — observed as a tiny dock pinned to the
+    # upper-right corner, unable to be resized or dragged. Discard v3
+    # so the healthy default layout (this time with explicit min /
+    # initial widths and a guaranteed LeftDockWidgetArea placement on
+    # the mesh.viewer side) is captured and re-saved.
+    _LAYOUT_SCHEMA_VERSION = 4
 
     def __init__(
         self,

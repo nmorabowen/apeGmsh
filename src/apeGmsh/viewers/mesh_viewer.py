@@ -536,6 +536,20 @@ class MeshViewer:
         # saved tiny width, Qt clamps up to ``minimumWidth`` on layout.
         # Users can still freely resize the dock above this floor.
         outline_dock.setMinimumWidth(LAYOUT.outline_min_width)
+        # Make sure the user can always close + redock + drag the
+        # outline panel.  A previous bug had a corrupt persisted state
+        # that left the dock unmovable in the upper-right corner; force
+        # the standard feature set so a future stale state can't trap
+        # it again.
+        try:
+            from qtpy.QtWidgets import QDockWidget as _QDW
+            outline_dock.setFeatures(
+                _QDW.DockWidgetClosable
+                | _QDW.DockWidgetMovable
+                | _QDW.DockWidgetFloatable
+            )
+        except Exception:
+            pass
         restored = win.window.restoreDockWidget(outline_dock)
         if outline_dock.isFloating():
             outline_dock.setFloating(False)
