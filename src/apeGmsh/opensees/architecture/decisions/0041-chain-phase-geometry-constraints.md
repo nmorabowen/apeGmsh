@@ -1,11 +1,20 @@
-# ADR 0039 — Chain-phase routing for geometry-intensive constraints (`embedded`, `tied_contact`)
+# ADR 0041 — Chain-phase routing for geometry-intensive constraints (`embedded`, `tied_contact`)
 
-**Status:** DRAFT — needs user review before implementation begins.
+**Status:** ACCEPTED 2026-05-27. Authored as DRAFT during a multi-agent
+design review session; the 8 open questions were resolved with the
+worker's recommendations adopted verbatim. See **Decisions (resolved
+2026-05-27)** at the end of this file for the locked answers.
+Renumbered 0039 → 0041 at acceptance to honor reservations for
+ADR 0039 (`embedded host decomposition primitive`) and ADR 0040
+(`g.loads.imposed_strain` eigenstrain primitive) — both deferred per
+ADR 0038 but anticipated future ADRs that warrant the lower numbers.
+
 This ADR proposes the design for Compose v1.1-A.2; the
 [v1.1-A worker report (PR #380)](https://github.com/nmorabowen/apeGmsh/pull/380)
 explicitly deferred `EmbeddedDef` and `TiedContactDef` to a separate
 ADR because the architectural choices for the lifted geometric
-primitives are load-bearing. No code has shipped under this ADR yet.
+primitives are load-bearing. No code has shipped under this ADR yet —
+Phase 1 (Kuhn decomposition lift) follows acceptance.
 Builds on [ADR 0036](0036-embedded-host-decomposition.md) (the build-
 phase Kuhn decomposition this ADR proposes to lift) and
 [ADR 0038](0038-compose-model-composition.md) (the chain-phase router
@@ -825,69 +834,88 @@ for the v1.1-A.2 scope; deferred per
   extensions (Phases 2 + 4), one for the router branches (Phases 3
   + 5). Both small and focused.
 
-## Open questions for user review
+## Decisions (resolved 2026-05-27)
 
-The following decisions need explicit user sign-off before Phase 1
-starts. Each is phrased so the user can answer with yes / no / X
-rather than open-ended discussion.
+The 8 questions raised during DRAFT review were resolved with all
+worker recommendations adopted verbatim. Captured here for future
+session continuity — these decisions are locked unless an explicit
+ADR amendment supersedes them.
 
-1. **Module location for Kuhn decomposition.**
-   Proposal: new file
-   `src/apeGmsh/_kernel/geometry/_host_decomposition.py`. The
-   `_kernel/geometry/` directory does not exist today. Alternative
-   locations considered: `_kernel/resolvers/_constraint_resolver/_geom.py`
-   (existing module — would extend), `_kernel/_host_decomposition.py`
-   (no subdir). **Question: do you want a new `_kernel/geometry/`
-   subdir, or fold into the existing `_geom.py`?**
+1. **Module location for Kuhn decomposition.** **Accepted: new
+   subdir `src/apeGmsh/_kernel/geometry/_host_decomposition.py`.**
+   Rationale: the decomposition isn't constraint-specific — future
+   loads, masses, viewer slices can reuse. Putting it under
+   `_constraint_resolver/` would mis-scope it.
 
-2. **ADR number.** This file uses **0039** per the
-   next-free-number convention (worktree shows 0001–0038). The
-   v1.1-A.2 kickoff suggested 0041 anticipating two interleaved
-   ADRs. **Question: ship as 0039, or reserve gaps for in-flight
-   work and use 0041?**
+2. **ADR number.** **Accepted: renumber to 0041** to honor the
+   Phase 3 closeout's reservations of 0039 (`embedded host
+   decomposition primitive`) + 0040 (`g.loads.imposed_strain`
+   eigenstrain primitive). Both are deferred per ADR 0038 but
+   anticipated future ADRs that warrant the lower numbers.
 
-3. **`FEMDataSource` API split.** Proposal: two concrete-class
-   methods (`host_subelements_for`, `boundary_faces_for`).
-   Alternative: one combined `elements_for(target) -> dict[npe,
-   conn]` plus user-side decomposition. **Question: two-method
-   shape, or one combined accessor?**
+3. **`FEMDataSource` API split.** **Accepted: two concrete-class
+   methods** — `host_subelements_for(target)` +
+   `boundary_faces_for(target)`. Rationale: single-responsibility —
+   embedded only needs host_subelements; tied_contact only needs
+   boundary_faces. Combining them forces every caller to know
+   post-filter logic. Two methods also document intent at the API.
 
-4. **Protocol vs concrete-class only.** Proposal: keep the
-   `ResolverSource` Protocol at four methods; element-side queries
-   on the `FEMDataSource` concrete class only. **Question: agreed,
-   or extend the Protocol so future adapters know they need to
-   stub these?**
+4. **Protocol vs concrete-class only.** **Accepted: concrete-class
+   only.** Methods land on `FEMDataSource` (concrete); leave
+   `ResolverSource` Protocol unchanged at its four narrow methods.
+   Rationale: the Protocol's job is the narrow node-resolution
+   contract every reader can fulfil; element-side decomposition is
+   a FEMData-specific capability. Widening the Protocol would force
+   foreign adapters (LS-DYNA d3plot, xDMF, Exodus per ADR 0026)
+   into either stubs or refusal-to-conform — same anti-pattern as
+   the H5ModelReader "Protocol doesn't widen for results data"
+   decision.
 
 5. **`boundary_faces_for` and the dim=3-only-saved broker.**
-   Proposal: raise a clear `ValueError` ("no dim=2 ElementGroups in
-   FEMData; re-extract with `dim=None` and re-save") and defer the
-   volume-to-face synthesis. **Question: accept the gap with a
-   documented error message, or schedule the synthesis pass as
-   Phase 6?**
+   **Accepted: raise clean `ValueError` with documented remedy**
+   ("no dim=2 ElementGroups in FEMData; re-extract with `dim=None`
+   and re-save"). The volume-to-face synthesis pass is deferred —
+   substantial code (~300–500 lines) for a rare misconfiguration.
+   Users hitting it have a clear recovery path. If/when synthesis
+   turns out to be needed (a real user with a real `dim=3`-only
+   model), Phase 6 schedules then. YAGNI.
 
-6. **PR sequencing.** Proposal: two PRs — Phases 1+2+3 (embedded
-   slice) and Phases 4+5 (tied_contact slice). Alternative: one
-   monolithic PR shipping all five phases. **Question: two PRs,
-   or one?**
+6. **PR sequencing.** **Accepted: two PRs** — Phases 1+2+3
+   (embedded slice) and Phases 4+5 (tied_contact slice). Rationale:
+   embedded is the more common SSI use case; shipping it standalone
+   unblocks users earlier. Tied_contact is more specialized.
+   Matches the prior compose work's slice pattern.
 
-7. **Build-phase rename ripple.** Phase 1 changes
-   `ConstraintsComposite._collect_host_subelements` from a static
-   method that does everything to a thin adapter that delegates.
-   The module-level constants `HEX8_TO_6_TETS` /
-   `PRISM6_TO_3_TETS` / `PYRAMID5_TO_2_TETS` move to the new
-   geometry module. Any code importing those constants from
-   `ConstraintsComposite` breaks. **Question: is there any
-   external import surface (tests, examples, downstream user code)
-   that pulls the Kuhn tables from `ConstraintsComposite`, or are
-   we free to move them?**
+7. **Build-phase rename ripple.** **Accepted: audit + move
+   cleanly if no consumers; otherwise re-export from the new
+   module.** Phase 1's first task is the audit — survey for
+   `from apeGmsh.core.ConstraintsComposite import HEX8_TO_6_TETS`
+   (or similar) across the codebase + tests. If clean, move the
+   constants outright; if consumers exist, add re-export aliases
+   in `ConstraintsComposite` for backward compat.
 
-8. **`host_subelements_for` warning channel.** ADR 0036's higher-
-   order warning fires once per (etype, entity) at build time. In
-   chain phase there's no "entity" — the granularity is the
-   target label. Proposal: warn once per (etype, target). **Question:
-   accept the looser dedup (one warning per host label rather than
-   per entity), or thread an explicit entity context through the
-   chain phase even though gmsh isn't available?**
+8. **`host_subelements_for` warning channel.** **Accepted: per
+   `(etype, target)`.** Threading gmsh entity context into FEMData
+   purely for warning messages is gold-plating; the (etype, target)
+   pair gives the user enough information to find the offending
+   elements. Mirrors how other chain-phase errors phrase themselves
+   (e.g., the v1.1-A "Constraint label '...' resolves to neither a
+   label nor a physical group" message).
+
+### Phase 1 unblocking criteria
+
+With all 8 decisions resolved, Phase 1 (Kuhn decomposition lift)
+spawns as the next worker task. Sequencing:
+
+- **Phase 1**: lift Kuhn decomposition off gmsh → new module at
+  `_kernel/geometry/_host_decomposition.py` + tests + import-shim
+  audit per decision 7
+- **Phase 2**: `FEMDataSource.host_subelements_for` + tests
+- **Phase 3**: `EmbeddedDef` chain-phase routing in `_chain_phase_router.py` + integration tests
+- **PR boundary** (per decision 6)
+- **Phase 4**: `FEMDataSource.boundary_faces_for` (filter dim=2 ElementGroups by node-ownership) + tests
+- **Phase 5**: `TiedContactDef` chain-phase routing + integration tests
+- **PR boundary**
 
 ## Followups (not blocking)
 
