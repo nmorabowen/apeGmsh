@@ -230,6 +230,8 @@ class _IO:
         kind           : str,
         highest_dim_only: bool,
         sync           : bool,
+        heal           : bool | float = False,
+        dedupe         : bool | float = False,
         fuse           : bool = False,
         label          : str | None = None,
     ) -> dict[int, list[Tag]]:
@@ -240,30 +242,65 @@ class _IO:
         (dim, tag) pairs, registers every imported entity, and returns a
         dimension-indexed dict so callers can address entities immediately.
 
-        When ``fuse=True``, the imported top-dimension entities are
-        unioned via ``g.model.boolean.fuse`` into a single survivor.
-        When ``label`` is given, every surviving imported entity carries
-        that label (or the fused survivor alone, when fuse runs).
+        Order of operations when optional steps are enabled:
+        ``import -> heal -> dedupe -> fuse -> label``.
 
         Returns
         -------
         dict[int, list[Tag]]
             ``{dim: [tag, ...]}`` — e.g. ``{3: [1, 2], 2: [5, 6, 7]}``
         """
+        will_mutate = bool(heal) or bool(dedupe)
+
+        # Snapshot pre-existing entities so we can re-derive the
+        # "imported set" even after heal/dedupe rewrite the kernel.
+        snapshot: dict[int, set[Tag]] = (
+            {
+                d: {t for _, t in gmsh.model.getEntities(d)}
+                for d in range(4)
+            }
+            if will_mutate else {}
+        )
+
         raw: list[tuple[int, int]] = gmsh.model.occ.importShapes(
             str(file_path),
             highestDimOnly=highest_dim_only,
         )
-        if sync:
+        if sync or will_mutate:
             gmsh.model.occ.synchronize()
 
-        result: dict[int, list[Tag]] = {}
+        # Defer label until after optional fuse — fuse consumes its
+        # inputs and re-labels the survivor, so pre-labeling would
+        # orphan the PG.
         for dim, tag in raw:
-            # Defer label until after optional fuse — fuse consumes its
-            # inputs and re-labels the survivor, so pre-labeling here
-            # would orphan the PG.
             self._model._register(dim, tag, None, kind)
-            result.setdefault(dim, []).append(tag)
+
+        if heal:
+            heal_tol = 1e-8 if heal is True else float(heal)
+            if raw:
+                self.heal_shapes(list(raw), tolerance=heal_tol, sync=True)
+
+        if dedupe:
+            dedupe_tol = None if dedupe is True else float(dedupe)
+            self._model._parent.queries.remove_duplicates(
+                tolerance=dedupe_tol, sync=True,
+            )
+
+        # Re-derive the surviving imported set.
+        if will_mutate:
+            result: dict[int, list[Tag]] = {}
+            for d in range(4):
+                live = {t for _, t in gmsh.model.getEntities(d)}
+                new = sorted(live - snapshot.get(d, set()))
+                if new:
+                    result[d] = new
+                    for t in new:
+                        if (d, t) not in self._model._metadata:
+                            self._model._register(d, t, None, kind)
+        else:
+            result = {}
+            for dim, tag in raw:
+                result.setdefault(dim, []).append(tag)
 
         fused = False
         if fuse and result:
@@ -289,6 +326,12 @@ class _IO:
 
         dim_summary = {d: len(ts) for d, ts in result.items()}
         suffix = ""
+        if heal:
+            suffix += f"  healed(tol={1e-8 if heal is True else float(heal)})"
+        if dedupe:
+            suffix += "  deduped" + (
+                f"(tol={float(dedupe)})" if dedupe is not True else ""
+            )
         if fused:
             suffix += "  fused"
         if label:
@@ -304,6 +347,8 @@ class _IO:
         *,
         highest_dim_only: bool = True,
         sync            : bool = True,
+        heal            : bool | float = False,
+        dedupe          : bool | float = False,
         fuse            : bool = False,
         label           : str | None = None,
     ) -> dict[int, list[Tag]]:
@@ -320,6 +365,16 @@ class _IO:
             returned and registered (volumes for solids, surfaces for
             surface models).  Set to False to capture every sub-entity
             (faces, edges, vertices) as well.
+        heal : bool or float
+            Run ``heal_shapes`` on the imported entities immediately
+            after import.  ``True`` uses the default tolerance
+            (``1e-8``); a float overrides it (e.g. ``heal=1e-3`` for
+            mm-scale CAD).  For non-tolerance knobs, call
+            ``heal_shapes()`` directly.
+        dedupe : bool or float
+            Run ``g.model.queries.remove_duplicates`` after the import
+            (and after heal, if enabled).  ``True`` uses the current
+            Gmsh tolerance; a float overrides it for the call.
         fuse : bool
             If True, union all imported top-dimension entities into a
             single survivor via ``g.model.boolean.fuse``.  No-op when
@@ -350,7 +405,7 @@ class _IO:
         """
         return self._import_shapes(
             Path(file_path), 'iges', highest_dim_only, sync,
-            fuse=fuse, label=label,
+            heal=heal, dedupe=dedupe, fuse=fuse, label=label,
         )
 
     def load_step(
@@ -359,6 +414,8 @@ class _IO:
         *,
         highest_dim_only: bool = True,
         sync            : bool = True,
+        heal            : bool | float = False,
+        dedupe          : bool | float = False,
         fuse            : bool = False,
         label           : str | None = None,
     ) -> dict[int, list[Tag]]:
@@ -374,6 +431,16 @@ class _IO:
             If True (default) only the highest-dimension entities are
             returned and registered.  Set to False to include all
             sub-entities.
+        heal : bool or float
+            Run ``heal_shapes`` on the imported entities immediately
+            after import.  ``True`` uses the default tolerance
+            (``1e-8``); a float overrides it (e.g. ``heal=1e-3`` for
+            mm-scale CAD).  For non-tolerance knobs, call
+            ``heal_shapes()`` directly.
+        dedupe : bool or float
+            Run ``g.model.queries.remove_duplicates`` after the import
+            (and after heal, if enabled).  ``True`` uses the current
+            Gmsh tolerance; a float overrides it for the call.
         fuse : bool
             If True, union all imported top-dimension entities into a
             single survivor via ``g.model.boolean.fuse``.  No-op when
@@ -395,15 +462,16 @@ class _IO:
         -------
         ::
 
-            # one-shot: import an assembly, fuse it, and label it
+            # one-shot: import an assembly, clean + fuse + label
             imported = g.model.io.load_step(
-                "assembly.step", fuse=True, label="frame",
+                "assembly.step",
+                heal=True, dedupe=True, fuse=True, label="frame",
             )
             body = imported[3][0]   # single fused volume
         """
         return self._import_shapes(
             Path(file_path), 'step', highest_dim_only, sync,
-            fuse=fuse, label=label,
+            heal=heal, dedupe=dedupe, fuse=fuse, label=label,
         )
 
     def heal_shapes(
