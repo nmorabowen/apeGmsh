@@ -11,6 +11,12 @@ generically — apeGmsh stores connectivity but not the per-spring
 direction vectors. We therefore default to axis-aligned directions
 (suffix 0 → x, 1 → y, 2 → z) and let the user override per diagram if
 their model uses skew springs.
+
+Render seam (ADR 0042, R-B): emits one arrow :class:`GlyphLayer` via
+``self._backend`` and holds no VTK objects. Signed force flips the
+arrow (orientation = value × direction); the absolute value drives the
+glyph scale. Springs sit at the reference configuration (no
+deformation sync). Same shape as the migrated LoadsDiagram.
 """
 from __future__ import annotations
 
@@ -18,11 +24,11 @@ import re
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
-import pyvista as pv
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
 from ._styles import SpringForceStyle
+from ..scene_ir import ColorSpec, GlyphLayer, PointSet
 
 if TYPE_CHECKING:
     from apeGmsh.results.Results import Results
@@ -64,14 +70,15 @@ class SpringForceDiagram(Diagram):
             )
         super().__init__(spec, results)
 
-        self._source: Optional[pv.PolyData] = None
-        self._actor: Any = None
+        self._layer: Optional[GlyphLayer] = None
+        self._handle: Any = None
         self._element_ids_to_read: tuple[int, ...] = ()
-        self._spring_positions: Optional[ndarray] = None
+        self._positions: Optional[ndarray] = None   # (n, 3) spring coords
+        self._values: Optional[ndarray] = None      # (n,) signed force/def
         self._direction: Optional[ndarray] = None
         self._initial_scale: float = 1.0
 
-        # Mapping from slab position -> spring index in our PolyData
+        # Mapping from slab position -> spring index in our layer order
         self._slab_to_spring_pos: Optional[ndarray] = None
 
         self._runtime_scale: Optional[float] = None
@@ -166,8 +173,7 @@ class SpringForceDiagram(Diagram):
             slab_values_all[:, valid_mask] if slab_values_all.ndim == 2
             else slab_values_all
         )
-        n = positions_in_slab_order.shape[0]
-        self._spring_positions = positions_in_slab_order
+        self._positions = positions_in_slab_order
         self._slab_to_spring_pos = np.where(valid_mask)[0]
 
         # Direction
@@ -197,38 +203,13 @@ class SpringForceDiagram(Diagram):
         else:
             self._initial_scale = float(style.scale)
 
-        # Build source PolyData with vector field
-        source = pv.PolyData(positions_in_slab_order)
-        source.point_data["_vec"] = np.tile(d, (n, 1))
-        source.point_data["_mag"] = np.abs(slab_values)
-        # Encode signed magnitude in vector length so negative values flip
-        source.point_data["_vec"][:] = (
-            slab_values[:, None] * d[None, :]
-        )
-        # Magnitude column stores absolute value for glyph scale
-        source.point_data["_mag"] = np.abs(slab_values)
-        self._source = source
-
-        glyph = self._build_glyph(self.current_scale())
-
-        actor = plotter.add_mesh(
-            glyph,
-            color=style.color,
-            opacity=1.0,
-            lighting=False,
-            name=self._actor_name(),
-            reset_camera=False,
-            show_scalar_bar=False,
-            # Decorative overlay — picks pass through to the substrate.
-            pickable=False,
-        )
-        self._actor = actor
-        self._actors = [actor]
+        # Emit the arrow glyph layer through the backend.
+        self._values = slab_values
+        self._layer = self._build_layer(slab_values, self.current_scale())
+        self._handle = self._backend.add_layer(self._layer)
 
     def update_to_step(self, step_index: int) -> None:
-        if self._source is None or self._actor is None:
-            return
-        if self._direction is None:
+        if self._layer is None or self._handle is None or self._direction is None:
             return
         results = self._scoped_results()
         if results is None:
@@ -250,30 +231,30 @@ class SpringForceDiagram(Diagram):
         ):
             return
         ours = slab_values[self._slab_to_spring_pos]
-        self._source.point_data["_vec"][:] = (
-            ours[:, None] * self._direction[None, :]
-        )
-        self._source.point_data["_mag"][:] = np.abs(ours)
-        try:
-            self._source.Modified()
-        except Exception:
-            pass
-        glyph = self._build_glyph(self.current_scale())
-        try:
-            mapper = self._actor.GetMapper()
-            mapper.SetInputData(glyph)
-            mapper.Modified()
-        except Exception:
-            pass
+        self._values = ours
+        self._layer = self._build_layer(ours, self.current_scale())
+        self._backend.update_layer(self._handle, self._layer)
 
     def detach(self) -> None:
-        self._source = None
-        self._actor = None
+        if self._backend is not None and self._handle is not None:
+            self._backend.remove_layer(self._handle)
+        self._layer = None
+        self._handle = None
         self._element_ids_to_read = ()
-        self._spring_positions = None
+        self._positions = None
+        self._values = None
         self._direction = None
         self._slab_to_spring_pos = None
         super().detach()
+
+    # ------------------------------------------------------------------
+    # Visibility (backend-routed)
+    # ------------------------------------------------------------------
+
+    def set_visible(self, visible: bool) -> None:
+        self._visible = visible
+        if self._backend is not None and self._handle is not None:
+            self._backend.set_layer_visible(self._handle, bool(visible))
 
     # ------------------------------------------------------------------
     # Runtime style
@@ -281,13 +262,9 @@ class SpringForceDiagram(Diagram):
 
     def set_scale(self, scale: float) -> None:
         self._runtime_scale = float(scale)
-        if self._source is not None and self._actor is not None:
-            try:
-                glyph = self._build_glyph(self.current_scale())
-                self._actor.GetMapper().SetInputData(glyph)
-                self._actor.GetMapper().Modified()
-            except Exception:
-                pass
+        if self._values is not None and self._handle is not None:
+            self._layer = self._build_layer(self._values, self.current_scale())
+            self._backend.update_layer(self._handle, self._layer)
 
     def set_direction(
         self, direction: tuple[float, float, float],
@@ -297,20 +274,10 @@ class SpringForceDiagram(Diagram):
         if norm < 1e-12:
             return
         self._direction = d / norm
-        if self._source is None:
+        if self._values is None or self._handle is None:
             return
-        # Re-orient existing vectors using the latest magnitude column.
-        mags = np.asarray(self._source.point_data["_mag"])
-        # Recover signed values: we don't have the sign on hand; assume
-        # positive (caller can re-step to refresh).
-        self._source.point_data["_vec"][:] = mags[:, None] * self._direction[None, :]
-        try:
-            self._source.Modified()
-            glyph = self._build_glyph(self.current_scale())
-            self._actor.GetMapper().SetInputData(glyph)
-            self._actor.GetMapper().Modified()
-        except Exception:
-            pass
+        self._layer = self._build_layer(self._values, self.current_scale())
+        self._backend.update_layer(self._handle, self._layer)
 
     def current_scale(self) -> float:
         if self._runtime_scale is not None:
@@ -321,8 +288,8 @@ class SpringForceDiagram(Diagram):
     # Internal
     # ------------------------------------------------------------------
 
-    def _actor_name(self) -> str:
-        return f"diagram_spring_{id(self):x}"
+    def _layer_id(self) -> str:
+        return f"spring_{id(self):x}"
 
     def _scoped_results(self) -> "Optional[Results]":
         if self.spec.stage_id is not None:
@@ -332,19 +299,21 @@ class SpringForceDiagram(Diagram):
         except Exception:
             return None
 
-    def _build_glyph(self, scale: float) -> pv.PolyData:
-        if self._source is None:
-            return pv.PolyData()
+    def _build_layer(self, values: ndarray, scale: float) -> GlyphLayer:
+        """Arrow glyph layer: orientation = value × dir (sign flips the
+        arrow), scale = |value| × ``scale``."""
         style: SpringForceStyle = self.spec.style    # type: ignore[assignment]
-        try:
-            return self._source.glyph(
-                orient="_vec",
-                scale="_mag",
-                factor=float(scale),
-                geom=pv.Arrow(tip_length=style.arrow_tip_fraction),
-            )
-        except Exception:
-            return pv.PolyData(np.asarray(self._source.points))
+        assert self._positions is not None and self._direction is not None
+        orientations = values[:, None] * self._direction[None, :]
+        scales = np.abs(values) * float(scale)
+        return GlyphLayer(
+            layer_id=self._layer_id(),
+            positions=PointSet(self._positions),
+            kind="arrow",
+            orientations=orientations,
+            scales=scales,
+            color=ColorSpec(mode="solid", solid_rgb=style.color),
+        )
 
     @staticmethod
     def _collect_zero_length_ids(view: "ViewerData") -> ndarray:
