@@ -81,10 +81,12 @@ model.h5
 │     └── coords                           (N, 3) float64
 ├── /elements
 │     └── /{gmsh_alias}                    one group per element type (tet4, hex8, …)
-├── /physical_groups
-│     └── /{name}                          one group per Gmsh physical group
-├── /labels
-│     └── /{name}                          one group per apeGmsh label
+├── /physical_groups                      schema 2.10: side-partitioned
+│     ├── /node_side/{name}                node-side physical group entries
+│     └── /element_side/{name}             element-side physical group entries
+├── /labels                                schema 2.10: side-partitioned
+│     ├── /node_side/{name}                node-side label entries
+│     └── /element_side/{name}             element-side label entries
 ├── /mesh_selections
 │     └── /{name}                          one group per post-mesh selection set
 ├── /constraints
@@ -147,7 +149,7 @@ Attributes only.
 
 | Attribute | Type | Description |
 |---|---|---|
-| `schema_version` | string | semver, e.g. `"2.4.0"` |
+| `schema_version` | string | semver, e.g. `"2.10.0"` (current) |
 | `apeGmsh_version` | string | producing apeGmsh version |
 | `created_iso` | string | ISO 8601 timestamp |
 | `ndm` | int | spatial dimension |
@@ -155,10 +157,15 @@ Attributes only.
 | `snapshot_id` | string | hash of FEMData snapshot the bridge was built from |
 | `model_name` | string | user-provided model name |
 
-Schema versioning is **strict on major**, **lax on minor/patch**. A
-reader written for `2.x.y` MUST refuse to read `1.x.y` or `3.x.y`
-files. Within `2.x.y`, additions are allowed without breaking
-readers.
+Schema versioning is **strict on major**, **bounded on minor** via
+the two-version reader window
+([ADR 0023](decisions/0023-per-zone-schema-versioning.md)). A reader
+written for `2.Y.*` accepts `2.Y.*` and `2.(Y-1).*` and refuses
+older minors, newer minors, or any other major. The window applies
+to **additive-only** changes; layout-perturbing minor bumps (such
+as the B2 2.10 split of `/physical_groups/` and `/labels/`) walk
+the window forward and the prior minor falls out of reach — see
+[ADR 0023's 2026-05-28 amendment](decisions/0023-per-zone-schema-versioning.md#amendment--2026-05-28--window-applies-to-additive-only-changes-b2--pr-398).
 
 ## `/nodes`
 
@@ -202,37 +209,68 @@ below for the cross-reference contract.
 
 ## `/physical_groups`
 
-Neutral-zone group at the root, broker-owned.  One sub-group per
-Gmsh physical group; combines node-side and element-side membership.
+Neutral-zone group at the root, broker-owned.  **Schema 2.10
+side-partitioned**: node-side and element-side entries live under
+separate `node_side/` and `element_side/` sub-trees rather than
+flattening into a single namespace.
 
 ```
-/physical_groups/Slab/
-├── attrs: dim=2, tag=100, name="Slab"
-├── node_ids          (Np,) int64
-├── node_coords       (Np, 3) float64
-└── element_ids       (Ep,) int64        — present for dim>=1
+/physical_groups/
+├── /node_side/Slab/
+│     ├── attrs: dim=2, tag=100, name="Slab"
+│     ├── node_ids          (Np,) int64
+│     └── node_coords       (Np, 3) float64
+└── /element_side/Slab/
+      ├── attrs: dim=2, tag=100, name="Slab"
+      ├── element_ids       (Ep,) int64
+      ├── node_ids          (Np,) int64       — element-derived membership
+      └── node_coords       (Np, 3) float64
 ```
 
-The combined-side shape matches the master plan's "top-level index for
-viewer discovery": one `physical_groups[name]` walk gives the viewer
-everything it needs to colour a PG.
+A PG that exists on both composites (the gmsh-extracted convention,
+where node membership is derived from element membership) gets one
+entry per side. A PG that exists only on the element-side broker
+composite (the hand-constructed case) writes only into
+`element_side/`, with no phantom `node_side/` entry.
+
+**The 2.10 split closes the snapshot_id drift bug**
+([ADR 0021's 2026-05-28 amendment](decisions/0021-lineage-chain-replaces-snapshot-id.md#amendment--2026-05-28--inv-1-retired-with-schema-210-b2--pr-398)
+and [project memory `project_h5_schema_2_10_b2_shipped`](../../../README.md)).
+Prior to 2.10 the layout was flat (`/physical_groups/{name}/...`)
+and the reader heuristically classified entries by field presence,
+producing phantom node-side entries that flipped the hash on
+hand-constructed FEMData round-trips.
+
+**Reader semantics**: each sub-tree is walked independently. No
+inference, no shared-dataset reuse across sides. A PG present on
+both sides produces two restored composite entries that share the
+`(dim, tag)` key — `nodes.physical[(dim, tag)]` and
+`elements.physical[(dim, tag)]` — the broker treats them as
+independent records (which they are, semantically).
 
 ## `/labels`
 
-Same shape as `/physical_groups`, with apeGmsh-internal labels in
-place of Gmsh PG taxonomy.  Each label entry carries the same
-fields (`dim`, `tag`, `name`, `node_ids`, `node_coords`, optional
+Same shape and side-partition as `/physical_groups`. Node-side
+labels live under `labels/node_side/{name}`, element-side under
+`labels/element_side/{name}`. Each entry carries the same fields
+(`dim`, `tag`, `name`, `node_ids`, `node_coords`, optional
 `element_ids`).
 
 ## `/mesh_selections`
 
-Same shape as `/physical_groups` / `/labels`, with post-mesh
-selection sets in place of Gmsh-derived taxonomy.  Sourced from
-``fem.mesh_selection`` (a
+Same per-entry payload as `/physical_groups` / `/labels` (`dim`,
+`tag`, `name`, `node_ids`, `node_coords`, optional `element_ids`),
+but **the layout remains flat** in schema 2.10 — entries live
+directly under `/mesh_selections/{name}/`, not under `node_side/` /
+`element_side/` sub-trees. Mesh selections are a single broker store
+(not partitioned by side), so the flat write/read is unambiguous;
+B2's side-split did not extend here. The H5Model reader auto-detects
+layout by sub-tree presence and falls back to the flat walk for this
+section.
+
+Sourced from `fem.mesh_selection` (a
 :class:`apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore` captured
 at ``get_fem_data()`` time when ``g.mesh_selection`` has entries).
-Each entry carries the same fields (`dim`, `tag`, `name`,
-`node_ids`, `node_coords`, optional `element_ids`).
 
 ```
 /mesh_selections/base/
@@ -747,14 +785,23 @@ fixed length (e.g. `ndf` for forces, 6 for element-load params). Use
 
 ## Versioning
 
-`/meta/schema_version` follows semver:
+`/meta/schema_version` follows semver, governed by
+[ADR 0023](decisions/0023-per-zone-schema-versioning.md):
 
-- **Major** bump → breaking change. Readers refuse.
+- **Major** bump → breaking change. Readers refuse outright.
 - **Minor** bump → additive (new group, new attribute). Readers
-  ignore unknown groups.
+  one minor behind continue to parse via the two-version window,
+  ignoring unknown groups.
 - **Patch** bump → internal/cosmetic. Readers must not depend.
 
-The current schema version is **`2.5.0`**.
+**Window caveat.** The two-version window applies to **additive-only**
+minor bumps. A minor bump that perturbs the canonical bytes of a
+required structure (the B2 layout split at 2.10 being the canonical
+example) walks the window forward and the prior minor falls out of
+reach. See
+[ADR 0023's 2026-05-28 amendment](decisions/0023-per-zone-schema-versioning.md#amendment--2026-05-28--window-applies-to-additive-only-changes-b2--pr-398).
+
+The current schema version is **`2.10.0`**.
 
 History:
 
@@ -813,6 +860,23 @@ History:
   `read_cuts_and_sweeps`.  Additive — pre-v4 readers (2.4.0 and
   earlier) ignore the new groups; missing groups return empty
   tuples.
+- `2.6.0` through `2.9.0` — additive evolution: `/meta/lineage`
+  (ADR 0021), `/meta/neutral_schema_version` (ADR 0023),
+  `/nodes/ndf` (S1b shell-to-solid), interpolation-payload widening
+  (ADR 0035), `/composed_from/` + `tag_span_max` + `module_label`
+  parallel datasets (ADR 0038 / compose v1 Phase 3A.1).
+- `2.10.0` — **B2 schema bump** (PR #398). `/physical_groups/` and
+  `/labels/` split into `node_side/` and `element_side/` sub-trees,
+  fixing a snapshot_id drift bug where the flat layout's
+  side-classification heuristic produced phantom node-side entries
+  on hand-constructed FEMData round-trips. Element-side groups now
+  write their own `node_ids` / `node_coords` (the prior writer
+  stripped them to `(0,)` on disk — adjacent latent bug). The
+  `compute_snapshot_id` hash widened to fold element-side PGs and
+  labels (previously element-side PGs were invisible to the hash,
+  and labels weren't hashed at all). **Not additive** — 2.9
+  files cannot be read by the 2.10 reader, the window slid forward.
+  ADR 0021 INV-1 retired; ADR 0023 window semantics reframed.
 
 A reader skeleton:
 

@@ -233,3 +233,44 @@ minor versions in CI.
   this ADR is the structural implementation of.
 - `mesh/_femdata_hash.py` — today's `snapshot_id` implementation; the
   basis for `fem_hash`.
+
+## Amendment — 2026-05-28 — INV-1 retired with schema 2.10 (B2 / PR #398)
+
+**INV-1 is retired** with the H5 schema 2.10 bump.
+
+The original wording — *"`fem_hash` semantics are byte-identical to
+today's `snapshot_id` for the neutral zone. Existing files written
+under `schema_version` 2.x continue to validate; the migration is
+purely additive"* — assumed every 2.x minor would preserve the hash.
+The B2 schema bump explicitly violates that assumption:
+
+- **Layout change.** `/physical_groups/` and `/labels/` split into
+  `node_side/` + `element_side/` sub-trees, fixing an unrecoverable
+  side-info-loss in the prior flat layout
+  (see [[project-h5-schema-2-10-b2-shipped]] for the bug it closes).
+- **Hash widening.** `compute_snapshot_id` now folds element-side PGs
+  and labels (previously element-side PGs were invisible to the hash
+  and labels weren't hashed at all). The change is intentional —
+  element-side PG mutations now perturb `fem_hash`, which they
+  silently did not before.
+
+Both changes flip every `snapshot_id` / `fem_hash` value in the wild.
+Files written before 2.10 cannot be re-validated by a 2.10 reader,
+even when the file would still parse — the recompute is structurally
+different.
+
+**Replacement guidance.** The lineage chain semantic (INV-2 through
+INV-5) is preserved. Specifically:
+
+- INV-2 (warn-not-raise) is unchanged.
+- INV-3 (one-directional tamper-evidence) is unchanged.
+- INV-4 (no cuts / sweeps in `model_hash`) is unchanged.
+- INV-5 (canonical-bytes determinism within the reader window) is
+  reframed: see [ADR 0023's 2026-05-28 amendment](0023-per-zone-schema-versioning.md)
+  for the new window semantics. Determinism still holds **within a
+  single neutral minor version**; across a layout-affecting bump
+  (such as 2.9 → 2.10), `fem_hash` is allowed to change.
+
+Future schema bumps that perturb canonical bytes should likewise be
+called out at this site rather than treated as routine — the original
+"purely additive" framing is the exception, not the rule.

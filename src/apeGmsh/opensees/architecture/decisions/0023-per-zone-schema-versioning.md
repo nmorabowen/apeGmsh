@@ -221,3 +221,50 @@ auto-upgrades them.
 - `opensees/emitter/h5_reader.py:50` — today's binary
   `EXPECTED_SCHEMA_MAJOR` rule, replaced by the per-zone window
   validation.
+
+## Amendment — 2026-05-28 — Window applies to additive-only changes (B2 / PR #398)
+
+The B2 schema bump (`neutral_schema_version: 2.9.0 → 2.10.0`) closed
+the snapshot_id drift bug by restructuring the on-disk H5 layout for
+`/physical_groups/` and `/labels/` into node-side / element-side
+sub-trees. Per the bump-cadence table above, a non-additive change to
+a required field's layout is a **major** bump. We instead shipped it
+as a minor bump and accepted that the 2.10 reader cannot parse 2.9
+files even though they nominally fall within the two-version window.
+
+The path of least resistance was reframing the window's scope rather
+than bumping to `3.0.0`:
+
+**The two-version window applies to ADDITIVE changes only.** When a
+minor bump perturbs the canonical bytes of a required structure (the
+classic example being the B2 layout restructure), the window does
+not guarantee that the prior minor can be read by the current reader.
+Rejecting `(Y-1).*` files in that case is the correct behaviour, not
+a regression.
+
+**Implications for the bump-cadence table**:
+
+- A minor bump that is **purely additive** (new dataset, new
+  attribute, new payload field; old required fields preserved) still
+  benefits from the window. Two-minor compat is preserved.
+- A minor bump that **restructures required content** (renamed group,
+  changed dtype, layout split) effectively walks the window forward
+  by one and locks the prior minor out — even though the version
+  number remains in the window's range. This was previously
+  ambiguous in the ADR; this amendment makes it explicit.
+
+**INV-5 (ADR 0021) is reframed accordingly.** Canonical-bytes
+determinism holds *within a single neutral minor version*, not
+across a layout-affecting bump.
+
+**For future bumps**: if a planned change perturbs canonical bytes of
+a required structure, either (a) bump the major and refuse the prior
+minor unambiguously, or (b) ship the change behind a side-attribute
+that lets the prior layout coexist (the "additive-only" path). Choice
+(a) is the cleaner signal; choice (b) preserves the window but
+constrains the design.
+
+The window mechanism itself is unchanged; the contract test
+`test_pre_2_8_0_schema_rejected` (renamed to follow the prior minor
+as the window slides) still locks the "below-window rejected"
+guarantee.
