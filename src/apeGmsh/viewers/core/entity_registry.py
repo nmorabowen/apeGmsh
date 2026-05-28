@@ -51,6 +51,12 @@ class EntityRegistry:
         "_bboxes",
         "_add_mesh_kwargs",
         "origin_shift",
+        # Node-cloud rebuild support — visibility manager needs the
+        # full node coord array, per-dim (node_idx, entity_tag) pairs,
+        # and the build-time kwargs to re-render a filtered subset.
+        "_node_coords",
+        "dim_node_entity_pairs",
+        "_node_cloud_kwargs",
     )
 
     def __init__(self) -> None:
@@ -82,6 +88,17 @@ class EntityRegistry:
         self._bboxes: dict[DimTag, np.ndarray] = {}            # DimTag -> (8, 3) corners
         self._add_mesh_kwargs: dict[int, dict] = {}            # dim -> kwargs for add_mesh
         self.origin_shift: np.ndarray = np.zeros(3)            # subtracted from world coords
+        # Node-cloud rebuild support (populated by build_mesh_scene via
+        # ``register_node_cloud_data``).  ``dim_node_entity_pairs[d]`` is
+        # an (K, 2) int64 array of (node_idx_into_node_coords, entity_tag)
+        # pairs — a node shared by N entities of the same dim contributes
+        # N rows.  Lets ``VisibilityManager._rebuild_node_cloud`` filter
+        # the cloud by the *expanded* hidden set while preserving the
+        # shared-boundary rule (a node owned by a still-visible entity
+        # stays drawn).
+        self._node_coords: np.ndarray | None = None
+        self.dim_node_entity_pairs: dict[int, np.ndarray] = {}
+        self._node_cloud_kwargs: dict = {}
 
     # ------------------------------------------------------------------
     # Registration
@@ -154,6 +171,31 @@ class EntityRegistry:
         """Register a per-dim node-glyph actor."""
         self.dim_node_clouds[dim] = cloud
         self.dim_node_actors[dim] = actor
+
+    def register_node_cloud_data(
+        self,
+        node_coords: np.ndarray,
+        dim_node_entity_pairs: dict[int, np.ndarray],
+        kwargs: dict,
+    ) -> None:
+        """Stash the inputs ``VisibilityManager`` needs to rebuild node
+        clouds after a hide.
+
+        ``node_coords`` is the full ``(N_nodes, 3)`` coordinate array
+        (the same one ``build_mesh_scene`` slices to feed
+        :func:`build_node_cloud`).  ``dim_node_entity_pairs[d]`` is an
+        ``(K_d, 2)`` int64 array whose rows are
+        ``(node_idx_into_node_coords, entity_tag)`` — *one row per
+        (node, owning-entity) pair*, so a node shared by two entities
+        of the same dim contributes two rows.  ``kwargs`` holds the
+        keyword args passed to :func:`build_node_cloud` at scene-build
+        time (``model_diagonal``, ``marker_size``, ``color``); the
+        rebuild reuses them so the rebuilt cloud matches the original
+        visual styling exactly.
+        """
+        self._node_coords = node_coords
+        self.dim_node_entity_pairs = dict(dim_node_entity_pairs)
+        self._node_cloud_kwargs = dict(kwargs)
 
     def set_silhouette(self, dim: int, actor: Any, kwargs: dict) -> None:
         """Track the explicit silhouette actor + its ``add_silhouette``

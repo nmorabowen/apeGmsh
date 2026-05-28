@@ -250,6 +250,11 @@ class VisibilityManager:
             # needs its own filtered rebuild so hidden points vanish.
             if dim == 0:
                 self._rebuild_point_glyphs(effective)
+                # The per-dim node cloud for dim=0 (registered in
+                # ``mesh_scene.py``) is a second sphere-glyph actor at
+                # the same locations as the dim-0 fill actor — without
+                # its own rebuild it would resurrect every hidden point.
+                self._rebuild_node_cloud(0, effective)
                 continue
 
             # Drop this dim's prior silhouette. pyvista's silhouette is
@@ -344,6 +349,16 @@ class VisibilityManager:
                 except Exception:
                     pass
 
+            # Rebuild the per-dim node cloud from the visible-node
+            # subset.  Without this the per-dim sphere-glyph actor
+            # (registered globally in ``mesh_scene.py``) keeps drawing
+            # every node of this dim, leaving ghost-node sprites on top
+            # of the freshly-filtered fill actor when entities are
+            # hidden.  Honors the same ``effective`` set used above so
+            # the shared-boundary rule is preserved: a node owned by a
+            # still-visible entity (e.g. on a shared face) stays drawn.
+            self._rebuild_node_cloud(dim, effective)
+
         if self._verbose:
             import time as _time
             print(f"[visibility] _rebuild_actors: {(_time.perf_counter()-_t0)*1000:.1f}ms  "
@@ -400,6 +415,84 @@ class VisibilityManager:
             idle_color=np.array(THEME.current.dim_pt, dtype=np.uint8),
         )
         reg.swap_dim(0, mesh, actor)
+
+    def _rebuild_node_cloud(self, dim: int, effective: set["DimTag"]) -> None:
+        """Rebuild ``registry.dim_node_actors[dim]`` from the *visible*
+        node subset.
+
+        The per-dim sphere-glyph node cloud is registered once in
+        ``mesh_scene.py`` and was never touched by the fill-rebuild
+        loop — every node of every dim stayed on screen regardless of
+        hide state.  This method closes that gap.
+
+        Filtering rule (matches the fill rebuild):
+
+        - Look at ``registry.dim_node_entity_pairs[dim]`` — rows are
+          ``(node_idx, entity_tag)`` for every (node, owning-entity)
+          pair within ``dim``.
+        - A node is **visible** if at least one of its owning entities
+          is not in ``effective``.  This implements the shared-boundary
+          rule: when a node is shared between hidden entity A and
+          visible entity B (both of the same dim), B keeps it alive.
+        - Rebuild the cloud from the surviving node indices, re-using
+          the build kwargs stashed at scene-build time so the visual
+          styling (color / marker size) matches the original.
+
+        No-op when the registry has no pair data for *dim* — the
+        scene-build path falls through to a gmsh-fallback for dims
+        whose centroid pass failed, which doesn't carry entity tags;
+        the prior all-nodes-visible behaviour is preserved for those.
+        """
+        reg = self._registry
+        pairs = reg.dim_node_entity_pairs.get(dim)
+        node_coords = reg._node_coords
+        if pairs is None or len(pairs) == 0 or node_coords is None:
+            return
+
+        if effective:
+            hidden_tags = [dt[1] for dt in effective if dt[0] == dim]
+        else:
+            hidden_tags = []
+
+        if hidden_tags:
+            visible_pairs_mask = ~np.isin(pairs[:, 1], hidden_tags)
+            if not visible_pairs_mask.any():
+                # Every node has at least one hidden owner and no
+                # visible owner — blank the actor (preserve the entry
+                # so reveal_all can resurrect it).
+                old = reg.dim_node_actors.get(dim)
+                if old is not None:
+                    try:
+                        old.SetVisibility(False)
+                    except Exception:
+                        pass
+                return
+            visible_node_indices = np.unique(pairs[visible_pairs_mask, 0])
+        else:
+            visible_node_indices = np.unique(pairs[:, 0])
+
+        visible_coords = node_coords[visible_node_indices]
+        if len(visible_coords) == 0:
+            return
+
+        plotter = self._plotter
+        old = reg.dim_node_actors.get(dim)
+        if old is not None:
+            try:
+                plotter.remove_actor(old)
+            except Exception:
+                pass
+
+        from ..scene.glyph_points import build_node_cloud
+        kw = reg._node_cloud_kwargs or {}
+        new_cloud, new_actor = build_node_cloud(
+            plotter,
+            visible_coords,
+            model_diagonal=kw.get("model_diagonal", 1.0),
+            marker_size=kw.get("marker_size", 6.0),
+            color=kw.get("color"),
+        )
+        reg.register_node_cloud(dim, new_cloud, new_actor)
 
     def _fire(self) -> None:
         for cb in self.on_changed:

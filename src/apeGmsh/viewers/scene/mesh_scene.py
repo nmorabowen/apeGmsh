@@ -396,6 +396,14 @@ def build_mesh_scene(
     # per-entity centroid pass. Reused by the node-cloud build below
     # to avoid a second gmsh boundary-traversal over every entity.
     dim_node_tag_acc: dict[int, list[np.ndarray]] = {}
+    # Parallel accumulator of entity tags — each entry is an array of
+    # the same length as the matching ``dim_node_tag_acc`` entry,
+    # filled with the contributing entity's tag.  Lets the
+    # visibility-rebuild path know which entity owns each node so the
+    # cloud can be filtered after a hide (including the shared-
+    # boundary rule when a node is owned by both hidden and visible
+    # entities of the same dim).
+    dim_node_entity_tag_acc: dict[int, list[np.ndarray]] = {}
 
     # ── build batched actors per dim ────────────────────────────────
     t_actors = time.perf_counter()
@@ -444,8 +452,10 @@ def build_mesh_scene(
                     # Stash for the per-dim node-cloud build below so
                     # we don't issue a second gmsh.getNodes pass over
                     # every entity (saves a full boundary traversal).
-                    dim_node_tag_acc.setdefault(dim, []).append(
-                        np.asarray(ntags, dtype=np.int64)
+                    ntags_arr = np.asarray(ntags, dtype=np.int64)
+                    dim_node_tag_acc.setdefault(dim, []).append(ntags_arr)
+                    dim_node_entity_tag_acc.setdefault(dim, []).append(
+                        np.full(len(ntags_arr), tag, dtype=np.int64)
                     )
             except Exception:
                 pass
@@ -598,6 +608,47 @@ def build_mesh_scene(
             color=node_color,
         )
         registry.register_node_cloud(d, cloud_d, actor_d)
+
+    # ── per-dim (node_idx, entity_tag) pairs for visibility rebuild ──
+    # Built from the same per-entity accumulator used above so the
+    # rebuild can keep nodes whose owning entity is still visible
+    # (preserving the shared-boundary rule).  Only the cached path
+    # carries entity tags; the gmsh-fallback path used by
+    # ``dim_node_indices`` above does not, so dims that fell through
+    # to it have no pairs and the rebuild is a no-op for them.
+    dim_node_entity_pairs: dict[int, np.ndarray] = {}
+    if len(node_tags) > 0 and len(tag_to_idx) > 0:
+        _max_t = len(tag_to_idx) - 1
+        for d in sorted(dim_node_entity_tag_acc.keys()):
+            cached_ntags = dim_node_tag_acc.get(d)
+            cached_etags = dim_node_entity_tag_acc.get(d)
+            if not cached_ntags or not cached_etags:
+                continue
+            flat_ntags = np.concatenate(cached_ntags)
+            flat_etags = np.concatenate(cached_etags)
+            if len(flat_ntags) != len(flat_etags):
+                continue
+            in_range = (flat_ntags >= 0) & (flat_ntags <= _max_t)
+            flat_ntags = flat_ntags[in_range]
+            flat_etags = flat_etags[in_range]
+            flat_idx = tag_to_idx[flat_ntags]
+            valid = flat_idx >= 0
+            if not valid.any():
+                continue
+            pairs = np.column_stack(
+                [flat_idx[valid].astype(np.int64, copy=False),
+                 flat_etags[valid].astype(np.int64, copy=False)]
+            )
+            dim_node_entity_pairs[d] = pairs
+    registry.register_node_cloud_data(
+        node_coords=filt_coords,
+        dim_node_entity_pairs=dim_node_entity_pairs,
+        kwargs={
+            "model_diagonal": diag,
+            "marker_size": node_marker_size,
+            "color": node_color,
+        },
+    )
 
     # KD-tree for nearest-node picking
     node_tree = None
