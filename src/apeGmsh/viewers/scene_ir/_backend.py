@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ._layers import SceneLayer, ScalarBarSpec, VisibilityMask
+from ._layers import ColorSpec, SceneLayer, ScalarBarSpec, VisibilityMask
 
 
 @runtime_checkable
@@ -80,12 +80,32 @@ class RenderBackend(Protocol):
         """
         ...
 
-    def add_scalar_bar(self, spec: ScalarBarSpec) -> None:
-        """Show a scalar bar (colour legend) for ``spec.layer_id``."""
+    def set_layer_color(self, handle: LayerHandle, color: "ColorSpec") -> None:
+        """Re-apply colour to an existing layer without re-adding it.
+
+        ``solid`` sets the actor colour; ``by_array`` rebinds the
+        mapper's scalars + lookup table (preset / clim / log). This is
+        the live-recolour path a diagram drives when the ColorMapEditor
+        changes the cmap or range (the diagram-side LUT mirror
+        translates its state into a plain :class:`ColorSpec` / ``LutSpec``
+        and calls here — the backend never sees Qt).
+        """
+        ...
+
+    def add_scalar_bar(self, handle: LayerHandle, spec: "ScalarBarSpec") -> None:
+        """Show a scalar bar bound to ``handle``'s mapper.
+
+        Keyed by ``spec.layer_id`` so multiple diagrams coexist even
+        when they share a display title.
+        """
         ...
 
     def remove_scalar_bar(self, layer_id: str) -> None:
         """Remove the scalar bar keyed by ``layer_id``. Idempotent."""
+        ...
+
+    def set_scalar_bar_format(self, layer_id: str, fmt: str) -> None:
+        """Update the tick-label ``printf`` format of a layer's bar."""
         ...
 
     def reset_camera(self) -> None:

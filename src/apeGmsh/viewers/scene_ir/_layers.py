@@ -126,6 +126,7 @@ class LutSpec:
     vmin: float = 0.0
     vmax: float = 1.0
     n_colors: int = 256
+    log_scale: bool = False
 
 
 @dataclass(frozen=True, eq=False)
@@ -223,6 +224,10 @@ class GlyphLayer:
     kind: Literal["arrow", "sphere", "cone", "axes"] = "sphere"
     orientations: Optional[np.ndarray] = None
     scales: Optional[np.ndarray] = None
+    # Per-glyph scalar used ONLY for ``ColorSpec(by_array)`` colouring —
+    # distinct from ``scales`` (glyph size). E.g. a vector diagram sizes
+    # by magnitude×factor but colours by the raw magnitude.
+    color_scalar: Optional[np.ndarray] = None
     color: ColorSpec = field(default_factory=ColorSpec)
     visibility: VisibilityMask = field(default_factory=VisibilityMask)
 
@@ -237,6 +242,9 @@ class GlyphLayer:
         if self.scales is not None:
             arr = np.ascontiguousarray(self.scales, dtype=np.float32)
             object.__setattr__(self, "scales", arr)
+        if self.color_scalar is not None:
+            arr = np.ascontiguousarray(self.color_scalar)
+            object.__setattr__(self, "color_scalar", arr)
 
 
 @dataclass(frozen=True, eq=False)

@@ -62,6 +62,26 @@ class ScalarBarSupport:
             # without magnitude colors). The runtime flag is recorded
             # for future re-attach, but there is nothing to mutate.
             return
+        # Render-seam path (ADR 0042): migrated diagrams hold a backend +
+        # layer handle; route the bar through the backend keyed by
+        # layer_id. Un-migrated diagrams fall through to the plotter.
+        if self._uses_backend():
+            lid = self._handle.layer_id
+            if show:
+                from ..scene_ir import ScalarBarSpec
+                self._backend.add_scalar_bar(
+                    self._handle,
+                    ScalarBarSpec(
+                        layer_id=lid,
+                        title=self._scalar_bar_title(),
+                        lut=self._current_lutspec(),
+                    ),
+                )
+                if self._runtime_fmt:
+                    self._backend.set_scalar_bar_format(lid, self._runtime_fmt)
+            else:
+                self._backend.remove_scalar_bar(lid)
+            return
         if getattr(self, "_actor", None) is None or self._plotter is None:
             return
         title = self._scalar_bar_title()
@@ -74,6 +94,9 @@ class ScalarBarSupport:
         """Update the bar's tick-label ``printf`` format string live."""
         fmt = str(fmt)
         self._runtime_fmt = fmt
+        if self._uses_backend():
+            self._backend.set_scalar_bar_format(self._handle.layer_id, fmt)
+            return
         bar = self._scalar_bar_actor()
         if bar is None:
             return
@@ -81,6 +104,34 @@ class ScalarBarSupport:
             bar.SetLabelFormat(fmt)
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Render-seam helpers (ADR 0042, R-B)
+    # ------------------------------------------------------------------
+
+    def _uses_backend(self) -> bool:
+        """True when the host is a migrated diagram (backend + handle)."""
+        return (
+            getattr(self, "_backend", None) is not None
+            and getattr(self, "_handle", None) is not None
+        )
+
+    def _current_lutspec(self) -> Any:
+        """A plain ``LutSpec`` snapshot of the host's LUT mirror (if any).
+
+        The Qt LUT mirror stays diagram-side; this is the plain-spec
+        translation that crosses the seam.
+        """
+        from ..scene_ir import LutSpec
+        lut = getattr(self, "_lut", None)
+        if lut is not None:
+            return LutSpec(
+                name=getattr(lut, "preset", "viridis"),
+                vmin=float(getattr(lut, "vmin", 0.0)),
+                vmax=float(getattr(lut, "vmax", 1.0)),
+                log_scale=bool(getattr(lut, "log_scale", False)),
+            )
+        return LutSpec()
 
     # ------------------------------------------------------------------
     # Hooks (override per diagram if its bar is conditional or its
@@ -117,7 +168,17 @@ class ScalarBarSupport:
             return None
 
     def _remove_scalar_bar(self, title: str) -> None:
-        """Remove the bar for ``title`` from the plotter, idempotent."""
+        """Remove the bar from the plotter, idempotent.
+
+        Routes through the backend (keyed by layer_id) for migrated
+        diagrams; otherwise removes by title from the plotter.
+        """
+        if self._uses_backend():
+            try:
+                self._backend.remove_scalar_bar(self._handle.layer_id)
+            except Exception:
+                pass
+            return
         plotter = getattr(self, "_plotter", None)
         if plotter is None:
             return

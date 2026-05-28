@@ -4,21 +4,26 @@ Same pattern as ``DeformedShapeDiagram``: ``selector.component`` is the
 diagram's display label; the actual vector field is built from
 ``style.components`` (default: 3-D translational displacement).
 
-Per-step update reads N components, recomputes the glyph PolyData,
-and rebinds the actor's mapper input — actor identity stable across
-steps.
+Render seam (ADR 0042, R-B Wave 1 #4 — first colour-mapped diagram).
+Emits one arrow :class:`GlyphLayer` via the backend; holds no VTK
+objects. Glyph **size** uses ``magnitude × scale`` (folded into
+``scales``); when ``use_magnitude_colors`` the glyph **colour** uses the
+raw magnitude (``color_scalar`` + ``ColorSpec(by_array)``). The Qt LUT
+mirror stays diagram-side — its ``changed`` signal is translated into a
+plain ``ColorSpec`` and pushed through ``backend.set_layer_color`` (the
+backend never sees Qt).
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
-import pyvista as pv
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
 from ._scalar_bar_support import ScalarBarSupport
 from ._styles import VectorGlyphStyle
+from ..scene_ir import ColorSpec, GlyphLayer, LutSpec, PointSet, ScalarBarSpec
 
 if TYPE_CHECKING:
     from apeGmsh.results.Results import Results
@@ -40,14 +45,11 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             )
         super().__init__(spec, results)
 
-        self._source: Optional[pv.PolyData] = None
-        self._actor: Any = None
+        self._layer: Optional[GlyphLayer] = None
+        self._handle: Any = None
+        self._coords: Optional[ndarray] = None
         self._fem_ids_to_read: Optional[ndarray] = None
         self._submesh_pos_of_id: Optional[ndarray] = None
-        # Substrate row indices the arrow source points were sampled
-        # from. Cached at attach so sync_substrate_points can rebuild
-        # the source.points as ``deformed_pts[substrate_idx]`` when the
-        # active geometry deforms.
         self._substrate_idx: Optional[ndarray] = None
         self._initial_scale: float = 1.0
         self._initial_clim: Optional[tuple[float, float]] = None
@@ -57,16 +59,11 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         self._runtime_cmap: Optional[str] = None
         self._init_scalar_bar_state()
 
-        # Plan 06 — LUT mirror. Only built when ``use_magnitude_colors``
-        # is True (the no-color path doesn't draw a scalar bar / cmap).
+        # Diagram-side LUT mirror (Qt). Built only when colouring by
+        # magnitude; the ColorMapEditor binds to it.
         self._lut: Any = None
         self._lut_conn: Any = None
 
-        # Axis-locked mode: when ``selector.component`` matches one of
-        # ``style.components``, render that axis only and zero the
-        # others. Auto-fit scale still uses the full ‖vec‖ across all
-        # steps (see _read_global_mag_max) so axis-x / axis-y /
-        # resultant diagrams compare at the same arrow length.
         comp = getattr(spec.selector, "component", "") or ""
         style: VectorGlyphStyle = spec.style    # type: ignore[assignment]
         try:
@@ -75,7 +72,6 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             self._axis = None
 
     def _scalar_bar_is_enabled(self) -> bool:
-        """VectorGlyph only paints a bar when colouring by magnitude."""
         style: VectorGlyphStyle = self.spec.style    # type: ignore[assignment]
         return bool(getattr(style, "use_magnitude_colors", False))
 
@@ -90,35 +86,27 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         scene: "FEMSceneData | None" = None,
     ) -> None:
         if scene is None:
-            raise RuntimeError(
-                "VectorGlyphDiagram.attach requires a FEMSceneData."
-            )
+            raise RuntimeError("VectorGlyphDiagram.attach requires a FEMSceneData.")
         super().attach(plotter, view, scene)
         style: VectorGlyphStyle = self.spec.style    # type: ignore[assignment]
 
-        # ── Resolve node IDs ────────────────────────────────────────
         node_ids = self._resolved_node_ids
         if node_ids is None:
             node_ids = scene.node_ids.copy()
         if node_ids.size == 0:
             return
 
-        # Map FEM ids to substrate point indices
         max_id = int(max(node_ids.max(), scene.node_ids.max())) + 1
         lookup = np.full(max_id + 1, -1, dtype=np.int64)
-        lookup[scene.node_ids] = np.arange(
-            scene.node_ids.size, dtype=np.int64,
-        )
+        lookup[scene.node_ids] = np.arange(scene.node_ids.size, dtype=np.int64)
         substrate_idx = lookup[node_ids]
         valid = substrate_idx >= 0
         if not valid.any():
             return
         node_ids = node_ids[valid]
         substrate_idx = substrate_idx[valid]
-
         coords = np.asarray(scene.grid.points)[substrate_idx].copy()
 
-        # Lookup table FEM id -> position in our source PolyData
         n = node_ids.size
         max_id = int(node_ids.max()) + 1
         submesh_pos = np.full(max_id + 1, -1, dtype=np.int64)
@@ -126,22 +114,12 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         self._submesh_pos_of_id = submesh_pos
         self._fem_ids_to_read = node_ids
         self._substrate_idx = substrate_idx.copy()
+        self._coords = coords
 
-        source = pv.PolyData(coords)
-        source.point_data["_vec"] = np.zeros((n, 3), dtype=np.float64)
-        source.point_data["_mag"] = np.zeros(n, dtype=np.float64)
-        self._source = source
-
-        # Read step-0 vectors (for initial display) and compute global
-        # magnitude statistics across all steps for auto-fit scale/clim.
         vecs0 = self._read_vectors(0)
-        source.point_data["_vec"][:] = vecs0
         mags0 = np.linalg.norm(vecs0, axis=1)
-        source.point_data["_mag"][:] = mags0
-
         global_mag_max = self._read_global_mag_max()
 
-        # Determine scale (auto-fit if not provided)
         if style.scale is None:
             max_abs = global_mag_max if global_mag_max > 0.0 else float(
                 mags0.max() if mags0.size else 0.0
@@ -155,11 +133,8 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         else:
             self._initial_scale = float(style.scale)
 
-        # Determine initial clim (over magnitudes across all steps)
         if style.clim is not None:
-            self._initial_clim = (
-                float(style.clim[0]), float(style.clim[1]),
-            )
+            self._initial_clim = (float(style.clim[0]), float(style.clim[1]))
         else:
             hi = (
                 global_mag_max if global_mag_max > 0.0
@@ -172,109 +147,73 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
                 hi = lo + 1.0
             self._initial_clim = (lo, hi)
 
-        # Build glyph PolyData
-        glyph = self._build_glyph(self.current_scale())
+        self._layer = self._build_layer(vecs0, mags0, self.current_scale())
+        self._handle = self._backend.add_layer(self._layer)
 
-        kwargs: dict[str, Any] = dict(
-            name=self._actor_name(),
-            reset_camera=False,
-            lighting=False,
-            # Decorative overlay — picks pass through to the substrate.
-            pickable=False,
-        )
-        if style.use_magnitude_colors:
-            bar_args = self._scalar_bar_args()
-            kwargs.update(
-                scalars="_mag",
-                cmap=self._runtime_cmap or style.cmap,
-                clim=self._runtime_clim or self._initial_clim,
-                show_scalar_bar=bar_args is not None,
-                scalar_bar_args=bar_args,
-            )
-        else:
-            kwargs.update(
-                color=style.color,
-                show_scalar_bar=False,
-            )
-
-        actor = plotter.add_mesh(glyph, **kwargs)
-        self._actor = actor
-        self._actors = [actor]
-
-        # Build the LUT mirror only when the diagram is actually painting
-        # by magnitude — without a scalar mapping there's nothing for the
-        # Color Map Editor to drive.
+        # LUT mirror + scalar bar only when colouring by magnitude.
         if style.use_magnitude_colors:
             self._init_lut()
+            if self._effective_show_scalar_bar():
+                self._backend.add_scalar_bar(
+                    self._handle,
+                    ScalarBarSpec(
+                        layer_id=self._handle.layer_id,
+                        title=self._scalar_bar_title(),
+                        lut=self._current_lutspec(),
+                    ),
+                )
 
     def update_to_step(self, step_index: int) -> None:
-        if self._source is None or self._actor is None:
+        if self._layer is None or self._handle is None:
             return
         vecs = self._read_vectors(int(step_index))
         if vecs is None:
             return
         mags = np.linalg.norm(vecs, axis=1)
-        self._source.point_data["_vec"][:] = vecs
-        self._source.point_data["_mag"][:] = mags
-        try:
-            self._source.Modified()
-        except Exception:
-            pass
-        # Rebuild the glyph and rebind the mapper input. We don't
-        # ``add_mesh`` again — the actor is reused.
-        glyph = self._build_glyph(self.current_scale())
-        try:
-            mapper = self._actor.GetMapper()
-            mapper.SetInputData(glyph)
-            mapper.Modified()
-        except Exception:
-            pass
+        self._layer = self._build_layer(vecs, mags, self.current_scale())
+        self._backend.update_layer(self._handle, self._layer)
 
     def sync_substrate_points(
         self, deformed_pts: "ndarray | None", scene: "FEMSceneData",
     ) -> None:
-        """Move arrow tails to follow the deformed substrate.
-
-        Re-samples ``self._substrate_idx`` rows from ``deformed_pts``
-        (or ``scene.grid.points`` when ``None`` — that's already at the
-        reference state by the time deformation sync runs). Then
-        rebuilds the arrow glyph PolyData and rebinds the mapper input
-        — same path ``update_to_step`` uses, so the arrows orient and
-        scale against the latest read vectors.
-        """
+        """Move arrow tails to follow the deformed substrate."""
         if (
-            self._source is None
-            or self._actor is None
+            self._layer is None
+            or self._handle is None
             or self._substrate_idx is None
         ):
             return
-        try:
-            target_pts = (
-                np.asarray(deformed_pts, dtype=np.float64)
-                if deformed_pts is not None
-                else np.asarray(scene.grid.points, dtype=np.float64)
-            )
-            self._source.points = target_pts[self._substrate_idx]
-            glyph = self._build_glyph(self.current_scale())
-            mapper = self._actor.GetMapper()
-            mapper.SetInputData(glyph)
-            mapper.Modified()
-        except Exception:
-            pass
+        target_pts = (
+            np.asarray(deformed_pts, dtype=np.float64)
+            if deformed_pts is not None
+            else np.asarray(scene.grid.points, dtype=np.float64)
+        )
+        self._coords = target_pts[self._substrate_idx]
+        # Rebuild at the new tail positions from the layer's existing
+        # orientations + magnitudes (arrows orient/scale unchanged).
+        orientations = np.asarray(self._layer.orientations, dtype=np.float64)
+        mags = (
+            np.asarray(self._layer.color_scalar, dtype=np.float64)
+            if self._layer.color_scalar is not None
+            else np.linalg.norm(orientations, axis=1)
+        )
+        self._layer = self._build_layer(orientations, mags, self.current_scale())
+        self._backend.update_layer(self._handle, self._layer)
 
     def detach(self) -> None:
-        # Drop the magnitude scalar bar before tearing the actor down
-        # so it doesn't accumulate across attach/detach cycles.
         self._remove_scalar_bar(self._scalar_bar_title())
         if self._lut is not None and self._lut_conn is not None:
             try:
                 self._lut.changed.disconnect(self._lut_conn)
             except (TypeError, RuntimeError):
                 pass
+        if self._backend is not None and self._handle is not None:
+            self._backend.remove_layer(self._handle)
         self._lut = None
         self._lut_conn = None
-        self._source = None
-        self._actor = None
+        self._layer = None
+        self._handle = None
+        self._coords = None
         self._fem_ids_to_read = None
         self._submesh_pos_of_id = None
         self._substrate_idx = None
@@ -282,24 +221,35 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         super().detach()
 
     # ------------------------------------------------------------------
+    # Visibility (backend-routed)
+    # ------------------------------------------------------------------
+
+    def set_visible(self, visible: bool) -> None:
+        self._visible = visible
+        if self._backend is not None and self._handle is not None:
+            self._backend.set_layer_visible(self._handle, bool(visible))
+
+    # ------------------------------------------------------------------
     # Runtime adjustments
     # ------------------------------------------------------------------
 
     def set_scale(self, scale: float) -> None:
         self._runtime_scale = float(scale)
-        # Re-apply current step values with new scale
-        if self._source is not None:
-            try:
-                glyph = self._build_glyph(self.current_scale())
-                self._actor.GetMapper().SetInputData(glyph)
-                self._actor.GetMapper().Modified()
-            except Exception:
-                pass
+        if self._layer is not None and self._handle is not None:
+            mags = (
+                np.asarray(self._layer.color_scalar, dtype=np.float64)
+                if self._layer.color_scalar is not None
+                else np.linalg.norm(
+                    np.asarray(self._layer.orientations, dtype=np.float64), axis=1
+                )
+            )
+            vecs = np.asarray(self._layer.orientations, dtype=np.float64)
+            self._layer = self._build_layer(vecs, mags, self.current_scale())
+            self._backend.update_layer(self._handle, self._layer)
 
     @property
     def lut(self) -> Any:
-        """Shared lookup-table mirror; ``None`` when not painting by
-        magnitude or outside attach."""
+        """Shared LUT mirror; ``None`` when not colouring by magnitude."""
         return self._lut
 
     def set_clim(self, vmin: float, vmax: float) -> None:
@@ -309,17 +259,11 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             self._lut.set_range(float(vmin), float(vmax))
             return
         self._runtime_clim = (float(vmin), float(vmax))
-        if self._actor is not None:
-            try:
-                mapper = self._actor.GetMapper()
-                mapper.SetScalarRange(*self._runtime_clim)
-            except Exception:
-                pass
 
     def autofit_clim_at_current_step(self) -> Optional[tuple[float, float]]:
-        if self._source is None:
+        if self._layer is None or self._layer.color_scalar is None:
             return None
-        mags = np.asarray(self._source.point_data["_mag"])
+        mags = np.asarray(self._layer.color_scalar)
         finite = mags[np.isfinite(mags)]
         if finite.size == 0:
             return None
@@ -333,21 +277,9 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         self._runtime_cmap = cmap
         if self._lut is not None:
             self._lut.set_preset(cmap)
-            return
-        if self._actor is None:
-            return
-        try:
-            lut = pv.LookupTable(cmap)
-            clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
-            lut.scalar_range = clim
-            mapper = self._actor.GetMapper()
-            mapper.SetLookupTable(lut)
-            mapper.SetScalarRange(*clim)
-        except Exception:
-            pass
 
     # ------------------------------------------------------------------
-    # LUT mirror (plan 06)
+    # LUT mirror (diagram-side; changes pushed through the backend)
     # ------------------------------------------------------------------
 
     def _init_lut(self) -> None:
@@ -370,22 +302,26 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
             self._lut_conn = None
 
     def _on_lut_changed(self) -> None:
-        if self._lut is None or self._actor is None:
+        if self._lut is None or self._handle is None or self._backend is None:
             return
         self._runtime_cmap = self._lut.preset
         self._runtime_clim = (self._lut.vmin, self._lut.vmax)
-        self._apply_lut_to_actor()
-
-    def _apply_lut_to_actor(self) -> None:
-        if self._actor is None or self._lut is None:
-            return
-        try:
-            table = self._lut.to_pyvista_lookup_table()
-            mapper = self._actor.GetMapper()
-            mapper.SetLookupTable(table)
-            mapper.SetScalarRange(self._lut.vmin, self._lut.vmax)
-        except Exception:
-            pass
+        color = ColorSpec(
+            mode="by_array",
+            array_name=self._color_array_name(),
+            lut=self._current_lutspec(),
+        )
+        self._backend.set_layer_color(self._handle, color)
+        # Refresh the bar so it reflects the new LUT.
+        if self._effective_show_scalar_bar():
+            self._backend.add_scalar_bar(
+                self._handle,
+                ScalarBarSpec(
+                    layer_id=self._handle.layer_id,
+                    title=self._scalar_bar_title(),
+                    lut=self._current_lutspec(),
+                ),
+            )
 
     def current_scale(self) -> float:
         if self._runtime_scale is not None:
@@ -399,8 +335,40 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
     # Internal
     # ------------------------------------------------------------------
 
-    def _actor_name(self) -> str:
-        return f"diagram_vector_{id(self):x}"
+    def _layer_id(self) -> str:
+        return f"vector_{id(self):x}"
+
+    def _color_array_name(self) -> str:
+        return self.spec.selector.component or "magnitude"
+
+    def _build_layer(
+        self, vecs: ndarray, mags: ndarray, scale: float,
+    ) -> GlyphLayer:
+        """Arrow glyph: size = magnitude × scale; colour (when enabled) =
+        raw magnitude through the LUT."""
+        style: VectorGlyphStyle = self.spec.style    # type: ignore[assignment]
+        assert self._coords is not None
+        if style.use_magnitude_colors:
+            clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
+            cmap = self._runtime_cmap or style.cmap
+            color = ColorSpec(
+                mode="by_array",
+                array_name=self._color_array_name(),
+                lut=LutSpec(name=cmap, vmin=float(clim[0]), vmax=float(clim[1])),
+            )
+            color_scalar = mags
+        else:
+            color = ColorSpec(mode="solid", solid_rgb=style.color)
+            color_scalar = None
+        return GlyphLayer(
+            layer_id=self._layer_id(),
+            positions=PointSet(self._coords),
+            kind="arrow",
+            orientations=vecs,
+            scales=mags * float(scale),
+            color_scalar=color_scalar,
+            color=color,
+        )
 
     def _scoped_results(self) -> "Optional[Results]":
         if self.spec.stage_id is not None:
@@ -442,13 +410,7 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         return out
 
     def _read_global_mag_max(self) -> float:
-        """Maximum |vector| across every step. ``0.0`` if unavailable.
-
-        Reads each component's full ``(T, N)`` slab once and reduces to
-        a single scalar — ``sqrt(sum_axes(values**2)).max()``. Used to
-        size the auto-fit scale/clim so they're meaningful at the
-        end-of-history rather than at the (near-zero) first increment.
-        """
+        """Maximum |vector| across every step. ``0.0`` if unavailable."""
         if self._fem_ids_to_read is None or self._submesh_pos_of_id is None:
             return 0.0
         results = self._scoped_results()
@@ -480,8 +442,6 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
                 slab_ids_ref = np.asarray(slab.node_ids, dtype=np.int64)
         if not slabs or n_t == 0:
             return 0.0
-        # Sum of squared values across components (broadcast safely if
-        # one component happens to have a different time count).
         ssq = np.zeros_like(slabs[0])
         for v in slabs:
             t = min(ssq.shape[0], v.shape[0])
@@ -491,20 +451,3 @@ class VectorGlyphDiagram(ScalarBarSupport, Diagram):
         except ValueError:
             return 0.0
         return mag_max if np.isfinite(mag_max) else 0.0
-
-    def _build_glyph(self, scale: float) -> pv.PolyData:
-        """Return a freshly-built arrow PolyData from ``self._source``."""
-        if self._source is None:
-            return pv.PolyData()
-        style: VectorGlyphStyle = self.spec.style    # type: ignore[assignment]
-        # PyVista's glyph() respects orient + scale; ``factor`` is the
-        # global multiplier we want (already includes the auto-fit).
-        try:
-            return self._source.glyph(
-                orient="_vec",
-                scale="_mag",
-                factor=float(scale),
-                geom=pv.Arrow(tip_length=style.arrow_tip_fraction),
-            )
-        except Exception:
-            return pv.PolyData(np.asarray(self._source.points))

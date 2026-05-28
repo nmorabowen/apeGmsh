@@ -283,15 +283,65 @@ class PyVistaQtBackend:
             except Exception:
                 pass
 
-    def add_scalar_bar(self, spec: ScalarBarSpec) -> None:
-        bar = self._plotter.add_scalar_bar(title=spec.title)
-        self._scalar_bars[spec.layer_id] = bar
+    def set_layer_color(self, handle: _PvHandle, color: ColorSpec) -> None:
+        actor = handle.actor
+        if actor is None:
+            return
+        try:
+            mapper = actor.GetMapper()
+        except Exception:
+            return
+        if color.mode == "by_array" and color.lut is not None:
+            try:
+                if color.array_name and handle.dataset is not None:
+                    handle.dataset.set_active_scalars(color.array_name)
+            except Exception:
+                pass
+            try:
+                table = _lookup_table_from_lutspec(color.lut)
+                mapper.SetLookupTable(table)
+                mapper.SetScalarRange(color.lut.vmin, color.lut.vmax)
+            except Exception:
+                pass
+        elif color.mode == "solid":
+            try:
+                actor.prop.color = color.solid_rgb
+            except Exception:
+                pass
+
+    def add_scalar_bar(self, handle: _PvHandle, spec: ScalarBarSpec) -> None:
+        actor = handle.actor
+        if actor is None:
+            return
+        try:
+            mapper = actor.GetMapper()
+        except Exception:
+            return
+        # Drop any prior bar for this layer before re-adding.
+        self.remove_scalar_bar(spec.layer_id)
+        try:
+            bar = self._plotter.add_scalar_bar(
+                title=spec.title, mapper=mapper, interactive=True,
+            )
+            self._scalar_bars[spec.layer_id] = (spec.title, bar)
+        except Exception:
+            pass
 
     def remove_scalar_bar(self, layer_id: str) -> None:
-        bar = self._scalar_bars.pop(layer_id, None)
-        if bar is not None:
+        entry = self._scalar_bars.pop(layer_id, None)
+        if entry is not None:
+            title, _bar = entry
             try:
-                self._plotter.remove_scalar_bar(title=getattr(bar, "title", None))
+                self._plotter.remove_scalar_bar(title)
+            except Exception:
+                pass
+
+    def set_scalar_bar_format(self, layer_id: str, fmt: str) -> None:
+        entry = self._scalar_bars.get(layer_id)
+        if entry is not None:
+            _title, bar = entry
+            try:
+                bar.SetLabelFormat(fmt)
             except Exception:
                 pass
 
@@ -339,18 +389,32 @@ class PyVistaQtBackend:
     def _add_glyph_layer(self, layer: GlyphLayer) -> _PvHandle:
         cloud = pv.PolyData(layer.positions.coords)
         if layer.orientations is not None:
-            cloud["vectors"] = layer.orientations
+            cloud["_vec"] = layer.orientations
         if layer.scales is not None:
-            cloud["scalars"] = layer.scales
+            cloud["_size"] = layer.scales
+        color = layer.color
+        # Per-glyph colour scalar (by_array). Attached to the source so
+        # vtkGlyph3D broadcasts it onto every glyph instance's points.
+        if (
+            color.mode == "by_array"
+            and color.array_name
+            and layer.color_scalar is not None
+        ):
+            cloud[color.array_name] = layer.color_scalar
         geom = _glyph_geometry(layer.kind)
         glyphed = cloud.glyph(
             geom=geom,
-            orient="vectors" if layer.orientations is not None else False,
-            scale="scalars" if layer.scales is not None else False,
+            orient="_vec" if layer.orientations is not None else False,
+            scale="_size" if layer.scales is not None else False,
         )
         kwargs: dict[str, Any] = {}
-        if layer.color.mode == "solid":
-            kwargs["color"] = layer.color.solid_rgb
+        if color.mode == "by_array" and color.array_name:
+            kwargs["scalars"] = color.array_name
+            if color.lut is not None:
+                kwargs["cmap"] = color.lut.name
+                kwargs["clim"] = (color.lut.vmin, color.lut.vmax)
+        else:
+            kwargs["color"] = color.solid_rgb
         actor = self._plotter.add_mesh(glyphed, **kwargs)
         return _PvHandle(layer.layer_id, actor, glyphed, "glyph")
 
@@ -359,6 +423,26 @@ class PyVistaQtBackend:
             layer.positions.coords, list(layer.texts)
         )
         return _PvHandle(layer.layer_id, actor, None, "label")
+
+
+def _lookup_table_from_lutspec(lut: "Any") -> Any:
+    """Build a ``pv.LookupTable`` from a :class:`LutSpec`.
+
+    The re-homed counterpart of the diagram-side LUT mirror's
+    ``to_pyvista_lookup_table`` — keeps all VTK/pyvista LUT construction
+    inside the backend so the mirror stays Qt-only and trame-portable.
+    """
+    table = pv.LookupTable(lut.name)
+    table.scalar_range = (lut.vmin, lut.vmax)
+    if getattr(lut, "log_scale", False):
+        try:
+            table.log_scale = True
+        except Exception:
+            try:
+                table.SetScaleToLog10()
+            except Exception:
+                pass
+    return table
 
 
 def _glyph_geometry(kind: str) -> Any:
