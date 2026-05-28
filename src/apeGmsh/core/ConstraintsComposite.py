@@ -284,7 +284,19 @@ class ConstraintsComposite:
         declaration instead, mirroring
         ``LoadsComposite``/``MassesComposite._add_def``.  Label
         validation is skipped for NodeToSurfaceDef / EmbeddedDef
-        (bare tags)."""
+        (bare tags).
+
+        Chain phase
+        -----------
+        When the session is in chain phase (``g._fem is not None``)
+        ``g.parts._instances`` is typically empty — the user came in
+        via ``apeGmsh.from_h5(...)`` or ``g.compose(...)`` rather than
+        building parts up from gmsh.  Validate labels against the
+        FEMData broker's labels / physical groups via
+        :class:`FEMDataSource.has_target` instead, so cross-session
+        interface bridging (Compose v1.1-A) keeps the same fail-loud
+        contract without requiring a parts registry.
+        """
         if type(defn) not in _DISPATCH:
             raise TypeError(
                 f"{type(defn).__name__} has no _DISPATCH entry — it "
@@ -293,14 +305,30 @@ class ConstraintsComposite:
                 f"before use."
             )
         if not isinstance(defn, (NodeToSurfaceDef, EmbeddedDef)):
-            parts = getattr(self._parent, "parts", None)
-            if parts is not None and hasattr(parts, "_instances"):
+            in_chain_phase = getattr(self._parent, "_fem", None) is not None
+            if in_chain_phase:
+                # Chain phase: validate via the FEMData broker.
+                from apeGmsh._kernel.resolvers._source import FEMDataSource
+
+                src = FEMDataSource(self._parent._fem)
                 for lbl in (defn.master_label, defn.slave_label):
-                    if lbl not in parts._instances:
+                    if not src.has_target(lbl):
                         raise KeyError(
-                            f"Part label \'{lbl}\' not found in g.parts.  "
-                            f"Available: {list(parts._instances)}"
+                            f"Constraint label {lbl!r} resolves to "
+                            f"neither a label nor a physical group in "
+                            f"the current FEMData chain head — pass a "
+                            f"label/PG name that exists in the loaded "
+                            f"model."
                         )
+            else:
+                parts = getattr(self._parent, "parts", None)
+                if parts is not None and hasattr(parts, "_instances"):
+                    for lbl in (defn.master_label, defn.slave_label):
+                        if lbl not in parts._instances:
+                            raise KeyError(
+                                f"Part label \'{lbl}\' not found in g.parts.  "
+                                f"Available: {list(parts._instances)}"
+                            )
         self.constraint_defs.append(defn)
         # Phase 3B.2d / ADR 0038 — chain-phase routing.  Constraint
         # defs (equalDOF / rigidLink / rigidDiaphragm / embedded /

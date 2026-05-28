@@ -465,13 +465,19 @@ class TestChainPhaseRouting:
         assert mrecs[0].mass[2] == 5.0
 
     def test_route_def_to_fem_returns_none_on_unsupported(self) -> None:
-        """route_def_to_fem returns None for shapes outside the minimum
-        viable router (e.g. complex constraint defs)."""
-        from apeGmsh._kernel.defs.constraints import EqualDOFDef
+        """route_def_to_fem returns None for shapes outside the
+        chain-phase router's coverage.
+
+        v1.1-A added ``EqualDOFDef`` / ``RigidLinkDef`` /
+        ``RigidDiaphragmDef`` coverage; ``EmbeddedDef`` and
+        ``TiedContactDef`` still need element-/face-connectivity
+        queries and remain on the bump-counter fallback (v1.1-A.2).
+        """
+        from apeGmsh._kernel.defs.constraints import TiedContactDef
 
         fem = _make_fem()
-        defn = EqualDOFDef(
-            master_label="a", slave_label="b", dofs=[1, 2, 3],
+        defn = TiedContactDef(
+            master_label="a", slave_label="b", tolerance=1.0,
         )
         result = route_def_to_fem(fem, defn)
         assert result is None

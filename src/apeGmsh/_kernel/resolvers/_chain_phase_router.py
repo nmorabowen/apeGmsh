@@ -1,4 +1,4 @@
-"""Chain-phase routing helpers — Phase 3B.2d / ADR 0038.
+"""Chain-phase routing helpers — Phase 3B.2d / Compose v1.1-A.
 
 When a session is in *chain phase* (``g._fem is not None``) the broker
 is canonical and the legacy "store def → re-extract on next
@@ -7,27 +7,40 @@ circuits to the cached FEMData and never re-resolves the def lists.
 
 This module provides the bridge: given a session whose latest broker
 snapshot is ``g._fem``, plus a freshly-built definition (``BCDef`` /
-``PointMassDef`` / etc.), it resolves the def against the FEMData
-via :class:`FEMDataSource` and returns a new :class:`FEMData` with
-the resulting records appended via the broker's ``with_*`` transforms.
+``PointMassDef`` / ``EqualDOFDef`` / etc.), it resolves the def against
+the FEMData via :class:`FEMDataSource` and returns a new :class:`FEMData`
+with the resulting records appended via the broker's ``with_*``
+transforms.
 
-Scope (intentional minimum-viable surface)
-------------------------------------------
-The chain-phase router covers the def types whose resolution needs
-only **node ids + names** — no element connectivity, no face area, no
-edge tributary, no quadrature.  Concretely:
+Scope
+-----
+The chain-phase router covers def types whose resolution can be answered
+out of the broker without a live gmsh session:
 
 * ``BCDef`` → one :class:`SPRecord` per restrained DOF per node.
 * ``PointMassDef`` → one :class:`MassRecord` per resolved node.
 * ``PointLoadDef`` → one :class:`NodalLoadRecord` per resolved node.
 
-Defs that need geometry-aware reduction (line / face / body loads;
-line / face / body masses; interface-bridging constraints like
-``embedded`` / ``tied_contact`` / ``equalDOF`` / ``rigid_link`` /
-``rigid_diaphragm``) fall back to the bump-counter pattern in chain
-phase.  Those are deferred to a follow-up that widens the
-:class:`FEMDataSource` adapter with element-side queries (face area,
-edge tributary).
+Plus the node-only interface-bridging constraints (Compose v1.1-A):
+
+* ``EqualDOFDef`` → one :class:`NodePairRecord` per co-located pair.
+* ``RigidLinkDef`` → one :class:`NodePairRecord` per slave node.
+* ``RigidDiaphragmDef`` → one :class:`NodeGroupRecord`.
+
+These use :class:`FEMDataSource.nodes_for` to resolve master/slave
+labels into node-id sets, then run the same pure-Python
+:class:`~apeGmsh._kernel.resolvers._constraint_resolver.ConstraintResolver`
+the build-phase path uses.  No gmsh state required.
+
+Deferred (v1.1-A.2)
+~~~~~~~~~~~~~~~~~~~
+``EmbeddedDef`` and ``TiedContactDef`` need element-connectivity and
+face-connectivity queries respectively — those require new
+:class:`FEMDataSource` methods (and, for tied-contact, synthesis of
+face connectivity from volume elements).  They continue to fall back
+to the bump-counter pattern; the def is stored on
+``constraint_defs`` but not applied to ``_fem`` until a build-phase
+``get_fem_data()`` re-extraction.
 """
 from __future__ import annotations
 
@@ -79,14 +92,19 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
 
     Returns a new :class:`FEMData` with the records appended on
     success; returns ``None`` when ``defn``'s shape needs geometry-
-    aware reduction this minimum-viable router does not cover yet
-    (the caller falls back to the bump-counter pattern).
+    aware reduction this router does not cover yet (the caller falls
+    back to the bump-counter pattern).
 
     No exceptions escape — resolution failures (e.g. unknown target
     name) propagate as :class:`KeyError` from the underlying source
     adapter; type-mismatch falls through as ``None``.
     """
-    from apeGmsh._kernel.defs.constraints import BCDef
+    from apeGmsh._kernel.defs.constraints import (
+        BCDef,
+        EqualDOFDef,
+        RigidDiaphragmDef,
+        RigidLinkDef,
+    )
     from apeGmsh._kernel.defs.masses import PointMassDef
     from apeGmsh._kernel.defs.loads import PointLoadDef
     from apeGmsh._kernel.records._loads import (
@@ -169,8 +187,106 @@ def route_def_to_fem(fem: "FEMData", defn) -> "FEMData | None":
             new_fem = new_fem.with_load(rec)
         return new_fem
 
+    # ── EqualDOFDef → NodePairRecord ──────────────────────────────
+    if isinstance(defn, EqualDOFDef):
+        return _route_equal_dof(fem, source, defn)
+
+    # ── RigidLinkDef → NodePairRecord ─────────────────────────────
+    if isinstance(defn, RigidLinkDef):
+        return _route_rigid_link(fem, source, defn)
+
+    # ── RigidDiaphragmDef → NodeGroupRecord ───────────────────────
+    if isinstance(defn, RigidDiaphragmDef):
+        return _route_rigid_diaphragm(fem, source, defn)
+
     # ── Unsupported def shape ─────────────────────────────────────
     return None
+
+
+def _route_equal_dof(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``EqualDOFDef`` against ``fem`` and append node-pair records.
+
+    Build-phase parity — uses the same
+    :class:`~apeGmsh._kernel.resolvers._constraint_resolver.ConstraintResolver`
+    that the meshed path uses; only the master/slave node sets come
+    from :meth:`FEMDataSource.nodes_for` rather than from
+    ``g.parts.build_node_map``.
+    """
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    master_nodes = {
+        int(t) for t in source.nodes_for(defn.master_label)
+    }
+    slave_nodes = {
+        int(t) for t in source.nodes_for(defn.slave_label)
+    }
+    resolver = _build_resolver(fem, ConstraintResolver)
+    records = resolver.resolve_equal_dof(defn, master_nodes, slave_nodes)
+    new_fem = fem
+    for rec in records:
+        new_fem = new_fem.with_constraint(rec)
+    return new_fem
+
+
+def _route_rigid_link(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``RigidLinkDef`` against ``fem`` and append node-pair records."""
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    master_nodes = {
+        int(t) for t in source.nodes_for(defn.master_label)
+    }
+    slave_nodes = {
+        int(t) for t in source.nodes_for(defn.slave_label)
+    }
+    resolver = _build_resolver(fem, ConstraintResolver)
+    records = resolver.resolve_rigid_link(defn, master_nodes, slave_nodes)
+    new_fem = fem
+    for rec in records:
+        new_fem = new_fem.with_constraint(rec)
+    return new_fem
+
+
+def _route_rigid_diaphragm(fem: "FEMData", source, defn) -> "FEMData":
+    """Resolve ``RigidDiaphragmDef`` against ``fem`` and append a group record.
+
+    Mirrors :meth:`ConstraintsComposite._resolve_diaphragm` — the
+    diaphragm gathers ``master_label`` ∪ ``slave_label`` nodes and
+    filters by plane proximity inside the resolver.
+    """
+    from apeGmsh._kernel.resolvers._constraint_resolver import (
+        ConstraintResolver,
+    )
+
+    m = {int(t) for t in source.nodes_for(defn.master_label)}
+    s = {int(t) for t in source.nodes_for(defn.slave_label)}
+    all_in = m | s
+    resolver = _build_resolver(fem, ConstraintResolver)
+    record = resolver.resolve_rigid_diaphragm(defn, all_in)
+    # The build-phase resolver returns an empty NodeGroupRecord (no
+    # master_node, no slaves) when no nodes survive the plane filter
+    # — preserve that behaviour by not appending an empty record (it
+    # would otherwise produce a phantom constraint with master_node=0).
+    if not record.slave_nodes and record.master_node == 0:
+        return fem
+    return fem.with_constraint(record)
+
+
+def _build_resolver(fem: "FEMData", resolver_cls):
+    """Build a :class:`ConstraintResolver` from FEMData arrays.
+
+    The resolver only needs ``node_tags`` + ``node_coords`` for the
+    three node-only constraint paths (no element connectivity).  Pass
+    them in directly so we avoid the cost of materialising the full
+    element table from the broker.
+    """
+    return resolver_cls(
+        node_tags=np.asarray(fem.nodes.ids, dtype=np.int64),
+        node_coords=np.asarray(fem.nodes.coords, dtype=np.float64),
+    )
 
 
 def _resolve_target_to_node_ids(source, target) -> np.ndarray:
