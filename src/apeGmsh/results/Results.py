@@ -835,6 +835,7 @@ class Results:
         stage: "Optional[str]" = None,
         show: bool = True,
         controls: bool = True,
+        render_mode: str = "client",
     ):
         """Open the view-only web / Jupyter results viewer (ADR 0042 R-C).
 
@@ -859,6 +860,12 @@ class Results:
             When ``True`` (default), stack an ``ipywidgets`` control panel
             (step slider + layer toggles) above the view. Degrades to a
             bare view if ``ipywidgets`` is absent.
+        render_mode
+            ``"client"`` (default) renders in the browser via WebGL — fast
+            camera interaction. ``"server"`` renders on the kernel and
+            streams images (laggy, most VTK-feature-complete; for very
+            large models). ``"hybrid"`` is pyvista's ``trame`` backend with
+            a local/remote toggle in the toolbar.
 
         Returns
         -------
@@ -866,7 +873,10 @@ class Results:
             The viewer handle (``.director`` / ``.set_step`` / ``.show``).
         """
         from ..viewers.web_viewer import show_web as _show_web
-        return _show_web(self, stage=stage, show=show, controls=controls)
+        return _show_web(
+            self, stage=stage, show=show, controls=controls,
+            render_mode=render_mode,
+        )
 
     def _build_viewer_argv(
         self,

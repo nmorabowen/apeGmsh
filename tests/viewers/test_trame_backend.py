@@ -199,6 +199,70 @@ def test_show_composes_controls_when_view_is_widget(cube_results):
 
 
 # ---------------------------------------------------------------------
+# render_mode toggle (R-C) — friendly name → pyvista jupyter_backend.
+# ---------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "render_mode, expected_backend",
+    [("client", "client"), ("server", "server"), ("hybrid", "trame")],
+)
+def test_render_mode_maps_to_jupyter_backend(
+    cube_results, render_mode, expected_backend
+):
+    from apeGmsh.viewers.web_viewer import WebViewer
+
+    wv = WebViewer(cube_results, plotter=pv.Plotter(off_screen=True))
+    seen = {}
+    wv._plotter.show = lambda **kwargs: seen.update(kwargs)
+    wv.show(controls=False, render_mode=render_mode)
+    assert seen["jupyter_backend"] == expected_backend
+
+
+def test_render_mode_defaults_to_client(cube_results):
+    """The fast path is the default (fixes the slow server-render UX)."""
+    from apeGmsh.viewers.web_viewer import WebViewer
+
+    wv = WebViewer(cube_results, plotter=pv.Plotter(off_screen=True))
+    seen = {}
+    wv._plotter.show = lambda **kwargs: seen.update(kwargs)
+    wv.show(controls=False)
+    assert seen["jupyter_backend"] == "client"
+
+
+def test_jupyter_backend_overrides_render_mode(cube_results):
+    """Raw jupyter_backend escape hatch wins over render_mode."""
+    from apeGmsh.viewers.web_viewer import WebViewer
+
+    wv = WebViewer(cube_results, plotter=pv.Plotter(off_screen=True))
+    seen = {}
+    wv._plotter.show = lambda **kwargs: seen.update(kwargs)
+    wv.show(controls=False, render_mode="client", jupyter_backend="html")
+    assert seen["jupyter_backend"] == "html"
+
+
+def test_unknown_render_mode_raises(cube_results):
+    from apeGmsh.viewers.web_viewer import WebViewer
+
+    wv = WebViewer(cube_results, plotter=pv.Plotter(off_screen=True))
+    wv._plotter.show = lambda **kwargs: None
+    with pytest.raises(ValueError, match="Unknown render_mode"):
+        wv.show(controls=False, render_mode="turbo")
+
+
+def test_show_web_threads_render_mode(cube_results, monkeypatch):
+    """show_web(render_mode=) reaches WebViewer.show."""
+    import apeGmsh.viewers.web_viewer as web_viewer
+
+    seen = {}
+    monkeypatch.setattr(
+        web_viewer.WebViewer, "show",
+        lambda self, **kw: seen.update(kw),
+    )
+    web_viewer.show_web(cube_results, show=True, render_mode="server")
+    assert seen["render_mode"] == "server"
+
+
+# ---------------------------------------------------------------------
 # ipywidgets controls (R-C slice 2) — wiring verified headlessly via
 # traitlets' synchronous .observe; the visual push is eyeballed.
 # ---------------------------------------------------------------------

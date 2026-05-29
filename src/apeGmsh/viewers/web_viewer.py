@@ -33,6 +33,30 @@ if TYPE_CHECKING:
     from .scene.fem_scene import FEMSceneData
 
 
+# Friendly render-mode names → pyvista ``jupyter_backend`` (ADR 0042 R-C,
+# resolved Q2). ``client`` renders with VTK.js / WebGL in the browser, so
+# camera interaction is local and instant — the fast default. ``server``
+# renders on the kernel and streams images back (most VTK-feature-complete
+# but laggy). ``hybrid`` is pyvista's ``trame`` backend: both, with a
+# local/remote toggle button in the toolbar (boots remote → feels slow).
+_RENDER_MODE_TO_BACKEND = {
+    "client": "client",
+    "server": "server",
+    "hybrid": "trame",
+}
+
+
+def _resolve_jupyter_backend(render_mode: str) -> str:
+    """Map a friendly ``render_mode`` to a pyvista ``jupyter_backend``."""
+    try:
+        return _RENDER_MODE_TO_BACKEND[render_mode]
+    except KeyError:
+        valid = ", ".join(repr(m) for m in _RENDER_MODE_TO_BACKEND)
+        raise ValueError(
+            f"Unknown render_mode {render_mode!r}; use one of {valid}."
+        ) from None
+
+
 class WebViewer:
     """Minimal view-only web/Jupyter shell around a :class:`ResultsDirector`.
 
@@ -216,10 +240,24 @@ class WebViewer:
         self,
         *,
         controls: bool = True,
-        jupyter_backend: str = "trame",
+        render_mode: str = "client",
+        jupyter_backend: Optional[str] = None,
         **kwargs: Any,
     ) -> Any:
         """Display the scene inline (Jupyter) via pyvista's trame backend.
+
+        ``render_mode`` picks how the scene is rendered (resolved Q2):
+
+        * ``"client"`` (default) — VTK.js / WebGL in the browser; camera
+          interaction is local and instant. Fast for typical models.
+        * ``"server"`` — render on the kernel and stream images back; most
+          VTK-feature-complete but laggy. Use for very large models.
+        * ``"hybrid"`` — pyvista's ``trame`` backend (both, with a
+          local/remote toggle in the toolbar).
+
+        Pass ``jupyter_backend`` to override with a raw pyvista backend name
+        (e.g. ``"html"``, ``"static"``); it takes precedence over
+        ``render_mode``.
 
         Returns the trame view widget — or, when ``controls`` is ``True``
         and ``ipywidgets`` is available, a :class:`~ipywidgets.VBox` of the
@@ -230,8 +268,9 @@ class WebViewer:
         if os.environ.get("APEGMSH_SKIP_VIEWER"):
             print("[skip web viewer] APEGMSH_SKIP_VIEWER set")
             return None
+        backend = jupyter_backend or _resolve_jupyter_backend(render_mode)
         view = self._plotter.show(
-            jupyter_backend=jupyter_backend, return_viewer=True, **kwargs
+            jupyter_backend=backend, return_viewer=True, **kwargs
         )
         if not controls:
             return view
@@ -266,15 +305,17 @@ def show_web(
     stage: Optional[str] = None,
     show: bool = True,
     controls: bool = True,
+    render_mode: str = "client",
 ) -> Any:
     """Open the view-only web/Jupyter results viewer (ADR 0042, R-C).
 
     Builds a :class:`WebViewer` around ``results`` and, when ``show`` is
     ``True`` (default), displays it inline with an ``ipywidgets`` control
     panel (step slider + per-layer visibility) when ``controls`` is
-    ``True``. Returns the :class:`WebViewer` so callers can add diagrams
-    via ``viewer.director`` and call ``viewer.show()`` again, or scrub
-    with ``viewer.set_step(i)``.
+    ``True``. ``render_mode`` (``"client"`` / ``"server"`` / ``"hybrid"``)
+    selects the trame render mode — see :meth:`WebViewer.show`. Returns the
+    :class:`WebViewer` so callers can add diagrams via ``viewer.director``
+    and call ``viewer.show()`` again, or scrub with ``viewer.set_step(i)``.
     """
     viewer = WebViewer(results, stage=stage)
     if show:
@@ -283,7 +324,7 @@ def show_web(
         # return the ``WebViewer`` (so callers can scrub / add diagrams),
         # that widget would never reach the notebook's display hook, so
         # nothing renders. Hand it to ``IPython.display`` explicitly.
-        widget = viewer.show(controls=controls)
+        widget = viewer.show(controls=controls, render_mode=render_mode)
         if widget is not None:
             try:
                 from IPython.display import display
