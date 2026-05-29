@@ -278,7 +278,19 @@ def show_web(
     """
     viewer = WebViewer(results, stage=stage)
     if show:
-        viewer.show(controls=controls)
+        # ``viewer.show`` *returns* the trame widget (pyvista's
+        # ``return_viewer=True``) — it does not display it. Because we
+        # return the ``WebViewer`` (so callers can scrub / add diagrams),
+        # that widget would never reach the notebook's display hook, so
+        # nothing renders. Hand it to ``IPython.display`` explicitly.
+        widget = viewer.show(controls=controls)
+        if widget is not None:
+            try:
+                from IPython.display import display
+            except ImportError:  # pragma: no cover - non-notebook env
+                pass
+            else:
+                display(widget)
     return viewer
 
 

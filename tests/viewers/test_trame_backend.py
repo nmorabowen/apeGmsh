@@ -150,6 +150,25 @@ def test_show_web_returns_viewer_without_display(cube_results, monkeypatch):
     assert isinstance(wv, web_viewer.WebViewer)
 
 
+def test_show_web_displays_widget_when_show_true(cube_results, monkeypatch):
+    """show_web(show=True) must hand the widget to IPython.display — the
+    WebViewer it returns has no rich repr, so without an explicit display
+    nothing reaches the notebook and nothing renders (the "didn't pop up"
+    bug). Returns the viewer regardless so callers can scrub / add diagrams.
+    """
+    import apeGmsh.viewers.web_viewer as web_viewer
+    import IPython.display as ipd
+
+    sentinel = object()
+    monkeypatch.setattr(web_viewer.WebViewer, "show", lambda self, **kw: sentinel)
+    displayed: list = []
+    monkeypatch.setattr(ipd, "display", lambda obj: displayed.append(obj))
+
+    wv = web_viewer.show_web(cube_results, show=True)
+    assert isinstance(wv, web_viewer.WebViewer)
+    assert displayed == [sentinel]
+
+
 def test_show_degrades_when_view_is_not_a_widget(cube_results):
     """If pyvista returns a static-image fallback (not an ipywidget) — e.g.
     nest_asyncio2 missing so the trame server can't launch — show() must
