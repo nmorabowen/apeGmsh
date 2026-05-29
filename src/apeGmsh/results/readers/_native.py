@@ -24,6 +24,7 @@ from .._slabs import (
     LayerSlab,
     LineStationSlab,
     NodeSlab,
+    SpringSlab,
 )
 from .._time import resolve_time_slice
 from ..schema import _native
@@ -167,7 +168,12 @@ class NativeReader:
             return []
         out: list[StageInfo] = []
         stages_grp = self._h5[_native.STAGES_GROUP[1:]]
-        for sid in stages_grp.keys():
+        # HDF5 returns group names alphabetically, so "stage_10" would
+        # sort before "stage_2". The conventional auto-assigned ids are
+        # "stage_<int>" (write order), so order those by integer suffix;
+        # custom ids (begin_stage accepts an arbitrary stage_id) fall back
+        # to lexical order so a non-numeric id never breaks the listing.
+        for sid in sorted(stages_grp.keys(), key=_stage_order_key):
             grp = stages_grp[sid]
             attrs = grp.attrs
             kind = str(attrs.get(_native.ATTR_STAGE_KIND, ""))
@@ -403,6 +409,16 @@ class NativeReader:
             np.concatenate(chunks_ids) if chunks_ids
             else np.array([], dtype=np.int64)
         )
+        # Boundary nodes are replicated across partition domains. Dedup
+        # by id (first occurrence wins, matching the MPCO multi-reader)
+        # so a shared node yields one column, not one per partition. Only
+        # reorders when duplicates exist, so disjoint-owner files are
+        # byte-identical to the plain concatenation.
+        if ids_out.size:
+            uniq, first_idx = np.unique(ids_out, return_index=True)
+            if uniq.size != ids_out.size:
+                ids_out = uniq
+                values = values[:, first_idx]
         return NodeSlab(
             component=component, values=values,
             node_ids=ids_out, time=time[t_idx],
@@ -820,6 +836,32 @@ class NativeReader:
             time=time[t_idx],
         )
 
+    # ------------------------------------------------------------------
+    # Slab reads — springs
+    # ------------------------------------------------------------------
+
+    def read_springs(
+        self,
+        stage_id: str,
+        component: str,
+        *,
+        element_ids: Optional[ndarray] = None,
+        time_slice: TimeSlice = None,
+    ) -> SpringSlab:
+        # The native writer has no spring-recording path (springs are an
+        # MPCO-only category), so a native file never carries spring
+        # data. available_components(SPRINGS) already returns [] here;
+        # return a matching empty slab rather than letting the missing
+        # method surface as an AttributeError from the composite layer.
+        time = self.time_vector(stage_id)
+        t_idx = resolve_time_slice(time_slice, time)
+        return SpringSlab(
+            component=component,
+            values=np.zeros((t_idx.size, 0), dtype=np.float64),
+            element_index=np.array([], dtype=np.int64),
+            time=time[t_idx],
+        )
+
 
 # =====================================================================
 # Helpers
@@ -829,3 +871,15 @@ def _concat_or_empty(chunks: list[ndarray], dtype) -> ndarray:
     if chunks:
         return np.concatenate(chunks)
     return np.array([], dtype=dtype)
+
+
+def _stage_order_key(sid: str) -> tuple[int, int, str]:
+    """Sort key for stage ids: numeric "stage_<int>" first (by suffix).
+
+    Custom (non-``stage_<int>``) ids — which ``begin_stage`` permits —
+    sort after, lexically, so they never raise from the integer parse.
+    """
+    head, _, tail = sid.rpartition("_")
+    if head and tail.isdigit():
+        return (0, int(tail), "")
+    return (1, 0, sid)

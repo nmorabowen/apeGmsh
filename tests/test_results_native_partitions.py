@@ -85,3 +85,47 @@ def test_filter_skips_partitions_with_no_match(tmp_path: Path) -> None:
                              node_ids=np.array([1, 3]))
     np.testing.assert_array_equal(slab.node_ids, [1, 3])
     np.testing.assert_allclose(slab.values[0], [0.10, 0.30])
+
+
+def test_shared_boundary_node_deduped(tmp_path: Path) -> None:
+    # A boundary node replicated across partition domains must yield one
+    # column, not one per partition (F1). First occurrence wins.
+    path = tmp_path / "run.h5"
+    time = np.array([0.0, 1.0])
+    # Node 3 is shared by both partitions with identical kinematics.
+    p0_ids = np.array([1, 2, 3], dtype=np.int64)
+    p0_ux = np.array([[0.10, 0.20, 0.30], [0.11, 0.22, 0.33]])
+    p1_ids = np.array([3, 4], dtype=np.int64)
+    p1_ux = np.array([[0.30, 0.40], [0.33, 0.44]])
+
+    with NativeWriter(path) as w:
+        w.open()
+        sid = w.begin_stage(name="s", kind="transient", time=time)
+        w.write_nodes(sid, "partition_0", node_ids=p0_ids,
+                      components={"displacement_x": p0_ux})
+        w.write_nodes(sid, "partition_1", node_ids=p1_ids,
+                      components={"displacement_x": p1_ux})
+        w.end_stage()
+
+    with NativeReader(path) as r:
+        slab = r.read_nodes("stage_0", "displacement_x")
+
+    # Node 3 appears exactly once; ids are the unique set.
+    np.testing.assert_array_equal(slab.node_ids, [1, 2, 3, 4])
+    assert slab.values.shape == (2, 4)
+    # Column for node 3 carries the (consistent) shared value.
+    col3 = slab.values[:, list(slab.node_ids).index(3)]
+    np.testing.assert_allclose(col3, [0.30, 0.33])
+
+
+def test_native_springs_returns_empty_slab(tmp_path: Path) -> None:
+    # Native files have no spring-recording path; read_springs returns an
+    # empty slab rather than raising AttributeError from the composite
+    # layer (F3).
+    path = tmp_path / "run.h5"
+    _write_partitioned(path)
+    with NativeReader(path) as r:
+        slab = r.read_springs("stage_0", "spring_force_0")
+    assert slab.element_index.size == 0
+    assert slab.values.shape == (2, 0)
+    np.testing.assert_allclose(slab.time, [0.0, 1.0])
