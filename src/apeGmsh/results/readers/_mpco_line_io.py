@@ -236,7 +236,7 @@ def parse_section_codes_from_meta(
     the same code tuple — so we return one tuple representing the
     whole bucket.
     """
-    meta = bucket_grp.get("META")
+    meta = bucket_grp["META"] if "META" in bucket_grp else None
     if meta is None or "COMPONENTS" not in meta:
         raise ValueError(
             f"MPCO bucket {bracket_key!r} is missing META/COMPONENTS; "

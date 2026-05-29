@@ -46,6 +46,24 @@ if TYPE_CHECKING:
 _STAGE_PREFIX = "MODEL_STAGE["
 
 
+def _child(group: "h5py.Group", path: str):
+    """Return the child at a ``/``-separated path, or ``None`` if any
+    segment is absent.
+
+    Uses membership (``H5Lexists``) at every level instead of
+    ``Group.get(path)``. A multi-segment ``Group.get("A/B")`` returns
+    ``None`` indistinguishably whether ``A`` or ``B`` is missing — and
+    can mis-resolve a broken/soft link to ``None`` — masking a malformed
+    file as "absent" (project ``h5py`` optional-child hazard rule).
+    """
+    node = group
+    for segment in path.split("/"):
+        if segment not in node:
+            return None
+        node = node[segment]
+    return node
+
+
 class MPCOReader:
     """Reader for STKO ``.mpco`` HDF5 files."""
 
@@ -113,16 +131,20 @@ class MPCOReader:
     ) -> ndarray:
         """Aggregate TIME attrs from all STEP_<k> datasets in the stage.
 
-        Picks the first ``RESULTS/ON_NODES/<X>`` group with STEP data
-        and reads the TIME attribute on each step. Different result
-        groups are assumed to share the same step cadence (which is
-        STKO's invariant).
+        Reads the TIME attribute on each step of the first
+        ``RESULTS/ON_NODES/<X>`` group with STEP data. STKO records every
+        result on one shared step cadence, so the remaining node-result
+        groups are cross-checked and a mismatch raises — a differing step
+        count means later reads would index this time vector against the
+        wrong steps.
         """
-        on_nodes = stage_grp.get("RESULTS/ON_NODES")
+        on_nodes = _child(stage_grp, "RESULTS/ON_NODES")
         if on_nodes is None:
             return np.array([], dtype=np.float64)
+        ref_time: Optional[ndarray] = None
+        ref_name = ""
         for result_name in on_nodes:
-            data_grp = on_nodes[result_name].get("DATA")
+            data_grp = _child(on_nodes[result_name], "DATA")
             if data_grp is None:
                 continue
             step_keys = sorted(
@@ -131,12 +153,22 @@ class MPCOReader:
             )
             if not step_keys:
                 continue
-            return np.array(
-                [float(_attr_scalar(data_grp[k].attrs.get("TIME", 0.0)))
-                 for k in step_keys],
-                dtype=np.float64,
-            )
-        return np.array([], dtype=np.float64)
+            if ref_time is None:
+                ref_time = np.array(
+                    [float(_attr_scalar(data_grp[k].attrs.get("TIME", 0.0)))
+                     for k in step_keys],
+                    dtype=np.float64,
+                )
+                ref_name = result_name
+            elif len(step_keys) != ref_time.size:
+                raise ValueError(
+                    f"MPCO stage step-count mismatch: result "
+                    f"{result_name!r} has {len(step_keys)} steps but "
+                    f"{ref_name!r} has {ref_time.size}. STKO records all "
+                    f"results on one cadence; this file is inconsistent "
+                    f"and step-indexed reads would misalign."
+                )
+        return ref_time if ref_time is not None else np.array([], dtype=np.float64)
 
     def time_vector(self, stage_id: str) -> ndarray:
         self._ensure_stages()
@@ -163,7 +195,7 @@ class MPCOReader:
             return None
         # Use the LAST stage's MODEL — most up-to-date geometry.
         mpco_name = self._stage_to_mpco[self._stage_cache[-1].id]
-        model_grp = self._h5[mpco_name].get("MODEL")
+        model_grp = _child(self._h5[mpco_name], "MODEL")
         if model_grp is None:
             self._fem_cache = None
             return None
@@ -194,7 +226,7 @@ class MPCOReader:
             return []
 
         if level.value == "nodes":
-            on_nodes = self._h5[mpco_name].get("RESULTS/ON_NODES")
+            on_nodes = _child(self._h5[mpco_name], "RESULTS/ON_NODES")
             if on_nodes is None:
                 return []
             out: set[str] = set()
@@ -230,7 +262,7 @@ class MPCOReader:
         return []
 
     def _gauss_available_components(self, mpco_name: str) -> list[str]:
-        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        on_elements = _child(self._h5[mpco_name], "RESULTS/ON_ELEMENTS")
         if on_elements is None:
             return []
         out: set[str] = set()
@@ -265,7 +297,7 @@ class MPCOReader:
     def _elements_available_components(
         self, mpco_name: str,
     ) -> list[str]:
-        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        on_elements = _child(self._h5[mpco_name], "RESULTS/ON_ELEMENTS")
         if on_elements is None:
             return []
         out: set[str] = set()
@@ -284,7 +316,7 @@ class MPCOReader:
         return sorted(out)
 
     def _fibers_available_components(self, mpco_name: str) -> list[str]:
-        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        on_elements = _child(self._h5[mpco_name], "RESULTS/ON_ELEMENTS")
         if on_elements is None:
             return []
         out: set[str] = set()
@@ -298,8 +330,8 @@ class MPCOReader:
 
     def _layers_available_components(self, mpco_name: str) -> list[str]:
         stage_grp = self._h5[mpco_name]
-        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
-        section_assignments = stage_grp.get("MODEL/SECTION_ASSIGNMENTS")
+        on_elements = _child(stage_grp, "RESULTS/ON_ELEMENTS")
+        section_assignments = _child(stage_grp, "MODEL/SECTION_ASSIGNMENTS")
         if on_elements is None or section_assignments is None:
             return []
         out: set[str] = set()
@@ -326,8 +358,8 @@ class MPCOReader:
         self, mpco_name: str,
     ) -> list[str]:
         stage_grp = self._h5[mpco_name]
-        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
-        model_elements = stage_grp.get("MODEL/ELEMENTS")
+        on_elements = _child(stage_grp, "RESULTS/ON_ELEMENTS")
+        model_elements = _child(stage_grp, "MODEL/ELEMENTS")
         if on_elements is None or model_elements is None:
             return []
         out: set[str] = set()
@@ -358,7 +390,7 @@ class MPCOReader:
         return sorted(out)
 
     def _springs_available_components(self, mpco_name: str) -> list[str]:
-        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        on_elements = _child(self._h5[mpco_name], "RESULTS/ON_ELEMENTS")
         if on_elements is None:
             return []
         out: set[str] = set()
@@ -394,7 +426,7 @@ class MPCOReader:
         t_idx = resolve_time_slice(time_slice, time)
 
         mpco_name = self._stage_to_mpco[stage_id]
-        on_nodes = self._h5[mpco_name].get("RESULTS/ON_NODES")
+        on_nodes = _child(self._h5[mpco_name], "RESULTS/ON_NODES")
         if on_nodes is None:
             return _empty_node_slab(component, time, t_idx)
 
@@ -405,7 +437,7 @@ class MPCOReader:
         mpco_result_name, col_idx = loc
 
         result_grp = on_nodes[mpco_result_name]
-        data_grp = result_grp.get("DATA")
+        data_grp = _child(result_grp, "DATA")
         if data_grp is None:
             return _empty_node_slab(component, time, t_idx)
 
@@ -468,7 +500,7 @@ class MPCOReader:
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return _empty_element_slab(component, time, time_slice)
-        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        on_elements = _child(self._h5[mpco_name], "RESULTS/ON_ELEMENTS")
         if on_elements is None:
             return _empty_element_slab(component, time, time_slice)
 
@@ -521,8 +553,8 @@ class MPCOReader:
         if mpco_name is None:
             return _empty_line_station_slab(component, time, t_idx)
         stage_grp = self._h5[mpco_name]
-        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
-        model_elements = stage_grp.get("MODEL/ELEMENTS")
+        on_elements = _child(stage_grp, "RESULTS/ON_ELEMENTS")
+        model_elements = _child(stage_grp, "MODEL/ELEMENTS")
         if on_elements is None or model_elements is None:
             return _empty_line_station_slab(component, time, t_idx)
 
@@ -614,7 +646,7 @@ class MPCOReader:
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return _empty_gauss_slab(component, time, t_idx)
-        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        on_elements = _child(self._h5[mpco_name], "RESULTS/ON_ELEMENTS")
         if on_elements is None:
             return _empty_gauss_slab(component, time, t_idx)
 
@@ -733,9 +765,9 @@ class MPCOReader:
         if mpco_name is None:
             return _empty_fiber_slab(component, time, t_idx)
         stage_grp = self._h5[mpco_name]
-        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
-        model_elements = stage_grp.get("MODEL/ELEMENTS")
-        section_assignments = stage_grp.get("MODEL/SECTION_ASSIGNMENTS")
+        on_elements = _child(stage_grp, "RESULTS/ON_ELEMENTS")
+        model_elements = _child(stage_grp, "MODEL/ELEMENTS")
+        section_assignments = _child(stage_grp, "MODEL/SECTION_ASSIGNMENTS")
         if (
             on_elements is None
             or model_elements is None
@@ -810,11 +842,11 @@ class MPCOReader:
         if mpco_name is None:
             return _empty_layer_slab(component, time, t_idx)
         stage_grp = self._h5[mpco_name]
-        on_elements = stage_grp.get("RESULTS/ON_ELEMENTS")
-        section_assignments = stage_grp.get("MODEL/SECTION_ASSIGNMENTS")
+        on_elements = _child(stage_grp, "RESULTS/ON_ELEMENTS")
+        section_assignments = _child(stage_grp, "MODEL/SECTION_ASSIGNMENTS")
         if on_elements is None or section_assignments is None:
             return _empty_layer_slab(component, time, t_idx)
-        local_axes = stage_grp.get("MODEL/LOCAL_AXES")  # may be None
+        local_axes = _child(stage_grp, "MODEL/LOCAL_AXES")  # may be None
 
         token, buckets = _mlayer.discover_layer_buckets(
             on_elements, canonical_component=component,
@@ -889,7 +921,7 @@ class MPCOReader:
         mpco_name = self._stage_to_mpco.get(stage_id)
         if mpco_name is None:
             return _empty_spring_slab(component, time, t_idx)
-        on_elements = self._h5[mpco_name].get("RESULTS/ON_ELEMENTS")
+        on_elements = _child(self._h5[mpco_name], "RESULTS/ON_ELEMENTS")
         if on_elements is None:
             return _empty_spring_slab(component, time, t_idx)
 

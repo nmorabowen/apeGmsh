@@ -172,7 +172,7 @@ def discover_local_force_buckets(
     out: list[_LocalForceBucket] = []
     for bracket_key in lf_grp:
         bucket_grp = lf_grp[bracket_key]
-        meta = bucket_grp.get("META")
+        meta = bucket_grp["META"] if "META" in bucket_grp else None
         if meta is None or "COMPONENTS" not in meta:
             continue
         try:
@@ -241,7 +241,7 @@ def read_local_force_bucket_slab(
         if sel_rows.size == 0:
             return None
 
-    data_grp = bucket_grp.get("DATA")
+    data_grp = bucket_grp["DATA"] if "DATA" in bucket_grp else None
     if data_grp is None:
         return None
     step_keys = sorted(

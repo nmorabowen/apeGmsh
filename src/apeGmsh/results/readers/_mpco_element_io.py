@@ -197,7 +197,7 @@ def validate_bucket_meta(
             f"GP × {layout.n_components_per_gp} comp) expects {expected}."
         )
 
-    meta = bucket_grp.get("META")
+    meta = bucket_grp["META"] if "META" in bucket_grp else None
     if meta is None:
         raise ValueError(
             f"MPCO bucket {bracket_key!r} is missing the META subgroup."

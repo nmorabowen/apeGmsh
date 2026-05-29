@@ -309,7 +309,7 @@ def resolve_material_state_layout(
     NUM_COMPONENTS) and cross-checks the bucket's
     ``NUM_COLUMNS`` attribute against ``n_GP × n_components_per_gp``.
     """
-    meta = bucket_grp.get("META")
+    meta = bucket_grp["META"] if "META" in bucket_grp else None
     if meta is None or "COMPONENTS" not in meta:
         raise ValueError(
             f"MPCO material-state bucket {bucket.bracket_key!r}: "

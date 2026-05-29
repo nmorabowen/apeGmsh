@@ -577,7 +577,7 @@ def resolve_layer_bucket_layout(
     else:
         parent_token = "fiber_stress"
 
-    meta = bucket_grp.get("META")
+    meta = bucket_grp["META"] if "META" in bucket_grp else None
     if meta is None or "COMPONENTS" not in meta:
         # Fallback: assume a single-component bucket. The validator
         # will catch any shape mismatch downstream.

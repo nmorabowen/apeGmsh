@@ -206,7 +206,7 @@ def resolve_n_springs(
 
     Returns the number of springs (columns per element per step).
     """
-    meta = bucket_grp.get("META")
+    meta = bucket_grp["META"] if "META" in bucket_grp else None
     if meta is None:
         raise ValueError(
             f"MPCO spring bucket {bucket.bracket_key!r}: missing META subgroup."
