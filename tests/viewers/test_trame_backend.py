@@ -150,6 +150,35 @@ def test_show_web_returns_viewer_without_display(cube_results, monkeypatch):
     assert isinstance(wv, web_viewer.WebViewer)
 
 
+def test_show_degrades_when_view_is_not_a_widget(cube_results):
+    """If pyvista returns a static-image fallback (not an ipywidget) — e.g.
+    nest_asyncio2 missing so the trame server can't launch — show() must
+    return the view as-is with a warning, NOT crash composing a VBox
+    (regression: TraitError on PIL.Image in VBox.children)."""
+    pytest.importorskip("ipywidgets")
+    from apeGmsh.viewers.web_viewer import WebViewer
+
+    wv = WebViewer(cube_results, plotter=pv.Plotter(off_screen=True))
+    sentinel = object()                      # stand-in for the static fallback
+    wv._plotter.show = lambda **kwargs: sentinel
+    with pytest.warns(RuntimeWarning, match="nest_asyncio2"):
+        out = wv.show(controls=True)
+    assert out is sentinel
+
+
+def test_show_composes_controls_when_view_is_widget(cube_results):
+    """When the trame view IS an ipywidget, controls stack above it."""
+    W = pytest.importorskip("ipywidgets")
+    from apeGmsh.viewers.web_viewer import WebViewer
+
+    wv = WebViewer(cube_results, plotter=pv.Plotter(off_screen=True))
+    fake_view = W.HTML("trame view")
+    wv._plotter.show = lambda **kwargs: fake_view
+    out = wv.show(controls=True)
+    assert isinstance(out, W.VBox)
+    assert fake_view in out.children
+
+
 # ---------------------------------------------------------------------
 # ipywidgets controls (R-C slice 2) — wiring verified headlessly via
 # traitlets' synchronous .observe; the visual push is eyeballed.

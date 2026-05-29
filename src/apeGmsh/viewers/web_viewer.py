@@ -239,6 +239,24 @@ class WebViewer:
             import ipywidgets as W
         except ImportError:  # pragma: no cover - env-dependent
             return view  # degrade: no controls, just the rendered view
+        # The control panel can only be stacked when the trame view is an
+        # ipywidget. pyvista returns a *non*-widget when the trame server
+        # couldn't launch (a static-image fallback — usually a missing
+        # ``nest_asyncio2``, which pyvista needs to start the server without
+        # ``await``) or in some IFrame modes; wrapping that in a VBox raises
+        # a TraitError. Degrade to the bare view with a clear pointer.
+        if not isinstance(view, W.Widget):
+            import warnings
+
+            warnings.warn(
+                "show_web fell back to a static image without the control "
+                "panel — the trame server could not launch in-notebook. "
+                "Install nest_asyncio2 (`pip install nest_asyncio2`) for the "
+                "live interactive view plus the step / visibility controls.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return view
         return W.VBox([self.controls(), view])
 
 
