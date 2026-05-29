@@ -338,6 +338,40 @@ def test_modal_capture(tmp_path: Path) -> None:
         np.testing.assert_allclose(shape2_y, [[0.2, 0.4, 0.6]])
 
 
+def test_modal_capture_warns_on_nonpositive_eigenvalue(tmp_path: Path) -> None:
+    # A non-positive eigenvalue (rigid-body mechanism / unconverged
+    # eigensolve) must warn loudly, not silently become a 0 Hz mode.
+    fem = _MockFem([1, 2])
+    spec = _make_spec(
+        ResolvedDomainCaptureRecord(
+            category="modal", name="m",
+            components=(), dt=None, n_steps=None, n_modes=2,
+        ),
+        snapshot_id=fem.snapshot_id,
+        ndm=3, ndf=3,
+    )
+    fake = _FakeOps()
+    fake.eigenvalues = [-1.0, 100.0]   # mode 1 spurious, mode 2 valid
+
+    path = tmp_path / "run.h5"
+    with DomainCapture(spec, path, fem, ops=fake) as cap:
+        with pytest.warns(UserWarning, match="non-positive eigenvalue"):
+            cap.capture_modes()
+
+    from apeGmsh.results import Results
+    with Results.from_native(path, fem=fem, model=_open_model_from_h5(path)) as r:
+        modes = sorted(r.modes, key=lambda m: m.mode_index)
+        assert len(modes) == 2
+        # Spurious mode is still written, eigenvalue preserved, but
+        # frequency/period zeroed (not a real vibration mode).
+        assert modes[0].eigenvalue == pytest.approx(-1.0)
+        assert modes[0].frequency_hz == 0.0
+        assert modes[0].period_s == 0.0
+        # The valid mode is unaffected.
+        assert modes[1].eigenvalue == pytest.approx(100.0)
+        assert modes[1].frequency_hz > 0.0
+
+
 def test_modal_capture_with_rotational_dofs(tmp_path: Path) -> None:
     """ndf=6 captures rotation_x/y/z too."""
     fem = _MockFem([1])

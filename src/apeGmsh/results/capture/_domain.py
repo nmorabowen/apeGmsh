@@ -777,7 +777,23 @@ class DomainCapture:
 
         node_ids = np.asarray(self._fem.nodes.ids, dtype=np.int64)
         for mode_idx, lam in enumerate(eigenvalues, start=1):
-            omega = math.sqrt(lam) if lam > 0 else 0.0
+            if lam > 0:
+                omega = math.sqrt(lam)
+            else:
+                # A non-positive eigenvalue is physically meaningful — a
+                # rigid-body mode / mechanism or an unconverged eigensolve.
+                # Don't silently bury it as a 0 Hz mode; warn so the user
+                # treats the shape with suspicion (the stage is still
+                # written, with frequency/period = 0).
+                warnings.warn(
+                    f"Mode {mode_idx} has a non-positive eigenvalue "
+                    f"({lam:.6g}); this indicates a spurious/unstable mode "
+                    f"(rigid-body mechanism or unconverged eigensolve). "
+                    f"Writing frequency=0 / period=0 for it.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                omega = 0.0
             freq_hz = omega / (2.0 * math.pi)
             period_s = (2.0 * math.pi / omega) if omega > 0 else 0.0
 
