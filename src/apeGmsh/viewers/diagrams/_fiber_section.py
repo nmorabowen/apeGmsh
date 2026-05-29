@@ -12,31 +12,44 @@ The 2-D side panel is a matplotlib scatter showing fibers at their
 GP via the panel's dropdown (or programmatically through the
 Director's ``picked_gp``) and the scatter updates.
 
-Performance contract: same as Phase 1 — endpoints, local frames, and
-per-fiber world positions are computed **once at attach**. Per-step
-update is one h5py read + numpy scatter into the existing
-``point_data`` array; actor + polydata identity stable across steps.
+Render seam (ADR 0042, R-B Wave 2 #2). The 3-D dot cloud is emitted as
+a vertex-cell point-cloud :class:`MeshLayer` through the backend
+(GPU sphere billboards via ``point_size`` + ``render_points_as_spheres``,
+``pickable=False`` so clicks pass through to the substrate). The diagram
+holds no VTK objects. The matplotlib side panel stays OUT of the IR —
+it remains a diagram-owned ``make_side_panel`` hook.
+
+Performance contract: endpoints, local frames, and per-fiber world
+positions are computed **once at attach**. Per-step update is one h5py
+read + a backend ``update_layer`` whose in-place fast path mutates the
+bound dataset's scalar array (topology unchanged) — actor + dataset
+identity stable across steps.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
-import pyvista as pv
 from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
 from ._beam_geometry import compute_local_axes, station_position
 from ._scalar_bar_support import ScalarBarSupport
 from ._styles import FiberSectionStyle
+from ..scene_ir import (
+    CellBlocks,
+    ColorSpec,
+    LutSpec,
+    MeshLayer,
+    PointSet,
+    ScalarBarSpec,
+    ScalarField,
+)
 
 if TYPE_CHECKING:
     from apeGmsh.results.Results import Results
     from apeGmsh.viewers.data import ViewerData
     from ..scene.fem_scene import FEMSceneData
-
-
-_SCALAR_NAME = "_fiber_value"
 
 
 class FiberSectionDiagram(ScalarBarSupport, Diagram):
@@ -54,12 +67,14 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
         super().__init__(spec, results)
 
         # Populated by attach()
-        self._cloud: Optional[pv.PolyData] = None
-        self._actor: Any = None
-        self._scalar_array: Optional[ndarray] = None
+        self._layer: Optional[MeshLayer] = None
+        self._handle: Any = None
+        self._points: Optional[PointSet] = None     # cached fiber positions
+        self._cells: Optional[CellBlocks] = None     # cached vertex cells
+        self._fiber_values: Optional[ndarray] = None  # current-step scalar
         self._element_ids_to_read: tuple[int, ...] = ()
 
-        # Per-fiber metadata (in the order they appear in self._cloud.points)
+        # Per-fiber metadata (row-aligned with the emitted point cloud)
         self._slab_eid: Optional[ndarray] = None      # (n_fibers,)
         self._slab_gp: Optional[ndarray] = None
         self._slab_y: Optional[ndarray] = None        # section-local y
@@ -203,11 +218,12 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
         self._slab_area = slab_area
         self._row_order_locked = True
 
-        # ── Build PolyData (point cloud) ────────────────────────────
-        cloud = pv.PolyData(world_pts)
-        cloud.point_data[_SCALAR_NAME] = slab_values_step0.astype(np.float64)
-        self._cloud = cloud
-        self._scalar_array = cloud.point_data[_SCALAR_NAME]
+        # ── Cache point-cloud geometry (one vertex cell per fiber) ──
+        self._points = PointSet(world_pts)
+        self._cells = CellBlocks(
+            {"vertex": np.arange(n_valid, dtype=np.int64).reshape(-1, 1)}
+        )
+        self._fiber_values = slab_values_step0.astype(np.float64)
 
         # ── Build (eid, gp) -> indices map for the side panel ──────
         keys = list(zip(slab_eid.tolist(), slab_gp.tolist()))
@@ -233,35 +249,26 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
             else:
                 self._initial_clim = (0.0, 1.0)
 
-        # Point size in world units
-        point_size = max(
-            scene.model_diagonal * style.point_size_fraction, 1e-6,
-        )
-
-        bar_args = self._scalar_bar_args()
-        actor = plotter.add_mesh(
-            cloud,
-            scalars=_SCALAR_NAME,
-            cmap=self._runtime_cmap or style.cmap,
-            clim=self._runtime_clim or self._initial_clim,
-            opacity=style.opacity,
-            render_points_as_spheres=True,
-            point_size=10.0,        # screen-space; the dot cloud rendering
-            show_scalar_bar=bar_args is not None,
-            scalar_bar_args=bar_args,
-            name=self._actor_name(),
-            reset_camera=False,
-            lighting=False,
-            # Decorative overlay — picks pass through to the substrate.
-            pickable=False,
-        )
-        self._actor = actor
-        self._actors = [actor]
+        self._layer = self._build_layer(self._fiber_values)
+        self._handle = self._backend.add_layer(self._layer)
 
         self._init_lut()
+        if self._effective_show_scalar_bar():
+            self._backend.add_scalar_bar(
+                self._handle,
+                ScalarBarSpec(
+                    layer_id=self._handle.layer_id,
+                    title=self._scalar_bar_title(),
+                    lut=self._current_lutspec(),
+                ),
+            )
 
     def update_to_step(self, step_index: int) -> None:
-        if self._cloud is None or self._scalar_array is None:
+        if (
+            self._layer is None
+            or self._handle is None
+            or self._fiber_values is None
+        ):
             return
         results = self._scoped_results()
         if results is None:
@@ -279,13 +286,19 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
         # Slab row order should match attach-time order — verify cheaply
         # and skip on mismatch (which would mean a partition / file change).
         slab_values = np.asarray(slab.values[0], dtype=np.float64)
-        if slab_values.size != self._scalar_array.size:
+        if slab_values.size != self._fiber_values.size:
             return
-        self._scalar_array[:] = slab_values
-        try:
-            self._cloud.Modified()
-        except Exception:
-            pass
+        self._fiber_values = slab_values
+        self._layer = self._build_layer(self._fiber_values)
+        # Topology is unchanged across steps, so the backend's in-place
+        # fast path recolours the bound dataset without re-adding the
+        # actor (perf contract).
+        self._backend.update_layer(self._handle, self._layer)
+
+    def set_visible(self, visible: bool) -> None:
+        self._visible = visible
+        if self._backend is not None and self._handle is not None:
+            self._backend.set_layer_visible(self._handle, bool(visible))
 
     def detach(self) -> None:
         self._remove_scalar_bar(self._scalar_bar_title())
@@ -296,9 +309,13 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
                 pass
         self._lut = None
         self._lut_conn = None
-        self._cloud = None
-        self._actor = None
-        self._scalar_array = None
+        if self._backend is not None and self._handle is not None:
+            self._backend.remove_layer(self._handle)
+        self._layer = None
+        self._handle = None
+        self._points = None
+        self._cells = None
+        self._fiber_values = None
         self._element_ids_to_read = ()
         self._slab_eid = None
         self._slab_gp = None
@@ -390,18 +407,11 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
             self._lut.set_range(float(vmin), float(vmax))
             return
         self._runtime_clim = (float(vmin), float(vmax))
-        if self._actor is not None:
-            try:
-                mapper = self._actor.GetMapper()
-                mapper.SetScalarRange(*self._runtime_clim)
-            except Exception:
-                pass
 
     def autofit_clim_at_current_step(self) -> Optional[tuple[float, float]]:
-        if self._scalar_array is None:
+        if self._fiber_values is None:
             return None
-        data = np.asarray(self._scalar_array)
-        finite = data[np.isfinite(data)]
+        finite = self._fiber_values[np.isfinite(self._fiber_values)]
         if finite.size == 0:
             return None
         lo, hi = float(finite.min()), float(finite.max())
@@ -414,24 +424,12 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
         self._runtime_cmap = cmap
         if self._lut is not None:
             self._lut.set_preset(cmap)
-            return
-        if self._actor is None:
-            return
-        try:
-            lut = pv.LookupTable(cmap)
-            clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
-            lut.scalar_range = clim
-            mapper = self._actor.GetMapper()
-            mapper.SetLookupTable(lut)
-            mapper.SetScalarRange(*clim)
-        except Exception:
-            pass
 
     def current_clim(self) -> Optional[tuple[float, float]]:
         return self._runtime_clim or self._initial_clim
 
     # ------------------------------------------------------------------
-    # LUT mirror (plan 06)
+    # LUT mirror (diagram-side; changes pushed through the backend)
     # ------------------------------------------------------------------
 
     def _init_lut(self) -> None:
@@ -454,29 +452,60 @@ class FiberSectionDiagram(ScalarBarSupport, Diagram):
             self._lut_conn = None
 
     def _on_lut_changed(self) -> None:
-        if self._lut is None or self._actor is None:
+        if self._lut is None or self._handle is None or self._backend is None:
             return
         self._runtime_cmap = self._lut.preset
         self._runtime_clim = (self._lut.vmin, self._lut.vmax)
-        self._apply_lut_to_actor()
-
-    def _apply_lut_to_actor(self) -> None:
-        if self._actor is None or self._lut is None:
-            return
-        try:
-            table = self._lut.to_pyvista_lookup_table()
-            mapper = self._actor.GetMapper()
-            mapper.SetLookupTable(table)
-            mapper.SetScalarRange(self._lut.vmin, self._lut.vmax)
-        except Exception:
-            pass
+        color = ColorSpec(
+            mode="by_array",
+            array_name=self._color_array_name(),
+            lut=self._current_lutspec(),
+        )
+        self._backend.set_layer_color(self._handle, color)
+        if self._effective_show_scalar_bar():
+            self._backend.add_scalar_bar(
+                self._handle,
+                ScalarBarSpec(
+                    layer_id=self._handle.layer_id,
+                    title=self._scalar_bar_title(),
+                    lut=self._current_lutspec(),
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _actor_name(self) -> str:
-        return f"diagram_fiber_{id(self):x}"
+    def _layer_id(self) -> str:
+        return f"fiber_{id(self):x}"
+
+    def _color_array_name(self) -> str:
+        return self.spec.selector.component or "_fiber_value"
+
+    def _build_layer(self, fiber_values: ndarray) -> MeshLayer:
+        """Point-cloud MeshLayer: GPU sphere billboards coloured by the
+        fiber value through the LUT; decorative (pickable=False)."""
+        style: FiberSectionStyle = self.spec.style    # type: ignore[assignment]
+        assert self._points is not None and self._cells is not None
+        clim = self._runtime_clim or self._initial_clim or (0.0, 1.0)
+        cmap = self._runtime_cmap or style.cmap
+        name = self._color_array_name()
+        color = ColorSpec(
+            mode="by_array",
+            array_name=name,
+            lut=LutSpec(name=cmap, vmin=float(clim[0]), vmax=float(clim[1])),
+        )
+        return MeshLayer(
+            layer_id=self._layer_id(),
+            points=self._points,
+            cells=self._cells,
+            fields=(ScalarField(name, fiber_values, "point"),),
+            color=color,
+            opacity=style.opacity,
+            point_size=10.0,
+            render_points_as_spheres=True,
+            pickable=False,
+        )
 
     def _scoped_results(self) -> "Optional[Results]":
         if self.spec.stage_id is not None:

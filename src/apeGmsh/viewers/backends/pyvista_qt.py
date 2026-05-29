@@ -367,6 +367,9 @@ class PyVistaQtBackend:
         }
         if layer.wireframe:
             kwargs["style"] = "wireframe"
+        if layer.point_size is not None:
+            kwargs["point_size"] = layer.point_size
+            kwargs["render_points_as_spheres"] = layer.render_points_as_spheres
         color = layer.color
         if color.mode == "solid":
             kwargs["color"] = color.solid_rgb
@@ -379,6 +382,11 @@ class PyVistaQtBackend:
             kwargs["scalars"] = "colors"
             kwargs["rgb"] = True
         actor = self._plotter.add_mesh(grid, **kwargs)
+        if not layer.pickable and actor is not None:
+            try:
+                actor.SetPickable(False)
+            except Exception:
+                pass
         if layer.silhouette:
             try:
                 self._plotter.add_silhouette(grid)

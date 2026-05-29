@@ -206,6 +206,17 @@ class MeshLayer:
     # "ghost" reference and similar overlays. A backend maps this to its
     # wireframe representation.
     wireframe: bool = False
+    # Point-cloud rendering (vertex-cell meshes, e.g. the fiber-section
+    # dot cloud). When ``point_size`` is set, a backend renders the
+    # layer's points at that **screen-space** size; ``render_points_as_
+    # spheres`` makes them GPU sphere billboards rather than flat dots.
+    # ``None`` leaves point size at the backend default.
+    point_size: Optional[float] = None
+    render_points_as_spheres: bool = False
+    # Whether the rendered actor participates in picking. Decorative
+    # overlays (the fiber cloud) set ``False`` so clicks pass through to
+    # the substrate behind them.
+    pickable: bool = True
 
     def field_named(self, name: str) -> Optional[ScalarField]:
         for f in self.fields:

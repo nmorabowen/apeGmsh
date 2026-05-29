@@ -1,20 +1,23 @@
-"""FiberSectionDiagram — attach + step + side-panel data accessors.
+"""FiberSectionDiagram — emits a point-cloud MeshLayer through the backend.
 
 Builds a 2-element beam, writes synthetic fiber data via NativeWriter
-(2 GPs per beam, 4 fibers per GP), then verifies:
+(2 GPs per beam, 4 fibers per GP), then verifies (ADR 0042 R-B Wave 2 #2):
 
-* The 3-D dot cloud has one point per fiber.
-* Step updates mutate the scalar in place.
-* ``available_gps()`` returns all (eid, gp) pairs.
-* ``read_section_at_gp`` returns the right (y, z, area, value) tuple
-  for a specific (eid, gp) pair, with values from the active step.
+* Emission + side-panel data accessors via the shared recording stub
+  ``backend`` fixture (no GL): the emitted ``MeshLayer`` carries one
+  vertex cell per fiber, a point ``ScalarField``, point-cloud render
+  attributes, and ``pickable=False``; ``available_gps`` /
+  ``read_section_at_gp`` are unchanged.
+* Render integration via a real offscreen ``PyVistaQtBackend``
+  (``pv_backend`` fixture): scalar bar on the plotter, mapper scalar
+  range, in-place actor stability across steps, the actor is
+  non-pickable.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
 import pytest
 
 from apeGmsh.results import Results
@@ -25,6 +28,7 @@ from apeGmsh.viewers.diagrams import (
     FiberSectionStyle,
     SlabSelector,
 )
+from apeGmsh.viewers.scene_ir import MeshLayer
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
 from tests.conftest import _open_model_from_h5
@@ -117,13 +121,6 @@ def fiber_results(g, tmp_path: Path):
     )
 
 
-@pytest.fixture
-def headless_plotter():
-    plotter = pv.Plotter(off_screen=True)
-    yield plotter
-    plotter.close()
-
-
 def _make_spec() -> DiagramSpec:
     return DiagramSpec(
         kind="fiber_section",
@@ -149,37 +146,61 @@ def test_construction_requires_fiber_style(fiber_results):
 
 
 # =====================================================================
-# Attach
+# Attach + emission (recording stub backend)
 # =====================================================================
 
-def test_attach_requires_scene(fiber_results, headless_plotter):
+def test_attach_requires_scene(fiber_results, backend):
     results = fiber_results[0]
     diagram = FiberSectionDiagram(_make_spec(), results)
     with pytest.raises(RuntimeError, match="FEMSceneData"):
-        diagram.attach(headless_plotter, results.fem)
+        diagram.attach(backend, results.fem)
 
 
-def test_attach_builds_dot_cloud(fiber_results, headless_plotter):
+def test_attach_emits_point_cloud_layer(fiber_results, backend):
     (results, line_eids, gps_per_beam, fibers_per_gp,
      *_, values) = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     n_total = len(line_eids) * gps_per_beam * fibers_per_gp
-    assert diagram._cloud is not None
-    assert diagram._cloud.n_points == n_total
-    assert diagram._scalar_array is not None
-    np.testing.assert_array_equal(
-        np.asarray(diagram._scalar_array), values[0],
+    layer = diagram._layer
+    assert isinstance(layer, MeshLayer)
+    assert layer.points.n_points == n_total
+    # One vertex cell per fiber.
+    assert set(layer.cells.blocks) == {"vertex"}
+    assert layer.cells.n_cells == n_total
+    # Point-cloud render attributes; decorative (non-pickable).
+    assert layer.point_size is not None
+    assert layer.render_points_as_spheres is True
+    assert layer.pickable is False
+    # Coloured by the fiber value (point ScalarField).
+    assert layer.color.mode == "by_array"
+    field = layer.field_named(layer.color.array_name)
+    assert field is not None and field.location == "point"
+    np.testing.assert_array_equal(np.asarray(field.values), values[0])
+    # Scalar bar registered on the backend.
+    assert diagram._handle.layer_id in backend.scalar_bars
+
+
+def test_attach_carries_style_opacity(fiber_results, backend):
+    results = fiber_results[0]
+    scene = build_fem_scene(results.fem)
+    spec = DiagramSpec(
+        kind="fiber_section",
+        selector=SlabSelector(component="fiber_stress"),
+        style=FiberSectionStyle(opacity=0.3),
     )
+    diagram = FiberSectionDiagram(spec, results)
+    diagram.attach(backend, results.fem, scene)
+    assert diagram._layer.opacity == pytest.approx(0.3)
 
 
-def test_available_gps_lists_all_pairs(fiber_results, headless_plotter):
+def test_available_gps_lists_all_pairs(fiber_results, backend):
     (results, line_eids, gps_per_beam, *_) = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     expected = sorted(
         (int(eid), gp) for eid in line_eids for gp in range(gps_per_beam)
@@ -191,30 +212,49 @@ def test_available_gps_lists_all_pairs(fiber_results, headless_plotter):
 # Step update
 # =====================================================================
 
-def test_step_update_changes_scalars(fiber_results, headless_plotter):
+def test_step_update_changes_scalars(fiber_results, backend):
     results, _, _, _, *_, values = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     diagram.update_to_step(2)
-    np.testing.assert_array_equal(
-        np.asarray(diagram._scalar_array), values[2],
-    )
+    field = diagram._layer.field_named(diagram._layer.color.array_name)
+    np.testing.assert_array_equal(np.asarray(field.values), values[2])
+
+
+def test_handle_stable_across_steps(fiber_results, backend):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(backend, results.fem, scene)
+    initial_handle = diagram._handle
+    for step in range(3):
+        diagram.update_to_step(step)
+    assert diagram._handle is initial_handle
+
+
+def test_set_visible_routes_through_backend(fiber_results, backend):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(backend, results.fem, scene)
+    diagram.set_visible(False)
+    assert diagram._handle.visible is False
+    diagram.set_visible(True)
+    assert diagram._handle.visible is True
 
 
 # =====================================================================
-# Side-panel data accessor
+# Side-panel data accessor (unchanged — uses the stub backend)
 # =====================================================================
 
-def test_read_section_at_gp_returns_correct_subset(
-    fiber_results, headless_plotter,
-):
+def test_read_section_at_gp_returns_correct_subset(fiber_results, backend):
     (results, line_eids, gps_per_beam, fibers_per_gp,
      eid_arr, gp_arr, y_arr, z_arr, area_arr, values) = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     # Pick the first beam, gp 1
     eid = int(line_eids[0])
@@ -230,11 +270,11 @@ def test_read_section_at_gp_returns_correct_subset(
     np.testing.assert_array_equal(val_out, values[0][expected_mask])
 
 
-def test_read_section_at_gp_uses_step(fiber_results, headless_plotter):
+def test_read_section_at_gp_uses_step(fiber_results, backend):
     (results, line_eids, *_, values) = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     data_step0 = diagram.read_section_at_gp(int(line_eids[0]), 0, step_index=0)
     data_step2 = diagram.read_section_at_gp(int(line_eids[0]), 0, step_index=2)
@@ -242,85 +282,36 @@ def test_read_section_at_gp_uses_step(fiber_results, headless_plotter):
     assert not np.array_equal(data_step0[3], data_step2[3])
 
 
-def test_read_section_at_gp_unknown_returns_none(
-    fiber_results, headless_plotter,
-):
+def test_read_section_at_gp_unknown_returns_none(fiber_results, backend):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     assert diagram.read_section_at_gp(99999, 0, step_index=0) is None
-
-
-# =====================================================================
-# In-place mutation
-# =====================================================================
-
-def test_actor_identity_stable_across_steps(fiber_results, headless_plotter):
-    results, *_ = fiber_results
-    scene = build_fem_scene(results.fem)
-    diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
-    initial_actor = diagram._actor
-    initial_cloud = diagram._cloud
-    initial_scalar = diagram._scalar_array
-
-    for step in range(3):
-        diagram.update_to_step(step)
-
-    assert diagram._actor is initial_actor
-    assert diagram._cloud is initial_cloud
-    assert diagram._scalar_array is initial_scalar
 
 
 # =====================================================================
 # Detach
 # =====================================================================
 
-def test_detach_clears_state(fiber_results, headless_plotter):
+def test_detach_clears_state(fiber_results, backend):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
+    layer_id = diagram._handle.layer_id
     diagram.detach()
-    assert diagram._cloud is None
-    assert diagram._actor is None
+    assert diagram._layer is None
+    assert diagram._handle is None
     assert diagram._slab_y is None
     assert not diagram.is_attached
-
-
-def test_detach_removes_scalar_bar(fiber_results, headless_plotter):
-    """Repeated attach/detach cycles must not leave scalar bars
-    accumulated on the plotter."""
-    results, *_ = fiber_results
-    scene = build_fem_scene(results.fem)
-    for _ in range(3):
-        diagram = FiberSectionDiagram(_make_spec(), results)
-        diagram.attach(headless_plotter, results.fem, scene)
-        diagram.detach()
-    bars = getattr(headless_plotter, "scalar_bars", {}) or {}
-    assert "fiber_stress" not in bars
-
-
-def test_set_show_and_fmt_live(fiber_results, headless_plotter):
-    results, *_ = fiber_results
-    scene = build_fem_scene(results.fem)
-    diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
-
-    diagram.set_show_scalar_bar(False)
-    assert "fiber_stress" not in headless_plotter.scalar_bars
-
-    diagram.set_show_scalar_bar(True)
-    assert "fiber_stress" in headless_plotter.scalar_bars
-
-    diagram.set_fmt("%.2e")
-    assert headless_plotter.scalar_bars["fiber_stress"].GetLabelFormat() == "%.2e"
+    assert layer_id in backend.removed
+    assert layer_id not in backend.scalar_bars
 
 
 # =====================================================================
-# LUT mirror (plan 06)
+# LUT mirror (diagram-side state, recording stub backend)
 # =====================================================================
 
 
@@ -330,7 +321,7 @@ def test_fiber_lut_is_none_before_attach(fiber_results):
     assert diagram.lut is None
 
 
-def test_fiber_attach_builds_lut_from_style(fiber_results, headless_plotter):
+def test_fiber_attach_builds_lut_from_style(fiber_results, backend):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     spec = DiagramSpec(
@@ -339,7 +330,7 @@ def test_fiber_attach_builds_lut_from_style(fiber_results, headless_plotter):
         style=FiberSectionStyle(cmap="plasma", clim=(-5.0, 5.0)),
     )
     diagram = FiberSectionDiagram(spec, results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     lut = diagram.lut
     assert lut is not None
@@ -348,74 +339,159 @@ def test_fiber_attach_builds_lut_from_style(fiber_results, headless_plotter):
     assert lut.range == (-5.0, 5.0)
 
 
-def test_fiber_attach_lut_picks_up_autofit_clim(
-    fiber_results, headless_plotter,
-):
+def test_fiber_attach_lut_picks_up_autofit_clim(fiber_results, backend):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     lut = diagram.lut
     clim = diagram.current_clim()
     assert lut.range == clim
 
 
-def test_fiber_set_cmap_routes_through_lut(fiber_results, headless_plotter):
+def test_fiber_set_cmap_routes_through_lut(fiber_results, backend):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     diagram.set_cmap("turbo")
     assert diagram.lut.preset == "turbo"
     assert diagram._runtime_cmap == "turbo"
 
 
-def test_fiber_set_clim_routes_through_lut(fiber_results, headless_plotter):
+def test_fiber_set_clim_routes_through_lut(fiber_results, backend):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     diagram.set_clim(-2.0, 7.0)
     assert diagram.lut.range == (-2.0, 7.0)
     assert diagram.current_clim() == (-2.0, 7.0)
 
 
-def test_fiber_lut_change_updates_actor_mapper(
-    fiber_results, headless_plotter,
+def test_fiber_lut_change_pushes_colorspec_through_backend(
+    fiber_results, backend,
 ):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
 
     diagram.lut.set_range(100.0, 200.0)
-    mapper = diagram._actor.GetMapper()
-    sr = mapper.GetScalarRange()
-    assert sr[0] == pytest.approx(100.0)
-    assert sr[1] == pytest.approx(200.0)
+    color = backend.colors[diagram._handle.layer_id]
+    assert color.mode == "by_array"
+    assert color.lut.vmin == pytest.approx(100.0)
+    assert color.lut.vmax == pytest.approx(200.0)
 
 
-def test_fiber_detach_clears_lut(fiber_results, headless_plotter):
+def test_fiber_detach_clears_lut(fiber_results, backend):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
     assert diagram.lut is not None
     diagram.detach()
     assert diagram.lut is None
 
 
-def test_fiber_lut_changes_after_detach_are_noops(
-    fiber_results, headless_plotter,
-):
+def test_fiber_lut_changes_after_detach_are_noops(fiber_results, backend):
     results, *_ = fiber_results
     scene = build_fem_scene(results.fem)
     diagram = FiberSectionDiagram(_make_spec(), results)
-    diagram.attach(headless_plotter, results.fem, scene)
+    diagram.attach(backend, results.fem, scene)
     held_lut = diagram.lut
     diagram.detach()
     held_lut.set_preset("magma")
     held_lut.set_range(0.0, 1.0)
+
+
+# =====================================================================
+# Render integration (real offscreen PyVistaQtBackend)
+# =====================================================================
+
+def test_scalar_bar_appears_on_plotter(fiber_results, pv_backend):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    assert "fiber_stress" in pv_backend.plotter.scalar_bars
+
+
+def test_actor_is_non_pickable(fiber_results, pv_backend):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    assert diagram._handle.actor.GetPickable() == 0
+
+
+def test_actor_identity_stable_across_steps(fiber_results, pv_backend):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    initial_actor = diagram._handle.actor
+    initial_dataset = diagram._handle.dataset
+
+    for step in range(3):
+        diagram.update_to_step(step)
+
+    # In-place fast path: topology unchanged, so the actor + dataset
+    # are reused rather than re-added.
+    assert diagram._handle.actor is initial_actor
+    assert diagram._handle.dataset is initial_dataset
+
+
+def test_step_update_recolors_dataset_in_place(fiber_results, pv_backend):
+    results, _, _, _, *_, values = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+    diagram.update_to_step(2)
+    ds = diagram._handle.dataset
+    np.testing.assert_array_equal(
+        np.asarray(ds.point_data["fiber_stress"]), values[2],
+    )
+
+
+def test_detach_removes_scalar_bar(fiber_results, pv_backend):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    for _ in range(3):
+        diagram = FiberSectionDiagram(_make_spec(), results)
+        diagram.attach(pv_backend, results.fem, scene)
+        diagram.detach()
+    assert "fiber_stress" not in (pv_backend.plotter.scalar_bars or {})
+
+
+def test_set_show_and_fmt_live(fiber_results, pv_backend):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+
+    diagram.set_show_scalar_bar(False)
+    assert "fiber_stress" not in pv_backend.plotter.scalar_bars
+
+    diagram.set_show_scalar_bar(True)
+    assert "fiber_stress" in pv_backend.plotter.scalar_bars
+
+    diagram.set_fmt("%.2e")
+    bar = pv_backend.plotter.scalar_bars["fiber_stress"]
+    assert bar.GetLabelFormat() == "%.2e"
+
+
+def test_fiber_lut_change_updates_actor_mapper(fiber_results, pv_backend):
+    results, *_ = fiber_results
+    scene = build_fem_scene(results.fem)
+    diagram = FiberSectionDiagram(_make_spec(), results)
+    diagram.attach(pv_backend, results.fem, scene)
+
+    diagram.lut.set_range(100.0, 200.0)
+    mapper = diagram._handle.actor.GetMapper()
+    sr = mapper.GetScalarRange()
+    assert sr[0] == pytest.approx(100.0)
+    assert sr[1] == pytest.approx(200.0)
