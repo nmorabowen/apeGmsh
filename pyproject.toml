@@ -24,7 +24,12 @@ plot = ["matplotlib", "scipy"]
 opensees = ["openseespy"]
 vtk = []  # VTKExport uses only numpy + stdlib
 dxf = ["ezdxf"]
-viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy"]
+# ADR 0042 R-C: trame/trame-vtk render the web/Jupyter TrameBackend
+# (results.show_web). Folded into [viewer] rather than a hard base dep or
+# a separate [web] extra — the whole render stack (pyvista/vtk/PySide6) is
+# already an opt-in here, so one render-install story stays consistent.
+viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
+          "trame>=3.0", "trame-vtk>=2.6"]
 animation = ["imageio>=2.30", "imageio-ffmpeg>=0.4"]
 # Weighted-partitioning backends (Flavor B of g.mesh.partitioning.partition).
 # pymetis: PyPI has Linux/macOS wheels. Windows must install via conda-forge
@@ -43,7 +48,8 @@ docs = [
     "mkdocs-jupyter>=0.24",
 ]
 all = ["matplotlib", "scipy", "openseespy", "ezdxf",
-       "PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy"]
+       "PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy",
+       "trame>=3.0", "trame-vtk>=2.6"]
 
 [project.scripts]
 apegmsh-viewer = "apeGmshViewer.__main__:main"

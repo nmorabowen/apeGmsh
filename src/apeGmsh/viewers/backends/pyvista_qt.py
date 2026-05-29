@@ -1,7 +1,12 @@
-"""``PyVistaQtBackend`` — the reference (desktop) render backend.
+"""``PyVistaBackend`` — the generic pyvista render backend (+ the
+desktop ``PyVistaQtBackend`` subclass).
 
 Implements :class:`~apeGmsh.viewers.scene_ir.RenderBackend` by
 translating ``scene_ir`` value types into ``pyvista`` plotter calls.
+``PyVistaBackend`` drives any ``pyvista.BasePlotter`` and is shared by
+the desktop (:class:`PyVistaQtBackend`) and web/Jupyter
+(``trame.TrameBackend``) backends; only the plotter's windowing/serving
+differs, and that lives outside this generic core.
 This is where every VTK/pyvista concept lives that the domain layer
 must not know about: the token → VTK-cell-type mapping, the
 ``vtkGhostType`` visibility bitmask, ``cell_data["colors"]`` RGB
@@ -236,11 +241,19 @@ class _PvHandle:
 # =====================================================================
 
 
-class PyVistaQtBackend:
-    """Reference desktop backend over a ``pyvista`` plotter.
+class PyVistaBackend:
+    """Generic ``RenderBackend`` over any ``pyvista.BasePlotter``.
+
+    Every method here drives a plain ``pyvista`` plotter — none of it is
+    Qt- or web-specific, so both the desktop (:class:`PyVistaQtBackend`)
+    and web/Jupyter (:class:`~apeGmsh.viewers.backends.trame.TrameBackend`)
+    backends share it. The *windowing / serving* of the plotter is owned
+    by the viewer layer (the Qt ``ResultsViewer`` or the trame shell), not
+    by the backend, so it lives in the subclasses (or outside entirely).
 
     Construct with any pyvista ``BasePlotter`` — the live
-    ``pyvistaqt.QtInteractor`` plotter in the desktop viewer, or a
+    ``pyvistaqt.QtInteractor`` plotter in the desktop viewer, a
+    ``pyvista.Plotter`` served via ``pyvista.trame``, or a
     ``pyvista.Plotter(off_screen=True)`` in a render-capable test.
     """
 
@@ -252,10 +265,10 @@ class PyVistaQtBackend:
     def plotter(self) -> Any:
         """The wrapped pyvista plotter.
 
-        Escape hatch for the R-B transition: the diagram base derives
-        ``self._plotter`` from this so un-migrated diagrams keep driving
-        the raw plotter directly. Removed at R-B.final once every
-        diagram emits through the backend.
+        The single seam between the backend and its host: the Qt viewer
+        adds substrate/label actors to it directly, the trame shell serves
+        it, and the ``headless_plotter`` test fixture reads ``scalar_bars``
+        off it. The domain layer (``diagrams/``) never touches it.
         """
         return self._plotter
 
@@ -486,6 +499,18 @@ class PyVistaQtBackend:
         return _PvHandle(layer.layer_id, actor, None, "label")
 
 
+class PyVistaQtBackend(PyVistaBackend):
+    """Reference desktop backend — a :class:`PyVistaBackend` whose plotter
+    is the live ``pyvistaqt.QtInteractor`` owned by the Qt ``ResultsViewer``
+    (or a ``pyvista.Plotter(off_screen=True)`` in render-capable tests).
+
+    Adds nothing over the base: desktop windowing lives in the viewer, and
+    picking is supported (inherited ``supports_picking() -> True``). It
+    stays a distinct type so the seam reads clearly and so future desktop-
+    only tweaks have a home.
+    """
+
+
 def _lookup_table_from_lutspec(lut: "Any") -> Any:
     """Build a ``pv.LookupTable`` from a :class:`LutSpec`.
 
@@ -546,6 +571,7 @@ def _glyph_geometry(layer: GlyphLayer) -> Any:
 
 
 __all__ = [
+    "PyVistaBackend",
     "PyVistaQtBackend",
     "mesh_layer_to_grid",
     "apply_visibility_mask",

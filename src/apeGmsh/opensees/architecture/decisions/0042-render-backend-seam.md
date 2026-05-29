@@ -447,6 +447,17 @@ rewrite with zero strategic payoff.
    the dependency surface proves to conflict in practice — flipping
    to an optional extra later is additive, not a breaking change.
 
+   **REVISED at R-C implementation (2026-05-29).** This rested on a
+   false premise: it assumed the render stack lived in base
+   `dependencies`. It does not — `pyvista` / `vtk` / `PySide6` are all
+   in the optional `[viewer]` extra, so making `trame` a *base* dep
+   would have pulled web libraries for users who installed no renderer
+   at all (and still lacked pyvista). `trame` / `trame-vtk` therefore
+   joined the existing `[viewer]` extra, not base `dependencies` and
+   not a separate `[web]` extra — one render-install story, consistent
+   with the actual packaging. Exactly the additive, non-breaking flip
+   this decision anticipated.
+
 ## References
 
 - [ADR 0014](0014-viewer-is-pure-h5-consumer.md) — viewers as a

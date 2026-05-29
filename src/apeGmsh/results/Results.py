@@ -809,6 +809,37 @@ class Results:
             cuts=cuts,
         ).show()
 
+    def show_web(
+        self,
+        *,
+        stage: "Optional[str]" = None,
+        show: bool = True,
+    ):
+        """Open the view-only web / Jupyter results viewer (ADR 0042 R-C).
+
+        Renders the FEM substrate plus any diagrams the director holds
+        through a ``pyvista.trame`` backend — the kernel-safe path that
+        replaces the blocking Qt :meth:`viewer` in a notebook. View-only
+        for now (no time-slider UI or picking yet; scrub with
+        ``returned_viewer.set_step(i)``).
+
+        Parameters
+        ----------
+        stage
+            Stage id or name to activate; defaults to the first stage.
+        show
+            When ``True`` (default), display inline immediately. When
+            ``False``, return the :class:`~apeGmsh.viewers.web_viewer.WebViewer`
+            unshown so diagrams can be added via ``viewer.director`` first.
+
+        Returns
+        -------
+        WebViewer
+            The viewer handle (``.director`` / ``.set_step`` / ``.show``).
+        """
+        from ..viewers.web_viewer import show_web as _show_web
+        return _show_web(self, stage=stage, show=show)
+
     def _build_viewer_argv(
         self,
         *,
